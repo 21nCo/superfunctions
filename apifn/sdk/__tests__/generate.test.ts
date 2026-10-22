@@ -328,6 +328,80 @@ describe("generated TypeScript", () => {
     expect(generate(reorder(catalog)).files).toEqual(result.files);
   });
 
+  it("widens references inside tuples that TypeScript resolves eagerly in a cycle", async () => {
+    const catalog = fixtureCatalog();
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    Object.assign(catalog.schemas, {
+      // type TupleUnion = [TupleUnion[]?, ...number[]] | {...} is a circular type alias.
+      TupleUnion: { anyOf: [{ type: "array", prefixItems: [{ type: "array", items: ref("TupleUnion") }], items: { type: "number" } }, { type: "object", properties: { a: { type: "string" } }, required: ["a"] }] },
+      // type TupleAllOf = [string?, ...TupleAllOf[][]] & {...} is too.
+      TupleAllOf: { allOf: [{ type: "array", prefixItems: [{ type: "string" }], items: { type: "array", items: ref("TupleAllOf") } }, { type: "object", properties: { k: { type: "number" } } }] },
+      // Inside an object type the reference stays precise.
+      TupleBoxed: { type: "array", prefixItems: [{ type: "object", properties: { next: ref("TupleBoxed") } }], items: false },
+    });
+    catalog.schemas.Task.properties.probe = { anyOf: [ref("TupleUnion"), ref("TupleAllOf"), ref("TupleBoxed")] };
+    const result = generate(catalog);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_CYCLE").map(({ pointer }) => pointer)).toEqual(["/schemas/TupleAllOf", "/schemas/TupleUnion"]);
+    const dir = tempDir();
+    expect((await writeSdk(dir, result)).ok).toBe(true);
+    expect(compile(dir)).toEqual([]);
+    const models = readFileSync(path.join(dir, "src/models.ts"), "utf8");
+    expect(models).toContain("export type TupleUnion = ([unknown[]?, ...number[]]) | ({");
+    expect(models).toContain("export type TupleAllOf = ([string?, ...unknown[][]]) & ({");
+    expect(models).toContain("export type TupleBoxed = [({\n  next?: TupleBoxed;\n})?];");
+  });
+
+  it("compiles a seeded corpus of recursive component schema graphs", async () => {
+    // A fixed linear congruential generator keeps the corpus identical on every run.
+    let seed = 20261022;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const pick = <T>(values: T[]): T => values[Math.floor(random() * values.length)];
+    const shape = (names: string[], depth: number): unknown => {
+      const ref = () => ({ $ref: `#/components/schemas/${pick(names)}` });
+      const primitive = () => ({ type: pick(["string", "number", "boolean", "null"]) });
+      const sub = () => (depth > 2 ? pick([ref, primitive])() : shape(names, depth + 1));
+      return pick<() => unknown>([
+        ref,
+        ref,
+        primitive,
+        () => ({ anyOf: [sub(), sub()] }),
+        () => ({ oneOf: [sub(), sub()] }),
+        () => ({ allOf: [sub(), sub()] }),
+        () => ({ allOf: [sub(), { type: "object", properties: { k: primitive() } }] }),
+        () => ({ type: "array", items: sub() }),
+        () => ({ type: ["array", "null"], items: sub() }),
+        () => ({ type: "object", properties: { p: sub() }, required: ["p"] }),
+        () => ({ type: "object", additionalProperties: sub() }),
+        () => ({ type: "array", prefixItems: [sub()], items: sub() }),
+        () => ({ type: "array", prefixItems: [sub(), sub()], minItems: 1, items: false }),
+        () => ({ type: "array", items: { type: "array", prefixItems: [sub()], items: sub() } }),
+        () => ({ ...ref(), description: "with siblings", properties: { z: sub() } }),
+      ])();
+    };
+    let cycles = 0;
+    for (let round = 0; round < 2; round++) {
+      const catalog = fixtureCatalog();
+      const members: Array<{ $ref: string }> = [];
+      for (let graph = 0; graph < 64; graph++) {
+        const names = ["A", "B", "C"].map((letter) => `Corpus${round}x${graph}${letter}`);
+        for (const name of names) {
+          catalog.schemas[name] = shape(names, 0);
+          members.push({ $ref: `#/components/schemas/${name}` });
+        }
+      }
+      catalog.schemas.Task.properties.probe = { anyOf: members };
+      const result = generate(catalog);
+      expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+      cycles += result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_CYCLE").length;
+      const dir = tempDir();
+      expect((await writeSdk(dir, result)).ok).toBe(true);
+      expect(compile(dir)).toEqual([]);
+    }
+    // The corpus exercises the cycle repair rather than only acyclic graphs.
+    expect(cycles).toBeGreaterThan(50);
+  });
+
   it("types params, results and declared errors for consumers", async () => {
     const dir = tempDir();
     expect((await writeSdk(dir, generate())).ok).toBe(true);

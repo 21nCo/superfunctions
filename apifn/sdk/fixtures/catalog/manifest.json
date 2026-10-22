@@ -14,6 +14,7 @@
     { "id": "tasks.attachment.upload", "operationId": "uploadAttachment" },
     { "id": "tasks.archive", "operationId": "archiveTask" },
     { "id": "tasks.export", "operationId": "exportTasks" },
+    { "id": "tasks.lookup", "operationId": "lookupTasks" },
     { "id": "projects.summary.get", "operationId": "getProjectSummary" },
     { "id": "reports.upload", "operationId": "uploadReport" },
     { "id": "session.get", "operationId": "getSession" },

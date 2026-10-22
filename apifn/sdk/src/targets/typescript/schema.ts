@@ -54,28 +54,52 @@ function literal(value: unknown): string | null {
   return null;
 }
 
+/** The JSON types a schema's `type` keyword, or failing that its keywords, give it; null if neither does. */
+function typeList(schema: Record<string, unknown>): unknown[] | null {
+  if (Array.isArray(schema.type)) return schema.type;
+  if (typeof schema.type === "string") return [schema.type];
+  if (isRecord(schema.properties) || "additionalProperties" in schema || "patternProperties" in schema) return ["object"];
+  if ("items" in schema || "prefixItems" in schema) return ["array"];
+  return null;
+}
+
 /**
- * Component names a schema's type refers to outside any object or array type: through `$ref`,
- * `$dynamicRef` and `allOf`/`anyOf`/`oneOf` members. TypeScript resolves these references eagerly, so
- * a cycle of them is a circular type alias; references inside object, array and tuple types are
- * deferred and may recurse.
+ * Where a schema sits in the type of the component schema that contains it, for cycle detection:
+ * `direct` outside any object or array type, `array` inside array types only, and `tuple` once inside a
+ * tuple type. TypeScript defers references inside object types and plain array types, but resolves
+ * some inside tuple types eagerly, such as `[A[]?, ...number[]] | B` and `[string?, ...A[][]][] & B`.
  */
-function directReferences(schema: unknown, found: Set<string>, depth = 0): Set<string> {
+type Position = "direct" | "array" | "tuple";
+
+/**
+ * Component names a schema's type refers to in a `direct` or `tuple` position (see `Position`):
+ * through `$ref`, `$dynamicRef`, `allOf`/`anyOf`/`oneOf` members and array items, but never through an
+ * object type. A cycle of these references may be a circular type alias.
+ */
+function directReferences(schema: unknown, found: Set<string>, position: Position = "direct", depth = 0): Set<string> {
   if (depth > MAX_DEPTH || !isRecord(schema)) return found;
-  for (const keyword of ["$ref", "$dynamicRef"]) {
-    const ref = schema[keyword];
-    const component = typeof ref === "string" ? componentName(ref) : null;
-    if (component !== null) found.add(component);
+  if (position !== "array") {
+    for (const keyword of ["$ref", "$dynamicRef"]) {
+      const ref = schema[keyword];
+      const component = typeof ref === "string" ? componentName(ref) : null;
+      if (component !== null) found.add(component);
+    }
   }
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
     const members = schema[keyword];
-    if (Array.isArray(members)) for (const member of members) directReferences(member, found, depth + 1);
+    if (Array.isArray(members)) for (const member of members) directReferences(member, found, position, depth + 1);
+  }
+  if (typeList(schema)?.includes("array")) {
+    const tuple = Array.isArray(schema.prefixItems);
+    const inner: Position = tuple || position === "tuple" ? "tuple" : "array";
+    if (tuple) for (const member of schema.prefixItems as unknown[]) directReferences(member, found, inner, depth + 1);
+    if ("items" in schema) directReferences(schema.items, found, inner, depth + 1);
   }
   return found;
 }
 
 /**
- * Finds the direct references (see `directReferences`) that close a cycle between component schemas,
+ * Finds the references (see `directReferences`) that close a cycle between component schemas,
  * by a depth-first search over names and references in sorted order, so the result is deterministic.
  * Typing each returned reference as `unknown` leaves the direct references acyclic. Keys are the
  * referencing schemas; values are the referenced ones, sorted.
@@ -111,8 +135,11 @@ export class SchemaTypes {
     this.#prefix = prefix;
   }
 
-  /** `cut` names components whose direct references (see `aliasCycleCuts`) are typed `unknown`. */
-  type(schema: unknown, indent = "", depth = 0, cut: ReadonlySet<string> = NO_CUTS): string {
+  /**
+   * `cut` names components whose references in a `direct` or `tuple` position (see `aliasCycleCuts`)
+   * are typed `unknown`; `position` is where `schema` sits in the component schema being typed.
+   */
+  type(schema: unknown, indent = "", depth = 0, cut: ReadonlySet<string> = NO_CUTS, position: Position = "direct"): string {
     if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null) return "unknown";
     if (schema === false) return "never";
     if (!isRecord(schema)) return "unknown";
@@ -122,7 +149,7 @@ export class SchemaTypes {
       const ref = schema[keyword];
       if (typeof ref !== "string") continue;
       const component = componentName(ref);
-      const name = component === null || cut.has(component) ? null : this.#resolve(component);
+      const name = component === null || (position !== "array" && cut.has(component)) ? null : this.#resolve(component);
       parts.push(name === null ? "unknown" : `${this.#prefix}${name}`);
     }
     if ("const" in schema) parts.push(literal(schema.const) ?? "unknown");
@@ -132,23 +159,19 @@ export class SchemaTypes {
     }
     // Literal values already narrow a primitive type; `("a" | "b") & string` would only add noise.
     const literals = "const" in schema || Array.isArray(schema.enum);
-    const typed = literals && primitiveOnly(schema.type) ? null : this.#byType(schema, indent, next);
+    const typed = literals && primitiveOnly(schema.type) ? null : this.#byType(schema, indent, next, cut, position);
     if (typed !== null) parts.push(typed);
-    if (Array.isArray(schema.allOf)) parts.push(intersection(schema.allOf.map((member) => this.type(member, indent, next, cut))));
+    if (Array.isArray(schema.allOf)) parts.push(intersection(schema.allOf.map((member) => this.type(member, indent, next, cut, position))));
     for (const keyword of ["anyOf", "oneOf"]) {
       const members = schema[keyword];
-      if (Array.isArray(members)) parts.push(union(members.map((member) => this.type(member, indent, next, cut))));
+      if (Array.isArray(members)) parts.push(union(members.map((member) => this.type(member, indent, next, cut, position))));
     }
     return intersection(parts);
   }
 
-  #byType(schema: Record<string, unknown>, indent: string, depth: number): string | null {
-    let types: unknown[];
-    if (Array.isArray(schema.type)) types = schema.type;
-    else if (typeof schema.type === "string") types = [schema.type];
-    else if (isRecord(schema.properties) || "additionalProperties" in schema || "patternProperties" in schema) types = ["object"];
-    else if ("items" in schema || "prefixItems" in schema) types = ["array"];
-    else return null;
+  #byType(schema: Record<string, unknown>, indent: string, depth: number, cut: ReadonlySet<string>, position: Position): string | null {
+    const types = typeList(schema);
+    if (types === null) return null;
     return union(
       types.map((type) => {
         switch (type) {
@@ -162,7 +185,7 @@ export class SchemaTypes {
           case "null":
             return "null";
           case "array":
-            return this.#array(schema, indent, depth);
+            return this.#array(schema, indent, depth, cut, position);
           case "object":
             return this.#object(schema, indent, depth);
           default:
@@ -172,19 +195,19 @@ export class SchemaTypes {
     );
   }
 
-  #array(schema: Record<string, unknown>, indent: string, depth: number): string {
+  #array(schema: Record<string, unknown>, indent: string, depth: number, cut: ReadonlySet<string>, position: Position): string {
     const items = "items" in schema ? schema.items : true;
     if (Array.isArray(schema.prefixItems)) {
       // Positions at or past minItems may be missing, so they are optional elements.
       const minItems = typeof schema.minItems === "number" && Number.isInteger(schema.minItems) ? schema.minItems : 0;
       const head = schema.prefixItems.map((member, index) => {
-        const type = this.type(member, indent, depth);
+        const type = this.type(member, indent, depth, cut, "tuple");
         return index < minItems ? type : `${group(type)}?`;
       });
-      const tail = items === false ? [] : [`...${group(this.type(items, indent, depth))}[]`];
+      const tail = items === false ? [] : [`...${group(this.type(items, indent, depth, cut, "tuple"))}[]`];
       return `[${[...head, ...tail].join(", ")}]`;
     }
-    return `${group(this.type(items, indent, depth))}[]`;
+    return `${group(this.type(items, indent, depth, cut, position === "tuple" ? "tuple" : "array"))}[]`;
   }
 
   #object(schema: Record<string, unknown>, indent: string, depth: number): string {

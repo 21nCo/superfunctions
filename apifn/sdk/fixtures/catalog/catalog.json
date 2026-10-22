@@ -1202,6 +1202,137 @@
       },
       "description": null,
       "executionPolicyRef": null,
+      "id": "tasks.lookup",
+      "method": "get",
+      "name": "lookupTasks",
+      "openapiOperationId": "lookupTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "key",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "match",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "q",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "X-Api-Key",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/lookup",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                },
+                "type": "array"
+              }
+            }
+          ],
+          "description": "Matching tasks",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "apiKeyQuery",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Look up tasks; parameters share names with the API key credentials",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
       "id": "tasks.replace",
       "method": "put",
       "name": "replaceTask",
@@ -1572,12 +1703,12 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:902bde0e72b44eb89fb65009f0812cd26dacdd1a269175dc9506802dc6f83f85",
+    "manifestDigest": "sha256:31d3816e25af985175d8acf2e1e1e4deb7ac41e7255e68bd1e8ea41426746c7e",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,
       "source": "apifn/sdk/fixtures/catalog/openapi.json"
     },
-    "specDigest": "sha256:709886f41f7cc51e9758ee8e43a1e5485a8d9d601f6e2179f0d275784247d216"
+    "specDigest": "sha256:04baa114ad4358167754d203d6fa72fa7a649ab8f4bf376401579e3973896fd0"
   }
 }

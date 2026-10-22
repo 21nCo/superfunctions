@@ -119,6 +119,21 @@
         "responses": { "200": { "description": "CSV text", "content": { "text/plain": { "schema": { "type": "string" } } } } }
       }
     },
+    "/projects/{projectId}/lookup": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "lookupTasks",
+        "summary": "Look up tasks; parameters share names with the API key credentials",
+        "security": [{ "apiKeyQuery": [] }, { "apiKeyHeader": [] }],
+        "parameters": [
+          { "name": "key", "in": "query", "schema": { "type": "string" } },
+          { "name": "match", "in": "query", "explode": true, "schema": { "type": "object", "additionalProperties": { "type": "string" } } },
+          { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "X-Api-Key", "in": "header", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Matching tasks", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } } } } } }
+      }
+    },
     "/reports": {
       "post": {
         "operationId": "uploadReport",

@@ -513,6 +513,7 @@ export class ApiRuntime<Credentials> {
   /**
    * Applies the first credentialed security alternative whose credentials are all configured; an
    * anonymous alternative is used only when none is, so optional authentication still sends credentials.
+   * A credential replaces any parameter sent under the same header or query name.
    */
   async #authorize(op: OperationSpec, headers: Headers, query: string[], signal: AbortSignal): Promise<void> {
     const satisfied = op.security.filter((terms) => terms.every((term) => own(this.#credentials, term.scheme) !== undefined));
@@ -533,7 +534,13 @@ export class ApiRuntime<Credentials> {
       if (typeof value !== "string" || value === "") throw new InputError(`${where} must be a non-empty string.`);
       if (term.type === "bearer") headers.set("authorization", headerValue(`Bearer ${value}`, where));
       else if (term.in === "header") setHeader(headers, term.name, headerValue(value, where), where);
-      else query.push(`${encode(term.name)}=${encode(value)}`);
+      else {
+        // Like a header credential, a query credential is the only value sent under its name: parameter
+        // pairs with that name, from any style, are dropped.
+        const name = encode(term.name);
+        const kept = query.filter((pair) => pair.split("=", 1)[0] !== name);
+        query.splice(0, query.length, ...kept, `${name}=${encode(value)}`);
+      }
     }
   }
 

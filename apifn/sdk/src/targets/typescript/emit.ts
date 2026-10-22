@@ -108,13 +108,13 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const resolve = (component: string) => typeNames.get(component) ?? null;
   const modelTypes = new SchemaTypes(resolve);
   const clientTypes = new SchemaTypes(resolve, "Models.");
-  // A cycle of references outside object and array types would be a circular type alias.
+  // A cycle of references outside object and plain array types would be a circular type alias.
   const cuts = aliasCycleCuts(catalog.schemas);
   for (const [schema, targets] of cuts) {
     diagnostics.push({
       code: "SDK_SCHEMA_CYCLE",
       severity: "warning",
-      message: `Component schema "${schema}" refers back to ${targets.map((target) => `"${target}"`).join(", ")} outside any object or array, which TypeScript cannot express as a type alias; ${targets.length === 1 ? "that reference is" : "those references are"} typed unknown.`,
+      message: `Component schema "${schema}" refers back to ${targets.map((target) => `"${target}"`).join(", ")} outside any object or plain array type, which TypeScript cannot express as a type alias; ${targets.length === 1 ? "that reference is" : "those references are"} typed unknown.`,
       pointer: `/schemas/${schema.replace(/~/g, "~0").replace(/\//g, "~1")}`,
     });
   }
