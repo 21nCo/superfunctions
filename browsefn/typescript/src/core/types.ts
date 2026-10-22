@@ -134,7 +134,13 @@ export interface WebConfig {
   rateLimit?: RateLimitConfig;
 }
 
+export interface DestinationSecurity {
+  /** Explicit trusted in-process opt-in. HTTP routes always override this. */
+  allowPrivateHosts?: boolean;
+}
+
 export interface GetPageOptions {
+  security?: DestinationSecurity;
   provider?: string;
   format?: 'html' | 'markdown' | 'text' | 'json';
   includeLinks?: boolean;
@@ -207,6 +213,7 @@ export interface PageResult {
 }
 
 export interface MetadataOptions {
+  security?: DestinationSecurity;
   fields?: Array<'title' | 'description' | 'image' | 'author' | 'published' | 'keywords' | 'favicon'>;
   timeout?: number;
   concurrency?: number;
@@ -309,6 +316,7 @@ export interface ImageSearchResult {
 }
 
 export interface ImageDownloadOptions {
+  security?: DestinationSecurity;
   destination?: string;
   filename?: string;
   size?: 'small' | 'medium' | 'large' | 'original';

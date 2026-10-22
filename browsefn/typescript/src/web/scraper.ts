@@ -2,6 +2,8 @@
  * Web scraper interface.
  */
 
+import { CheerioProvider } from './providers/cheerio.js';
+import { denied } from '../utils/destination-policy.js';
 import { BrowseFnError, isBrowseFnError, getUpstreamStatus } from '../core/errors.js';
 import type {
   GetPageOptions,
@@ -112,6 +114,7 @@ export class WebScraper {
             format: 'html',
             timeout: options.timeout,
             cache: options.cache,
+            security: options.security,
           });
 
           const metadata = this.filterMetadata(page.metadata, options.fields);
@@ -175,6 +178,8 @@ export class WebScraper {
         continue;
       }
 
+      if (options.security && !options.security.allowPrivateHosts && provider.constructor !== CheerioProvider) throw denied();
+
       const capabilityError = this.getCustomScrapeCapabilityError(providerName, provider);
       if (capabilityError) {
         errors.push(capabilityError);
@@ -198,6 +203,7 @@ export class WebScraper {
         return await provider.scrape!(sanitizedUrl, { ...options, script });
       } catch (error) {
         const normalizedError = this.normalizeError(error, providerName);
+        if (normalizedError.code === 'SECURITY_POLICY_BLOCKED') throw normalizedError;
         errors.push(normalizedError);
         this.emitFallbackIfNeeded(chain, index, normalizedError);
       }
@@ -235,6 +241,8 @@ export class WebScraper {
         continue;
       }
 
+      if (options.security && !options.security.allowPrivateHosts && provider.constructor !== CheerioProvider) throw denied();
+
       const capabilityError = this.getCapabilityError(providerName, provider, options);
       if (capabilityError) {
         errors.push(capabilityError);
@@ -261,6 +269,7 @@ export class WebScraper {
         return this.annotateResult(result, providerName, fallbackFrom);
       } catch (error) {
         const normalizedError = this.normalizeError(error, providerName);
+        if (normalizedError.code === 'SECURITY_POLICY_BLOCKED') throw normalizedError;
         errors.push(normalizedError);
         fallbackFrom ??= providerName;
         this.emitFallbackIfNeeded(chain, index, normalizedError);

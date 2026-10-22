@@ -63,6 +63,7 @@ export class RetryMiddleware {
   }
 
   private shouldRetry(error: Error): boolean {
+    if (isBrowseFnError(error) && error.code === 'SECURITY_POLICY_BLOCKED') return false;
     if (!this.config.retryOn || this.config.retryOn.length === 0) {
       return true;
     }

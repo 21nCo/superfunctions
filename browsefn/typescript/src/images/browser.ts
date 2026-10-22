@@ -107,6 +107,9 @@ export class ImageBrowser {
       : undefined;
 
     const provider = this.providerManager.getDefault();
+    if (provider?.download && options.security && !options.security.allowPrivateHosts) {
+      throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Provider cannot enforce the active destination policy.' });
+    }
     if (provider?.download) {
       await this.rateLimiter?.waitForLimit(provider.name);
       const result = await provider.download(sanitizedUrl, providerOptions);

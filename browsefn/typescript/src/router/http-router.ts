@@ -182,7 +182,7 @@ export function createBrowseFnRouter(browseFn: BrowseFn): Router<BrowseFnContext
             );
             const page = await ctx.browseFn.web.getPage(
               requireField(body.url, 'url'),
-              body.options
+              { ...body.options, security: { allowPrivateHosts: false }, cache: false }
             );
             return respondSuccess(request, page);
           } catch (error) {
@@ -205,7 +205,7 @@ export function createBrowseFnRouter(browseFn: BrowseFn): Router<BrowseFnContext
               });
             }
 
-            const results = await ctx.browseFn.web.getMultipleMetadata(body.urls, body.options);
+            const results = await ctx.browseFn.web.getMultipleMetadata(body.urls, { ...body.options, security: { allowPrivateHosts: false }, cache: false });
             return respondSuccess(request, results);
           } catch (error) {
             return respondError(request, error);
@@ -243,7 +243,7 @@ export function createBrowseFnRouter(browseFn: BrowseFn): Router<BrowseFnContext
             );
             const result = await ctx.browseFn.images.download(
               requireField(body.url, 'url'),
-              body.options
+              { ...body.options, allowPrivateHosts: false, security: { allowPrivateHosts: false } }
             );
             return respondSuccess(request, result);
           } catch (error) {

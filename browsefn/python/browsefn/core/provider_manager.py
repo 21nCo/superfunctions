@@ -125,6 +125,7 @@ class ProviderManager(Generic[T]):
         requested_provider: Optional[str],
         executor: Callable[[T, str], Awaitable[Any]],
         on_fallback: Optional[Callable[[str, str, Exception], None]] = None,
+        before_provider: Optional[Callable[[T], None]] = None,
     ) -> Any:
         chain = self.get_fallback_chain(requested_provider)
         if not chain:
@@ -141,6 +142,8 @@ class ProviderManager(Generic[T]):
             if provider is None:
                 continue
 
+            if before_provider is not None:
+                before_provider(provider)
             if not await self.is_available(provider_name):
                 error = BrowseFnError(
                     "PROVIDER_UNAVAILABLE",
@@ -165,6 +168,8 @@ class ProviderManager(Generic[T]):
         raise self._summarize_errors(errors)
 
     def _assert_fallback_allowed(self, error: BrowseFnError) -> None:
+        if error.code == "SECURITY_POLICY_BLOCKED":
+            raise error
         aliases = {"RATE_LIMIT": "RATE_LIMITED", "TIMEOUT": "UPSTREAM_TIMEOUT", "NOT_FOUND": "UPSTREAM_NOT_FOUND"}
         if self.fallback_on_errors is not None and error.code not in [aliases.get(code, code) for code in self.fallback_on_errors]:
             raise error

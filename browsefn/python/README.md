@@ -91,3 +91,20 @@ python3 -m pytest browsefn/python/tests/test_web.py browsefn/python/tests/test_i
 
 - [Package overview](../README.md)
 - [Testing guide](./TESTING.md)
+
+
+## HTTP destination policy
+
+The router forces public destinations for page, metadata and image download
+requests; body options cannot opt into private hosts. Page/metadata requests use
+no cache. Static HTML uses checked DNS answers pinned to each connection and
+revalidates every redirect (five maximum), with a 10 MiB body limit and an overall
+timeout. Encoded responses, proxies and cookies are rejected on protected static
+requests. Non-static/custom providers fail closed pending enforced egress
+isolation; this does not complete browser-provider security or SEC-001.
+
+For trusted direct use, `GetPageOptions(security={"allowPrivateHosts": False},
+cache=False)` selects protected static transport. Set `allowPrivateHosts` to
+`True` only for an explicitly trusted private destination. Omitting `security`
+keeps legacy direct-library behavior and provides no untrusted-URL boundary.
+See the root BrowseFn README for the migration limits and remaining work.

@@ -168,7 +168,11 @@ class Cookie(BaseModel):
     value: str
     domain: Optional[str] = None
 
+class DestinationSecurity(BaseModel):
+    allow_private_hosts: bool = Field(False, alias="allowPrivateHosts", strict=True)
+
 class GetPageOptions(BaseModel):
+    security: Optional[DestinationSecurity] = None
     provider: Optional[str] = None
     format: Optional[Literal['html', 'markdown', 'text', 'json']] = None
     selectors: Optional[Selectors] = None
@@ -227,6 +231,7 @@ class PageResult(BaseModel):
     duration: Optional[float] = None
 
 class MetadataOptions(BaseModel):
+    security: Optional[DestinationSecurity] = None
     fields: Optional[List[Literal['title', 'description', 'image', 'author', 'published', 'keywords', 'favicon']]] = None
     timeout: Optional[int] = None
     concurrency: Optional[int] = None

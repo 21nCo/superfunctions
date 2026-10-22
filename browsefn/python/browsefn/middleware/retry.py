@@ -50,6 +50,8 @@ class RetryMiddleware:
         raise self._finalize_error(last_error, context)
 
     def _is_retryable(self, error: Exception) -> bool:
+        if isinstance(error, BrowseFnError) and error.code == "SECURITY_POLICY_BLOCKED":
+            return False
         if not self.config.retry_on:
             return True
 

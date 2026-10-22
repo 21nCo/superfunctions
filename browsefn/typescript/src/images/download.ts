@@ -2,35 +2,15 @@
 import { lookup } from 'node:dns';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { BlockList, isIP } from 'node:net';
+import { isIP } from 'node:net';
+import { isPublicAddress, denied } from '../utils/destination-policy.js';
+export { isPublicAddress } from '../utils/destination-policy.js';
 import { constants } from 'node:fs';
 import { open, mkdir, link, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { BrowseFnError } from '../core/errors.js';
 import type { ImageDownloadOptions } from '../core/types.js';
-
-const blocked = new BlockList();
-for (const [address, prefix] of [
-  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
-  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
-  ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24],
-  ['224.0.0.0', 4], ['240.0.0.0', 4],
-] as const) blocked.addSubnet(address, prefix, 'ipv4');
-const globalV6 = new BlockList();
-globalV6.addSubnet('2000::', 3, 'ipv6');
-blocked.addSubnet('2001::', 23, 'ipv6');
-blocked.addSubnet('2001:db8::', 32, 'ipv6');
-blocked.addSubnet('2002::', 16, 'ipv6');
-blocked.addSubnet('3fff::', 20, 'ipv6');
-
-export function isPublicAddress(address: string): boolean {
-  return isIP(address) === 4 ? !blocked.check(address, 'ipv4') :
-    isIP(address) === 6 && globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6');
-}
-function denied(): BrowseFnError {
-  return new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Target host is not allowed by the active security policy.' });
-}
 
 export async function fetchImageBytes(input: string, options: ImageDownloadOptions): Promise<Uint8Array> {
   const deadline = Date.now() + 30_000;

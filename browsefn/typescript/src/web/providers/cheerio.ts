@@ -2,6 +2,7 @@
  * Cheerio provider for lightweight HTML scraping
  */
 
+import { fetchPublicPage } from '../../utils/public-page.js';
 import * as cheerio from 'cheerio';
 import { ProxyAgent, fetch as proxyFetch } from 'undici';
 import type { WebProvider, GetPageOptions, PageResult, ProviderCapabilities } from '../../core/types.js';
@@ -28,6 +29,10 @@ export class CheerioProvider implements WebProvider {
     const startTime = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
 
+    if (options.security) {
+      const result = await fetchPublicPage(sanitizedUrl, options);
+      return this.parsePage(Buffer.from(result.bytes).toString('utf8'), result.url, options, startTime);
+    }
     const agent = options.proxy ? new ProxyAgent(options.proxy) : undefined;
     let html: string, resolvedUrl: string;
     try {
@@ -40,6 +45,10 @@ export class CheerioProvider implements WebProvider {
       html = await response.text();
     } finally { await agent?.close(); }
 
+    return this.parsePage(html, resolvedUrl, options, startTime);
+  }
+
+  private parsePage(html: string, resolvedUrl: string, options: GetPageOptions, startTime: number): PageResult {
     // Apply selectors
     if (options.selectors) {
       html = applySelectors(html, options.selectors);

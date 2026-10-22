@@ -240,6 +240,37 @@ CacheManager(CacheConfig(enabled=True, storage='database', database=shared_adapt
 - Synchronous `has()` remains supported for memory. Persistent storage requires `await hasAsync()` / `await has_async()`; sync use throws an actionable error instead of reporting an unloaded persisted key absent. Other existing async operations retain their signatures. Statistics counts are manager-local; size reflects persisted, unexpired records.
 - Python minimum metadata is corrected to >=3.10 because the already-required shared core distribution requires >=3.10. This is an explicit correction of an unsatisfiable >=3.9 installation claim, not proof of Python3.9 compatibility.
 
+## HTTP destination policy
+
+The TypeScript and Python HTTP routers enforce a public-destination policy for
+`/web/page`, `/web/metadata`, and `/images/download`. Request bodies cannot enable
+private hosts. Page and metadata routes disable cache reads/writes to prevent
+caller-selected cache keys from crossing the policy boundary.
+
+Protected static page requests resolve all DNS answers, reject any non-public
+answer, connect to a checked address, and repeat validation on every redirect.
+They allow at most five redirects and 10 MiB of response bytes. Requests ask for
+identity encoding; servers returning encoded bodies are rejected. The whole
+request deadline includes DNS, redirects and body transfer. Proxies are rejected
+because an untrusted proxy can resolve the destination differently. Python
+protected static requests also reject cookies pending a bounded cookie policy.
+
+**Migration:** HTTP page requests using browser, hosted or custom web providers
+currently fail closed with `SECURITY_POLICY_BLOCKED`. These providers do not yet
+have an enforced egress boundary covering subresources, redirects and DNS
+rebinding. This is an interim restriction; browser functionality under this
+policy and full SEC-001 acceptance remain unfinished. Hosted-provider remote
+network access is a separate boundary that a local DNS check cannot certify.
+
+Trusted in-process static callers can select the checked transport with
+`security: { allowPrivateHosts: false }`, or explicitly permit private hosts with
+`security: { allowPrivateHosts: true }`. Python accepts the same option through
+`GetPageOptions(security={"allowPrivateHosts": True})`. Calls without `security`
+retain the legacy direct-library provider behavior, which is not a security
+boundary for untrusted URLs. Do not forward arbitrary request options to direct
+library methods. Protected direct calls should also disable caching; the HTTP
+routers enforce this automatically. Exact host allowlists are not implemented.
+
 ## Image download security policy
 
 The built-in TypeScript downloader and Python browser/provider downloaders now use a shared helper within each SDK. These helpers are specialized network/file transfer policy, not framework HTTP adapters.

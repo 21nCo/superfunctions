@@ -48,11 +48,15 @@ class BeautifulSoupProvider:
         if options.proxy:
             client_config["proxy"] = options.proxy
 
-        async with httpx.AsyncClient(**client_config) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html_content = response.text
-            resolved_url = str(response.url)
+        if options.security is not None:
+            from browsefn.web.public_page import fetch_public_page
+            html_content, resolved_url = await fetch_public_page(url, options)
+        else:
+            async with httpx.AsyncClient(**client_config) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                html_content = response.text
+                resolved_url = str(response.url)
 
         metadata_dict = extract_metadata(html_content)
         metadata = PageMetadata(

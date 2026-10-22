@@ -21,6 +21,7 @@ from browsefn.core.types import (
     WebConfig,
     WebProvider,
 )
+from browsefn.web.providers.bs4 import BeautifulSoupProvider
 from browsefn.middleware.retry import RetryMiddleware
 from browsefn.utils.validation import validate_page_options, validate_url
 
@@ -100,6 +101,10 @@ class WebScraper:
         validate_page_options(options)
         requested_provider = self._normalize_provider_id(options.provider)
 
+        def assert_destination_policy(provider: WebProvider) -> None:
+            if options.security is not None and not options.security.allow_private_hosts and type(provider) is not BeautifulSoupProvider:
+                raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Provider cannot enforce the active destination policy.")
+
         async def executor(provider: WebProvider, provider_name: str) -> PageResult:
             self._assert_provider_capabilities(provider_name, provider, options)
             result = await provider.get_page(url, options)
@@ -107,7 +112,7 @@ class WebScraper:
             return result
 
         async def execute():
-            return await self.provider_manager.execute_with_fallback(requested_provider, executor)
+            return await self.provider_manager.execute_with_fallback(requested_provider, executor, before_provider=assert_destination_policy)
         if options.retry:
             return await RetryMiddleware(RetryConfig(enabled=True, maxAttempts=options.retry.count + 1, delay=options.retry.delay, backoff="linear")).execute(execute)
         return await execute()
@@ -138,7 +143,7 @@ class WebScraper:
                 try:
                     page_result = await self.get_page(
                         url,
-                        GetPageOptions(format="html", timeout=options.timeout or 10000, cache=options.cache),
+                        GetPageOptions(format="html", timeout=options.timeout or 10000, cache=options.cache, security=options.security),
                     )
                     metadata_dict = page_result.metadata.model_dump()
                     if options.fields:

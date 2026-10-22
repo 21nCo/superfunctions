@@ -87,7 +87,7 @@ def create_browsefn_router(browse_fn: Any) -> List[Route]:
             body = await request.json()
             if "url" not in body:
                 raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: url")
-            options = GetPageOptions(**body.get("options", {}))
+            options = GetPageOptions(**{**body.get("options", {}), "security": {"allowPrivateHosts": False}, "cache": False})
             page = await browse_fn.web.get_page(body["url"], options)
             meta = {
                 "requestId": request_id,
@@ -108,7 +108,7 @@ def create_browsefn_router(browse_fn: Any) -> List[Route]:
             urls = body.get("urls")
             if not isinstance(urls, list):
                 raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: urls")
-            options = MetadataOptions(**body.get("options", {}))
+            options = MetadataOptions(**{**body.get("options", {}), "security": {"allowPrivateHosts": False}, "cache": False})
             results = await browse_fn.web.get_multiple_metadata(urls, options)
             return Response(
                 status=200,
@@ -145,7 +145,7 @@ def create_browsefn_router(browse_fn: Any) -> List[Route]:
             body = await request.json()
             if "url" not in body:
                 raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: url")
-            options = ImageDownloadOptions(**body.get("options", {}))
+            options = ImageDownloadOptions(**{**body.get("options", {}), "allowPrivateHosts": False})
             result = await browse_fn.images.download(body["url"], options)
             return Response(status=200, body=create_success_envelope(_serialize_data(result), {"requestId": request_id}))
         except Exception as error:
