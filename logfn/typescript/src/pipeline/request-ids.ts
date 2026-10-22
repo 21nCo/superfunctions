@@ -23,22 +23,13 @@ export interface RequestIdOptions {
 function parseTraceParent(
   traceparent: string
 ): { traceId: string; spanId: string } | null {
-  const parts = traceparent.split("-");
-  if (parts.length !== 4) {
-    return null;
-  }
-
-  const [version, traceId, spanId] = parts;
-
-  // Version must be 00 for now
-  if (version !== "00") {
-    return null;
-  }
-
-  // Validate format
-  if (traceId.length !== 32 || spanId.length !== 16) {
-    return null;
-  }
+  // W3C Trace Context sections3.2.2 and3.2.4: lowercase hexadecimal,
+  // nonzero identifiers, exact v00 layout, additive future versions.
+  const match = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(.*)$/.exec(traceparent);
+  if (!match || match[0] !== traceparent) return null;
+  const [, version, traceId, spanId, , suffix] = match;
+  if (version === "ff" || /^0+$/.test(traceId) || /^0+$/.test(spanId)) return null;
+  if (version === "00" ? suffix !== "" : suffix !== "" && !suffix.startsWith("-")) return null;
 
   return { traceId, spanId };
 }
@@ -87,7 +78,7 @@ export function withRequestIds(options: RequestIdOptions = {}): PipelineStage {
 
   return (event: LogEvent): LogEvent => {
     // If event already has IDs, don't override
-    if (event.traceId || event.spanId || event.requestId) {
+    if (event.traceId && event.spanId && event.requestId) {
       return event;
     }
 
@@ -97,9 +88,9 @@ export function withRequestIds(options: RequestIdOptions = {}): PipelineStage {
 
     return {
       ...event,
-      traceId: ids.traceId ?? event.traceId,
-      spanId: ids.spanId ?? event.spanId,
-      requestId: ids.requestId ?? event.requestId,
+      traceId: event.traceId ?? ids.traceId,
+      spanId: event.spanId ?? ids.spanId,
+      requestId: event.requestId ?? ids.requestId,
     };
   };
 }

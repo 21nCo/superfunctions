@@ -3,6 +3,7 @@
  */
 
 import type { LogEvent, Sink } from "../types.js";
+import { IndexedDbQueue } from "./indexeddb-queue.js";
 
 /**
  * HTTP sink options
@@ -38,6 +39,9 @@ export interface HttpSinkOptions {
   /** Offline buffer strategy */
   offlineBuffer?: "memory" | "indexeddb";
 
+  /** Stable non-secret identity separating authenticated durable queues. */
+  offlineKey?: string;
+
   /** Maximum queue size (default: 5000) */
   maxQueue?: number;
 }
@@ -45,7 +49,12 @@ export interface HttpSinkOptions {
 /**
  * Create an HTTP sink
  */
-export function sinkHttp(options: HttpSinkOptions): Sink {
+export interface HttpSink extends Sink {
+  /** Drain accepted events and remove owned timers/listeners. Failed close is retryable. */
+  close(): Promise<void>;
+}
+
+export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const {
     url,
     batch: batchSize = 50,
@@ -59,14 +68,29 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
   const { attempts = 5, backoffMs = 200 } = retry;
 
+  if (options.offlineBuffer === "indexeddb" && typeof indexedDB === "undefined") {
+    throw new Error("IndexedDB offline buffering requires IndexedDB support");
+  }
+  if (options.offlineBuffer === "indexeddb" && (auth?.token || auth?.secretHeader || Object.keys(headers).length) && !options.offlineKey) {
+    throw new Error("Authenticated IndexedDB buffering requires a non-secret offlineKey");
+  }
+  const durable = options.offlineBuffer === "indexeddb"
+    ? new IndexedDbQueue(JSON.stringify([url, options.offlineKey ?? "public"]), maxQueue) : undefined;
+  let writes: Promise<void> = Promise.resolve();
+  let closed = false;
+  let closing: Promise<void> | null = null;
   let buffer: LogEvent[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  let flushing = false;
+  let flushing: Promise<void> | null = null;
+  for (const [name, value] of Object.entries({ batchSize, flushIntervalMs, timeoutMs, maxQueue, attempts })) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  if (!Number.isFinite(backoffMs) || backoffMs < 0) throw new RangeError("backoffMs must be finite and nonnegative");
 
   /**
    * Send events to the HTTP endpoint with retry
    */
-  async function sendBatch(events: LogEvent[]): Promise<void> {
+  async function sendBatch(events: LogEvent[], keepalive = false): Promise<void> {
     const requestHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       ...headers,
@@ -79,121 +103,130 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
       requestHeaders[auth.secretHeader] = auth.token || "";
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    let lastError: Error | null = null;
-
+    let lastError: unknown = new Error("Request failed");
     for (let attempt = 0; attempt < attempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      let terminal = false;
       try {
         const response = await fetch(url, {
-          method: "POST",
-          headers: requestHeaders,
-          body: JSON.stringify({ events }),
-          signal: controller.signal,
+          method: "POST", headers: requestHeaders,
+          body: JSON.stringify({ events }), signal: controller.signal,
+          ...(keepalive ? { keepalive: true } : {}),
         });
-
-        clearTimeout(timeoutId);
-
         if (response.ok) {
-          return; // Success
+          await response.body?.cancel();
+          return;
         }
-
-        // Don't retry on client errors
-        if (response.status >= 400 && response.status < 500) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        // Retry on server errors
-        lastError = new Error(
-          `HTTP ${response.status}: ${response.statusText}`
-        );
+        terminal = response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429;
+        lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        await response.body?.cancel();
       } catch (error) {
+        lastError = error;
+      } finally {
         clearTimeout(timeoutId);
-        lastError = error as Error;
-
-        // Don't retry on abort
-        if (lastError.name === "AbortError") {
-          throw lastError;
-        }
       }
-
-      // Exponential backoff with jitter
+      if (terminal) throw lastError;
       if (attempt < attempts - 1) {
-        const delay = backoffMs * Math.pow(2, attempt) + Math.random() * 100;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        const delay = Math.min(5000, backoffMs * 2 ** Math.min(attempt, 30) + Math.random() * 100);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
-
-    throw lastError || new Error("Unknown error");
+    throw lastError;
   }
 
-  /**
-   * Flush buffered events
-   */
-  async function flushBuffer(): Promise<void> {
-    if (flushing || buffer.length === 0) {
-      return;
-    }
+  /** All callers join the active drain; failed batches remain queued. */
+  function flushBuffer(keepalive = false): Promise<void> {
+    if (flushing) return flushing;
+    if (!durable && buffer.length === 0) return Promise.resolve();
+    let failed = false;
+    const drain = async () => {
+      if (durable) {
+        await writes;
+        while (true) {
+          const records = await durable.batch(batchSize);
+          if (!records.length) return;
+          await sendBatch(records.map(record => record.event), keepalive);
+          await durable.acknowledge(records);
+        }
+      }
+      while (buffer.length > 0) {
+        const toSend = buffer.splice(0, batchSize);
+        try {
+          await sendBatch(toSend, keepalive);
+        } catch (error) {
+          failed = true;
+          // Preserve queue order and the documented newest-events overflow policy.
+          buffer = [...toSend, ...buffer].slice(-maxQueue);
+          throw error;
+        }
+      }
+    };
+    flushing = drain().finally(() => {
+      flushing = null;
+      if (!failed && buffer.length > 0) scheduleFlush();
+    });
+    return flushing;
+  }
 
-    flushing = true;
-    const toSend = buffer.splice(0, buffer.length);
-
-    try {
-      await sendBatch(toSend);
-    } catch (error) {
-      // On error, put events back at the front (up to maxQueue)
-      const putBack = toSend.slice(0, Math.max(0, maxQueue - buffer.length));
-      buffer.unshift(...putBack);
-
-      // Log error internally (without recursion)
-      console.error("[logfn http-sink error]", error);
-    } finally {
-      flushing = false;
-    }
+  function backgroundFlush(keepalive = false): void {
+    if (closed) return;
+    void flushBuffer(keepalive).catch(error => console.error("[logfn http-sink error]", error));
   }
 
   /**
    * Schedule a flush
    */
   function scheduleFlush(): void {
-    if (flushTimer) {
+    if (flushTimer || closed || closing) {
       return;
     }
 
     flushTimer = setTimeout(() => {
       flushTimer = null;
-      flushBuffer().catch(() => {
-        // Error already handled in flushBuffer
-      });
+      backgroundFlush();
     }, flushIntervalMs);
   }
 
-  /**
-   * Add events to browser flush hooks
-   */
-  if (typeof window !== "undefined") {
-    window.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") {
-        flushBuffer().catch(() => {});
+  const browserWindow = typeof window === "undefined" ? undefined : window;
+  const browserDocument = typeof document === "undefined" ? undefined : document;
+  const visibilityHandler = () => {
+    if (browserDocument?.visibilityState === "hidden") backgroundFlush();
+  };
+  const unloadHandler = () => {
+    if (closed) return;
+    if (durable) { backgroundFlush(true); return; }
+    if (buffer.length === 0) return;
+    // Beacon cannot carry configured authentication or custom headers. Keep
+    // such deliveries on fetch, preserving their request contract.
+    if (!auth?.token && !auth?.secretHeader && Object.keys(headers).length === 0 &&
+        typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const events = buffer.slice(0, batchSize);
+      let blob = new Blob([JSON.stringify({ events })], { type: "application/json" });
+      while (blob.size > 60000 && events.length > 0) {
+        events.pop();
+        blob = new Blob([JSON.stringify({ events })], { type: "application/json" });
       }
-    });
+      try {
+        if (events.length > 0 && navigator.sendBeacon(url, blob)) return;
+      } catch { /* Fall back to fetch; queue remains retained. */ }
+    }
+    backgroundFlush(true);
+  };
+  browserDocument?.addEventListener("visibilitychange", visibilityHandler);
+  browserWindow?.addEventListener("beforeunload", unloadHandler);
 
-    window.addEventListener("beforeunload", () => {
-      // Synchronous flush attempt (may not complete)
-      if (buffer.length > 0) {
-        // Use sendBeacon if available
-        if (navigator.sendBeacon) {
-          const blob = new Blob([JSON.stringify({ events: buffer })], {
-            type: "application/json",
-          });
-          navigator.sendBeacon(url, blob);
-        }
-      }
-    });
-  }
-
-  const sink: Sink = (batch: LogEvent[]) => {
+  const sink: HttpSink = (batch: LogEvent[]) => {
+    if (closed || closing) throw new Error("HTTP sink is closed");
+    if (durable) {
+      // Persist before delivery; Logger.flush joins this returned promise.
+      const operation = writes.then(() => durable.add(batch));
+      writes = operation.catch(() => {});
+      return operation.then(async () => {
+        if ((await durable.batch(batchSize)).length >= batchSize) backgroundFlush();
+        else scheduleFlush();
+      });
+    }
     // Add to buffer
     buffer.push(...batch);
 
@@ -205,10 +238,11 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
     // Flush if batch size reached
     if (buffer.length >= batchSize) {
-      flushBuffer().catch(() => {});
+      backgroundFlush();
     } else {
       scheduleFlush();
     }
+    return undefined;
   };
 
   sink.flush = async (): Promise<void> => {
@@ -219,5 +253,19 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
     await flushBuffer();
   };
 
+  sink.close = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (closing) return closing;
+    closing = (async () => {
+      await sink.flush!();
+      await durable?.close();
+      closed = true;
+      browserDocument?.removeEventListener("visibilitychange", visibilityHandler);
+      browserWindow?.removeEventListener("beforeunload", unloadHandler);
+    })().finally(() => { closing = null; });
+    return closing;
+  };
+
+  if (durable) scheduleFlush(); // Recover persisted events after page/process restart.
   return sink;
 }

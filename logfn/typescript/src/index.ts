@@ -10,7 +10,9 @@ export { createLogger, devLogger, serverLogger } from "./core/factory.js";
 export type {
   LogEvent,
   LogLevel,
+  LogCorrelation,
   LoggerOptions,
+  DefaultRedactionOptions,
   ChildLoggerOptions,
   Sink,
   PipelineStage,
@@ -53,7 +55,7 @@ export { sinkConsole } from "./sinks/console.js";
 export type { ConsoleSinkOptions } from "./sinks/console.js";
 
 export { sinkHttp } from "./sinks/http.js";
-export type { HttpSinkOptions } from "./sinks/http.js";
+export type { HttpSinkOptions, HttpSink } from "./sinks/http.js";
 
 // Browser utilities
 export {

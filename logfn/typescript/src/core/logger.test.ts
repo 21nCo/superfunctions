@@ -152,7 +152,7 @@ describe("Logger", () => {
       logger.info("test", { userId: "123", action: "login" });
 
       expect(capturedEvents[0].ctx).toEqual({
-        userId: "123",
+        userId: "[redacted]",
         action: "login",
       });
     });

@@ -57,6 +57,8 @@ lerna-debug.log*
 *-key.pem
 
 # Testing
+.coverage
+.coverage.*
 coverage/
 .nyc_output
 .vite-vitest/

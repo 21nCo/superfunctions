@@ -44,3 +44,99 @@ logger = create_logger(
 
 logger.info("User logged in", user_id="123", email="user@example.com")
 ```
+
+## HTTP delivery and shutdown
+
+`SinkHttp` sends `{ "events": [...] }` batches compatible with the TypeScript
+ingestion handler. Synchronous logging enqueues; with a running event loop,
+`batch_size` and `flush_interval_ms` trigger background delivery. Without a running
+loop, explicitly run `await sink.flush()` before shutdown.
+
+`flush()` waits for any active delivery and rejects on failure, retaining unsent
+events for retry. `Logger.flush()` propagates sink failures. The sink retries
+network/timeouts and HTTP 408/429/5xx with bounded backoff; other unsuccessful
+statuses fail immediately. `max_queue` bounds waiting events by discarding oldest
+entries on overflow. Each request contains at most `batch_size` events.
+
+Use `await sink.close()` to flush and close its owned HTTP client. Failed close
+leaves the sink available for retry. An injected `client` remains owned by its
+caller. Requests can be duplicated after ambiguous network errors, so ingestion
+storage should use idempotent writes where duplicates matter.
+
+Async custom sinks may return a coroutine or Future. Parent and child loggers
+share delivery tracking: `await logger.flush()` waits for their outstanding
+sink calls before running every sink's flush hook. Background delivery failures
+are reported by the next flush, after the other sinks have finished flushing.
+Cancelling a flush waiter does not cancel these accepted sink calls. Custom
+async sinks require a running event loop when logging; `SinkHttp` itself can
+also enqueue synchronously and flush later.
+
+## Serialization and nested redaction
+
+Sink events are sanitized after pipeline processing: dates become ISO strings, non-finite floats become null, cycles and unsupported objects become explicit placeholders, and nesting is limited to 64 levels. Application context is not modified by this conversion.
+
+The `redact` stage applies its patterns recursively to strings inside dictionaries and lists. Its optional `keys` selects top-level context fields; all nested values within each selected field are processed. Message redaction remains active. Configure patterns for the secrets your application emits.
+
+Logger events are limited to 64 KiB in the standard escaped JSON representation, which also bounds the compact UTF-8 HTTP representation. Tags are capped at 20 entries. Oversized context retains whole entries that fit and adds `ctx._truncated`; oversized envelope text is shortened at Unicode code-point boundaries. The escaped JSON budget is conservative for non-ASCII text. Custom sinks that add fields or whitespace after delivery must enforce their own resulting wire-size limit.
+
+## Internal error reporting
+
+Pass synchronous `on_error(error, context)` to `Logger` or `create_logger` to observe pipeline, sink delivery and flush failures. Context identifies the stage or sink, with `phase: "flush"` for flush hooks. Children inherit the same callback. Callback exceptions and synchronous recursive reports are isolated so they do not replace the logging outcome. Use a separate reporting channel rather than logging callback failures back into the same sinks.
+
+`flush()` still raises asynchronous delivery or flush failures after all sink hooks settle. Without a callback, internal reports go to stderr. The exported `ErrorHandler` type describes this callback.
+
+### Request correlation
+
+Pass `correlation` to `Logger` or `create_logger` to emit `traceId`, `spanId`,
+`requestId`, `userId`, and `tenantId` as top-level event fields. Children inherit
+these fields and can override individual values without changing their parent:
+
+```python
+request_log = logger.child(correlation={"requestId": "request-123", "userId": "user-7"})
+request_log.info("request accepted")
+```
+
+Correlation mappings are copied when creating a logger or child. Context fields
+remain separate. The `with_request_ids()` pipeline fills missing request IDs
+with UUID strings and missing trace IDs with lowercase 32-character hexadecimal
+values, preserving supplied IDs. This helper generates IDs per event; pass a
+shared request correlation mapping when multiple events belong to one request.
+
+Values that exceed Python's configured integer-to-decimal conversion limit are
+replaced with `[unserializable]` during event sanitization. Other context fields
+are preserved, the original input is unchanged, and the interpreter's limit is
+never disabled or increased.
+
+## Default privacy boundary and migration
+
+Logger factories now apply terminal masking after custom stages and serialization
+and before every sink. Known secret keys (password/token/API-key/auth/cookie and
+common variants), user/tenant ID keys, credential assignments, bearer/basic text
+and email patterns are masked recursively. Quoted JSON credential fields are
+covered, but message text need not remain parseable JSON after masking; prefer
+structured context. Input objects are not modified by masking, and each sink
+receives an independent snapshot within the existing 64 KiB event limit.
+
+Intentional safe exceptions use exact JSON Pointer primitive leaves:
+
+```python
+logger = create_logger(
+    "service", [SinkConsole(json=True)],
+    correlation={"userId": "approved-pseudonymous-id", "tenantId": "private"},
+    redaction={"allowlist": ["/userId", "/ctx/publicToken"]},
+)
+```
+
+`DefaultRedactionOptions` is exported. Policies are copied at construction and
+inherited by children. Paths escape literal `/` as `~1` and `~` as `~0`.
+Allowlisting an object does not exempt its descendants, and secret containers
+remain masked as a whole. Existing `redact` patterns and selected roots continue
+to configure their explicit stage, without disabling this terminal boundary.
+This is a migration from previously unmasked default output: add only deliberate
+safe exceptions. Built-in diagnostic context is masked too; custom `on_error`
+callbacks and exceptions propagated by `flush()` remain caller-owned.
+
+Key/value matching is heuristic; arbitrary unlabelled credentials and all PII
+cannot be detected. Configure application-specific stages as needed. Direct sink
+calls assume already-processed events. This parity checkpoint does not implement
+the future v0.2 Python middleware surface or close all original readiness gates.

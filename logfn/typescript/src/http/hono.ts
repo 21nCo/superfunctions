@@ -6,8 +6,10 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
   extractCorrelationIds,
+  getDefaultRequestLogger,
+  createRequestSampler,
   redactHeaders,
-  truncateBody,
+  captureRequestBody,
 } from "./middleware.js";
 
 /**
@@ -19,13 +21,19 @@ export function requestLogger(
   const {
     header = "traceparent",
     redactHeaders: redactList = [],
-    logger,
+    logger = getDefaultRequestLogger(),
     includeBody = false,
     captureUser,
   } = options;
+  const shouldSample = createRequestSampler(options.sample);
+  const bodyTimeout = options.bodyCaptureTimeoutMs ?? 100;
+  if (!Number.isFinite(bodyTimeout) || bodyTimeout <= 0) {
+    throw new RangeError("Body capture timeout must be a positive finite number");
+  }
 
   return async (c: Context, next) => {
     const startTime = Date.now();
+    const sampled = shouldSample();
     const req = c.req;
 
     // Extract correlation IDs
@@ -37,8 +45,9 @@ export function requestLogger(
     const ids = extractCorrelationIds(headersObj, header);
 
     // Create child logger with correlation IDs
-    const requestLogger = logger
+    let requestLogger = logger
       ? logger.child({
+          correlation: ids,
           ctx: {
             traceId: ids.traceId,
             spanId: ids.spanId,
@@ -46,9 +55,6 @@ export function requestLogger(
           },
         })
       : undefined;
-
-    // Attach logger to context
-    c.set("log", requestLogger);
 
     // Capture user/tenant if provided
     let userId: string | undefined;
@@ -59,8 +65,16 @@ export function requestLogger(
       tenantId = userInfo?.tenantId;
     }
 
+    if (requestLogger && (userId !== undefined || tenantId !== undefined)) {
+      requestLogger = requestLogger.child({ correlation: {
+        ...(userId !== undefined ? { userId } : {}),
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      } });
+    }
+    c.set("log", requestLogger);
+
     // Log request start
-    if (requestLogger) {
+    if (requestLogger && sampled) {
       requestLogger.info("Request started", {
         method: req.method,
         url: req.url,
@@ -70,7 +84,7 @@ export function requestLogger(
         userId,
         tenantId,
         body: includeBody
-          ? truncateBody(await req.raw.clone().text())
+          ? await captureRequestBody(req.raw, bodyTimeout)
           : undefined,
       });
     }
@@ -80,7 +94,7 @@ export function requestLogger(
 
     // Log response
     const latencyMs = Date.now() - startTime;
-    if (requestLogger) {
+    if (requestLogger && sampled) {
       requestLogger.info("Request completed", {
         method: req.method,
         url: req.url,

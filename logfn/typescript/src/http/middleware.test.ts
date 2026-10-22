@@ -152,7 +152,7 @@ describe("Middleware Utilities", () => {
       expect(truncated).toHaveProperty("_truncated", true);
       expect(truncated).toHaveProperty("_size");
       expect(truncated).toHaveProperty("_preview");
-      expect(truncated._preview).toHaveLength(200);
+      expect(new TextEncoder().encode(JSON.stringify(truncated)).byteLength).toBeLessThanOrEqual(100);
     });
 
     it("should handle string bodies", () => {
@@ -176,5 +176,24 @@ describe("Middleware Utilities", () => {
 
       expect(truncated).toEqual(body); // Under 8KB
     });
+  });
+});
+
+
+describe("body capture safety", () => {
+  it("bounds multibyte body JSON including truncation metadata", () => {
+    for (const body of ["😀".repeat(3000), { text: "界".repeat(4000) }, "\\".repeat(9000)]) {
+      const result = truncateBody(body);
+      expect(result._truncated).toBe(true);
+      expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(8192);
+      expect(result._preview).not.toContain("�");
+    }
+  });
+  it("handles cyclic and unsupported parsed body values without throwing", () => {
+    const body: any = { count: 1n }; body.self = body;
+    expect(truncateBody(body)).toEqual({ count: "[unserializable]", self: "[circular]" });
+  });
+  it("retains false, zero and empty request bodies", () => {
+    for (const value of [false, 0, ""]) expect(truncateBody(value)).toBe(value);
   });
 });

@@ -20,6 +20,14 @@ LOG_LEVEL_VALUES: Dict[LogLevel, int] = {
 
 DEFAULT_VERSION = "0"
 
+class LogCorrelation(TypedDict, total=False):
+    traceId: str
+    spanId: str
+    requestId: str
+    userId: str
+    tenantId: str
+
+
 class LogEvent(TypedDict):
     ts: str  # ISO8601 timestamp
     level: LogLevel
@@ -33,6 +41,8 @@ class LogEvent(TypedDict):
     userId: NotRequired[str]
     tenantId: NotRequired[str]
     version: str
+
+ErrorHandler = Callable[[BaseException, Dict[str, str]], None]
 
 PipelineStage = Callable[[LogEvent], Optional[LogEvent]]
 
@@ -50,7 +60,14 @@ class Sink(Protocol):
     async def flush(self) -> None:
         ...
 
+class DefaultRedactionOptions(TypedDict, total=False):
+    allowlist: List[str]
+
+
 class LoggerOptions(TypedDict):
+    redaction: NotRequired[DefaultRedactionOptions]
+    correlation: NotRequired[LogCorrelation]
+    onError: NotRequired[ErrorHandler]
     name: str
     level: NotRequired[LogLevel]
     pipeline: NotRequired[List[PipelineStage]]
@@ -60,6 +77,7 @@ class LoggerOptions(TypedDict):
     baseTags: NotRequired[List[str]]
 
 class ChildLoggerOptions(TypedDict):
+    correlation: NotRequired[LogCorrelation]
     name: NotRequired[str]
     level: NotRequired[LogLevel]
     ctx: NotRequired[Dict[str, Any]]

@@ -8,8 +8,18 @@ import type {
   FastifyPluginCallback,
 } from "fastify";
 import type { RequestLoggerOptions } from "./middleware.js";
+import type { Logger } from "../core/logger.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /** LogFn request logger; Fastify's native request.log remains unchanged. */
+    logfn?: Logger;
+  }
+}
 import {
   extractCorrelationIds,
+  getDefaultRequestLogger,
+  createRequestSampler,
   redactHeaders,
   truncateBody,
 } from "./middleware.js";
@@ -23,14 +33,17 @@ export function requestLogger(
   const {
     header = "traceparent",
     redactHeaders: redactList = [],
-    logger,
+    logger = getDefaultRequestLogger(),
     includeBody = false,
     captureUser,
   } = options;
+  const shouldSample = createRequestSampler(options.sample);
 
-  return (fastify, _opts, done) => {
+  const sampled = new WeakMap<FastifyRequest, boolean>();
+  const plugin: FastifyPluginCallback = (fastify, _opts, done) => {
     fastify.addHook("onRequest", async (request: FastifyRequest) => {
       const startTime = Date.now();
+      sampled.set(request, shouldSample());
 
       // Extract correlation IDs
       const ids = extractCorrelationIds(request.headers, header);
@@ -38,6 +51,7 @@ export function requestLogger(
       // Create child logger with correlation IDs
       const requestLogger = logger
         ? logger.child({
+            correlation: ids,
             ctx: {
               traceId: ids.traceId,
               spanId: ids.spanId,
@@ -47,26 +61,30 @@ export function requestLogger(
         : undefined;
 
       // Attach logger to request
-      (request as any).log = requestLogger;
+      request.logfn = requestLogger;
 
       // Store start time for latency calculation
       (request as any)._startTime = startTime;
+    });
 
-      // Capture user/tenant if provided
-      let userId: string | undefined;
-      let tenantId: string | undefined;
+    // Body parsing has completed by preHandler.
+    fastify.addHook("preHandler", async (request: FastifyRequest) => {
+      let requestLogger = request.logfn;
       if (captureUser) {
         const userInfo = captureUser(request);
-        userId = userInfo?.userId;
-        tenantId = userInfo?.tenantId;
+        (request as any)._userId = userInfo?.userId;
+        (request as any)._tenantId = userInfo?.tenantId;
       }
-
-      // Store user info
-      (request as any)._userId = userId;
-      (request as any)._tenantId = tenantId;
-
-      // Log request start
-      if (requestLogger) {
+      const userId = (request as any)._userId;
+      const tenantId = (request as any)._tenantId;
+      if (requestLogger && (userId !== undefined || tenantId !== undefined)) {
+        requestLogger = requestLogger.child({ correlation: {
+          ...(userId !== undefined ? { userId } : {}),
+          ...(tenantId !== undefined ? { tenantId } : {}),
+        } });
+        request.logfn = requestLogger;
+      }
+      if (requestLogger && sampled.get(request)) {
         requestLogger.info("Request started", {
           method: request.method,
           url: request.url,
@@ -84,12 +102,12 @@ export function requestLogger(
       async (request: FastifyRequest, reply: FastifyReply) => {
         const startTime = (request as any)._startTime || Date.now();
         const latencyMs = Date.now() - startTime;
-        const requestLogger = (request as any).log;
+        const requestLogger = request.logfn;
         const userId = (request as any)._userId;
         const tenantId = (request as any)._tenantId;
 
         // Log response
-        if (requestLogger) {
+        if (requestLogger && sampled.get(request)) {
           requestLogger.info("Request completed", {
             method: request.method,
             url: request.url,
@@ -105,6 +123,9 @@ export function requestLogger(
 
     done();
   };
+  // Register the hooks in the caller scope, like a conventional Fastify plugin.
+  Object.defineProperty(plugin, Symbol.for("skip-override"), { value: true });
+  return plugin;
 }
 
 // Re-export types

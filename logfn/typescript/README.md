@@ -71,7 +71,7 @@ const logger = createLogger({
   pipeline: [
     redactSecFn({
       patterns: [/api_key=\w+/gi, /password=\w+/gi],
-      allowlist: ["userId"], // Don't redact these fields
+      allowlist: ["userId"], // Exception for this stage; terminal policy still applies
     }),
   ],
   sinks: [sinkConsole()],
@@ -237,11 +237,24 @@ const handler = watchLogsHandler({
     value: process.env.API_KEY,
   },
   maxBatch: 500,
+  ingest: async (events, request) => {
+    // Resolve only after your configured WatchFn/store durably accepts this batch.
+    await logStore.appendBatch(events);
+  },
 });
 
 // Use with your HTTP framework
 // POST /watch/logs
 ```
+
+The handler returns 202 only after `ingest` resolves. An absent destination or a
+rejected write returns 503 without exposing storage error details. Consumers may
+retry failed requests: use stable event identifiers or transactional/idempotent
+writes if your destination can partially commit. Authentication callbacks may be
+asynchronous. Only POST is accepted; `maxBodyBytes` defaults to 8 MiB and is enforced
+while reading the request stream. Invalid events reject the entire batch before
+calling the destination. Deployments upgrading the previous placeholder handler
+must configure `ingest`; it no longer acknowledges discarded events.
 
 ## Log Event Schema
 
@@ -336,6 +349,14 @@ const logger = createLogger({
 });
 ```
 
+## HTTP request logging
+
+Import `requestLogger` from `@logfn/core/http/express`, `/http/fastify`, or `/http/hono` and optionally supply a `logger`. Without one, all adapters create request children from a shared `logfn.http` console logger. Request correlation fields appear at the event top level and are inherited by application logs from the request logger. Fastify exposes it as `request.logfn`, preserving the native `request.log`.
+
+`sample` applies one decision to each automatic info-level request/completion pair (`{ info: rate }` or a number from0 to1). It does not disable the attached application logger. Default secret-header redaction remains active alongside custom header names.
+
+Body capture is opt-in with `includeBody: true`. Captured values are bounded to8192 serialized UTF-8 bytes. Hono reads at most8192 bytes from a cloned stream and allows at most `bodyCaptureTimeoutMs` (default100ms) for that capture before entering the route. A truncated prefix reports `_capturedBytes`, not the unknown total body length. Unavailable or timed-out captures contain an `_omitted` reason. The route retains its original request stream; transport buffering and individual incoming chunk sizes are controlled by the runtime.
+
 ## API Reference
 
 See full TypeScript definitions in the package. All exports are fully typed.
@@ -375,3 +396,187 @@ MIT
 ## Contributing
 
 Contributions welcome! Please see the main repository for guidelines.
+
+### HTTP delivery guarantees
+
+`batch` limits each request's event count. Concurrent `flush()` calls wait for the
+same active drain, including queued arrivals during delivery. A failed explicit
+flush rejects and retains unsent events for a later flush; background failures are
+reported to the internal console channel. Overflow continues to discard oldest
+queued events at `maxQueue`. Each request attempt gets a fresh timeout; network
+failures, timeouts, 408, 429 and 5xx retry within `retry.attempts`, with backoff capped
+at five seconds. Other 4xx responses end that send attempt immediately. Requests
+may be retried after ambiguous network failure, so destinations should tolerate
+duplicate events.
+
+### Event size and serialization
+
+Events are sanitized before delivery. Cycles become `[circular]`, unsupported
+values become `[unserializable]`, and nesting beyond 64 levels becomes
+`[depth_limit]`. Shared references that are not cycles retain their values.
+The 64 KiB event limit is measured as UTF-8 JSON bytes. Oversized events receive
+`ctx._truncated`; complete context entries are retained where they fit. If the
+envelope itself exceeds the limit, optional metadata is removed and required
+text fields are shortened at Unicode code-point boundaries. Inputs are not
+mutated. Keep unusually large payloads in external storage and log a reference.
+
+`await logger.flush()` joins outstanding asynchronous sink calls from the logger
+and its children before invoking every sink's flush hook. It reports background
+delivery failures after all flush hooks settle; synchronous logging still does
+not throw sink failures. Redaction handles cyclic context before serialization,
+so cycles do not cause the redaction stage to be skipped.
+
+`serverLogger({ name, url })` sends to both the JSON console sink and the supplied
+HTTP endpoint. Call `await logger.flush()` before normal shutdown. The opt-in
+`registerProcessHandlers(logger)` helper owns SIGTERM/SIGINT termination: it
+logs the received signal, drains accepted events, then exits with status 0 on
+success or 1 on delivery failure. It does not enqueue another event after the
+final flush. Its returned cleanup function removes both signal listeners.
+
+Pass `onError(error, { stage?, sink? })` to `createLogger` to receive pipeline,
+sink delivery and flush failures. Child loggers inherit the callback. Logging
+calls contain callback exceptions and suppress synchronous recursive error
+reporting; an explicit `flush()` still rejects when delivery fails. Without a
+callback, failures go to the internal console error channel.
+
+HTTP sinks expose `await sink.close()` to drain accepted events, clear timers,
+and remove owned browser listeners. New writes are rejected during close and
+after successful close. A failed close retains events and can be retried.
+Unload requests with authentication or custom headers use best-effort keepalive
+fetch. Header-free beacon attempts are bounded below the browser payload limit;
+queued events remain until confirmed HTTP delivery, so duplicates are possible.
+Unload transport is not a substitute for durable offline storage.
+
+### Durable browser HTTP queue
+
+`offlineBuffer: "indexeddb"` now persists each accepted batch before delivery.
+Direct sink callers must await the returned promise; `Logger.flush()` already
+joins these writes. Records are deleted only after a successful HTTP response,
+using exact record IDs so concurrent enqueue is not accidentally acknowledged.
+Delivery is at least once: a crash after server acceptance but before local
+acknowledgement can produce duplicates. Ingestion should deduplicate where needed.
+
+Queues recover on sink creation and retain the newest `maxQueue` waiting events.
+IndexedDB must be available; storage errors reject enqueue instead of silently
+falling back to volatile memory. For authentication or custom headers, supply a
+stable, non-secret `offlineKey` unique to the tenant/credential scope. Reuse it
+across token rotation for the same identity; use a different key when switching
+identities. Credentials are not stored with queued events. Browser storage
+clearing, eviction and private-session policies can still remove local data.
+
+```ts
+const sink = sinkHttp({
+  url: '/logs',
+  offlineBuffer: 'indexeddb',
+  offlineKey: 'workspace-123',
+  auth: { token },
+});
+```
+
+The acceptance script `logfn/scripts/browser-offline-acceptance.mjs` checks failed
+delivery, Chrome process restart, recovery, and deletion after acknowledgement.
+Build first; set `PLAYWRIGHT_MODULE` and `CHROME_PATH` when needed.
+
+Trace-context parsing rejects malformed hexadecimal fields, zero trace/span IDs,
+invalid version/flag fields, and extra fields on version00. Additive future
+versions preserve the known trace/span fields. `withRequestIds()` fills missing
+IDs while preserving supplied IDs. Format rules follow the
+[W3C Trace Context specification](https://www.w3.org/TR/trace-context/#traceparent-header-field-values).
+
+Request middleware always redacts `authorization`, `cookie`, `x-api-key` and
+`x-auth-token`; custom `redactHeaders` entries extend that baseline. Fastify
+middleware exposes the LogFn child as typed `request.logfn`, preserving Fastify's
+native `request.log`. Its request event is emitted at `preHandler` so opt-in
+body capture sees the parsed body. Register identity hooks before this plugin
+when `captureUser` depends on their results.
+
+The WatchFn ingestion handler rejects unsupported event versions with HTTP 400 and events larger than 64 KiB of UTF-8 JSON with HTTP 413. Validation covers the entire batch before invoking the configured ingestion callback, so an invalid event cannot cause partial callback delivery.
+
+## Shared HTTP ingestion router
+
+Install `@superfunctions/http@^0.3.1` when using the ingestion subpath. Create `watchLogsRouter` and pass its router to your framework's `@superfunctions/http-*` adapter directly; LogFn does not re-export framework adapters. The existing `watchLogsHandler` remains available for direct Fetch handlers.
+
+```typescript
+import { watchLogsRouter } from "@logfn/core/http/watch";
+
+const router = watchLogsRouter({
+  basePath: "/api",
+  auth: { header: "authorization", value: "Bearer configured-token" },
+  ingest: async (events) => {
+    await persistEvents(events); // Application-owned durable storage
+  },
+});
+
+// Fetch-native runtime entrypoint: POST /api/watch/logs
+export default { fetch: router.handler };
+```
+
+`path` defaults to `/watch/logs`. Routing, method handling and route metadata use the shared HTTP router; LogFn retains event validation, authentication and awaited ingestion behavior.
+
+## Shared HTTP request logging
+
+Use `requestLogger` from `@logfn/core/http/shared` in a shared HTTP router's middleware list. It adds the request logger to `context.log`, preserving the same correlation fields for automatic start/completion events and application logs. `sample` controls the automatic pair; the application logger remains available. Captured bodies use the same bounded Fetch-stream capture described above.
+
+```typescript
+import { createRouter } from "@superfunctions/http";
+import { requestLogger, type LogRequestContext } from "@logfn/core/http/shared";
+
+const router = createRouter<LogRequestContext>({
+  middleware: [requestLogger({ logger })],
+  routes: [{
+    method: "GET", path: "/health",
+    handler: (_request, context) => {
+      context.log?.info("Health checked");
+      return new Response("ok");
+    },
+  }],
+});
+```
+
+Mount the router through the consumer's shared HTTP framework adapter. Completion records reflect the final response returned by the shared router, including configured error responses.
+
+## Default privacy boundary and migration
+
+Every `Logger`, `createLogger`, `devLogger` and `serverLogger` now applies a
+terminal masking policy after custom pipeline stages and serialization, before
+console/HTTP/custom sinks. Known secret-bearing keys (including password, token,
+API-key, authorization/cookie and common variants) are masked recursively, as are
+user/tenant ID keys. Credential assignments, bearer/basic text and email patterns
+are scrubbed from strings, including quoted JSON credential fields. Trace/span/
+request IDs remain usable unless their string values match a sensitive pattern.
+
+This changes output that previously reached sinks without a redaction stage.
+Safe identity/context exceptions require an explicit exact JSON Pointer leaf:
+
+```typescript
+const logger = createLogger({
+  name: "service",
+  sinks: [sinkConsole({ json: true })],
+  correlation: { userId: "approved-pseudonymous-id", tenantId: "private-tenant" },
+  redaction: { allowlist: ["/userId", "/ctx/publicToken"] },
+});
+```
+
+`DefaultRedactionOptions` is exported. The policy is copied at construction and
+inherited by children. `/ctx/publicToken` permits only that primitive value;
+parent/object entries never exempt a subtree. Paths use JSON Pointer escaping
+(`~1` for `/`, `~0` for `~`), so a literal key cannot accidentally authorize a
+nested unrelated secret. Secret containers remain masked as a whole. Nulls are
+preserved. A failed terminal conversion drops the event and reports a fixed
+internal failure instead of sending the unsafe value. Each sink receives an
+independent snapshot, and final events retain the 64 KiB wire bound.
+
+Existing `redactSecFn` custom patterns/allowlists still control that explicit
+pipeline stage; they do not disable the terminal policy. Move intentional safe
+field exceptions to `LoggerOptions.redaction.allowlist`. Built-in diagnostics
+also apply masking. Explicit `onError` callbacks and rejected `flush()` errors
+remain caller-owned and can contain raw exception information.
+
+The policy is a bounded set of key/value heuristics, not a detector for arbitrary
+unlabelled credentials or all PII. Prefer structured context over pre-serialized
+JSON messages; redacted message text need not remain parseable JSON. Add
+application-specific pipeline policies where needed. Calling sinks directly
+assumes the caller has already applied its privacy policy. Existing persisted
+IndexedDB events are not retroactively rewritten: handle pre-upgrade spool data
+under your retention/privacy policy before replaying it. New logger-generated
+events are masked before entering the durable queue.

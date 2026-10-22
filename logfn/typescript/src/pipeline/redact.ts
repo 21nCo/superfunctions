@@ -3,6 +3,7 @@
  */
 
 import type { LogEvent, PipelineStage } from "../types.js";
+import { sanitizeValue } from "../validation.js";
 
 /**
  * Redaction options
@@ -61,7 +62,10 @@ function redactValue(
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
       const newPath = path ? `${path}.${key}` : key;
-      result[key] = redactValue(val, patterns, allowlist, newPath);
+      Object.defineProperty(result, key, {
+        value: redactValue(val, patterns, allowlist, newPath),
+        enumerable: true, configurable: true, writable: true,
+      });
     }
     return result;
   }
@@ -84,7 +88,7 @@ export function redactSecFn(options: RedactionOptions = {}): PipelineStage {
 
     // Redact context
     if (event.ctx) {
-      redacted.ctx = redactValue(event.ctx, patterns, allowlist) as Record<
+      redacted.ctx = redactValue(sanitizeValue(event.ctx), patterns, allowlist) as Record<
         string,
         unknown
       >;
