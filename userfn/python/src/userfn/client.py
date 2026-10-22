@@ -88,6 +88,7 @@ class UserFnClient:
             if any(c.caps and any(value is not None for value in vars(c.caps).values()) for c in campaigns):
                 raise MessagingDeliveryError('Capped campaigns require durable messaging configuration')
             return campaigns
+        if user is None: return []
         epoch = self._messaging_epoch
         with self.durable_messaging.exclusive():
             if not self.consent.state()['messaging']: return []

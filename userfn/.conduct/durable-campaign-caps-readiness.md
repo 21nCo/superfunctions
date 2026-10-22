@@ -80,3 +80,13 @@ tests, SDK typecheck/build, and the built Chrome/SQLite/Python restart fixture w
 its explicit local opt-in. Logs: `/tmp/userfn-https-sdk-tests.log`,
 `/tmp/userfn-https-python-tests.log`, `/tmp/userfn-https-sdk-types.log`,
 `/tmp/userfn-https-sdk-build.log`, and `/tmp/userfn-https-browser.log`.
+
+## Python development check prerequisite
+
+The normal `.[dev]` extra now includes the existing HTTP/config feature test
+libraries (`httpx` and `cryptography`, using the same constraints as their feature
+extras). Runtime dependencies remain unchanged. The durable trigger explicitly
+narrows an absent local identity before reading its ID. An isolated Python3.10
+installation of this checkout's `.[dev]` passes `python -m mypy .` across32 source
+files and all185 tests, without suppressing missing imports or changing checker
+settings. Receipts: `/tmp/user-merge-dev-mypy.log`, `/tmp/user-merge-python.log`.
