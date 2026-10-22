@@ -1,0 +1,112 @@
+---
+title: Admin
+description: Function-owned administration manifests, policy-aware dispatch and typed operator clients.
+---
+
+## What It Is
+
+`@superfunctions/admin` defines shared administration contracts for Super Console
+and self-hosted API consumers. A function describes its resources and operations
+in a capability manifest and binds those operations to its domain service. The
+same definitions support operator discovery, REST/OpenAPI descriptions, typed
+client calls and MCP projection. The package keeps these surfaces aligned without
+moving domain behavior into the console or a generic route handler.
+
+## When To Use It
+
+Use this package when a function needs a consistent operator API with explicit
+scope, permissions, mutation controls and audit behavior. A deployment can enable
+only selected function modules, so installing a package does not automatically
+expose its administrative operations. It is also useful when an application
+needs typed access to an existing administration deployment. It does not supply
+operator identities, a durable audit backend or a domain service automatically.
+
+## Install
+
+```bash
+npm install @superfunctions/admin
+```
+
+Function-specific client wrappers may require this package as a peer dependency.
+Keep the shared client installed in the consuming application so wrappers use the
+same public types and runtime instance. Install HTTP or authentication adapters
+separately according to the deployment's request and identity boundaries.
+
+## Quick Start
+
+Registry enablement is explicit. An empty registry is a useful starting point
+for an installation that must expose no function administration until adapters
+and an allowlist are supplied by deployment configuration.
+
+```ts
+import { createAdminRegistry } from "@superfunctions/admin";
+
+const registry = createAdminRegistry({
+  adapters: [],
+  enabledModules: [],
+});
+```
+
+A function author uses `defineAdminCapability` to define the manifest and
+`createAdminCapabilityAdapter` to bind operation IDs to implementations. Add those
+adapters to the registry and enable their module IDs deliberately. An unavailable
+capability cannot become operational merely by adding its ID to the allowlist.
+
+## Core Concepts
+
+Manifests describe resources, operation input and output schemas, permissions,
+HTTP routes, safety classifications and optional presentation metadata. The
+registry validates dependencies and rejects collisions. Presentation describes
+operator controls but does not change authorization or mutation safety. The
+dispatcher repeats the relevant policy checks when an operation is invoked.
+
+Scopes follow installation, workspace, project and environment hierarchy. An
+operation requiring a deeper scope needs the complete chain. Mutations declare
+required audit, and destructive operations require confirmation. Idempotency
+identities bind the request key to actor, scope and operation, preventing a key
+from silently authorizing a different operation or payload.
+
+Memory audit and idempotency implementations are suitable for development and
+tests. Production deployments need durable implementations with the documented
+atomic claim, fencing and audit reconciliation semantics. Audit and domain
+storage are separate transactions; monitoring must account for an attempted
+operation whose terminal audit outcome is not yet confirmed.
+
+## Real-World Example
+
+An application can use the shared client to discover enabled capabilities at a
+particular tenant scope. Authentication remains part of the deployment's
+transport configuration; the scope object is not an authentication credential.
+
+```ts
+import { createAdminClient } from "@superfunctions/admin";
+
+export async function inspectAdministration(baseUrl: string) {
+  const client = createAdminClient({
+    baseUrl,
+    scope: {
+      installationId: "install_1", workspaceId: "workspace_1",
+      projectId: "project_1",
+    },
+    timeoutMs: 30000,
+  });
+  return await client.registry();
+}
+```
+
+## Related Packages
+
+[Auth](/docs/authentication/auth) supplies authentication abstractions.
+[HTTP](/docs/http/http) supplies shared request and router contracts.
+[HTTP OpenAPI](/docs/http/http-openapi) generates descriptions from general HTTP
+routes; administration manifests have their own projection through
+`createAdminOpenApiDocument` with deployment-specific security configuration.
+
+## Troubleshooting
+
+A missing navigation entry or operation may mean its module is disabled, lacks
+an implementation or is filtered by discovery policy. Check the registry and
+scope before adding custom routes around the dispatcher. For mutation failures,
+inspect the confirmation, idempotency and audit requirements rather than retrying
+with a new key immediately. An uncertain domain outcome must remain fenced until
+reconciled; bypassing that boundary can repeat a destructive side effect.

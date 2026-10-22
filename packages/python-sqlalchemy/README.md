@@ -6,6 +6,8 @@ SQLAlchemy adapter for `superfunctions.db`
 **Package:** `superfunctions-sqlalchemy`  
 **Import:** `from superfunctions_sqlalchemy import create_adapter`
 
+Version 0.1.1 requires `superfunctions-core>=0.1.1,<0.2.0`, including typed AND/OR query connectors and the current adapter error and capability models.
+
 ## Installation
 
 ```bash
