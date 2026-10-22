@@ -13,9 +13,5 @@
   "dependencies": {
     "@probefn/analyzers": "*",
     "@probefn/contracts": "*"
-  },
-  "devDependencies": {
-    "@probefn/core": "*",
-    "@probefn/storage": "*"
   }
 }
