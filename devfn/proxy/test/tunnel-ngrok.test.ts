@@ -381,6 +381,9 @@ describe("ngrok connector lifecycle", () => {
       let status = await tunnelStatus(options);
       expect(status).toMatchObject({ connector: "running", routed: [A, B], urls: { [A]: `https://${A}`, [B]: `https://${B}` },
         capabilities: { provider: "ngrok", urlTiming: "pre-start", dns: "connector-only" } });
+      // Prerequisites DevFn does not check are stated, not implied by readiness.
+      expect(status.capabilities.gaps).toEqual(expect.arrayContaining([expect.stringContaining("neither creates nor checks the domain's DNS delegation to ngrok"),
+        expect.stringContaining("needs the authtoken variable and ngrok on PATH")]));
       // The agent got only PATH, its private HOME and the authtoken, and a configuration of exactly the published endpoints.
       const agent = (await agents()).at(-1)!;
       expect(Object.keys(agent.env).filter((key) => key !== "__CF_USER_TEXT_ENCODING").sort()).toEqual(["HOME", "NGROK_AUTHTOKEN", "PATH"]);
@@ -443,6 +446,7 @@ describe("ngrok connector lifecycle", () => {
       expect(Object.keys(second.urls)).toEqual([a, b]);
       expect(second.urls[a]).not.toBe(first.urls[a]);
       expect(second.capabilities.gaps.join(" ")).toContain("assigns new ephemeral URLs");
+      expect(second.capabilities.gaps.join(" ")).not.toContain("DNS delegation");
       expect((await readTunnelState(stateDir, "eph")).connector!.urls).toEqual(second.urls);
       // An agent that reports one URL for two endpoints never becomes ready; the previous connector keeps serving.
       await writeFile(path.join(record, "same-url"), "");
@@ -508,7 +512,8 @@ describe("ngrok connector lifecycle", () => {
       await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
       expect(await agents()).toHaveLength(3);
       expect(running((await agentPids())[2])).toBe(false);
-      expect((await tunnelStatus(options)).routed).toEqual([]);
+      // The stopped relaunch is not left listed as a retired connector.
+      expect(await tunnelStatus(options)).toMatchObject({ routed: [], retired: 0 });
     } finally { api.beforeList = undefined; fixtureOrigin.server.close(); }
   });
 

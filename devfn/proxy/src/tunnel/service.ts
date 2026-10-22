@@ -49,9 +49,11 @@ export interface TunnelCapabilities {
 export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
   if (binding.provider === "cloudflare") return { provider: "cloudflare", urlTiming: "pre-start", dns: "devfn-records", gaps: ["DevFn does not provision or check edge certificates for the public domain."] };
   const gaps = ["ngrok keeps no DNS record DevFn can read back; a name is public exactly while the connector runs its endpoint.",
-    "The ngrok agent forwards plain HTTP to the DevFn origin bridge on loopback, which verifies the public origin's TLS for each hostname."];
+    "The ngrok agent forwards plain HTTP to the DevFn origin bridge on loopback, which verifies the public origin's TLS for each hostname.",
+    "Withdrawing some of the binding's names while others stay published launches a replacement agent, which needs the authtoken variable and ngrok on PATH in the shell that runs it; without them the withdrawal stays journaled and outstanding and is reported as a cleanup error. A withdrawal that leaves no names only stops the connector."];
   if (binding.ngrok.endpoints === "reserved") {
-    gaps.push("Reserved endpoints are pooled: an agent of another registration that joins a hostname's pool after DevFn's post-launch readback, or that the account listing does not show yet, is detected only when a later publish or recovery of that hostname reads the account.");
+    gaps.push("DevFn checks only that the account reserves the wildcard domain; it neither creates nor checks the domain's DNS delegation to ngrok or ngrok's certificate for it, so a ready lifecycle's URL may not resolve or complete TLS until the operator sets them up.",
+      "Reserved endpoints are pooled: an agent of another registration that joins a hostname's pool after DevFn's post-launch readback, or that the account listing does not show yet, is detected only when a later publish or recovery of that hostname reads the account.");
   }
   if (binding.ngrok.endpoints === "ephemeral") {
     gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
@@ -703,7 +705,12 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
     for (const hostname of names) await ctx.provider.ensureDns(ctx.binding, hostname);
     for (const hostname of names) await ctx.provider.verifyDns(ctx.binding, hostname);
     if (await connectorServes(ctx, state, names)) return;
-    await converge(ctx, state, names);
+    // A failed launch is already stopped; dropping it here keeps status from listing it as retired.
+    try { await converge(ctx, state, names); }
+    catch (error) {
+      await stopRetired(ctx, state).catch(() => undefined);
+      throw error;
+    }
   });
   return await tunnelStatus(options);
 }
