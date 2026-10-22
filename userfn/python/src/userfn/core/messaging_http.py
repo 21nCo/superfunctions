@@ -81,24 +81,26 @@ class HttpMessaging:
         return value
 
     def admit(self, campaign_id, user, allowed):
+        """Return admitted, denied, or handled; only explicit denial permits another candidate."""
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', campaign_id) or not user or len(user) > 200:
             raise MessagingDeliveryError('Invalid campaign identity')
         journal = self.read()
         entry = journal.get(campaign_id)
         if entry and entry['user'] != user:
             raise MessagingDeliveryError('Messaging journal belongs to another user; use a distinct state path')
-        if entry and entry['phase'] == 'presenting': return False
+        if entry and entry['phase'] == 'presenting': return 'handled'
         if entry and entry['phase'] == 'shown':
             self.send(campaign_id, entry['key'], 'shown')
-            del journal[campaign_id]; self.save(journal); return False
+            del journal[campaign_id]; self.save(journal); return 'handled'
         entry = entry or {'key': str(uuid.uuid4()), 'phase': 'pending', 'user': user}
         journal[campaign_id] = entry; self.save(journal)
         receipt = self.send(campaign_id, entry['key'], 'reserve')
         if not receipt['allowed'] or receipt['shown']:
-            del journal[campaign_id]; self.save(journal); return False
-        if not allowed(): return False
+            del journal[campaign_id]; self.save(journal); return 'handled' if receipt['allowed'] else 'denied'
+        if not allowed(): return 'handled'
         entry['phase'] = 'presenting'; self.save(journal)
-        return True
+        # File persistence can release the GIL; identity/consent may change while saving.
+        return 'admitted' if allowed() else 'handled'
 
     def confirm(self, campaign_id):
         with self.exclusive():

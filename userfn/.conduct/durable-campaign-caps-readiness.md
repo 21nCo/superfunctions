@@ -22,10 +22,45 @@ Python's existing synchronous `trigger` now reserves before returning the highes
 
 ## Evidence
 
-Final local runs: 214 SDK tests, 182 Python tests, and 29 service/native tests pass. SDK/admin/service TypeScript checks and SDK/service builds pass. The built Chrome/Python acceptance reports all three browser reload, native SQLite and Python reconciliation checks passed.
+Final local runs after the admission-selection follow-up: 218 SDK tests, 184 Python tests, and 29 service/native tests pass. SDK/admin/service TypeScript checks and SDK/service builds pass. The built Chrome/Python acceptance reports all three browser reload, native SQLite and Python reconciliation checks passed.
 
 - Native HTTP test uses two independent SQLite connections and service instances, racing distinct and duplicate keys; checks user/session/tenant isolation, stable replay, conflict denial, explicit zero/disabled/missing policy, oversized/spoofed requests, shown confirmation and SQLite close/reopen.
 - Actual Chrome test drops an admission ACK after the SQLite commit, reloads the page, verifies exact-key replay and one modal, then reloads again and observes the durable cap. Python clients exercise private journal restart, no repeated handoff, shown confirmation and cap enforcement against that same real service.
 - SDK regression tests cover malformed receipt denial, missing durable configuration, persisted pending/shown replay, uncertain presentation and consent withdrawal/regrant during admission.
 
 Local validation commands: SDK Vitest and TypeScript; service typecheck/build and `test:native`; Python pytest with the existing config/exposure optional dependencies; built `scripts/verify-messaging-browser.mjs` with the installed Playwright module and real Chrome. These are local receipts, not provider or deployment evidence. The unrelated AuthFn acceptance suite requires the unavailable `@superfunctions/oauth-storage` package in this sparse checkout and is reported separately.
+
+## Admission selection and reconciliation follow-up — 2026-10-22
+
+A service-denied high-priority campaign now allows the SDK to consider the next
+eligible campaign. Previously durable mode skipped local cap filtering but only
+attempted the first candidate, so a permanently capped or disabled campaign
+starved lower-priority messages. Both SDKs distinguish explicit denial from a
+pending, uncertain, or previously shown receipt. Uncertain presentation still
+stops the trigger and is never automatically retried. Transport errors also stop
+selection rather than treating unknown admission as denial. Consent and identity
+are checked again between candidates and before any survey fallback.
+
+Both SDKs recheck consent/identity after persisting the presentation fence and
+before render/handoff. Python file persistence can release the GIL; a concurrent
+identity change during that operation must not hand the old user's message to
+the host. Custom browser storage can also invoke application callbacks while
+saving. If authority changes during this save, the consumed reservation remains
+uncertain and no presentation occurs; there is no unsafe refund.
+
+Existing shown receipts can be confirmed after the host removes a campaign's
+policy. Only reservation requires the current campaign policy. Confirmation still
+requires the verified user, session, matching campaign/key, and an existing
+receipt, and never creates a reservation or consumes more capacity. Removed
+campaigns continue to deny all reserve requests.
+
+Regression evidence includes failures before these changes for both SDK priority
+selection, both post-save presentation gates, and native HTTP/SQLite confirmation
+after policy removal. The full suites and SDK/service typechecks and builds pass.
+The built real Chrome reload, SQLite, and Python restart fixture also passes.
+Logs are `/tmp/userfn-inspect-sdk-tests.log`, `/tmp/userfn-inspect-python-tests.log`,
+`/tmp/userfn-inspect-native-final.log`, `/tmp/userfn-inspect-service-tests.log`,
+and `/tmp/userfn-inspect-browser.log`. Native service validation uses Node20.20.0,
+matching this checkout's existing SQLite binding. No dependencies were changed.
+These remain local checkpoint guarantees, with the original open requirements
+and deployment gates above unchanged.

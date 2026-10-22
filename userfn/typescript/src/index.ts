@@ -103,8 +103,8 @@ export class UserFnClient {
     
     // 1. Messaging
     const campaigns = this.messaging.getEligibleMessages(type, context, user, !!this.durableMessaging);
-    if (campaigns.length > 0) {
-      const topCampaign = campaigns[0];
+    for (const topCampaign of campaigns) {
+      if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
       if (!this.durableMessaging && topCampaign.caps && Object.values(topCampaign.caps).some(cap => cap !== undefined)) throw new MessagingDeliveryError('Capped campaigns require durable messaging configuration');
       const render = () => {
         this.renderer?.render(
@@ -123,11 +123,14 @@ export class UserFnClient {
       };
       if (this.durableMessaging) {
         const identity = user!.id;
-        await this.durableMessaging.present(topCampaign.id, identity, () => this.syncConsent().messaging && this.identity.getUser()?.id === identity && epoch === this.messagingEpoch, render);
+        const outcome = await this.durableMessaging.present(topCampaign.id, identity, () => this.syncConsent().messaging && this.identity.getUser()?.id === identity && epoch === this.messagingEpoch, render);
+        if (outcome === 'denied') continue;
       } else render();
       return; // Prioritize messaging over surveys? Or show both? prioritizing for now.
     }
 
+    // Admission can await the network; never fall through to a stale user's survey.
+    if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
     // 2. Surveys
     const surveys = this.surveys.getEligibleSurveys(type, context, user);
     if (surveys.length > 0) {

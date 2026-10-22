@@ -52,7 +52,7 @@ export class HttpMessaging {
     if (!value || typeof value !== 'object' || !('campaignId' in value) || value.campaignId !== id || !('allowed' in value) || typeof value.allowed !== 'boolean' || !('shown' in value) || typeof value.shown !== 'boolean') throw new MessagingDeliveryError('Invalid messaging receipt');
     return { allowed: value.allowed, shown: value.shown };
   }
-  async present(id: string, user: string, allowed: () => boolean, render: () => boolean): Promise<void> {
+  async present(id: string, user: string, allowed: () => boolean, render: () => boolean): Promise<'denied' | void> {
     if (!/^[A-Za-z0-9_-]{1,100}$/.test(id) || !user || user.length > 200) throw new MessagingDeliveryError('Invalid campaign identity');
     const journal = this.read(); let entry = journal[id];
     if (entry && entry.user !== user) throw new MessagingDeliveryError('Messaging journal belongs to another user; use a distinct storageKey');
@@ -62,10 +62,10 @@ export class HttpMessaging {
     }
     entry ??= { key: crypto.randomUUID(), phase: 'pending', user }; journal[id] = entry; this.save(journal);
     const receipt = await this.send(id, entry.key, 'reserve');
-    if (!receipt.allowed || receipt.shown) { delete journal[id]; this.save(journal); return; }
+    if (!receipt.allowed || receipt.shown) { delete journal[id]; this.save(journal); return receipt.allowed ? undefined : 'denied'; }
     if (!allowed()) return;
     entry.phase = 'presenting'; this.save(journal); // Durable fence precedes the UI side effect.
-    if (!render()) return;
+    if (!allowed() || !render()) return;
     entry.phase = 'shown'; this.save(journal);
     await this.send(id, entry.key, 'shown'); delete journal[id]; this.save(journal);
   }

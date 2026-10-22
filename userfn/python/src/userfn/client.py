@@ -91,9 +91,13 @@ class UserFnClient:
         epoch = self._messaging_epoch
         with self.durable_messaging.exclusive():
             if not self.consent.state()['messaging']: return []
-            campaign = campaigns[0]
             allowed = lambda: self.consent.state()['messaging'] and self._messaging_epoch == epoch and self.identity.get_user() == user
-            return [campaign] if self.durable_messaging.admit(campaign.id, user.id, allowed) else []
+            for campaign in campaigns:
+                if not allowed(): return []
+                outcome = self.durable_messaging.admit(campaign.id, user.id, allowed)
+                if outcome == 'admitted': return [campaign]
+                if outcome != 'denied': return []
+            return []
 
     def confirm_message_shown(self, campaign_id):
         if not self.durable_messaging: raise MessagingDeliveryError('Durable messaging is not configured')

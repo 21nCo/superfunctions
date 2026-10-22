@@ -36,7 +36,9 @@ export function messagingRoutes(database: Adapter, authorize: (request: Request,
       const actor = [session.subject.tenantId, session.subject.actorId];
       const id = hash([...actor, key]);
       const fingerprint = hash([campaignId, sessionId]);
-      const policy = await options.resolvePolicy(session, campaignId);
+      // Confirmation reconciles an existing side effect, even after campaign retirement.
+      const policy: MessagingPolicy | null = action === 'reserve'
+        ? await options.resolvePolicy(session, campaignId) : { enabled: false };
       if (!policy) return json({ error: 'Campaign not found' }, 404);
       if (typeof policy.enabled !== 'boolean' || [policy.perUser, policy.perSession].some(cap => cap !== undefined && (!Number.isSafeInteger(cap) || cap < 0 || cap > 1000000))) throw new Error('Invalid messaging policy');
       for (let attempt = 0; attempt < 8; attempt++) {

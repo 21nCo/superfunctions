@@ -25,8 +25,9 @@ it('enforces verified user/session caps under concurrent HTTP requests and recon
     const [tenantId, actorId, appSession] = token.split(':');
     return { id: actorId, type: 'session', subject: { tenantId, actorId, actorType: 'user' }, scopes: ['userfn:messages:write'], metadata: { appSession } };
   } };
+  const retired = new Set<string>();
   const options = { auth, messaging: { resolveSession: (session: AuthSession) => session.metadata.appSession as string,
-    resolvePolicy: (_session: AuthSession, campaign: string) => campaign === 'missing' ? null : ({ enabled: campaign !== 'disabled', perUser: campaign === 'zero' ? 0 : 3, perSession: 2 }) } };
+    resolvePolicy: (_session: AuthSession, campaign: string) => campaign === 'missing' || retired.has(campaign) ? null : ({ enabled: campaign !== 'disabled', perUser: campaign === 'zero' ? 0 : 3, perSession: 2 }) } };
   let services = [createUserFnService({ database: adapter, ...options }), createUserFnService({ database: secondary, ...options })];
   let next = 0;
   const server = createServer(async (incoming, outgoing) => {
@@ -51,6 +52,12 @@ it('enforces verified user/session caps under concurrent HTTP requests and recon
     expect((await (await send('zero', undefined, 'reserve', 'zero')).json()).allowed).toBe(false);
     expect((await (await send('disabled', undefined, 'reserve', 'disabled')).json()).allowed).toBe(false);
     expect((await send('large', undefined, 'reserve', 'campaign', 'x'.repeat(65537))).status).toBe(413);
+    expect((await (await send('retired-receipt', 'a:retired:session', 'reserve', 'retired')).json()).allowed).toBe(true);
+    retired.add('retired');
+    expect((await send('new-retired', 'a:retired:session', 'reserve', 'retired')).status).toBe(404);
+    const retiredShown = await send('retired-receipt', 'a:retired:session', 'shown', 'retired');
+    expect(retiredShown.status).toBe(200);
+    expect(await retiredShown.json()).toMatchObject({ allowed: true, shown: true });
     const duplicate = await Promise.all(Array.from({ length: 6 }, () => send('same', 'a:duplicate:session').then(response => response.json())));
     expect(duplicate.every(value => value.allowed)).toBe(true);
     expect(new Set(duplicate.map(value => value.id)).size).toBe(1);
