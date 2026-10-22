@@ -66,6 +66,7 @@ const compatSourceChecks = [
   "searchfn/adapters/src/elasticsearch.ts",
   "searchfn/adapters/src/opensearch.ts",
   "searchfn/adapters/src/types.ts",
+  "searchfn/adapters/src/internal/redaction.ts",
 ];
 
 for (const relPath of compatSourceChecks) {
