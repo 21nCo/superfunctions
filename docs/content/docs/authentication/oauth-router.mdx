@@ -36,38 +36,65 @@ Use your preferred HTTP adapter in the app layer, for example `@superfunctions/h
 
 ```ts
 import { createOAuthBrowserRoutes } from "@superfunctions/oauth-router";
+import type { OAuthBrowserRouteConfig } from "@superfunctions/oauth-router";
 
-const routes = createOAuthBrowserRoutes({
-  basePath: "/auth/social",
-  flowService,
-  async resolveStartInput(request) {
-    return (await request.json()) as never;
-  },
-});
+export function browserRoutes(
+  flowService: OAuthBrowserRouteConfig["flowService"],
+  resolveStartInput: OAuthBrowserRouteConfig["resolveStartInput"],
+) {
+  return createOAuthBrowserRoutes({
+    basePath: "/auth/social", flowService, resolveStartInput,
+    callbackMode: "json",
+  });
+}
 ```
 
-## Default Route Posture
+## Core Concepts
+
+Each factory returns three routes under its base path: `POST /start`,
+`GET /callback/:provider`, and `POST /disconnect/:provider`. The start resolver
+converts the application request into an `OAuthFlowStartInput`. Keep tenant,
+actor and permitted-provider decisions in trusted application code rather than
+copying an arbitrary request body into that input. The default request ID header
+is `x-request-id`; `requestIdHeader` changes that lookup.
+
+Authentication modes are route metadata. Their enforcement still depends on the
+application middleware and adapter configuration. Declaring a mode does not
+create a session resolver or establish a logged-in user by itself.
+
+### Default Route Posture
 
 The factories now ship with secure defaults:
 
 - browser routes: `start=none`, `callback=none`, `disconnect=hybrid`
 - connection routes: `start=hybrid`, `callback=none`, `disconnect=hybrid`
 
-That keeps provider callbacks open while avoiding unauthenticated disconnect by default.
+That leaves provider callbacks open and declares hybrid authentication for disconnect; the host must enforce that metadata.
 
-## Route Metadata Overrides
+## Real-World Example
+
+A connection-management API can require a bearer scope on its start route while
+leaving provider callbacks reachable. Supply the resolver from your application
+after validating the signed-in actor and permitted connection destination. This
+example exposes that dependency explicitly; it does not trust client-provided
+identity fields.
+
+### Route Metadata Overrides
 
 You can override metadata per route through `routeMeta`, and overrides merge shallowly with nested `auth` and `openapi` objects.
 
 ```ts
 import { createOAuthConnectionRoutes } from "@superfunctions/oauth-router";
+import type { OAuthConnectionRouteConfig } from "@superfunctions/oauth-router";
 
-const routes = createOAuthConnectionRoutes({
+export function connectionRoutes(
+  flowService: OAuthConnectionRouteConfig["flowService"],
+  resolveStartInput: OAuthConnectionRouteConfig["resolveStartInput"],
+) {
+  return createOAuthConnectionRoutes({
   basePath: "/oauth/connections",
   flowService,
-  async resolveStartInput(request) {
-    return (await request.json()) as never;
-  },
+  resolveStartInput,
   routeMeta: {
     start: {
       auth: {
@@ -77,9 +104,10 @@ const routes = createOAuthConnectionRoutes({
     },
   },
 });
+}
 ```
 
-## Relationship To The Rest Of The Stack
+## Related Packages
 
 - [`oauth-flow`](/docs/authentication/oauth-flow) owns lifecycle orchestration.
 - [`oauth-router`](/docs/authentication/oauth-router) owns reusable route definitions.
@@ -90,3 +118,11 @@ That split is what lets apps such as `plugfn` reuse one lifecycle engine and one
 ## Troubleshooting
 
 If callback routes fail because a request is blocked before it reaches `oauth-flow`, inspect your adapter/session middleware before blaming the provider. If a route needs stricter auth metadata than the defaults, use `routeMeta` instead of cloning the factory. If your app needs redirect-on-callback behavior for browser auth, use the browser route factory’s callback mode options rather than building a parallel custom callback stack.
+
+Browser callbacks can return JSON or redirect, with a callback-mode function
+selecting the behavior per result. Redirect locations are checked against the
+request origin and explicitly configured `allowedRedirectOrigins`; the factory
+rejects invalid redirect targets. Configure full trusted origins, and keep
+provider callback URLs consistent with the flow service configuration. Result
+serialization can be customized with `serializeCallbackResult`, which is useful
+when the UI needs a small response instead of the full flow result.

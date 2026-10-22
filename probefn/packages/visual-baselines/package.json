@@ -13,13 +13,10 @@
   "dependencies": {
     "@probefn/analyzers": "*",
     "@probefn/contracts": "*",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "@probefn/storage": "*"
   },
   "devDependencies": {
-    "@types/pngjs": "^6.0.5",
-    "@probefn/browser-runner": "*",
-    "@probefn/core": "*",
-    "@probefn/dev-server": "*",
-    "@probefn/storage": "*"
+    "@types/pngjs": "^6.0.5"
   }
 }

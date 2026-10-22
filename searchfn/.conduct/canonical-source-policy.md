@@ -28,3 +28,7 @@
 
 - Duplication checks run via `npm run check:duplication`.
 - SearchFn single-source checks fail if non-canonical implementation files reappear.
+
+## Log-context redaction
+
+`@searchfn/adapter-contracts` owns `redactSensitive` and `redactSensitiveString`. PostgreSQL, Meilisearch, Elasticsearch (including OpenSearch), and the historical `redactSearchFnLogContext` compatibility export delegate to this implementation. Security regression tests live in `adapter-contracts/__tests__`, alongside backend tests that exercise error and logger call sites. Redaction covers secret-bearing keys, credential URLs, error messages/stacks/causes, and nested objects with circular-reference handling; unrelated connection timeout settings remain visible. This is structured log sanitization, not a guarantee that arbitrary free-form text contains no secrets.
