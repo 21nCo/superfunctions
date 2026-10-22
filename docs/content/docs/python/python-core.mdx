@@ -3,26 +3,26 @@ title: Python Core
 description: Use the shared Python HTTP and database contracts when you want framework-neutral handlers and persistence boundaries.
 ---
 
-`sfns` is the foundation for the Python integrations. It packages the shared request, response, route, and database adapter concepts so Python services can use the same architectural boundaries described elsewhere in the Superfunctions docs. If you want a FastAPI service, a Flask app, and a reusable internal package to agree on one handler contract or one persistence interface, this is the package that makes that possible.
+`superfunctions-core` is the foundation for the Python integrations. It packages the shared request, response, route, and database adapter concepts so Python services can use the same architectural boundaries described elsewhere in the Superfunctions docs. If you want a FastAPI service, a Flask app, and a reusable internal package to agree on one handler contract or one persistence interface, this is the package that makes that possible.
 
 The outside-world value is portability. Instead of writing your business logic directly against a framework request object or a raw ORM session, you can build on the shared contracts first. That lets a library author publish Python helpers that stay reusable across several host apps, and it lets an application team move code between frameworks without rewriting every route or repository function.
 
 ## What It Is
 
-`sfns` provides two core surfaces. The first is the HTTP layer in `superfunctions.http`, which includes request and response protocols, route definitions, route context, and HTTP error types. The second is the data layer in `superfunctions.db`, which defines adapter protocols, CRUD parameter models, query operators, schema helpers, and health-check types.
+`superfunctions-core` provides two core surfaces. The first is the HTTP layer in `superfunctions.http`, which includes request and response protocols, route definitions, route context, and HTTP error types. The second is the data layer in `superfunctions.db`, which defines adapter protocols, CRUD parameter models, query operators, schema helpers, and health-check types.
 
 This package is intentionally low level. It does not start a web server, pick a framework, or create a database engine for you. Instead, it gives you the shared vocabulary that the framework adapters and database adapters build on top of.
 
 ## When To Use It
 
-Use `sfns` when you want your Python code to depend on stable interfaces instead of framework internals. It is a strong fit for reusable libraries, platform teams standardizing service boundaries, and applications that want to keep route handlers and repositories easy to test. It is also the right starting point when you are evaluating whether a future FastAPI or Flask integration should share the same domain code.
+Use `superfunctions-core` when you want your Python code to depend on stable interfaces instead of framework internals. It is a strong fit for reusable libraries, platform teams standardizing service boundaries, and applications that want to keep route handlers and repositories easy to test. It is also the right starting point when you are evaluating whether a future FastAPI or Flask integration should share the same domain code.
 
 If you already know you need framework wiring, pair this package with [`python-fastapi`](/docs/python/python-fastapi) or [`python-flask`](/docs/python/python-flask). If your main problem is persistence behind SQLAlchemy, pair it with [`python-sqlalchemy`](/docs/python/python-sqlalchemy).
 
 ## Install
 
 ```bash
-pip install sfns
+pip install superfunctions-core
 ```
 
 Add only the adapters your application needs:

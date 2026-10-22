@@ -17,6 +17,7 @@ export const WatchFnConfigSchema = z.object({
   ]).optional().default("memory"),
   
   database: z.custom<WatchFnDatabase>().optional(),
+  alerts: z.custom<import("../alerts/types").AlertRuntimeConfig>().optional(),
   retention: z.object({
     apps: z.array(z.string().min(1).max(200).refine(value => !!value.trim())).min(1).max(100),
     defaultTtlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),

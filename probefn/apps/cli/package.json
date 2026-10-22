@@ -17,8 +17,6 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@probefn/core": "*",
-    "@probefn/storage": "*",
     "vitest": "^3.1.4"
   }
 }

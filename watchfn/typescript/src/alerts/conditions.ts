@@ -1,162 +1,101 @@
-/** Alert condition types and evaluation. */
-
-export type ConditionOperator = "gt" | "gte" | "lt" | "lte" | "eq" | "ne";
-
+/** Windowed alert conditions. Missing observations are distinct from a healthy measurement. */
+export type ConditionOperator = 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne';
 export interface ThresholdCondition {
-  type: "threshold";
-  metric: string;
-  operator: ConditionOperator;
-  threshold: number;
-  window: string; // e.g., "5m", "1h"
-  aggregation?: "avg" | "sum" | "min" | "max" | "count";
+  type?: 'threshold'; metric: string; operator: ConditionOperator; threshold: number;
+  window: string; aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'count';
 }
-
 export interface AnomalyCondition {
-  type: "anomaly";
-  metric: string;
-  sensitivity: number; // 0-1
-  minDataPoints: number;
-  algorithm: "moving-average" | "stddev";
+  type: 'anomaly'; metric: string; sensitivity: number; minDataPoints: number;
+  algorithm: 'moving-average' | 'stddev';
 }
-
 export interface CompositeCondition {
-  type: "composite";
-  operator: "and" | "or";
-  conditions: AlertCondition[];
+  type: 'composite'; operator: 'and' | 'or'; conditions: AlertCondition[];
 }
-
 export type AlertCondition = ThresholdCondition | AnomalyCondition | CompositeCondition;
+export interface AlertMetricPoint { value: number; timestamp: number; metric?: string }
+export type AlertMetricData = ReadonlyMap<string, readonly AlertMetricPoint[]> | readonly AlertMetricPoint[];
+export interface ConditionResult { matched: boolean | null; value?: number; dataPoints: number }
 
-export class ConditionEvaluator {
-  /**
-   * Evaluate an alert condition
-   */
-  evaluate(condition: AlertCondition, data: any[]): boolean {
-    switch (condition.type) {
-      case "threshold":
-        return this.evaluateThreshold(condition, data);
-      case "anomaly":
-        return this.evaluateAnomaly(condition, data);
-      case "composite":
-        return this.evaluateComposite(condition, data);
-      default:
-        return false;
+export function alertWindowMs(window: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(window);
+  const value = match ? Number(match[1]) * ({ ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]] ?? 0) : NaN;
+  if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError('Alert window must be a positive finite duration');
+  return value;
+}
+export function validateAlertCondition(condition: AlertCondition): void {
+  let nodes = 0;
+  const visit = (value: AlertCondition, depth: number) => {
+    if (!value || typeof value !== 'object' || ++nodes > 128 || depth > 16) throw new TypeError('Invalid or excessively nested alert condition');
+    if (value.type === 'composite') {
+      if (!['and', 'or'].includes(value.operator) || !Array.isArray(value.conditions) || !value.conditions.length) throw new TypeError('Composite alerts require an operator and conditions');
+      for (const child of value.conditions) visit(child, depth + 1);
+      return;
     }
-  }
-
-  private evaluateThreshold(condition: ThresholdCondition, data: any[]): boolean {
-    if (data.length === 0) return false;
-
-    const values = data.map((d) => d.value);
-    let value: number;
-
-    switch (condition.aggregation || "avg") {
-      case "avg":
-        value = values.reduce((sum, v) => sum + v, 0) / values.length;
-        break;
-      case "sum":
-        value = values.reduce((sum, v) => sum + v, 0);
-        break;
-      case "min":
-        value = Math.min(...values);
-        break;
-      case "max":
-        value = Math.max(...values);
-        break;
-      case "count":
-        value = values.length;
-        break;
-      default:
-        value = 0;
-    }
-
-    return this.compareValue(value, condition.operator, condition.threshold);
-  }
-
-  private evaluateAnomaly(condition: AnomalyCondition, data: any[]): boolean {
-    if (data.length < condition.minDataPoints) {
-      return false;
-    }
-
-    const values = data.map((d) => d.value);
-    const currentValue = values[values.length - 1];
-
-    if (condition.algorithm === "moving-average") {
-      return this.detectMovingAverageAnomaly(values, currentValue, condition.sensitivity);
-    } else if (condition.algorithm === "stddev") {
-      return this.detectStdDevAnomaly(values, currentValue, condition.sensitivity);
-    }
-
-    return false;
-  }
-
-  private evaluateComposite(condition: CompositeCondition, data: any[]): boolean {
-    const results = condition.conditions.map((child, index) => {
-      const matchingData = "metric" in child
-        ? data.filter((point) => point?.metric === child.metric)
-        : [];
-      const childData = matchingData.length > 0
-        ? matchingData
-        : data.length === condition.conditions.length
-          ? [data[index]]
-          : data;
-      return this.evaluate(child, childData);
-    });
-
-    if (condition.operator === "and") {
-      return results.every((r) => r);
+    if (typeof value.metric !== 'string' || !value.metric.trim() || value.metric.length > 255) throw new TypeError('Alert metric is required');
+    if (value.type === 'anomaly') {
+      if (!Number.isFinite(value.sensitivity) || value.sensitivity < 0 || value.sensitivity > 1 || !Number.isSafeInteger(value.minDataPoints) || value.minDataPoints < 2 || !['moving-average', 'stddev'].includes(value.algorithm)) throw new TypeError('Invalid anomaly condition');
     } else {
-      return results.some((r) => r);
+      if (value.type !== undefined && value.type !== 'threshold') throw new TypeError('Unsupported alert condition');
+      if (!Number.isFinite(value.threshold) || !['gt', 'gte', 'lt', 'lte', 'eq', 'ne'].includes(value.operator) || (value.aggregation !== undefined && !['avg', 'sum', 'min', 'max', 'count'].includes(value.aggregation))) throw new TypeError('Invalid threshold condition');
+      alertWindowMs(value.window);
     }
+  };
+  visit(condition, 0);
+}
+export class ConditionEvaluator {
+  evaluate(condition: AlertCondition, data: AlertMetricData, now = Date.now()): boolean {
+    return this.evaluateResult(condition, data, now).matched === true;
   }
-
-  private compareValue(value: number, operator: ConditionOperator, threshold: number): boolean {
-    switch (operator) {
-      case "gt":
-        return value > threshold;
-      case "gte":
-        return value >= threshold;
-      case "lt":
-        return value < threshold;
-      case "lte":
-        return value <= threshold;
-      case "eq":
-        return value === threshold;
-      case "ne":
-        return value !== threshold;
-      default:
-        return false;
-    }
-  }
-
-  private detectMovingAverageAnomaly(values: number[], currentValue: number, sensitivity: number): boolean {
-    // Calculate moving average (excluding current value)
-    const historicalValues = values.slice(0, -1);
-    const avg = historicalValues.reduce((sum, v) => sum + v, 0) / historicalValues.length;
-
-    // Calculate deviation percentage
-    const deviation = Math.abs(currentValue - avg) / avg;
-
-    // Sensitivity: 1.0 = very sensitive (trigger on small deviations)
-    const threshold = 1 - sensitivity;
-
-    return deviation > threshold;
-  }
-
-  private detectStdDevAnomaly(values: number[], currentValue: number, sensitivity: number): boolean {
-    const historicalValues = values.slice(0, -1);
-    const mean = historicalValues.reduce((sum, v) => sum + v, 0) / historicalValues.length;
-
-    const squaredDiffs = historicalValues.map((v) => Math.pow(v - mean, 2));
-    const variance = squaredDiffs.reduce((sum, v) => sum + v, 0) / historicalValues.length;
-    const stdDev = Math.sqrt(variance);
-
-    // Number of standard deviations from mean
-    const zScore = Math.abs(currentValue - mean) / stdDev;
-
-    // Sensitivity maps to z-score threshold (higher sensitivity = lower threshold)
-    const threshold = 3 - sensitivity * 2; // Range: 1 to 3 standard deviations
-
-    return zScore > threshold;
+  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now()): ConditionResult {
+    validateAlertCondition(condition);
+    if (!Number.isFinite(now)) throw new TypeError('Evaluation time must be finite');
+    const unlabelledMetric = condition.type === 'composite' ? undefined : condition.metric;
+    const evaluate = (rule: AlertCondition): ConditionResult => {
+      if (rule.type === 'composite') {
+        const results = rule.conditions.map(evaluate);
+        const matches = results.map(result => result.matched);
+        const matched = rule.operator === 'and'
+          ? matches.includes(false) ? false : matches.includes(null) ? null : true
+          : matches.includes(true) ? true : matches.includes(null) ? null : false;
+        return { matched, dataPoints: results.reduce((count, result) => count + result.dataPoints, 0) };
+      }
+      const raw: readonly AlertMetricPoint[] = Array.isArray(data) ? data : (data as ReadonlyMap<string, readonly AlertMetricPoint[]>).get(rule.metric) ?? [];
+      const cutoff = rule.type === 'anomaly' ? -Infinity : now - alertWindowMs(rule.window);
+      const points = raw.filter(point => point && Number.isFinite(point.value) && Number.isFinite(point.timestamp) && point.timestamp >= cutoff && point.timestamp <= now &&
+        (Array.isArray(data) ? (point.metric ?? unlabelledMetric) === rule.metric : point.metric === undefined || point.metric === rule.metric));
+      if (!points.length) return { matched: null, dataPoints: 0 };
+      let value: number;
+      if (rule.type === 'anomaly') {
+        if (points.length < rule.minDataPoints) return { matched: null, dataPoints: points.length };
+        points.sort((a, b) => a.timestamp - b.timestamp);
+        value = points[points.length - 1].value;
+        const history = points.slice(0, -1);
+        const mean = history.reduce((sum, point) => sum + point.value / history.length, 0);
+        const delta = Math.abs(value - mean);
+        if (!Number.isFinite(mean) || !Number.isFinite(delta)) return { matched: null, dataPoints: points.length };
+        // Floating-point mean rounding is not an observation of an anomaly.
+        const scale = history.reduce((max, point) => Math.max(max, Math.abs(point.value)), Math.abs(value));
+        if (delta <= Number.EPSILON * scale * 8) return { matched: false, value, dataPoints: points.length };
+        let matched: boolean;
+        if (rule.algorithm === 'moving-average') matched = mean === 0 ? delta > 0 : delta / Math.abs(mean) > 1 - rule.sensitivity;
+        else {
+          const variance = history.reduce((sum, point) => sum + (point.value - mean) ** 2 / history.length, 0);
+          if (!Number.isFinite(variance)) return { matched: null, dataPoints: points.length };
+          matched = variance === 0 ? delta > 0 : delta / Math.sqrt(variance) > 3 - rule.sensitivity * 2;
+        }
+        return { matched, value, dataPoints: points.length };
+      }
+      switch (rule.aggregation ?? 'avg') {
+        case 'avg': value = points.reduce((sum, point) => sum + point.value / points.length, 0); break;
+        case 'sum': value = points.reduce((sum, point) => sum + point.value, 0); break;
+        case 'min': value = points.reduce((min, point) => Math.min(min, point.value), Infinity); break;
+        case 'max': value = points.reduce((max, point) => Math.max(max, point.value), -Infinity); break;
+        case 'count': value = points.length; break;
+      }
+      if (!Number.isFinite(value)) return { matched: null, dataPoints: points.length };
+      const matched = ({ gt: value > rule.threshold, gte: value >= rule.threshold, lt: value < rule.threshold, lte: value <= rule.threshold, eq: value === rule.threshold, ne: value !== rule.threshold })[rule.operator];
+      return { matched, value, dataPoints: points.length };
+    };
+    return evaluate(condition);
   }
 }
