@@ -5,6 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+const reactMajor = process.env.CATCHFN_REACT_MAJOR ?? '18';
+if (!['18', '19'].includes(reactMajor)) throw new Error('CATCHFN_REACT_MAJOR must be 18 or 19');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'catchfn-packed-status-'));
 const npm = (args, cwd = directory) => execFileSync(process.env.NPM_CLI ? process.execPath : 'npm', process.env.NPM_CLI ? [process.env.NPM_CLI, ...args] : args, { cwd, encoding: 'utf8', stdio: 'pipe' });
@@ -14,7 +16,7 @@ try {
     return join(directory, pack.filename);
   });
   writeFileSync(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-  npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs, '@types/node@22', '@types/react@18']);
+  npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs, '@types/node@22', `@types/react@${reactMajor}`, `react@${reactMajor}`, `react-dom@${reactMajor}`]);
   const consumer = `import {BrowserClient, parseBugIssueStatus, type BrowserBugIssueStatus} from '@watchfn/browser';
 import {catchFn, type IssueStatusConfig, type BugIntegrationHint} from 'catchfn';
 import type {CatchFnReporterButtonProps} from 'catchfn/react';
@@ -40,6 +42,8 @@ export const receipt=parseBugIssueStatus({app:'shop',reportId:'one',target:'gith
   writeFileSync(join(directory, 'runtime.mjs'), `import assert from 'node:assert/strict';import {BrowserClient} from '@watchfn/browser';import {catchFn} from 'catchfn';${check}\nawait check(BrowserClient,catchFn);`);
   writeFileSync(join(directory, 'runtime.cjs'), `const assert=require('node:assert/strict');const {BrowserClient}=require('@watchfn/browser');const {catchFn}=require('catchfn');${check}\ncheck(BrowserClient,catchFn).catch(error=>{console.error(error);process.exitCode=1});`);
   for (const file of ['runtime.mjs', 'runtime.cjs']) execFileSync(process.execPath, [file], { cwd: directory, encoding: 'utf8', stdio: 'pipe' });
+  writeFileSync(join(directory, 'react.mjs'), `import assert from 'node:assert/strict';import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';import {catchFn} from 'catchfn';import {CatchFnReporterButton} from 'catchfn/react';const catcher=catchFn({name:'react'});try{assert.match(renderToStaticMarkup(React.createElement(CatchFnReporterButton,{catcher})),/Report a bug/);console.log('CatchFn React '+React.version+' SSR passed')}finally{catcher.stop()}`);
+  console.log(execFileSync(process.execPath,['react.mjs'],{cwd:directory,encoding:'utf8',stdio:'pipe'}).trim());
   console.log('Fresh Watch browser/CatchFn tarballs: ESM and CJS status reads/polling plus strict Node16/NodeNext public declaration consumers passed');
 } catch (error) {
   if (error.stdout) console.error(String(error.stdout)); if (error.stderr) console.error(String(error.stderr)); throw error;
