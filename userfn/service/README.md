@@ -148,3 +148,15 @@ checks signed HTTP behavior plus strict installed declaration consumption.
 Use npm 11 for this consumer check if npm 10 fails while resolving optional
 peers. `USERFN_NPM_CLI=/absolute/path/to/npm/bin/npm-cli.js` selects an existing
 CLI without changing the global installation or bypassing peer checks.
+
+## Durable campaign caps
+
+Apply `getUserFnSchema()` migrations and enable `messaging` with trusted
+`resolvePolicy(session, campaignId)` and `resolveSession(session)` callbacks.
+Policies return `{ enabled, perUser?, perSession? }`; sessions must identify a
+verified application session, and bearer users need `userfn:messages:write`.
+The service reserves capacity atomically before display and reconciles stable
+idempotency keys. Uncertain display consumes its reservation.
+
+See [the migration and delivery contract](../.conduct/durable-campaign-caps-readiness.md)
+for SDK configuration, persisted pending/shown states and operational limits.

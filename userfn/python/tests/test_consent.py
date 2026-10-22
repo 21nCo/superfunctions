@@ -49,10 +49,12 @@ def test_invalid_patch_is_atomic_and_constructor_validates():
 def test_denied_trigger_never_consumes_messaging_eligibility(monkeypatch):
     c = client(consent=ConsentOptions(messaging=False))
     called = []
-    monkeypatch.setattr(c.messaging, 'get_eligible_messages', lambda *args: called.append(args) or ['campaign'])
+    from userfn.types import Campaign, MessageContent
+    campaign = Campaign(id='campaign', kind='modal', content=MessageContent(body='test'), triggers=[], enabled=True)
+    monkeypatch.setattr(c.messaging, 'get_eligible_messages', lambda *args: called.append(args) or [campaign])
     assert c.trigger('event', 'hello') == []
     c.set_consent(messaging=True)
-    assert c.trigger('event', 'hello') == ['campaign']
+    assert c.trigger('event', 'hello') == [campaign]
     assert len(called) == 1
 
 

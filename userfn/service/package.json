@@ -18,7 +18,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run tests/service.test.ts",
-    "test:native": "vitest run tests/sqlite-http.test.ts tests/board-http.test.ts tests/filter-migration.test.ts tests/metadata-http.test.ts tests/flag-config-http.test.ts",
+    "test:native": "vitest run tests/sqlite-http.test.ts tests/board-http.test.ts tests/filter-migration.test.ts tests/metadata-http.test.ts tests/flag-config-http.test.ts tests/messaging-http.test.ts",
     "test:authfn": "vitest run --config vitest.authfn.config.ts"
   },
   "dependencies": {

@@ -438,3 +438,26 @@ identity and user-requested feedback are not treated as analytics. The existing
 `track`/`render` placeholders are gated but remain placeholders. Consent collection,
 storage across reloads, and selecting the application's initial flags are owned
 by the application.
+
+### Durable campaign caps and async triggers
+
+Capped campaigns require service-backed admission. Configure a stable journal
+namespace per authenticated application session and await the existing trigger:
+
+```ts
+const client = new UserFnClient({
+  apiKey: verifiedUserBearer,
+  endpoint: 'https://userfn.example',
+  messaging: { storageKey: stableAuthenticatedSessionKey },
+});
+client.identify(localUserId);
+client.setCampaigns(campaigns);
+await client.trigger('event', 'show');
+```
+
+The service must supply trusted `perUser`/`perSession` policies and verified
+session identity. Browser delivery uses localStorage plus Web Locks. Lost
+responses retain a stable reservation; `getMessageDeliveryStatus()` reports
+pending/shown/uncertain states. An uncertain presentation is not redisplayed
+or refunded automatically. Handle trigger rejection and preserve the journal
+across reloads. See [the migration contract](../.conduct/durable-campaign-caps-readiness.md).

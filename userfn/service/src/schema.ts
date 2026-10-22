@@ -2,7 +2,21 @@ import type { TableSchemaMap } from '@superfunctions/db';
 
 /** Apply this migration metadata before serving requests; no schema is required on adapter construction. */
 export function getUserFnSchema(): TableSchemaMap {
-  return { userfn_flag_config: {
+  return { userfn_message_counters: {
+    modelName: 'userfn_message_counters', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      count: { type: 'number', required: true },
+    },
+  }, userfn_message_receipts: {
+    modelName: 'userfn_message_receipts', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      fingerprint: { type: 'string', required: true, maxLength: 64 },
+      campaignId: { type: 'string', required: true, maxLength: 100 },
+      allowed: { type: 'boolean', required: true },
+      shown: { type: 'boolean', required: true },
+      reason: { type: 'string', required: true, maxLength: 16 },
+    },
+  }, userfn_flag_config: {
     modelName: 'userfn_flag_config',
     fields: {
       id: { type: 'string', required: true, unique: true, maxLength: 64 },

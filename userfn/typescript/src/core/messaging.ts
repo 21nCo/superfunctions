@@ -19,7 +19,8 @@ export class MessagingEngine {
   getEligibleMessages(
     triggerType: CampaignTrigger['type'],
     triggerContext: string, // URL or Event Name
-    user: UserIdentity | null
+    user: UserIdentity | null,
+    authoritative = false
   ): Campaign[] {
     if (!user) return []; // Messaging usually requires identity
 
@@ -55,7 +56,7 @@ export class MessagingEngine {
       const campaignDeliveries = this.deliveries.get(campaign.id) || [];
       const shownCount = campaignDeliveries.filter(d => d.status === 'shown').length;
       const globalCap = campaign.caps?.global;
-      if (globalCap != null && shownCount >= globalCap) {
+      if (!authoritative && globalCap != null && shownCount >= globalCap) {
         continue;
       }
 

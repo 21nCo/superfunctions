@@ -1,3 +1,4 @@
+from .core.messaging_http import HttpMessaging, MessagingDeliveryError
 from .core.exposures import FlagExposures
 from .core.consent import ConsentPolicy
 from .core.config_refresh import ConfigRefreshLoop
@@ -14,6 +15,8 @@ from .core.messaging import MessagingEngine
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
+        self._messaging_epoch = 0
+        self.durable_messaging = HttpMessaging(options) if options.messaging_state_path else None
         self.consent = ConsentPolicy(options.consent, options.do_not_track)
         self.exposures = FlagExposures(options.exposures, options.environment) if options.exposures else None
         self._config_environment = options.environment
@@ -33,9 +36,11 @@ class UserFnClient:
         ])
 
     def identify(self, id: str, traits: Optional[UserTraits] = None):
+        self._messaging_epoch += 1
         self.identity.identify(id, traits)
 
     def reset(self):
+        self._messaging_epoch += 1
         self.identity.reset()
 
     def get_flag(self, key: str, default_value: FlagValue = False) -> FlagValue:
@@ -48,6 +53,7 @@ class UserFnClient:
         return result["value"]
 
     def set_consent(self, *, analytics=None, messaging=None, do_not_track=None):
+        self._messaging_epoch += 1
         previous = self.consent.state()
         self.consent.update(analytics=analytics, messaging=messaging, do_not_track=do_not_track)
         if not self.consent.state()['analytics'] and self.exposures and (previous['analytics'] or self.exposures.queue):
@@ -76,7 +82,26 @@ class UserFnClient:
         if not self.consent.state()['messaging']:
             return []
         user = self.identity.get_user()
-        return self.messaging.get_eligible_messages(trigger_type, context, user)
+        campaigns = self.messaging.get_eligible_messages(trigger_type, context, user, bool(self.durable_messaging))
+        if not campaigns: return []
+        if not self.durable_messaging:
+            if any(c.caps and any(value is not None for value in vars(c.caps).values()) for c in campaigns):
+                raise MessagingDeliveryError('Capped campaigns require durable messaging configuration')
+            return campaigns
+        epoch = self._messaging_epoch
+        with self.durable_messaging.exclusive():
+            if not self.consent.state()['messaging']: return []
+            campaign = campaigns[0]
+            allowed = lambda: self.consent.state()['messaging'] and self._messaging_epoch == epoch and self.identity.get_user() == user
+            return [campaign] if self.durable_messaging.admit(campaign.id, user.id, allowed) else []
+
+    def confirm_message_shown(self, campaign_id):
+        if not self.durable_messaging: raise MessagingDeliveryError('Durable messaging is not configured')
+        if not self.consent.state()['messaging']: return
+        self.durable_messaging.confirm(campaign_id)
+
+    def get_message_delivery_status(self):
+        return self.durable_messaging.status() if self.durable_messaging else {}
 
     # Configuration setters (normally loaded from server)
     async def refresh_config(self) -> bool:

@@ -1,3 +1,6 @@
+import { HttpMessaging, MessagingDeliveryError } from './core/messaging-http';
+export { MessagingDeliveryError } from './core/messaging-http';
+export type { DurableMessagingOptions, MessageStorage } from './core/messaging-http';
 import { ConsentPolicy } from './core/consent';
 import type { ConsentPatch, ConsentState } from './types';
 import { resolveCampaignUrl } from './ui/campaign-url';
@@ -21,6 +24,7 @@ export class UserFnClient {
   private flags: FlagEvaluator;
   private segments: SegmentEvaluator;
   private messaging: MessagingEngine;
+  private durableMessaging?: HttpMessaging;
   private surveys: SurveyEngine;
   private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
@@ -32,6 +36,7 @@ export class UserFnClient {
   private readonly configEnvironment?: string;
   private readonly consent: ConsentPolicy;
   private consentEpoch = 0;
+  private messagingEpoch = 0;
   private lastConsent?: ConsentState;
   private flagRevision = 0;
   private readonly flagListeners = new Set<() => void>();
@@ -48,6 +53,7 @@ export class UserFnClient {
     this.segments = new SegmentEvaluator(); 
     this.flags = new FlagEvaluator([], this.segments, options.environment);
     this.messaging = new MessagingEngine(this.segments);
+    this.durableMessaging = options.messaging ? new HttpMessaging(options) : undefined;
     this.surveys = new SurveyEngine(this.segments);
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
@@ -83,25 +89,42 @@ export class UserFnClient {
 
 
   // Trigger check for messaging and surveys
-  trigger(type: 'url_match' | 'event', context: string) {
+  async trigger(type: 'url_match' | 'event', context: string): Promise<void> {
+    if (this.durableMessaging) return this.durableMessaging.exclusive(() => this.triggerMessages(type, context));
+    return this.triggerMessages(type, context);
+  }
+
+  getMessageDeliveryStatus() { return this.durableMessaging?.status() ?? {}; }
+
+  private async triggerMessages(type: 'url_match' | 'event', context: string): Promise<void> {
     if (!this.syncConsent().messaging) return;
+    const epoch = this.messagingEpoch;
     const user = this.identity.getUser();
     
     // 1. Messaging
-    const campaigns = this.messaging.getEligibleMessages(type, context, user);
+    const campaigns = this.messaging.getEligibleMessages(type, context, user, !!this.durableMessaging);
     if (campaigns.length > 0) {
       const topCampaign = campaigns[0];
-      this.renderer?.render(
-        topCampaign,
-        () => { if (this.syncConsent().messaging) this.messaging.trackDelivery(topCampaign.id, 'dismissed'); },
-        () => {
-          if (!this.syncConsent().messaging) return;
-          this.messaging.trackDelivery(topCampaign.id, 'clicked');
-          const destination = resolveCampaignUrl(topCampaign.content.ctaUrl, window.location.href);
-          if (destination) window.location.href = destination;
-        }
-      );
-      this.messaging.trackDelivery(topCampaign.id, 'shown');
+      if (!this.durableMessaging && topCampaign.caps && Object.values(topCampaign.caps).some(cap => cap !== undefined)) throw new MessagingDeliveryError('Capped campaigns require durable messaging configuration');
+      const render = () => {
+        this.renderer?.render(
+          topCampaign,
+          () => { if (this.syncConsent().messaging) this.messaging.trackDelivery(topCampaign.id, 'dismissed'); },
+          () => {
+            if (!this.syncConsent().messaging) return;
+            this.messaging.trackDelivery(topCampaign.id, 'clicked');
+            const destination = resolveCampaignUrl(topCampaign.content.ctaUrl, window.location.href);
+            if (destination) window.location.href = destination;
+          }
+        );
+        const shown = !!this.renderer && ['modal', 'inbox-item'].includes(topCampaign.kind);
+        if (shown) this.messaging.trackDelivery(topCampaign.id, 'shown');
+        return shown;
+      };
+      if (this.durableMessaging) {
+        const identity = user!.id;
+        await this.durableMessaging.present(topCampaign.id, identity, () => this.syncConsent().messaging && this.identity.getUser()?.id === identity && epoch === this.messagingEpoch, render);
+      } else render();
       return; // Prioritize messaging over surveys? Or show both? prioritizing for now.
     }
 
@@ -180,12 +203,14 @@ export class UserFnClient {
 
 
   identify(id: string, traits: UserTraits = {}) {
+    this.messagingEpoch++;
     this.identity.identify(id, traits);
     this.publishFlags();
     // TODO: Send identify event to server
   }
 
   reset() {
+    this.messagingEpoch++;
     this.identity.reset();
     this.publishFlags();
   }
@@ -236,6 +261,7 @@ export class UserFnClient {
     const state = this.consent.state();
     const previous = this.lastConsent;
     if (this.lastConsent?.analytics !== state.analytics) this.consentEpoch++;
+    if (this.lastConsent?.messaging !== state.messaging) this.messagingEpoch++;
     this.lastConsent = state;
     if (!state.analytics && (previous?.analytics !== false || (this.exposures?.status().pending ?? 0) > 0)) this.exposures?.discardPending();
     if (!state.messaging) this.renderer?.dismissMessages();

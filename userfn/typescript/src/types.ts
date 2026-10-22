@@ -1,3 +1,4 @@
+import type { DurableMessagingOptions } from './core/messaging-http';
 export interface UserTraits {
   [key: string]: any;
   email?: string;
@@ -113,6 +114,7 @@ export interface ConsentState { analytics: boolean; messaging: boolean; doNotTra
 
 export interface UserFnOptions {
   consent?: ConsentOptions;
+  messaging?: DurableMessagingOptions;
   /** Forwarded server/request signal; live browser DNT still vetoes grants. */
   doNotTrack?: boolean;
   exposures?: ExposureOptions;
@@ -187,7 +189,8 @@ export interface Campaign {
   priority?: number;
   caps?: {
     global?: number; // Maximum shown count in this engine; zero blocks, omission is uncapped
-    session?: number; // Max times per session
+    session?: number; // Max times per verified session
+    perUser?: number; // Durable maximum across verified sessions
   };
   enabled: boolean;
 }

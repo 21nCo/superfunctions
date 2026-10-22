@@ -24,7 +24,7 @@ class MessagingEngine:
         self,
         trigger_type: str, # 'url_match' | 'event'
         trigger_context: str, # URL or Event Name
-        user: Optional[UserIdentity] = None
+        user: Optional[UserIdentity] = None, authoritative: bool = False
     ) -> List[Campaign]:
         if not user:
             return []
@@ -59,7 +59,7 @@ class MessagingEngine:
                     continue
 
             # 3. Check Frequency Caps (Simple global cap)
-            if campaign.caps and campaign.caps.global_cap is not None:
+            if not authoritative and campaign.caps and campaign.caps.global_cap is not None:
                 deliveries = self.deliveries.get(campaign.id, [])
                 shown_count = sum(1 for d in deliveries if d.status == 'shown')
                 if shown_count >= campaign.caps.global_cap:

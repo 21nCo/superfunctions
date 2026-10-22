@@ -380,3 +380,15 @@ be accepted remotely; no acknowledged data is retracted. Messaging denial makes
 `trigger` return no campaigns before eligibility is evaluated. Config refresh and
 explicit feedback remain available. There is no new Python survey renderer, and
 consent persistence/collection remains application-owned.
+
+### Durable campaign admission
+
+Configure `UserFnOptions(..., messaging_state_path='/private/session/messages.json')`
+with the UserFn service endpoint and a verified user bearer credential. `trigger`
+reserves capacity before returning the highest-priority campaign; call
+`confirm_message_shown(campaign.id)` after actual presentation. Reuse the private
+state path after restart and inspect `get_message_delivery_status()` when a
+request or display is uncertain. Capped campaigns require this configuration.
+Service-owned `perUser`/`perSession` policy is authoritative; SDK metadata uses
+`CampaignCaps(per_user=..., session_cap=...)`. See the
+[delivery contract](../.conduct/durable-campaign-caps-readiness.md).

@@ -124,6 +124,7 @@ class UserFnOptions:
     exposures: Optional[ExposureOptions] = None
     consent: Optional[ConsentOptions] = None
     do_not_track: bool = False
+    messaging_state_path: Optional[str] = None
 
 EventProperties = Dict[str, Any]
 
@@ -171,6 +172,7 @@ class CampaignTrigger:
 class CampaignCaps:
     global_cap: Optional[int] = None
     session_cap: Optional[int] = None
+    per_user: Optional[int] = None
 
 @dataclass
 class Campaign:
