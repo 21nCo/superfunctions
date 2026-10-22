@@ -83,3 +83,11 @@ Logs: `/tmp/probe-shared-ci-install.log`, `/tmp/probe-shared-turbo-build.json`,
 `/tmp/probe-shared-turbo-types.log`, `/tmp/probe-shared-turbo-full.log`,
 `/tmp/probe-native-diagnostic.log`, `/tmp/probe-design-diagnostic.log`,
 `/tmp/probe-shared-turbo-full-rerun.log`.
+
+The subsequent ordinary merge of final Shared
+`c0ce24b30ef7935e79a400ed27fcc8ffac1b5d42` is conflict-free. It changes no Probe
+source/configuration or root manifest/lock/Turbo configuration relative to the
+177-test passing checkpoint. The final graph still has 301 tasks and both storage
+runtime edges; the real Turbo Probe typecheck and prerequisite MCP build pass
+again. Final logs: `/tmp/probe-final-shared-turbo-build.json` and
+`/tmp/probe-final-shared-types.log`. No owned test/server processes remain.
