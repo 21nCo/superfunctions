@@ -53,7 +53,8 @@ export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
     "Withdrawing some of the binding's names while others stay published launches a replacement agent, which needs the authtoken variable and ngrok on PATH in the shell that runs it; without them the withdrawal stays journaled and outstanding and is reported as a cleanup error. A withdrawal that leaves no names only stops the connector."];
   if (binding.ngrok.endpoints === "reserved") {
     gaps.push("DevFn checks only that the account reserves the wildcard domain; it neither creates nor checks the domain's DNS delegation to ngrok or ngrok's certificate for it, so a ready lifecycle's URL may not resolve or complete TLS until the operator sets them up.",
-      "Reserved endpoints are pooled: an agent of another registration that joins a hostname's pool after DevFn's post-launch readback, or that the account listing does not show yet, is detected only when a later publish or recovery of that hostname reads the account.");
+      "Reserved endpoints are pooled: an agent of another registration that joins a hostname's pool after DevFn's post-launch readback of every routed name, or that the account listing does not show yet, is detected only when a later publish or recovery reads the account.",
+      "A withdrawal's replacement agent is kept even when its readback finds another registration's agent on a name it still routes, or cannot read the account, so the withdrawn names stop being routed; tunnel status lists those names as unconfirmed until a later launch reads them back.");
   }
   if (binding.ngrok.endpoints === "ephemeral") {
     gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
@@ -77,6 +78,8 @@ export interface TunnelStatus {
   urls: Record<string, string>;
   /** Withdrawn names whose public reachability is not fully confirmed ended, by owner. */
   outstanding: Array<{ ownerId: string; detail: string }>;
+  /** Routed names the running connector's readback did not confirm no other registration's agent serves (see readBack); absent when none. */
+  unconfirmed?: string[];
 }
 
 interface Context {
@@ -286,10 +289,10 @@ async function connectorConfig(ctx: Context, hostnames: readonly string[]): Prom
  * explicit, as in validation: a private empty HOME, the provider's resolved
  * connector credentials, whose values the wrapper redacts from the log, and
  * no ambient credentials or TUNNEL_* settings that could select another
- * tunnel. The ready connector is read back (readBack) against served, the
- * names a verifiably running predecessor already routes.
+ * tunnel. The ready connector is read back (readBack), as a narrowing
+ * replacement when narrowing.
  */
-async function launchConnector(ctx: Context, hostnames: readonly string[], served: readonly string[], onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
+async function launchConnector(ctx: Context, hostnames: readonly string[], narrowing: boolean, onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
   const { config, digest: configDigest } = await connectorConfig(ctx, hostnames);
   const configFile = paths.config(configDigest);
@@ -318,7 +321,7 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], serve
   }
   // The record is journaled as retired until committed. A launch that fails its readback is stopped at once, so it
   // never routes into the rollback or a failed recovery; one that does not stop stays retired for the next transition.
-  try { await readBack(ctx, record!, served); }
+  try { await readBack(ctx, record!, narrowing); }
   catch (error) {
     await stopConnector(paths, record!).catch(() => undefined);
     throw error;
@@ -331,17 +334,26 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], serve
  * connector, applied to every launch and to a launch an interrupted
  * transition left retired (restoreFallback): the public URLs the provider
  * assigned are read from it, and no agent outside this registration may
- * serve a name it routes that served, the names a verifiably running
- * predecessor already routes, does not include. A narrowing replacement for
- * a withdrawal routes no new name, so its readback never depends on another
- * registration's agents. Sets urls and readBack only once both pass.
+ * serve any name it routes, whether or not a predecessor already routed it.
+ * Sets urls, and readBack once both pass. The one exception is a narrowing
+ * replacement, which routes only names of its verifiably running
+ * predecessor for a withdrawal: stopping it would keep the withdrawn names
+ * routed, so a failed serving check does not stop it. It is promoted without
+ * readBack, with the names that check did not confirm in unconfirmed.
  */
-async function readBack(ctx: Context, record: ConnectorRecord, served: readonly string[]): Promise<void> {
+async function readBack(ctx: Context, record: ConnectorRecord, narrowing = false): Promise<void> {
+  delete record.unconfirmed;
   const urls = ctx.provider.assignedUrls ? await ctx.provider.assignedUrls(ctx.binding, record.metricsPort, record.hostnames) : undefined;
-  const added = record.hostnames.filter((hostname) => !served.includes(hostname));
-  if (added.length) await ctx.provider.verifyServing?.(ctx.binding, added);
+  try { await ctx.provider.verifyServing?.(ctx.binding, record.hostnames); }
+  catch (error) {
+    if (!narrowing) throw error;
+    // The names a conflict reports; every routed name when the check could not tell.
+    const shared = (error as { details?: { hostnames?: unknown } }).details?.hostnames;
+    const routed = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.every((hostname) => record.hostnames.includes(hostname as string));
+    record.unconfirmed = routed(shared) ? [...shared] : [...record.hostnames];
+  }
   if (urls) record.urls = urls;
-  record.readBack = true;
+  if (!record.unconfirmed) record.readBack = true;
 }
 
 const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid === b.pid && a.birthSignature === b.birthSignature;
@@ -369,14 +381,16 @@ async function commitState(ctx: Context, state: TunnelState, candidate: TunnelSt
  * the predecessor serves the previous committed set and the transition has
  * failed. After it, the transition stands; a replaced connector that does
  * not stop, or whose stop is not recorded, stays retired for the next
- * transition. No hostnames stops the connector. Mutates and persists state.
+ * transition. No hostnames stops the connector. A withdrawal's replacement
+ * (narrow) is read back as narrowing while it routes only names of a
+ * verifiably running predecessor. Mutates and persists state.
  */
-async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: (draft: TunnelState) => void): Promise<void> {
+async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: (draft: TunnelState) => void, narrow = false): Promise<void> {
   let launched: ConnectorRecord | undefined;
   if (hostnames.length) {
     await assertSoleConnector(ctx, state);
     const served = state.connector && await connectorStatus(ctx.paths, state.connector) === "running" ? state.connector.hostnames : [];
-    launched = await launchConnector(ctx, hostnames, served, async (record) => {
+    launched = await launchConnector(ctx, hostnames, narrow && hostnames.every((hostname) => served.includes(hostname)), async (record) => {
       state.retired.push(record);
       await writeTunnelState(ctx.stateDir, state);
     });
@@ -480,10 +494,11 @@ const outstandingFor = (state: TunnelState, ownerId: string): string[] => state.
  * Retry what keeps withdrawn names reachable. Their DNS records are removed
  * and read back. A connector still routing them is replaced make before
  * break by one for the committed names it already routes when it verifiably
- * runs, so the replacement makes no name newly reachable; it is kept
- * running for the other owners if that replacement fails, and stopped when
- * no committed name remains or it exited; an unverifiable one stays the
- * recorded connector. No connector is started where none runs. Returns the
+ * runs, so the replacement makes no name newly reachable and is promoted
+ * even when another registration's agent shares a name it keeps (readBack).
+ * The old one is kept running for the other owners if that replacement
+ * fails, and stopped when no committed name remains or it exited; an
+ * unverifiable one stays the recorded connector. No connector is started where none runs. Returns the
  * errors met.
  */
 async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]> {
@@ -499,7 +514,7 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
     const status = await connectorStatus(ctx.paths, state.connector);
     // An unverifiable connector stays recorded, so no other connector starts beside it.
     if (committed.length && status === "running") {
-      await swapConnector(ctx, state, committed).catch((error: unknown) => { errors.push(`the running connector was kept for the other public routes (${message(error)})`); });
+      await swapConnector(ctx, state, committed, undefined, true).catch((error: unknown) => { errors.push(`the running connector was kept for the other public routes (${message(error)})`); });
     } else if (status !== "unverified") { state.retired.push(state.connector); delete state.connector; }
   }
   await stopRetired(ctx, state);
@@ -524,7 +539,7 @@ async function restoreFallback(ctx: Context, state: TunnelState): Promise<boolea
   const known = new Set([...committed, ...state.residue.flatMap((item) => item.hostnames)]);
   for (const record of [...state.retired].reverse()) {
     if (!record.hostnames.some((hostname) => committed.has(hostname)) || !record.hostnames.every((hostname) => known.has(hostname)) || await connectorStatus(ctx.paths, record) !== "running") continue;
-    if (!record.readBack && !await readBack(ctx, record, []).then(() => true, () => false)) continue;
+    if (!record.readBack && !await readBack(ctx, record).then(() => true, () => false)) continue;
     state.retired = [...state.retired.filter((item) => !sameConnector(item, record)), ...(state.connector ? [state.connector] : [])];
     state.connector = record;
     return true;
@@ -750,5 +765,6 @@ export async function tunnelStatus(options: Pick<TunnelServiceOptions, "stateDir
     pending: state.pending !== undefined,
     retired: state.retired.length,
     outstanding: [...new Set(state.residue.map((item) => item.ownerId))].flatMap((ownerId) => outstandingFor(state, ownerId).map((detail) => ({ ownerId, detail }))),
+    ...(state.connector?.unconfirmed && status === "running" ? { unconfirmed: [...state.connector.unconfirmed] } : {}),
   };
 }

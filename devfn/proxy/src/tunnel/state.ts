@@ -77,9 +77,11 @@ export interface TunnelHostname { hostname: string; ownerId: string; publishedAt
  * to this launch and names the only agent identity file it may own. readBack
  * is set once the launch passed its post-launch readbacks (assigned URLs and
  * the provider's serving check); a running record without it is read back
- * before it can become the recorded connector.
+ * before it can become the recorded connector. unconfirmed lists the names a
+ * withdrawal's narrowing replacement routes whose serving check failed: it
+ * was promoted without readBack so the withdrawn names stop being routed.
  */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string>; readBack?: true }
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string>; readBack?: true; unconfirmed?: string[] }
 
 /**
  * An in-flight publish, written before any provider or connector mutation.
@@ -433,6 +435,7 @@ const isConnector = (value: unknown): value is ConnectorRecord => {
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
     Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && (item!.launchId === undefined || (typeof item!.launchId === "string" && LAUNCH_ID.test(item!.launchId))) && isNames(item!.hostnames) &&
     (item!.readBack === undefined || item!.readBack === true) &&
+    (item!.unconfirmed === undefined || (isNames(item!.unconfirmed) && item!.unconfirmed.every((hostname) => item!.hostnames!.includes(hostname)))) &&
     (item!.urls === undefined || (typeof item!.urls === "object" && item!.urls !== null && Object.entries(item!.urls).every(([hostname, url]) =>
       item!.hostnames!.includes(hostname) && typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url))));
 };

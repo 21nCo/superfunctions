@@ -203,6 +203,7 @@ export class NgrokTunnelProvider implements TunnelProvider {
    * marker other than this registration's; ephemeral URLs are the agent's
    * own. Both inventories are read in full: an agent endpoint, pooled or
    * not, can be listed under /endpoints without a matching /tunnels entry.
+   * The conflict names every such hostname, also in its details.
    */
   private async assertSoleRegistration(binding: TunnelBinding, hostnames: readonly string[], outcome: string): Promise<void> {
     if (ngrok(binding).endpoints === "ephemeral") return;
@@ -213,8 +214,8 @@ export class NgrokTunnelProvider implements TunnelProvider {
     const host = (url: unknown): string | undefined => { try { return typeof url === "string" ? new URL(url).hostname : undefined; } catch { return undefined; } };
     const online = [...tunnels.map((item) => ({ hosts: [host(item.public_url)], metadata: item.metadata })),
       ...endpoints.map((item) => ({ hosts: [host(item.url), host(item.public_url)], metadata: item.metadata }))];
-    const foreign = hostnames.find((hostname) => online.some((item) => item.hosts.includes(hostname) && item.metadata !== ngrokMarker(binding)));
-    if (foreign) throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${foreign} is already served by an ngrok agent DevFn does not own; ${outcome}.`);
+    const foreign = hostnames.filter((hostname) => online.some((item) => item.hosts.includes(hostname) && item.metadata !== ngrokMarker(binding)));
+    if (foreign.length) throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${foreign.join(", ")} ${foreign.length > 1 ? "are" : "is"} already served by an ngrok agent DevFn does not own; ${outcome}.`, { hostnames: foreign });
   }
 
   /** Nothing to remove; reachability ends once no connector routes the name. */

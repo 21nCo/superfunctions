@@ -523,6 +523,26 @@ describe("ngrok connector lifecycle", () => {
       expect(await readTunnelState(stateDir, "share")).toMatchObject({ connector: before, hostnames: [{ hostname: B, ownerId: "owner-b" }], retired: [], residue: [] });
       expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: before.pid, routed: [B] });
 
+      // So is a name the predecessor already routes: a foreign agent on B, listed before A's launch or joining after it, in either listing,
+      // stops the connector A's publish launched instead of promoting it pooled beside that agent.
+      api.beforeList = undefined;
+      api.endpoints = [];
+      const retained = async (arrange: () => void) => {
+        arrange();
+        await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: expect.stringContaining(`${B} is already served`) });
+        api.beforeList = undefined;
+        api.tunnels = [{ public_url: `https://${B}`, metadata: ngrokMarker(binding) }];
+        api.endpoints = [];
+        expect(running((await agentPids()).at(-1)!)).toBe(false);
+        expect(await readTunnelState(stateDir, "share")).toMatchObject({ connector: before, hostnames: [{ hostname: B, ownerId: "owner-b" }], retired: [], residue: [] });
+        expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: before.pid, routed: [B] });
+      };
+      await retained(() => api.endpoints.push({ url: `https://${B}`, metadata: foreign }));
+      await retained(() => api.tunnels.push({ public_url: `https://${B}`, metadata: foreign }));
+      await retained(() => joinAfterLaunch(B, "/endpoints"));
+      await retained(() => joinAfterLaunch(B, "/tunnels"));
+      expect(await agents()).toHaveLength(6);
+
       // A recovery relaunch is read back the same way: B's crashed connector is not replaced by one pooled with a foreign agent.
       api.tunnels = [];
       api.endpoints = [];
@@ -530,25 +550,44 @@ describe("ngrok connector lifecycle", () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       joinAfterLaunch(B, "/tunnels");
       await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
-      expect(await agents()).toHaveLength(3);
-      expect(running((await agentPids())[2])).toBe(false);
+      expect(await agents()).toHaveLength(7);
+      expect(running((await agentPids())[6])).toBe(false);
       // The stopped relaunch is not left listed as a retired connector.
       expect(await tunnelStatus(options)).toMatchObject({ routed: [], retired: 0 });
     } finally { api.beforeList = undefined; fixtureOrigin.server.close(); }
   });
 
-  posixIt("withdraws one owner's names while another registration's agent serves a sibling owner's name", { timeout: 90_000 }, async () => {
+  posixIt("withdraws one owner's names while another registration's agent serves a sibling owner's name, reporting that name as unconfirmed", { timeout: 120_000 }, async () => {
     const { stateDir, options, api, fixtureOrigin, binding } = await setup("reserved");
+    const own = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${B}`, metadata: ngrokMarker(binding) }];
     try {
       await publishTunnelRoutes(options, "owner-a", [A]);
       await publishTunnelRoutes(options, "owner-b", [B]);
       // A same-name registration elsewhere joined B's pool after B was published.
-      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${B}`, metadata: ngrokMarker(binding) },
-        { public_url: `https://${B}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
-      // The narrowing replacement routes no new name, so it does not depend on that agent: A's withdrawal ends.
+      api.tunnels = [...own, { public_url: `https://${B}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
+      // The narrowing replacement only drops names, so its readback finding that agent does not keep A routed: A's withdrawal ends,
+      // and the replacement is promoted with B reported as unconfirmed rather than read back.
       expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
-      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B], hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [] });
-      expect((await readTunnelState(stateDir, "share")).retired).toEqual([]);
+      const narrowed = await tunnelStatus(options);
+      expect(narrowed).toMatchObject({ connector: "running", routed: [B], hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [], unconfirmed: [B] });
+      const state = await readTunnelState(stateDir, "share");
+      expect(state.retired).toEqual([]);
+      expect(state.connector).toMatchObject({ hostnames: [B], unconfirmed: [B] });
+      expect(state.connector!.readBack).toBeUndefined();
+      // That connector is never widened while B is shared: A's publish fails and leaves it serving B.
+      await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: expect.stringContaining(B) });
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: narrowed.pid, routed: [B], unconfirmed: [B] });
+      // Once only this registration's agents are listed, the publish pools beside its predecessor and reads every name back.
+      api.tunnels = own;
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      const widened = await tunnelStatus(options);
+      expect(widened).toMatchObject({ connector: "running", routed: [A, B] });
+      expect(widened.unconfirmed).toBeUndefined();
+      // A narrowing readback that cannot read the account does not keep A routed either.
+      api.fail = 500;
+      expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
+      api.fail = undefined;
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B], unconfirmed: [B] });
     } finally { fixtureOrigin.server.close(); }
   });
 
@@ -579,9 +618,12 @@ describe("ngrok connector lifecycle", () => {
     const { stateDir, options, api, fixtureOrigin, binding } = await setup("reserved");
     try {
       await publishTunnelRoutes(options, "owner-a", [A]);
+      await publishTunnelRoutes(options, "owner-b", [B]);
       const launched = await interruptAfterLaunch(stateDir, "share");
       const agent = JSON.parse(await readFile(tunnelPaths(stateDir, "share").agent(launched.launchId!), "utf8")) as { pid: number };
-      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${A}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
+      // Only B, a name its predecessor already routed, is shared.
+      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }];
+      api.endpoints = [{ url: `https://${B}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
       await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
       // It was stopped, agent included, instead of serving beside the foreign agent.
       await vi.waitFor(() => expect(processExists(agent.pid)).toBe(false), { timeout: 5_000 });
