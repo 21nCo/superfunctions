@@ -24,6 +24,7 @@ npx @apifn/cli --help
 | `serve [specPath]` | Serve an interactive API explorer |
 | `mock <specPath>` | Start a mock server from a spec |
 | `snippet <specPath> [apiPath]` | Generate a code snippet for an endpoint |
+| `sdk generate` | Generate an SDK package from an operation catalog |
 
 ### Global options
 
@@ -165,6 +166,24 @@ apifn snippet .apifn/openapi.yml --all --target python-requests
 - `--method <method>` — HTTP method (default `get`)
 - `--base-url <url>` — base URL override
 - `--all` — generate snippets for every endpoint
+
+## sdk generate
+
+Generate an installable SDK package from an operation catalog (via [`@apifn/sdk`](../sdk)).
+
+```bash
+apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk
+apifn sdk generate --sdk-config sdk.config.json --spec openapi.json --manifest apifn.manifest.json --out packages/projects-sdk
+apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk --check
+```
+
+- `--sdk-config <path>` — `{ "target": "typescript", "unsupported": "fail" | "exclude", "options": { … } }` (see `@apifn/sdk`)
+- `--catalog <path>` — catalog built by `@apifn/contracts`; or `--spec <path>` with `--manifest <path>` to build it
+- `--out <dir>` — package directory; only files the generator owns are written, and `src/custom/` is never touched
+- `--check` — write nothing; exit `1` if the directory is out of date
+- `--format <type>` — `text` (default) or `json`
+
+Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts or `--check` drift (nothing written) · `2` missing or unreadable inputs.
 
 ---
 

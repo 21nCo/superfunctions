@@ -1,0 +1,58 @@
+{
+  "name": "@apifn/sdk",
+  "version": "0.1.0",
+  "description": "Generate installable SDKs from ApiFn operation catalogs through deterministic target adapters",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./fixtures/*": "./fixtures/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/embed-runtime.mjs && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p templates/tsconfig.json",
+    "lint": "node scripts/embed-runtime.mjs --check && tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed-sdk.mjs"
+  },
+  "dependencies": {
+    "@apifn/contracts": "0.1.0",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "apifn/sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "README.md"
+  ]
+}

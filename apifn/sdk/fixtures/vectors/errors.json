@@ -1,0 +1,90 @@
+{
+  "description": "Response handling with retries disabled (maxAttempts 1). The server answers each call with `response`; `body` is the raw response text. `expect.result` is the decoded success value (null for no body); `expect.error` is the failure: kind (apifn.client-failure/v1 failure kinds), HTTP status, whether the status and body kind are documented by the operation (`declared`), and the decoded body (parsed JSON, text, or null).",
+  "cases": [
+    {
+      "name": "declared JSON error",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 404, "headers": { "content-type": "application/problem+json" }, "body": "{\"title\":\"Not found\",\"status\":404}" },
+      "expect": { "error": { "kind": "http", "status": 404, "declared": true, "body": { "title": "Not found", "status": 404 } } }
+    },
+    {
+      "name": "a status declared by a range",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 410, "headers": { "content-type": "application/problem+json" }, "body": "{\"title\":\"Gone\",\"status\":410}" },
+      "expect": { "error": { "kind": "http", "status": 410, "declared": true, "body": { "title": "Gone", "status": 410 } } }
+    },
+    {
+      "name": "a status declared by default",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "p1" } },
+      "response": { "status": 500, "headers": { "content-type": "application/problem+json" }, "body": "{\"title\":\"Broken\",\"status\":500}" },
+      "expect": { "error": { "kind": "http", "status": 500, "declared": true, "body": { "title": "Broken", "status": 500 } } }
+    },
+    {
+      "name": "an undeclared status keeps its text body",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" } },
+      "body": { "title": "x" },
+      "response": { "status": 418, "headers": { "content-type": "text/plain" }, "body": "teapot" },
+      "expect": { "error": { "kind": "http", "status": 418, "declared": false, "body": "teapot" } }
+    },
+    {
+      "name": "a declared status with an undocumented media type is undeclared",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 404, "headers": { "content-type": "text/html" }, "body": "<h1>404</h1>" },
+      "expect": { "error": { "kind": "http", "status": 404, "declared": false, "body": "<h1>404</h1>" } }
+    },
+    {
+      "name": "malformed JSON in an error is undeclared text",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 404, "headers": { "content-type": "application/problem+json" }, "body": "{oops" },
+      "expect": { "error": { "kind": "http", "status": 404, "declared": false, "body": "{oops" } }
+    },
+    {
+      "name": "redirects are returned, never followed",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 302, "headers": { "location": "http://127.0.0.1:9/elsewhere" }, "body": "" },
+      "expect": { "error": { "kind": "http", "status": 302, "declared": false, "body": null } }
+    },
+    {
+      "name": "malformed JSON in a success is a decode failure",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": "{" },
+      "expect": { "error": { "kind": "decode" } }
+    },
+    {
+      "name": "an undocumented success media type is a decode failure",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "text/plain" }, "body": "hello" },
+      "expect": { "error": { "kind": "decode" } }
+    },
+    {
+      "name": "JSON success",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "application/json; charset=utf-8" }, "body": "{\"id\":\"t1\",\"title\":\"Write\",\"status\":\"open\",\"assignee\":null}" },
+      "expect": { "result": { "id": "t1", "title": "Write", "status": "open", "assignee": null } }
+    },
+    {
+      "name": "text success",
+      "operation": "tasks.export",
+      "parameters": { "path": { "projectId": "p1" } },
+      "response": { "status": 200, "headers": { "content-type": "text/plain; charset=utf-8" }, "body": "id,title\nt1,Write" },
+      "expect": { "result": "id,title\nt1,Write" }
+    },
+    {
+      "name": "no-content success",
+      "operation": "tasks.delete",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 204, "headers": {}, "body": "" },
+      "expect": { "result": null }
+    }
+  ]
+}

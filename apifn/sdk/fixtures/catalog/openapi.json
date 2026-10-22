@@ -1,0 +1,181 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Tasks API", "version": "2026-10-01", "description": "Shared SDK fixture: every serialization, credential, error and retry case the SDK targets must agree on." },
+  "servers": [{ "url": "https://spec-server.example.test/v1", "description": "Spec server; SDKs must never send requests here" }],
+  "security": [{ "bearerAuth": [] }, { "apiKeyHeader": [] }],
+  "paths": {
+    "/projects/{projectId}/tasks": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "listTasks",
+        "summary": "List tasks",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "name": "tags", "in": "query", "explode": true, "schema": { "type": "array", "items": { "type": "string" } } },
+          { "name": "status", "in": "query", "explode": false, "schema": { "type": "array", "items": { "$ref": "#/components/schemas/TaskStatus" } } },
+          { "name": "filter", "in": "query", "style": "deepObject", "explode": true, "schema": { "type": "object", "additionalProperties": { "type": "string" } } },
+          { "name": "q", "in": "query", "allowReserved": true, "schema": { "type": "string" } },
+          { "name": "X-Request-Id", "in": "header", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "A page of tasks", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskPage" } } } },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "post": {
+        "operationId": "createTask",
+        "summary": "Create a task",
+        "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "Idempotency-Key", "in": "header", "schema": { "type": "string", "maxLength": 64 } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskInput" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "422": { "description": "Invalid input", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ValidationProblem" } } } }
+        }
+      }
+    },
+    "/projects/{projectId}/tasks/search": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "post": {
+        "operationId": "searchTasks",
+        "summary": "Search tasks with an optional JSON query",
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "properties": { "text": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "Matches", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskPage" } } } } }
+      }
+    },
+    "/projects/{projectId}/tasks/{taskId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/TaskId" }],
+      "get": {
+        "operationId": "getTask",
+        "summary": "Get a task",
+        "security": [{ "apiKeyQuery": [] }],
+        "responses": {
+          "200": { "description": "The task", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "4XX": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "put": {
+        "operationId": "replaceTask",
+        "summary": "Replace a task",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskInput" } } } },
+        "responses": { "200": { "description": "Replaced", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } } }
+      },
+      "delete": {
+        "operationId": "deleteTask",
+        "summary": "Delete a task",
+        "deprecated": true,
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "204": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/Problem" } }
+      }
+    },
+    "/projects/{projectId}/tasks/{taskId}/attachment": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/TaskId" }],
+      "put": {
+        "operationId": "uploadAttachment",
+        "summary": "Upload a task attachment",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "contentMediaType": "application/octet-stream" } } } },
+        "responses": { "200": { "description": "Stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Attachment" } } } } }
+      }
+    },
+    "/projects/{projectId}/export": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "exportTasks",
+        "summary": "Export tasks as text",
+        "security": [{ "basicAuth": [] }],
+        "responses": { "200": { "description": "CSV text", "content": { "text/plain": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/reports": {
+      "post": {
+        "operationId": "uploadReport",
+        "summary": "Upload a report form",
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "properties": { "file": { "type": "string", "contentMediaType": "application/pdf" } } } } } },
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/session": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "Read the browser session",
+        "security": [{ "cookieAuth": [] }],
+        "responses": { "200": { "description": "Session", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/internal/ping": {
+      "get": { "operationId": "ping", "security": [], "responses": { "204": { "description": "Alive" } } }
+    },
+    "/legacy/tasks": {
+      "get": { "operationId": "listLegacyTasks", "responses": { "200": { "description": "Legacy list", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } } } }
+    },
+    "/health": {
+      "servers": [{ "url": "https://status.example.test", "description": "Status host; SDKs must never send requests here" }],
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "security": [],
+        "responses": { "200": { "description": "Healthy", "content": { "text/plain": { "schema": { "type": "string" } } } } }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ProjectId": { "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Problem": { "description": "Problem", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } }
+    },
+    "schemas": {
+      "TaskStatus": { "type": "string", "enum": ["open", "closed"] },
+      "Task": {
+        "type": "object",
+        "required": ["id", "title", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/TaskStatus" },
+          "assignee": { "type": ["string", "null"] },
+          "labels": { "type": "array", "items": { "type": "string" } },
+          "subtasks": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } }
+        }
+      },
+      "TaskInput": {
+        "type": "object",
+        "required": ["title"],
+        "properties": { "title": { "type": "string", "minLength": 1 }, "status": { "$ref": "#/components/schemas/TaskStatus" } },
+        "additionalProperties": false
+      },
+      "TaskPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } }, "nextCursor": { "type": ["string", "null"] } }
+      },
+      "Attachment": { "type": "object", "required": ["size"], "properties": { "size": { "type": "integer" } } },
+      "Problem": {
+        "type": "object",
+        "required": ["title", "status"],
+        "properties": { "type": { "type": "string" }, "title": { "type": "string" }, "status": { "type": "integer" } }
+      },
+      "ValidationProblem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "fields": { "type": "object", "additionalProperties": { "type": "string" } } } }
+        ]
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" },
+      "apiKeyHeader": { "type": "apiKey", "in": "header", "name": "X-Api-Key" },
+      "apiKeyQuery": { "type": "apiKey", "in": "query", "name": "key" },
+      "basicAuth": { "type": "http", "scheme": "basic" },
+      "cookieAuth": { "type": "apiKey", "in": "cookie", "name": "session" }
+    }
+  }
+}

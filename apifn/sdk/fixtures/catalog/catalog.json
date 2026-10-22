@@ -1,0 +1,1317 @@
+{
+  "api": {
+    "id": "example.tasks",
+    "title": "Tasks API",
+    "version": "2026-10-01"
+  },
+  "catalogVersion": "apifn.operation-catalog/v1",
+  "operations": [
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "legacy.tasks.list",
+      "method": "get",
+      "name": "listLegacyTasks",
+      "openapiOperationId": "listLegacyTasks",
+      "parameters": [],
+      "path": "/legacy/tasks",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            }
+          ],
+          "description": "Legacy list",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [
+          "python",
+          "typescript"
+        ],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": null,
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "reports.upload",
+      "method": "post",
+      "name": "uploadReport",
+      "openapiOperationId": "uploadReport",
+      "parameters": [],
+      "path": "/reports",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "multipart/form-data",
+            "schema": {
+              "properties": {
+                "file": {
+                  "contentMediaType": "application/pdf",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          }
+        ],
+        "required": true
+      },
+      "responses": [
+        {
+          "contents": [],
+          "description": "Accepted",
+          "kind": "success",
+          "status": "202"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Upload a report form",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "session.get",
+      "method": "get",
+      "name": "getSession",
+      "openapiOperationId": "getSession",
+      "parameters": [],
+      "path": "/session",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "type": "object"
+              }
+            }
+          ],
+          "description": "Session",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "cookieAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Read the browser session",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "system.health",
+      "method": "get",
+      "name": "getHealth",
+      "openapiOperationId": "getHealth",
+      "parameters": [],
+      "path": "/health",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "text/plain",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Healthy",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          []
+        ]
+      },
+      "servers": [
+        {
+          "description": "Status host; SDKs must never send requests here",
+          "url": "https://status.example.test",
+          "variables": {}
+        }
+      ],
+      "summary": "Health check",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "system.ping",
+      "method": "get",
+      "name": "ping",
+      "openapiOperationId": "ping",
+      "parameters": [],
+      "path": "/internal/ping",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [],
+          "description": "Alive",
+          "kind": "success",
+          "status": "204"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": false
+      },
+      "security": {
+        "alternatives": [
+          []
+        ]
+      },
+      "servers": null,
+      "summary": null,
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.attachment.upload",
+      "method": "put",
+      "name": "uploadAttachment",
+      "openapiOperationId": "uploadAttachment",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "taskId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/{taskId}/attachment",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "application/octet-stream",
+            "schema": {
+              "contentMediaType": "application/octet-stream",
+              "type": "string"
+            }
+          }
+        ],
+        "required": true
+      },
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Attachment"
+              }
+            }
+          ],
+          "description": "Stored",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Upload a task attachment",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
+      "executionPolicyRef": null,
+      "id": "tasks.create",
+      "method": "post",
+      "name": "createTask",
+      "openapiOperationId": "createTask",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "Idempotency-Key",
+          "required": false,
+          "schema": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/TaskInput"
+            }
+          }
+        ],
+        "required": true
+      },
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          ],
+          "description": "Created",
+          "kind": "success",
+          "status": "201"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "error",
+          "status": "409"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/ValidationProblem"
+              }
+            }
+          ],
+          "description": "Invalid input",
+          "kind": "error",
+          "status": "422"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Create a task",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": true,
+        "message": "Close tasks instead of deleting them.",
+        "replacement": "tasks.replace",
+        "since": "2026-09-01"
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.delete",
+      "method": "delete",
+      "name": "deleteTask",
+      "openapiOperationId": "deleteTask",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "taskId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/{taskId}",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [],
+          "description": "Deleted",
+          "kind": "success",
+          "status": "204"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "error",
+          "status": "404"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Delete a task",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.export",
+      "method": "get",
+      "name": "exportTasks",
+      "openapiOperationId": "exportTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/export",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "text/plain",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "CSV text",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "basicAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Export tasks as text",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.get",
+      "method": "get",
+      "name": "getTask",
+      "openapiOperationId": "getTask",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "taskId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/{taskId}",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          ],
+          "description": "The task",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "error",
+          "status": "404"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "error",
+          "status": "4XX"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyQuery",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Get a task",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.list",
+      "method": "get",
+      "name": "listTasks",
+      "openapiOperationId": "listTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "filter",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "style": "deepObject"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": true,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "q",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "query",
+          "name": "status",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/components/schemas/TaskStatus"
+            },
+            "type": "array"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "tags",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "X-Request-Id",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/TaskPage"
+              }
+            }
+          ],
+          "description": "A page of tasks",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "error",
+          "status": "401"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Problem",
+          "kind": "default",
+          "status": "default"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "List tasks",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.replace",
+      "method": "put",
+      "name": "replaceTask",
+      "openapiOperationId": "replaceTask",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "taskId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/{taskId}",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/TaskInput"
+            }
+          }
+        ],
+        "required": true
+      },
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          ],
+          "description": "Replaced",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Replace a task",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.search",
+      "method": "post",
+      "name": "searchTasks",
+      "openapiOperationId": "searchTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/search",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "application/json",
+            "schema": {
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          }
+        ],
+        "required": false
+      },
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/TaskPage"
+              }
+            }
+          ],
+          "description": "Matches",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Search tasks with an optional JSON query",
+      "tags": []
+    }
+  ],
+  "schemas": {
+    "Attachment": {
+      "properties": {
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "size"
+      ],
+      "type": "object"
+    },
+    "Problem": {
+      "properties": {
+        "status": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
+    "Task": {
+      "properties": {
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/components/schemas/TaskStatus"
+        },
+        "subtasks": {
+          "items": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TaskInput": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/components/schemas/TaskStatus"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "TaskPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "TaskStatus": {
+      "enum": [
+        "open",
+        "closed"
+      ],
+      "type": "string"
+    },
+    "ValidationProblem": {
+      "allOf": [
+        {
+          "$ref": "#/components/schemas/Problem"
+        },
+        {
+          "properties": {
+            "fields": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "securitySchemes": {
+    "apiKeyHeader": {
+      "description": null,
+      "in": "header",
+      "name": "X-Api-Key",
+      "type": "apiKey"
+    },
+    "apiKeyQuery": {
+      "description": null,
+      "in": "query",
+      "name": "key",
+      "type": "apiKey"
+    },
+    "basicAuth": {
+      "description": null,
+      "scheme": "basic",
+      "type": "http"
+    },
+    "bearerAuth": {
+      "description": null,
+      "scheme": "bearer",
+      "type": "http"
+    },
+    "cookieAuth": {
+      "description": null,
+      "in": "cookie",
+      "name": "session",
+      "type": "apiKey"
+    }
+  },
+  "serialization": {
+    "mediaTypes": [
+      "application/json",
+      "application/octet-stream",
+      "application/problem+json",
+      "multipart/form-data",
+      "text/plain"
+    ]
+  },
+  "servers": [
+    {
+      "description": "Spec server; SDKs must never send requests here",
+      "url": "https://spec-server.example.test/v1",
+      "variables": {}
+    }
+  ],
+  "source": {
+    "manifestDigest": "sha256:af414762b03e49d03984924d4fc67e575c917214e7e72f8aadaffaaf88c1fecf",
+    "provenance": {
+      "exporter": "hand-authored",
+      "revision": null,
+      "source": "apifn/sdk/fixtures/catalog/openapi.json"
+    },
+    "specDigest": "sha256:597c8284e2604ed9f07a2766766e75917fa4ebffcb16ffe7cbc6eb8fd8cf4a90"
+  }
+}

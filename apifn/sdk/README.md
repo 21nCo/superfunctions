@@ -1,0 +1,85 @@
+# @apifn/sdk
+
+Generates installable SDK packages from an ApiFn operation catalog ([`@apifn/contracts`](../contracts)) through target adapters. Each target implements one contract; this package ships the TypeScript `fetch` target. The same catalog, config, generator version and target version always produce the same bytes.
+
+```ts
+import { generateSdk, writeSdk, SDK_TARGETS } from "@apifn/sdk";
+
+const result = generateSdk({ catalog, config, targets: SDK_TARGETS });
+if (!result.ok) throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+const written = await writeSdk("packages/projects-sdk", result);
+```
+
+From the command line: `apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk` (see [`@apifn/cli`](../cli)).
+
+## SDK config
+
+```json
+{
+  "target": "typescript",
+  "unsupported": "fail",
+  "options": {
+    "package": { "name": "@example/projects-sdk", "version": "1.0.0", "description": "…", "license": "MIT" },
+    "clientName": "ProjectsClient",
+    "baseUrl": "https://api.example.com/v1",
+    "timeoutMs": 30000,
+    "retry": { "maxAttempts": 3, "baseDelayMs": 200, "maxDelayMs": 5000, "idempotentOperations": ["projects.replace"] },
+    "typeNames": { "Error": "ApiProblem" }
+  }
+}
+```
+
+- `unsupported`: `fail` (default) fails generation when the target cannot express an included operation; `exclude` leaves it out, lists it in the manifest with reason `unsupported` and marks the artifact `complete: false`. Operations are never omitted silently: `sdk.include: false` and `sdk.excludeTargets` exclusions are listed too.
+- Unknown fields anywhere are errors (`SDK_INVALID_CONFIG`).
+
+## Artifact manifest
+
+Every package gets `apifn.sdk-manifest.json` (`apifn.sdk-artifact/v1`): generator and target name/version, package identity, API identity, catalog digest with its spec and manifest digests, a digest of the resolved config, the release ID, included and excluded operations, the custom-code area, the sha256 of every owned file and the generation warnings. The release ID is the one `createReleaseDescriptor` derives for this catalog, generator and package; it is what generated clients report in failure observations. A release descriptor for an artifact with `complete: false` lists operations the package does not contain, so such an artifact should not be released.
+
+## Regeneration
+
+`writeSdk(outDir, result, { dryRun })` plans every change before writing:
+
+- Owned files (those listed in the previous manifest) are rewritten only when their contents change, so an unchanged file keeps its timestamp. Owned files a new generation no longer produces are deleted.
+- Seeds are written once, when missing, in the custom-code area (`src/custom/` for TypeScript). Nothing in that area is ever rewritten or deleted.
+- An existing file the generator does not own, a symlinked or non-directory ancestor, or an unreadable manifest is an `SDK_OUTPUT_CONFLICT`; nothing is written. An owned file edited by hand is replaced with an `SDK_OWNED_FILE_MODIFIED` warning.
+- New paths are recorded as owned before they are written, so an interrupted write can be rerun.
+
+## TypeScript target
+
+The generated package has no runtime dependencies and builds with its pinned TypeScript (`npm run build`, run by `prepack`). It contains `src/runtime.ts`, `src/models.ts` (one type per component schema), `src/client.ts` (the client class, per-operation `Params`, `Result` and `Error` types, `OperationErrors` and `isOperationError`), `src/index.ts`, and the `src/custom/index.ts` seed, whose exports are re-exported from the package entry.
+
+| Concern | Behavior |
+| --- | --- |
+| Destination | Requests go only to `baseUrl`: the consumer's, else the config's; one of them is required. Catalog and operation `servers` are never used (an operation with its own servers gets an `SDK_SERVERS_IGNORED` warning). Redirects are not followed, path parameters cannot be empty or `.`/`..`, and the built URL must keep the base origin and path. |
+| Parameters | One params object with camelCase keys plus `body`. Path and header `simple`, query `form` (explode or not) and `deepObject`, `allowReserved` (reserved characters kept except `#`); absent optional values are omitted. Cookie parameters are unsupported. |
+| Bodies | JSON (`application/json`, `application/*+json`), `text/plain` and `application/octet-stream` requests; form and multipart are unsupported. Responses decode by media type; a 2xx body of a kind the operation does not document is a `decode` error. |
+| Credentials | `credentials` by scheme name: bearer (`http bearer`, `oauth2`, `openIdConnect` access tokens), `http basic` (`{ username, password }`), `apiKey` in a header or query. Values may be functions resolved per call. The first alternative, in catalog order, whose credentials are all set is used; with none, no credentials are sent. Cookie API keys, other HTTP schemes and `mutualTLS` are unsupported; operations with no usable alternative are unsupported. |
+| Errors | `ApiError` with `kind` (`network`, `timeout`, `http`, `decode`, `validation`, `aborted`, `unknown`). `ApiHttpError` carries `status`, decoded `body`, `headers` and `declared`, true when the operation documents the status (exact, range or `default`) and the body kind; `isOperationError(error, id)` narrows to the operation's typed errors. |
+| Timeouts and cancellation | `timeoutMs` per attempt, including reading the body (`ApiTimeoutError`); a caller `AbortSignal` cancels the call and any backoff (`ApiAbortError`, never retried). |
+| Retries | `maxAttempts` from 1 to 10 in total. Reads (GET, HEAD, OPTIONS, TRACE) retry on network errors, timeouts and 408, 429, 500, 502, 503, 504 with exponential backoff capped at `maxDelayMs`, honoring `Retry-After`. Writes retry only when listed in `retry.idempotentOperations`: catalog v1 has no idempotency field, and method, schema or an `Idempotency-Key` parameter grant none. A stream body is never retried. |
+| Observation | `onFailure` receives an `apifn.client-failure/v1`-shaped event per failed call (operation, release, failure kind, status, attempt; no URLs, values, bodies or credentials). Nothing is observed unless it is set, and a throwing or rejecting hook never changes the call's result. |
+| Transport | `fetch` is injectable; it defaults to the global `fetch` (Node 18+, browsers, edge runtimes). |
+
+Names that would collide (a schema and a runtime export or an operation's types, two schemas with one type name, two parameters with one key, an operation named `constructor`, or two files differing only in case) are `SDK_NAME_COLLISION` errors; rename schemas with `typeNames` and operations with the catalog manifest's `name`.
+
+## Adding a target
+
+A target implements `SdkTarget` (`src/types.ts`): `id` and pinned `version`, `customCodeRoot`, `resolveOptions` (validates its `options`, unknown fields are errors), `packageOf`, `unsupportedReasons` (per operation; empty means supported) and `emit` (files and diagnostics from the context alone). `generateSdk` validates the catalog against `operation-catalog.v1`, selects operations (`sdk.include`, `excludeTargets`, then support), derives the release ID, checks every emitted path, and writes the manifest; `writeSdk` applies the ownership rules above to every target.
+
+## Shared fixtures
+
+`fixtures/` is shared with every target (`@apifn/sdk/fixtures/*`):
+
+- `catalog/`: an OpenAPI document and manifest covering every case below, and the `catalog.json` built from them.
+- `typescript/sdk.config.json`: the TypeScript config used by the tests.
+- `vectors/serialization.json`, `auth.json`, `errors.json`, `retry.json`: language-neutral request, credential, response and retry cases keyed by wire names. Each target runs them against a local HTTP server.
+
+## Verification
+
+```bash
+npx turbo run build typecheck test lint --filter=@apifn/sdk... --filter=@apifn/cli...
+npm run build --workspace @apifn/sdk && npm run verify:packed --workspace @apifn/sdk
+```
+
+The tests generate the fixture SDK, type-check and compile it with TypeScript, and run the vectors, timeouts, cancellation, host binding and observation against a local server. `verify:packed` generates the package outside the monorepo, installs its pinned TypeScript, type-checks and packs it, installs the tarball into a clean consumer, compiles a typed consumer and runs it against a local server (needs registry access). Set `UPDATE_FIXTURES=1` to rebuild `fixtures/catalog/catalog.json` after changing the fixture spec.

@@ -1,0 +1,71 @@
+{
+  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS, TRACE) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504; writes retry only when the SDK config declares the operation idempotent (retry.idempotentOperations), never because the method is PUT or DELETE or because an Idempotency-Key is sent. `expect.attempts` is the number of requests the server receives.",
+  "cases": [
+    {
+      "name": "a read retries within the budget",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 502 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "success" }
+    },
+    {
+      "name": "a read stops at the budget",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 503 }, { "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a client error is not retried",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 400 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 400 }
+    },
+    {
+      "name": "429 with Retry-After is retried",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "p1" } },
+      "responses": [{ "status": 429, "headers": { "retry-after": "0" } }, { "status": 200 }],
+      "expect": { "attempts": 2, "outcome": "success" }
+    },
+    {
+      "name": "a write with an Idempotency-Key is not retried without a declaration",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "key-1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 201 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a POST read-like search is not retried",
+      "operation": "tasks.search",
+      "parameters": { "path": { "projectId": "p1" } },
+      "responses": [{ "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "an undeclared DELETE is not retried",
+      "operation": "tasks.delete",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 204 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a declared idempotent write retries within the budget",
+      "operation": "tasks.replace",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 500 }, { "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a declared idempotent write succeeds on retry",
+      "operation": "tasks.replace",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 504 }, { "status": 200 }],
+      "expect": { "attempts": 2, "outcome": "success" }
+    }
+  ]
+}

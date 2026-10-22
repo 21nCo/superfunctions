@@ -9,7 +9,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 | Package | Description |
 |---------|-------------|
 | [`@apifn/core`](./core) | Route introspection, schema conversion (Zod/TypeBox → JSON Schema), OpenAPI 3.1 generation, diff, and ecosystem integrations. The other ApiFn npm packages build on it. |
-| [`@apifn/cli`](./cli) | The `apifn` command — generate, export, import, validate, diff, test, mock, serve, snippet. |
+| [`@apifn/cli`](./cli) | The `apifn` command — generate, export, import, validate, diff, test, mock, serve, snippet, sdk. |
 | [`@apifn/collections`](./collections) | OpenCollection YAML read/write/run: portable request collections with assertions, scripting, and reporters. |
 | [`@apifn/mock`](./mock) | Framework-free mock server from any OpenAPI spec, with schema/example/random responses and request validation. |
 | [`@apifn/snippets`](./snippets) | Generate request code snippets for 11 languages/clients (curl, fetch, axios, Python, Go, Java, …). |
@@ -17,6 +17,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 | [`@apifn/svelte`](./svelte) | The same UI surface for Svelte, shipped as `.svelte` source. |
 | [`@apifn/docsfn`](./docsfn) | docsfn plugin — render an OpenAPI spec as an interactive API reference. |
 | [`@apifn/contracts`](./contracts) | Versioned operation catalog, release descriptor and client-failure event contracts, with JSON Schemas and shared fixtures for SDK generators, agent tools and failure reporting. |
+| [`@apifn/sdk`](./sdk) | Generate installable SDKs from an operation catalog through deterministic target adapters; ships the TypeScript `fetch` target. |
 
 ### npm release dependency order
 
@@ -27,7 +28,8 @@ Publish DocsFn after both renderers: it pins core, React, and Svelte to 0.0.3.
 The admin wrapper also requires the published `@superfunctions/admin` **^0.1.4**
 peer so consumers share the same `AdminClient` type.
 `@apifn/contracts` **0.1.0** also pins core to exactly 0.0.3 and publishes after
-core; it is not in the current publication batch.
+core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
+contracts and is not published yet either.
 
 All ApiFn workspace callers use the new exact core pin. CLI, collections, mock,
 and snippets retain their current package versions and are not included in this

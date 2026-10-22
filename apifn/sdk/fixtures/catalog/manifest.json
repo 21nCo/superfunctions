@@ -1,0 +1,21 @@
+{
+  "manifestVersion": 1,
+  "api": { "id": "example.tasks", "version": "2026-10-01" },
+  "serialization": { "mediaTypes": ["application/json", "application/problem+json", "text/plain", "application/octet-stream", "multipart/form-data"] },
+  "provenance": { "source": "apifn/sdk/fixtures/catalog/openapi.json", "exporter": "hand-authored" },
+  "operations": [
+    { "id": "tasks.list", "operationId": "listTasks" },
+    { "id": "tasks.create", "operationId": "createTask" },
+    { "id": "tasks.search", "operationId": "searchTasks" },
+    { "id": "tasks.get", "operationId": "getTask" },
+    { "id": "tasks.replace", "operationId": "replaceTask" },
+    { "id": "tasks.delete", "operationId": "deleteTask", "deprecation": { "replacement": "tasks.replace", "since": "2026-09-01", "message": "Close tasks instead of deleting them." } },
+    { "id": "tasks.attachment.upload", "operationId": "uploadAttachment" },
+    { "id": "tasks.export", "operationId": "exportTasks" },
+    { "id": "reports.upload", "operationId": "uploadReport" },
+    { "id": "session.get", "operationId": "getSession" },
+    { "id": "system.ping", "operationId": "ping", "sdk": { "include": false } },
+    { "id": "legacy.tasks.list", "operationId": "listLegacyTasks", "sdk": { "excludeTargets": ["typescript", "python"] } },
+    { "id": "system.health", "operationId": "getHealth" }
+  ]
+}
