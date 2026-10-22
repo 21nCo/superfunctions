@@ -1,0 +1,31 @@
+devfn/config/src/index.ts
+  s_a3afc0a1a8c47e::t_8fe1cbfed35e41 6
+devfn/config/src/process-identity.ts
+  s_a3afc0a1a8c47e::t_aaf9e4223bb120 46-59
+devfn/processes/src/identity.ts
+  s_a3afc0a1a8c47e::t_8b93d153d65ff4 1
+devfn/processes/src/index.ts
+  s_a3afc0a1a8c47e::t_b5a3daff58edac 2
+devfn/processes/src/supervisor.ts
+  s_a3afc0a1a8c47e::t_ed309e70848909 11,82
+devfn/proxy/src/tunnel/ngrok-connector.ts
+  s_a3afc0a1a8c47e::t_801534b87839f5 7,90-91
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_a3afc0a1a8c47e::t_9810cfae9e0e26 691-749
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c955af1d135a3a817fc863bd2089fd84adcc4c4b",
+  "prompts": {},
+  "sessions": {
+    "s_a3afc0a1a8c47e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a3afc0a1a8c47e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
