@@ -26,7 +26,8 @@ function createMockPlatformAdapter(opts: {
     platform: 'zoom',
     async join() {},
     async leave() {},
-    getAudioStream: () => new ReadableStream(),
+    getAudioStream: () => new ReadableStream({ start(c) { c.enqueue({ data: new Uint8Array(32000), encoding: 'pcm_s16le', sampleRate: 16000, channels: 1, timestamp: 1000 }); c.close(); } }),
+    getVideoStream: () => new ReadableStream({ start(c) { c.enqueue({ data: new Uint8Array(16 * 16 * 3), encoding: 'rgb24', frameRate: 1, width: 16, height: 16, timestamp: 1000 }); c.close(); } }),
     async getParticipants() {
       return participants;
     },

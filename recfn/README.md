@@ -119,3 +119,45 @@ support transactions and serialize writes to the bot root. File-backed SQLite,
 real local files, and the SearchFn memory index have failure/reopen and concurrent
 producer coverage. Other database isolation modes and remote storage/search
 providers require their own acceptance; this is not live-provider evidence.
+
+### Bot media finalization
+
+Bot workers require `ffmpeg` (PCM/AAC and libx264 encoders) and `ffprobe` on
+`PATH`. They encode and fully decode-check media before storing a recording.
+`BotWorkerConfig.captureOptions` can select executable paths, a private temporary
+parent directory, and capture limits. Defaults are 256 MiB combined input,
+64 MiB output, and a four-hour capture deadline; output can be configured up to
+256 MiB. Exceeding a limit fails the recording instead of publishing truncated
+media. At 1920×1080 RGB24, the default input cap holds at most 43 video
+frames (about 1.4 seconds at 30 fps, before audio). This spool-first video path
+is a valid-media checkpoint and cannot yet record ordinary meetings; streaming
+encoding with bounded backpressure/storage is still required. Each encoder/decoder invocation has a 60-second deadline. Temporary files
+are removed on success or failure. The final bounded result is held in memory
+for the existing storage API; this is not unlimited-duration streaming storage.
+
+Adapters must declare `AudioChunk.encoding`: interleaved signed 16-bit
+little-endian PCM (`pcm_s16le`), or consecutive bytes from one WebM/Ogg audio
+container. PCM sample rate and channel count must remain constant and frames
+must contain complete samples. For encoded audio, decoder metadata determines
+the resulting sample format. Audio-only recordings are finalized as WAV.
+Meet/Teams propagate their actual MediaRecorder MIME container and preserve the
+last asynchronous data event before closing the stream.
+
+MP4 requires both audio and video. Video currently accepts complete even-sized
+RGB24 frames (up to 4096×4096) at a declared constant rate of 1–120 fps. Video
+presentation timestamps must be monotonic at that cadence within 1 ms and share
+a millisecond clock with audio; Zoom SDK bridges must provide these media
+timestamps, not arrival times. MP4 contains AAC audio and H.264 video in a
+fragmented MP4 container. Initial audio/video offset is preserved (up to one
+minute); AAC codec priming can extend the container duration. Duration comes
+from the encoded file, including the final sample/frame, rather than the interval
+between callback arrivals. Unknown encodings, absent video, format/cadence
+changes, malformed input, missing binaries, or encoding failures reject capture.
+
+A Zoom bridge must identify its actual raw frame layout or convert it to this
+contract. The SDK interface alone does not establish that a real provider emits
+RGB24. Meet/Teams currently expose audio only and therefore cannot satisfy the
+default MP4 request; request `audio_only` for that capture path. Live provider
+video support, per-participant tracks, one-hour latency/resource acceptance,
+ASR compatibility with encoded MediaRecorder chunks, and desktop recorder
+container correctness remain separate unfinished requirements.

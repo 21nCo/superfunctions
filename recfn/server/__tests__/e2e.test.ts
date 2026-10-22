@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { ZoomAdapter } from '../../platforms/zoom/src/index.js';
 import type {
   ZoomAudioFrame,
@@ -72,7 +76,7 @@ function createMockSdk(): ZoomMeetingSdk & {
       }
     },
     emit(event: string, ...args: unknown[]) {
-      for (const callback of listeners.get(event) ?? []) {
+      for (const callback of [...(listeners.get(event) ?? [])]) {
         callback(...args);
       }
     },
@@ -173,15 +177,19 @@ describe('End-to-end integration (Zoom production path)', () => {
       timestamp: Date.now(),
     });
     sdk.emit('audio-frame', {
-      buffer: new Uint8Array([1, 2, 3, 4]),
+      buffer: new Uint8Array(48000),
+      encoding: 'pcm_s16le', timestamp: 1000,
       sampleRate: 48000,
       channels: 1,
     });
     sdk.emit('audio-frame', {
-      buffer: new Uint8Array([5, 6, 7, 8]),
+      buffer: new Uint8Array(48000),
+      encoding: 'pcm_s16le', timestamp: 1500,
       sampleRate: 48000,
       channels: 1,
     });
+
+    for (let i = 0; i < 10; i++) sdk.emit('video-frame', { buffer: new Uint8Array(16 * 16 * 3), width: 16, height: 16, encoding: 'rgb24', frameRate: 10, timestamp: 1000 + i * 100 });
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -235,6 +243,18 @@ describe('End-to-end integration (Zoom production path)', () => {
     expect(aggregate.data.recordings[0].botId).toBe(botId);
     expect(aggregate.data.recordings[0].storageRef).toContain(`recordings/ns_e2e/`);
     expect(aggregate.data.recordings[0].size).toBeGreaterThan(0);
+    const persistedBytes = await storage.download(aggregate.data.recordings[0].storageRef);
+    expect(persistedBytes.length).toBe(aggregate.data.recordings[0].size);
+    const directory = await mkdtemp(join(tmpdir(), 'recfn-stored-media-'));
+    try {
+      const path = join(directory, 'recording.mp4');
+      await writeFile(path, persistedBytes);
+      const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-count_frames', '-show_streams', '-of', 'json', path], { encoding: 'utf8' }));
+      expect(probe.streams.find((s: any) => s.codec_type === 'video')).toMatchObject({ codec_name: 'h264', nb_read_frames: '10', width: 16, height: 16 });
+      expect(probe.streams.find((s: any) => s.codec_type === 'audio')).toMatchObject({ codec_name: 'aac', sample_rate: '48000', channels: 1 });
+      execFileSync('ffmpeg', ['-v', 'error', '-xerror', '-i', path, '-f', 'null', '-']);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+
 
     const persistedParticipants = await store.getParticipants(botId, 'ns_e2e');
     const persistedMetadata = await store.getMetadata(botId, 'ns_e2e');

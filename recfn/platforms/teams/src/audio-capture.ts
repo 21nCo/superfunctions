@@ -16,6 +16,7 @@ interface TeamsCaptureStartResult {
   details?: Record<string, unknown>;
   sampleRate?: number;
   channels?: number;
+  encoding?: AudioChunk['encoding'];
 }
 
 interface TeamsCapturePollResult {
@@ -24,6 +25,7 @@ interface TeamsCapturePollResult {
   error?: string | null;
   sampleRate?: number;
   channels?: number;
+  encoding?: AudioChunk['encoding'];
 }
 
 function createTeamsCaptureUnavailableError(
@@ -120,6 +122,7 @@ export function createTeamsAudioStream(
                   error: string | null;
                   sampleRate: number;
                   channels: number;
+                  encoding?: AudioChunk['encoding'];
                   recorder?: MediaRecorder;
                   stream?: MediaStream;
                   audioStream?: MediaStream;
@@ -211,12 +214,14 @@ export function createTeamsAudioStream(
                 error: null,
                 sampleRate: sampleRate ?? 48_000,
                 channels: Math.max(audioTracks.length, 1),
+                encoding: recorder.mimeType.startsWith('audio/webm') ? 'webm' : recorder.mimeType.startsWith('audio/ogg') ? 'ogg' : undefined,
                 recorder,
                 stream,
                 audioStream,
               };
 
-              recorder.ondataavailable = async (event) => {
+              let pendingData = Promise.resolve();
+              recorder.ondataavailable = (event) => {
                 if (!event.data || event.data.size === 0) {
                   return;
                 }
@@ -224,8 +229,10 @@ export function createTeamsAudioStream(
                 if (!activeSession) {
                   return;
                 }
-                const buffer = await event.data.arrayBuffer();
-                activeSession.queue.push(Array.from(new Uint8Array(buffer)));
+                pendingData = pendingData.then(async () => {
+                  const buffer = await event.data.arrayBuffer();
+                  activeSession.queue.push(Array.from(new Uint8Array(buffer)));
+                }).catch(() => { activeSession.error = 'MediaRecorder data extraction failed.'; });
               };
               recorder.onerror = (event) => {
                 const activeSession = sessions[sessionId];
@@ -241,7 +248,7 @@ export function createTeamsAudioStream(
                 if (!activeSession) {
                   return;
                 }
-                activeSession.done = true;
+                void pendingData.then(() => { activeSession.done = true; });
               };
 
               const markEnded = () => {
@@ -249,7 +256,6 @@ export function createTeamsAudioStream(
                 if (!activeSession) {
                   return;
                 }
-                activeSession.done = true;
                 if (recorder.state !== 'inactive') {
                   recorder.stop();
                 }
@@ -310,6 +316,7 @@ export function createTeamsAudioStream(
                       error: string | null;
                       sampleRate: number;
                       channels: number;
+                  encoding?: AudioChunk['encoding'];
                     }
                   >;
                 };
@@ -335,8 +342,12 @@ export function createTeamsAudioStream(
                   error: activeSession.error,
                   sampleRate: activeSession.sampleRate,
                   channels: activeSession.channels,
+                  encoding: activeSession.encoding,
                 };
                 if (snapshot.done) {
+                  const media = activeSession as typeof activeSession & { stream?: MediaStream; audioStream?: MediaStream };
+                  media.audioStream?.getTracks().forEach(track => track.stop());
+                  media.stream?.getTracks().forEach(track => track.stop());
                   delete sessions[sessionId];
                 }
                 return snapshot;
@@ -364,6 +375,7 @@ export function createTeamsAudioStream(
                 timestamp: Date.now(),
                 sampleRate: result.sampleRate ?? options?.sampleRate ?? 48_000,
                 channels: result.channels ?? 1,
+                encoding: result.encoding,
               });
             }
 

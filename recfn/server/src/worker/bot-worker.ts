@@ -19,6 +19,7 @@ import {
   assertCaptureHasData,
   captureFromStream,
   type CaptureResult,
+  type CaptureOptions,
 } from '../recording/capture.js';
 import { uploadRecording } from '../recording/storage.js';
 
@@ -31,6 +32,8 @@ export interface BotWorkerConfig {
   platformAdapters?: Map<string, PlatformAdapter>;
   platformAdapterFactories?: Map<string, PlatformAdapterFactory>;
   storage?: StorageAdapter;
+  /** Host encoder paths and bounded media capture resources. */
+  captureOptions?: Omit<CaptureOptions, 'recordingFormat' | 'videoStream'>;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
   metrics?: import('../integrations/watchfn.js').MetricsEmitter;
@@ -134,8 +137,11 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     }
   }
 
-  function startCaptureSession(bot: Bot, adapter: PlatformAdapter): Promise<CaptureResult> {
-    let recordingStream = adapter.getAudioStream();
+  async function startCaptureSession(bot: Bot, adapter: PlatformAdapter): Promise<CaptureResult> {
+    const videoStream = (bot.config.recordingFormat ?? 'mp4') === 'mp4' ? adapter.getVideoStream?.() : undefined;
+    let recordingStream;
+    try { recordingStream = adapter.getAudioStream(); }
+    catch (error) { void videoStream?.cancel().catch(() => {}); throw error; }
     if (bot.config.enableRealTimeTranscript && config.realtimePipeline) {
       const [realtimeStream, finalizedRecordingStream] = recordingStream.tee();
       recordingStream = finalizedRecordingStream;
@@ -147,7 +153,9 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     }
 
     return captureFromStream(recordingStream, {
+      ...config.captureOptions,
       recordingFormat: bot.config.recordingFormat ?? 'mp4',
+      videoStream,
     });
   }
 

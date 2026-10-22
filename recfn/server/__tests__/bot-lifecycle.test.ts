@@ -30,13 +30,15 @@ function createMockPlatformAdapter(
     opts.audioChunks ??
     [
       {
-        data: new Uint8Array([1, 2, 3]),
+        data: new Uint8Array(96000),
+        encoding: 'pcm_s16le',
         timestamp: 1000,
         sampleRate: 48000,
         channels: 1,
       },
       {
-        data: new Uint8Array([4, 5, 6]),
+        data: new Uint8Array(96000),
+        encoding: 'pcm_s16le',
         timestamp: 2000,
         sampleRate: 48000,
         channels: 1,
@@ -67,6 +69,12 @@ function createMockPlatformAdapter(
           controller.close();
         },
       });
+    },
+    getVideoStream() {
+      return new ReadableStream({ start(c) {
+        for (let i = 0; i < 20; i++) c.enqueue({ data: new Uint8Array(16 * 16 * 3), encoding: 'rgb24', frameRate: 10, timestamp: 1000 + i * 100, width: 16, height: 16 });
+        c.close();
+      } });
     },
     async getParticipants() {
       return participants;

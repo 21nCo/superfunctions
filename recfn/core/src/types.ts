@@ -159,6 +159,8 @@ export interface EnvelopeError {
 export type Result<T> = Envelope<T> | EnvelopeError;
 
 export interface AudioChunk {
+  /** Explicit wire encoding. Omitted legacy frames cannot be finalized safely. */
+  encoding?: 'pcm_s16le' | 'webm' | 'ogg';
   data: Uint8Array;
   timestamp: number;
   sampleRate: number;
@@ -166,6 +168,9 @@ export interface AudioChunk {
 }
 
 export interface VideoChunk {
+  /** One complete packed RGB frame; timestamps must follow this constant rate. */
+  encoding?: 'rgb24';
+  frameRate?: number;
   data: Uint8Array;
   timestamp: number;
   width: number;

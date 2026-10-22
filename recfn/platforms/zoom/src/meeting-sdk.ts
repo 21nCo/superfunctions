@@ -24,6 +24,9 @@ export interface ZoomChatMessageInfo {
 }
 
 export interface ZoomAudioFrame {
+  encoding?: 'pcm_s16le';
+  /** Media-clock milliseconds shared with video. */
+  timestamp?: number;
   buffer: Uint8Array;
   sampleRate: number;
   channels: number;
@@ -31,6 +34,10 @@ export interface ZoomAudioFrame {
 }
 
 export interface ZoomVideoFrame {
+  encoding?: 'rgb24';
+  /** Media-clock milliseconds shared with audio. */
+  timestamp?: number;
+  frameRate?: number;
   buffer: Uint8Array;
   width: number;
   height: number;

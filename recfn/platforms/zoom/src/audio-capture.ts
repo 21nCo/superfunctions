@@ -9,6 +9,7 @@ export function createAudioStream(
   sdk: ZoomMeetingSdk,
   _options?: AudioCaptureOptions,
 ): ReadableStream<AudioChunk> {
+  let cleanup = () => {};
   return new ReadableStream<AudioChunk>({
     start(controller) {
       let closed = false;
@@ -18,7 +19,8 @@ export function createAudioStream(
         }
         const chunk: AudioChunk = {
           data: frame.buffer,
-          timestamp: Date.now(),
+          encoding: frame.encoding,
+          timestamp: frame.timestamp ?? Date.now(),
           sampleRate: frame.sampleRate,
           channels: frame.channels,
         };
@@ -34,11 +36,16 @@ export function createAudioStream(
         controller.close();
       };
 
+      cleanup = () => {
+        closed = true;
+        sdk.off('audio-frame', onFrame as (...args: unknown[]) => void);
+        sdk.off('meeting-ended', onMeetingEnded as (...args: unknown[]) => void);
+      };
       sdk.on('audio-frame', onFrame);
       sdk.on('meeting-ended', onMeetingEnded);
     },
     cancel() {
-      // Streams are meeting-scoped; upstream SDK listeners are removed when the meeting ends.
+      cleanup();
     },
   });
 }
@@ -47,6 +54,7 @@ export function createPerParticipantAudioStream(
   sdk: ZoomMeetingSdk,
   participantId: string,
 ): ReadableStream<AudioChunk> {
+  let cleanup = () => {};
   return new ReadableStream<AudioChunk>({
     start(controller) {
       let closed = false;
@@ -57,7 +65,8 @@ export function createPerParticipantAudioStream(
         if (frame.participantId === participantId) {
           const chunk: AudioChunk = {
             data: frame.buffer,
-            timestamp: Date.now(),
+          encoding: frame.encoding,
+            timestamp: frame.timestamp ?? Date.now(),
             sampleRate: frame.sampleRate,
             channels: frame.channels,
           };
@@ -77,8 +86,14 @@ export function createPerParticipantAudioStream(
         controller.close();
       };
 
+      cleanup = () => {
+        closed = true;
+        sdk.off('participant-audio-frame', onFrame as (...args: unknown[]) => void);
+        sdk.off('meeting-ended', onMeetingEnded as (...args: unknown[]) => void);
+      };
       sdk.on('participant-audio-frame', onFrame);
       sdk.on('meeting-ended', onMeetingEnded);
     },
+    cancel() { cleanup(); },
   });
 }
