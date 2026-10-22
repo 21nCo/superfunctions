@@ -27,3 +27,9 @@ builds passed. The focused webhook/native suite was rerun after adding concurren
 exhaustion settlement. Default Node 20 could not load the existing Node 22 SQLite
 binary; the native tests ran under the matching Node 22 runtime. This is not new
 Node 20 acceptance. Local receiver, databases and temporary directories are removed.
+
+The task branch also incorporates shared prerequisite f0d620096 through an ordinary
+merge. Rebuilt observability, DB, HTTP, storage, Markdown core/extensions/ContentFn/
+parser, ContentFn core and server in dependency order, then repeated the full server
+suite and typecheck. Turbo was absent in this checkout, so npm workspace build
+commands were used; no package or toolchain bypass was introduced.
