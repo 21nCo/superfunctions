@@ -69,6 +69,9 @@ export * from "./trace/context-propagation";
 // Alerts
 export {
   ConditionEvaluator,
+  type AlertMetricPoint,
+  type AlertMetricData,
+  type ConditionResult,
   type AnomalyCondition,
   type CompositeCondition,
   type ConditionOperator,

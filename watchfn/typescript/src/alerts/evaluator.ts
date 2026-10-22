@@ -1,6 +1,6 @@
 /** Alert evaluator engine. */
 
-import { AlertCondition, ConditionEvaluator } from "./conditions";
+import { AlertCondition, ConditionEvaluator, validateAlertCondition, type AlertMetricPoint } from "./conditions";
 
 export interface Alert {
   id: string;
@@ -22,6 +22,8 @@ export interface EvaluationResult {
   value?: number;
   timestamp: number;
   message?: string;
+  /** False when observations cannot establish either a breach or recovery. */
+  observed: boolean;
 }
 
 export class AlertEvaluator {
@@ -36,6 +38,7 @@ export class AlertEvaluator {
    * Register an alert
    */
   register(alert: Alert): void {
+    validateAlertCondition(alert.condition);
     this.alerts.set(alert.id, {
       ...alert,
       state: "normal",
@@ -46,13 +49,13 @@ export class AlertEvaluator {
   /**
    * Evaluate all alerts
    */
-  evaluateAll(data: Map<string, any[]>): EvaluationResult[] {
+  evaluateAll(data: ReadonlyMap<string, readonly AlertMetricPoint[]>, now = Date.now()): EvaluationResult[] {
     const results: EvaluationResult[] = [];
 
     for (const alert of this.alerts.values()) {
       if (!alert.enabled) continue;
 
-      const result = this.evaluate(alert, data);
+      const result = this.evaluate(alert, data, now);
       results.push(result);
     }
 
@@ -62,14 +65,9 @@ export class AlertEvaluator {
   /**
    * Evaluate a single alert
    */
-  evaluate(alert: Alert, data: Map<string, any[]>): EvaluationResult {
-    const timestamp = Date.now();
-    
-    // Get relevant data for this alert
-    const alertData = this.getAlertData(alert, data);
-    
-    // Evaluate condition
-    const triggered = this.conditionEvaluator.evaluate(alert.condition, alertData);
+  evaluate(alert: Alert, data: ReadonlyMap<string, readonly AlertMetricPoint[]>, timestamp = Date.now()): EvaluationResult {
+    const result = this.conditionEvaluator.evaluateResult(alert.condition, data, timestamp);
+    const triggered = result.matched === true;
 
     // Update alert state
     if (triggered) {
@@ -78,7 +76,7 @@ export class AlertEvaluator {
         alert.state = "triggered";
         alert.triggeredAt = timestamp;
       }
-    } else {
+    } else if (result.matched === false) {
       alert.consecutiveFailures = 0;
       if (alert.state === "triggered") {
         alert.state = "normal";
@@ -92,6 +90,8 @@ export class AlertEvaluator {
       alert,
       triggered,
       timestamp,
+      value: result.value,
+      observed: result.matched !== null,
       message: triggered ? `Alert ${alert.name} triggered` : undefined,
     };
   }
@@ -144,22 +144,4 @@ export class AlertEvaluator {
     this.alerts.delete(id);
   }
 
-  private getAlertData(alert: Alert, allData: Map<string, any[]>): any[] {
-    // Extract metric name from condition
-    const metric = this.extractMetric(alert.condition);
-    return allData.get(metric) || [];
-  }
-
-  private extractMetric(condition: AlertCondition): string {
-    if (condition.type === "threshold" || condition.type === "anomaly") {
-      return condition.metric;
-    } else if (condition.type === "composite") {
-      // For composite conditions, return the first metric found
-      for (const c of condition.conditions) {
-        const metric = this.extractMetric(c);
-        if (metric) return metric;
-      }
-    }
-    return "";
-  }
 }
