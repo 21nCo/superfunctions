@@ -1,0 +1,35 @@
+cifn/.conduct/log-confidentiality-readiness.md
+  s_92427ff18a8304::t_4b44833d2452f7 1-29
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_b2a922504b8aa9 2,18-19,53,73
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_5dc286a03c60c5 217-223
+cifn/typescript/runner/src/reporting/redact.ts
+  s_e1c5fc1a65c0cf::t_49fecc536bfe67 1,3-10
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_e1c5fc1a65c0cf::t_83504a4372202c 94-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cfb1c393a8358df151495b8bccba558fc41d242",
+  "prompts": {},
+  "sessions": {
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
