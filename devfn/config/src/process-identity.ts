@@ -43,6 +43,20 @@ export async function processBirthSignature(pid: number): Promise<string | undef
   return undefined;
 }
 
+/**
+ * The birth signature of a process just started, read up to ten times 20 ms
+ * apart: a single ps or /proc read may miss it transiently. Undefined only
+ * when every read failed.
+ */
+export async function startedProcessBirthSignature(pid: number): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    const signature = await processBirthSignature(pid);
+    if (signature) return signature;
+  }
+  return undefined;
+}
+
 /** The /proc/<pid>/stat fields after the command name: state, ppid, pgrp, ... */
 function linuxStatFields(stat: string): string[] {
   return stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);

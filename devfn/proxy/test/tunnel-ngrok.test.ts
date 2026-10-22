@@ -688,6 +688,65 @@ describe("ngrok connector lifecycle", () => {
     } finally { try { process.kill(gate, "SIGKILL"); } catch { /* gone */ } }
   });
 
+  // Reads of the agent's process identity (ps on darwin, /proc on Linux) fail
+  // the first `failures` times; the gate's PID and each injected failure are recorded.
+  async function connectorWithIdentityFaults(failures: number) {
+    const record = path.join(dir, "record");
+    await mkdir(record);
+    const caFile = path.join(dir, "ca.pem");
+    await writeFile(caFile, issue([`*.${DOMAIN}`], "origin").cert);
+    const configFile = path.join(dir, "connector.json");
+    await writeFile(configFile, new NgrokTunnelProvider({ env: SECRETS }).renderConnectorConfig(ngrokFixtureBinding("/repo"), [A], { port: 1, caFile }));
+    const injected = path.join(dir, "injected");
+    const preload = path.join(dir, "identity-faults.mjs");
+    await writeFile(preload, `import { createRequire, syncBuiltinESMExports } from "node:module";\nimport { appendFileSync, writeFileSync } from "node:fs";\nimport { promisify } from "node:util";\n` +
+      `const require = createRequire(import.meta.url);\nconst childProcess = require("node:child_process");\nconst fsPromises = require("node:fs/promises");\n` +
+      `let remaining = ${failures};\nconst inject = (pid) => { if (pid === String(process.pid) || remaining <= 0) return false; remaining -= 1; appendFileSync(${JSON.stringify(injected)}, "x"); return true; };\n` +
+      `const execFile = childProcess.execFile;\nconst patched = (...args) => execFile(...args);\n` +
+      `patched[promisify.custom] = (file, args, options) => file === "ps" && args.includes("lstart=") && inject(args.at(-1)) ? Promise.reject(new Error("injected identity read failure")) : execFile[promisify.custom](file, args, options);\n` +
+      `childProcess.execFile = patched;\nconst readFile = fsPromises.readFile;\n` +
+      `fsPromises.readFile = (file, ...rest) => { const match = /^\\/proc\\/(\\d+)\\/stat$/.exec(String(file)); return match && inject(match[1]) ? Promise.reject(new Error("injected identity read failure")) : readFile(file, ...rest); };\n` +
+      `const spawn = childProcess.spawn;\nchildProcess.spawn = (...args) => { const child = spawn(...args); writeFileSync(${JSON.stringify(path.join(dir, "gate.pid"))}, String(child.pid)); return child; };\nsyncBuiltinESMExports();\n`);
+    const home = path.join(dir, "home");
+    await mkdir(home);
+    const readyPort = await new Promise<number>((resolve) => { const probe = net.createServer().listen(0, "127.0.0.1", () => { const { port } = probe.address() as net.AddressInfo; probe.close(() => resolve(port)); }); });
+    const identityFile = path.join(dir, "agent.json");
+    const [node, importFlag, tsx, entry] = CONNECTOR;
+    const child = spawn(node, [importFlag, tsx, "--import", pathToFileURL(preload).href, entry, configFile, String(readyPort), await writeFakeNgrok(dir, record), identityFile],
+      { env: { PATH: process.env.PATH, HOME: home, NGROK_AUTHTOKEN: SECRETS.DEVFN_FIXTURE_NGROK_AUTHTOKEN }, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    return { child, exited, record, readyPort, identityFile, stderr: () => stderr, injected: async () => (await readFile(injected, "utf8").catch(() => "")).length, gate: async () => Number(await readFile(path.join(dir, "gate.pid"), "utf8")) };
+  }
+
+  posixIt("retries a failed read of its agent's identity before the agent may start", { timeout: 60_000 }, async () => {
+    const connector = await connectorWithIdentityFaults(1);
+    try {
+      await vi.waitFor(async () => expect(await new Promise((resolve) => http.get({ host: "127.0.0.1", port: connector.readyPort, path: "/ready" }, (response) => { response.resume(); resolve(response.statusCode); }).on("error", () => resolve(0)))).toBe(200), { timeout: 20_000, interval: 100 });
+      expect(await connector.injected()).toBe(1);
+      const agent = JSON.parse(await readFile(connector.identityFile, "utf8")) as { pid: number };
+      expect(agent.pid).toBe(await connector.gate());
+      expect((await readdir(connector.record)).filter((name) => name.startsWith("agent-"))).toEqual([`agent-${agent.pid}.json`]);
+    } finally {
+      connector.child.kill("SIGTERM");
+      await connector.exited;
+    }
+  });
+
+  posixIt("exits without opening its agent's gate when the agent's identity cannot be read", { timeout: 60_000 }, async () => {
+    const connector = await connectorWithIdentityFaults(Number.MAX_SAFE_INTEGER);
+    const gate = await vi.waitFor(async () => await connector.gate(), { timeout: 20_000 });
+    try {
+      expect(await connector.exited).toBe(1);
+      expect(connector.stderr()).toContain("The ngrok agent's process identity could not be read.");
+      expect(await connector.injected()).toBe(10);
+      await vi.waitFor(() => expect(() => process.kill(gate, 0)).toThrow(), { timeout: 3_000 });
+      expect(await readdir(connector.record)).toEqual([]);
+      await expect(readFile(connector.identityFile)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { try { process.kill(gate, "SIGKILL"); } catch { /* gone */ } }
+  });
+
   posixIt("stops its agent whenever the connector itself fails", { timeout: 60_000 }, async () => {
     const record = path.join(dir, "record");
     await mkdir(record);

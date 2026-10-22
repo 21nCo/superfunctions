@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
 
-import { processBirthSignature } from "@devfn/processes";
+import { startedProcessBirthSignature } from "@devfn/processes";
 
 import { createOriginBridge, startedEndpoint } from "./ngrok-bridge.js";
 import { parseNgrokConnectorConfig, renderNgrokAgentConfig } from "./ngrok.js";
@@ -87,7 +87,8 @@ async function main(): Promise<void> {
   child.once("error", fatal);
   // Only an agent that exited stops being one the service must look for.
   child.once("exit", (code) => { void rm(identityFile, { force: true }).finally(() => exit(code === 0 ? 0 : 1)); });
-  const birthSignature = child.pid ? await processBirthSignature(child.pid) : undefined;
+  // Until it is recorded the gate stays closed: failing here exits the connector, and the agent with it, before ngrok runs.
+  const birthSignature = child.pid ? await startedProcessBirthSignature(child.pid) : undefined;
   if (!child.pid || !birthSignature) throw new Error("The ngrok agent's process identity could not be read.");
   await writePrivateJson(identityFile, { version: 1, pid: child.pid, birthSignature, startedAt: new Date().toISOString(), configFile: path.basename(configFile) });
   child.stdin?.end("start\n");
