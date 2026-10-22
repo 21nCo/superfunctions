@@ -11,7 +11,7 @@ import { ProcessError, ProcessSupervisor, processGroupStatus, stopProcessGroup }
 import { PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
 import {
-  TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, writePrivateFile, writeTunnelState,
+  InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, writePrivateFile, writeTunnelState,
   type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState,
 } from "./state.js";
 
@@ -217,11 +217,13 @@ const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid
 
 /**
  * Commit a transition built on candidate, a copy of state: state becomes the
- * candidate only once it is durable, so after a failed write it is still the
- * last durable state, which rollback and recovery read.
+ * candidate once the journal is replaced with it, the commit point, even if
+ * syncing that rename failed (InstalledWriteError), as recovery then reads
+ * the candidate too. After a write that failed before replacing the journal,
+ * state is still the journal, which rollback and recovery read.
  */
 async function commitState(ctx: Context, state: TunnelState, candidate: TunnelState): Promise<void> {
-  await writeTunnelState(ctx.stateDir, candidate);
+  await writeTunnelState(ctx.stateDir, candidate).catch((error: unknown) => { if (!(error instanceof InstalledWriteError)) throw error; });
   for (const key of Object.keys(state) as Array<keyof TunnelState>) delete state[key];
   Object.assign(state, candidate);
 }
@@ -567,6 +569,7 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
     const names = keep.map((item) => item.hostname);
     if (names.length) await ctx.provider.verifyTunnel(ctx.binding);
     for (const hostname of names) await ctx.provider.ensureDns(ctx.binding, hostname);
+    for (const hostname of names) await ctx.provider.verifyDns(ctx.binding, hostname);
     if (await connectorServes(ctx, state, names)) return;
     await converge(ctx, state, names);
   });

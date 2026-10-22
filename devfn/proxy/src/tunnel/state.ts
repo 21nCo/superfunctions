@@ -256,11 +256,24 @@ export async function tunnelDirectory(stateDir: string, name: string): Promise<s
 const UNSYNCABLE_DIRECTORY = new Set(["EISDIR", "EPERM", "EINVAL"]);
 
 /**
+ * A write that replaced its file, but whose rename could not be synced:
+ * readers, and recovery, already see the new content. The rename is the
+ * commit point, so a caller treats the write as done, not failed.
+ */
+export class InstalledWriteError extends Error {
+  public constructor(file: string, cause: unknown) {
+    super(`${file} was replaced, but syncing its directory failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = "InstalledWriteError";
+  }
+}
+
+/**
  * Replace file atomically and durably with owner-only content: readers see
  * the old or the complete new content. The content is synced to disk before
  * it replaces the previous file, so a crash also leaves one or the other
  * whole, and the rename is then synced where the platform can sync a
- * directory.
+ * directory. A failure before the rename keeps the previous file; one after
+ * it is an InstalledWriteError.
  */
 export async function writePrivateFile(file: string, text: string): Promise<void> {
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
@@ -269,11 +282,16 @@ export async function writePrivateFile(file: string, text: string): Promise<void
     try { await handle.writeFile(text, "utf8"); await handle.sync(); }
     finally { await handle.close(); }
     await rename(temp, file);
-  } finally { await rm(temp, { force: true }); }
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => undefined);
+    throw error;
+  }
   let directory: FileHandle | undefined;
-  try { directory = await open(path.dirname(file), "r"); await directory.sync(); }
-  catch (error) { if (!UNSYNCABLE_DIRECTORY.has((error as NodeJS.ErrnoException).code ?? "")) throw error; }
-  finally { await directory?.close(); }
+  try {
+    try { directory = await open(path.dirname(file), "r"); await directory.sync(); }
+    catch (error) { if (!UNSYNCABLE_DIRECTORY.has((error as NodeJS.ErrnoException).code ?? "")) throw error; }
+    finally { await directory?.close(); }
+  } catch (error) { throw new InstalledWriteError(file, error); }
 }
 
 export async function writePrivateJson(file: string, value: unknown): Promise<void> {

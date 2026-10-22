@@ -9,14 +9,32 @@ import { publishTunnelRoutes, readOwnerBindings, readTunnelBindings, readTunnelS
 import { writeTunnelState, type TunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
-// Every persisted state, as recovery after an interruption at that write would find it; failWrite fails the first write it matches.
-const { written, failWrite } = vi.hoisted(() => ({ written: [] as TunnelState[], failWrite: {} as { when?: (state: TunnelState) => boolean } }));
+// Every persisted state, as recovery after an interruption at that write would find it; failWrite fails the first write it matches, before it replaces the journal, or every write while persist is set.
+const { written, failWrite, failSync } = vi.hoisted(() => ({ written: [] as TunnelState[], failWrite: {} as { when?: (state: TunnelState) => boolean; persist?: boolean },
+  failSync: {} as { at?: "open" | "sync" | "close"; when?: (state: TunnelState) => boolean } }));
 vi.mock("../src/tunnel/state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/tunnel/state.js")>();
   return { ...actual, writeTunnelState: async (stateDir: string, state: TunnelState) => {
-    if (failWrite.when?.(state)) { delete failWrite.when; throw new Error("the tunnel state write failed"); }
+    if (failWrite.when?.(state)) { if (!failWrite.persist) delete failWrite.when; throw new Error("the tunnel state write failed"); }
     written.push(structuredClone(state));
     await actual.writeTunnelState(stateDir, state);
+  } };
+});
+// failSync fails syncing the tunnel directory, at its open, sync or close, once the journal it holds matches: after the journal was replaced.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const fault = () => Object.assign(new Error("directory sync failed"), { code: "EIO" });
+  return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+    const target = String(args[0]);
+    const journal = failSync.when && args[1] === "r" && target.endsWith(path.join("tunnels", "preview"))
+      ? await actual.readFile(path.join(target, "state.json"), "utf8").then((text) => JSON.parse(text) as TunnelState, () => undefined) : undefined;
+    const at = journal && failSync.when?.(journal) ? failSync.at : undefined;
+    if (at) delete failSync.when;
+    if (at === "open") throw fault();
+    const handle = await actual.open(...args);
+    if (at === "sync") handle.sync = async () => { throw fault(); };
+    if (at === "close") { const close = handle.close.bind(handle); handle.close = async () => { await close(); throw fault(); }; }
+    return handle;
   } };
 });
 
@@ -58,6 +76,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete failWrite.when;
+  delete failWrite.persist;
+  delete failSync.when;
   const state = await readTunnelState(dir, "preview").catch(() => undefined);
   for (const record of [state?.connector, ...(state?.retired ?? [])]) if (record) { try { process.kill(-record.pid, "SIGKILL"); } catch { /* gone */ } }
   await rm(dir, { recursive: true, force: true });
@@ -266,6 +286,42 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     expect(await readOwnerBindings(dir, "owner-b")).toEqual([]);
   });
 
+  // The rename is the commit point: a journal replaced by the promotion write is the committed state, whatever fails after it.
+  posixIt.each([
+    ["open", false], ["sync", false], ["close", false], ["open", true], ["sync", true], ["close", true],
+  ] as const)("commits a publish whose promotion write replaced the journal but failed at the directory %s (later writes failing: %s)", async (at, persist) => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    failSync.at = at;
+    failSync.when = (state) => {
+      const promoted = !state.pending && state.hostnames.some((item) => item.hostname === B);
+      if (promoted && persist) Object.assign(failWrite, { when: () => true, persist: true });
+      return promoted;
+    };
+    expect(await publishTunnelRoutes(options, "owner-b", [B])).toEqual([expect.objectContaining({ hostname: B, ownerId: "owner-b" })]);
+    expect(failSync.when).toBeUndefined();
+    delete failWrite.when;
+    const after = await readTunnelState(dir, "preview");
+    expect(after.pending).toBeUndefined();
+    expect(after.hostnames.map((item) => item.hostname)).toEqual([A, B]);
+    expect(after.connector!.hostnames).toEqual([A, B]);
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A, B] });
+    // A fresh recovery reads the same committed set from the journal.
+    expect(await recoverTunnel(options)).toMatchObject({ connector: "running", routed: [A, B], pending: false, retired: 0, outstanding: [] });
+    expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B]: "devfn" });
+  });
+
+  posixIt("rolls back a publish whose promotion write failed before replacing the journal, from the journal, when every later write fails too", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const before = (await readTunnelState(dir, "preview")).connector!;
+    failWrite.when = (state) => (failWrite.persist ||= !state.pending && state.hostnames.some((item) => item.hostname === B));
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("its rollback did not finish");
+    delete failWrite.when;
+    // The interrupted rollback is finished by a fresh recovery from the journal; B is never committed or routed.
+    expect((await readTunnelState(dir, "preview")).hostnames.map((item) => item.hostname)).toEqual([A]);
+    expect(await recoverTunnel(options)).toMatchObject({ connector: "running", pid: before.pid, routed: [A], hostnames: [{ hostname: A }], pending: false, retired: 0, outstanding: [] });
+    expect([...provider.records.keys()]).toEqual([A]);
+  });
+
   it("rejects a publish whose commit write fails while the running connector already routes its names, evicting them", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     provider.records.set(B, "devfn");
@@ -321,6 +377,21 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     provider.records.set(B, "devfn");
     expect(await recoverTunnel(options)).toMatchObject({ connector: "running", routed: [A, B], outstanding: [] });
     expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B]: "devfn" });
+  });
+
+  posixIt("reads back each recovered route's DNS record, whether or not the connector runs, before relying on it or launching", async () => {
+    options.ownerMayRun = async () => true;
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    // The record is confirmed, but its readback finds it no longer resolves to the tunnel alone (a covering wildcard).
+    provider.ensureDns = async (_binding, hostname) => { provider.calls.push(`ensure ${hostname}`); return "existing"; };
+    provider.verifyDns = async (_binding, hostname) => { throw new Error(`${hostname} is covered by a wildcard record`); };
+    provider.calls.length = 0;
+    await expect(recoverTunnel(options)).rejects.toThrow(`${A} is covered by a wildcard record`);
+    process.kill(-connector.pid, "SIGKILL");
+    await expect(recoverTunnel(options)).rejects.toThrow(`${A} is covered by a wildcard record`);
+    expect(provider.calls).not.toContain("launch");
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", routed: [] });
   });
 
   it("never trusts a saved origin root that is not a complete certificate", async () => {
