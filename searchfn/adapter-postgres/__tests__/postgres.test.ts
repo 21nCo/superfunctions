@@ -372,14 +372,18 @@ describe("PostgresAdapter integration", () => {
 });
 
 describe("PostgresAdapter redaction", () => {
-  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+  it("redacts connection secret keys without over-redacting connectionTimeout", () => {
     expect(
       redactPostgresSensitive({
         connection: "postgres://user:pass@example.test/db",
+        pgConnectionString: "postgres://user:pass@example.test/db",
+        dbConnection: "private-database",
         connectionTimeout: 5000,
       }),
     ).toEqual({
       connection: "[REDACTED]",
+      pgConnectionString: "[REDACTED]",
+      dbConnection: "[REDACTED]",
       connectionTimeout: 5000,
     });
   });
