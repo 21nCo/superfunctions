@@ -1,0 +1,21 @@
+recfn/server/__tests__/bot-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_21b63a76051401 1-4,117,119-120,126-131,158,209,270,331,522,573,619,659,675
+recfn/server/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_0e5233af585d18 1-4,66,68-69,75-80,107,162,200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99ecc830d9f97b52087c1c0f937f72558f644534",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
