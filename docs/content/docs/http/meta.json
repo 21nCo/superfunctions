@@ -7,6 +7,7 @@
     "http-fastify",
     "http-hono",
     "http-next",
-    "http-sveltekit"
+    "http-sveltekit",
+    "http-openapi"
   ]
 }
