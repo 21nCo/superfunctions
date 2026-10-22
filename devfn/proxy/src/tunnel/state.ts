@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import { canonicalBirthSignature, withFileLock, withRoutingLock } from "@devfn/ports";
@@ -252,11 +252,28 @@ export async function tunnelDirectory(stateDir: string, name: string): Promise<s
   return dir;
 }
 
-/** Replace file atomically with owner-only content: readers see the old or the complete new content. */
+/** Directory sync errors of platforms that cannot open or sync a directory. */
+const UNSYNCABLE_DIRECTORY = new Set(["EISDIR", "EPERM", "EINVAL"]);
+
+/**
+ * Replace file atomically and durably with owner-only content: readers see
+ * the old or the complete new content. The content is synced to disk before
+ * it replaces the previous file, so a crash also leaves one or the other
+ * whole, and the rename is then synced where the platform can sync a
+ * directory.
+ */
 export async function writePrivateFile(file: string, text: string): Promise<void> {
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  try { await writeFile(temp, text, { encoding: "utf8", mode: 0o600, flag: "wx" }); await rename(temp, file); }
-  finally { await rm(temp, { force: true }); }
+  try {
+    const handle = await open(temp, "wx", 0o600);
+    try { await handle.writeFile(text, "utf8"); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(temp, file);
+  } finally { await rm(temp, { force: true }); }
+  let directory: FileHandle | undefined;
+  try { directory = await open(path.dirname(file), "r"); await directory.sync(); }
+  catch (error) { if (!UNSYNCABLE_DIRECTORY.has((error as NodeJS.ErrnoException).code ?? "")) throw error; }
+  finally { await directory?.close(); }
 }
 
 export async function writePrivateJson(file: string, value: unknown): Promise<void> {

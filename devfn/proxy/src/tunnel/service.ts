@@ -216,31 +216,43 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
 const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid === b.pid && a.birthSignature === b.birthSignature;
 
 /**
+ * Commit a transition built on candidate, a copy of state: state becomes the
+ * candidate only once it is durable, so after a failed write it is still the
+ * last durable state, which rollback and recovery read.
+ */
+async function commitState(ctx: Context, state: TunnelState, candidate: TunnelState): Promise<void> {
+  await writeTunnelState(ctx.stateDir, candidate);
+  for (const key of Object.keys(state) as Array<keyof TunnelState>) delete state[key];
+  Object.assign(state, candidate);
+}
+
+/**
  * Make before break: the connector for `hostnames` is ready before the one it
  * replaces is stopped, so other owners' public routes keep being served. A
  * launched connector is journaled as retired until it is promoted, so one
  * that fails readiness and does not stop stays recorded. It is promoted, and
  * its predecessor retired, in the same write that applies commit, the
- * transition's committed hostnames: an interruption before that write leaves
- * the predecessor serving the previous committed set. A replaced connector
- * that does not stop stays retired. No hostnames stops the connector.
- * Mutates and persists state.
+ * transition's committed hostnames (commitState): until that write succeeds
+ * the predecessor serves the previous committed set and the transition has
+ * failed. After it, the transition stands; a replaced connector that does
+ * not stop, or whose stop is not recorded, stays retired for the next
+ * transition. No hostnames stops the connector. Mutates and persists state.
  */
-async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: () => void): Promise<void> {
-  const previous = state.connector;
+async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: (draft: TunnelState) => void): Promise<void> {
+  let launched: ConnectorRecord | undefined;
   if (hostnames.length) {
     await assertSoleConnector(state);
-    const launched = await launchConnector(ctx, hostnames, async (record) => {
+    launched = await launchConnector(ctx, hostnames, async (record) => {
       state.retired.push(record);
       await writeTunnelState(ctx.stateDir, state);
     });
-    state.retired = state.retired.filter((item) => !sameConnector(item, launched));
-    state.connector = launched;
-  } else delete state.connector;
-  if (previous) state.retired.push(previous);
-  commit?.();
-  await writeTunnelState(ctx.stateDir, state);
-  await stopRetired(ctx, state);
+  }
+  const candidate = structuredClone(state);
+  candidate.retired = [...candidate.retired.filter((item) => !launched || !sameConnector(item, launched)), ...(candidate.connector ? [candidate.connector] : [])];
+  if (launched) candidate.connector = launched; else delete candidate.connector;
+  commit?.(candidate);
+  await commitState(ctx, state, candidate);
+  await stopRetired(ctx, state).catch(() => undefined);
 }
 
 /** The launch predicate: no recorded connector but a verifiably running predecessor (replaced make before break) may still run, as two connectors on one tunnel split its requests. */
@@ -272,10 +284,11 @@ async function connectorServes(ctx: Context, state: TunnelState, hostnames: read
 }
 
 /** Run a connector for exactly hostnames, replacing one that exited or serves another allowlist (make before break), then apply and persist commit. Only publish and recovery converge, after verifying the tunnel and choosing hostnames with relaunchable. */
-async function converge(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: () => void): Promise<void> {
+async function converge(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: (draft: TunnelState) => void): Promise<void> {
   if (await connectorServes(ctx, state, hostnames)) {
-    commit?.();
-    await writeTunnelState(ctx.stateDir, state);
+    const candidate = structuredClone(state);
+    commit?.(candidate);
+    await commitState(ctx, state, candidate);
     return;
   }
   if (state.connector && await connectorStatus(state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
@@ -478,15 +491,16 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
         if (result === "existing") { state.pending.createdDns.pop(); await writeTunnelState(ctx.stateDir, state); }
       }
       for (const hostname of wanted) await ctx.provider.verifyDns(ctx.binding, hostname);
-      // The new set is committed in the write that promotes its connector.
+      // The new set is committed in the write that promotes its connector;
+      // the publish has failed, and is rolled back, unless that write succeeds.
       // A republished name is no longer withdrawn; dropped names, which the
       // new connector no longer serves, are withdrawn then and retried later.
-      await converge(ctx, state, next.map((item) => item.hostname), () => {
-        withdrawNames(state, stale);
-        state.hostnames = next;
-        delete state.pending;
-        state.residue = state.residue.map((item) => ({ ...item, hostnames: item.hostnames.filter((hostname) => !wanted.includes(hostname)) })).filter((item) => item.hostnames.length);
-        if (dropped.length) state.residue.push({ ownerId, hostnames: dropped, dnsRemoved: false });
+      await converge(ctx, state, next.map((item) => item.hostname), (draft) => {
+        withdrawNames(draft, stale);
+        draft.hostnames = next;
+        delete draft.pending;
+        draft.residue = draft.residue.map((item) => ({ ...item, hostnames: item.hostnames.filter((hostname) => !wanted.includes(hostname)) })).filter((item) => item.hostnames.length);
+        if (dropped.length) draft.residue.push({ ownerId, hostnames: dropped, dnsRemoved: false });
       });
     } catch (error) {
       const rollback = await settle(ctx, state).then(async () => await finishResidue(ctx, state), (rollbackError: unknown) => [message(rollbackError)]);
@@ -495,7 +509,8 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
       }
       throw error;
     }
-    await finishResidue(ctx, state);
+    // The publish is committed; what finishResidue cannot finish stays journaled for the next tunnel command.
+    await finishResidue(ctx, state).catch(() => undefined);
     return next.filter((item) => item.ownerId === ownerId);
   });
 }
@@ -535,11 +550,11 @@ export async function withdrawTunnelRoutes(options: TunnelServiceOptions, ownerI
 
 /**
  * Recover a binding (see settle and finishResidue), then run a connector for
- * the committed names that are still relaunchable, after verifying the
- * provider tunnel; the rest are withdrawn. Every name kept has its
- * DevFn-owned DNS record confirmed, or recreated, and read back first; a
- * name whose DNS does not verify fails the recovery before any launch.
- * Reports the binding.
+ * the committed names that are still relaunchable; the rest are withdrawn.
+ * While any name is kept, the provider tunnel is verified first, then every
+ * kept name has its DevFn-owned DNS record confirmed, or recreated, and read
+ * back; a name whose DNS does not verify fails the recovery before any
+ * launch. Reports the binding.
  */
 export async function recoverTunnel(options: TunnelServiceOptions): Promise<TunnelStatus> {
   const ctx = context(options);
@@ -550,9 +565,9 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
     await writeTunnelState(ctx.stateDir, state);
     await finishResidue(ctx, state);
     const names = keep.map((item) => item.hostname);
+    if (names.length) await ctx.provider.verifyTunnel(ctx.binding);
     for (const hostname of names) await ctx.provider.ensureDns(ctx.binding, hostname);
     if (await connectorServes(ctx, state, names)) return;
-    await ctx.provider.verifyTunnel(ctx.binding);
     await converge(ctx, state, names);
   });
   return await tunnelStatus(options);

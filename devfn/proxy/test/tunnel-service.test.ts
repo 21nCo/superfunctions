@@ -9,11 +9,15 @@ import { publishTunnelRoutes, readOwnerBindings, readTunnelBindings, readTunnelS
 import { writeTunnelState, type TunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
-// Every persisted state, as recovery after an interruption at that write would find it.
-const { written } = vi.hoisted(() => ({ written: [] as TunnelState[] }));
+// Every persisted state, as recovery after an interruption at that write would find it; failWrite fails the first write it matches.
+const { written, failWrite } = vi.hoisted(() => ({ written: [] as TunnelState[], failWrite: {} as { when?: (state: TunnelState) => boolean } }));
 vi.mock("../src/tunnel/state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/tunnel/state.js")>();
-  return { ...actual, writeTunnelState: async (stateDir: string, state: TunnelState) => { written.push(structuredClone(state)); await actual.writeTunnelState(stateDir, state); } };
+  return { ...actual, writeTunnelState: async (stateDir: string, state: TunnelState) => {
+    if (failWrite.when?.(state)) { delete failWrite.when; throw new Error("the tunnel state write failed"); }
+    written.push(structuredClone(state));
+    await actual.writeTunnelState(stateDir, state);
+  } };
 });
 
 const A = "web-a-0123456789abcdef0123.tunnel.example.test";
@@ -53,6 +57,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  delete failWrite.when;
   const state = await readTunnelState(dir, "preview").catch(() => undefined);
   for (const record of [state?.connector, ...(state?.retired ?? [])]) if (record) { try { process.kill(-record.pid, "SIGKILL"); } catch { /* gone */ } }
   await rm(dir, { recursive: true, force: true });
@@ -89,7 +94,8 @@ describe("tunnel bindings", () => {
   });
 });
 
-describe("tunnel lifecycle", () => {
+// Each test starts, replaces and stops real connector processes behind synced journal writes.
+describe("tunnel lifecycle", { timeout: 30_000 }, () => {
   it("shares one connector between owners and withdraws one owner without touching another's routes", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     const first = (await readTunnelState(dir, "preview")).connector!;
@@ -240,6 +246,62 @@ describe("tunnel lifecycle", () => {
     expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
     expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B], outstanding: [] });
     expect(await processGroupStatus(fallback.pid, fallback.birthSignature)).toBe("exited");
+  });
+
+  posixIt("rejects a publish whose promotion write fails, leaving the previous connector serving only the committed names", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const before = (await readTunnelState(dir, "preview")).connector!;
+    written.length = 0;
+    failWrite.when = (state) => !state.pending && state.hostnames.some((item) => item.hostname === B);
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("the tunnel state write failed");
+    const launched = written.flatMap((state) => state.retired).find((record) => record.hostnames.includes(B))!;
+    expect(await processGroupStatus(launched.pid, launched.birthSignature)).toBe("exited");
+    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("running");
+    const after = await readTunnelState(dir, "preview");
+    expect(after).toMatchObject({ hostnames: [{ hostname: A, ownerId: "owner-a" }], connector: before, retired: [], residue: [] });
+    expect(after.pending).toBeUndefined();
+    expect([...provider.records.keys()]).toEqual([A]);
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A], outstanding: [] });
+    expect(await withdrawTunnelRoutes(options, "owner-b")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-b")).toEqual([]);
+  });
+
+  it("rejects a publish whose commit write fails while the running connector already routes its names, evicting them", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    provider.records.set(B, "devfn");
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    await interruptPublish([B], []);
+    failWrite.when = (state) => !state.pending && state.hostnames.some((item) => item.hostname === B);
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("the tunnel state write failed");
+    expect((await readTunnelState(dir, "preview")).hostnames).toEqual([expect.objectContaining({ hostname: A, ownerId: "owner-a" })]);
+    expect(await connectorHostnames()).toEqual([A]);
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A], pending: false, outstanding: [] });
+  });
+
+  posixIt("reports a committed publish as published although stopping the replaced connector could not be recorded", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const before = (await readTunnelState(dir, "preview")).connector!;
+    // The promotion write still retires the previous connector; the next one records it stopped.
+    failWrite.when = (state) => !state.pending && !state.retired.length && state.hostnames.some((item) => item.hostname === B);
+    expect(await publishTunnelRoutes(options, "owner-b", [B])).toEqual([expect.objectContaining({ hostname: B, ownerId: "owner-b" })]);
+    expect(failWrite.when).toBeUndefined();
+    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B, A].sort(), hostnames: [{ hostname: A }, { hostname: B }], retired: 0 });
+    expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B]: "devfn" });
+  });
+
+  posixIt("verifies the provider tunnel before recovery confirms any DNS record, whether or not the connector runs", async () => {
+    options.ownerMayRun = async () => true;
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    provider.records.delete(A);
+    provider.tunnel = "remote";
+    provider.calls.length = 0;
+    await expect(recoverTunnel(options)).rejects.toThrow("the tunnel is remotely managed");
+    process.kill(-connector.pid, "SIGKILL");
+    await expect(recoverTunnel(options)).rejects.toThrow("the tunnel is remotely managed");
+    expect(provider.calls.filter((call) => call.startsWith("ensure") || call === "launch")).toEqual([]);
+    expect(provider.records.size).toBe(0);
   });
 
   it("confirms or recreates each recovered route's DNS record and launches nothing while one does not verify", async () => {
