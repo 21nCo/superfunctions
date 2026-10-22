@@ -81,9 +81,9 @@ describe.sequential('deterministic actions', () => {
       devServer: {
         mode: 'spawn',
         name: 'web',
-        command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 4173`,
+        command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 0`,
         cwd: '.',
-        url: 'http://127.0.0.1:4173',
+        url: 'http://127.0.0.1:0',
         readyPattern: 'Local:\\s+(https?:\\/\\/[^\\s]+)',
         timeoutMs: 5000,
         envAllowlist: [],
@@ -221,7 +221,7 @@ describe.sequential('deterministic actions', () => {
   });
 
   it('returns target-not-found for unmatched explicit selectors', async () => {
-    const context = await createEphemeralContext('4178', 'sess_not_found', 'run_not_found');
+    const context = await createEphemeralContext('sess_not_found', 'run_not_found');
 
     try {
       await performDeterministicAction({
@@ -249,7 +249,7 @@ describe.sequential('deterministic actions', () => {
   });
 
   it('returns not-interactable when a deterministic target exists but is disabled', async () => {
-    const context = await createEphemeralContext('4179', 'sess_disabled', 'run_disabled');
+    const context = await createEphemeralContext('sess_disabled', 'run_disabled');
 
     try {
       await performDeterministicAction({
@@ -277,7 +277,7 @@ describe.sequential('deterministic actions', () => {
   });
 });
 
-async function createEphemeralContext(port: string, sessionId: string, runId: string) {
+async function createEphemeralContext(sessionId: string, runId: string) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'probefn-actions-'));
   tempDirectories.push(directory);
   const artifactStore = new ArtifactStore({
@@ -302,9 +302,9 @@ async function createEphemeralContext(port: string, sessionId: string, runId: st
     devServer: {
       mode: 'spawn',
       name: 'web',
-      command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port ${port}`,
+      command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 0`,
       cwd: '.',
-      url: `http://127.0.0.1:${port}`,
+      url: 'http://127.0.0.1:0',
       readyPattern: 'Local:\\s+(https?:\\/\\/[^\\s]+)',
       timeoutMs: 5000,
       envAllowlist: [],

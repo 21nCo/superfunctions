@@ -91,9 +91,9 @@ describe.sequential('BrowserRunner', () => {
       devServer: {
         mode: 'spawn',
         name: 'web',
-        command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 4183`,
+        command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 0`,
         cwd: '.',
-        url: 'http://127.0.0.1:4183',
+        url: 'http://127.0.0.1:0',
         readyPattern: 'Local:\\s+(https?:\\/\\/[^\\s]+)',
         timeoutMs: 5000,
         envAllowlist: [],

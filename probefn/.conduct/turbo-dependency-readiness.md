@@ -50,3 +50,36 @@ Logs: `/tmp/probe-turbo-after.json`, `/tmp/probe-turbo-typecheck.log`,
 The Turbo executable came from the existing main checkout installation; it
 reported version 2.6.1 and warned that this scoped node_modules has no local Turbo
 binary. No dependency install or broad lock regeneration was performed.
+
+## Shared integration and isolated fixture ports
+
+The ordinary merge of Shared `9a93c4970f4c3045a0734af7baf4a4d73f1c373a`
+preserves the root-owned Probe harness and both reporter/visual-baselines runtime
+storage dependencies. The root graph retains the Shared docs/React dependency
+corrections and Next 15.5.28 with its sharp 0.35.5 dependency.
+
+Browser action/trace fixtures now bind port zero and use the readiness output's
+actual address. The attach fixture also binds port zero and reads its actual
+address. This removes collisions with unrelated services without stopping them;
+no product readiness deadline or test assertion changed.
+
+Normal npm 11 scoped `ci --workspace=@probefn/workspace
+--include-workspace-root=false --no-audit --no-fund` installed 394 packages on
+Node 22.22.0 without force or peer-resolution bypasses. npm warned that several
+esbuild versions and msw were absent from its allowScripts list; no approval
+configuration was changed. The subsequent real MCP build succeeded.
+
+Actual Turbo 2.6.1 root build dry-run accepts 301 tasks with docs-theme and storage
+runtime edges intact. Actual Turbo Probe typecheck passes, including the MCP
+CJS/ESM/declaration prerequisite. The first full run during concurrent sibling
+builds hit default browser/MCP setup deadlines (162 pass, 1 fail, 14 skipped).
+All 18 affected cases passed separately with diagnostic 30s/60s limits; then the
+full Turbo harness passed **177 tests in 35 files with the original default
+limits unchanged** (54.47s Vitest, 57.03s Turbo). Reporter, native Chromium, MCP,
+process ownership, SQLite storage, and design cases are included. This is local
+acceptance evidence, not hosted CI or cross-browser certification.
+
+Logs: `/tmp/probe-shared-ci-install.log`, `/tmp/probe-shared-turbo-build.json`,
+`/tmp/probe-shared-turbo-types.log`, `/tmp/probe-shared-turbo-full.log`,
+`/tmp/probe-native-diagnostic.log`, `/tmp/probe-design-diagnostic.log`,
+`/tmp/probe-shared-turbo-full-rerun.log`.

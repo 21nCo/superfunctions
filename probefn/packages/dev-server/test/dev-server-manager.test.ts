@@ -183,7 +183,13 @@ describe('DevServerManager', () => {
       response.end('ok');
     });
 
-    await new Promise<void>((resolve) => server.listen(4175, '127.0.0.1', resolve));
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Fixture address unavailable');
+    const url = `http://127.0.0.1:${address.port}`;
     attachedServers.push(server);
 
     const artifactStore = new ArtifactStore({ repoRoot, artifactRoot });
@@ -198,13 +204,13 @@ describe('DevServerManager', () => {
       devServer: {
         mode: 'attach',
         name: 'web',
-        url: 'http://127.0.0.1:4175',
+        url,
         timeoutMs: 1000,
         envAllowlist: [],
       },
     });
 
-    expect(startedSession.resolvedUrl).toBe('http://127.0.0.1:4175');
+    expect(startedSession.resolvedUrl).toBe(url);
 
     await expect(
       manager.startSession({
@@ -216,7 +222,7 @@ describe('DevServerManager', () => {
         devServer: {
           mode: 'attach',
           name: 'web',
-          url: 'http://127.0.0.1:4175',
+          url,
           timeoutMs: 1000,
           envAllowlist: [],
         },
