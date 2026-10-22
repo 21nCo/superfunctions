@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PlatformAdapter, Participant } from '@recfn/core';
 import {
   createMemoryStore,
@@ -60,11 +63,19 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
   let store: RecFnStore;
   let queue: MemoryQueueAdapter;
   let logger: MemoryLogger;
+  let temporaryDirectory: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-worker-test-'));
     store = createMemoryStore();
     queue = new MemoryQueueAdapter();
     logger = new MemoryLogger();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
+    await rm(temporaryDirectory, { recursive: true, force: true });
   });
 
   it('sends consent message before transitioning to recording (TV-BOT-010)', async () => {
@@ -93,6 +104,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
 
     const { adapter, sendChatMessage } = createMockPlatformAdapter();
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -147,6 +159,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
 
     const { adapter, sendChatMessage } = createMockPlatformAdapter();
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -184,6 +197,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
 
     const { adapter } = createMockPlatformAdapter({ sendChatMessageError: true });
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,

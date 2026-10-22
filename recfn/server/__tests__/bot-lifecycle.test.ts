@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AudioChunk, PlatformAdapter, Participant } from '@recfn/core';
 import {
   createMemoryStore,
@@ -111,11 +114,19 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   let store: RecFnStore;
   let queue: MemoryQueueAdapter;
   let logger: MemoryLogger;
+  let temporaryDirectory: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-worker-test-'));
     store = createMemoryStore();
     queue = new MemoryQueueAdapter();
     logger = new MemoryLogger();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
+    await rm(temporaryDirectory, { recursive: true, force: true });
   });
 
   it('full happy path: creating → joining → joined → recording', async () => {
@@ -144,6 +155,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
     const adapter = createMockPlatformAdapter();
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -194,6 +206,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     });
 
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -254,6 +267,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       });
 
       const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
         store,
         queue,
         logger,
@@ -314,6 +328,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
     const adapter = createMockPlatformAdapter();
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -504,6 +519,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     });
 
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -554,6 +570,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     // five-second connection grace period.
     const adapter = createMockPlatformAdapter({ joinDelay: 10_000 });
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -599,6 +616,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       joinError: 'Meeting not found',
     });
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -638,6 +656,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
     // No 'meet' adapter registered
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
@@ -653,6 +672,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
   it('processNext returns false when queue is empty', async () => {
     const worker = createBotWorker({
+      captureOptions: { temporaryDirectory },
       store,
       queue,
       logger,
