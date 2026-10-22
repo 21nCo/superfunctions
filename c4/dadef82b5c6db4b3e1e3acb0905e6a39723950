@@ -1,0 +1,25 @@
+catchfn/.conduct/react-consumer-readiness.md
+  s_e1c5fc1a65c0cf::t_1f049a1d57c23b 1-32
+catchfn/typescript/scripts/packed-status-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_f9da937af658f8 8-9,19,45-46
+catchfn/typescript/src/react.ts
+  s_e1c5fc1a65c0cf::t_7f82f604c263f4 1,9
+package-lock.json
+  s_e1c5fc1a65c0cf::t_e0848c70024ab6 6142-6162,6412-6438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4dadef82b5c6db4b3e1e3acb0905e6a39723950",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
