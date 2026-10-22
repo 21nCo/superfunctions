@@ -143,6 +143,11 @@ export interface TunnelProvider {
   connectorSecrets?(binding: TunnelBinding): Record<string, string>;
   /** The public URL the provider assigned to each hostname, read from a ready connector. */
   assignedUrls?(binding: TunnelBinding, metricsPort: number, hostnames: readonly string[]): Promise<Record<string, string>>;
+  /**
+   * Read back, once a launched connector is ready and before its transition commits, that no agent outside this
+   * registration serves its hostnames; for providers whose endpoints another agent can join once online.
+   */
+  verifyServing?(binding: TunnelBinding, hostnames: readonly string[]): Promise<void>;
 }
 
 const BINDING_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;

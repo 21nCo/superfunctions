@@ -330,6 +330,8 @@ describe("devfn CLI", () => {
       const urls = await run("tunnel", "urls");
       expect(urls.result).toEqual({ ok: true, binding: "preview", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
       expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
+      // Credential references are variable names, shown so the operator knows what a binding reads.
+      expect(await run("tunnel", "list")).toMatchObject({ result: { bindings: [{ name: "preview", cloudflare: { apiTokenEnv: "DEVFN_FIXTURE_TOKEN" } }] } });
       expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
       expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
       expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], urls: {}, pending: false, retired: 0, outstanding: [],
@@ -372,7 +374,7 @@ describe("devfn CLI", () => {
       expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--domain", "ngrok.example.test", "--nonproduction")).toMatchObject(invalid);
       expect(await run("tunnel", "register", "share", "--provider", "other", "--nonproduction")).toMatchObject(invalid);
       expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--api-key-env", "NGROK_API_KEY", "--nonproduction"))
-        .toMatchObject({ code: 0, result: { binding: { name: "share", provider: "ngrok", domain: "ngrok.example.test", ngrok: { endpoints: "reserved" } } } });
+        .toMatchObject({ code: 0, result: { binding: { name: "share", provider: "ngrok", domain: "ngrok.example.test", ngrok: { endpoints: "reserved", authtokenEnv: "NGROK_AUTHTOKEN", apiKeyEnv: "NGROK_API_KEY" } } } });
       expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--nonproduction"))
         .toMatchObject({ code: 0, result: { binding: { name: "eph", domain: "eph.ngrok.devfn.internal", ngrok: { endpoints: "ephemeral" } } } });
       expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "share", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.ngrok\.example\.test$/) } });

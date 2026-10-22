@@ -307,8 +307,24 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   return await handler();
 }
 
+/** Tunnel binding fields that name the environment variable holding a credential, never the credential. */
+const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv"]);
+
+/**
+ * Tunnel output under the shared redaction, except that a credential
+ * reference holding a variable name is shown: it tells the operator which
+ * variable a binding reads, and the shared key pattern would hide it.
+ */
+function redactTunnelResult(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactTunnelResult);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key,
+    CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
+      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] === null ? redactTunnelResult(nested) : "[REDACTED]"]));
+}
+
 function renderResult(args: ParsedArgs, result: unknown, output: ReturnType<typeof createOutput>): void {
-  if (args.json) { output.json(redactValue(result)); return; }
+  if (args.json) { output.json(args.command === "tunnel" ? redactTunnelResult(result) : redactValue(result)); return; }
   if (args.command === "logs" && result && typeof result === "object") {
     for (const [name, log] of Object.entries(result)) output.info(`${name}\n${log}`);
     return;

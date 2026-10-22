@@ -10,11 +10,18 @@ import { writeTunnelState, type TunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
 // Every persisted state, as recovery after an interruption at that write would find it; failWrite fails the first write it matches, before it replaces the journal, or every write while persist is set.
-const { written, failWrite, failSync } = vi.hoisted(() => ({ written: [] as TunnelState[], failWrite: {} as { when?: (state: TunnelState) => boolean; persist?: boolean },
-  failSync: {} as { at?: "open" | "sync" | "close"; when?: (state: TunnelState) => boolean } }));
+// afterRead runs once, right after the next state read returns, as a transition interleaved with that reader.
+const { written, failWrite, failSync, afterRead } = vi.hoisted(() => ({ written: [] as TunnelState[], failWrite: {} as { when?: (state: TunnelState) => boolean; persist?: boolean },
+  failSync: {} as { at?: "open" | "sync" | "close"; when?: (state: TunnelState) => boolean }, afterRead: {} as { run?: () => Promise<void> } }));
 vi.mock("../src/tunnel/state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/tunnel/state.js")>();
-  return { ...actual, writeTunnelState: async (stateDir: string, state: TunnelState) => {
+  return { ...actual, readTunnelState: async (stateDir: string, name: string) => {
+    const state = await actual.readTunnelState(stateDir, name);
+    const run = afterRead.run;
+    delete afterRead.run;
+    await run?.();
+    return state;
+  }, writeTunnelState: async (stateDir: string, state: TunnelState) => {
     if (failWrite.when?.(state)) { if (!failWrite.persist) delete failWrite.when; throw new Error("the tunnel state write failed"); }
     written.push(structuredClone(state));
     await actual.writeTunnelState(stateDir, state);
@@ -78,6 +85,7 @@ afterEach(async () => {
   delete failWrite.when;
   delete failWrite.persist;
   delete failSync.when;
+  delete afterRead.run;
   const state = await readTunnelState(dir, "preview").catch(() => undefined);
   for (const record of [state?.connector, ...(state?.retired ?? [])]) if (record) { try { process.kill(-record.pid, "SIGKILL"); } catch { /* gone */ } }
   await rm(dir, { recursive: true, force: true });
@@ -138,6 +146,18 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     expect(last).toMatchObject({ hostnames: [], retired: [], residue: [] });
     expect(last.connector).toBeUndefined();
     expect(provider.records.size).toBe(0);
+  });
+
+  posixIt("reports the successor, not a stopped connector, when another owner's swap commits between status's read and probe", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const first = (await readTunnelState(dir, "preview")).connector!;
+    // owner-b's publish replaces the connector right after status read the journal, so the connector it read has stopped.
+    afterRead.run = async () => { await publishTunnelRoutes(options, "owner-b", [B]); };
+    const status = await tunnelStatus(options);
+    const second = (await readTunnelState(dir, "preview")).connector!;
+    expect(await processGroupStatus(first.pid, first.birthSignature)).toBe("exited");
+    expect(status).toMatchObject({ connector: "running", pid: second.pid, routed: [A, B].sort() });
+    expect(second.pid).not.toBe(first.pid);
   });
 
   it("validates the origin and the provider tunnel before any provider mutation", async () => {

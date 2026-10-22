@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
@@ -34,8 +35,8 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-/** A fixture ngrok API: reserved domains and online tunnels, each listed one item per page; every request URL is logged. */
-function account(state: { reserved: string[]; tunnels: Array<{ public_url: string; metadata?: string }>; fail?: number }) {
+/** A fixture ngrok API: reserved domains and online tunnels, each listed one item per page; every request URL is logged, after beforeList ran. */
+function account(state: { reserved: string[]; tunnels: Array<{ public_url: string; metadata?: string }>; fail?: number; beforeList?: (route: string) => void }) {
   const requests: string[] = [];
   const page = (items: unknown[], key: string, offset: number, route: string) => new Response(JSON.stringify({
     [key]: items.slice(offset, offset + 1), next_page_uri: offset + 1 < items.length ? `https://api.ngrok.com${route}?limit=100&offset=${offset + 1}` : null }), { status: 200 });
@@ -44,6 +45,7 @@ function account(state: { reserved: string[]; tunnels: Array<{ public_url: strin
     requests.push(`${url.origin}${url.pathname}${url.search} ${new Headers(init?.headers).get("authorization") ?? ""}`);
     if (state.fail) return new Response(JSON.stringify({ error_code: "ERR_NGROK_218", msg: `echo ${SECRETS.DEVFN_FIXTURE_NGROK_API_KEY}` }), { status: state.fail });
     const offset = Number(url.searchParams.get("offset") ?? 0);
+    if (!offset) state.beforeList?.(url.pathname);
     if (url.pathname === "/reserved_domains") return page(state.reserved.map((domain) => ({ domain })), "reserved_domains", offset, url.pathname);
     if (url.pathname === "/tunnels") return page(state.tunnels, "tunnels", offset, url.pathname);
     return new Response("{}", { status: 404 });
@@ -188,6 +190,9 @@ describe("ngrok bindings", () => {
     const C = `web-c-0123456789abcdef0123.${DOMAIN}`;
     fixture.tunnels.push({ public_url: `https://${C}`, metadata: ngrokMarker(ngrokFixtureBinding("/repo", "reserved", "share", "d".repeat(32))) });
     await expect(provider.ensureDns(binding, C)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+    // The post-launch readback applies the same rule to every launched name in one listing.
+    await provider.verifyServing(binding, [A]);
+    await expect(provider.verifyServing(binding, [A, C])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: `${C} is already served by an ngrok agent DevFn does not own; the new connector was stopped.` });
     await expect(provider.verifyDns(binding, `web.other.example.test`)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_INVALID" });
     fixture.reserved = [DOMAIN];
     await expect(provider.verifyTunnel(binding)).rejects.toThrow(`does not reserve *.${DOMAIN}`);
@@ -215,6 +220,7 @@ describe("ngrok bindings", () => {
     const ephemeral = ngrokFixtureBinding("/repo", "ephemeral");
     await provider.verifyTunnel(ephemeral);
     await provider.verifyDns(ephemeral, `web-a-0123456789abcdef0123.${ephemeral.domain}`);
+    await provider.verifyServing(ephemeral, [`web-a-0123456789abcdef0123.${ephemeral.domain}`]);
     expect(requests).toEqual([]);
   });
 
@@ -351,7 +357,7 @@ describe("ngrok connector lifecycle", () => {
     const credentials = issue([`*.${DOMAIN}`, "*.eph.ngrok.devfn.internal"], "origin");
     const fixtureOrigin = await origin(credentials);
     const binding = await registerTunnelBinding(stateDir, ngrokFixtureBinding(path.join(dir), endpoints, endpoints === "reserved" ? "share" : "eph"));
-    const api = { reserved: [`*.${DOMAIN}`], tunnels: [] as Array<{ public_url: string; metadata?: string }>, fail: undefined as number | undefined };
+    const api = { reserved: [`*.${DOMAIN}`], tunnels: [] as Array<{ public_url: string; metadata?: string }>, fail: undefined as number | undefined, beforeList: undefined as ((route: string) => void) | undefined };
     const provider = new NgrokTunnelProvider({ env: SECRETS, fetch: account(api).fetcher, command: async () => await writeFakeNgrok(dir, record), connector: CONNECTOR });
     const live = new Set(["owner-a", "owner-b"]);
     const options: TunnelServiceOptions = { stateDir, binding, provider, originPort: fixtureOrigin.port, readyTimeoutMs: 20_000, originCa: async () => credentials.cert,
@@ -463,6 +469,47 @@ describe("ngrok connector lifecycle", () => {
       await publishTunnelRoutes(options, "owner-a", [A]);
       expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A] });
     } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("stops a launched connector whose pooled endpoint another registration joined after the pre-launch read, committing nothing", { timeout: 90_000 }, async () => {
+    const { stateDir, options, api, record, agents, fixtureOrigin, binding } = await setup("reserved");
+    const foreign = `devfn-tunnel:${binding.name}:${"d".repeat(32)}`;
+    const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    // The PID of each agent the connectors started, in start order.
+    const agentPids = async () => (await Promise.all((await readdir(record)).filter((name) => name.startsWith("agent-")).map(async (name) =>
+      ({ pid: Number(/^agent-(\d+)\.json$/.exec(name)![1]), startedAt: (JSON.parse(await readFile(path.join(record, name), "utf8")) as { startedAt: number }).startedAt }))))
+      .sort((a, b) => a.startedAt - b.startedAt).map((item) => item.pid);
+    // The same-name registration elsewhere comes online for name once this run's next agent has started: after every pre-launch read.
+    const joinAfterLaunch = (name: string) => {
+      const before = readdirSync(record).filter((item) => item.startsWith("agent-")).length;
+      api.beforeList = (route) => {
+        if (route === "/tunnels" && readdirSync(record).filter((item) => item.startsWith("agent-")).length > before) api.tunnels.push({ public_url: `https://${name}`, metadata: foreign });
+      };
+    };
+    try {
+      // Own pooled endpoints, a predecessor's included, are not a conflict: make before break still works.
+      await publishTunnelRoutes(options, "owner-b", [B]);
+      api.tunnels = [{ public_url: `https://${B}`, metadata: ngrokMarker(binding) }];
+      const before = (await readTunnelState(stateDir, "share")).connector!;
+      joinAfterLaunch(A);
+      await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: expect.stringContaining("the new connector was stopped") });
+      // The launched agent is gone, nothing was committed and the predecessor keeps serving B alone.
+      const [kept, stopped] = await agentPids();
+      expect(await agents()).toHaveLength(2);
+      expect([running(kept), running(stopped)]).toEqual([true, false]);
+      expect(await readTunnelState(stateDir, "share")).toMatchObject({ connector: before, hostnames: [{ hostname: B, ownerId: "owner-b" }], retired: [], residue: [] });
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: before.pid, routed: [B] });
+
+      // A recovery relaunch is read back the same way: B's crashed connector is not replaced by one pooled with a foreign agent.
+      api.tunnels = [];
+      process.kill(-before.pid, "SIGKILL");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      joinAfterLaunch(B);
+      await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+      expect(await agents()).toHaveLength(3);
+      expect(running((await agentPids())[2])).toBe(false);
+      expect((await tunnelStatus(options)).routed).toEqual([]);
+    } finally { api.beforeList = undefined; fixtureOrigin.server.close(); }
   });
 
   posixIt("keeps serving after upgrade clients reset their connections, denied or allowed", { timeout: 60_000 }, async () => {

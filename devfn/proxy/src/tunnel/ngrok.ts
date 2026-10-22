@@ -184,13 +184,25 @@ export class NgrokTunnelProvider implements TunnelProvider {
    */
   public async verifyDns(binding: TunnelBinding, hostname: string): Promise<void> {
     if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
+    await this.assertSoleRegistration(binding, [hostname], "it was left unchanged");
+  }
+
+  /**
+   * The same check once a launched connector's pooled endpoints are online:
+   * another registration whose agent came online after the pre-launch read
+   * would otherwise share the pool and split its public traffic.
+   */
+  public async verifyServing(binding: TunnelBinding, hostnames: readonly string[]): Promise<void> {
+    await this.assertSoleRegistration(binding, hostnames, "the new connector was stopped");
+  }
+
+  /** No online tunnel for a reserved hostname carries a marker other than this registration's; ephemeral URLs are the agent's own. */
+  private async assertSoleRegistration(binding: TunnelBinding, hostnames: readonly string[], outcome: string): Promise<void> {
     if (ngrok(binding).endpoints === "ephemeral") return;
     const tunnels = await this.list<OnlineTunnel>(binding, "/tunnels", "tunnels");
     const host = (url: unknown): string | undefined => { try { return typeof url === "string" ? new URL(url).hostname : undefined; } catch { return undefined; } };
-    const foreign = tunnels.filter((item) => host(item.public_url) === hostname && item.metadata !== ngrokMarker(binding));
-    if (foreign.length) {
-      throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${hostname} is already served by an ngrok agent DevFn does not own; it was left unchanged.`);
-    }
+    const foreign = hostnames.find((hostname) => tunnels.some((item) => host(item.public_url) === hostname && item.metadata !== ngrokMarker(binding)));
+    if (foreign) throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${foreign} is already served by an ngrok agent DevFn does not own; ${outcome}.`);
   }
 
   /** Nothing to remove; reachability ends once no connector routes the name. */

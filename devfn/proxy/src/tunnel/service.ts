@@ -50,6 +50,9 @@ export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
   if (binding.provider === "cloudflare") return { provider: "cloudflare", urlTiming: "pre-start", dns: "devfn-records", gaps: ["DevFn does not provision or check edge certificates for the public domain."] };
   const gaps = ["ngrok keeps no DNS record DevFn can read back; a name is public exactly while the connector runs its endpoint.",
     "The ngrok agent forwards plain HTTP to the DevFn origin bridge on loopback, which verifies the public origin's TLS for each hostname."];
+  if (binding.ngrok.endpoints === "reserved") {
+    gaps.push("Reserved endpoints are pooled: an agent of another registration that joins a hostname's pool after DevFn's post-launch readback, or that the account listing does not show yet, is detected only when a later publish or recovery of that hostname reads the account.");
+  }
   if (binding.ngrok.endpoints === "ephemeral") {
     gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
       "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; devfn status and tunnel status report the current ones, and devfn up records them in the receipt.",
@@ -305,8 +308,16 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   } catch (error) {
     throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector did not become ready (${message(error)}); see ${paths.log}.`, record ? { pid: record.pid } : undefined);
   }
-  // The record is journaled as retired until committed, so a launch whose URLs cannot be read is stopped like any failed one.
-  if (ctx.provider.assignedUrls) record!.urls = await ctx.provider.assignedUrls(ctx.binding, metricsPort, hostnames);
+  // The record is journaled as retired until committed. A launch whose URLs cannot be read, or whose names an agent
+  // outside this registration serves beside it, is stopped at once, so it never routes into the rollback or a failed
+  // recovery; one that does not stop stays retired for the next transition.
+  try {
+    if (ctx.provider.assignedUrls) record!.urls = await ctx.provider.assignedUrls(ctx.binding, metricsPort, hostnames);
+    await ctx.provider.verifyServing?.(ctx.binding, hostnames);
+  } catch (error) {
+    await stopConnector(paths, record!).catch(() => undefined);
+    throw error;
+  }
   return record!;
 }
 
@@ -677,10 +688,25 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
   return await tunnelStatus(options);
 }
 
-/** Lock-free report of a binding's published hostnames, connector and withdrawals still outstanding. */
+const STATUS_READS = 5;
+
+/**
+ * Lock-free report of a binding's published hostnames, connector and
+ * withdrawals still outstanding. Another owner's transition can commit a
+ * successor and stop the recorded connector between the read and the probe;
+ * a connector found not running is reported only once a fresh read records
+ * the same one, so that swap never reads as this binding's routes ending.
+ */
 export async function tunnelStatus(options: Pick<TunnelServiceOptions, "stateDir" | "binding">): Promise<TunnelStatus> {
-  const state = await readTunnelState(options.stateDir, options.binding.name);
-  const status = state.connector ? await connectorStatus(tunnelPaths(options.stateDir, options.binding.name), state.connector) : "exited";
+  const paths = tunnelPaths(options.stateDir, options.binding.name);
+  let state = await readTunnelState(options.stateDir, options.binding.name);
+  let status = state.connector ? await connectorStatus(paths, state.connector) : "exited";
+  for (let read = 1; read < STATUS_READS && status !== "running"; read += 1) {
+    const again = await readTunnelState(options.stateDir, options.binding.name);
+    if (again.connector === state.connector || (again.connector && state.connector && sameConnector(again.connector, state.connector))) break;
+    state = again;
+    status = state.connector ? await connectorStatus(paths, state.connector) : "exited";
+  }
   return {
     binding: options.binding.name,
     capabilities: tunnelCapabilities(options.binding),
