@@ -32,3 +32,39 @@ BrowseFn also requires middleware0.3.0's per-key limits/blocked-key result and s
 MemoryFn's manifest declared mandatory `secfn:*`, although a repository search finds no SecFn reference in its sources or documentation (only that manifest entry). npm auto-installed the legacy published secfn0.0.2, whose DB^0.1 peer conflicts with the current shared DB workspace. The unused integration peer is now optional, preserving the ability for consumers to opt in without forcing the incompatible legacy runtime on other workspace installations. Its stale peer-only lock nodes were removed before standard npm regeneration; no peer range was widened and no force/legacy-peer-deps flags were used.
 
 The follow-up default npm10 clean scoped ci on Node22 installed576 packages successfully. Middleware26 and storage-local27 tests passed; both builds passed; native SQLite JSON/predicate/rollback acceptance passed again. Source provenance is via local workspace links under this worktree for DB0.4.0, HTTP0.3.1, admin0.1.5, MCPcore0.0.6, middleware0.3.0 and storage-local0.2.0. Legacy secfn is absent from the installed graph.
+
+## Schema and Markdown follow-up
+
+- Immutable JSON cloning defines own data properties, preserving JSON `__proto__` keys without changing object prototypes. Only objects recursively detached and frozen by the module are eligible for reuse; shallow-frozen caller objects remain detached.
+- Sidecar mapping preserves unchanged anchors and reuses immutable metadata/message subtrees. Edits outside anchors report `sidecarChanged: false`; changed anchors remain frozen and historical state is unchanged.
+- Directive serialization counts closing-fence lines with actual tab/carriage-return syntax, preventing tab-suffixed inner fences from prematurely ending serialized bodies.
+- Registry cloning replays successful registrations in their original order, including tools and prompts, while public catalog ordering remains deterministic.
+- Profile schema validation and ownership comparison receive registered schema resources, including hidden-tool and prompt schemas. A 64-entry content-addressed syntax-validation cache includes the full dependency graph and engine. Authentication, visibility, projection, ownership comparison and canonical runtime input/output validation still run per request.
+
+Focused regressions reproduce the original JSON property loss, false sidecar-change notifications, tab-fence truncation, dependency-order clone failure and external-reference profile failure. Final shared checks: MCP **263 tests**, Markdown core **28**, Markdown parser **11**, extensions **7**, ContentFn conversion **14**. Builds and changed-package typechecks pass. Edge-profile coverage resolves embedded external resources with the code-generation-free validator. Cache coverage verifies repeat compilation is avoided and mutated schema graphs are rejected. Fresh packed ESM/CJS MCP/admin consumers pass on exact Node18.18 and20.19; HTTP/admin smoke passes20.19 and production audit reports zero vulnerabilities.
+
+Logs: `/tmp/sf-shared-mcp-full.log`, `/tmp/sf-shared-followup-markdown.log`, `/tmp/sf-shared-core-final.log`, `/tmp/sf-shared-followup-packed.log`.
+
+## Hono HTTP dependency correction — 2026-10-20
+
+The Hono adapter imports observation header helpers from shared HTTP 0.3.1, but its exact 0.1.3 peer and ^0.1.0 development dependency installed an older nested HTTP package without those exports. Its peer now requires ^0.3.1 and development validation uses exact 0.3.1. Standard lock regeneration removed only the stale Hono-local HTTP node and updated the two constraints.
+
+Clean scoped npm10.8.2 installation on Node20.20.0 installed 186 packages successfully (unrelated DevFn workspace Node22 engine warnings remain). Observability, HTTP, and Hono builds pass. Tests pass: observability 8, HTTP 66, and Hono 11. Logs: `/tmp/shared-hono-lock.log`, `/tmp/shared-hono-ci.log`, `/tmp/shared-hono-tests.log`. This corrects dependency resolution; no source, public API, other adapter constraints, or production deployment changed.
+
+## Observability synchronous bundle loading (2026-10-20)
+
+Removed top-level asynchronous module initialization from shared observability. Default Node contexts initialize AsyncLocalStorage on their first already-asynchronous `runWithRequest` call; all simultaneous first calls share the same per-context initialization promise before user work runs. Parent/child scopes retain one storage instance. Loader failures reject without invoking user work or silently using an unsafe fallback. Custom request-context implementations remain authoritative.
+
+Outside Node, default context is explicitly synchronous: its stack frame ends when the callback returns, before awaiting any returned promise. This prevents overlapping asynchronous callbacks from inheriting another request's context. Async propagation in browser/edge runtimes requires an injected `requestContext`; automatic browser async isolation is not claimed.
+
+Validation: observability13, HTTP66 and Hono11 tests pass; all three package builds pass. New regressions cover concurrent first initialization, nested rejection/restoration across child scopes, Node loader failure, browser overlap safety and custom context preservation. A temporary esbuild CommonJS bundle loaded via actual synchronous `require` and preserved concurrent first-use isolation on Node18.18.0 and20.20.0. A browser IIFE bundle evaluated in a VM without Node globals and preserved synchronous scope without retaining async frames. Temporary files were removed.
+
+This establishes bundle compatibility. Shared observability/HTTP package exports still point to ESM artifacts; standalone synchronous require of those published packages is not newly advertised. WatchFn must bundle the actual shared dependency closure into its CommonJS artifact and independently validate its packed dual-format consumer behavior. No hosted deployment or original full readiness claim.
+
+## Shared HTTP adapter dependency alignment (2026-10-20)
+
+Express, Fastify, Next and SvelteKit adapters now declare shared HTTP `^0.3.1` as their peer and `0.3.1` for development, matching Hono and the shared runtime. Regenerated lock removes their nested obsolete HTTP0.1.3 installations. Added local Vitest configs for Next/SvelteKit so package tests use their own source tests instead of inheriting unrelated root DocsFn projects.
+
+Clean scoped npm11.21.0 installation succeeded (404 packages). All seven shared package builds pass. Tests pass: observability13, HTTP66, Hono11, Express10, Fastify9, Next8, SvelteKit8. Initial Next/SvelteKit startup failures came from missing local configs and were resolved by those configs.
+
+A fresh temporary consumer installed independently packed tarballs for all seven shared packages with npm11.21.0, without force or legacy peer resolution. `npm ls` confirmed every adapter deduplicates to HTTP0.3.1 and observability0.0.1. The same unpinned-framework consumer first failed under npm10.8.2 with an internal Arborist `Cannot read properties of null (reading edgesOut)` exception; npm10 fresh-consumer success is not claimed. Temporary consumer directories were removed. This validates shared package dependency installation; WatchFn packed runtime verification remains separate.

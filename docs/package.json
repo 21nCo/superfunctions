@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 6010",
     "predev": "node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
-    "prebuild": "node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
+    "prebuild": "npm run build --workspace=@superfunctions/docs-theme && node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
     "build": "next build",
     "start": "next start",
     "check:coverage": "tsx ./scripts/check-docs-catalog.mjs",
@@ -24,7 +24,7 @@
     "lightningcss": "^1.31.1",
     "lucide-react": "^0.575.0",
     "mermaid": "^11.12.3",
-    "next": "15.3.6",
+    "next": "15.5.28",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",

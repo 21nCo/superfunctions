@@ -240,6 +240,7 @@ export const categoryOverviewContracts: readonly RequiredPageContract[] = [
 ];
 
 function createTypeScriptPackageEntry(input: {
+  sourcePaths?: readonly string[];
   slug: string;
   title: string;
   category: PackageCategoryId;
@@ -255,7 +256,7 @@ function createTypeScriptPackageEntry(input: {
     language: "typescript",
     order: input.order,
     summary: input.summary,
-    sourcePaths: [`packages/${input.slug}/README.md`, `packages/${input.slug}/package.json`],
+    sourcePaths: input.sourcePaths ?? [`packages/${input.slug}/README.md`, `packages/${input.slug}/package.json`],
     requiredSections: packagePageRequiredSections,
     relatedPackages: input.relatedPackages,
   };
@@ -349,14 +350,6 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     relatedPackages: ["oauth-core", "oauth-flow", "auth"],
   }),
   createTypeScriptPackageEntry({
-    slug: "oauth-router",
-    title: "OAuth Router",
-    category: "authentication",
-    order: 80,
-    summary: "Reuse OAuth browser and connection route factories on top of the shared HTTP layer.",
-    relatedPackages: ["oauth-flow", "oauth-http", "http"],
-  }),
-  createTypeScriptPackageEntry({
     slug: "http",
     title: "HTTP",
     category: "http",
@@ -398,6 +391,7 @@ export const packageCatalog: readonly PackageDocEntry[] = [
   }),
   createTypeScriptPackageEntry({
     slug: "http-openapi",
+    sourcePaths: ["packages/http-openapi/src/generate.ts", "packages/http-openapi/package.json"],
     title: "HTTP OpenAPI",
     category: "http",
     order: 55,
@@ -411,14 +405,6 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     order: 60,
     summary: "Use `@superfunctions/http` in SvelteKit endpoints without custom glue code.",
     relatedPackages: ["http", "middleware", "webhooks"],
-  }),
-  createTypeScriptPackageEntry({
-    slug: "http-openapi",
-    title: "HTTP OpenAPI",
-    category: "http",
-    order: 70,
-    summary: "Generate deterministic OpenAPI documents from `@superfunctions/http` routers.",
-    relatedPackages: ["http", "http-next", "oauth-router"],
   }),
   createTypeScriptPackageEntry({
     slug: "middleware",
@@ -476,6 +462,12 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     summary: "Load typed environment and runtime configuration before wiring shared packages together.",
     relatedPackages: ["middleware", "metrics", "queue"],
   }),
+  { ...createTypeScriptPackageEntry({ slug: "delivery", title: "Delivery", category: "middleware-runtime", order: 80,
+    summary: "Share typed email, SMS and push delivery contracts across providers.", relatedPackages: ["queue", "observability", "webhooks"] }),
+    sourcePaths: ["packages/delivery/src/index.ts", "packages/delivery/package.json"] },
+  { ...createTypeScriptPackageEntry({ slug: "observability", title: "Observability", category: "middleware-runtime", order: 90,
+    summary: "Compose request observations, events, metrics and spans with injected channels.", relatedPackages: ["metrics", "http", "delivery"] }),
+    sourcePaths: ["packages/observability/src/index.ts", "packages/observability/package.json"] },
   createTypeScriptPackageEntry({
     slug: "db",
     title: "DB",
@@ -550,7 +542,7 @@ export const packageCatalog: readonly PackageDocEntry[] = [
   }),
   createPythonPackageEntry({
     slug: "python-core",
-    packageName: "sfns",
+    packageName: "superfunctions-core",
     title: "Python Core",
     order: 10,
     summary: "Bring the shared database and HTTP abstractions into Python projects.",
@@ -596,6 +588,9 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     summary: "Reuse the shared Fumadocs theme primitives used across Superfunctions docs apps.",
     relatedPackages: ["cli", "http", "auth"],
   }),
+  { ...createTypeScriptPackageEntry({ slug: "admin", title: "Admin", category: "tooling", order: 30,
+    summary: "Define scoped administration capabilities, dispatch policy and typed operator clients.", relatedPackages: ["http", "auth", "http-openapi"] }),
+    sourcePaths: ["packages/admin/README.md", "packages/admin/src/index.ts", "packages/admin/package.json"] },
 ];
 
 export function getExpectedPackageDocPath(entry: PackageDocEntry): string {
