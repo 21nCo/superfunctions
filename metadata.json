@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5J1MHNEXZ82QCK6S1MK9HGX",
+  "strategy": "manual-commit",
+  "branch": "linear/dev-8",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "devfn/cli/src/index.ts",
+    "devfn/cli/test/cli.test.ts",
+    "devfn/docs/configuration.md",
+    "devfn/proxy/src/tunnel/ngrok.ts",
+    "devfn/proxy/src/tunnel/service.ts",
+    "devfn/proxy/src/tunnel/state.ts",
+    "devfn/proxy/test/tunnel-ngrok.test.ts",
+    "devfn/proxy/test/tunnel-service.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 85158,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 5587584,
+    "output_tokens": 9076,
+    "api_call_count": 37,
+    "subagent_tokens_complete": false
+  }
+}
