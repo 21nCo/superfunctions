@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { RunStepResult } from './run-step.js';
 
@@ -14,6 +15,8 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   let closed = false;
   child.once('close', () => { closed = true; });
   let stdout = ''; let stderr = ''; let bytes = 0; let stopping = false;
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
   const alive = () => {
     if (!child.pid) return false;
     try { process.kill(-child.pid, 0); return true; }
@@ -47,7 +50,7 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   const capture = (chunk: Buffer, output: 'stdout' | 'stderr') => {
     bytes += chunk.length;
     if (bytes > 1_048_576) { stop(); return; }
-    if (output === 'stdout') stdout += chunk.toString(); else stderr += chunk.toString();
+    if (output === 'stdout') stdout += stdoutDecoder.write(chunk); else stderr += stderrDecoder.write(chunk);
   };
   child.stdout.on('data', chunk => capture(chunk, 'stdout'));
   child.stderr.on('data', chunk => capture(chunk, 'stderr'));
@@ -67,6 +70,7 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
     const streamsUntil = Date.now() + 1_000;
     while (!closed && Date.now() < streamsUntil) await delay(10);
     if (!closed) throw new ProcessGroupUncertainError();
+    stdout += stdoutDecoder.end(); stderr += stderrDecoder.end();
     const lines = [...stdout.split('\n'), ...stderr.split('\n')].filter(Boolean);
     return { exitCode: stopping ? 1 : code, stdout, stderr, lines };
   } finally {

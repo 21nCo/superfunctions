@@ -91,6 +91,16 @@ describe('resolveEnvMap', () => {
 });
 
 describe('redactSecrets', () => {
+  it('redacts each emitted component of a multiline secret', () => {
+    expect(redactSecrets(['prefix=alpha-key', 'beta-key suffix'], ['alpha-key\r\nbeta-key']))
+      .toEqual(['prefix=***', '*** suffix']);
+  });
+
+  it('uses longest literal matches without rewriting inserted markers', () => {
+    expect(redactSecrets(['abcde a.b $$$'], ['abc', 'abcde', 'a.b', '$$$', '*']))
+      .toEqual(['*** *** ***']);
+  });
+
   it('replaces secret values with ***', () => {
     const result = redactSecrets(
       ['my secret is redact-me and more redact-me here'],

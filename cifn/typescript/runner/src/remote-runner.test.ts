@@ -214,3 +214,10 @@ it('keeps captured secrets and expanded scripts out of durable journal entries a
     expect(bytes).not.toContain(secret); expect(bytes).not.toContain('secretSnapshot'); expect(bytes).not.toContain('test ');
   }
 });
+
+it('preserves UTF-8 split across owned subprocess chunks before secret redaction', async () => {
+  const result = await executeOwnedShell("printf '\\342'; sleep 0.05; printf '\\202\\254\\n'", directory(), process.env);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe('€\n');
+  expect(result.lines).toEqual(['€']);
+});
