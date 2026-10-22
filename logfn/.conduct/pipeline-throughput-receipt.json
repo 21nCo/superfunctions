@@ -1,0 +1,398 @@
+[
+  {
+    "node": "v20.20.0",
+    "defaultRedaction": true,
+    "pipeline": "0/2/4 real enrichContext stages; terminal redaction always enabled",
+    "consoleDestination": "caller-selected stdout destination; not interactive terminal evidence",
+    "samplePolicy": "single bounded sample per case; no performance threshold claim",
+    "cleanup": {
+      "serverClosed": true
+    },
+    "results": [
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 68.592625,
+        "eventsPerSecond": 29157.65361071981,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 74.48766700000002,
+        "eventsPerSecond": 26850.08244384939,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 76.78737500000003,
+        "eventsPerSecond": 26045.94830855983,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 243.38608299999999,
+        "eventsPerSecond": 8217.396719433626,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 252.076959,
+        "eventsPerSecond": 7934.084923644291,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 321.346417,
+        "eventsPerSecond": 6223.812976262312,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 171.35591599999998,
+        "eventsPerSecond": 11671.61336874999,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 124.17329100000006,
+        "eventsPerSecond": 16106.523261914666,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 86.00350000000003,
+        "eventsPerSecond": 23254.8675344608,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 290.5860829999999,
+        "eventsPerSecond": 6882.642070645898,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 219.422916,
+        "eventsPerSecond": 9114.818253531916,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 374.478875,
+        "eventsPerSecond": 5340.75520281351,
+        "httpReceived": 2000,
+        "requests": 20
+      }
+    ]
+  },
+  {
+    "node": "v20.20.0",
+    "defaultRedaction": true,
+    "pipeline": "0/2/4 real enrichContext stages; terminal redaction always enabled",
+    "consoleDestination": "caller-selected stdout destination; not interactive terminal evidence",
+    "samplePolicy": "single bounded sample per case; no performance threshold claim",
+    "cleanup": {
+      "serverClosed": true
+    },
+    "results": [
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 36.957792,
+        "eventsPerSecond": 54115.78700372577,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 38.32958299999999,
+        "eventsPerSecond": 52179.017966357744,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 44.523624999999996,
+        "eventsPerSecond": 44919.97226191713,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 102.04475,
+        "eventsPerSecond": 19599.244449126487,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 102.70362500000002,
+        "eventsPerSecond": 19473.509333287893,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 111.618,
+        "eventsPerSecond": 17918.256911967605,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 59.939208000000065,
+        "eventsPerSecond": 33367.140920513964,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 36.8375420000001,
+        "eventsPerSecond": 54292.43894720214,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 42.513165999999956,
+        "eventsPerSecond": 47044.2497742935,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 110.837083,
+        "eventsPerSecond": 18044.50230795049,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 119.22299999999996,
+        "eventsPerSecond": 16775.2866477106,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 125.43462499999998,
+        "eventsPerSecond": 15944.56076222973,
+        "httpReceived": 2000,
+        "requests": 20
+      }
+    ]
+  },
+  {
+    "node": "v20.20.0",
+    "defaultRedaction": true,
+    "pipeline": "0/2/4 real enrichContext stages; terminal redaction always enabled",
+    "consoleDestination": "caller-selected stdout destination; not interactive terminal evidence",
+    "samplePolicy": "single bounded sample per case; no performance threshold claim",
+    "cleanup": {
+      "serverClosed": true
+    },
+    "results": [
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 36.376,
+        "eventsPerSecond": 54981.30635583902,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 36.648666999999996,
+        "eventsPerSecond": 54572.24406006364,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 41.83737500000001,
+        "eventsPerSecond": 47804.146412149414,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 103.527375,
+        "eventsPerSecond": 19318.5618779574,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 105.532792,
+        "eventsPerSecond": 18951.455392178006,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "console",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 111.42950000000002,
+        "eventsPerSecond": 17948.5683773148,
+        "httpReceived": null,
+        "requests": null
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 57.93070800000004,
+        "eventsPerSecond": 34524.00409123256,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 39.63420800000006,
+        "eventsPerSecond": 50461.459959033295,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 128,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 43.374374999999986,
+        "eventsPerSecond": 46110.174498191634,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 0,
+        "events": 2000,
+        "elapsedMs": 116.19624999999996,
+        "eventsPerSecond": 17212.25943178029,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 2,
+        "events": 2000,
+        "elapsedMs": 118.25716599999998,
+        "eventsPerSecond": 16912.29434671215,
+        "httpReceived": 2000,
+        "requests": 20
+      },
+      {
+        "transport": "http",
+        "payloadBytes": 4096,
+        "depth": 4,
+        "events": 2000,
+        "elapsedMs": 125.97649999999999,
+        "eventsPerSecond": 15875.976868701704,
+        "httpReceived": 2000,
+        "requests": 20
+      }
+    ]
+  }
+]
