@@ -19,6 +19,8 @@ export type SdkDiagnosticCode =
   | "SDK_NAME_COLLISION"
   /** A security scheme the target cannot inject; alternatives that need it are dropped. */
   | "SDK_UNSUPPORTED_SECURITY_SCHEME"
+  /** Component schemas refer to each other in a cycle the target cannot type; the back-references are widened. */
+  | "SDK_SCHEMA_CYCLE"
   /** Spec `servers` are recorded but never used as request destinations. */
   | "SDK_SERVERS_IGNORED"
   /** The release identity could not be derived (createReleaseDescriptor rejected the input). */

@@ -54,6 +54,52 @@ function literal(value: unknown): string | null {
   return null;
 }
 
+/**
+ * Component names a schema's type refers to outside any object or array type: through `$ref`,
+ * `$dynamicRef` and `allOf`/`anyOf`/`oneOf` members. TypeScript resolves these references eagerly, so
+ * a cycle of them is a circular type alias; references inside object, array and tuple types are
+ * deferred and may recurse.
+ */
+function directReferences(schema: unknown, found: Set<string>, depth = 0): Set<string> {
+  if (depth > MAX_DEPTH || !isRecord(schema)) return found;
+  for (const keyword of ["$ref", "$dynamicRef"]) {
+    const ref = schema[keyword];
+    const component = typeof ref === "string" ? componentName(ref) : null;
+    if (component !== null) found.add(component);
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    const members = schema[keyword];
+    if (Array.isArray(members)) for (const member of members) directReferences(member, found, depth + 1);
+  }
+  return found;
+}
+
+/**
+ * Finds the direct references (see `directReferences`) that close a cycle between component schemas,
+ * by a depth-first search over names and references in sorted order, so the result is deterministic.
+ * Typing each returned reference as `unknown` leaves the direct references acyclic. Keys are the
+ * referencing schemas; values are the referenced ones, sorted.
+ */
+export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<string, string[]> {
+  const names = Object.keys(schemas).sort();
+  const edges = new Map(names.map((name) => [name, [...directReferences(schemas[name], new Set())].filter((target) => Object.prototype.hasOwnProperty.call(schemas, target)).sort()]));
+  const state = new Map<string, "open" | "done">();
+  const cuts = new Map<string, string[]>();
+  const visit = (name: string) => {
+    state.set(name, "open");
+    for (const target of edges.get(name) ?? []) {
+      const seen = state.get(target);
+      if (seen === "open") cuts.set(name, [...(cuts.get(name) ?? []), target]);
+      else if (seen === undefined) visit(target);
+    }
+    state.set(name, "done");
+  };
+  for (const name of names) if (!state.has(name)) visit(name);
+  return cuts;
+}
+
+const NO_CUTS: ReadonlySet<string> = new Set();
+
 export class SchemaTypes {
   /** Maps a component schema name to its exported type name. */
   readonly #resolve: (component: string) => string | null;
@@ -65,7 +111,8 @@ export class SchemaTypes {
     this.#prefix = prefix;
   }
 
-  type(schema: unknown, indent = "", depth = 0): string {
+  /** `cut` names components whose direct references (see `aliasCycleCuts`) are typed `unknown`. */
+  type(schema: unknown, indent = "", depth = 0, cut: ReadonlySet<string> = NO_CUTS): string {
     if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null) return "unknown";
     if (schema === false) return "never";
     if (!isRecord(schema)) return "unknown";
@@ -75,7 +122,7 @@ export class SchemaTypes {
       const ref = schema[keyword];
       if (typeof ref !== "string") continue;
       const component = componentName(ref);
-      const name = component === null ? null : this.#resolve(component);
+      const name = component === null || cut.has(component) ? null : this.#resolve(component);
       parts.push(name === null ? "unknown" : `${this.#prefix}${name}`);
     }
     if ("const" in schema) parts.push(literal(schema.const) ?? "unknown");
@@ -87,10 +134,10 @@ export class SchemaTypes {
     const literals = "const" in schema || Array.isArray(schema.enum);
     const typed = literals && primitiveOnly(schema.type) ? null : this.#byType(schema, indent, next);
     if (typed !== null) parts.push(typed);
-    if (Array.isArray(schema.allOf)) parts.push(intersection(schema.allOf.map((member) => this.type(member, indent, next))));
+    if (Array.isArray(schema.allOf)) parts.push(intersection(schema.allOf.map((member) => this.type(member, indent, next, cut))));
     for (const keyword of ["anyOf", "oneOf"]) {
       const members = schema[keyword];
-      if (Array.isArray(members)) parts.push(union(members.map((member) => this.type(member, indent, next))));
+      if (Array.isArray(members)) parts.push(union(members.map((member) => this.type(member, indent, next, cut))));
     }
     return intersection(parts);
   }

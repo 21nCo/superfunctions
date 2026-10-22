@@ -380,6 +380,84 @@
       },
       "description": null,
       "executionPolicyRef": null,
+      "id": "tasks.archive",
+      "method": "post",
+      "name": "archiveTask",
+      "openapiOperationId": "archiveTask",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "taskId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/tasks/{taskId}/archive",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [],
+          "description": "Archived; no content",
+          "kind": "success",
+          "status": "202"
+        },
+        {
+          "contents": [],
+          "description": "Already archived; no content",
+          "kind": "error",
+          "status": "409"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Archive a task",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
       "id": "tasks.attachment.download",
       "method": "get",
       "name": "downloadAttachment",
@@ -1494,12 +1572,12 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:9519aa252b65503590a4d22b31f9a482400bd501a07b99ebd6c7daa3e229fe31",
+    "manifestDigest": "sha256:902bde0e72b44eb89fb65009f0812cd26dacdd1a269175dc9506802dc6f83f85",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,
       "source": "apifn/sdk/fixtures/catalog/openapi.json"
     },
-    "specDigest": "sha256:7f483de77605ada640c9574a3ea1496c03be6d8f4c4ce174ce7641bd90854b23"
+    "specDigest": "sha256:709886f41f7cc51e9758ee8e43a1e5485a8d9d601f6e2179f0d275784247d216"
   }
 }

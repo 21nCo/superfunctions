@@ -572,7 +572,7 @@ export class ApiRuntime<Credentials> {
         throw error;
       }
       const status = response.status;
-      let body: Decoded = { kind: "none", value: undefined };
+      let body = NO_CONTENT;
       try {
         body = await untilAborted(decode(response, op.method, controller.signal), controller.signal);
       } catch (error) {
@@ -580,6 +580,7 @@ export class ApiRuntime<Credentials> {
       }
       if (status >= 200 && status < 300) {
         // A success body must be one the operation documents, so the result matches its type.
+        if (op.success !== null) body = asDocumented(body, op.success);
         if (body.kind === "invalid-json" || (op.success !== null && !op.success.includes(body.kind))) {
           throw new ApiError("decode", op.id, `${label} returned a ${body.kind === "invalid-json" ? "malformed JSON" : body.kind} body, which the operation does not document.`, attempt);
         }
@@ -592,6 +593,7 @@ export class ApiRuntime<Credentials> {
         op.errors.find((candidate) => candidate.status === code) ??
         op.errors.find((candidate) => candidate.status === `${code[0]}XX`) ??
         op.errors.find((candidate) => candidate.status === "default");
+      if (entry !== undefined) body = asDocumented(body, entry.kinds);
       const kind: BodyKind = body.kind === "invalid-json" ? "text" : body.kind;
       const declared = status !== 0 && entry !== undefined && entry.kinds.includes(kind);
       const error = new ApiHttpError(op.id, `${label} returned HTTP ${status}.`, attempt, status, body.value, declared, response.headers);
@@ -621,17 +623,28 @@ export class ApiRuntime<Credentials> {
       failure: { kind: error.kind, retryable, attempt: Math.max(1, error.attempts) },
     };
     if (error instanceof ApiHttpError && error.status >= 100) event.failure.httpStatus = error.status;
-    // An observer never changes the call's outcome.
+    // An observer never changes the call's outcome. Any thenable it returns, from any realm, is adopted
+    // and its rejection handled; a throwing `then` getter rejects the adopting promise, handled the same way.
     try {
       const result = hook(event) as unknown;
-      if (result instanceof Promise) result.catch(() => undefined);
+      if ((typeof result === "object" && result !== null) || typeof result === "function") {
+        Promise.resolve(result).then(undefined, () => undefined);
+      }
     } catch {
       // ignored
     }
   }
 }
 
-type Decoded = { kind: BodyKind; value: unknown } | { kind: "invalid-json"; value: string };
+/** `empty` marks the empty value of a text or binary media type, which may instead be documented as no content. */
+type Decoded = { kind: BodyKind; value: unknown; empty?: true } | { kind: "invalid-json"; value: string };
+
+const NO_CONTENT: Decoded = { kind: "none", value: undefined };
+
+/** Reads an empty text or binary body as no content when the documented kinds include it. */
+function asDocumented(body: Decoded, kinds: readonly BodyKind[]): Decoded {
+  return "empty" in body && kinds.includes("none") ? NO_CONTENT : body;
+}
 
 /** Statuses whose responses never have content. */
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
@@ -639,14 +652,17 @@ const BODYLESS_STATUSES = new Set([204, 205, 304]);
 /**
  * Reads the whole body inside the attempt's timeout and classifies it by media type. An empty body is
  * no content for HEAD, 204, 205, 304, a missing media type and JSON (an empty JSON body is not a JSON
- * document); for a text or binary media type it is an empty string or byte array.
+ * document); for a text or binary media type it is an empty string or byte array marked `empty`, which
+ * `asDocumented` turns into no content when the status documents none (frameworks often send a media
+ * type with an empty body).
  */
 async function decode(response: Response, method: string, signal: AbortSignal): Promise<Decoded> {
-  if (response.type === "opaqueredirect") return { kind: "none", value: undefined };
+  if (response.type === "opaqueredirect") return NO_CONTENT;
   const bytes = response.body === null ? new Uint8Array(0) : await readBody(response.body, signal);
   const type = mediaTypeOf(response);
-  if (bytes.byteLength === 0 && (method === "HEAD" || BODYLESS_STATUSES.has(response.status) || type === "" || isJsonMediaType(type))) {
-    return { kind: "none", value: undefined };
+  if (bytes.byteLength === 0) {
+    if (method === "HEAD" || BODYLESS_STATUSES.has(response.status) || type === "" || isJsonMediaType(type)) return NO_CONTENT;
+    return type.startsWith("text/") ? { kind: "text", value: "", empty: true } : { kind: "binary", value: bytes, empty: true };
   }
   if (isJsonMediaType(type)) {
     const text = new TextDecoder().decode(bytes);

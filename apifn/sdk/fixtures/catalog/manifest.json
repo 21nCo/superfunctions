@@ -12,6 +12,7 @@
     { "id": "tasks.delete", "operationId": "deleteTask", "deprecation": { "replacement": "tasks.replace", "since": "2026-09-01", "message": "Close tasks instead of deleting them." } },
     { "id": "tasks.attachment.download", "operationId": "downloadAttachment" },
     { "id": "tasks.attachment.upload", "operationId": "uploadAttachment" },
+    { "id": "tasks.archive", "operationId": "archiveTask" },
     { "id": "tasks.export", "operationId": "exportTasks" },
     { "id": "projects.summary.get", "operationId": "getProjectSummary" },
     { "id": "reports.upload", "operationId": "uploadReport" },

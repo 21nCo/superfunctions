@@ -89,6 +89,15 @@
         "responses": { "200": { "description": "Stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Attachment" } } } } }
       }
     },
+    "/projects/{projectId}/tasks/{taskId}/archive": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/TaskId" }],
+      "post": {
+        "operationId": "archiveTask",
+        "summary": "Archive a task",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "202": { "description": "Archived; no content" }, "409": { "description": "Already archived; no content" } }
+      }
+    },
     "/projects/{projectId}/summary": {
       "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
       "get": {

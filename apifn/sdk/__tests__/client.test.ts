@@ -4,6 +4,7 @@
 import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import vm from "node:vm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildFixtureSdk, cleanupTemp, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
 
@@ -474,6 +475,33 @@ describe("failure observation", () => {
     expect(rejected.status).toBe(404);
     // A rejection the hook returns is handled: vitest fails the run on an unhandled one.
     await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it("handles rejections of cross-realm promises and thenables a hook returns", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      const results: Array<[string, () => unknown]> = [
+        ["a rejected promise from another realm", () => vm.runInNewContext('Promise.reject(new Error("cross-realm observer failed"))')],
+        ["a rejecting thenable", () => ({ then: (_resolve: unknown, reject: (reason: unknown) => void) => reject(new Error("thenable observer failed")) })],
+        ["a thenable whose then throws", () => ({ then: () => { throw new Error("then failed"); } })],
+        ["a throwing then getter", () => Object.defineProperty({}, "then", { get: () => { throw new Error("then getter failed"); } })],
+      ];
+      for (const [name, result] of results) {
+        server.reset([{ status: 404, headers: { "content-type": "application/problem+json" }, body: '{"title":"x","status":404}' }]);
+        let observed = 0;
+        const target = client({ onFailure: () => (observed++, result()) });
+        const error = await target.getTask({ projectId: "p", taskId: "t" }).catch((caught: unknown) => caught);
+        expect(observed, name).toBe(1);
+        expect(error, name).toBeInstanceOf(sdk.ApiHttpError);
+        expect(error.status, name).toBe(404);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
   });
 });
 

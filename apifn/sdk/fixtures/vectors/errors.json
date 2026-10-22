@@ -1,5 +1,5 @@
 {
-  "description": "Response handling with retries disabled (maxAttempts 1). The server answers each call with `response`; `body` is the raw response text. `expect.result` is the decoded success value (null for no body) and `expect.binaryResult` the base64 of a binary one. An empty body is an empty string or byte array for a documented text or binary media type, and no content for 204, 205, 304, HEAD, a missing media type or JSON (so an empty JSON success is a decode failure). `expect.error` is the failure: kind (apifn.client-failure/v1 failure kinds), HTTP status, whether the status and body kind are documented by the operation (`declared`), and the decoded body (parsed JSON, text, or null).",
+  "description": "Response handling with retries disabled (maxAttempts 1). The server answers each call with `response`; `body` is the raw response text. `expect.result` is the decoded success value (null for no body) and `expect.binaryResult` the base64 of a binary one. An empty body is no content for 204, 205, 304, HEAD, a missing media type or JSON (so an empty JSON success is a decode failure). With a text or binary media type it is checked against the kinds documented for its status (every 2xx kind for a success, else the matched error entry): no content when they include it, else an empty string or byte array. `expect.error` is the failure: kind (apifn.client-failure/v1 failure kinds), HTTP status, whether the status and body kind are documented by the operation (`declared`), and the decoded body (parsed JSON, text, or null).",
   "cases": [
     {
       "name": "declared JSON error",
@@ -120,6 +120,41 @@
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
       "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": "" },
       "expect": { "error": { "kind": "decode" } }
+    },
+    {
+      "name": "an empty no-content success with a text media type",
+      "operation": "tasks.archive",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 202, "headers": { "content-type": "text/html; charset=utf-8" }, "body": "" },
+      "expect": { "result": null }
+    },
+    {
+      "name": "an empty no-content success with a binary media type",
+      "operation": "tasks.archive",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 202, "headers": { "content-type": "application/octet-stream" }, "body": "" },
+      "expect": { "result": null }
+    },
+    {
+      "name": "a non-empty body for a no-content success is a decode failure",
+      "operation": "tasks.archive",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 202, "headers": { "content-type": "text/plain" }, "body": "archived" },
+      "expect": { "error": { "kind": "decode" } }
+    },
+    {
+      "name": "an empty documented no-content error with a media type is declared",
+      "operation": "tasks.archive",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 409, "headers": { "content-type": "text/html; charset=utf-8" }, "body": "" },
+      "expect": { "error": { "kind": "http", "status": 409, "declared": true, "body": null } }
+    },
+    {
+      "name": "a non-empty body for a documented no-content error is undeclared",
+      "operation": "tasks.archive",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 409, "headers": { "content-type": "text/plain" }, "body": "archived" },
+      "expect": { "error": { "kind": "http", "status": 409, "declared": false, "body": "archived" } }
     }
   ]
 }

@@ -6,7 +6,7 @@ import { camelCase, docComment, NameRegistry, pascalCase, propertyKey } from "./
 import { analyzeOperation, isReadMethod, type ResponseShape } from "./operations.js";
 import type { TypeScriptOptions } from "./options.js";
 import { RUNTIME_SOURCE } from "./runtime-source.js";
-import { SchemaTypes } from "./schema.js";
+import { aliasCycleCuts, SchemaTypes } from "./schema.js";
 
 export const CUSTOM_CODE_ROOT = "src/custom/";
 /** TypeScript used to build generated packages; pinned so builds are reproducible. */
@@ -108,11 +108,21 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const resolve = (component: string) => typeNames.get(component) ?? null;
   const modelTypes = new SchemaTypes(resolve);
   const clientTypes = new SchemaTypes(resolve, "Models.");
+  // A cycle of references outside object and array types would be a circular type alias.
+  const cuts = aliasCycleCuts(catalog.schemas);
+  for (const [schema, targets] of cuts) {
+    diagnostics.push({
+      code: "SDK_SCHEMA_CYCLE",
+      severity: "warning",
+      message: `Component schema "${schema}" refers back to ${targets.map((target) => `"${target}"`).join(", ")} outside any object or array, which TypeScript cannot express as a type alias; ${targets.length === 1 ? "that reference is" : "those references are"} typed unknown.`,
+      pointer: `/schemas/${schema.replace(/~/g, "~0").replace(/\//g, "~1")}`,
+    });
+  }
   let models = header(context);
   for (const schema of schemaNames) {
     const value = catalog.schemas[schema];
     const description = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.description === "string" ? value.description : null;
-    models += `\n${docComment([description])}export type ${typeNames.get(schema)} = ${modelTypes.type(value)};\n`;
+    models += `\n${docComment([description])}export type ${typeNames.get(schema)} = ${modelTypes.type(value, "", 0, new Set(cuts.get(schema)))};\n`;
   }
   if (schemaNames.length === 0) models += "\nexport {};\n";
 

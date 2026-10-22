@@ -294,6 +294,40 @@ describe("generated TypeScript", () => {
     expect(models).toContain("export type Tree = {\n  children?: Tree[];\n};");
   });
 
+  it("widens references that close a cycle TypeScript cannot alias, naming each, and keeps recursion through arrays", async () => {
+    const catalog = fixtureCatalog();
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    Object.assign(catalog.schemas, {
+      AliasA: ref("AliasB"),
+      AliasB: ref("AliasA"),
+      UnionA: { anyOf: [ref("UnionB"), { type: "string" }] },
+      UnionB: { anyOf: [ref("UnionA"), { type: "number" }] },
+      Self: { allOf: [ref("Self"), { type: "object", properties: { x: { type: "string" } } }] },
+      ListA: { anyOf: [{ type: "array", items: ref("ListB") }, { type: "string" }] },
+      ListB: ref("ListA"),
+    });
+    catalog.schemas.Task.properties.probe = ref("AliasA");
+    const result = generate(catalog);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_CYCLE").map(({ severity, pointer }) => [severity, pointer])).toEqual([
+      ["warning", "/schemas/AliasB"],
+      ["warning", "/schemas/Self"],
+      ["warning", "/schemas/UnionB"],
+    ]);
+    const dir = tempDir();
+    expect((await writeSdk(dir, result)).ok).toBe(true);
+    expect(compile(dir)).toEqual([]);
+    const models = readFileSync(path.join(dir, "src/models.ts"), "utf8");
+    expect(models).toContain("export type AliasA = AliasB;");
+    expect(models).toContain("export type AliasB = unknown;");
+    expect(models).toContain("export type UnionA = UnionB | string;");
+    expect(models).toContain("export type UnionB = unknown;");
+    expect(models).toContain("export type Self = {\n  x?: string;\n};");
+    expect(models).toContain("export type ListA = ListB[] | string;");
+    expect(models).toContain("export type ListB = ListA;");
+    expect(generate(reorder(catalog)).files).toEqual(result.files);
+  });
+
   it("types params, results and declared errors for consumers", async () => {
     const dir = tempDir();
     expect((await writeSdk(dir, generate())).ok).toBe(true);
