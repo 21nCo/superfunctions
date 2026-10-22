@@ -1,0 +1,27 @@
+devfn/ports/src/index.ts
+  s_4a5f79a919f8e9::t_ca6ca4be342017 3
+devfn/ports/src/proxy-state.ts
+  s_4a5f79a919f8e9::t_459bc3859285aa 55-59,110
+devfn/proxy/src/tunnel/state.ts
+  s_4a5f79a919f8e9::t_4d9390f3b09923 5,352,432
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_4a5f79a919f8e9::t_fe46008c4f0c16 670-671
+devfn/proxy/test/tunnel-service.test.ts
+  s_4a5f79a919f8e9::t_4b11d5d4752565 731-734
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f79bf8d1c282599a0eef47d33b7026312d6a391",
+  "prompts": {},
+  "sessions": {
+    "s_4a5f79a919f8e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4a5f79a919f8e9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
