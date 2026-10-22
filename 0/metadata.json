@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5HXPRWFK33E3MTH53F85EC8",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-22T13:44:47.353517Z",
+  "branch": "linear/dev-8",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "devfn/docs/configuration.md",
+    "devfn/proxy/src/tunnel/ngrok-bridge.ts",
+    "devfn/proxy/src/tunnel/ngrok.ts",
+    "devfn/proxy/src/tunnel/service.ts",
+    "devfn/proxy/src/tunnel/state.ts",
+    "devfn/proxy/test/tunnel-ngrok.test.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "be5ea7d29b2b",
+  "checkpoint_transcript_start": 26343,
+  "transcript_lines_at_start": 26343,
+  "compact_transcript_start": 3239,
+  "token_usage": {
+    "input_tokens": 116344,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4317568,
+    "output_tokens": 12524,
+    "api_call_count": 61,
+    "subagent_tokens_complete": false
+  },
+  "session_metrics": {
+    "turn_count": 86
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-22T13:44:46.4314Z",
+    "agent_lines": 2358,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2358,
+    "total_lines_changed": 2358,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
