@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5HCJRDN8EGYMJ4TKY1KGTBR",
+  "strategy": "manual-commit",
+  "branch": "linear/dev-8",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "devfn/SPEC.md",
+    "devfn/cli/README.md",
+    "devfn/cli/SECURITY.md",
+    "devfn/cli/src/index.ts",
+    "devfn/cli/test/cli.test.ts",
+    "devfn/config/src/schema.ts",
+    "devfn/config/src/types.ts",
+    "devfn/core/src/endpoints.ts",
+    "devfn/core/src/index.ts",
+    "devfn/core/src/orchestrator.ts",
+    "devfn/core/src/tunnel.ts",
+    "devfn/core/src/types.ts",
+    "devfn/core/test/endpoints.test.ts",
+    "devfn/core/test/tunnel-lifecycle.test.ts",
+    "devfn/core/test/tunnel-ngrok-lifecycle.test.ts",
+    "devfn/docs/configuration.md",
+    "devfn/proxy/src/tunnel/cloudflare.ts",
+    "devfn/proxy/src/tunnel/index.ts",
+    "devfn/proxy/src/tunnel/ngrok-bridge.ts",
+    "devfn/proxy/src/tunnel/ngrok-connector.ts",
+    "devfn/proxy/src/tunnel/ngrok.ts",
+    "devfn/proxy/src/tunnel/service.ts",
+    "devfn/proxy/src/tunnel/state.ts",
+    "devfn/proxy/test/fixtures/tunnel.ts",
+    "devfn/proxy/test/tunnel-ngrok.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 545527,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 30972544,
+    "output_tokens": 71631,
+    "api_call_count": 283,
+    "subagent_tokens_complete": false
+  }
+}
