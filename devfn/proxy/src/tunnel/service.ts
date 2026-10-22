@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -174,12 +174,16 @@ async function freeLoopbackPort(): Promise<number> {
   return typeof address === "object" && address ? address.port : 0;
 }
 
-/** The agent process a connector recorded (see agentIdentityFile) and whether it still runs; "exited" when it recorded none. */
+/**
+ * The agent process a connector launch recorded (see agentIdentityFile) and
+ * whether it still runs; "exited" when it recorded none. Only the file of
+ * this record's own launch is read: no other launch's agent is attributed to it.
+ */
 async function recordedAgent(paths: TunnelPaths, record: ConnectorRecord) {
-  const file = paths.agent(record.metricsPort);
+  if (!record.launchId) return { status: "exited" as const };
+  const file = paths.agent(record.launchId);
   const agent = await readAgentIdentity(file);
-  // Another connector's record, at a readiness port this one no longer holds, is not this connector's agent.
-  if (!agent || agent.configFile !== path.basename(paths.config(record.configDigest))) return { file, status: "exited" as const };
+  if (!agent) return { file, status: "exited" as const };
   return { file, agent, status: await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt) };
 }
 
@@ -207,7 +211,7 @@ async function stopOrphanAgent(paths: TunnelPaths, record: ConnectorRecord): Pro
   const leader = await processIdentityStatus(record.pid, record.birthSignature, record.startedAt);
   if (leader === "running" || leader === "unverified") return undefined;
   const { file, agent, status } = await recordedAgent(paths, record);
-  if (!agent || status === "exited" || status === "identity-mismatch") { await rm(file, { force: true }); return undefined; }
+  if (!agent || status === "exited" || status === "identity-mismatch") { if (file) await rm(file, { force: true }); return undefined; }
   const label = `The agent (PID ${agent.pid}) of tunnel connector ${record.pid}`;
   for (const signal of ["SIGTERM", "SIGKILL"] as const) {
     const current = await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt);
@@ -219,7 +223,7 @@ async function stopOrphanAgent(paths: TunnelPaths, record: ConnectorRecord): Pro
   }
   const final = await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt);
   if (final !== "exited" && final !== "identity-mismatch") return `${label} did not exit`;
-  await rm(file, { force: true });
+  await rm(file!, { force: true });
   return undefined;
 }
 
@@ -281,7 +285,8 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   await writeFile(configFile, config, { mode: 0o600 });
   await ctx.provider.validateConnectorConfig(ctx.binding, configFile, hostnames);
   const metricsPort = await freeLoopbackPort();
-  const command = await ctx.provider.connectorCommand(ctx.binding, configFile, metricsPort);
+  const launchId = randomBytes(16).toString("hex");
+  const command = await ctx.provider.connectorCommand(ctx.binding, configFile, metricsPort, paths.agent(launchId));
   const secrets = ctx.provider.connectorSecrets?.(ctx.binding) ?? {};
   const home = path.join(paths.dir, "home");
   await mkdir(home, { recursive: true, mode: 0o700 });
@@ -294,7 +299,7 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
     await new ProcessSupervisor().start({ name: "connector", root: paths.dir, runtimeDir: paths.dir,
       spec: { adapter: "command", command, env: { HOME: home, ...secrets }, secretEnv: Object.keys(secrets), health: { type: "http", url: `http://127.0.0.1:${metricsPort}/ready`, timeoutMs: ctx.readyTimeoutMs } },
       onStarted: async (managed) => {
-        record = { pid: managed.pid, birthSignature: managed.birthSignature!, startedAt: managed.startedAt, configDigest, metricsPort, hostnames: [...hostnames] };
+        record = { pid: managed.pid, birthSignature: managed.birthSignature!, startedAt: managed.startedAt, configDigest, metricsPort, launchId, hostnames: [...hostnames] };
         await onLaunched(record);
       } });
   } catch (error) {
@@ -366,8 +371,8 @@ async function stopRetired(ctx: Context, state: TunnelState): Promise<void> {
   if (kept.length !== state.retired.length) { state.retired = kept; await writeTunnelState(ctx.stateDir, state); }
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
   const records = [state.connector, ...state.retired].filter((item): item is ConnectorRecord => item !== undefined);
-  const used = new Set(records.flatMap((item) => [path.basename(paths.config(item.configDigest)), path.basename(paths.agent(item.metricsPort))]));
-  for (const name of await readdir(paths.dir)) if (/^(connector-[a-f0-9]{64}\.yml|agent-\d+\.json)$/.test(name) && !used.has(name)) await rm(path.join(paths.dir, name), { force: true });
+  const used = new Set(records.flatMap((item) => [path.basename(paths.config(item.configDigest)), ...(item.launchId ? [path.basename(paths.agent(item.launchId))] : [])]));
+  for (const name of await readdir(paths.dir)) if (/^(connector-[a-f0-9]{64}\.yml|agent-[a-f0-9]{32}\.json)$/.test(name) && !used.has(name)) await rm(path.join(paths.dir, name), { force: true });
 }
 
 /** Whether the recorded connector runs exactly the allowlist for hostnames; none runs for no hostnames. */

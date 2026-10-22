@@ -34,6 +34,9 @@ function forwardHeaders(headers: http.IncomingHttpHeaders, hostname: string, upg
   return result;
 }
 
+/** The request target, when it is origin-form: a path, which cannot name a host other than the Host header's. */
+const originForm = (target: string | undefined): string | undefined => target?.startsWith("/") ? target : undefined;
+
 const deny = (response: http.ServerResponse): void => {
   response.writeHead(404, { [PUBLIC_ORIGIN_HEADER]: "deny", "content-length": "0" });
   response.end();
@@ -48,11 +51,11 @@ const contain = (...streams: Array<{ on(event: "error", listener: (error: Error)
  * The loopback hop between the ngrok agent and the DevFn public origin.
  * ngrok forwards to a plain HTTP upstream and cannot pin the origin's TLS
  * server name or root, so this bridge provides the Cloudflare connector's
- * origin guarantees: a request whose Host is not an allowlisted hostname is
- * denied here (404) and never reaches the origin; an allowlisted one is
- * forwarded over TLS with that hostname as both server name and Host, and
- * only once the origin's certificate verifies against the DevFn root for
- * exactly that name. WebSocket upgrades follow the same rule. Every stream
+ * origin guarantees: a request whose Host is not an allowlisted hostname, or
+ * whose target is not a path (origin-form), is denied here (404) and never
+ * reaches the origin; an allowlisted one is forwarded over TLS with that
+ * hostname as both server name and Host, and only once the origin's
+ * certificate verifies against the DevFn root for exactly that name. WebSocket upgrades follow the same rule. Every stream
  * it touches handles its errors for its whole lifetime, so one failed
  * connection, allowed or denied, closes only itself.
  */
@@ -60,10 +63,10 @@ export function createOriginBridge(options: OriginBridgeOptions): http.Server {
   const allowed = new Set(options.hostnames);
   const server = http.createServer((request, response) => {
     contain(request, response);
-    const hostname = hostName(request.headers.host);
-    if (!hostname || !allowed.has(hostname)) { request.resume(); deny(response); return; }
+    const hostname = hostName(request.headers.host), target = originForm(request.url);
+    if (!hostname || !allowed.has(hostname) || !target) { request.resume(); deny(response); return; }
     const upstream = https.request({ host: "127.0.0.1", port: options.originPort, servername: hostname, ca: options.ca, rejectUnauthorized: true, agent: false,
-      method: request.method, path: request.url, headers: forwardHeaders(request.headers, hostname, false) }, (reply) => {
+      method: request.method, path: target, headers: forwardHeaders(request.headers, hostname, false) }, (reply) => {
       contain(reply);
       const headers: http.OutgoingHttpHeaders = {};
       for (const [key, value] of Object.entries(reply.headers)) if (value !== undefined && !HOP_BY_HOP.has(key)) headers[key] = value;
@@ -84,13 +87,13 @@ export function createOriginBridge(options: OriginBridgeOptions): http.Server {
   server.on("upgrade", (request: http.IncomingMessage, socket: Duplex, head: Buffer) => {
     // Node removes its own socket error handling for an upgrade; this one covers every branch, before any write.
     contain(socket);
-    const hostname = hostName(request.headers.host);
-    if (!hostname || !allowed.has(hostname)) { socket.end(`HTTP/1.1 404 Not Found\r\n${PUBLIC_ORIGIN_HEADER}: deny\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`); return; }
+    const hostname = hostName(request.headers.host), target = originForm(request.url);
+    if (!hostname || !allowed.has(hostname) || !target) { socket.end(`HTTP/1.1 404 Not Found\r\n${PUBLIC_ORIGIN_HEADER}: deny\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`); return; }
     const origin = tls.connect({ host: "127.0.0.1", port: options.originPort, servername: hostname, ca: options.ca, rejectUnauthorized: true, ALPNProtocols: ["http/1.1"] });
     let connected = false;
     origin.once("secureConnect", () => {
       connected = true;
-      const lines = [`${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1`];
+      const lines = [`${request.method ?? "GET"} ${target} HTTP/1.1`];
       for (const [key, value] of Object.entries(forwardHeaders(request.headers, hostname, true))) {
         for (const item of Array.isArray(value) ? value : [value]) if (item !== undefined) lines.push(`${key}: ${String(item)}`);
       }

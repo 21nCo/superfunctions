@@ -73,9 +73,10 @@ export interface TunnelHostname { hostname: string; ownerId: string; publishedAt
 /**
  * A connector process DevFn started for exactly these hostnames; it leads its
  * own process group. urls holds the public URL the provider assigned to each
- * hostname once it ran, for providers that assign them.
+ * hostname once it ran, for providers that assign them. launchId is unique
+ * to this launch and names the only agent identity file it may own.
  */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; hostnames: string[]; urls?: Record<string, string> }
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string> }
 
 /**
  * An in-flight publish, written before any provider or connector mutation.
@@ -135,9 +136,9 @@ export interface TunnelProvider {
   validateConnectorConfig(binding: TunnelBinding, configFile: string, hostnames: readonly string[]): Promise<void>;
   /**
    * Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. A connector that runs
-   * a separate agent process records it at agentIdentityFile(dirname(configFile), metricsPort) before that agent may route.
+   * a separate agent process records it at agentFile, which belongs to this launch only, before that agent may route.
    */
-  connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]>;
+  connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number, agentFile: string): Promise<string[]>;
   /** Credentials the connector reads from its environment, resolved from the binding's references; their values are redacted from its log. */
   connectorSecrets?(binding: TunnelBinding): Record<string, string>;
   /** The public URL the provider assigned to each hostname, read from a ready connector. */
@@ -308,14 +309,19 @@ export async function assertBindingRegistered(stateDir: string, binding: TunnelB
 }
 
 /**
- * Where a connector whose configuration is in dir and whose readiness port
- * is metricsPort records the identity of an agent process it runs, before
- * that agent may route anything. A connector that dies without running any
- * code leaves such an agent outside its supervision; the tunnel service
- * stops it through this record. While its connector runs, no other
- * connector gets the same readiness port.
+ * Where the connector launch launchId, whose configuration is in dir,
+ * records the identity of an agent process it runs, before that agent may
+ * route anything. A connector that dies without running any code leaves
+ * such an agent outside its supervision; the tunnel service stops it
+ * through this record. The launch ID is random per launch, unlike a
+ * readiness port, which a later launch may reuse once a connector exits, so
+ * a record is only ever read, signalled through or removed for the launch
+ * that wrote it.
  */
-export const agentIdentityFile = (dir: string, metricsPort: number): string => path.join(dir, `agent-${metricsPort}.json`);
+export const agentIdentityFile = (dir: string, launchId: string): string => path.join(dir, `agent-${launchId}.json`);
+
+/** A connector launch ID: random, and the only key of its agent identity file. */
+export const LAUNCH_ID = /^[a-f0-9]{32}$/;
 
 /** A recorded agent process and the connector configuration file it was started for. */
 export interface AgentIdentity { pid: number; birthSignature: string; startedAt: string; configFile: string }
@@ -328,11 +334,11 @@ export async function readAgentIdentity(file: string): Promise<AgentIdentity | u
   return { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile };
 }
 
-export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string; agent: (metricsPort: number) => string } {
+export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string; agent: (launchId: string) => string } {
   if (!BINDING_NAME.test(name)) throw invalid("Invalid tunnel binding name.");
   const dir = path.join(stateDir, "tunnels", name);
   return { dir, state: path.join(dir, "state.json"), lock: path.join(dir, "tunnel.lock"), originCa: path.join(dir, "origin-ca.pem"),
-    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`), agent: (metricsPort) => agentIdentityFile(dir, metricsPort) };
+    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`), agent: (launchId) => agentIdentityFile(dir, launchId) };
 }
 
 export async function tunnelDirectory(stateDir: string, name: string): Promise<string> {
@@ -405,7 +411,7 @@ const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
   return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
-    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames) &&
+    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && (item!.launchId === undefined || (typeof item!.launchId === "string" && LAUNCH_ID.test(item!.launchId))) && isNames(item!.hostnames) &&
     (item!.urls === undefined || (typeof item!.urls === "object" && item!.urls !== null && Object.entries(item!.urls).every(([hostname, url]) =>
       item!.hostnames!.includes(hostname) && typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url))));
 };

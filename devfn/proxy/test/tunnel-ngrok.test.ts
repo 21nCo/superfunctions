@@ -13,6 +13,7 @@ import {
   NgrokTunnelProvider, createOriginBridge, ngrokMarker, parseTunnelBinding, publishTunnelRoutes, readTunnelState, recoverTunnel, registerTunnelBinding, renderNgrokAgentConfig,
   tunnelPaths, tunnelStatus, urlTiming, withdrawTunnelRoutes, type NgrokConnectorConfig, type TunnelServiceOptions,
 } from "../src/tunnel/index.js";
+import { writeTunnelState } from "../src/tunnel/state.js";
 import { ngrokFixtureBinding, writeFakeNgrok } from "./fixtures/tunnel.js";
 
 const DOMAIN = "ngrok.example.test";
@@ -86,6 +87,17 @@ async function viaBridge(port: number, host: string | undefined): Promise<{ stat
     });
     request.once("error", reject);
     request.end();
+  });
+}
+
+/** One raw request to the bridge; resolves with everything it answered before closing. */
+async function rawRequest(port: number, text: string): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let answer = "";
+    const socket = net.connect(port, "127.0.0.1", () => socket.write(text));
+    socket.on("data", (chunk: Buffer) => { answer += chunk.toString(); });
+    socket.once("close", () => resolve(answer));
+    socket.once("error", reject);
   });
 }
 
@@ -238,6 +250,10 @@ describe("ngrok origin bridge", () => {
       for (const host of [B, "web-w1.localhost", "127.0.0.1", `${A}.evil.test`, `evil@${A}`]) {
         expect(await viaBridge(bridgePort, host)).toMatchObject({ status: 404, marker: "deny" });
       }
+      // An absolute-form target, which would name its own host to the origin, is denied before the origin even with an allowlisted Host.
+      for (const target of ["https://web-w1.localhost/", `https://${A}/`, "*"]) {
+        expect(await rawRequest(bridgePort, `OPTIONS ${target} HTTP/1.1\r\nHost: ${A}\r\nConnection: close\r\n\r\n`)).toMatch(/^HTTP\/1\.1 404 Not Found\r\n[\s\S]*devfn-public-origin: deny/i);
+      }
       // An HTTP/1.1 request without Host is refused by the parser itself.
       expect(await viaBridge(bridgePort, undefined)).toMatchObject({ status: 400 });
       expect(seen).toHaveLength(2);
@@ -318,6 +334,9 @@ describe("ngrok origin bridge", () => {
       expect(await upgrade(A)).toMatch(/^HTTP\/1\.1 101[\s\S]*ping$/);
       expect(seen).toEqual([{ host: A, servername: A }]);
       expect(await upgrade(B)).toMatch(/^HTTP\/1\.1 404 Not Found\r\nDevfn-Public-Origin: deny/);
+      // An absolute-form upgrade target is denied before the origin as well.
+      expect(await rawRequest((bridge.address() as net.AddressInfo).port, `GET https://${B}/socket HTTP/1.1\r\nHost: ${A}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`))
+        .toMatch(/^HTTP\/1\.1 404 Not Found\r\nDevfn-Public-Origin: deny/);
       expect(seen).toHaveLength(1);
     } finally { bridge.close(); server.close(); }
   });
@@ -470,7 +489,7 @@ describe("ngrok connector lifecycle", () => {
   /** SIGKILL only the connector process, which runs no code then, and wait until its wrapper exited too; returns the agent it left running. */
   async function killConnectorOnly(stateDir: string, name: string): Promise<number> {
     const record = (await readTunnelState(stateDir, name)).connector!;
-    const agent = JSON.parse(await readFile(tunnelPaths(stateDir, name).agent(record.metricsPort), "utf8")) as { pid: number };
+    const agent = JSON.parse(await readFile(tunnelPaths(stateDir, name).agent(record.launchId!), "utf8")) as { pid: number };
     const connector = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(agent.pid)], { encoding: "utf8" }).trim());
     expect([record.pid, agent.pid]).not.toContain(connector);
     process.kill(connector, "SIGKILL");
@@ -507,6 +526,34 @@ describe("ngrok connector lifecycle", () => {
       expect(() => process.kill(orphan, 0)).toThrow();
       expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", hostnames: [], retired: 0, outstanding: [] });
       expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("never attributes a running connector's agent to a dead record at the same readiness port", { timeout: 120_000 }, async () => {
+    const { stateDir, options, fixtureOrigin } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      const live = (await readTunnelState(stateDir, "share")).connector!;
+      const agentFile = tunnelPaths(stateDir, "share").agent(live.launchId!);
+      const agent = JSON.parse(await readFile(agentFile, "utf8")) as { pid: number };
+      const exited = spawn(process.execPath, ["-e", ""]);
+      const deadPid = await new Promise<number>((resolve) => exited.once("exit", () => resolve(exited.pid!)));
+      // A retired launch whose leader is gone, at the readiness port the live connector was given after it: with the same
+      // configuration, then with another one. Neither may stop the live agent or forget its identity.
+      for (const configDigest of [live.configDigest, "f".repeat(64)]) {
+        const state = await readTunnelState(stateDir, "share");
+        state.retired = [{ ...live, pid: deadPid, launchId: "e".repeat(32), configDigest, urls: undefined }];
+        await writeTunnelState(stateDir, state);
+        expect(await recoverTunnel(options)).toMatchObject({ connector: "running", pid: live.pid, routed: [A], retired: 0 });
+        expect(() => process.kill(agent.pid, 0)).not.toThrow();
+        expect(JSON.parse(await readFile(agentFile, "utf8"))).toMatchObject({ pid: agent.pid });
+      }
+      // The live connector's agent is still found once its connector is killed outright.
+      const orphan = await killConnectorOnly(stateDir, "share");
+      expect(orphan).toBe(agent.pid);
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", routed: [] });
+      expect(await recoverTunnel(options)).toMatchObject({ connector: "running", routed: [A] });
+      expect(() => process.kill(orphan, 0)).toThrow();
     } finally { fixtureOrigin.server.close(); }
   });
 
