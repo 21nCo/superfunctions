@@ -15,8 +15,5 @@
     "@probefn/core": "*",
     "@probefn/storage": "*",
     "playwright": "^1.55.0"
-  },
-  "devDependencies": {
-    "@probefn/dev-server": "*"
   }
 }

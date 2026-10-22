@@ -17,7 +17,7 @@ describe("ConditionEvaluator", () => {
 
       const data = [{ value: 85 }, { value: 90 }, { value: 88 }];
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true);
     });
 
@@ -33,7 +33,7 @@ describe("ConditionEvaluator", () => {
 
       const data = [{ value: 500 }, { value: 600 }, { value: 550 }];
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true);
     });
   });
@@ -58,7 +58,7 @@ describe("ConditionEvaluator", () => {
         { value: 500 }, // Anomaly
       ];
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true);
     });
 
@@ -73,10 +73,10 @@ describe("ConditionEvaluator", () => {
 
       // Create normally distributed data with an outlier
       const data = Array.from({ length: 15 }, (_, i) => ({
-        value: i < 14 ? 100 + Math.random() * 10 : 500, // Last value is outlier
+        value: i < 14 ? 100 + (i % 5) * 2 : 500, // Last value is outlier
       }));
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true);
     });
   });
@@ -107,11 +107,11 @@ describe("ConditionEvaluator", () => {
       };
 
       const data = [
-        { value: 85 }, // CPU > 80
-        { value: 95 }, // Memory > 90
+        { value: 85, metric: "cpu" }, // CPU > 80
+        { value: 95, metric: "memory" }, // Memory > 90
       ];
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true);
     });
 
@@ -140,11 +140,11 @@ describe("ConditionEvaluator", () => {
       };
 
       const data = [
-        { value: 3 }, // Error rate < 5
-        { value: 1500 }, // Latency > 1000
+        { value: 3, metric: "error.rate" }, // Error rate < 5
+        { value: 1500, metric: "latency" }, // Latency > 1000
       ];
 
-      const result = evaluator.evaluate(condition, data);
+      const result = evaluator.evaluate(condition, data.map((point, index) => ({ ...point, timestamp: Date.now() - data.length + index })));
       expect(result).toBe(true); // True because one condition is met
     });
   });

@@ -13,6 +13,30 @@ export class QueryEngine {
     this.storage = storage;
   }
 
+  /** Bounded raw numeric observations for alert conditions; overflow never truncates a window. */
+  async alertObservations(metric: string, from: number | undefined, now: number, maximum: number): Promise<{ value: number; timestamp: number }[]> {
+    this.field(metric);
+    const points: { value: number; timestamp: number }[] = [];
+    const fallback: { value: number; timestamp: number }[] = [];
+    const suffix = metric.lastIndexOf('.');
+    const base = suffix < 0 ? undefined : metric.slice(0, suffix);
+    let exactSeen = false;
+    const range = { from: from ?? -8640000000000000, to: now };
+    for await (const event of this.events({ resolvedTimeRange: range })) {
+      const exact = event.name === metric || event.type === metric;
+      if (exact) { exactSeen = true; fallback.length = 0; }
+      if (!exact && (exactSeen || !base || (event.name !== base && event.type !== base))) continue;
+      const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp > now || (from !== undefined && timestamp < from)) continue;
+      const value = this.getFieldValue(event, exact ? 'value' : metric.slice(suffix + 1));
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      const destination = exact ? points : fallback;
+      if (destination.length >= maximum) throw new QueryValidationError('Alert observation capacity exceeded; window was not evaluated');
+      destination.push({ value, timestamp });
+    }
+    return exactSeen ? points : fallback;
+  }
+
   async aggregate(options: AggregateOptions): Promise<QueryResult> {
     if (!this.isRecord(options)) throw new QueryValidationError("Aggregation options must be an object");
     const { aggregation, field, percentile, numerator, denominator, ...query } = options;

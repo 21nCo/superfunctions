@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "cli",
-    "docs-theme"
+    "docs-theme",
+    "admin"
   ]
 }

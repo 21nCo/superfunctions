@@ -1,0 +1,105 @@
+---
+title: HTTP OpenAPI
+description: Generate an OpenAPI 3.1 document from explicit shared HTTP route metadata.
+---
+
+## What It Is
+
+`@superfunctions/http-openapi` exports `generateOpenApiDocument`, which converts
+route inventories into an OpenAPI 3.1 document. It consumes the `getRoutes()`
+interface used by the shared HTTP router. The result is a plain object suitable
+for serialization, inspection and version control. Generation does not start a
+server or make requests to the handlers described by the document.
+
+## When To Use It
+
+Use this package when a library already defines routes with
+`@superfunctions/http` and wants its API description to come from the same route
+inventory. This is useful for publishing integration documentation, checking API
+changes in CI and supplying a schema to another tool. Your application remains
+responsible for serving the resulting JSON and for enforcing authentication on
+actual requests. Documentation metadata is not an authorization mechanism.
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-openapi
+```
+
+Install framework adapters separately when mounting the routes in an application.
+The generator needs route definitions, so it can also run in a build script
+without importing a running Express, Hono or Next.js server.
+
+## Quick Start
+
+This small inventory documents a health endpoint using the actual generator
+input contract. The example handler is included in the route definition but is
+not executed during document generation.
+
+```ts
+import type { Route } from "@superfunctions/http";
+import { generateOpenApiDocument } from "@superfunctions/http-openapi";
+
+const routes: Route[] = [{
+  method: "GET",
+  path: "/health",
+  handler: async () => Response.json({ ok: true }),
+  meta: { openapi: {
+    operationId: "health.read",
+    responseSchemas: {
+      "200": { type: "object", properties: { ok: { type: "boolean" } } },
+    },
+  } },
+}];
+const document = generateOpenApiDocument({
+  title: "Service API", version: "1.0.0",
+  routers: [{ getRoutes: () => routes }],
+});
+```
+
+## Core Concepts
+
+Only routes with `meta.openapi` participate. Setting `include: false` explicitly
+excludes a route. Included routes require `operationId`; missing identifiers
+raise `OpenApiGenerationError` with code `OPENAPI_META_INCOMPLETE`. A duplicate
+method and normalized path also fails instead of silently replacing an operation.
+
+Paths such as `/records/:id` become `/records/{id}`. Generated path parameters
+are required strings. `requestBodySchema` produces a required JSON request body,
+and `responseSchemas` maps status codes to JSON response schemas. Without response
+schemas the generator supplies a basic 200 success description. Summary,
+description and tags are taken from route metadata. Paths, methods, tags and
+schema object keys are sorted for stable output.
+
+## Real-World Example
+
+A build step can serialize a supplied route inventory without constructing a
+framework application. Keeping this boundary small lets an application compare
+the document in CI while its runtime adapter remains independently configured.
+
+```ts
+import type { OpenApiRouter } from "@superfunctions/http-openapi";
+import { generateOpenApiDocument } from "@superfunctions/http-openapi";
+
+export function describeApi(routers: OpenApiRouter[]): string {
+  return JSON.stringify(generateOpenApiDocument({
+    title: "Operations API", version: "2.0.0", routers,
+  }), null, 2);
+}
+```
+
+## Related Packages
+
+[HTTP](/docs/http/http) defines the router and metadata contracts.
+[OAuth Router](/docs/authentication/oauth-router) supplies reusable route
+inventories. [Admin](/docs/tooling/admin) has its own administration manifest
+projection, including operator security configuration, for administration APIs.
+
+## Troubleshooting
+
+An empty paths object usually means the supplied routes have no OpenAPI metadata
+or are excluded. Inspect `getRoutes()` before changing the generator. A schema
+error should be corrected in route metadata rather than hidden by dropping the
+route. This generator does not infer arbitrary handler types, query parameters
+or security schemes from application code; do not assume generated documentation
+proves those runtime behaviors are implemented.
