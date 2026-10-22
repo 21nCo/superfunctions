@@ -115,6 +115,9 @@ describe("ngrok bindings", () => {
     const elsewhere = await registerTunnelBinding(path.join(dir, "elsewhere"), reserved);
     expect(registered.provider === "ngrok" && elsewhere.provider === "ngrok" && registered.ngrok.registrationId !== elsewhere.ngrok.registrationId).toBe(true);
     expect(ngrokMarker(registered)).not.toBe(ngrokMarker(elsewhere));
+    // Repeating the same registration, such as a retry after an interrupted command, keeps the stored ID; a changed one is refused.
+    await expect(registerTunnelBinding(stateDir, reserved)).resolves.toEqual(registered);
+    await expect(registerTunnelBinding(stateDir, { ...reserved, ngrok: { ...reserved.ngrok, authtokenEnv: "OTHER_TOKEN" } })).rejects.toMatchObject({ code: "DEVFN_TUNNEL_IN_USE" });
     await expect(registerTunnelBinding(stateDir, ngrokFixtureBinding(repo, "ephemeral", "eph"))).resolves.toMatchObject({ domain: "eph.ngrok.devfn.internal" });
     // Public domains still never overlap.
     await expect(registerTunnelBinding(stateDir, { ...reserved, name: "again", domain: `sub.${DOMAIN}` })).rejects.toMatchObject({ code: "DEVFN_TUNNEL_IN_USE" });
@@ -464,6 +467,75 @@ describe("ngrok connector lifecycle", () => {
     } finally { fixtureOrigin.server.close(); }
   });
 
+  /** SIGKILL only the connector process, which runs no code then, and wait until its wrapper exited too; returns the agent it left running. */
+  async function killConnectorOnly(stateDir: string, name: string): Promise<number> {
+    const record = (await readTunnelState(stateDir, name)).connector!;
+    const agent = JSON.parse(await readFile(tunnelPaths(stateDir, name).agent(record.metricsPort), "utf8")) as { pid: number };
+    const connector = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(agent.pid)], { encoding: "utf8" }).trim());
+    expect([record.pid, agent.pid]).not.toContain(connector);
+    process.kill(connector, "SIGKILL");
+    await vi.waitFor(() => expect(() => process.kill(record.pid, 0)).toThrow(), { timeout: 5_000 });
+    expect(() => process.kill(agent.pid, 0)).not.toThrow();
+    return agent.pid;
+  }
+
+  posixIt("stops the agent a killed connector left behind before relaunching or reporting its names unrouted (reserved)", { timeout: 120_000 }, async () => {
+    const { stateDir, options, agents, record, fixtureOrigin } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      await publishTunnelRoutes(options, "owner-b", [B]);
+      const orphan = await killConnectorOnly(stateDir, "share");
+      // The orphaned agent may still route both names: nothing reports them unrouted or starts beside it.
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", routed: [] });
+      const status = await recoverTunnel(options);
+      expect(status).toMatchObject({ connector: "running", routed: [A, B], retired: 0, outstanding: [] });
+      expect(() => process.kill(orphan, 0)).toThrow();
+      // The replacement agent started only once the orphan had been stopped.
+      const stoppedAt = Number(await readFile(path.join(record, `exited-${orphan}`), "utf8"));
+      expect((await agents()).at(-1)!.startedAt).toBeGreaterThan(stoppedAt);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("stops the agent a killed connector left behind before a withdrawal ends (ephemeral)", { timeout: 120_000 }, async () => {
+    const { stateDir, options, fixtureOrigin, domain } = await setup("ephemeral");
+    const a = `web-a-0123456789abcdef0123.${domain}`;
+    try {
+      await publishTunnelRoutes(options, "owner-a", [a]);
+      const orphan = await killConnectorOnly(stateDir, "eph");
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", urls: {} });
+      expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [a], outstanding: [] });
+      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", hostnames: [], retired: 0, outstanding: [] });
+      expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("never starts an agent whose identity its connector did not record", { timeout: 60_000 }, async () => {
+    const record = path.join(dir, "record");
+    await mkdir(record);
+    const caFile = path.join(dir, "ca.pem");
+    await writeFile(caFile, issue([`*.${DOMAIN}`], "origin").cert);
+    const configFile = path.join(dir, "connector.json");
+    await writeFile(configFile, new NgrokTunnelProvider({ env: SECRETS }).renderConnectorConfig(ngrokFixtureBinding("/repo"), [A], { port: 1, caFile }));
+    // The connector is killed outright right after spawning its agent, before it can record the agent's identity.
+    const preload = path.join(dir, "kill-after-spawn.mjs");
+    await writeFile(preload, `import { createRequire, syncBuiltinESMExports } from "node:module";\nimport { writeFileSync } from "node:fs";\n` +
+      `const childProcess = createRequire(import.meta.url)("node:child_process");\nconst spawn = childProcess.spawn;\n` +
+      `childProcess.spawn = (...args) => { const child = spawn(...args); writeFileSync(${JSON.stringify(path.join(dir, "gate.pid"))}, String(child.pid)); process.kill(process.pid, "SIGKILL"); return child; };\nsyncBuiltinESMExports();\n`);
+    const home = path.join(dir, "home");
+    await mkdir(home);
+    const readyPort = await new Promise<number>((resolve) => { const probe = net.createServer().listen(0, "127.0.0.1", () => { const { port } = probe.address() as net.AddressInfo; probe.close(() => resolve(port)); }); });
+    const [node, importFlag, tsx, entry] = CONNECTOR;
+    const child = spawn(node, [importFlag, tsx, "--import", pathToFileURL(preload).href, entry, configFile, String(readyPort), await writeFakeNgrok(dir, record), path.join(dir, "agent.json")],
+      { env: { PATH: process.env.PATH, HOME: home, NGROK_AUTHTOKEN: SECRETS.DEVFN_FIXTURE_NGROK_AUTHTOKEN }, stdio: "ignore" });
+    expect(await new Promise((resolve) => child.once("exit", (_code, signal) => resolve(signal)))).toBe("SIGKILL");
+    const gate = Number(await readFile(path.join(dir, "gate.pid"), "utf8"));
+    try {
+      await vi.waitFor(() => expect(() => process.kill(gate, 0)).toThrow(), { timeout: 3_000 });
+      expect(await readdir(record)).toEqual([]);
+    } finally { try { process.kill(gate, "SIGKILL"); } catch { /* gone */ } }
+  });
+
   posixIt("stops its agent whenever the connector itself fails", { timeout: 60_000 }, async () => {
     const record = path.join(dir, "record");
     await mkdir(record);
@@ -478,7 +550,7 @@ describe("ngrok connector lifecycle", () => {
     await mkdir(home);
     const readyPort = await new Promise<number>((resolve) => { const probe = net.createServer().listen(0, "127.0.0.1", () => { const { port } = probe.address() as net.AddressInfo; probe.close(() => resolve(port)); }); });
     const [node, importFlag, tsx, entry] = CONNECTOR;
-    const child = spawn(node, [importFlag, tsx, "--import", pathToFileURL(preload).href, entry, configFile, String(readyPort), await writeFakeNgrok(dir, record)],
+    const child = spawn(node, [importFlag, tsx, "--import", pathToFileURL(preload).href, entry, configFile, String(readyPort), await writeFakeNgrok(dir, record), path.join(dir, "agent.json")],
       { env: { PATH: process.env.PATH, HOME: home, NGROK_AUTHTOKEN: SECRETS.DEVFN_FIXTURE_NGROK_AUTHTOKEN }, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

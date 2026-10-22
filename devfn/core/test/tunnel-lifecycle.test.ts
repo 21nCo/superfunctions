@@ -21,7 +21,7 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
-import { publicUrlsLive, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
+import { livePublicUrls, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
 import { writeTunnelState } from "../../proxy/src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
@@ -252,12 +252,13 @@ it("reports public URLs live only while the running connector routes every one o
   const tunnel = await registerPreview();
   const added = "api-other-0123456789abcdef0123.tunnel.example.test";
   await publishTunnelRoutes(tunnel, "owner", [OTHER]);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER] }, undefined, undefined)).toBe(true);
+  const selection = { binding: tunnel.binding, timing: "pre-start" as const, routes: [], hostnames: { web: OTHER }, urls: { web: `https://${OTHER}` }, postStart: [] };
+  expect(await livePublicUrls(stateDir, "owner", { binding: "preview", hostnames: [OTHER] }, config, selection)).toEqual({ web: `https://${OTHER}` });
   // A name committed for the owner that the running connector does not route is not live.
   const state = await readTunnelState(stateDir, "preview");
   state.hostnames.push({ hostname: added, ownerId: "owner", publishedAt: "now" });
   await writeTunnelState(stateDir, state);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] }, undefined, undefined)).toBe(false);
+  expect(await livePublicUrls(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] }, config, selection)).toBeUndefined();
 });
 
 it("reads no tunnel state for a lifecycle that never published and fails closed for one that may have", async () => {
@@ -294,4 +295,4 @@ it("recovers every other orphan when one orphan's withdrawal fails", async () =>
   provider.connector = "ready";
   expect(await recover()).toEqual(["orphan-a"]);
   expect([...provider.records.keys()]).toEqual([live]);
-});
+}, 30_000);

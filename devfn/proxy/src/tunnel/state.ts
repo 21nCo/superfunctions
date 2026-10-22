@@ -133,7 +133,10 @@ export interface TunnelProvider {
   renderConnectorConfig(binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string;
   /** Validate a rendered configuration locally before any connector runs it. */
   validateConnectorConfig(binding: TunnelBinding, configFile: string, hostnames: readonly string[]): Promise<void>;
-  /** Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. */
+  /**
+   * Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. A connector that runs
+   * a separate agent process records it at agentIdentityFile(dirname(configFile), metricsPort) before that agent may route.
+   */
   connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]>;
   /** Credentials the connector reads from its environment, resolved from the binding's references; their values are redacted from its log. */
   connectorSecrets?(binding: TunnelBinding): Record<string, string>;
@@ -240,8 +243,11 @@ async function writeBindings(stateDir: string, bindings: TunnelBinding[]): Promi
  * fresh random registration ID.
  */
 export async function registerTunnelBinding(stateDir: string, input: TunnelBindingInput): Promise<TunnelBinding> {
+  // A caller-supplied registration ID is replaced: only registration assigns one.
   const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity),
     ...(input.provider === "ngrok" ? { ngrok: { ...input.ngrok, registrationId: randomBytes(16).toString("hex") } } : {}) });
+  // Repeating a registration, such as a retry of one whose write succeeded, returns the stored binding with its registration ID.
+  const requested = (item: TunnelBinding): string => JSON.stringify(item.provider === "ngrok" ? { ...item, ngrok: { ...item.ngrok, registrationId: undefined } } : item);
   if (binding.provider === "cloudflare") {
     let entry;
     try { entry = await lstat(binding.cloudflare.credentialsFile); }
@@ -260,7 +266,7 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     const bindings = await readTunnelBindings(stateDir);
     const existing = bindings.find((item) => item.name === binding.name);
     if (existing) {
-      if (JSON.stringify(existing) === JSON.stringify(binding)) return existing;
+      if (requested(existing) === requested(binding)) return existing;
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel binding ${binding.name} is already registered.`);
     }
     if (bindings.some((item) => domainContains(item.domain, binding.domain) || domainContains(binding.domain, item.domain))) {
@@ -301,11 +307,32 @@ export async function assertBindingRegistered(stateDir: string, binding: TunnelB
   if (!current || JSON.stringify(current) !== JSON.stringify(binding)) throw new TunnelError("DEVFN_TUNNEL_UNREGISTERED", `Tunnel binding ${binding.name} is no longer registered as resolved.`);
 }
 
-export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string } {
+/**
+ * Where a connector whose configuration is in dir and whose readiness port
+ * is metricsPort records the identity of an agent process it runs, before
+ * that agent may route anything. A connector that dies without running any
+ * code leaves such an agent outside its supervision; the tunnel service
+ * stops it through this record. While its connector runs, no other
+ * connector gets the same readiness port.
+ */
+export const agentIdentityFile = (dir: string, metricsPort: number): string => path.join(dir, `agent-${metricsPort}.json`);
+
+/** A recorded agent process and the connector configuration file it was started for. */
+export interface AgentIdentity { pid: number; birthSignature: string; startedAt: string; configFile: string }
+
+/** A recorded agent identity, or undefined when none is recorded; one that cannot be parsed is undefined too, as a connector writes it atomically. */
+export async function readAgentIdentity(file: string): Promise<AgentIdentity | undefined> {
+  const value = await readFile(file, "utf8").then((text) => JSON.parse(text) as Partial<AgentIdentity> & { version?: unknown }, () => undefined);
+  if (!value || value.version !== 1 || !Number.isInteger(value.pid) || value.pid! <= 0 || typeof value.birthSignature !== "string" || !canonicalBirthSignature(value.birthSignature) ||
+    typeof value.startedAt !== "string" || typeof value.configFile !== "string") return undefined;
+  return { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile };
+}
+
+export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string; agent: (metricsPort: number) => string } {
   if (!BINDING_NAME.test(name)) throw invalid("Invalid tunnel binding name.");
   const dir = path.join(stateDir, "tunnels", name);
   return { dir, state: path.join(dir, "state.json"), lock: path.join(dir, "tunnel.lock"), originCa: path.join(dir, "origin-ca.pem"),
-    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`) };
+    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`), agent: (metricsPort) => agentIdentityFile(dir, metricsPort) };
 }
 
 export async function tunnelDirectory(stateDir: string, name: string): Promise<string> {

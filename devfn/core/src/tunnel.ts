@@ -89,9 +89,12 @@ export async function selectedPublicRoutes(config: DevFnConfig, plan: LifecycleP
  */
 export async function publicTemplateInputs(config: DevFnConfig, plan: LifecyclePlan, identity: RoutingIdentity, stateDir: string): Promise<{ publicUrls?: Record<string, string>; postStartPublicRoutes?: string[] }> {
   if (!profileTunnel(config, plan)) return {};
-  const selection = await selectedPublicRoutes(config, plan, identity, Object.fromEntries(plan.portNames.map((name) => [name, 1])), stateDir);
-  return selection ? { publicUrls: selection.urls, postStartPublicRoutes: selection.postStart } : {};
+  return selectionTemplateInputs(await selectedPublicRoutes(config, plan, identity, Object.fromEntries(plan.portNames.map((name) => [name, 1])), stateDir));
 }
+
+/** The public URL template inputs of one selection, so a start resolves its consumers from the selection it publishes. */
+export const selectionTemplateInputs = (selection: PublicSelection | undefined): { publicUrls?: Record<string, string>; postStartPublicRoutes?: string[] } =>
+  selection ? { publicUrls: selection.urls, postStartPublicRoutes: selection.postStart } : {};
 
 /** Each selected route's public URL once published: its deterministic URL, or the one the provider assigned to its hostname. */
 export function publishedPublicUrls(config: DevFnConfig, selection: PublicSelection, assigned: Readonly<Record<string, string>>): Record<string, string> {
@@ -122,25 +125,25 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
 }
 
 /**
- * Whether every hostname of this owner's tunnel receipt is still published
- * for it and routed by the binding's running connector, and, for URLs
- * assigned after start, whether the receipt's URLs are exactly what the
- * current selection would publish from the URLs that connector serves now:
- * each route against its own hostname's URL, so a reassigned, swapped,
- * missing or extra route URL is stale. A connector restart assigns new ones.
+ * The public URLs of this owner's tunnel receipt by route while they are
+ * live, or undefined: every hostname of the receipt is still published for
+ * the owner and routed by the binding's running connector, and the current
+ * selection's hostnames are among them. URLs assigned after start are what
+ * that connector serves now, each route's from its own hostname, so a
+ * hostname without a URL, or two sharing one, is not live; they are not
+ * compared with the URLs recorded at start, because another worktree's
+ * publish or withdrawal on the binding restarts the shared connector and
+ * reassigns them without ending this lifecycle's exposure.
  */
-export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[]; urlTiming?: UrlTiming },
-  publicUrls: Readonly<Record<string, string>> | undefined, current: ((assigned: Readonly<Record<string, string>>) => Record<string, string>) | undefined): Promise<boolean> {
+export async function livePublicUrls(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[] }, config: DevFnConfig, selection: PublicSelection | undefined): Promise<Record<string, string> | undefined> {
   const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === tunnel.binding);
   const status = binding ? await tunnelStatus({ stateDir, binding }) : undefined;
-  if (status?.connector !== "running" || !tunnel.hostnames.every((hostname) =>
-    status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId))) return false;
-  if (tunnel.urlTiming !== "post-start") return true;
-  if (!current) return false;
-  let expected: Record<string, string>;
-  try { expected = current(status.urls); } catch { return false; }
-  const recorded = Object.entries(publicUrls ?? {});
-  return recorded.length === Object.keys(expected).length && recorded.every(([route, url]) => expected[route] === url);
+  if (!selection || selection.binding.name !== tunnel.binding || status?.connector !== "running" || !tunnel.hostnames.every((hostname) =>
+    status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId))) return undefined;
+  const hostnames = [...new Set(Object.values(selection.hostnames))];
+  if (!hostnames.every((hostname) => tunnel.hostnames.includes(hostname))) return undefined;
+  if (selection.timing === "post-start" && new Set(hostnames.map((hostname) => status.urls[hostname])).size !== hostnames.length) return undefined;
+  try { return publishedPublicUrls(config, selection, status.urls); } catch { return undefined; }
 }
 
 /**

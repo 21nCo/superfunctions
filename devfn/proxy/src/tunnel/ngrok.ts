@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { TunnelError, compareNames, isPublicHostname, type NgrokTunnelBinding, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
+import { TunnelError, agentIdentityFile, compareNames, isPublicHostname, type NgrokTunnelBinding, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
 
 const execFileAsync = promisify(execFile);
 const API = "https://api.ngrok.com";
@@ -231,8 +231,9 @@ export class NgrokTunnelProvider implements TunnelProvider {
     } finally { await rm(home, { recursive: true, force: true }); }
   }
 
+  /** The connector records its agent's identity beside its configuration, where the tunnel service looks for it. */
   public async connectorCommand(_binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]> {
-    return [...this.connector, configFile, String(metricsPort), await this.command()];
+    return [...this.connector, configFile, String(metricsPort), await this.command(), agentIdentityFile(path.dirname(configFile), metricsPort)];
   }
 
   /** The agent authtoken, under the name ngrok reads; the connector passes it to the agent only. */

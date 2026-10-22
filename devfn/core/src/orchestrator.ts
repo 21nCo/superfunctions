@@ -15,7 +15,7 @@ import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
 import { createPlan } from "./planner.js";
-import { profileTunnel, publicTemplateInputs, publicUrlsLive, publishedPublicUrls, publishLifecycleTunnel, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
+import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -324,7 +324,12 @@ async function waitForOwnedLoopbackListeners(processName: string, expected: Arra
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Process ${processName} ${missing!.protocol.toUpperCase()} port ${missing!.port} has no verified loopback listener owned by its process tree after ${timeoutMs} ms.`);
 }
 
-async function receiptIsReady(config: DevFnConfig, root: string, receipt: LifecycleReceipt, processStates: readonly string[], serviceStates: readonly string[]): Promise<boolean> {
+const sameUrls = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>> | undefined): boolean =>
+  Object.keys(a).length === Object.keys(b ?? {}).length && Object.entries(a).every(([name, url]) => b?.[name] === url);
+
+/** Whether a receipt's lifecycle still serves what it recorded; live receives its current public URLs. */
+async function receiptIsReady(config: DevFnConfig, root: string, receipt: LifecycleReceipt, processStates: readonly string[], serviceStates: readonly string[],
+  live: { publicUrls?: Record<string, string> } = {}): Promise<boolean> {
   const ports = Object.fromEntries(receipt.allocations.map((allocation) => [allocation.service, allocation.port]));
   let resolved: ReturnType<typeof resolveEndpointTemplates>;
   try {
@@ -352,9 +357,10 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     if (!await new CaddyProxyController(receipt.stateDir ?? defaultStateDir()).instanceRoutesLive(receipt.instanceId, receipt.routes)) return false;
     // Public URLs are live only while the binding's connector runs and still publishes them.
     if (receipt.tunnel) {
-      const selection = await selectedPublicRoutes(config, plan, identity, ports, receipt.stateDir ?? defaultStateDir());
-      if (!await publicUrlsLive(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, receipt.tunnel, receipt.publicUrls,
-        selection && ((assigned) => publishedPublicUrls(config, selection, assigned)))) return false;
+      const publicUrls = await livePublicUrls(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, receipt.tunnel, config,
+        await selectedPublicRoutes(config, plan, identity, ports, receipt.stateDir ?? defaultStateDir()));
+      if (!publicUrls) return false;
+      live.publicUrls = publicUrls;
     }
     const currentUrls = resolveAllocationUrls(receipt.allocations, receipt.routes, selectedHttpPorts(config, plan), resolved.directUrls);
     if (Object.keys(currentUrls).length !== Object.keys(receipt.urls).length ||
@@ -621,8 +627,12 @@ export class DevFnOrchestrator {
     });
     const ports = Object.fromEntries(allocations.map((item) => [item.service, item.port]));
     let resolved: ReturnType<typeof resolveEndpointTemplates>;
-    try { resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix, await publicTemplateInputs(options.config, plan, identity, stateDir)); }
-    catch (error) {
+    // The binding is read once per start: consumers resolve their public URLs from the same selection that is published.
+    let publicSelection: PublicSelection | undefined;
+    try {
+      publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
+      resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix, selectionTemplateInputs(publicSelection));
+    } catch (error) {
       await registry.release({ invocationId, errorCode: "DEVFN_ENDPOINT_RESOLUTION_FAILED" });
       throw error;
     }
@@ -742,7 +752,6 @@ export class DevFnOrchestrator {
         // Public exposure starts last, once every node is ready and the
         // public origin routes are active; a profile without a tunnel
         // withdraws any this owner still publishes.
-        const publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
         if (publicSelection) {
           await writeReceipt(receipt);
           const { hostnames, urls, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, options.config, this.tunnelOverrides);
@@ -790,9 +799,18 @@ export class DevFnOrchestrator {
       const serviceStates = await Promise.all(existing.services.map((item) => new ComposeController().status(item)));
       const managedCount = processStates.length + serviceStates.length;
       const allRunning = managedCount > 0 && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
+      const live: { publicUrls?: Record<string, string> } = {};
       const allReady = allRunning && existing.profile === (options.profile ?? options.config.defaultProfile ?? "default") &&
-        await receiptIsReady(options.config, options.root, existing, processStates, serviceStates);
-      if (existing.state === "ready" && allReady && !options.replace) throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+        await receiptIsReady(options.config, options.root, existing, processStates, serviceStates, live);
+      if (existing.state === "ready" && allReady && !options.replace) {
+        // Public URLs a shared connector restart reassigned are recorded; the lifecycle and every connector are kept.
+        if (live.publicUrls && !sameUrls(live.publicUrls, existing.publicUrls)) {
+          existing.publicUrls = live.publicUrls;
+          existing.updatedAt = new Date().toISOString();
+          await writeReceipt(existing);
+        }
+        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+      }
       // Validate the replacement while the old lifecycle still owns its ports
       // and containers. A malformed source must never turn a ready service off.
       const replacementPlan = createPlan(options.config, options.profile);
@@ -967,10 +985,13 @@ export class DevFnOrchestrator {
     const processes = await Promise.all(receipt.processes.map(async (managed) => ({ name: managed.name, pid: managed.pid, state: await supervisor.status(managed), logPath: managed.logPath })));
     const compose = new ComposeController();
     const services = await Promise.all(receipt.services.map(async (managed) => ({ ...managed, state: await compose.status(managed) })));
-    const runtimeReady = receipt.state === "ready" && await receiptIsReady(options.config, options.root, receipt, processes.map((item) => item.state), services.map((item) => item.state));
+    const live: { publicUrls?: Record<string, string> } = {};
+    const runtimeReady = receipt.state === "ready" && await receiptIsReady(options.config, options.root, receipt, processes.map((item) => item.state), services.map((item) => item.state), live);
     const degraded = receipt.state === "ready" && !runtimeReady;
     const state = degraded ? "degraded" : receipt.state;
-    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {} };
+    // Public URLs are the ones served now; publicUrlsChanged marks those reassigned since the receipt recorded them.
+    const publicUrls = state === "ready" && live.publicUrls ? { publicUrls: live.publicUrls, ...(sameUrls(live.publicUrls, receipt.publicUrls) ? {} : { publicUrlsChanged: true }) } : {};
+    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
   }
 
   public async doctor(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string }): Promise<{ ok: boolean; diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> }> {

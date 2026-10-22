@@ -6,13 +6,13 @@ import path from "node:path";
 import tls from "node:tls";
 
 import { withFileLock } from "@devfn/ports";
-import { ProcessError, ProcessSupervisor, processGroupStatus, stopProcessGroup } from "@devfn/processes";
+import { ProcessError, ProcessSupervisor, processGroupStatus, processIdentityStatus, stopProcessGroup, type ProcessGroupStatus } from "@devfn/processes";
 
 import { PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
 import { NgrokTunnelProvider } from "./ngrok.js";
 import {
-  InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, urlTiming, writePrivateFile, writeTunnelState,
+  InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readAgentIdentity, readTunnelState, tunnelDirectory, tunnelPaths, urlTiming, writePrivateFile, writeTunnelState,
   type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState, type UrlTiming,
 } from "./state.js";
 
@@ -52,7 +52,7 @@ export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
     "The ngrok agent forwards plain HTTP to the DevFn origin bridge on loopback, which verifies the public origin's TLS for each hostname."];
   if (binding.ngrok.endpoints === "ephemeral") {
     gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
-      "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; read the current ones from tunnel status.",
+      "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; devfn status and tunnel status report the current ones, and devfn up records them in the receipt.",
       "Requests reach the application with the DevFn-internal origin name as Host, not the assigned public host.");
   }
   return { provider: "ngrok", urlTiming: urlTiming(binding), dns: "connector-only", gaps };
@@ -75,16 +75,18 @@ export interface TunnelStatus {
 }
 
 interface Context {
-  stateDir: string; binding: TunnelBinding; provider: TunnelProvider; port: number; readyTimeoutMs: number;
+  stateDir: string; paths: TunnelPaths; binding: TunnelBinding; provider: TunnelProvider; port: number; readyTimeoutMs: number;
   originCa: () => Promise<string>; probeOrigin: (hostname: string, port: number, ca: string) => Promise<void>; ownerMayRun: (ownerId: string) => Promise<boolean>;
 }
 
 const context = (options: TunnelServiceOptions): Context => ({
-  stateDir: options.stateDir, binding: options.binding, provider: options.provider ?? (options.binding.provider === "ngrok" ? new NgrokTunnelProvider() : new CloudflareTunnelProvider()),
+  stateDir: options.stateDir, paths: tunnelPaths(options.stateDir, options.binding.name), binding: options.binding, provider: options.provider ?? (options.binding.provider === "ngrok" ? new NgrokTunnelProvider() : new CloudflareTunnelProvider()),
   port: options.originPort ?? PUBLIC_ORIGIN_PORT, readyTimeoutMs: options.readyTimeoutMs ?? 30_000,
   originCa: options.originCa ?? caddyInternalRoot, probeOrigin: options.probeOrigin ?? probePublicOrigin,
   ownerMayRun: options.ownerMayRun ?? (() => Promise.resolve(false)),
 });
+
+type TunnelPaths = ReturnType<typeof tunnelPaths>;
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const isPem = (text: string | undefined): text is string => /-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----\s*$/.test(text ?? "");
@@ -172,12 +174,67 @@ async function freeLoopbackPort(): Promise<number> {
   return typeof address === "object" && address ? address.port : 0;
 }
 
-const connectorStatus = async (record: ConnectorRecord) => await processGroupStatus(record.pid, record.birthSignature, record.startedAt);
+/** The agent process a connector recorded (see agentIdentityFile) and whether it still runs; "exited" when it recorded none. */
+async function recordedAgent(paths: TunnelPaths, record: ConnectorRecord) {
+  const file = paths.agent(record.metricsPort);
+  const agent = await readAgentIdentity(file);
+  // Another connector's record, at a readiness port this one no longer holds, is not this connector's agent.
+  if (!agent || agent.configFile !== path.basename(paths.config(record.configDigest))) return { file, status: "exited" as const };
+  return { file, agent, status: await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt) };
+}
 
-/** Stop a connector's process group through its verified leader; returns why it may still run. */
-async function stopConnector(record: ConnectorRecord): Promise<string | undefined> {
-  try { await stopProcessGroup({ pid: record.pid, birthSignature: record.birthSignature, startedAt: record.startedAt }, "The DevFn tunnel connector", STOP_TIMEOUT_MS); return undefined; }
+/**
+ * Whether anything of a connector may still route: its process group, and
+ * an agent it recorded, which outlives a connector killed outright and on
+ * Windows is outside the leader's process tree.
+ */
+async function connectorStatus(paths: TunnelPaths, record: ConnectorRecord): Promise<ProcessGroupStatus> {
+  const status = await processGroupStatus(record.pid, record.birthSignature, record.startedAt);
+  if (status === "running" || status === "unverified") return status;
+  const { status: agent } = await recordedAgent(paths, record);
+  return agent === "exited" || agent === "identity-mismatch" ? status : "unverified";
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Stop the agent a connector recorded once the connector's leader is gone,
+ * so nothing that leader can signal reaches it any more: only that verified
+ * process is signalled, gracefully and then forcibly. Returns why it may
+ * still run.
+ */
+async function stopOrphanAgent(paths: TunnelPaths, record: ConnectorRecord): Promise<string | undefined> {
+  const leader = await processIdentityStatus(record.pid, record.birthSignature, record.startedAt);
+  if (leader === "running" || leader === "unverified") return undefined;
+  const { file, agent, status } = await recordedAgent(paths, record);
+  if (!agent || status === "exited" || status === "identity-mismatch") { await rm(file, { force: true }); return undefined; }
+  const label = `The agent (PID ${agent.pid}) of tunnel connector ${record.pid}`;
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    const current = await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt);
+    if (current === "exited" || current === "identity-mismatch") break;
+    if (current === "unverified") return `${label} may still run, but its identity cannot be verified`;
+    try { process.kill(agent.pid, signal); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return `${label} could not be stopped (${message(error)})`; }
+    for (const deadline = Date.now() + STOP_TIMEOUT_MS; Date.now() < deadline && await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt) === "running";) await delay(50);
+  }
+  const final = await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt);
+  if (final !== "exited" && final !== "identity-mismatch") return `${label} did not exit`;
+  await rm(file, { force: true });
+  return undefined;
+}
+
+/**
+ * Stop a connector's process group through its verified leader, and an
+ * agent it recorded through that agent's own identity; returns why either
+ * may still run.
+ */
+async function stopConnector(paths: TunnelPaths, record: ConnectorRecord): Promise<string | undefined> {
+  const orphan = await stopOrphanAgent(paths, record);
+  if (orphan) return orphan;
+  try { await stopProcessGroup({ pid: record.pid, birthSignature: record.birthSignature, startedAt: record.startedAt }, "The DevFn tunnel connector", STOP_TIMEOUT_MS); }
   catch (error) { if (error instanceof ProcessError) return error.message; throw error; }
+  // A Windows tree stop does not reach an agent whose connector exited first.
+  return await stopOrphanAgent(paths, record);
 }
 
 /**
@@ -278,7 +335,7 @@ async function commitState(ctx: Context, state: TunnelState, candidate: TunnelSt
 async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: (draft: TunnelState) => void): Promise<void> {
   let launched: ConnectorRecord | undefined;
   if (hostnames.length) {
-    await assertSoleConnector(state);
+    await assertSoleConnector(ctx, state);
     launched = await launchConnector(ctx, hostnames, async (record) => {
       state.retired.push(record);
       await writeTunnelState(ctx.stateDir, state);
@@ -293,9 +350,9 @@ async function swapConnector(ctx: Context, state: TunnelState, hostnames: readon
 }
 
 /** The launch predicate: no recorded connector but a verifiably running predecessor (replaced make before break) may still run, as two connectors on one tunnel split its requests. */
-async function assertSoleConnector(state: TunnelState): Promise<void> {
+async function assertSoleConnector(ctx: Context, state: TunnelState): Promise<void> {
   for (const record of [state.connector, ...state.retired]) {
-    const status = record ? await connectorStatus(record) : "exited";
+    const status = record ? await connectorStatus(ctx.paths, record) : "exited";
     if (status === "unverified" || (status === "running" && record !== state.connector)) {
       throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `A previous tunnel connector (PID ${record!.pid}) may still run; stop its process group before another connector starts.`);
     }
@@ -305,17 +362,18 @@ async function assertSoleConnector(state: TunnelState): Promise<void> {
 /** Stop every retired connector; one that does not stop stays recorded. Configurations no recorded connector runs are removed. */
 async function stopRetired(ctx: Context, state: TunnelState): Promise<void> {
   const kept: ConnectorRecord[] = [];
-  for (const record of state.retired) if (await stopConnector(record)) kept.push(record);
+  for (const record of state.retired) if (await stopConnector(ctx.paths, record)) kept.push(record);
   if (kept.length !== state.retired.length) { state.retired = kept; await writeTunnelState(ctx.stateDir, state); }
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
-  const used = new Set([state.connector, ...state.retired].flatMap((item) => item ? [path.basename(paths.config(item.configDigest))] : []));
-  for (const name of await readdir(paths.dir)) if (/^connector-[a-f0-9]{64}\.yml$/.test(name) && !used.has(name)) await rm(path.join(paths.dir, name), { force: true });
+  const records = [state.connector, ...state.retired].filter((item): item is ConnectorRecord => item !== undefined);
+  const used = new Set(records.flatMap((item) => [path.basename(paths.config(item.configDigest)), path.basename(paths.agent(item.metricsPort))]));
+  for (const name of await readdir(paths.dir)) if (/^(connector-[a-f0-9]{64}\.yml|agent-\d+\.json)$/.test(name) && !used.has(name)) await rm(path.join(paths.dir, name), { force: true });
 }
 
 /** Whether the recorded connector runs exactly the allowlist for hostnames; none runs for no hostnames. */
 async function connectorServes(ctx: Context, state: TunnelState, hostnames: readonly string[]): Promise<boolean> {
   if (!state.connector) return !hostnames.length;
-  const status = await connectorStatus(state.connector);
+  const status = await connectorStatus(ctx.paths, state.connector);
   if (status === "unverified") throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The recorded tunnel connector (PID ${state.connector.pid}) cannot be verified.`);
   return status === "running" && hostnames.length > 0 && state.connector.configDigest === (await connectorConfig(ctx, hostnames)).digest;
 }
@@ -328,7 +386,7 @@ async function converge(ctx: Context, state: TunnelState, hostnames: readonly st
     await commitState(ctx, state, candidate);
     return;
   }
-  if (state.connector && await connectorStatus(state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
+  if (state.connector && await connectorStatus(ctx.paths, state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
   await swapConnector(ctx, state, hostnames, commit);
 }
 
@@ -353,7 +411,7 @@ function withdrawNames(state: TunnelState, items: readonly TunnelHostname[]): vo
  * transition. So a publish never makes a dead owner's names public again.
  */
 async function relaunchable(ctx: Context, state: TunnelState, items: readonly TunnelHostname[]): Promise<{ keep: TunnelHostname[]; stale: TunnelHostname[] }> {
-  const routed = state.connector && await connectorStatus(state.connector) === "running" ? state.connector.hostnames : [];
+  const routed = state.connector && await connectorStatus(ctx.paths, state.connector) === "running" ? state.connector.hostnames : [];
   const keep: TunnelHostname[] = [], stale: TunnelHostname[] = [];
   for (const item of items) {
     let ok = routed.includes(item.hostname);
@@ -398,7 +456,7 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
   const withdrawn = state.residue.flatMap((item) => item.hostnames);
   if (state.connector?.hostnames.some((hostname) => withdrawn.includes(hostname))) {
     const committed = state.hostnames.map((item) => item.hostname).filter((hostname) => state.connector!.hostnames.includes(hostname));
-    const status = await connectorStatus(state.connector);
+    const status = await connectorStatus(ctx.paths, state.connector);
     // An unverifiable connector stays recorded, so no other connector starts beside it.
     if (committed.length && status === "running") {
       await swapConnector(ctx, state, committed).catch((error: unknown) => { errors.push(`the running connector was kept for the other public routes (${message(error)})`); });
@@ -418,12 +476,12 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
  * connector again. It keeps serving until a replacement is ready instead
  * of being stopped; finishResidue then replaces it make before break.
  */
-async function restoreFallback(state: TunnelState): Promise<boolean> {
-  if (state.connector && ["running", "unverified"].includes(await connectorStatus(state.connector))) return false;
+async function restoreFallback(ctx: Context, state: TunnelState): Promise<boolean> {
+  if (state.connector && ["running", "unverified"].includes(await connectorStatus(ctx.paths, state.connector))) return false;
   const committed = new Set(state.hostnames.map((item) => item.hostname));
   const known = new Set([...committed, ...state.residue.flatMap((item) => item.hostnames)]);
   for (const record of [...state.retired].reverse()) {
-    if (!record.hostnames.some((hostname) => committed.has(hostname)) || !record.hostnames.every((hostname) => known.has(hostname)) || await connectorStatus(record) !== "running") continue;
+    if (!record.hostnames.some((hostname) => committed.has(hostname)) || !record.hostnames.every((hostname) => known.has(hostname)) || await connectorStatus(ctx.paths, record) !== "running") continue;
     state.retired = [...state.retired.filter((item) => !sameConnector(item, record)), ...(state.connector ? [state.connector] : [])];
     state.connector = record;
     return true;
@@ -442,9 +500,12 @@ async function restoreFallback(state: TunnelState): Promise<boolean> {
  * like every record the publish did not create. Retired connectors,
  * including any it launched, are stopped, except a running fallback for the
  * committed names (restoreFallback). No connector is launched here.
- * finishResidue completes the rest.
+ * finishResidue completes the rest. First, an agent that outlived its
+ * connector is stopped (stopOrphanAgent): until then that connector may
+ * still route its names, and nothing may start beside it.
  */
 async function settle(ctx: Context, state: TunnelState): Promise<TunnelState> {
+  for (const record of [state.connector, ...state.retired]) if (record) await stopOrphanAgent(ctx.paths, record);
   if (state.pending) {
     const { ownerId, hostnames, createdDns } = state.pending;
     const uncommitted = (hostname: string) => !state.hostnames.some((item) => item.hostname === hostname);
@@ -455,7 +516,7 @@ async function settle(ctx: Context, state: TunnelState): Promise<TunnelState> {
     delete state.pending;
     await writeTunnelState(ctx.stateDir, state);
   }
-  if (await restoreFallback(state)) await writeTunnelState(ctx.stateDir, state);
+  if (await restoreFallback(ctx, state)) await writeTunnelState(ctx.stateDir, state);
   await stopRetired(ctx, state);
   const residue = state.residue.filter((item) => !residueDone(state, item));
   if (residue.length !== state.residue.length) { state.residue = residue; await writeTunnelState(ctx.stateDir, state); }
@@ -614,7 +675,7 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
 /** Lock-free report of a binding's published hostnames, connector and withdrawals still outstanding. */
 export async function tunnelStatus(options: Pick<TunnelServiceOptions, "stateDir" | "binding">): Promise<TunnelStatus> {
   const state = await readTunnelState(options.stateDir, options.binding.name);
-  const status = state.connector ? await connectorStatus(state.connector) : "exited";
+  const status = state.connector ? await connectorStatus(tunnelPaths(options.stateDir, options.binding.name), state.connector) : "exited";
   return {
     binding: options.binding.name,
     capabilities: tunnelCapabilities(options.binding),

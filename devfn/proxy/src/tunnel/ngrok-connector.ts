@@ -4,12 +4,15 @@ import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
 
+import { processBirthSignature } from "@devfn/processes";
+
 import { createOriginBridge, startedEndpoint } from "./ngrok-bridge.js";
 import { parseNgrokConnectorConfig, renderNgrokAgentConfig } from "./ngrok.js";
+import { writePrivateJson } from "./state.js";
 
 /**
  * The DevFn ngrok connector: argv is the connector configuration file, the
- * readiness port and the ngrok executable. It runs the origin bridge on a
+ * readiness port, the ngrok executable and the agent identity file. It runs the origin bridge on a
  * free loopback port, then the ngrok agent with a configuration that
  * forwards every selected endpoint to that bridge. GET /ready on the
  * readiness port answers 200, with the public URL of each hostname, once
@@ -19,7 +22,10 @@ import { parseNgrokConnectorConfig, renderNgrokAgentConfig } from "./ngrok.js";
  * exits when the agent does, so a dead agent never looks ready, and kills
  * the agent whenever it exits itself: an agent left behind would keep its
  * public endpoints forwarding to a freed loopback port that any local
- * process could bind, past the bridge's allowlist.
+ * process could bind, past the bridge's allowlist. A connector killed
+ * outright runs no code, so the agent's verified identity is recorded
+ * before the agent may route anything, and the tunnel service stops an
+ * agent its connector left behind through it (see agentIdentityFile).
  */
 let agent: ChildProcess | undefined;
 // Synchronous, so it holds for every exit: fatal error, signal timeout or the agent's own exit (then a no-op).
@@ -32,10 +38,12 @@ process.on("uncaughtException", fatal);
 process.on("unhandledRejection", fatal);
 
 async function main(): Promise<void> {
-  const [configFile, readyPortText, command] = process.argv.slice(2);
+  const [configFile, readyPortText, command, identityFile] = process.argv.slice(2);
   const config = parseNgrokConnectorConfig(await readFile(configFile, "utf8"));
   const home = process.env.HOME;
-  if (!home || !path.isAbsolute(home) || !command || !path.isAbsolute(command)) throw new Error("The ngrok connector needs a private HOME and an absolute ngrok path.");
+  if (!home || !path.isAbsolute(home) || !command || !path.isAbsolute(command) || !identityFile || !path.isAbsolute(identityFile)) {
+    throw new Error("The ngrok connector needs a private HOME, an absolute ngrok path and an absolute agent identity file.");
+  }
   const bridge = createOriginBridge({ hostnames: config.hostnames, originPort: config.origin.port, ca: await readFile(config.origin.caFile, "utf8") });
   await new Promise<void>((resolve, reject) => { bridge.once("error", reject); bridge.listen(0, "127.0.0.1", resolve); });
   bridge.on("error", fatal);
@@ -55,20 +63,34 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve, reject) => { readiness.once("error", reject); readiness.listen(Number(readyPortText), "127.0.0.1", resolve); });
   readiness.on("error", fatal);
 
-  const child = spawn(command, ["start", "--all", "--config", agentFile], {
+  // On POSIX the agent first runs as a shell that waits for "start" on stdin
+  // and then execs ngrok in the same process (through env, which drops the
+  // variables the shell adds), so the identity recorded below stays the
+  // agent's; a connector that dies before recording it closes stdin, and the
+  // shell exits without ever starting ngrok. Windows has no such gate: an
+  // agent its connector loses before recording it is a documented gap.
+  const argv = ["start", "--all", "--config", agentFile];
+  const gated = process.platform !== "win32";
+  const gate = 'read -r gate && [ "$gate" = start ] && exec /usr/bin/env -u PWD -u OLDPWD -u SHLVL -u _ "$0" "$@"';
+  const child = spawn(gated ? "/bin/sh" : command, gated ? ["-c", gate, command, ...argv] : argv, {
     env: { PATH: process.env.PATH ?? "", HOME: home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), NGROK_AUTHTOKEN: process.env.NGROK_AUTHTOKEN ?? "" },
-    stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+    stdio: [gated ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true,
   });
   agent = child;
-  readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
+  readline.createInterface({ input: child.stdout!, crlfDelay: Infinity }).on("line", (line) => {
     const started = startedEndpoint(line);
     if (started && config.hostnames.includes(started.name)) urls[started.name] = started.url;
     process.stdout.write(`${line}\n`);
   });
-  child.stderr.pipe(process.stderr);
+  child.stderr!.pipe(process.stderr);
   const exit = (code: number) => { void rm(agentFile, { force: true }).finally(() => process.exit(code)); };
-  child.once("error", () => exit(1));
-  child.once("exit", (code) => exit(code === 0 ? 0 : 1));
+  child.once("error", fatal);
+  // Only an agent that exited stops being one the service must look for.
+  child.once("exit", (code) => { void rm(identityFile, { force: true }).finally(() => exit(code === 0 ? 0 : 1)); });
+  const birthSignature = child.pid ? await processBirthSignature(child.pid) : undefined;
+  if (!child.pid || !birthSignature) throw new Error("The ngrok agent's process identity could not be read.");
+  await writePrivateJson(identityFile, { version: 1, pid: child.pid, birthSignature, startedAt: new Date().toISOString(), configFile: path.basename(configFile) });
+  child.stdin?.end("start\n");
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.once(signal, () => { child.kill("SIGTERM"); setTimeout(() => exit(0), 2_000).unref(); });
 }
 

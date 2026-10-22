@@ -20,7 +20,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { processBirthSignature } from "@devfn/processes";
-import { readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { publishTunnelRoutes, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, withdrawTunnelRoutes, type TunnelBinding } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, readReceipt, registerDomain, resolveInstanceIdentity, writeReceipt, type TunnelOverrides } from "../src/index.js";
 import { FakeTunnelProvider, ngrokFixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
@@ -130,20 +130,49 @@ it("publishes an ephemeral endpoint's URL only to runtime outputs once its conne
   const env = JSON.parse(await readFile(path.join(root, "started-env.json"), "utf8")) as Record<string, string>;
   expect(Object.keys(env).filter((key) => key.startsWith("DEVFN_PUBLIC_URL_"))).toEqual([]);
   expect((await readTunnelState(stateDir, "eph")).connector!.urls).toEqual({ [hostname]: "https://assigned-1-0.ngrok-free.app" });
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
-  // A connector restart for another worktree assigns new URLs: the receipt's snapshot is then no longer ready, and up records the current one.
-  const journal = tunnelPaths(stateDir, "eph").state;
-  const state = JSON.parse(await readFile(journal, "utf8")) as { connector: { urls: Record<string, string> } };
-  state.connector.urls[hostname] = "https://reassigned.ngrok-free.app";
-  await writeFile(journal, JSON.stringify(state), { mode: 0o600 });
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
-  const restarted = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
-  expect(restarted.publicUrls).toEqual({ web: `${(await readTunnelState(stateDir, "eph")).connector!.urls[restarted.tunnel!.hostnames[0]]}/app` });
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready", publicUrls: { web: "https://assigned-1-0.ngrok-free.app/app" } });
+  expect(await orchestrator.status({ config, root })).not.toHaveProperty("publicUrlsChanged");
   await orchestrator.down({ config, root, stateDir });
 }, 60_000);
 
-it("judges ephemeral receipt URLs route by route, including routes that share one host label", async () => {
+it("keeps one worktree ready with its current ephemeral URLs across another owner's publish, withdrawal and connector recovery", async () => {
+  const config = manifest({ binding: "eph", routes: ["web"], ephemeral: true });
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  const [hostname] = started.tunnel!.hostnames;
+  const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === "eph")!;
+  // Another worktree's lifecycle on the same binding, which may still run.
+  const other = `web-other-0123456789abcdef0123.${binding.domain}`;
+  const service = { ...overrides, stateDir, binding, ownerMayRun: async (ownerId: string) => await Promise.resolve(ownerId === started.instanceId || ownerId === "other-worktree") };
+  const current = async () => `${(await readTunnelState(stateDir, "eph")).connector!.urls![hostname]}/app`;
+  const expectReady = async () => {
+    const status = await orchestrator.status({ config, root });
+    expect(status).toMatchObject({ state: "ready", publicUrls: { web: await current() } });
+    return status;
+  };
+  // Each restart of the shared connector reassigns this worktree's URL, without ending its exposure or its readiness.
+  await publishTunnelRoutes(service, "other-worktree", [other]);
+  expect(await current()).not.toBe(started.publicUrls!.web);
+  expect(await expectReady()).toMatchObject({ publicUrlsChanged: true });
+  await withdrawTunnelRoutes(service, "other-worktree");
+  await expectReady();
+  await publishTunnelRoutes(service, "other-worktree", [other]);
+  process.kill(-(await readTunnelState(stateDir, "eph")).connector!.pid, "SIGKILL");
+  await vi.waitFor(async () => expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" }), { timeout: 5_000 });
+  await recoverTunnel(service);
+  await expectReady();
+  // up keeps the ready lifecycle and the other worktree's connector, and records the current URLs.
+  const connector = (await readTunnelState(stateDir, "eph")).connector!;
+  await expect(orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true })).rejects.toThrow("is already running");
+  expect((await readTunnelState(stateDir, "eph")).connector).toEqual(connector);
+  expect(await readReceipt(config, root, started.instanceId)).toMatchObject({ invocationId: started.invocationId, publicUrls: { web: await current() } });
+  expect(await orchestrator.status({ config, root })).not.toHaveProperty("publicUrlsChanged");
+  await withdrawTunnelRoutes(service, "other-worktree");
+  await orchestrator.down({ config, root, stateDir });
+}, 90_000);
+
+it("reports ephemeral URLs route by route from the running connector, including routes that share one host label", async () => {
   // Routes share a host label through a registered local domain; the public hostname follows the label.
   const identity = await resolveInstanceIdentity("fixture", root);
   await registerDomain(stateDir, { domain: "dev.example.test", projectId: "fixture", repositoryIdentity: identity.repositoryIdentity, tls: "internal" },
@@ -163,20 +192,23 @@ it("judges ephemeral receipt URLs route by route, including routes that share on
   await expect(orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true })).rejects.toThrow("is already running");
   expect((await readReceipt(config, root, started.instanceId))!.invocationId).toBe(started.invocationId);
   expect((await readTunnelState(stateDir, "eph")).connector).toMatchObject({ pid: connector.pid, urls: connector.urls });
-  // Swapped route URLs, or a missing route, are stale although every URL is still served.
+  // Status reports each route's URL from its own hostname as served now, whatever the receipt holds.
   const receipt = (await readReceipt(config, root, started.instanceId))!;
   await writeReceipt({ ...receipt, publicUrls: { ...receipt.publicUrls, web: receipt.publicUrls!.admin, admin: receipt.publicUrls!.web } });
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
-  await writeReceipt({ ...receipt, publicUrls: { web: receipt.publicUrls!.web, admin: receipt.publicUrls!.admin } });
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready", publicUrls: started.publicUrls, publicUrlsChanged: true });
   await writeReceipt(receipt);
-  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
-  // One hostname reassigned by the provider is stale for both of its routes' receipt entries.
   const journal = tunnelPaths(stateDir, "eph").state;
   const state = JSON.parse(await readFile(journal, "utf8")) as { connector: { urls: Record<string, string> } };
-  state.connector.urls[host("admin")] = "https://reassigned.ngrok-free.app";
-  await writeFile(journal, JSON.stringify(state), { mode: 0o600 });
+  const edit = async (urls: Record<string, string>) => await writeFile(journal, JSON.stringify({ ...state, connector: { ...state.connector, urls } }), { mode: 0o600 });
+  await edit({ ...connector.urls, [host("admin")]: "https://reassigned.ngrok-free.app" });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready", publicUrls: { ...started.publicUrls, admin: "https://reassigned.ngrok-free.app" }, publicUrlsChanged: true });
+  // A route hostname the connector serves without a URL of its own, or with another hostname's, is not ready.
+  await edit({ [host("web")]: connector.urls![host("web")] });
   expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await edit({ [host("web")]: connector.urls![host("web")], [host("admin")]: connector.urls![host("web")] });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await edit(connector.urls!);
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready", publicUrls: started.publicUrls });
   await orchestrator.down({ config, root, stateDir });
 }, 60_000);
 
