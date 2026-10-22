@@ -19,10 +19,9 @@ export const metadata: Metadata = {
   description: "Shared-package docs and ecosystem guides for Superfunctions.",
 };
 
-type DocsRootLayoutProps = Parameters<typeof DocsRootLayout>[0];
 type RootProviderProps = Parameters<typeof RootProvider>[0];
 
-export default function Layout({ children }: { children: DocsRootLayoutProps["children"] }) {
+export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <DocsRootLayout>
       <RootProvider>{children as RootProviderProps["children"]}</RootProvider>
