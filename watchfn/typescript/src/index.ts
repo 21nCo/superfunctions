@@ -98,3 +98,7 @@ export type { DeploymentComparisonOptions, ComparedMetric } from "./analysis/dep
 export type { BotFnIssueConfig, BotFnIssueRoute, BotFnGitHubClient, BotFnLinearClient, BugIssueStatus, BugReportReference } from "./integrations/botfn/types";
 export { getBugIssueSchema } from "./integrations/botfn/schema";
 export { BugIssueConflictError, BugIssueValidationError } from "./integrations/botfn/types";
+
+export { getAlertSchema } from './alerts/schema';
+export { AlertManager } from './alerts/alert-manager';
+export type { AlertConfig, AlertChannel, AlertRuntimeConfig, AlertSender, AlertNotification, PublicAlert } from './alerts/types';

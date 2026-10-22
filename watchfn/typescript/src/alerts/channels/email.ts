@@ -1,7 +1,8 @@
-/** Email notification channel (placeholder - requires email service). */
+/** Email notification channel backed by an explicitly configured sender. */
 
 export interface EmailOptions {
   from: string;
+  sender?: (message: { from: string; to: string[]; subject: string; html: string }) => Promise<void>;
   smtp?: {
     host: string;
     port: number;
@@ -30,20 +31,9 @@ export class EmailChannel {
     const subject = `[${alert.severity.toUpperCase()}] ${alert.name}`;
     const html = this.buildEmailHtml(alert);
 
-    // In production, use a proper email service (SendGrid, AWS SES, etc.)
-    // For now, this is a placeholder
-    console.log(`Would send email to ${recipients.join(", ")}:`);
-    console.log(`Subject: ${subject}`);
-    console.log(`Body: ${html}`);
+    if (!this.options.sender) throw new Error('EmailChannel requires a configured email sender');
+    await this.options.sender({ from: this.options.from, to: [...recipients], subject, html });
 
-    // TODO: Implement actual email sending
-    // Example with sendFn integration:
-    // await sendFn.email.send({
-    //   from: this.options.from,
-    //   to: recipients,
-    //   subject,
-    //   html,
-    // });
   }
 
   private buildEmailHtml(alert: {
@@ -55,6 +45,12 @@ export class EmailChannel {
     runbook?: string;
   }): string {
     const severityColor = this.getSeverityColor(alert.severity);
+    const escape = (value: string) => value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+    let runbook: string | undefined;
+    if (alert.runbook) {
+      try { const url = new URL(alert.runbook); if (['http:', 'https:'].includes(url.protocol)) runbook = escape(url.href); } catch { /* Omit invalid links. */ }
+    }
+    alert = { ...alert, name: escape(alert.name), description: alert.description ? escape(alert.description) : undefined, severity: escape(alert.severity), runbook };
 
     return `
       <!DOCTYPE html>

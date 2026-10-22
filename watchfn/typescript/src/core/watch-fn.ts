@@ -33,7 +33,7 @@ export class WatchFn implements WatchFnInstance {
   private exceptionHandler: ExceptionHandler;
   private httpInterceptor: HttpInterceptor;
   private tracer: Tracer;
-  private alertManager: AlertManager;
+  private alertManager?: AlertManager;
   private queryEngine: QueryEngine | null = null;
   private systemMetrics: SystemMetricsCollector;
   private processMetrics: ProcessMetricsCollector;
@@ -93,7 +93,6 @@ export class WatchFn implements WatchFnInstance {
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
     this.tracer = new Tracer(this);
-    this.alertManager = new AlertManager(this);
     this.systemMetrics = new SystemMetricsCollector(this, this.config.infra?.interval);
     this.processMetrics = new ProcessMetricsCollector(this, this.config.infra?.interval);
     this.syntheticsScheduler = new SyntheticScheduler(this);
@@ -317,18 +316,29 @@ export class WatchFn implements WatchFnInstance {
   }
   
   get alerts() {
-      return {
-          create: async (opts: any) => this.alertManager.create(opts),
-          list: async (filter?: { status?: string }) => this.alertManager.list(filter),
-          onTrigger: (cb: any) => this.alertManager.onTrigger(cb),
-          onResolve: (cb: any) => this.alertManager.onResolve(cb),
-          addNote: async (id: string, note: any) => this.alertManager.addNote(id, note),
-          acknowledge: async (id: string, data: any) => this.alertManager.acknowledge(id, data),
-          resolve: async (id: string, data: any) => this.alertManager.resolve(id, data),
-          trigger: async (id: string, data: any) => this.alertManager.trigger(id, data),
-      }
+    if (!this.alertManager) {
+      const database = this.config.storage === 'database' ? this.config.database : undefined;
+      if (database && !('create' in database)) throw new TypeError('Durable alerts require a shared DB Adapter');
+      this.alertManager = new AlertManager({
+        name: this.config.name, config: this.config.alerts, database: database as import('@superfunctions/db').Adapter | undefined,
+        observations: (metric, from, now, maximum) => {
+          if (!this.queryEngine) throw new Error('WatchFn storage is unavailable');
+          return this.queryEngine.alertObservations(metric, from, now, maximum);
+        },
+        admit: async <T>(operation: () => Promise<T>, started = false): Promise<T> => {
+          if (this.stopping || (started && !this.isStarted)) throw new Error('WatchFn storage is unavailable');
+          let result!: T;
+          const record = this.write(async () => { result = await operation(); });
+          await record.completion;
+          if (record.failed) throw record.error;
+          return result;
+        },
+      });
+    }
+    return this.alertManager;
   }
   
+
   get synthetics() {
       return {
           create: async (opts: any) => this.syntheticsScheduler.create(opts),

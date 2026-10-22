@@ -112,3 +112,17 @@ custom database collations or legacy IDs use the original materialized sort
 before returning any rows. Legacy `queryEvents` adapters still return arrays.
 Keyset reads are live across pages, not a snapshot of concurrent writes or
 retention cleanup. See [native query acceptance and remaining limits](../.conduct/query-streaming-readiness.md).
+
+### Durable alert lifecycle
+
+`watch.alerts` now persists definitions, notes, acknowledgement and resolution
+with the shared database adapter. Migrate the exported `getAlertSchema()` tables
+before use. Run `await watch.alerts.evaluate()` and
+`await watch.alerts.processNotifications()` from your host scheduler; both accept
+bounded pages and participate in shutdown draining. Configure `alerts.emailSender`
+or `alerts.pagerDutySender` for those channels, including after restart. Webhook
+and Slack destinations supplied at creation are retained in the database; public
+alert results hide their credentials. Memory storage remains process-local.
+
+See [public alert manager behavior and remaining limits](../.conduct/public-alert-manager-readiness.md)
+for cap, recovery, delivery and credential-storage semantics.
