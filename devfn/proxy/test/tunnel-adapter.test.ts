@@ -97,6 +97,16 @@ describe("Cloudflare DNS adapter", () => {
     await provider.removeDns(binding, PUBLIC_HOST);
   });
 
+  it("neither publishes nor reports removed a name an ancestor wildcard record to the tunnel keeps routed", async () => {
+    // The binding domain tunnel.example.test sits below its zone; Cloudflare wildcards cover deeper names.
+    const wildcard = { id: "wild", type: "CNAME", name: "*.example.test", content: target, proxied: true, comment: "user" };
+    const records: Array<Record<string, unknown>> = [wildcard];
+    const { provider } = zone(records);
+    await expect(provider.ensureDns(binding, PUBLIC_HOST)).rejects.toThrow("wildcard record *.example.test");
+    await expect(provider.removeDns(binding, PUBLIC_HOST)).rejects.toThrow("still routed to the tunnel by the wildcard record *.example.test");
+    expect(records).toEqual([wildcard]);
+  });
+
   it("accepts only an existing, locally configured tunnel of the binding's account", async () => {
     const urls: string[] = [];
     const account = (tunnel: Record<string, unknown> | null) => new CloudflareTunnelProvider({ env: { DEVFN_FIXTURE_TOKEN: "secret-token" },
@@ -128,10 +138,11 @@ it.skipIf(process.env.DEVFN_REAL_TUNNEL !== "1")("validates the generated ingres
     const binding = fixtureBinding(dir, path.join(dir, "credentials.json"));
     await writeFile(binding.cloudflare.credentialsFile, "{}", { mode: 0o600 });
     const provider = new CloudflareTunnelProvider();
-    const hostnames = [PUBLIC_HOST, "api-w1-0123456789abcdef0123.tunnel.example.test"];
+    // Labels mixing "-", digits and letters: the rendered ingress and its rule-index check share one code-unit order.
+    const hostnames = [PUBLIC_HOST, "api-w1-0123456789abcdef0123.tunnel.example.test", "ab-w1-0123456789abcdef0123.tunnel.example.test", "a-b-w1-0123456789abcdef0123.tunnel.example.test", "a0-w1-0123456789abcdef0123.tunnel.example.test"];
     const config = provider.renderConnectorConfig(binding, hostnames, { port: PUBLIC_ORIGIN_PORT, caFile: path.join(dir, "origin-ca.pem") });
     expect(config).toContain(`      originServerName: "${PUBLIC_HOST}"\n      httpHostHeader: "${PUBLIC_HOST}"`);
-    expect(config.match(/noTLSVerify: false/g)).toHaveLength(2);
+    expect(config.match(/noTLSVerify: false/g)).toHaveLength(hostnames.length);
     expect(config.trimEnd().endsWith(`- service: "http_status:404"`)).toBe(true);
     const file = path.join(dir, "connector.yml");
     await writeFile(file, config);
@@ -150,10 +161,10 @@ async function freePort(): Promise<number> {
   return typeof address === "object" && address ? address.port : 0;
 }
 
-/** Status and body for a TLS request with the given SNI and Host, without verification, or the handshake error. */
-async function rawRequest(port: number, servername: string, host: string): Promise<{ status: number; body: string } | { error: string }> {
+/** Status and body for a TLS request with the given SNI and Host, verified against ca for that SNI, or the handshake error. */
+async function rawRequest(port: number, servername: string, host: string, ca: string): Promise<{ status: number; body: string } | { error: string }> {
   return await new Promise((resolve) => {
-    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] }, () => socket.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`));
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, ca, ALPNProtocols: ["http/1.1"] }, () => socket.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`));
     let text = "";
     socket.on("data", (chunk: Buffer) => { text += chunk.toString("utf8"); });
     socket.once("error", (error) => resolve({ error: error.message }));
@@ -184,20 +195,20 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("denies private routes, forged H
       }
       // Verified TLS for the allowlisted name, with a forged Host refused.
       await probePublicOrigin(PUBLIC_HOST, publicPort, root!);
-      expect(await rawRequest(publicPort, PUBLIC_HOST, PUBLIC_HOST)).toEqual({ status: 403, body: "PUBLIC" });
+      expect(await rawRequest(publicPort, PUBLIC_HOST, PUBLIC_HOST, root!)).toEqual({ status: 403, body: "PUBLIC" });
       // A host routing only /app answers / with its own marked fallback, which still proves it is allowlisted.
       await probePublicOrigin(pathOnly, publicPort, root!);
       // A name Caddy holds a certificate for but the public origin does not serve gets the marked deny response.
       await expect(probePublicOrigin("web-w1.localhost", publicPort, root!)).rejects.toThrow("does not serve");
       await expect(probePublicOrigin("unknown.tunnel.example.test", publicPort, root!)).rejects.toThrow("TLS verification");
-      expect(await rawRequest(publicPort, PUBLIC_HOST, "web-w1.localhost")).toMatchObject({ status: 421 });
+      expect(await rawRequest(publicPort, PUBLIC_HOST, "web-w1.localhost", root!)).toMatchObject({ status: 421 });
       // A private name Caddy holds a certificate for is denied on the public origin.
-      expect(await rawRequest(publicPort, "web-w1.localhost", "web-w1.localhost")).toEqual({ status: 403, body: "" });
-      expect(await rawRequest(publicPort, "unknown.tunnel.example.test", "unknown.tunnel.example.test")).toHaveProperty("error");
+      expect(await rawRequest(publicPort, "web-w1.localhost", "web-w1.localhost", root!)).toEqual({ status: 403, body: "" });
+      expect(await rawRequest(publicPort, "unknown.tunnel.example.test", "unknown.tunnel.example.test", root!)).toHaveProperty("error");
       // The origin certificate does not verify against another root.
       await expect(probePublicOrigin(PUBLIC_HOST, publicPort, tls.rootCertificates[0])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_VALIDATION_FAILED" });
       // The private listener is unchanged.
-      expect(await rawRequest(httpsPort, "web-w1.localhost", "web-w1.localhost")).toEqual({ status: 200, body: "PRIVATE" });
+      expect(await rawRequest(httpsPort, "web-w1.localhost", "web-w1.localhost", root!)).toEqual({ status: 200, body: "PRIVATE" });
     } finally {
       child.kill("SIGTERM");
       await new Promise((resolve) => child.once("exit", resolve));

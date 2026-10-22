@@ -11,7 +11,7 @@ import { ProcessError, ProcessSupervisor, processGroupStatus, stopProcessGroup }
 import { PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
 import {
-  TunnelError, assertBindingRegistered, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, writeTunnelState,
+  TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, writePrivateFile, writeTunnelState,
   type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState,
 } from "./state.js";
 
@@ -41,6 +41,8 @@ export interface TunnelStatus {
   hostnames: Array<{ hostname: string; ownerId: string }>;
   pending: boolean;
   retired: number;
+  /** The hostnames the running connector routes; none unless it verifiably runs. */
+  routed: string[];
   /** Withdrawn names whose public reachability is not fully confirmed ended, by owner. */
   outstanding: Array<{ ownerId: string; detail: string }>;
 }
@@ -54,10 +56,11 @@ const context = (options: TunnelServiceOptions): Context => ({
   stateDir: options.stateDir, binding: options.binding, provider: options.provider ?? new CloudflareTunnelProvider(),
   port: options.originPort ?? PUBLIC_ORIGIN_PORT, readyTimeoutMs: options.readyTimeoutMs ?? 30_000,
   originCa: options.originCa ?? caddyInternalRoot, probeOrigin: options.probeOrigin ?? probePublicOrigin,
-  ownerMayRun: options.ownerMayRun ?? (async () => false),
+  ownerMayRun: options.ownerMayRun ?? (() => Promise.resolve(false)),
 });
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const isPem = (text: string | undefined): text is string => /-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----\s*$/.test(text ?? "");
 
 /** The DevFn Caddy's internal root certificate, read from its loopback admin API. */
 export async function caddyInternalRoot(): Promise<string> {
@@ -150,16 +153,21 @@ async function stopConnector(record: ConnectorRecord): Promise<string | undefine
   catch (error) { if (error instanceof ProcessError) return error.message; throw error; }
 }
 
-/** The origin root for a new connector configuration; the last written root while the proxy is briefly unavailable. */
+/**
+ * The origin root for a new connector configuration; the last written root
+ * while the proxy is briefly unavailable. It is replaced atomically, so an
+ * interrupted write keeps the previous root, and a saved root that is not a
+ * complete certificate is never used.
+ */
 async function originRoot(ctx: Context): Promise<string> {
   const file = tunnelPaths(ctx.stateDir, ctx.binding.name).originCa;
   try {
     const root = await ctx.originCa();
-    if (await readFile(file, "utf8").catch(() => undefined) !== root) await writeFile(file, root, { mode: 0o600 });
+    if (await readFile(file, "utf8").catch(() => undefined) !== root) await writePrivateFile(file, root);
     return root;
   } catch (error) {
     const saved = await readFile(file, "utf8").catch(() => undefined);
-    if (saved) return saved;
+    if (isPem(saved)) return saved;
     throw error;
   }
 }
@@ -210,12 +218,15 @@ const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid
 /**
  * Make before break: the connector for `hostnames` is ready before the one it
  * replaces is stopped, so other owners' public routes keep being served. A
- * launched connector is journaled as retired until it is committed, so one
- * that fails readiness and does not stop stays recorded. A replaced
- * connector that does not stop stays retired as well. No hostnames stops
- * the connector. Mutates and persists state.
+ * launched connector is journaled as retired until it is promoted, so one
+ * that fails readiness and does not stop stays recorded. It is promoted, and
+ * its predecessor retired, in the same write that applies commit, the
+ * transition's committed hostnames: an interruption before that write leaves
+ * the predecessor serving the previous committed set. A replaced connector
+ * that does not stop stays retired. No hostnames stops the connector.
+ * Mutates and persists state.
  */
-async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[]): Promise<void> {
+async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: () => void): Promise<void> {
   const previous = state.connector;
   if (hostnames.length) {
     await assertSoleConnector(state);
@@ -227,6 +238,7 @@ async function swapConnector(ctx: Context, state: TunnelState, hostnames: readon
     state.connector = launched;
   } else delete state.connector;
   if (previous) state.retired.push(previous);
+  commit?.();
   await writeTunnelState(ctx.stateDir, state);
   await stopRetired(ctx, state);
 }
@@ -259,11 +271,15 @@ async function connectorServes(ctx: Context, state: TunnelState, hostnames: read
   return status === "running" && hostnames.length > 0 && state.connector.configDigest === (await connectorConfig(ctx, hostnames)).digest;
 }
 
-/** Run a connector for exactly hostnames, replacing one that exited or serves another allowlist (make before break). Only publish and recovery converge, after verifying the tunnel and choosing hostnames with relaunchable. */
-async function converge(ctx: Context, state: TunnelState, hostnames: readonly string[]): Promise<void> {
-  if (await connectorServes(ctx, state, hostnames)) return;
+/** Run a connector for exactly hostnames, replacing one that exited or serves another allowlist (make before break), then apply and persist commit. Only publish and recovery converge, after verifying the tunnel and choosing hostnames with relaunchable. */
+async function converge(ctx: Context, state: TunnelState, hostnames: readonly string[], commit?: () => void): Promise<void> {
+  if (await connectorServes(ctx, state, hostnames)) {
+    commit?.();
+    await writeTunnelState(ctx.stateDir, state);
+    return;
+  }
   if (state.connector && await connectorStatus(state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
-  await swapConnector(ctx, state, hostnames);
+  await swapConnector(ctx, state, hostnames, commit);
 }
 
 /** Whether any recorded connector may route one of hostnames. */
@@ -299,13 +315,13 @@ async function relaunchable(ctx: Context, state: TunnelState, items: readonly Tu
 
 /**
  * Whether the owner's public reachability on this binding has ended: it
- * publishes nothing, and for every name it withdrew either DNS removal is
- * confirmed by readback or no recorded connector may still route it. A
- * name whose DevFn-owned record is kept ends only once no connector routes it.
+ * publishes nothing and no recorded connector may still route a name it
+ * withdrew. Confirmed DNS removal is not enough: cached resolutions and
+ * established connections keep reaching a connector that routes the name.
  */
 function reachabilityEnded(state: TunnelState, ownerId: string): boolean {
   return !state.hostnames.some((item) => item.ownerId === ownerId) && state.pending?.ownerId !== ownerId &&
-    state.residue.every((item) => item.ownerId !== ownerId || item.dnsRemoved || !mayRoute(state, item.hostnames));
+    state.residue.every((item) => item.ownerId !== ownerId || !mayRoute(state, item.hostnames));
 }
 
 /** What still keeps the owner's withdrawn names publicly reachable. */
@@ -347,15 +363,17 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
 /**
  * After a swap interrupted before its old connector stopped, the new one
  * may have exited while the old one still serves committed names: a
- * retired connector that verifiably runs and routes only committed names
- * becomes the recorded connector again, so it keeps serving until a
- * replacement is ready instead of being stopped.
+ * retired connector that verifiably runs, routes a committed name and
+ * otherwise only names journaled as withdrawn becomes the recorded
+ * connector again. It keeps serving until a replacement is ready instead
+ * of being stopped; finishResidue then replaces it make before break.
  */
 async function restoreFallback(state: TunnelState): Promise<boolean> {
   if (state.connector && ["running", "unverified"].includes(await connectorStatus(state.connector))) return false;
-  const committed = state.hostnames.map((item) => item.hostname);
+  const committed = new Set(state.hostnames.map((item) => item.hostname));
+  const known = new Set([...committed, ...state.residue.flatMap((item) => item.hostnames)]);
   for (const record of [...state.retired].reverse()) {
-    if (!record.hostnames.length || !record.hostnames.every((hostname) => committed.includes(hostname)) || await connectorStatus(record) !== "running") continue;
+    if (!record.hostnames.some((hostname) => committed.has(hostname)) || !record.hostnames.every((hostname) => known.has(hostname)) || await connectorStatus(record) !== "running") continue;
     state.retired = [...state.retired.filter((item) => !sameConnector(item, record)), ...(state.connector ? [state.connector] : [])];
     state.connector = record;
     return true;
@@ -417,7 +435,7 @@ async function locked<T>(ctx: Context, action: (state: TunnelState) => Promise<T
  */
 export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId: string, hostnames: readonly string[]): Promise<TunnelHostname[]> {
   const ctx = context(options);
-  const wanted = [...new Set(hostnames)].sort();
+  const wanted = [...new Set(hostnames)].sort(compareNames);
   ownerMarkerFile(ctx.stateDir, ownerId);
   if (!wanted.length || wanted.length !== hostnames.length || wanted.some((hostname) => !isPublicHostname(hostname, ctx.binding.domain))) {
     throw new TunnelError("DEVFN_TUNNEL_INVALID", `Public hostnames must be distinct labels directly under ${ctx.binding.domain}.`);
@@ -434,7 +452,7 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
     const { keep, stale } = await relaunchable(ctx, state, state.hostnames.filter((item) => item.ownerId !== ownerId));
     const next = [...keep,
       ...wanted.map((hostname) => before.find((item) => item.hostname === hostname) ?? { hostname, ownerId, publishedAt: now })]
-      .sort((a, b) => a.hostname < b.hostname ? -1 : a.hostname > b.hostname ? 1 : 0);
+      .sort((a, b) => compareNames(a.hostname, b.hostname));
     const dropped = before.map((item) => item.hostname).filter((hostname) => !wanted.includes(hostname));
     await ctx.provider.verifyTunnel(ctx.binding);
     await markOwnerBinding(ctx.stateDir, ownerId, ctx.binding.name, true);
@@ -460,7 +478,16 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
         if (result === "existing") { state.pending.createdDns.pop(); await writeTunnelState(ctx.stateDir, state); }
       }
       for (const hostname of wanted) await ctx.provider.verifyDns(ctx.binding, hostname);
-      await converge(ctx, state, next.map((item) => item.hostname));
+      // The new set is committed in the write that promotes its connector.
+      // A republished name is no longer withdrawn; dropped names, which the
+      // new connector no longer serves, are withdrawn then and retried later.
+      await converge(ctx, state, next.map((item) => item.hostname), () => {
+        withdrawNames(state, stale);
+        state.hostnames = next;
+        delete state.pending;
+        state.residue = state.residue.map((item) => ({ ...item, hostnames: item.hostnames.filter((hostname) => !wanted.includes(hostname)) })).filter((item) => item.hostnames.length);
+        if (dropped.length) state.residue.push({ ownerId, hostnames: dropped, dnsRemoved: false });
+      });
     } catch (error) {
       const rollback = await settle(ctx, state).then(async () => await finishResidue(ctx, state), (rollbackError: unknown) => [message(rollbackError)]);
       if (rollback.length) {
@@ -468,14 +495,6 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
       }
       throw error;
     }
-    withdrawNames(state, stale);
-    state.hostnames = next;
-    delete state.pending;
-    // A republished name is no longer withdrawn; dropped names, which the new
-    // connector no longer serves, are withdrawn now and retried later.
-    state.residue = state.residue.map((item) => ({ ...item, hostnames: item.hostnames.filter((hostname) => !wanted.includes(hostname)) })).filter((item) => item.hostnames.length);
-    if (dropped.length) state.residue.push({ ownerId, hostnames: dropped, dnsRemoved: false });
-    await writeTunnelState(ctx.stateDir, state);
     await finishResidue(ctx, state);
     return next.filter((item) => item.ownerId === ownerId);
   });
@@ -517,7 +536,10 @@ export async function withdrawTunnelRoutes(options: TunnelServiceOptions, ownerI
 /**
  * Recover a binding (see settle and finishResidue), then run a connector for
  * the committed names that are still relaunchable, after verifying the
- * provider tunnel; the rest are withdrawn. Reports the binding.
+ * provider tunnel; the rest are withdrawn. Every name kept has its
+ * DevFn-owned DNS record confirmed, or recreated, and read back first; a
+ * name whose DNS does not verify fails the recovery before any launch.
+ * Reports the binding.
  */
 export async function recoverTunnel(options: TunnelServiceOptions): Promise<TunnelStatus> {
   const ctx = context(options);
@@ -528,6 +550,7 @@ export async function recoverTunnel(options: TunnelServiceOptions): Promise<Tunn
     await writeTunnelState(ctx.stateDir, state);
     await finishResidue(ctx, state);
     const names = keep.map((item) => item.hostname);
+    for (const hostname of names) await ctx.provider.ensureDns(ctx.binding, hostname);
     if (await connectorServes(ctx, state, names)) return;
     await ctx.provider.verifyTunnel(ctx.binding);
     await converge(ctx, state, names);
@@ -544,6 +567,7 @@ export async function tunnelStatus(options: Pick<TunnelServiceOptions, "stateDir
     connector: status === "running" ? "running" : status === "unverified" ? "unverified" : "stopped",
     ...(state.connector && status === "running" ? { pid: state.connector.pid } : {}),
     hostnames: state.hostnames.map(({ hostname, ownerId }) => ({ hostname, ownerId })),
+    routed: state.connector && status === "running" ? [...state.connector.hostnames] : [],
     pending: state.pending !== undefined,
     retired: state.retired.length,
     outstanding: [...new Set(state.residue.map((item) => item.ownerId))].flatMap((ownerId) => outstandingFor(state, ownerId).map((detail) => ({ ownerId, detail }))),

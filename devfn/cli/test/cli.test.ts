@@ -332,7 +332,7 @@ describe("devfn CLI", () => {
       expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
       expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
       expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
-      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], pending: false, retired: 0, outstanding: [] } } });
+      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], pending: false, retired: 0, outstanding: [] } } });
       // ports gc still collects other released leases while it reports an orphan whose DNS removal fails (no API token in this shell).
       const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
       await registry.reserve({ projectId: "other", instanceId: "released-owner", invocationId: "released", profile: "default", requests: [{ name: "api", spec: {} }] });

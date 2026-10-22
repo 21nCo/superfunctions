@@ -10,7 +10,7 @@ import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePoli
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, PUBLIC_ORIGIN_PORT, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
 import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
-import { tunnelOwners } from "@devfn/proxy/tunnel";
+import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
@@ -382,7 +382,7 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunn
   const failures: string[] = [];
   // An owner whose proxy routes are gone may still have published tunnel hostnames.
   const published = await tunnelOwners(stateDir).catch((error: unknown) => { failures.push(error instanceof Error ? error.message : String(error)); return []; });
-  const routed = [...new Set([...await proxy.routedInstanceIds(), ...published])].sort();
+  const routed = [...new Set([...await proxy.routedInstanceIds(), ...published])].sort(compareNames);
   // The OAuth relay has no lifecycle lock; its recorded identities show
   // whether it may still run. Recovery also ends a dead relay's claim and
   // record after a route transition already dropped its route. A relay
@@ -709,7 +709,8 @@ export class DevFnOrchestrator {
         const publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
         if (publicSelection) {
           await writeReceipt(receipt);
-          receipt.tunnel = { binding: publicSelection.binding.name, hostnames: await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, this.tunnelOverrides) };
+          const { hostnames, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, this.tunnelOverrides);
+          receipt.tunnel = { binding: publicSelection.binding.name, hostnames, ...(outstanding.length ? { outstanding } : {}) };
           receipt.publicUrls = publicSelection.urls;
         } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);

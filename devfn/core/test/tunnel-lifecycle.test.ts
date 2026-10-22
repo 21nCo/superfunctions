@@ -21,7 +21,8 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
-import { publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
+import { publicUrlsLive, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
+import { writeTunnelState } from "../../proxy/src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
 const CADDY_STUB = "#!/bin/sh\ncase \"$1\" in version|validate|reload) exit 0;; esac\nexit 1\n";
@@ -146,15 +147,14 @@ it("withdraws public routes before stopping processes, also for a replacement, a
   expect(provider.calls.indexOf(`remove ${hostname}`)).toBeLessThan(provider.calls.lastIndexOf(`ensure ${hostname}`));
   expect(replaced).toMatchObject({ state: "ready", tunnel: { hostnames: [hostname] } });
 
-  // Exposure cannot be shown ended: DNS removal fails and the connector another owner shares cannot be replaced.
+  // Exposure cannot be shown ended: the DNS record is removed, but the connector another owner shares cannot be replaced and still routes the name.
   await publishTunnelRoutes(tunnel, "other-worktree", [OTHER]);
-  provider.failRemove.add(hostname);
   provider.connector = "exit";
   const degraded = await orchestrator.down({ config, root, stateDir });
+  expect(provider.records.has(hostname)).toBe(false);
   expect(degraded.state).toBe("degraded");
   expect(degraded.cleanup).toMatchObject({ stoppedProcesses: [], releasedPorts: false, removedProxy: false });
   expect(process.kill(replaced.processes[0].pid, 0)).toBe(true);
-  provider.failRemove.clear();
   provider.connector = "ready";
   expect((await orchestrator.down({ config, root, stateDir })).state).toBe("stopped");
   expect(provider.records.has(hostname)).toBe(false);
@@ -172,20 +172,19 @@ it("ends a receiptless owner's public exposure before a private start takes a le
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const leased = async () => (await registry.read()).invocations.some((item) => item.instanceId === identity.instanceId);
   const orchestrator = new DevFnOrchestrator(overrides);
-  provider.failRemove.add(hostname);
+  // The name's DNS record is removed, but the shared connector cannot be replaced and still routes it.
   provider.connector = "exit";
   await expect(orchestrator.up({ config, root, stateDir })).rejects.toThrow("could not be withdrawn before startup");
+  expect(provider.records.has(hostname)).toBe(false);
   expect(await leased()).toBe(false);
   await expect(access(path.join(root, ".devfn"))).rejects.toThrow();
   expect((await readTunnelState(stateDir, "preview")).connector!.hostnames).toEqual([OTHER, hostname].sort());
 
-  provider.failRemove.clear();
   provider.connector = "ready";
-  const removeDns = provider.removeDns.bind(provider);
-  const leasedAtRemoval: boolean[] = [];
-  provider.removeDns = async (binding, name) => { leasedAtRemoval.push(await leased()); await removeDns(binding, name); };
+  const leasedAtReplacement: boolean[] = [];
+  provider.beforeLaunch = async () => { leasedAtReplacement.push(await leased()); };
   expect(await orchestrator.up({ config, root, stateDir })).toMatchObject({ state: "ready" });
-  expect(leasedAtRemoval).toEqual([false]);
+  expect(leasedAtReplacement).toEqual([false]);
   expect([...provider.records.keys()]).toEqual([OTHER]);
   const state = await readTunnelState(stateDir, "preview");
   expect(state.hostnames).toEqual([expect.objectContaining({ hostname: OTHER, ownerId: "other-worktree" })]);
@@ -235,14 +234,29 @@ async function registerStaging(preview: TunnelServiceOptions): Promise<TunnelSer
 }
 const STAGED = "web-other-0123456789abcdef0123.staging.example.test";
 
-it("moves an owner's routes off a binding it no longer selects", async () => {
+it("moves an owner's routes off a binding it no longer selects, reporting what the old binding still journals", async () => {
   const preview = await registerPreview();
   const staging = (await registerStaging(preview)).binding;
   await publishTunnelRoutes(preview, "owner", [OTHER]);
   const moved = STAGED;
-  await publishLifecycleTunnel(stateDir, "owner", { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides);
+  provider.failRemove.add(OTHER);
+  expect(await publishLifecycleTunnel(stateDir, "owner", { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides))
+    .toEqual({ hostnames: [moved], outstanding: [`preview: ${OTHER}: public DNS removal is not confirmed`, `preview: provider failure removing ${OTHER}`] });
+  expect(await readOwnerBindings(stateDir, "owner")).toEqual(["preview", "staging"]);
   expect((await readTunnelState(stateDir, "preview")).hostnames).toEqual([]);
   expect((await readTunnelState(stateDir, "staging")).hostnames.map((item) => item.hostname)).toEqual([moved]);
+});
+
+it("reports public URLs live only while the running connector routes every one of them", async () => {
+  const tunnel = await registerPreview();
+  const added = "api-other-0123456789abcdef0123.tunnel.example.test";
+  await publishTunnelRoutes(tunnel, "owner", [OTHER]);
+  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER] })).toBe(true);
+  // A name committed for the owner that the running connector does not route is not live.
+  const state = await readTunnelState(stateDir, "preview");
+  state.hostnames.push({ hostname: added, ownerId: "owner", publishedAt: "now" });
+  await writeTunnelState(stateDir, state);
+  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] })).toBe(false);
 });
 
 it("reads no tunnel state for a lifecycle that never published and fails closed for one that may have", async () => {

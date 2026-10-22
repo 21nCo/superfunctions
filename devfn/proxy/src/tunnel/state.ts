@@ -252,10 +252,25 @@ export async function tunnelDirectory(stateDir: string, name: string): Promise<s
   return dir;
 }
 
-export async function writePrivateJson(file: string, value: unknown): Promise<void> {
+/** Replace file atomically with owner-only content: readers see the old or the complete new content. */
+export async function writePrivateFile(file: string, text: string): Promise<void> {
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  try { await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" }); await rename(temp, file); }
+  try { await writeFile(temp, text, { encoding: "utf8", mode: 0o600, flag: "wx" }); await rename(temp, file); }
   finally { await rm(temp, { force: true }); }
+}
+
+export async function writePrivateJson(file: string, value: unknown): Promise<void> {
+  await writePrivateFile(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * The one order of hostnames, owner IDs and binding names: by UTF-16 code
+ * unit, independent of locale. The rendered ingress and its rule-index
+ * validation both depend on it.
+ */
+export function compareNames(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }
 
 const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -329,7 +344,7 @@ export async function markOwnerBinding(stateDir: string, ownerId: string, name: 
   await mkdir(ownersDir(stateDir), { recursive: true, mode: 0o700 });
   await withFileLock(`${file}.lock`, async () => {
     const current = await readOwnerBindings(stateDir, ownerId);
-    const bindings = [...new Set([...current.filter((item) => item !== name), ...(present ? [name] : [])])].sort();
+    const bindings = [...new Set([...current.filter((item) => item !== name), ...(present ? [name] : [])])].sort(compareNames);
     if (bindings.length === current.length && bindings.every((item) => current.includes(item))) return;
     if (bindings.length) await writePrivateJson(file, { version: 1, bindings });
     else await rm(file, { force: true });
@@ -338,7 +353,7 @@ export async function markOwnerBinding(stateDir: string, ownerId: string, name: 
 
 /** Every owner with a publish-intent marker on this machine. */
 export async function tunnelOwners(stateDir: string): Promise<string[]> {
-  try { return (await readdir(ownersDir(stateDir))).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5)).filter((name) => OWNER_ID.test(name)).sort(); }
+  try { return (await readdir(ownersDir(stateDir))).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5)).filter((name) => OWNER_ID.test(name)).sort(compareNames); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", "The tunnel owner directory is unreadable.");

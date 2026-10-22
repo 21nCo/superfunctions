@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { PublicOrigin, TunnelBinding, TunnelProvider } from "../../src/tunnel/index.js";
+import { compareNames, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "../../src/tunnel/index.js";
 
 /**
  * A connector stand-in: answers GET /ready on its metrics port until stopped,
@@ -48,9 +48,9 @@ export class FakeTunnelProvider implements TunnelProvider {
 
   public constructor(private readonly script: string) {}
 
-  public async verifyTunnel(binding: TunnelBinding): Promise<void> {
+  public verifyTunnel(binding: TunnelBinding): Promise<void> {
     this.calls.push(`tunnel ${binding.name}`);
-    if (this.tunnel !== "local") throw new Error("the tunnel is remotely managed");
+    return this.tunnel === "local" ? Promise.resolve() : Promise.reject(new Error("the tunnel is remotely managed"));
   }
 
   public async ensureDns(_binding: TunnelBinding, hostname: string): Promise<"created" | "existing"> {
@@ -66,31 +66,32 @@ export class FakeTunnelProvider implements TunnelProvider {
     return "created";
   }
 
-  public async ownsDns(_binding: TunnelBinding, hostname: string): Promise<boolean> {
+  public ownsDns(_binding: TunnelBinding, hostname: string): Promise<boolean> {
     this.calls.push(`read ${hostname}`);
-    if (this.failRead.has(hostname)) throw new Error(`provider failure reading ${hostname}`);
-    if (this.unseen.delete(hostname)) return false;
-    return this.records.get(hostname) === "devfn" || this.records.get(hostname) === "unproxied";
+    if (this.failRead.has(hostname)) return Promise.reject(new Error(`provider failure reading ${hostname}`));
+    if (this.unseen.delete(hostname)) return Promise.resolve(false);
+    return Promise.resolve(this.records.get(hostname) === "devfn" || this.records.get(hostname) === "unproxied");
   }
 
-  public async verifyDns(_binding: TunnelBinding, hostname: string): Promise<void> {
+  public verifyDns(_binding: TunnelBinding, hostname: string): Promise<void> {
     this.calls.push(`verify ${hostname}`);
-    if (this.records.get(hostname) !== "devfn") throw new Error(`no DevFn record for ${hostname}`);
+    return this.records.get(hostname) === "devfn" ? Promise.resolve() : Promise.reject(new Error(`no DevFn record for ${hostname}`));
   }
 
-  public async removeDns(_binding: TunnelBinding, hostname: string): Promise<void> {
+  public removeDns(_binding: TunnelBinding, hostname: string): Promise<void> {
     this.calls.push(`remove ${hostname}`);
-    if (this.failRemove.has(hostname)) throw new Error(`provider failure removing ${hostname}`);
+    if (this.failRemove.has(hostname)) return Promise.reject(new Error(`provider failure removing ${hostname}`));
     if (this.records.get(hostname) !== "foreign") this.records.delete(hostname);
+    return Promise.resolve();
   }
 
   public renderConnectorConfig(_binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string {
-    return `${JSON.stringify({ hostnames: [...hostnames].sort(), origin })}\n`;
+    return `${JSON.stringify({ hostnames: [...hostnames].sort(compareNames), origin })}\n`;
   }
 
   public async validateConnectorConfig(_binding: TunnelBinding, configFile: string, hostnames: readonly string[]): Promise<void> {
     const config = JSON.parse(await readFile(configFile, "utf8")) as { hostnames: string[] };
-    if (JSON.stringify(config.hostnames) !== JSON.stringify([...hostnames].sort())) throw new Error("connector configuration mismatch");
+    if (JSON.stringify(config.hostnames) !== JSON.stringify([...hostnames].sort(compareNames))) throw new Error("connector configuration mismatch");
   }
 
   public async connectorCommand(_binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]> {

@@ -68,21 +68,24 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
   return selection ? { binding: selection.binding.name, urls: selection.urls } : { urls: {} };
 }
 
-/** Whether the binding's connector runs and still publishes every hostname of this owner's tunnel receipt. */
+/** Whether every hostname of this owner's tunnel receipt is still published for it and routed by the binding's running connector. */
 export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[] }): Promise<boolean> {
   const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === tunnel.binding);
   const status = binding ? await tunnelStatus({ stateDir, binding }) : undefined;
-  return status?.connector === "running" && tunnel.hostnames.every((hostname) => status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId));
+  return status?.connector === "running" && tunnel.hostnames.every((hostname) =>
+    status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId));
 }
 
 /**
  * Publish the selection for this owner after withdrawing it from every other
  * binding, so a profile that changes binding leaves nothing on the old one.
+ * Returns the published hostnames and what the old bindings still journal.
  */
-export async function publishLifecycleTunnel(stateDir: string, ownerId: string, selection: PublicSelection, overrides: TunnelOverrides = {}): Promise<string[]> {
-  await withdrawLifecycleTunnel(stateDir, ownerId, overrides, selection.binding.name);
+export async function publishLifecycleTunnel(stateDir: string, ownerId: string, selection: PublicSelection, overrides: TunnelOverrides = {}): Promise<{ hostnames: string[]; outstanding: string[] }> {
+  const { outstanding } = await withdrawLifecycleTunnel(stateDir, ownerId, overrides, selection.binding.name);
   const hostnames = [...new Set(selection.routes.map((route) => route.hostname))];
-  return (await publishTunnelRoutes({ ownerMayRun: lifecycleOwnerMayRun(stateDir), ...overrides, stateDir, binding: selection.binding }, ownerId, hostnames)).map((item) => item.hostname);
+  const published = await publishTunnelRoutes({ ownerMayRun: lifecycleOwnerMayRun(stateDir), ...overrides, stateDir, binding: selection.binding }, ownerId, hostnames);
+  return { hostnames: published.map((item) => item.hostname), outstanding };
 }
 
 /**

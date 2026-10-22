@@ -1,13 +1,20 @@
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { processGroupStatus } from "@devfn/processes";
 import { registerDomain } from "../src/domains.js";
 import { publishTunnelRoutes, readOwnerBindings, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, unregisterTunnelBinding, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
-import { writeTunnelState } from "../src/tunnel/state.js";
+import { writeTunnelState, type TunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
+
+// Every persisted state, as recovery after an interruption at that write would find it.
+const { written } = vi.hoisted(() => ({ written: [] as TunnelState[] }));
+vi.mock("../src/tunnel/state.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/tunnel/state.js")>();
+  return { ...actual, writeTunnelState: async (stateDir: string, state: TunnelState) => { written.push(structuredClone(state)); await actual.writeTunnelState(stateDir, state); } };
+});
 
 const A = "web-a-0123456789abcdef0123.tunnel.example.test";
 const B = "web-b-0123456789abcdef0123.tunnel.example.test";
@@ -178,13 +185,14 @@ describe("tunnel lifecycle", () => {
     expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B2]: "foreign" });
   });
 
-  it("withdraws without reducing another owner's service when the connector replacement fails", async () => {
+  it("fails a withdrawal whose DNS is removed while the connector kept for another owner still routes its name", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     await publishTunnelRoutes(options, "owner-b", [B]);
     const before = (await readTunnelState(dir, "preview")).connector!;
     provider.connector = "exit";
-    // DNS removal ended the owner's exposure; the running connector keeps serving the other owner.
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`, expect.stringContaining("kept for the other public routes")] });
+    // Confirmed DNS removal does not end exposure: cached resolutions and open connections still reach the running connector, kept for the other owner.
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped (the running connector was kept for the other public routes`);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
     expect([...provider.records.keys()]).toEqual([B]);
     expect((await readTunnelState(dir, "preview")).connector).toEqual(before);
     expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("running");
@@ -194,6 +202,79 @@ describe("tunnel lifecycle", () => {
     expect(await recoverTunnel(options)).toMatchObject({ connector: "running", hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [] });
     expect(await connectorHostnames()).toEqual([B]);
     expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
+  });
+
+  it("never persists a committed name the recorded connector does not route, so an interruption at any write keeps it served", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A, A2]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    written.length = 0;
+    // A shrink, a growth and a withdrawal each replace the shared connector.
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B, B2]);
+    await withdrawTunnelRoutes(options, "owner-a");
+    expect(written.length).toBeGreaterThan(3);
+    for (const state of written) expect(state.connector?.hostnames ?? []).toEqual(expect.arrayContaining(state.hostnames.map((item) => item.hostname)));
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B2, B].sort(), hostnames: [{ hostname: B2 }, { hostname: B }] });
+  });
+
+  posixIt("keeps an old connector still serving another owner after an interrupted withdrawal's replacement exited, replacing it make before break", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    const fallback = (await readTunnelState(dir, "preview")).connector!;
+    // owner-a's withdrawal committed [B], removed A's DNS and promoted a [B] connector, which then exited before the [A, B] one was stopped.
+    const state = await readTunnelState(dir, "preview");
+    state.hostnames = state.hostnames.filter((item) => item.ownerId === "owner-b");
+    state.residue = [{ ownerId: "owner-a", hostnames: [A], dnsRemoved: true }];
+    state.connector = { ...fallback, pid: 999_999, hostnames: [B] };
+    state.retired = [fallback];
+    await writeTunnelState(dir, state);
+    provider.records.delete(A);
+    // While no replacement can start, the old connector keeps serving B and A stays outstanding.
+    provider.connector = "exit";
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped`);
+    expect((await readTunnelState(dir, "preview")).connector).toEqual(fallback);
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A, B], hostnames: [{ hostname: B, ownerId: "owner-b" }] });
+    provider.connector = "ready";
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B], outstanding: [] });
+    expect(await processGroupStatus(fallback.pid, fallback.birthSignature)).toBe("exited");
+  });
+
+  it("confirms or recreates each recovered route's DNS record and launches nothing while one does not verify", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    // Public DNS drifted outside DevFn: A's record was deleted and B's replaced.
+    provider.records.delete(A);
+    provider.records.set(B, "foreign");
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    process.kill(-connector.pid, "SIGKILL");
+    options.ownerMayRun = async () => true;
+    provider.calls.length = 0;
+    await expect(recoverTunnel(options)).rejects.toThrow(`${B} has a foreign record`);
+    provider.records.set(B, "unproxied");
+    await expect(recoverTunnel(options)).rejects.toThrow(`no DevFn record for ${B}`);
+    expect(provider.calls).not.toContain("launch");
+    provider.records.set(B, "devfn");
+    expect(await recoverTunnel(options)).toMatchObject({ connector: "running", routed: [A, B], outstanding: [] });
+    expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B]: "devfn" });
+  });
+
+  it("never trusts a saved origin root that is not a complete certificate", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const file = tunnelPaths(dir, "preview").originCa;
+    const root = await readFile(file, "utf8");
+    // The proxy is briefly unavailable and the saved root was truncated by an interrupted in-place write.
+    options.originCa = async () => { throw new Error("the DevFn Caddy internal root is unavailable"); };
+    await writeFile(file, root.slice(0, 20));
+    provider.calls.length = 0;
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("internal root is unavailable");
+    expect(provider.calls).toEqual([]);
+    // A complete saved root is used meanwhile.
+    await writeFile(file, root);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    expect(await connectorHostnames()).toEqual([A, B]);
   });
 
   posixIt("launches nothing for committed routes whose tunnel or origin does not verify", async () => {
@@ -240,7 +321,7 @@ describe("tunnel lifecycle", () => {
     // The wrapper that leads the group is gone; its connector child remains, so the group is unverifiable.
     process.kill(connector.pid, "SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`] });
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped`);
     expect((await readTunnelState(dir, "preview")).connector).toEqual(connector);
     provider.calls.length = 0;
     await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("cannot be verified");
@@ -315,15 +396,15 @@ describe("tunnel lifecycle", () => {
     expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
   });
 
-  posixIt("reports and retries a withdrawn owner's connector that cannot be verified stopped", async () => {
+  posixIt("fails and retries a withdrawal while the owner's connector cannot be verified stopped", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     const connector = (await readTunnelState(dir, "preview")).connector!;
     // The wrapper that leads the group is gone; its connector child remains, so the group is unverifiable.
     process.kill(connector.pid, "SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`] });
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped`);
     expect(provider.records.size).toBe(0);
-    expect((await withdrawTunnelRoutes(options, "owner-a")).outstanding).toHaveLength(1);
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped`);
     expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
     process.kill(-connector.pid, "SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 200));

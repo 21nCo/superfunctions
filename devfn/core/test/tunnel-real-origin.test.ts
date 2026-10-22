@@ -28,13 +28,13 @@ const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, por
 
 type Answer = { status: number; marker?: string; body: string } | { error: string };
 
-/** One request to a real listener: over TLS with the given SNI, verified against ca when given, or plain HTTP. */
-async function request(port: number, host: string, options: { servername?: string; ca?: string } = {}): Promise<Answer> {
+/** One request to a real listener: over TLS with the given SNI, verified against ca, or plain HTTP. */
+async function request(port: number, host: string, options: { servername: string; ca: string } | Record<string, never> = {}): Promise<Answer> {
   return await new Promise((resolve) => {
     const write = () => socket.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
     const socket = options.servername === undefined
       ? net.connect(port, "127.0.0.1", write)
-      : tls.connect({ host: "127.0.0.1", port, servername: options.servername, rejectUnauthorized: options.ca !== undefined, ...(options.ca ? { ca: options.ca } : {}), ALPNProtocols: ["http/1.1"] }, write);
+      : tls.connect({ host: "127.0.0.1", port, servername: options.servername, ca: options.ca, ALPNProtocols: ["http/1.1"] }, write);
     socket.setTimeout(5_000, () => socket.destroy(new Error("timed out")));
     let text = "";
     socket.on("data", (chunk: Buffer) => { text += chunk.toString("utf8"); });
@@ -47,7 +47,7 @@ async function request(port: number, host: string, options: { servername?: strin
   });
 }
 
-/** A public name the origin no longer serves: no certificate for it, or the marked deny response. */
+/** A public name the origin no longer serves: no certificate that verifies for it, or the marked deny response. */
 function expectUnserved(answer: Answer): void {
   if ("error" in answer) return;
   expect(answer).toMatchObject({ status: 403, marker: "deny" });
@@ -103,7 +103,7 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("shuts down and rolls back one r
         expect(state.connector!.hostnames).toEqual([hostB]);
         expect([...provider.records.keys()]).toEqual([hostB]);
         // A's public name is no longer served by the origin, and its local route is gone.
-        expectUnserved(await request(PUBLIC_ORIGIN_PORT, hostA, { servername: hostA }));
+        expectUnserved(await request(PUBLIC_ORIGIN_PORT, hostA, { servername: hostA, ca }));
         expect(await request(httpPort, localHost(a))).not.toMatchObject({ body: "alpha" });
       };
 
@@ -125,7 +125,7 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("shuts down and rolls back one r
 
       expect(await orchestrator.down({ config, root: rootB, stateDir })).toMatchObject({ state: "stopped", cleanup: { withdrawnPublicHostnames: [hostB], errors: [] } });
       expect(provider.records.size).toBe(0);
-      expectUnserved(await request(PUBLIC_ORIGIN_PORT, hostB, { servername: hostB }));
+      expectUnserved(await request(PUBLIC_ORIGIN_PORT, hostB, { servername: hostB, ca }));
     } finally {
       for (const dir of [rootA, rootB]) await orchestrator.down({ config, root: dir, stateDir }).catch(() => undefined);
       const state = await readTunnelState(stateDir, "preview").catch(() => undefined);

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { TunnelError, isPublicHostname, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
+import { TunnelError, compareNames, isPublicHostname, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
 
 const execFileAsync = promisify(execFile);
 const API = "https://api.cloudflare.com/client/v4";
@@ -94,9 +94,19 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     return result.filter((record) => record.name?.toLowerCase() === name);
   }
 
-  /** A wildcard record under the binding domain that routes to its tunnel keeps every name there routed whatever DevFn removes. */
-  private async coveredByWildcard(binding: TunnelBinding): Promise<boolean> {
-    return (await this.named(binding, `*.${binding.domain}`)).some((record) => record.type === "CNAME" && record.content === tunnelTarget(binding));
+  /**
+   * A wildcard record that routes to the tunnel at the binding domain or any
+   * ancestor of it keeps names there routed whatever DevFn removes; Cloudflare
+   * wildcards cover deeper names. An intervening record can keep an ancestor
+   * wildcard from applying, but that changes as records come and go, so
+   * every such wildcard counts. Names outside the zone have no records.
+   */
+  private async coveringWildcard(binding: TunnelBinding): Promise<string | undefined> {
+    for (let domain = binding.domain; domain.includes("."); domain = domain.slice(domain.indexOf(".") + 1)) {
+      const name = `*.${domain}`;
+      if ((await this.named(binding, name)).some((record) => record.type === "CNAME" && record.content === tunnelTarget(binding))) return name;
+    }
+    return undefined;
   }
 
   /**
@@ -138,8 +148,9 @@ export class CloudflareTunnelProvider implements TunnelProvider {
       throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Public DNS for ${hostname} does not route only to tunnel binding ${binding.name} through a proxied DevFn-owned record.`);
     }
     // Removing the name's record could not end its reachability.
-    if (await this.coveredByWildcard(binding)) {
-      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `A wildcard record *.${binding.domain} routes every name to tunnel binding ${binding.name}; DevFn publishes only names it can withdraw.`);
+    const wildcard = await this.coveringWildcard(binding);
+    if (wildcard) {
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `A wildcard record ${wildcard} routes every name to tunnel binding ${binding.name}; DevFn publishes only names it can withdraw.`);
     }
   }
 
@@ -150,13 +161,14 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     if ((await this.records(binding, hostname)).some((item) => owned(binding, item))) {
       throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The DevFn-owned DNS record for ${hostname} is still present after deletion.`);
     }
-    if (await this.coveredByWildcard(binding)) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `${hostname} is still routed to the tunnel by the wildcard record *.${binding.domain}.`);
+    const wildcard = await this.coveringWildcard(binding);
+    if (wildcard) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `${hostname} is still routed to the tunnel by the wildcard record ${wildcard}.`);
   }
 
   public renderConnectorConfig(binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string {
     if (!hostnames.length) throw new TunnelError("DEVFN_TUNNEL_INVALID", "A connector configuration needs at least one public hostname.");
     const lines = [`tunnel: ${quoted(binding.cloudflare.tunnelId)}`, `credentials-file: ${quoted(binding.cloudflare.credentialsFile)}`, "no-autoupdate: true", "ingress:"];
-    for (const hostname of [...hostnames].sort()) {
+    for (const hostname of [...hostnames].sort(compareNames)) {
       if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
       // The origin sees the allowlisted name as both TLS server name and Host,
       // and its certificate must verify against the DevFn origin root.
@@ -186,7 +198,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     };
     try {
       await run("validate");
-      const sorted = [...hostnames].sort();
+      const sorted = [...hostnames].sort(compareNames);
       for (const [index, hostname] of sorted.entries()) {
         const output = await run("rule", `https://${hostname}/`);
         if (!output.includes(`Matched rule #${index}`) || !output.includes(`hostname: ${hostname}`)) {
