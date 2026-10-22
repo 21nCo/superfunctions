@@ -74,9 +74,12 @@ export interface TunnelHostname { hostname: string; ownerId: string; publishedAt
  * A connector process DevFn started for exactly these hostnames; it leads its
  * own process group. urls holds the public URL the provider assigned to each
  * hostname once it ran, for providers that assign them. launchId is unique
- * to this launch and names the only agent identity file it may own.
+ * to this launch and names the only agent identity file it may own. readBack
+ * is set once the launch passed its post-launch readbacks (assigned URLs and
+ * the provider's serving check); a running record without it is read back
+ * before it can become the recorded connector.
  */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string> }
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string>; readBack?: true }
 
 /**
  * An in-flight publish, written before any provider or connector mutation.
@@ -417,6 +420,7 @@ const isConnector = (value: unknown): value is ConnectorRecord => {
   return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
     Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && (item!.launchId === undefined || (typeof item!.launchId === "string" && LAUNCH_ID.test(item!.launchId))) && isNames(item!.hostnames) &&
+    (item!.readBack === undefined || item!.readBack === true) &&
     (item!.urls === undefined || (typeof item!.urls === "object" && item!.urls !== null && Object.entries(item!.urls).every(([hostname, url]) =>
       item!.hostnames!.includes(hostname) && typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url))));
 };

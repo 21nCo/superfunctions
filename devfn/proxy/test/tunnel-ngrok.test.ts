@@ -512,6 +512,59 @@ describe("ngrok connector lifecycle", () => {
     } finally { api.beforeList = undefined; fixtureOrigin.server.close(); }
   });
 
+  posixIt("withdraws one owner's names while another registration's agent serves a sibling owner's name", { timeout: 90_000 }, async () => {
+    const { stateDir, options, api, fixtureOrigin, binding } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      await publishTunnelRoutes(options, "owner-b", [B]);
+      // A same-name registration elsewhere joined B's pool after B was published.
+      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${B}`, metadata: ngrokMarker(binding) },
+        { public_url: `https://${B}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
+      // The narrowing replacement routes no new name, so it does not depend on that agent: A's withdrawal ends.
+      expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [B], hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [] });
+      expect((await readTunnelState(stateDir, "share")).retired).toEqual([]);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  /** The journal a transition leaves when it is interrupted once its launched connector is recorded, before its readback and commit. */
+  async function interruptAfterLaunch(stateDir: string, name: string) {
+    const state = await readTunnelState(stateDir, name);
+    const { urls: _urls, readBack: _readBack, ...launched } = state.connector!;
+    delete state.connector;
+    state.retired = [launched];
+    await writeTunnelState(stateDir, state);
+    return launched;
+  }
+
+  posixIt("reads back an interrupted launch before it becomes the recorded connector (ephemeral)", { timeout: 90_000 }, async () => {
+    const { stateDir, options, fixtureOrigin, domain } = await setup("ephemeral");
+    const a = `web-a-0123456789abcdef0123.${domain}`;
+    try {
+      await publishTunnelRoutes(options, "owner-a", [a]);
+      const { urls } = (await readTunnelState(stateDir, "eph")).connector!;
+      const launched = await interruptAfterLaunch(stateDir, "eph");
+      // The healthy connector is kept, with the URLs it serves read from it.
+      expect(await recoverTunnel(options)).toMatchObject({ connector: "running", pid: launched.pid, routed: [a], urls, retired: 0 });
+      expect((await readTunnelState(stateDir, "eph")).connector).toMatchObject({ pid: launched.pid, urls, readBack: true });
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("refuses to promote an interrupted launch whose name another registration serves (reserved)", { timeout: 90_000 }, async () => {
+    const { stateDir, options, api, fixtureOrigin, binding } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      const launched = await interruptAfterLaunch(stateDir, "share");
+      const agent = JSON.parse(await readFile(tunnelPaths(stateDir, "share").agent(launched.launchId!), "utf8")) as { pid: number };
+      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${A}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
+      await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+      // It was stopped, agent included, instead of serving beside the foreign agent.
+      await vi.waitFor(() => expect(() => process.kill(agent.pid, 0)).toThrow(), { timeout: 5_000 });
+      expect(() => process.kill(launched.pid, 0)).toThrow();
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", routed: [], retired: 0 });
+    } finally { fixtureOrigin.server.close(); }
+  });
+
   posixIt("keeps serving after upgrade clients reset their connections, denied or allowed", { timeout: 60_000 }, async () => {
     const { options, agents, fixtureOrigin } = await setup("reserved");
     try {

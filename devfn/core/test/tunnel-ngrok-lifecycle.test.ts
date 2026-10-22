@@ -172,6 +172,25 @@ it("keeps one worktree ready with its current ephemeral URLs across another owne
   await orchestrator.down({ config, root, stateDir });
 }, 90_000);
 
+it("keeps a worktree ready once recovery promotes a launch an interrupted transition left unread", async () => {
+  const config = manifest({ binding: "eph", routes: ["web"], ephemeral: true });
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  const [hostname] = started.tunnel!.hostnames;
+  const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === "eph")!;
+  // The journal as a recovery interrupted after recording its launched connector, before reading its URLs and committing, leaves it.
+  const state = await readTunnelState(stateDir, "eph");
+  const { urls: _urls, readBack: _readBack, ...launched } = state.connector!;
+  await writeFile(tunnelPaths(stateDir, "eph").state, JSON.stringify({ ...state, connector: undefined, retired: [launched] }), { mode: 0o600 });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await recoverTunnel({ ...overrides, stateDir, binding, ownerMayRun: async (ownerId: string) => await Promise.resolve(ownerId === started.instanceId) });
+  const connector = (await readTunnelState(stateDir, "eph")).connector!;
+  expect(connector).toMatchObject({ pid: launched.pid, urls: { [hostname]: "https://assigned-2-0.ngrok-free.app" } });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready", publicUrls: { web: "https://assigned-2-0.ngrok-free.app/app" } });
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
 it("reports ephemeral URLs route by route from the running connector, including routes that share one host label", async () => {
   // Routes share a host label through a registered local domain; the public hostname follows the label.
   const identity = await resolveInstanceIdentity("fixture", root);

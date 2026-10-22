@@ -279,9 +279,10 @@ async function connectorConfig(ctx: Context, hostnames: readonly string[]): Prom
  * explicit, as in validation: a private empty HOME, the provider's resolved
  * connector credentials, whose values the wrapper redacts from the log, and
  * no ambient credentials or TUNNEL_* settings that could select another
- * tunnel. Public URLs a provider assigns are read from the ready connector.
+ * tunnel. The ready connector is read back (readBack) against served, the
+ * names a verifiably running predecessor already routes.
  */
-async function launchConnector(ctx: Context, hostnames: readonly string[], onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
+async function launchConnector(ctx: Context, hostnames: readonly string[], served: readonly string[], onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
   const { config, digest: configDigest } = await connectorConfig(ctx, hostnames);
   const configFile = paths.config(configDigest);
@@ -308,17 +309,32 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   } catch (error) {
     throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector did not become ready (${message(error)}); see ${paths.log}.`, record ? { pid: record.pid } : undefined);
   }
-  // The record is journaled as retired until committed. A launch whose URLs cannot be read, or whose names an agent
-  // outside this registration serves beside it, is stopped at once, so it never routes into the rollback or a failed
-  // recovery; one that does not stop stays retired for the next transition.
-  try {
-    if (ctx.provider.assignedUrls) record!.urls = await ctx.provider.assignedUrls(ctx.binding, metricsPort, hostnames);
-    await ctx.provider.verifyServing?.(ctx.binding, hostnames);
-  } catch (error) {
+  // The record is journaled as retired until committed. A launch that fails its readback is stopped at once, so it
+  // never routes into the rollback or a failed recovery; one that does not stop stays retired for the next transition.
+  try { await readBack(ctx, record!, served); }
+  catch (error) {
     await stopConnector(paths, record!).catch(() => undefined);
     throw error;
   }
   return record!;
+}
+
+/**
+ * The one gate between a running connector and its promotion to the recorded
+ * connector, applied to every launch and to a launch an interrupted
+ * transition left retired (restoreFallback): the public URLs the provider
+ * assigned are read from it, and no agent outside this registration may
+ * serve a name it routes that served, the names a verifiably running
+ * predecessor already routes, does not include. A narrowing replacement for
+ * a withdrawal routes no new name, so its readback never depends on another
+ * registration's agents. Sets urls and readBack only once both pass.
+ */
+async function readBack(ctx: Context, record: ConnectorRecord, served: readonly string[]): Promise<void> {
+  const urls = ctx.provider.assignedUrls ? await ctx.provider.assignedUrls(ctx.binding, record.metricsPort, record.hostnames) : undefined;
+  const added = record.hostnames.filter((hostname) => !served.includes(hostname));
+  if (added.length) await ctx.provider.verifyServing?.(ctx.binding, added);
+  if (urls) record.urls = urls;
+  record.readBack = true;
 }
 
 const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid === b.pid && a.birthSignature === b.birthSignature;
@@ -352,7 +368,8 @@ async function swapConnector(ctx: Context, state: TunnelState, hostnames: readon
   let launched: ConnectorRecord | undefined;
   if (hostnames.length) {
     await assertSoleConnector(ctx, state);
-    launched = await launchConnector(ctx, hostnames, async (record) => {
+    const served = state.connector && await connectorStatus(ctx.paths, state.connector) === "running" ? state.connector.hostnames : [];
+    launched = await launchConnector(ctx, hostnames, served, async (record) => {
       state.retired.push(record);
       await writeTunnelState(ctx.stateDir, state);
     });
@@ -490,7 +507,9 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
  * retired connector that verifiably runs, routes a committed name and
  * otherwise only names journaled as withdrawn becomes the recorded
  * connector again. It keeps serving until a replacement is ready instead
- * of being stopped; finishResidue then replaces it make before break.
+ * of being stopped; finishResidue then replaces it make before break. A
+ * launch that was never read back is promoted only once it passes readBack,
+ * as no predecessor runs; otherwise it stays retired and is stopped.
  */
 async function restoreFallback(ctx: Context, state: TunnelState): Promise<boolean> {
   if (state.connector && ["running", "unverified"].includes(await connectorStatus(ctx.paths, state.connector))) return false;
@@ -498,6 +517,7 @@ async function restoreFallback(ctx: Context, state: TunnelState): Promise<boolea
   const known = new Set([...committed, ...state.residue.flatMap((item) => item.hostnames)]);
   for (const record of [...state.retired].reverse()) {
     if (!record.hostnames.some((hostname) => committed.has(hostname)) || !record.hostnames.every((hostname) => known.has(hostname)) || await connectorStatus(ctx.paths, record) !== "running") continue;
+    if (!record.readBack && !await readBack(ctx, record, []).then(() => true, () => false)) continue;
     state.retired = [...state.retired.filter((item) => !sameConnector(item, record)), ...(state.connector ? [state.connector] : [])];
     state.connector = record;
     return true;
