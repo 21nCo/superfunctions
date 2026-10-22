@@ -313,14 +313,19 @@ const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv
 /**
  * Tunnel output under the shared redaction, except that a credential
  * reference holding a variable name is shown: it tells the operator which
- * variable a binding reads, and the shared key pattern would hide it.
+ * variable a binding reads, and the shared key pattern would hide it. The
+ * keys of a `urls` map are hostnames or route names, which carry worktree
+ * labels, not field names: only their values go through the redaction.
  */
 function redactTunnelResult(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactTunnelResult);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key,
     CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
-      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] === null ? redactTunnelResult(nested) : "[REDACTED]"]));
+      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] !== null ? "[REDACTED]"
+        : key === "urls" && nested && typeof nested === "object" && !Array.isArray(nested)
+          ? Object.fromEntries(Object.entries(nested).map(([name, url]) => [name, redactTunnelResult(url)]))
+          : redactTunnelResult(nested)]));
 }
 
 function renderResult(args: ParsedArgs, result: unknown, output: ReturnType<typeof createOutput>): void {

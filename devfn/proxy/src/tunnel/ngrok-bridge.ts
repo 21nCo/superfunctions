@@ -22,13 +22,16 @@ function hostName(header: string | undefined): string | undefined {
   return match?.[1].toLowerCase();
 }
 
-function forwardHeaders(headers: http.IncomingHttpHeaders, hostname: string, upgrade: boolean): http.OutgoingHttpHeaders {
+/** A message's end-to-end headers: without the fixed hop-by-hop set and every field its own Connection header nominates. */
+function endToEnd(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
   const listed = new Set(String(headers.connection ?? "").toLowerCase().split(",").map((item) => item.trim()).filter(Boolean));
   const result: http.OutgoingHttpHeaders = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (value === undefined || key === "host" || HOP_BY_HOP.has(key) || listed.has(key)) continue;
-    result[key] = value;
-  }
+  for (const [key, value] of Object.entries(headers)) if (value !== undefined && !HOP_BY_HOP.has(key) && !listed.has(key)) result[key] = value;
+  return result;
+}
+
+function forwardHeaders(headers: http.IncomingHttpHeaders, hostname: string, upgrade: boolean): http.OutgoingHttpHeaders {
+  const result = endToEnd(headers);
   result.host = hostname;
   if (upgrade) { result.connection = "upgrade"; result.upgrade = headers.upgrade; }
   return result;
@@ -68,9 +71,7 @@ export function createOriginBridge(options: OriginBridgeOptions): http.Server {
     const upstream = https.request({ host: "127.0.0.1", port: options.originPort, servername: hostname, ca: options.ca, rejectUnauthorized: true, agent: false,
       method: request.method, path: target, headers: forwardHeaders(request.headers, hostname, false) }, (reply) => {
       contain(reply);
-      const headers: http.OutgoingHttpHeaders = {};
-      for (const [key, value] of Object.entries(reply.headers)) if (value !== undefined && !HOP_BY_HOP.has(key)) headers[key] = value;
-      response.writeHead(reply.statusCode ?? 502, headers);
+      response.writeHead(reply.statusCode ?? 502, endToEnd(reply.headers));
       // An origin response cut short ends the public one as failed, never as complete or open.
       reply.once("close", () => { if (!reply.complete) response.destroy(); });
       reply.pipe(response);

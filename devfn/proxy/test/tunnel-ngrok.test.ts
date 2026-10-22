@@ -66,7 +66,7 @@ async function origin(credentials: { cert: string; key: string }) {
   const seen: Array<{ host?: string; servername?: string; connection?: string }> = [];
   const server = https.createServer(credentials, (request, response) => {
     seen.push({ host: request.headers.host, servername: (request.socket as unknown as { servername?: string }).servername, connection: request.headers["x-hop"] as string | undefined });
-    response.writeHead(207, { "x-origin": "fixture" });
+    response.writeHead(207, { "x-origin": "fixture", connection: "x-origin-hop", "x-origin-hop": "dropped" });
     response.end(`origin saw ${request.headers.host}`);
   });
   server.on("upgrade", (request, socket) => {
@@ -79,13 +79,14 @@ async function origin(credentials: { cert: string; key: string }) {
 }
 
 /** One plain HTTP request to the bridge, as the ngrok agent sends it. */
-async function viaBridge(port: number, host: string | undefined): Promise<{ status: number; marker?: string; body: string }> {
+async function viaBridge(port: number, host: string | undefined): Promise<{ status: number; marker?: string; origin?: string; hop?: string; body: string }> {
   return await new Promise((resolve, reject) => {
     const request = http.request({ host: "127.0.0.1", port, path: "/path?q=1", headers: host === undefined ? {} : { host, connection: "x-hop", "x-hop": "dropped" }, setHost: host !== undefined }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk: string) => { body += chunk; });
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, marker: response.headers["devfn-public-origin"] as string | undefined, body }));
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, marker: response.headers["devfn-public-origin"] as string | undefined,
+        origin: response.headers["x-origin"] as string | undefined, hop: response.headers["x-origin-hop"] as string | undefined, body }));
     });
     request.once("error", reject);
     request.end();
@@ -248,8 +249,9 @@ describe("ngrok origin bridge", () => {
     await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
     const bridgePort = (bridge.address() as net.AddressInfo).port;
     try {
-      // The application response passes through unchanged; hop-by-hop headers stay on their connection.
-      expect(await viaBridge(bridgePort, A)).toEqual({ status: 207, body: `origin saw ${A}` });
+      // The application response passes through unchanged; hop-by-hop headers, including those a
+      // Connection header nominates, stay on their connection in both directions.
+      expect(await viaBridge(bridgePort, A)).toEqual({ status: 207, origin: "fixture", body: `origin saw ${A}` });
       expect(await viaBridge(bridgePort, `${A.toUpperCase()}:443`)).toMatchObject({ status: 207 });
       expect(seen).toEqual([{ host: A, servername: A }, { host: A, servername: A }]);
       // Any other Host, including a private route the origin holds a certificate for, is denied before the origin.

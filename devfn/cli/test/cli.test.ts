@@ -361,8 +361,8 @@ describe("devfn CLI", () => {
     try {
       const write = async (tunnel: Record<string, unknown>) => await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, ports: { web: {} },
         processes: { web: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], ports: ["web"] } },
-        profiles: { default: { processes: ["web"], proxy: true, tunnel } }, hostnames: { web: { target: "web" } } }));
-      await write({ binding: "share", routes: ["web"] });
+        profiles: { default: { processes: ["web"], proxy: true, tunnel } }, hostnames: { web: { target: "web" }, "session-id": { target: "web" } } }));
+      await write({ binding: "share", routes: ["web", "session-id"] });
       const run = async (...args: string[]) => {
         let output = "";
         const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
@@ -377,7 +377,9 @@ describe("devfn CLI", () => {
         .toMatchObject({ code: 0, result: { binding: { name: "share", provider: "ngrok", domain: "ngrok.example.test", ngrok: { endpoints: "reserved", authtokenEnv: "NGROK_AUTHTOKEN", apiKeyEnv: "NGROK_API_KEY" } } } });
       expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--nonproduction"))
         .toMatchObject({ code: 0, result: { binding: { name: "eph", domain: "eph.ngrok.devfn.internal", ngrok: { endpoints: "ephemeral" } } } });
-      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "share", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.ngrok\.example\.test$/) } });
+      // URL map keys are route names or hostnames, never secret field names, even when they read like one.
+      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "share", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.ngrok\.example\.test$/),
+        "session-id": expect.stringMatching(/^https:\/\/session-id-[a-z0-9-]+\.ngrok\.example\.test$/) } });
       // An ephemeral binding must be selected explicitly; its URLs are reported as assigned after start, never guessed.
       await write({ binding: "eph", routes: ["web"] });
       expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { message: expect.stringContaining("tunnel.ephemeral: true") } } });
