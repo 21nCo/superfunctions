@@ -1,0 +1,43 @@
+userfn/.conduct/durable-campaign-caps-readiness.md
+  s_e59c76123dc00d::t_02aea8de665a30 25,67-82
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_0ad3c669f4937d 395-397
+userfn/python/src/userfn/core/messaging_http.py
+  s_e1c5fc1a65c0cf::t_c4bb89b7b98e1e 23-24
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_0a6b022507f685 128
+userfn/python/tests/test_messaging_durable.py
+  s_e1c5fc1a65c0cf::t_ecc24d40049412 34-44
+userfn/service/scripts/verify-messaging-browser.mjs
+  s_e1c5fc1a65c0cf::t_9d702e64cd85a8 54,65
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_ad796862584761 464-466
+userfn/typescript/src/__tests__/messaging-durable.test.ts
+  s_e1c5fc1a65c0cf::t_75e82bdce384f1 83-91
+userfn/typescript/src/core/messaging-http.ts
+  s_e1c5fc1a65c0cf::t_68153368423915 3,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81fb0f75b17a138902f69a211f0042be8cd2e6a9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e59c76123dc00d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1889500-b328-4374-8cb8-48aecec81cfc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
