@@ -232,6 +232,7 @@ export type { Logger, LogEntry } from './integrations/logfn.js';
 export {
   MemoryStorageAdapter,
   DEFAULT_SIGNED_URL_EXPIRY,
+  DEFAULT_UPLOAD_TIMEOUT_MS,
   uploadObject,
   createDownloadUrl,
   createDownloadResponse,

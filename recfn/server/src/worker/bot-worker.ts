@@ -36,6 +36,8 @@ export interface BotWorkerConfig {
   storage?: StorageAdapter;
   /** Host encoder paths and bounded media capture resources. */
   captureOptions?: Omit<CaptureOptions, 'recordingFormat' | 'videoStream'>;
+  /** Finite total storage-upload deadline; defaults to five minutes. */
+  uploadTimeoutMs?: number;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
   metrics?: import('../integrations/watchfn.js').MetricsEmitter;
@@ -269,6 +271,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
           namespace,
           capture,
           source: 'bot_finalization',
+          uploadTimeoutMs: config.uploadTimeoutMs,
+          signal: session.captureAbort?.signal,
         },
         {
           storage,

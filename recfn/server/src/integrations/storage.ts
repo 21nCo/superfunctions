@@ -11,6 +11,9 @@ export interface UploadOptions {
   contentType?: string;
   encryption?: boolean;
   target?: string;
+  /** Total upload operation deadline, including adapter acquisition. Default: five minutes. */
+  uploadTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface DownloadUrlOptions {
@@ -22,68 +25,92 @@ export interface DownloadUrlOptions {
 
 export const DEFAULT_SIGNED_URL_EXPIRY = 3600;
 
-async function writeStream(
-  writable: WritableStream<Uint8Array>,
-  data: Uint8Array,
-): Promise<void> {
-  const writer = writable.getWriter();
-  try {
-    await writer.write(data);
-    await writer.close();
-  } catch (error) {
-    // Never replace the storage failure with an abort/close state error.
-    try { await writer.abort(error); } catch { /* Preserve the original failure. */ }
-    throw error;
-  } finally {
-    writer.releaseLock();
-  }
-}
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 300_000;
 
+/** Adapter promises have no signal contract; abort requests are best effort, not rollback. */
 export async function uploadObject(
   storage: StorageAdapter,
   key: string,
   data: Uint8Array | StreamingUploadData,
   options?: UploadOptions,
 ): Promise<void> {
-  if (storage.openUploadStream) {
-    const writable = await storage.openUploadStream({
-      key,
-      target: options?.target,
-      contentType: options?.contentType,
-    });
-    if (data instanceof Uint8Array) await writeStream(writable, data);
-    else await data.openStream().pipeTo(writable);
-    return;
-  }
-
-  if (storage.signUploadUrl) {
-    const signed = await storage.signUploadUrl({
-      key,
-      target: options?.target,
-      expiresInSeconds: 300,
-      constraints: {
-        contentType: options?.contentType,
-        contentLength: data instanceof Uint8Array ? data.byteLength : data.size,
-      },
-    });
-    const response = await fetch(signed.url, {
-      method: 'PUT',
-      headers: {
-        ...(signed.headers ?? {}),
-        ...(options?.contentType ? { 'Content-Type': options.contentType } : {}),
-      },
-      body: (data instanceof Uint8Array ? data : data.openStream()) as RequestInit['body'],
-      duplex: 'half',
-    } as RequestInit & { duplex: 'half' });
-    if (!response.ok) {
-      throw new Error(
-        `Storage upload failed with status ${response.status} for ${key}.`,
-      );
+  const timeout = options?.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) throw new TypeError('uploadTimeoutMs must be a positive finite timer duration');
+  const controller = new AbortController();
+  const abort = () => controller.abort(options?.signal?.reason ?? new Error('Storage upload cancelled'));
+  options?.signal?.addEventListener('abort', abort, { once: true });
+  if (options?.signal?.aborted) abort();
+  const timer = setTimeout(() => controller.abort(new Error(`Storage upload timed out after ${timeout}ms`)), timeout);
+  const signal = controller.signal;
+  // Each wait removes its listener; a long upload must not accumulate pending races.
+  const wait = <T>(operation: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    const cancelled = () => { signal.removeEventListener('abort', cancelled); reject(signal.reason); };
+    if (signal.aborted) { operation.catch(() => {}); reject(signal.reason); return; }
+    signal.addEventListener('abort', cancelled, { once: true });
+    operation.then(value => { signal.removeEventListener('abort', cancelled); resolve(value); }, error => { signal.removeEventListener('abort', cancelled); reject(error); });
+  });
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let writer: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  try {
+    signal.throwIfAborted();
+    if (storage.openUploadStream) {
+      const acquisition = storage.openUploadStream({ key, target: options?.target, contentType: options?.contentType });
+      // A timed-out acquisition can resolve later; it must never start writing data.
+      void acquisition.then(writable => { if (signal.aborted) void writable.abort(signal.reason).catch(() => {}); }, () => {});
+      const writable = await wait(acquisition);
+      signal.throwIfAborted();
+      writer = writable.getWriter();
+      if (data instanceof Uint8Array) await wait(writer.write(data));
+      else {
+        reader = data.openStream().getReader();
+        while (true) {
+          const chunk = await wait(reader.read());
+          if (chunk.done) break;
+          signal.throwIfAborted();
+          await wait(writer.write(chunk.value));
+        }
+      }
+      signal.throwIfAborted();
+      await wait(writer.close());
+      return;
     }
-    return;
+    if (storage.signUploadUrl) {
+      const signed = await wait(storage.signUploadUrl({ key, target: options?.target, expiresInSeconds: 300,
+        constraints: { contentType: options?.contentType, contentLength: data instanceof Uint8Array ? data.byteLength : data.size } }));
+      signal.throwIfAborted();
+      let body: Uint8Array | ReadableStream<Uint8Array>;
+      if (data instanceof Uint8Array) body = data;
+      else {
+        reader = data.openStream().getReader();
+        const source = reader;
+        body = new ReadableStream<Uint8Array>({
+          async pull(c) { try { const chunk = await source.read(); if (chunk.done) c.close(); else c.enqueue(chunk.value); } catch (error) { c.error(error); } },
+          cancel: reason => source.cancel(reason),
+        });
+      }
+      const response = await wait(fetch(signed.url, {
+        method: 'PUT', signal,
+        headers: { ...(signed.headers ?? {}), ...(options?.contentType ? { 'Content-Type': options.contentType } : {}) },
+        body: body as RequestInit['body'], duplex: 'half',
+      } as RequestInit & { duplex: 'half' }));
+      // The object is determined by status; never retain an unbounded response body.
+      if (response.body) await wait(response.body.cancel());
+      if (!response.ok) throw new Error(`Storage upload failed with status ${response.status} for ${key}.`);
+      return;
+    }
+    throw new Error('Storage adapter does not support server-side uploads.');
+  } catch (error) {
+    controller.abort(error);
+    // Web Streams defer sink abort behind an outstanding write. Do not claim that
+    // an uncooperative adapter has stopped, or hold the local artifact indefinitely.
+    if (writer) void writer.abort(error).catch(() => {});
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options?.signal?.removeEventListener('abort', abort);
+    if (reader) { void reader.cancel(signal.reason).catch(() => {}); reader.releaseLock(); }
+    writer?.releaseLock();
   }
-
-  throw new Error('Storage adapter does not support server-side uploads.');
 }
 
 export async function createDownloadUrl(

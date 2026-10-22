@@ -49,6 +49,8 @@ export interface UploadRecordingInput {
   namespace: string;
   capture: CaptureResult | CaptureArtifact;
   source?: 'bot_finalization' | 'manual_upload';
+  uploadTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface UploadRecordingResult {
@@ -91,6 +93,8 @@ async function uploadRecordingInner(
     await uploadObject(storage, key, 'data' in capture ? capture.data : capture, {
       contentType: contentTypeForFormat(capture.format),
       encryption: true,
+      uploadTimeoutMs: input.uploadTimeoutMs,
+      signal: input.signal,
     });
 
     externalSettled = true;

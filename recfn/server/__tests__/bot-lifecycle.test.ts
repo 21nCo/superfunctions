@@ -491,6 +491,33 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     ]);
   });
 
+  it.each(['timeout', 'shutdown'])('releases finalization on hung upload %s without reporting ready', async mode => {
+    let entered!: () => void;
+    let release!: () => void;
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    const stalled = new Promise<void>(resolve => { release = resolve; });
+    const storage = new MemoryStorageAdapter();
+    storage.openUploadStream = async () => new WritableStream({ write() { entered(); return stalled; } });
+    const bot = await store.createBot({ meetingUrl: 'https://zoom.us/j/1', platform: 'zoom', namespace: 'ns_test', config: { recordingFormat: 'audio_only', enableRealTimeTranscript: false } });
+    await queue.enqueue(QUEUE_NAMES.BOT_JOIN, { type: 'bot.join', data: { botId: bot.id, namespace: 'ns_test' }, createdAt: new Date().toISOString() });
+    const worker = trackedWorker({ store, queue, logger, storage, uploadTimeoutMs: mode === 'timeout' ? 100 : 5000,
+      captureOptions: { temporaryDirectory }, platformAdapters: new Map([['zoom', createMockPlatformAdapter()]]),
+    });
+    try {
+      await worker.processNext();
+      await transitionBot({ store, logger, queue }, bot.id, 'ns_test', 'leaving');
+      const finalizing = worker.processNext();
+      await writing;
+      if (mode === 'shutdown') await worker.cancelCaptures();
+      await finalizing;
+      expect((await store.getBot(bot.id, 'ns_test'))!.status).toBe('error');
+      expect(await store.getRecordings(bot.id, 'ns_test')).toEqual([]);
+      expect(await store.listBotProducers(bot.id, 'ns_test')).toMatchObject([{ state: 'uncertain' }]);
+      expect(logger.findByEvent('recording.finalization.complete')).toEqual([]);
+      expect(await readdir(temporaryDirectory)).toEqual([]);
+    } finally { release(); }
+  });
+
   it('transitions to error when automatic finalization upload fails (TV-BOT-001 negative)', async () => {
     class FailingStorageAdapter extends MemoryStorageAdapter {
       override async openUploadStream(): Promise<WritableStream<Uint8Array>> {
