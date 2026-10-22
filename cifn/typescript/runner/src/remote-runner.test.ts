@@ -221,3 +221,36 @@ it('preserves UTF-8 split across owned subprocess chunks before secret redaction
   expect(result.stdout).toBe('€\n');
   expect(result.lines).toEqual(['€']);
 });
+
+it('does not treat a transient EPERM group probe as confirmed termination', async () => {
+  const originalKill = process.kill.bind(process);
+  let injected = false;
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 0 && !injected) {
+      injected = true;
+      throw Object.assign(new Error('Owned probe temporarily unavailable'), { code: 'EPERM' });
+    }
+    return originalKill(pid, signal);
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 50);
+  try {
+    const result = await executeOwnedShell('sleep 2', directory(), process.env, controller.signal);
+    expect(injected).toBe(true);
+    expect(result.exitCode).toBe(1);
+  } finally { clearTimeout(timer); kill.mockRestore(); }
+});
+
+it('retains uncertainty when group probes remain EPERM through the cleanup deadline', async () => {
+  const originalKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 0) throw Object.assign(new Error('Owned probe unavailable'), { code: 'EPERM' });
+    return originalKill(pid, signal);
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 50);
+  try {
+    await expect(executeOwnedShell('sleep 2', directory(), process.env, controller.signal))
+      .rejects.toThrow('Owned process group termination requires reconciliation');
+  } finally { clearTimeout(timer); kill.mockRestore(); }
+}, 10_000);

@@ -20,7 +20,11 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   const alive = () => {
     if (!child.pid) return false;
     try { process.kill(-child.pid, 0); return true; }
-    catch (cause) { if ((cause as NodeJS.ErrnoException).code === 'ESRCH') return false; throw new ProcessGroupUncertainError(); }
+    catch (cause) { if ((cause as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      // A transient EPERM probe is not proof of disappearance. Keep waiting
+      // within the existing deadline; signal-delivery errors still fail closed.
+      if ((cause as NodeJS.ErrnoException).code === 'EPERM') return true;
+      throw new ProcessGroupUncertainError(); }
   };
   const send = (value: NodeJS.Signals) => {
     if (!child.pid) return;
