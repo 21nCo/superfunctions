@@ -8,6 +8,8 @@
     "envelope",
     "errors",
     "metrics",
-    "config"
+    "config",
+    "delivery",
+    "observability"
   ]
 }
