@@ -26,6 +26,10 @@ import { writePrivateJson } from "./state.js";
  * outright runs no code, so the agent's verified identity is recorded
  * before the agent may route anything, and the tunnel service stops an
  * agent its connector left behind through it (see agentIdentityFile).
+ * The URLs the service reads back at launch are the ones it reports, so an
+ * endpoint the agent later reports at another URL stops the connector:
+ * status then shows it stopped, and recovery relaunches it and reads the
+ * new URLs back, instead of the old URL being reported as current.
  */
 let agent: ChildProcess | undefined;
 // Synchronous, so it holds for every exit: fatal error, signal timeout or the agent's own exit (then a no-op).
@@ -78,9 +82,12 @@ async function main(): Promise<void> {
   });
   agent = child;
   readline.createInterface({ input: child.stdout!, crlfDelay: Infinity }).on("line", (line) => {
-    const started = startedEndpoint(line);
-    if (started && config.hostnames.includes(started.name)) urls[started.name] = started.url;
     process.stdout.write(`${line}\n`);
+    const started = startedEndpoint(line);
+    if (started && config.hostnames.includes(started.name)) {
+      if (urls[started.name] !== undefined && urls[started.name] !== started.url) fatal(new Error(`the ngrok agent reassigned the endpoint for ${started.name}`));
+      urls[started.name] = started.url;
+    }
   });
   child.stderr!.pipe(process.stderr);
   const exit = (code: number) => { void rm(agentFile, { force: true }).finally(() => process.exit(code)); };

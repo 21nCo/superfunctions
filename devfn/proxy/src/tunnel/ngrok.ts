@@ -97,15 +97,17 @@ export interface NgrokProviderOptions {
 }
 
 interface OnlineTunnel { public_url?: unknown; metadata?: unknown }
+interface OnlineEndpoint { url?: unknown; public_url?: unknown; metadata?: unknown }
 
 /**
  * ngrok adapter. ngrok keeps no DNS record for DevFn to create or remove: a
  * hostname is reachable exactly while an agent runs an endpoint for it, so
  * public reachability is governed by the connector alone, and DNS calls
  * only read the account. Reserved endpoints need the account to reserve
- * `*.<domain>`; any online tunnel for a hostname that does not carry the
- * binding's marker is a conflict. Ephemeral endpoints have nothing to read
- * before the connector runs; their URLs are reported by the ready connector.
+ * `*.<domain>`; any online tunnel session or endpoint for a hostname that
+ * does not carry the binding's marker is a conflict. Ephemeral endpoints
+ * have nothing to read before the connector runs; their URLs are reported
+ * by the ready connector.
  */
 export class NgrokTunnelProvider implements TunnelProvider {
   private readonly fetcher: typeof fetch;
@@ -196,12 +198,22 @@ export class NgrokTunnelProvider implements TunnelProvider {
     await this.assertSoleRegistration(binding, hostnames, "the new connector was stopped");
   }
 
-  /** No online tunnel for a reserved hostname carries a marker other than this registration's; ephemeral URLs are the agent's own. */
+  /**
+   * No online tunnel session or endpoint for a reserved hostname carries a
+   * marker other than this registration's; ephemeral URLs are the agent's
+   * own. Both inventories are read in full: an agent endpoint, pooled or
+   * not, can be listed under /endpoints without a matching /tunnels entry.
+   */
   private async assertSoleRegistration(binding: TunnelBinding, hostnames: readonly string[], outcome: string): Promise<void> {
     if (ngrok(binding).endpoints === "ephemeral") return;
-    const tunnels = await this.list<OnlineTunnel>(binding, "/tunnels", "tunnels");
+    const [tunnels, endpoints] = await Promise.all([
+      this.list<OnlineTunnel>(binding, "/tunnels", "tunnels"),
+      this.list<OnlineEndpoint>(binding, "/endpoints", "endpoints"),
+    ]);
     const host = (url: unknown): string | undefined => { try { return typeof url === "string" ? new URL(url).hostname : undefined; } catch { return undefined; } };
-    const foreign = hostnames.find((hostname) => tunnels.some((item) => host(item.public_url) === hostname && item.metadata !== ngrokMarker(binding)));
+    const online = [...tunnels.map((item) => ({ hosts: [host(item.public_url)], metadata: item.metadata })),
+      ...endpoints.map((item) => ({ hosts: [host(item.url), host(item.public_url)], metadata: item.metadata }))];
+    const foreign = hostnames.find((hostname) => online.some((item) => item.hosts.includes(hostname) && item.metadata !== ngrokMarker(binding)));
     if (foreign) throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${foreign} is already served by an ngrok agent DevFn does not own; ${outcome}.`);
   }
 

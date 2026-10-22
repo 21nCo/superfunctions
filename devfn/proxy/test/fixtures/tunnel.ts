@@ -113,8 +113,10 @@ export function ngrokFixtureBinding(repositoryIdentity: string, endpoints: "rese
  * environment and configuration under the record directory, prints its
  * authtoken (so a test can prove it is redacted) and reports every tunnel
  * started the way the agent's JSON log does: at its reserved domain, or at a
- * fresh ephemeral URL. It exits at once while <record>/fail exists, and
- * records when it was asked to stop in <record>/exited-<pid>.
+ * fresh ephemeral URL. SIGUSR2 reports every tunnel started again, as after
+ * a reconnect: a reserved one at its domain, an ephemeral one at a new URL.
+ * It exits at once while <record>/fail exists, and records when it was
+ * asked to stop in <record>/exited-<pid>.
  */
 export async function writeFakeNgrok(dir: string, record: string): Promise<string> {
   const file = path.join(dir, "fake-ngrok");
@@ -133,12 +135,14 @@ if (fs.existsSync(path.join(record, "fail"))) process.exit(1);
 fs.writeFileSync(path.join(record, "agent-" + process.pid + ".json"), JSON.stringify({ startedAt: performance.timeOrigin + performance.now(), args, env: process.env, config }));
 process.stdout.write("authtoken in use: " + process.env.NGROK_AUTHTOKEN + "\\n");
 const tunnels = [...config.matchAll(/^  ("[^"]+"):\\n((?:    .*\\n)+)/gm)];
-for (const [, name, body] of tunnels) {
+const start = () => { for (const [, name, body] of tunnels) {
   const domain = /^    domain: (".*")$/m.exec(body);
   const assigned = fs.existsSync(path.join(record, "same-url")) ? "shared" : Math.random().toString(16).slice(2, 10);
   const url = domain ? "https://" + JSON.parse(domain[1]) : "https://" + assigned + ".ngrok-free.app";
   process.stdout.write(JSON.stringify({ lvl: "info", msg: "started tunnel", obj: "tunnels", name: JSON.parse(name), url }) + "\\n");
-}
+} };
+start();
+process.on("SIGUSR2", start);
 process.on("SIGTERM", () => { fs.writeFileSync(path.join(record, "exited-" + process.pid), String(performance.timeOrigin + performance.now())); process.exit(0); });
 setInterval(() => undefined, 1000);
 `, { mode: 0o755 });

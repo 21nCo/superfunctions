@@ -19,7 +19,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 });
 
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
-import { processBirthSignature } from "@devfn/processes";
+import { processBirthSignature, processGroupStatus } from "@devfn/processes";
 import { publishTunnelRoutes, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, withdrawTunnelRoutes, type TunnelBinding } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, readReceipt, registerDomain, resolveInstanceIdentity, writeReceipt, type TunnelOverrides } from "../src/index.js";
 import { FakeTunnelProvider, ngrokFixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
@@ -245,7 +245,8 @@ it("keeps a reserved endpoint's pre-start URL for consumers across replacement a
   expect(replaced.publicUrls).toEqual({ web: planned });
   // A crashed consumer is recovered by a plain up through the same replacement validation.
   process.kill(-replaced.processes[0].pid, "SIGKILL");
-  await vi.waitFor(() => expect(() => process.kill(-replaced.processes[0].pid, 0)).toThrow(), { timeout: 5_000 });
+  // Gone as DevFn judges a group: a zombie a non-reaping PID 1 keeps has exited, a live member has not.
+  await vi.waitFor(async () => expect(await processGroupStatus(replaced.processes[0].pid)).toBe("exited"), { timeout: 5_000 });
   await rm(path.join(root, "started-env.json"));
   const recovered = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
   expect(recovered.invocationId).not.toBe(replaced.invocationId);

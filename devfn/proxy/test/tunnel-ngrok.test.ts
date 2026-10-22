@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { processExists } from "@devfn/processes";
 import {
   NgrokTunnelProvider, createOriginBridge, ngrokMarker, parseTunnelBinding, publishTunnelRoutes, readTunnelState, recoverTunnel, registerTunnelBinding, renderNgrokAgentConfig,
   tunnelPaths, tunnelStatus, urlTiming, withdrawTunnelRoutes, type NgrokConnectorConfig, type TunnelServiceOptions,
@@ -35,8 +36,8 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-/** A fixture ngrok API: reserved domains and online tunnels, each listed one item per page; every request URL is logged, after beforeList ran. */
-function account(state: { reserved: string[]; tunnels: Array<{ public_url: string; metadata?: string }>; fail?: number; beforeList?: (route: string) => void }) {
+/** A fixture ngrok API: reserved domains, online tunnel sessions and online endpoints, each listed one item per page; every request URL is logged, after beforeList ran. */
+function account(state: { reserved: string[]; tunnels: Array<{ public_url: string; metadata?: string }>; endpoints?: Array<{ url: string; metadata?: string }>; fail?: number; beforeList?: (route: string) => void }) {
   const requests: string[] = [];
   const page = (items: unknown[], key: string, offset: number, route: string) => new Response(JSON.stringify({
     [key]: items.slice(offset, offset + 1), next_page_uri: offset + 1 < items.length ? `https://api.ngrok.com${route}?limit=100&offset=${offset + 1}` : null }), { status: 200 });
@@ -48,6 +49,7 @@ function account(state: { reserved: string[]; tunnels: Array<{ public_url: strin
     if (!offset) state.beforeList?.(url.pathname);
     if (url.pathname === "/reserved_domains") return page(state.reserved.map((domain) => ({ domain })), "reserved_domains", offset, url.pathname);
     if (url.pathname === "/tunnels") return page(state.tunnels, "tunnels", offset, url.pathname);
+    if (url.pathname === "/endpoints") return page(state.endpoints ?? [], "endpoints", offset, url.pathname);
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
   return { requests, fetcher };
@@ -173,7 +175,8 @@ describe("ngrok bindings", () => {
 
   it("read a reserved account through the API before any connector routes a name, and never send the key elsewhere", async () => {
     const binding = ngrokFixtureBinding("/repo");
-    const fixture = { reserved: ["other.example.test", `*.${DOMAIN}`], tunnels: [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: "https://unrelated.example.test" }] };
+    const fixture = { reserved: ["other.example.test", `*.${DOMAIN}`], tunnels: [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: "https://unrelated.example.test" }],
+      endpoints: [] as Array<{ url: string; metadata?: string }> };
     const { requests, fetcher } = account(fixture);
     const provider = new NgrokTunnelProvider({ env: SECRETS, fetch: fetcher });
     await provider.verifyTunnel(binding);
@@ -194,6 +197,12 @@ describe("ngrok bindings", () => {
     // The post-launch readback applies the same rule to every launched name in one listing.
     await provider.verifyServing(binding, [A]);
     await expect(provider.verifyServing(binding, [A, C])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: `${C} is already served by an ngrok agent DevFn does not own; the new connector was stopped.` });
+    // An online endpoint the tunnel-session listing does not show is read too, on its own later pages, before and after a launch.
+    const D = `web-d-0123456789abcdef0123.${DOMAIN}`;
+    fixture.endpoints = [{ url: `https://${A}`, metadata: ngrokMarker(binding) }, { url: `https://${D}`, metadata: "someone else" }];
+    await provider.ensureDns(binding, A);
+    await expect(provider.ensureDns(binding, D)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+    await expect(provider.verifyServing(binding, [A, D])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: expect.stringContaining(`${D} is already served`) });
     await expect(provider.verifyDns(binding, `web.other.example.test`)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_INVALID" });
     fixture.reserved = [DOMAIN];
     await expect(provider.verifyTunnel(binding)).rejects.toThrow(`does not reserve *.${DOMAIN}`);
@@ -359,7 +368,7 @@ describe("ngrok connector lifecycle", () => {
     const credentials = issue([`*.${DOMAIN}`, "*.eph.ngrok.devfn.internal"], "origin");
     const fixtureOrigin = await origin(credentials);
     const binding = await registerTunnelBinding(stateDir, ngrokFixtureBinding(path.join(dir), endpoints, endpoints === "reserved" ? "share" : "eph"));
-    const api = { reserved: [`*.${DOMAIN}`], tunnels: [] as Array<{ public_url: string; metadata?: string }>, fail: undefined as number | undefined, beforeList: undefined as ((route: string) => void) | undefined };
+    const api = { reserved: [`*.${DOMAIN}`], tunnels: [] as Array<{ public_url: string; metadata?: string }>, endpoints: [] as Array<{ url: string; metadata?: string }>, fail: undefined as number | undefined, beforeList: undefined as ((route: string) => void) | undefined };
     const provider = new NgrokTunnelProvider({ env: SECRETS, fetch: account(api).fetcher, command: async () => await writeFakeNgrok(dir, record), connector: CONNECTOR });
     const live = new Set(["owner-a", "owner-b"]);
     const options: TunnelServiceOptions = { stateDir, binding, provider, originPort: fixtureOrigin.port, readyTimeoutMs: 20_000, originCa: async () => credentials.cert,
@@ -466,6 +475,11 @@ describe("ngrok connector lifecycle", () => {
       for (const metadata of [`devfn-tunnel:${binding.name}`, `devfn-tunnel:${binding.name}:${"d".repeat(32)}`]) {
         api.tunnels = [{ public_url: `https://${A}`, metadata }];
         await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+        // Listed only as an online endpoint, with no tunnel session, it conflicts the same way.
+        api.tunnels = [];
+        api.endpoints = [{ url: `https://${A}`, metadata }];
+        await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+        api.endpoints = [];
       }
       expect(await agents()).toEqual([]);
       expect(await readTunnelState(stateDir, "share")).toMatchObject({ hostnames: [] });
@@ -480,16 +494,19 @@ describe("ngrok connector lifecycle", () => {
   posixIt("stops a launched connector whose pooled endpoint another registration joined after the pre-launch read, committing nothing", { timeout: 90_000 }, async () => {
     const { stateDir, options, api, record, agents, fixtureOrigin, binding } = await setup("reserved");
     const foreign = `devfn-tunnel:${binding.name}:${"d".repeat(32)}`;
-    const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const running = processExists;
     // The PID of each agent the connectors started, in start order.
     const agentPids = async () => (await Promise.all((await readdir(record)).filter((name) => name.startsWith("agent-")).map(async (name) =>
       ({ pid: Number(/^agent-(\d+)\.json$/.exec(name)![1]), startedAt: (JSON.parse(await readFile(path.join(record, name), "utf8")) as { startedAt: number }).startedAt }))))
       .sort((a, b) => a.startedAt - b.startedAt).map((item) => item.pid);
     // The same-name registration elsewhere comes online for name once this run's next agent has started: after every pre-launch read.
-    const joinAfterLaunch = (name: string) => {
+    // It appears in one listing: an online endpoint without a tunnel session, or a tunnel session.
+    const joinAfterLaunch = (name: string, listing: "/tunnels" | "/endpoints") => {
       const before = readdirSync(record).filter((item) => item.startsWith("agent-")).length;
       api.beforeList = (route) => {
-        if (route === "/tunnels" && readdirSync(record).filter((item) => item.startsWith("agent-")).length > before) api.tunnels.push({ public_url: `https://${name}`, metadata: foreign });
+        if (route !== listing || readdirSync(record).filter((item) => item.startsWith("agent-")).length <= before) return;
+        if (listing === "/tunnels") api.tunnels.push({ public_url: `https://${name}`, metadata: foreign });
+        else api.endpoints.push({ url: `https://${name}`, metadata: foreign });
       };
     };
     try {
@@ -497,7 +514,7 @@ describe("ngrok connector lifecycle", () => {
       await publishTunnelRoutes(options, "owner-b", [B]);
       api.tunnels = [{ public_url: `https://${B}`, metadata: ngrokMarker(binding) }];
       const before = (await readTunnelState(stateDir, "share")).connector!;
-      joinAfterLaunch(A);
+      joinAfterLaunch(A, "/endpoints");
       await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT", message: expect.stringContaining("the new connector was stopped") });
       // The launched agent is gone, nothing was committed and the predecessor keeps serving B alone.
       const [kept, stopped] = await agentPids();
@@ -508,9 +525,10 @@ describe("ngrok connector lifecycle", () => {
 
       // A recovery relaunch is read back the same way: B's crashed connector is not replaced by one pooled with a foreign agent.
       api.tunnels = [];
+      api.endpoints = [];
       process.kill(-before.pid, "SIGKILL");
       await new Promise((resolve) => setTimeout(resolve, 500));
-      joinAfterLaunch(B);
+      joinAfterLaunch(B, "/tunnels");
       await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
       expect(await agents()).toHaveLength(3);
       expect(running((await agentPids())[2])).toBe(false);
@@ -566,11 +584,37 @@ describe("ngrok connector lifecycle", () => {
       api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }, { public_url: `https://${A}`, metadata: `devfn-tunnel:${binding.name}:${"d".repeat(32)}` }];
       await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
       // It was stopped, agent included, instead of serving beside the foreign agent.
-      await vi.waitFor(() => expect(() => process.kill(agent.pid, 0)).toThrow(), { timeout: 5_000 });
-      expect(() => process.kill(launched.pid, 0)).toThrow();
+      await vi.waitFor(() => expect(processExists(agent.pid)).toBe(false), { timeout: 5_000 });
+      expect(processExists(launched.pid)).toBe(false);
       expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", routed: [], retired: 0 });
     } finally { fixtureOrigin.server.close(); }
   });
+
+  for (const endpoints of ["reserved", "ephemeral"] as const) {
+    posixIt(`never reports a URL its running agent has since reassigned (${endpoints})`, { timeout: 90_000 }, async () => {
+      const { stateDir, options, fixtureOrigin, name, domain } = await setup(endpoints);
+      const a = `web-a-0123456789abcdef0123.${domain}`;
+      try {
+        await publishTunnelRoutes(options, "owner-a", [a]);
+        const launched = (await readTunnelState(stateDir, name)).connector!;
+        const agent = JSON.parse(await readFile(tunnelPaths(stateDir, name).agent(launched.launchId!), "utf8")) as { pid: number };
+        const initial = (await tunnelStatus(options)).urls[a];
+        // The same agent reports its endpoint started again, as after a reconnect: a reserved one at its domain, an ephemeral one at a new URL.
+        process.kill(agent.pid, "SIGUSR2");
+        if (endpoints === "reserved") {
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: launched.pid, urls: { [a]: initial } });
+          return;
+        }
+        // The connector stops instead of the launch readback's URL staying current; recovery reads the new one back.
+        await vi.waitFor(async () => expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", routed: [], urls: {} }), { timeout: 10_000 });
+        const recovered = await recoverTunnel(options);
+        expect(recovered).toMatchObject({ connector: "running", routed: [a] });
+        expect(recovered.urls[a]).toMatch(/^https:\/\/[0-9a-f]+\.ngrok-free\.app$/);
+        expect(recovered.urls[a]).not.toBe(initial);
+      } finally { fixtureOrigin.server.close(); }
+    });
+  }
 
   posixIt("keeps serving after upgrade clients reset their connections, denied or allowed", { timeout: 60_000 }, async () => {
     const { options, agents, fixtureOrigin } = await setup("reserved");
@@ -600,8 +644,8 @@ describe("ngrok connector lifecycle", () => {
     const connector = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(agent.pid)], { encoding: "utf8" }).trim());
     expect([record.pid, agent.pid]).not.toContain(connector);
     process.kill(connector, "SIGKILL");
-    await vi.waitFor(() => expect(() => process.kill(record.pid, 0)).toThrow(), { timeout: 5_000 });
-    expect(() => process.kill(agent.pid, 0)).not.toThrow();
+    await vi.waitFor(() => expect(processExists(record.pid)).toBe(false), { timeout: 5_000 });
+    expect(processExists(agent.pid)).toBe(true);
     return agent.pid;
   }
 
@@ -615,7 +659,7 @@ describe("ngrok connector lifecycle", () => {
       expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", routed: [] });
       const status = await recoverTunnel(options);
       expect(status).toMatchObject({ connector: "running", routed: [A, B], retired: 0, outstanding: [] });
-      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(processExists(orphan)).toBe(false);
       // The replacement agent started only once the orphan had been stopped.
       const stoppedAt = Number(await readFile(path.join(record, `exited-${orphan}`), "utf8"));
       expect((await agents()).at(-1)!.startedAt).toBeGreaterThan(stoppedAt);
@@ -630,7 +674,7 @@ describe("ngrok connector lifecycle", () => {
       const orphan = await killConnectorOnly(stateDir, "eph");
       expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", urls: {} });
       expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [a], outstanding: [] });
-      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(processExists(orphan)).toBe(false);
       expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", hostnames: [], retired: 0, outstanding: [] });
       expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
     } finally { fixtureOrigin.server.close(); }
@@ -649,11 +693,11 @@ describe("ngrok connector lifecycle", () => {
         await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
         await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
         expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", hostnames: [], outstanding: [{ ownerId: "owner-a", detail: expect.stringContaining(A) }] });
-        expect(() => process.kill(orphan, 0)).not.toThrow();
+        expect(processExists(orphan)).toBe(true);
       } finally { await chmod(agentFile, 0o600); }
       // Readable again, the next withdrawal stops the agent and only then removes its record.
       expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
-      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(processExists(orphan)).toBe(false);
       expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", retired: 0, outstanding: [] });
       expect((await readdir(tunnelPaths(stateDir, "share").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
     } finally { fixtureOrigin.server.close(); }
@@ -674,11 +718,11 @@ describe("ngrok connector lifecycle", () => {
         await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
         await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
         expect(await readFile(agentFile, "utf8")).toBe(malformed);
-        expect(() => process.kill(orphan, 0)).not.toThrow();
+        expect(processExists(orphan)).toBe(true);
       }
       await writeFile(agentFile, original);
       expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
-      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(processExists(orphan)).toBe(false);
       expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
     } finally { fixtureOrigin.server.close(); }
   });
@@ -699,7 +743,7 @@ describe("ngrok connector lifecycle", () => {
         state.retired = [{ ...live, pid: deadPid, launchId: "e".repeat(32), configDigest, urls: undefined }];
         await writeTunnelState(stateDir, state);
         expect(await recoverTunnel(options)).toMatchObject({ connector: "running", pid: live.pid, routed: [A], retired: 0 });
-        expect(() => process.kill(agent.pid, 0)).not.toThrow();
+        expect(processExists(agent.pid)).toBe(true);
         expect(JSON.parse(await readFile(agentFile, "utf8"))).toMatchObject({ pid: agent.pid });
       }
       // The live connector's agent is still found once its connector is killed outright.
@@ -707,7 +751,7 @@ describe("ngrok connector lifecycle", () => {
       expect(orphan).toBe(agent.pid);
       expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", routed: [] });
       expect(await recoverTunnel(options)).toMatchObject({ connector: "running", routed: [A] });
-      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(processExists(orphan)).toBe(false);
     } finally { fixtureOrigin.server.close(); }
   });
 
@@ -732,7 +776,7 @@ describe("ngrok connector lifecycle", () => {
     expect(await new Promise((resolve) => child.once("exit", (_code, signal) => resolve(signal)))).toBe("SIGKILL");
     const gate = Number(await readFile(path.join(dir, "gate.pid"), "utf8"));
     try {
-      await vi.waitFor(() => expect(() => process.kill(gate, 0)).toThrow(), { timeout: 3_000 });
+      await vi.waitFor(() => expect(processExists(gate)).toBe(false), { timeout: 3_000 });
       expect(await readdir(record)).toEqual([]);
     } finally { try { process.kill(gate, "SIGKILL"); } catch { /* gone */ } }
   });
@@ -790,7 +834,7 @@ describe("ngrok connector lifecycle", () => {
       expect(await connector.exited).toBe(1);
       expect(connector.stderr()).toContain("The ngrok agent's process identity could not be read.");
       expect(await connector.injected()).toBe(10);
-      await vi.waitFor(() => expect(() => process.kill(gate, 0)).toThrow(), { timeout: 3_000 });
+      await vi.waitFor(() => expect(processExists(gate)).toBe(false), { timeout: 3_000 });
       expect(await readdir(connector.record)).toEqual([]);
       await expect(readFile(connector.identityFile)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { try { process.kill(gate, "SIGKILL"); } catch { /* gone */ } }
@@ -818,7 +862,7 @@ describe("ngrok connector lifecycle", () => {
     const agentPid = Number(/^agent-(\d+)\.json$/.exec((await readdir(record)).find((name) => name.startsWith("agent-"))!)![1]);
     try {
       expect(code).toBe(1);
-      await vi.waitFor(() => expect(() => process.kill(agentPid, 0)).toThrow(), { timeout: 3_000 });
+      await vi.waitFor(() => expect(processExists(agentPid)).toBe(false), { timeout: 3_000 });
       expect(stderr).toContain("DevFn ngrok connector failed: injected connector fault");
     } finally { try { process.kill(agentPid, "SIGKILL"); } catch { /* gone */ } }
   });

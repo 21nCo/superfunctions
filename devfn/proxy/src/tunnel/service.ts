@@ -57,7 +57,7 @@ export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
   }
   if (binding.ngrok.endpoints === "ephemeral") {
     gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
-      "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; devfn status and tunnel status report the current ones, and devfn up records them in the receipt.",
+      "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; devfn status and tunnel status report the current ones, and devfn up records them in the receipt. An endpoint the agent reassigns while it runs stops the connector, so its routes read as stopped until recovery relaunches it.",
       "Requests reach the application with the DevFn-internal origin name as Host, not the assigned public host.");
   }
   return { provider: "ngrok", urlTiming: urlTiming(binding), dns: "connector-only", gaps };

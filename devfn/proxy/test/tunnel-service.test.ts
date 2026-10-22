@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { processGroupStatus } from "@devfn/processes";
 import { registerDomain } from "../src/domains.js";
 import { publishTunnelRoutes, readOwnerBindings, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, unregisterTunnelBinding, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
-import { writeTunnelState, type TunnelState } from "../src/tunnel/state.js";
+import { writeTunnelState, type ConnectorRecord, type TunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
 // Every persisted state, as recovery after an interruption at that write would find it; failWrite fails the first write it matches, before it replaces the journal, or every write while persist is set.
@@ -65,6 +65,12 @@ const interruptPublish = async (names: string[], createdDns: string[]) => {
   state.hostnames = state.hostnames.filter((item) => item.ownerId !== "owner-b");
   await writeTunnelState(dir, state);
   return state.connector!;
+};
+
+/** A connector crash: its process group is SIGKILLed, and only once the group is gone as DevFn judges it (zombies left unreaped count as gone) does the test go on. */
+const crash = async (record: ConnectorRecord): Promise<void> => {
+  process.kill(-record.pid, "SIGKILL");
+  await vi.waitFor(async () => expect(await processGroupStatus(record.pid, record.birthSignature, record.startedAt)).toBe("exited"), { timeout: 5_000 });
 };
 
 const connectorHostnames = async (): Promise<string[]> => {
@@ -211,7 +217,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     options.ownerMayRun = async (ownerId) => ownerId === "owner-a";
     await publishTunnelRoutes(options, "owner-a", [A]);
     const crashed = (await readTunnelState(dir, "preview")).connector!;
-    process.kill(-crashed.pid, "SIGKILL");
+    await crash(crashed);
     // An interrupted publish recorded a create for B before the process died.
     const state = await readTunnelState(dir, "preview");
     provider.records.set(B, "devfn");
@@ -374,7 +380,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     provider.tunnel = "remote";
     provider.calls.length = 0;
     await expect(recoverTunnel(options)).rejects.toThrow("the tunnel is remotely managed");
-    process.kill(-connector.pid, "SIGKILL");
+    await crash(connector);
     await expect(recoverTunnel(options)).rejects.toThrow("the tunnel is remotely managed");
     expect(provider.calls.filter((call) => call.startsWith("ensure") || call === "launch")).toEqual([]);
     expect(provider.records.size).toBe(0);
@@ -387,7 +393,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     provider.records.delete(A);
     provider.records.set(B, "foreign");
     const connector = (await readTunnelState(dir, "preview")).connector!;
-    process.kill(-connector.pid, "SIGKILL");
+    await crash(connector);
     options.ownerMayRun = async () => true;
     provider.calls.length = 0;
     await expect(recoverTunnel(options)).rejects.toThrow(`${B} has a foreign record`);
@@ -408,7 +414,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     provider.verifyDns = async (_binding, hostname) => { throw new Error(`${hostname} is covered by a wildcard record`); };
     provider.calls.length = 0;
     await expect(recoverTunnel(options)).rejects.toThrow(`${A} is covered by a wildcard record`);
-    process.kill(-connector.pid, "SIGKILL");
+    await crash(connector);
     await expect(recoverTunnel(options)).rejects.toThrow(`${A} is covered by a wildcard record`);
     expect(provider.calls).not.toContain("launch");
     expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", routed: [] });
@@ -434,7 +440,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     options.ownerMayRun = async () => true;
     await publishTunnelRoutes(options, "owner-a", [A]);
     const crashed = (await readTunnelState(dir, "preview")).connector!;
-    process.kill(-crashed.pid, "SIGKILL");
+    await crash(crashed);
     provider.tunnel = "remote";
     provider.calls.length = 0;
     probed.length = 0;
@@ -455,7 +461,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
   posixIt("withdraws a dead owner's routes instead of relaunching them for another owner's publish", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     await publishTunnelRoutes(options, "owner-b", [B]);
-    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    await crash((await readTunnelState(dir, "preview")).connector!);
     await publishTunnelRoutes(options, "owner-a", [A]);
     expect(await connectorHostnames()).toEqual([A]);
     expect([...provider.records.keys()]).toEqual([A]);
@@ -488,8 +494,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     await expect(recoverTunnel(options)).rejects.toThrow(`connector (PID ${connector.pid}) may still run`);
     expect(provider.calls).not.toContain("launch");
     expect((await readTunnelState(dir, "preview")).hostnames).toMatchObject([{ hostname: B, ownerId: "owner-b" }]);
-    process.kill(-connector.pid, "SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await crash(connector);
     await publishTunnelRoutes(options, "owner-b", [B]);
     expect(provider.calls.filter((call) => call === "launch")).toHaveLength(1);
     expect(await connectorHostnames()).toEqual([B]);
@@ -510,7 +515,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
   posixIt("starts no connector during a withdrawal when the recorded one exited", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     await publishTunnelRoutes(options, "owner-b", [B]);
-    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    await crash((await readTunnelState(dir, "preview")).connector!);
     provider.calls.length = 0;
     expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
     expect(provider.calls).toEqual([`remove ${A}`]);
@@ -559,8 +564,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     expect(provider.records.size).toBe(0);
     await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`${A}: a connector that may route them has not stopped`);
     expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
-    process.kill(-connector.pid, "SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await crash(connector);
     expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
     expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
   });
@@ -685,7 +689,7 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
 
   posixIt("withdraws without restarting the connector for the names it removes", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
-    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    await crash((await readTunnelState(dir, "preview")).connector!);
     provider.calls.length = 0;
     expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
     expect(provider.calls).toEqual([`remove ${A}`]);
