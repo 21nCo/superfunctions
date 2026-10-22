@@ -138,6 +138,12 @@ describe("shared error vectors", () => {
         expect(outcome.result ?? null).toEqual(vector.expect.result);
         return;
       }
+      if ("binaryResult" in vector.expect) {
+        expect(outcome.error).toBeUndefined();
+        expect(outcome.result).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(outcome.result as Uint8Array).toString("base64")).toBe(vector.expect.binaryResult);
+        return;
+      }
       const { error } = outcome;
       expect(error).toBeInstanceOf(sdk.ApiError);
       expect(error.kind).toBe(vector.expect.error.kind);
@@ -334,6 +340,56 @@ describe("timeouts and cancellation", () => {
     expect(error).toBeInstanceOf(sdk.ApiTimeoutError);
     expect(Date.now() - started).toBeLessThan(1_000);
   });
+
+  /** A body that yields 1 KiB every 20 ms for as long as it is read, and records being cancelled. */
+  function trickle() {
+    const state = { pulls: 0, cancelled: false };
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          state.pulls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (!state.cancelled) controller.enqueue(new Uint8Array(1024));
+        },
+        cancel() {
+          state.cancelled = true;
+        },
+      },
+      { highWaterMark: 0 }
+    );
+    return { state, response: new Response(body, { status: 200, headers: { "content-type": "application/json" } }) };
+  }
+
+  const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  for (const ending of ["timeout", "abort"] as const) {
+    it(`stops reading a response body on ${ending}`, async () => {
+      const { state, response } = trickle();
+      const controller = new AbortController();
+      if (ending === "abort") setTimeout(() => controller.abort(), 60);
+      const error = await client({ fetch: async () => response, timeoutMs: ending === "timeout" ? 60 : 2_000, retry: { maxAttempts: 1 } })
+        .getTask({ projectId: "p", taskId: "t" }, { signal: controller.signal })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ending === "timeout" ? sdk.ApiTimeoutError : sdk.ApiAbortError);
+      await settle(30);
+      expect(state.cancelled).toBe(true);
+      const pulls = state.pulls;
+      await settle(100);
+      expect(state.pulls).toBe(pulls);
+    });
+  }
+
+  it("cancels the body of a response that arrives after the attempt gave up", async () => {
+    const { state, response } = trickle();
+    const fetch = () => settle(80).then(() => response);
+    const error = await client({ fetch, timeoutMs: 30, retry: { maxAttempts: 1 } })
+      .getTask({ projectId: "p", taskId: "t" })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(sdk.ApiTimeoutError);
+    await settle(100);
+    expect(state.cancelled).toBe(true);
+    expect(state.pulls).toBeLessThanOrEqual(1);
+  });
 });
 
 describe("host-bound requests", () => {
@@ -409,9 +465,15 @@ describe("failure observation", () => {
     const error = await throwing.getTask({ projectId: "p", taskId: "t" }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(sdk.ApiHttpError);
     expect(error.status).toBe(404);
-    server.reset([{ status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
-    const rejecting = client({ onFailure: () => Promise.reject(new Error("async observer failed")) });
-    await expect(rejecting.getTask({ projectId: "p", taskId: "t" })).resolves.toEqual({});
+    server.reset([{ status: 404, headers: { "content-type": "application/problem+json" }, body: '{"title":"x","status":404}' }]);
+    let observed = 0;
+    const rejecting = client({ onFailure: () => (observed++, Promise.reject(new Error("async observer failed"))) });
+    const rejected = await rejecting.getTask({ projectId: "p", taskId: "t" }).catch((caught: unknown) => caught);
+    expect(observed).toBe(1);
+    expect(rejected).toBeInstanceOf(sdk.ApiHttpError);
+    expect(rejected.status).toBe(404);
+    // A rejection the hook returns is handled: vitest fails the run on an unhandled one.
+    await new Promise((resolve) => setTimeout(resolve, 20));
   });
 });
 

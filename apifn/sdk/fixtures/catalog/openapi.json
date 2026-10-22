@@ -75,6 +75,12 @@
     },
     "/projects/{projectId}/tasks/{taskId}/attachment": {
       "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/TaskId" }],
+      "get": {
+        "operationId": "downloadAttachment",
+        "summary": "Download a task attachment",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "The attachment bytes", "content": { "application/octet-stream": { "schema": { "type": "string", "contentMediaType": "application/octet-stream" } } } } }
+      },
       "put": {
         "operationId": "uploadAttachment",
         "summary": "Upload a task attachment",

@@ -558,7 +558,15 @@ export class ApiRuntime<Credentials> {
     try {
       let response: Response;
       try {
-        response = await untilAborted(Promise.resolve().then(() => this.#fetch(prepared.url, { ...prepared.init, signal: controller.signal })), controller.signal);
+        const sent = Promise.resolve().then(() => this.#fetch(prepared.url, { ...prepared.init, signal: controller.signal }));
+        // A response that arrives after the attempt was given up is never read: cancel its body.
+        sent.then(
+          (late) => {
+            if (controller.signal.aborted) discard(late);
+          },
+          () => undefined
+        );
+        response = await untilAborted(sent, controller.signal);
       } catch (error) {
         settle(new ApiError("network", op.id, `${label} failed before a response was received.`, attempt, { cause: error }));
         throw error;
@@ -566,7 +574,7 @@ export class ApiRuntime<Credentials> {
       const status = response.status;
       let body: Decoded = { kind: "none", value: undefined };
       try {
-        body = await untilAborted(decode(response), controller.signal);
+        body = await untilAborted(decode(response, op.method, controller.signal), controller.signal);
       } catch (error) {
         settle(new ApiError("network", op.id, `${label} failed while reading the response body.`, attempt, { cause: error }));
       }
@@ -625,12 +633,21 @@ export class ApiRuntime<Credentials> {
 
 type Decoded = { kind: BodyKind; value: unknown } | { kind: "invalid-json"; value: string };
 
-/** Reads the whole body inside the attempt's timeout and classifies it by media type. */
-async function decode(response: Response): Promise<Decoded> {
-  if (response.type === "opaqueredirect" || response.body === null) return { kind: "none", value: undefined };
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength === 0) return { kind: "none", value: undefined };
+/** Statuses whose responses never have content. */
+const BODYLESS_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * Reads the whole body inside the attempt's timeout and classifies it by media type. An empty body is
+ * no content for HEAD, 204, 205, 304, a missing media type and JSON (an empty JSON body is not a JSON
+ * document); for a text or binary media type it is an empty string or byte array.
+ */
+async function decode(response: Response, method: string, signal: AbortSignal): Promise<Decoded> {
+  if (response.type === "opaqueredirect") return { kind: "none", value: undefined };
+  const bytes = response.body === null ? new Uint8Array(0) : await readBody(response.body, signal);
   const type = mediaTypeOf(response);
+  if (bytes.byteLength === 0 && (method === "HEAD" || BODYLESS_STATUSES.has(response.status) || type === "" || isJsonMediaType(type))) {
+    return { kind: "none", value: undefined };
+  }
   if (isJsonMediaType(type)) {
     const text = new TextDecoder().decode(bytes);
     try {
@@ -641,4 +658,44 @@ async function decode(response: Response): Promise<Decoded> {
   }
   if (type.startsWith("text/")) return { kind: "text", value: new TextDecoder().decode(bytes) };
   return { kind: "binary", value: bytes };
+}
+
+/** Reads a body to the end; when `signal` aborts it cancels the body, so a stream that ignores the signal stops being read. */
+async function readBody(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const cancel = () => {
+    reader.cancel(signal.reason).catch(() => undefined);
+  };
+  if (signal.aborted) cancel();
+  else signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
+}
+
+/** Cancels the body of a response that will not be read. */
+function discard(response: Response | undefined): void {
+  try {
+    const body = response?.body;
+    if (body && !body.locked) body.cancel().catch(() => undefined);
+  } catch {
+    // ignored
+  }
 }

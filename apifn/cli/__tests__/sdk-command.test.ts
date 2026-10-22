@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -34,6 +34,26 @@ describe("apifn sdk generate", () => {
     expect(stale.code).toBe(1);
     expect(stale.stderr).toContain("out of date: src/models.ts");
     expect(await readFile(path.join(cwd, "tasks-sdk/src/models.ts"), "utf8")).toBe("// stale\n");
+
+    // Regenerating repairs the edit and leaves a final manifest, so the next check is clean.
+    expect((await run(args, cwd)).code).toBe(0);
+    expect((await run([...args, "--check"], cwd)).code).toBe(0);
+  });
+
+  it("reports output conflicts apart from generation failures", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
+    await mkdir(path.join(cwd, "out"));
+    await writeFile(path.join(cwd, "out/README.md"), "mine\n");
+    const written = await run(args, cwd);
+    expect(written.code).toBe(1);
+    expect(written.stderr).toContain("error SDK_OUTPUT_CONFLICT README.md:");
+    expect(written.stderr).toContain("conflicts with the generated SDK; nothing was written.");
+    expect(written.stderr).not.toContain("generation failed");
+    const checked = await run([...args, "--check"], cwd);
+    expect(checked.code).toBe(1);
+    expect(checked.stderr).toContain("cannot be checked: resolve the output conflicts above.");
+    expect(readdirSync(path.join(cwd, "out"))).toEqual(["README.md"]);
   });
 
   it("builds the catalog from --spec and --manifest with the same result", async () => {

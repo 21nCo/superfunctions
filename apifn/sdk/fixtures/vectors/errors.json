@@ -1,5 +1,5 @@
 {
-  "description": "Response handling with retries disabled (maxAttempts 1). The server answers each call with `response`; `body` is the raw response text. `expect.result` is the decoded success value (null for no body); `expect.error` is the failure: kind (apifn.client-failure/v1 failure kinds), HTTP status, whether the status and body kind are documented by the operation (`declared`), and the decoded body (parsed JSON, text, or null).",
+  "description": "Response handling with retries disabled (maxAttempts 1). The server answers each call with `response`; `body` is the raw response text. `expect.result` is the decoded success value (null for no body) and `expect.binaryResult` the base64 of a binary one. An empty body is an empty string or byte array for a documented text or binary media type, and no content for 204, 205, 304, HEAD, a missing media type or JSON (so an empty JSON success is a decode failure). `expect.error` is the failure: kind (apifn.client-failure/v1 failure kinds), HTTP status, whether the status and body kind are documented by the operation (`declared`), and the decoded body (parsed JSON, text, or null).",
   "cases": [
     {
       "name": "declared JSON error",
@@ -92,6 +92,34 @@
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
       "response": { "status": 204, "headers": {}, "body": "" },
       "expect": { "result": null }
+    },
+    {
+      "name": "empty text success",
+      "operation": "tasks.export",
+      "parameters": { "path": { "projectId": "p1" } },
+      "response": { "status": 200, "headers": { "content-type": "text/plain" }, "body": "" },
+      "expect": { "result": "" }
+    },
+    {
+      "name": "binary success",
+      "operation": "tasks.attachment.download",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "application/octet-stream" }, "body": "abc" },
+      "expect": { "binaryResult": "YWJj" }
+    },
+    {
+      "name": "empty binary success",
+      "operation": "tasks.attachment.download",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "application/octet-stream" }, "body": "" },
+      "expect": { "binaryResult": "" }
+    },
+    {
+      "name": "an empty JSON success is a decode failure",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": "" },
+      "expect": { "error": { "kind": "decode" } }
     }
   ]
 }

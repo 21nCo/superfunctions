@@ -115,7 +115,11 @@ export async function runSdkGenerateCommand(options: SdkGenerateCommandOptions):
     }
   }
   if (!ok || !written || !result.manifest) {
-    if (!json) options.output.error("SDK generation failed; nothing was written.");
+    if (!json) {
+      if (!result.ok) options.output.error("SDK generation failed; nothing was written.");
+      else if (options.check) options.output.error(`${outDir} cannot be checked: resolve the output conflicts above.`);
+      else options.output.error(`${outDir} conflicts with the generated SDK; nothing was written.`);
+    }
     return 1;
   }
   const { manifest } = result;

@@ -1,7 +1,7 @@
 // An interrupted writeSdk run: the next run must not mistake files the
 // interrupted run already rewrote for hand edits.
 
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { SDK_ARTIFACT_MANIFEST_FILE, writeSdk } from "../src/index.js";
@@ -42,6 +42,7 @@ describe("an interrupted write", () => {
     failRename.target = path.join(dir, "src/client.ts");
     await expect(writeSdk(dir, v2)).rejects.toThrow("simulated crash");
     failRename.target = null;
+    expect(readdirSync(path.join(dir, "src")).filter((name) => name.includes(".apifn-tmp-"))).toEqual([]);
     expect(readFileSync(path.join(dir, "README.md"), "utf8")).toBe(v2.files.find((file) => file.path === "README.md")!.contents);
     const interim = manifestOf(dir);
     expect(interim.catalog).toEqual(v1.manifest!.catalog);

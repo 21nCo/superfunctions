@@ -17,6 +17,7 @@ export interface WriteSdkResult {
   ok: boolean;
   /** Owned files created or replaced (or that would be, in a dry run). */
   written: string[];
+  /** Files whose contents already match, including a manifest briefly replaced by an interim one and restored. */
   unchanged: string[];
   /** Files owned by the previous generation that this one no longer produces. */
   deleted: string[];
@@ -179,9 +180,11 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
   // every path this run may create or replace, keeping the previous provenance and digests.
   const seeds = new Set(result.manifest.customCode.seeds);
   const owned = writes.filter((file) => !seeds.has(file.path) && file.path !== SDK_ARTIFACT_MANIFEST_FILE);
-  const manifestFile = writes.find((file) => file.path === SDK_ARTIFACT_MANIFEST_FILE);
+  const manifestFile = result.files.find((file) => file.path === SDK_ARTIFACT_MANIFEST_FILE);
   await mkdir(root, { recursive: true });
-  if (owned.length > 0 || outcome.deleted.length > 0) {
+  // The interim manifest is always replaced by the final one, even when that equals the previous manifest.
+  const interimWritten = owned.length > 0 || outcome.deleted.length > 0;
+  if (interimWritten) {
     const base = generation?.manifest ?? result.manifest;
     const recorded = [...(previous ?? [])].flatMap(([file, digests]) => [...digests].map((sha256) => ({ path: file, sha256 })));
     const created = owned.filter((file) => !previous?.has(file.path)).map((file) => ({ path: file.path, sha256: sha256Hex(file.contents) }));
@@ -193,17 +196,24 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
     await atomicWrite(path.join(root, SDK_ARTIFACT_MANIFEST_FILE), `${JSON.stringify(interim, null, 2)}\n`);
   }
   for (const file of writes) {
-    if (file === manifestFile) continue;
+    if (file.path === SDK_ARTIFACT_MANIFEST_FILE) continue;
     await mkdir(path.dirname(path.join(root, file.path)), { recursive: true });
     await atomicWrite(path.join(root, file.path), file.contents);
   }
   for (const stale of outcome.deleted) await rm(path.join(root, stale), { force: true });
-  if (manifestFile) await atomicWrite(path.join(root, manifestFile.path), manifestFile.contents);
+  if (manifestFile && (interimWritten || writes.some((file) => file.path === SDK_ARTIFACT_MANIFEST_FILE))) {
+    await atomicWrite(path.join(root, manifestFile.path), manifestFile.contents);
+  }
   return outcome;
 }
 
 async function atomicWrite(file: string, contents: string): Promise<void> {
   const temporary = `${file}.apifn-tmp-${process.pid}`;
-  await writeFile(temporary, contents);
-  await rename(temporary, file);
+  try {
+    await writeFile(temporary, contents);
+    await rename(temporary, file);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }

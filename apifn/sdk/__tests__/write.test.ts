@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { generateSdk, SDK_ARTIFACT_MANIFEST_FILE, writeSdk, type SdkTarget } from "../src/index.js";
@@ -123,6 +123,24 @@ describe("writeSdk", () => {
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SDK_OWNED_FILE_MODIFIED", severity: "warning", pointer: "src/client.ts" })]);
     expect(readFileSync(path.join(dir, "src/client.ts"), "utf8")).toBe(original);
   });
+
+  for (const damage of ["edited", "deleted"] as const) {
+    it(`repairs an owned file that was ${damage} and finishes with the final manifest`, async () => {
+      const dir = tempDir();
+      const generation = generate();
+      await writeSdk(dir, generation);
+      const manifest = readFileSync(path.join(dir, SDK_ARTIFACT_MANIFEST_FILE), "utf8");
+      if (damage === "edited") writeFileSync(path.join(dir, "src/client.ts"), "// local edit\n");
+      else rmSync(path.join(dir, "src/client.ts"));
+      const result = await writeSdk(dir, generation);
+      expect(result).toMatchObject({ ok: true, written: ["src/client.ts"], deleted: [] });
+      expect(result.unchanged).toContain(SDK_ARTIFACT_MANIFEST_FILE);
+      expect(readFileSync(path.join(dir, SDK_ARTIFACT_MANIFEST_FILE), "utf8")).toBe(manifest);
+      const check = await writeSdk(dir, generation, { dryRun: true });
+      expect(check).toMatchObject({ ok: true, written: [], deleted: [], seeded: [], diagnostics: [] });
+      expect(readdirSync(dir).filter((name) => name.includes(".apifn-tmp-"))).toEqual([]);
+    });
+  }
 
   it("plans without writing in a dry run", async () => {
     const dir = tempDir();
