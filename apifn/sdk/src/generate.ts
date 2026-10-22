@@ -6,6 +6,7 @@ import { validateCatalog } from "./catalog.js";
 import { comparePaths, isSafeRelativePath } from "./paths.js";
 import {
   SDK_ARTIFACT_MANIFEST_FILE,
+  SDK_OUTPUT_LOCK_FILE,
   SDK_ARTIFACT_MANIFEST_VERSION,
   type SdkArtifactManifest,
   type SdkDiagnostic,
@@ -146,7 +147,7 @@ function checkFiles(files: SdkFile[], customRoot: string): SdkDiagnostic[] {
   }
   for (const file of files) {
     const fold = file.path.toLowerCase();
-    if (!isSafeRelativePath(file.path) || file.path === SDK_ARTIFACT_MANIFEST_FILE) {
+    if (!isSafeRelativePath(file.path) || fold === SDK_ARTIFACT_MANIFEST_FILE || fold === SDK_OUTPUT_LOCK_FILE) {
       diagnostics.push({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message: `Generated path "${file.path}" is not a safe package-relative path.`, pointer: file.path });
     } else if (seen.has(fold)) {
       // Case-insensitive file systems (macOS, Windows) would write both to one file.

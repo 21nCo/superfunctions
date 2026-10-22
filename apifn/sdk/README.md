@@ -44,7 +44,7 @@ Every package gets `apifn.sdk-manifest.json` (`apifn.sdk-artifact/v1`): generato
 - Seeds are written once, when missing, in the custom-code area (`src/custom/` for TypeScript). Nothing in that area is ever rewritten or deleted.
 - An existing file the generator does not own, a symlinked or non-directory ancestor, or an unreadable manifest is an `SDK_OUTPUT_CONFLICT`; nothing is written. An owned file edited by hand is replaced with an `SDK_OWNED_FILE_MODIFIED` warning.
 - Before any owned file changes, an interim manifest records the paths this run may create and, in `pendingFiles`, the digests it writes, while keeping the previous generation's provenance and digests. After an interruption the rerun treats either version of a file as generated (no spurious `SDK_OWNED_FILE_MODIFIED`), and the final manifest always replaces the interim one, even when it equals the previous manifest (repairing an edited or deleted owned file); a failed write removes its temporary file.
-- `writeSdk` takes no lock: run one writer per output directory at a time. Each file write uses its own temporary file, so overlapping writes never remove each other's temporary files, but their manifests may interleave.
+- One run at a time writes an output directory, across calls and processes: `writeSdk` creates `.apifn-sdk.lock` in it exclusively before reading the previous manifest and removes it after the final manifest, including when it fails or throws (a dry run takes it too while planning). A run that finds the lock returns `SDK_OUTPUT_CONFLICT` naming the holder's process, host and start time, and changes nothing. A lock is never taken over: one left by a crashed run must be removed by hand, after which the rerun recovers through the interim manifest. The lock file is never generated, owned or packed.
 
 ## TypeScript target
 
@@ -68,7 +68,7 @@ Component schemas that refer to each other in a cycle outside any object or plai
 
 ## Adding a target
 
-A target implements `SdkTarget` (`src/types.ts`): `id` and pinned `version`, `customCodeRoot`, `resolveOptions` (validates its `options`, unknown fields are errors), `packageOf`, `unsupportedReasons` (per operation; empty means supported) and `emit` (files and diagnostics from the context alone). `emit` reports `SDK_NAME_COLLISION` for operation names its language reserves or calls implicitly on a client object (for TypeScript, the set above). `generateSdk` validates the catalog against `operation-catalog.v1`, selects operations (`sdk.include`, `excludeTargets`, then support), derives the release ID, checks every emitted path, and writes the manifest; `writeSdk` applies the ownership rules above to every target.
+A target implements `SdkTarget` (`src/types.ts`): `id` and pinned `version`, `customCodeRoot`, `resolveOptions` (validates its `options`, unknown fields are errors), `packageOf`, `unsupportedReasons` (per operation; empty means supported) and `emit` (files and diagnostics from the context alone). `emit` reports `SDK_NAME_COLLISION` for operation names its language reserves or calls implicitly on a client object (for TypeScript, the set above). `generateSdk` validates the catalog against `operation-catalog.v1`, selects operations (`sdk.include`, `excludeTargets`, then support), derives the release ID, checks every emitted path, and writes the manifest; `writeSdk` applies the ownership and lock rules above to every target (`.apifn-sdk.lock` and `apifn.sdk-manifest.json` are reserved paths).
 
 ## Shared fixtures
 

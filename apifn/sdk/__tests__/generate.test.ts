@@ -1,15 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { buildOperationCatalog, canonicalDigest, canonicalJson, createReleaseDescriptor, sha256Hex } from "@apifn/contracts";
+import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, sha256Hex } from "@apifn/contracts";
 import { afterAll, describe, expect, it } from "vitest";
 import { GENERATOR_VERSION, SDK_ARTIFACT_MANIFEST_FILE, TYPESCRIPT_TARGET_VERSION, writeSdk } from "../src/index.js";
 import { RUNTIME_SOURCE } from "../src/targets/typescript/runtime-source.js";
 import { cleanupTemp, clone, compile, fixtureCatalog, fixtureConfig, FIXTURES, generate, PACKAGE_DIR, readJson, tempDir } from "./helpers.js";
 
 afterAll(cleanupTemp);
-
-const codes = (diagnostics: Array<{ code: string; severity: string }>, severity = "error") =>
-  diagnostics.filter((diagnostic) => diagnostic.severity === severity).map((diagnostic) => diagnostic.code);
 
 /** Reverses key order at every depth: canonical inputs must not depend on it. */
 function reorder(value: unknown): unknown {
@@ -532,6 +529,74 @@ export async function use(): Promise<void> {
   await client.vector${at("a schema without type keywords")}({ xTrace: [["a"]] });
   await client.vector${at("a flat deepObject through a component reference")}({ filter: { owner: "me", due: null } });
   await client.vector${at("an array of component enum values")}({ status: ["open"] });
+}
+`
+    );
+    expect(compile(dir)).toEqual([]);
+  });
+
+  /** Components `<prefix>0` … `<prefix><depth>`, each the allOf of two references to the next (and `extra`), ending in `last`. */
+  function chain(prefix: string, depth: number, last: unknown, extra: unknown[] = []): Record<string, unknown> {
+    const schemas: Record<string, unknown> = { [`${prefix}${depth}`]: last };
+    for (let level = 0; level < depth; level++) {
+      const next = { $ref: `#/components/schemas/${prefix}${level + 1}` };
+      schemas[`${prefix}${level}`] = { allOf: [next, next, ...extra] };
+    }
+    return schemas;
+  }
+
+  it("analyzes each referenced component once, however often it is referenced", () => {
+    const cases = [
+      { name: "array items through a repeated chain", schemas: chain("Chain", 40, { type: "string" }), parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Chain0" } } }, expect: { supported: true, admitsUnserializable: false } },
+      { name: "a nested member through a repeated chain", schemas: chain("Deep", 40, { type: "object", properties: { owner: { type: "object" } } }), parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Deep0" } }, expect: { supported: false } },
+      // Every level also refers back to the first, so each one is in a cycle too; the cut references are
+      // unknown in an intersection, so the items are strings, as the emitted types say.
+      { name: "a repeated chain that is also cyclic", schemas: chain("Loop", 40, { type: "string" }, [{ $ref: "#/components/schemas/Loop0" }]), parameter: { in: "header", name: "X-Loop", style: "simple", explode: false, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Loop0" } } }, expect: { supported: true, admitsUnserializable: false } },
+    ];
+    const started = performance.now();
+    const result = generate(vectorCatalog(cases.map((vector, index) => ({ vector, index }))));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.ok).toBe(true);
+    expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([
+      'query parameter "filter": its member "owner" admits only nested objects or arrays, which the client cannot serialize.',
+    ]);
+    const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
+    for (const index of [0, 2]) {
+      expect(result.manifest!.operations.included.map((entry) => entry.id)).toContain(`vectors.v${index}`);
+      const params = client.match(new RegExp(`export interface Vector${index}Params \\{[\\s\\S]*?\\n\\}`))![0];
+      expect(/\bParamValue</.test(params), cases[index]!.name).toBe(cases[index]!.expect.admitsUnserializable);
+    }
+  });
+
+  it("types a cut alias cycle as unknown in the analysis, as in the emitted types", async () => {
+    // Pair = string | Wrap and Wrap = Pair: the emitted Wrap cuts its reference to unknown, so Pair admits anything.
+    const cycle = {
+      name: "an alias cycle",
+      schemas: { Pair: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/Wrap" }] }, Wrap: { allOf: [{ $ref: "#/components/schemas/Pair" }] } },
+      parameter: { in: "query", name: "pairs", style: "form", explode: true, required: true, schema: { type: "array", items: { $ref: "#/components/schemas/Pair" } } },
+    };
+    // A recursive object through a property stays precise: its child member is only ever an object.
+    const tree = {
+      name: "a recursive object",
+      schemas: { Node: { type: "object", properties: { name: { type: "string" }, child: { $ref: "#/components/schemas/Node" } } } },
+      parameter: { in: "query", name: "node", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Node" } },
+    };
+    const result = generate(vectorCatalog([{ vector: cycle, index: 0 }, { vector: tree, index: 1 }]));
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_CYCLE").length).toBeGreaterThan(0);
+    expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([
+      'query parameter "node": its member "child" admits only nested objects or arrays, which the client cannot serialize.',
+    ]);
+    const dir = tempDir();
+    expect((await writeSdk(dir, result)).ok).toBe(true);
+    writeFileSync(
+      path.join(dir, "src/custom/consumer-cycle.ts"),
+      `import { TasksClient } from "../index.js";
+const client = new TasksClient();
+export async function use(): Promise<void> {
+  await client.vector0({ pairs: ["a", 1] });
+  // @ts-expect-error nested values cannot be serialized
+  await client.vector0({ pairs: [["a"]] });
 }
 `
     );

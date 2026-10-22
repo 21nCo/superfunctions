@@ -1,6 +1,7 @@
 // JSON Schema 2020-12 (as published in operation-catalog.v1) → TypeScript types.
 // Constructs without a TypeScript equivalent widen to `unknown`; they never fail generation.
 
+import { compareCodeUnits } from "../../paths.js";
 import { docComment, propertyKey } from "./naming.js";
 
 const REF_PREFIX = "#/components/schemas/";
@@ -20,7 +21,7 @@ export function componentName(ref: string): string | null {
     return null;
   }
   const segments = decoded.split("/");
-  if (segments.length !== 4 || /~[^01]|~$/.test(segments[3])) return null;
+  if (segments.length !== 4 || /~(?:[^01]|$)/.test(segments[3])) return null;
   return segments[3].replace(/~1/g, "/").replace(/~0/g, "~");
 }
 
@@ -105,8 +106,8 @@ function directReferences(schema: unknown, found: Set<string>, position: Positio
  * referencing schemas; values are the referenced ones, sorted.
  */
 export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<string, string[]> {
-  const names = Object.keys(schemas).sort();
-  const edges = new Map(names.map((name) => [name, [...directReferences(schemas[name], new Set())].filter((target) => Object.prototype.hasOwnProperty.call(schemas, target)).sort()]));
+  const names = Object.keys(schemas).sort(compareCodeUnits);
+  const edges = new Map(names.map((name) => [name, [...directReferences(schemas[name], new Set())].filter((target) => Object.prototype.hasOwnProperty.call(schemas, target)).sort(compareCodeUnits)]));
   const state = new Map<string, "open" | "done">();
   const cuts = new Map<string, string[]>();
   const visit = (name: string) => {
@@ -134,22 +135,77 @@ function literalKind(value: unknown): number {
   return literal(value) === null ? ANY : SCALAR;
 }
 
+const NO_CUTS: ReadonlySet<string> = new Set();
+
+/** One component analysis per component: its results and the components it is computing. */
+interface Memo<T> {
+  done: Map<string, T>;
+  active: Set<string>;
+}
+
+/**
+ * What `valueKinds` and `containerMembers` found for each component of one `schemas` object, which they
+ * treat as immutable (generateSdk passes targets its own validated copy). Each component is analyzed
+ * once, in its own context, so shared references cost nothing more: a reference `aliasCycleCuts` cuts
+ * is `unknown`, as `SchemaTypes` types it, which leaves the remaining references acyclic.
+ */
+interface Analysis {
+  cuts: Map<string, ReadonlySet<string>>;
+  kinds: Memo<number>;
+  members: Memo<ContainerMembers>;
+}
+
+const analyses = new WeakMap<object, Analysis>();
+
+function analysisOf(schemas: Readonly<Record<string, unknown>>): Analysis {
+  let analysis = analyses.get(schemas);
+  if (!analysis) {
+    const cuts = new Map([...aliasCycleCuts(schemas)].map(([name, targets]) => [name, new Set(targets)] as const));
+    analysis = { cuts, kinds: { done: new Map(), active: new Set() }, members: { done: new Map(), active: new Set() } };
+    analyses.set(schemas, analysis);
+  }
+  return analysis;
+}
+
+/** The component a reference resolves to in `schemas`, or null when it does not or `cut` types it `unknown`. */
+function referenced(ref: unknown, schemas: Readonly<Record<string, unknown>>, cut: ReadonlySet<string>): string | null {
+  const component = typeof ref === "string" ? componentName(ref) : null;
+  return component !== null && !cut.has(component) && Object.prototype.hasOwnProperty.call(schemas, component) ? component : null;
+}
+
+/**
+ * Computes a component's entry once, in the component's own context. A component met again while active
+ * (only a reference the cuts miss could do that), or past MAX_DEPTH nested components, is `unknown`.
+ */
+function memoized<T>(memo: Memo<T>, component: string, analysis: Analysis, unknownValue: T, compute: (cut: ReadonlySet<string>) => T): T {
+  const cached = memo.done.get(component);
+  if (cached !== undefined) return cached;
+  if (memo.active.has(component) || memo.active.size > MAX_DEPTH) return unknownValue;
+  memo.active.add(component);
+  try {
+    const value = compute(analysis.cuts.get(component) ?? NO_CUTS);
+    memo.done.set(component, value);
+    return value;
+  } finally {
+    memo.active.delete(component);
+  }
+}
+
 /**
  * The kinds of value (`SCALAR` strings, numbers and booleans, `NULL`, `ARRAY`, `OBJECT`) the type
  * `SchemaTypes.type` gives a schema admits at its top level, following component references in
- * `schemas`. Anything typed `unknown` admits every kind.
+ * `schemas`. Anything typed `unknown` admits every kind. `cut` holds the references typed `unknown`
+ * where `schema` sits (see `aliasCycleCuts`).
  */
-export function valueKinds(schema: unknown, schemas: Readonly<Record<string, unknown>>, seen: ReadonlySet<string> = new Set(), depth = 0): number {
+export function valueKinds(schema: unknown, schemas: Readonly<Record<string, unknown>>, cut: ReadonlySet<string> = NO_CUTS, depth = 0): number {
   if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null || !isRecord(schema)) return schema === false ? 0 : ANY;
   const next = depth + 1;
   let kinds = ANY;
   for (const keyword of ["$ref", "$dynamicRef"]) {
-    const ref = schema[keyword];
-    if (typeof ref !== "string") continue;
-    const component = componentName(ref);
-    if (component !== null && !seen.has(component) && Object.prototype.hasOwnProperty.call(schemas, component)) {
-      kinds &= valueKinds(schemas[component], schemas, new Set([...seen, component]), next);
-    }
+    const component = referenced(schema[keyword], schemas, cut);
+    if (component === null) continue;
+    const analysis = analysisOf(schemas);
+    kinds &= memoized(analysis.kinds, component, analysis, ANY, (inner) => valueKinds(schemas[component], schemas, inner));
   }
   if ("const" in schema) kinds &= literalKind(schema.const);
   if (Array.isArray(schema.enum)) kinds &= schema.enum.reduce((all: number, value) => all | literalKind(value), 0);
@@ -173,34 +229,45 @@ export function valueKinds(schema: unknown, schemas: Readonly<Record<string, unk
       }
     }, 0);
   }
-  if (Array.isArray(schema.allOf)) for (const member of schema.allOf) kinds &= valueKinds(member, schemas, seen, next);
+  if (Array.isArray(schema.allOf)) for (const member of schema.allOf) kinds &= valueKinds(member, schemas, cut, next);
   for (const keyword of ["anyOf", "oneOf"]) {
     const members = schema[keyword];
-    if (Array.isArray(members)) kinds &= members.reduce((all: number, member) => all | valueKinds(member, schemas, seen, next), 0);
+    if (Array.isArray(members)) kinds &= members.reduce((all: number, member) => all | valueKinds(member, schemas, cut, next), 0);
   }
   return kinds;
 }
 
 /** What a schema's type admits inside its array and object types: see `containerMembers`. */
 export interface ContainerMembers {
-  /** Kinds admitted by the items of each array type. */
+  /** Kinds admitted by the items of each array type, each distinct value once. */
   items: number[];
-  /** Kinds admitted by each declared property and index signature of each object type. */
+  /** Kinds admitted by each declared property and index signature of each object type, each distinct pair once. */
   members: Array<{ name: string | null; kinds: number }>;
   /** Whether some part of the type is `unknown`, so its arrays and objects are not described. */
   opaque: boolean;
 }
 
+function addItem(found: ContainerMembers, kinds: number): void {
+  if (!found.items.includes(kinds)) found.items.push(kinds);
+}
+
+function addMember(found: ContainerMembers, name: string | null, kinds: number): void {
+  if (!found.members.some((member) => member.name === name && member.kinds === kinds)) found.members.push({ name, kinds });
+}
+
+const OPAQUE: ContainerMembers = { items: [], members: [], opaque: true };
+
 /**
  * The array item and object member kinds (see `valueKinds`) of every array and object type a schema's
  * top level may be: through component references and `allOf`/`anyOf`/`oneOf`, as `SchemaTypes.type`
- * types them. Object types list declared properties by name and an index signature as null.
+ * types them. Object types list declared properties by name and an index signature as null. `cut` is
+ * as for `valueKinds`.
  */
 export function containerMembers(
   schema: unknown,
   schemas: Readonly<Record<string, unknown>>,
   found: ContainerMembers = { items: [], members: [], opaque: false },
-  seen: ReadonlySet<string> = new Set(),
+  cut: ReadonlySet<string> = NO_CUTS,
   depth = 0
 ): ContainerMembers {
   if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null || !isRecord(schema)) {
@@ -213,9 +280,16 @@ export function containerMembers(
     const ref = schema[keyword];
     if (typeof ref !== "string") continue;
     described = true;
-    const component = componentName(ref);
-    if (component === null || seen.has(component) || !Object.prototype.hasOwnProperty.call(schemas, component)) found.opaque = true;
-    else containerMembers(schemas[component], schemas, found, new Set([...seen, component]), next);
+    const component = referenced(ref, schemas, cut);
+    if (component === null) {
+      found.opaque = true;
+      continue;
+    }
+    const analysis = analysisOf(schemas);
+    const members = memoized(analysis.members, component, analysis, OPAQUE, (inner) => containerMembers(schemas[component], schemas, undefined, inner));
+    for (const kinds of members.items) addItem(found, kinds);
+    for (const member of members.members) addMember(found, member.name, member.kinds);
+    if (members.opaque) found.opaque = true;
   }
   if ("const" in schema || Array.isArray(schema.enum)) {
     described = true;
@@ -228,19 +302,22 @@ export function containerMembers(
     described = true;
     if (types.some((type) => typeof type !== "string" || !["string", "number", "integer", "boolean", "null", "array", "object"].includes(type))) found.opaque = true;
     if (types.includes("array")) {
+      // Mirrors SchemaTypes#array: tuple members keep the cuts, plain array items have none.
       const items = "items" in schema ? schema.items : true;
-      let kinds = Array.isArray(schema.prefixItems) ? schema.prefixItems.reduce((all: number, member) => all | valueKinds(member, schemas), 0) : 0;
-      if (items !== false) kinds |= valueKinds(items, schemas);
-      found.items.push(kinds);
+      const tuple = Array.isArray(schema.prefixItems);
+      const itemCut = tuple ? cut : NO_CUTS;
+      let kinds = tuple ? (schema.prefixItems as unknown[]).reduce((all: number, member) => all | valueKinds(member, schemas, cut), 0) : 0;
+      if (items !== false) kinds |= valueKinds(items, schemas, itemCut);
+      addItem(found, kinds);
     }
     if (types.includes("object")) {
       // Mirrors SchemaTypes#object: declared properties, then the index signature it would emit.
       const properties = isRecord(schema.properties) ? schema.properties : {};
-      for (const name of Object.keys(properties)) found.members.push({ name, kinds: valueKinds(properties[name], schemas) });
+      for (const name of Object.keys(properties)) addMember(found, name, valueKinds(properties[name], schemas));
       const additional = schema.additionalProperties;
       const hasProperties = Object.keys(properties).length > 0;
       if (additional !== false && (additional !== undefined || isRecord(schema.patternProperties) || !hasProperties)) {
-        found.members.push({ name: null, kinds: hasProperties || additional === undefined ? ANY : valueKinds(additional, schemas) });
+        addMember(found, null, hasProperties || additional === undefined ? ANY : valueKinds(additional, schemas));
       }
     }
   }
@@ -248,13 +325,11 @@ export function containerMembers(
     const members = schema[keyword];
     if (!Array.isArray(members)) continue;
     described = true;
-    for (const member of members) containerMembers(member, schemas, found, seen, next);
+    for (const member of members) containerMembers(member, schemas, found, cut, next);
   }
   if (!described) found.opaque = true;
   return found;
 }
-
-const NO_CUTS: ReadonlySet<string> = new Set();
 
 export class SchemaTypes {
   /** Maps a component schema name to its exported type name. */

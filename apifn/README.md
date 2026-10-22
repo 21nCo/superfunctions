@@ -29,7 +29,8 @@ The admin wrapper also requires the published `@superfunctions/admin` **^0.1.4**
 peer so consumers share the same `AdminClient` type.
 `@apifn/contracts` **0.1.0** also pins core to exactly 0.0.3 and publishes after
 core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either.
+contracts and is not published yet either. The next `@apifn/cli` release depends on
+both, so it publishes after contracts and then sdk.
 
 All ApiFn workspace callers use the new exact core pin. CLI, collections, mock,
 and snippets retain their current package versions and are not included in this

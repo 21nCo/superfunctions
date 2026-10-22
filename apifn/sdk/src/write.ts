@@ -1,16 +1,25 @@
 // Writes a generation result into a package directory. Only files the
 // generator owns are created, replaced or deleted; seeds are created once; the
-// custom-code area and every other file are left alone.
+// custom-code area and every other file are left alone. One run at a time holds
+// the directory's lock file from reading the previous manifest to writing the new one.
 
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, stat as follow, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rm, stat as follow, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "@apifn/contracts";
 import { comparePaths, isSafeRelativePath } from "./paths.js";
-import { SDK_ARTIFACT_MANIFEST_FILE, SDK_ARTIFACT_MANIFEST_VERSION, type SdkArtifactManifest, type SdkDiagnostic, type SdkGenerationResult } from "./types.js";
+import {
+  SDK_ARTIFACT_MANIFEST_FILE,
+  SDK_ARTIFACT_MANIFEST_VERSION,
+  SDK_OUTPUT_LOCK_FILE,
+  type SdkArtifactManifest,
+  type SdkDiagnostic,
+  type SdkGenerationResult,
+} from "./types.js";
 
 export interface WriteSdkOptions {
-  /** Plan only: report what would change without touching the directory. */
+  /** Plan only: report what would change without changing the directory (the lock is still taken while planning). */
   dryRun?: boolean;
 }
 
@@ -89,6 +98,52 @@ async function checkAncestors(outDir: string, relative: string): Promise<string 
   return null;
 }
 
+const isLockPath = (relative: string) => relative.toLowerCase() === SDK_OUTPUT_LOCK_FILE;
+
+interface OutputLock {
+  file: string;
+  nonce: string;
+}
+
+/** Creates the lock file exclusively, or explains who holds it. A held lock is never taken over. */
+async function acquireLock(root: string): Promise<OutputLock | string> {
+  const file = path.join(root, SDK_OUTPUT_LOCK_FILE);
+  const nonce = randomUUID();
+  let handle;
+  try {
+    handle = await open(file, "wx");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    let holder = "holder unknown";
+    try {
+      const held = JSON.parse(await readFile(file, "utf8")) as { pid?: unknown; hostname?: unknown; startedAt?: unknown };
+      holder = `process ${String(held.pid)} on ${String(held.hostname)} since ${String(held.startedAt)}`;
+    } catch {
+      // Unreadable, or its holder has not finished writing it.
+    }
+    return `${file} exists: another run is writing this directory (${holder}). If no run is active, a crashed run left it behind: remove it and rerun.`;
+  }
+  try {
+    await handle.writeFile(`${JSON.stringify({ pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString(), nonce })}\n`);
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await rm(file, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  return { file, nonce };
+}
+
+/** Removes the lock only while it is still this run's own. */
+async function releaseLock(lock: OutputLock): Promise<void> {
+  try {
+    if ((JSON.parse(await readFile(lock.file, "utf8")) as { nonce?: unknown }).nonce !== lock.nonce) return;
+  } catch {
+    return;
+  }
+  await rm(lock.file, { force: true });
+}
+
 export async function writeSdk(outDir: string, result: SdkGenerationResult, options: WriteSdkOptions = {}): Promise<WriteSdkResult> {
   const outcome: WriteSdkResult = { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] };
   const conflict = (message: string, pointer?: string) => outcome.diagnostics.push({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message, pointer });
@@ -96,12 +151,33 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
     conflict("Generation failed; nothing was written.");
     return outcome;
   }
+  const generated = { ...result, manifest: result.manifest };
   const root = path.resolve(outDir);
   const rootInfo = await follow(root).catch(() => null);
   if (rootInfo && !rootInfo.isDirectory()) {
     conflict(`${root} exists and is not a directory.`);
     return outcome;
   }
+  // A dry run of a missing directory has nothing to read, so it needs no lock.
+  if (!rootInfo && options.dryRun) return transaction(root, generated, options, outcome);
+  if (!rootInfo) await mkdir(root, { recursive: true });
+  const lock = await acquireLock(root);
+  if (typeof lock === "string") {
+    conflict(lock, SDK_OUTPUT_LOCK_FILE);
+    return outcome;
+  }
+  try {
+    return await transaction(root, generated, options, outcome);
+  } finally {
+    await releaseLock(lock);
+  }
+}
+
+type Generated = SdkGenerationResult & { manifest: SdkArtifactManifest };
+
+/** Plans and applies the write; the caller holds the directory's lock. */
+async function transaction(root: string, result: Generated, options: WriteSdkOptions, outcome: WriteSdkResult): Promise<WriteSdkResult> {
+  const conflict = (message: string, pointer?: string) => outcome.diagnostics.push({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message, pointer });
   const generation = await previousGeneration(root);
   if (typeof generation === "string") {
     conflict(`${generation} Remove it, or choose an empty output directory.`, SDK_ARTIFACT_MANIFEST_FILE);
@@ -113,7 +189,7 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
   // Plan every change before writing anything, so a conflict leaves the directory untouched.
   const writes: Array<{ path: string; contents: string }> = [];
   for (const file of result.files) {
-    if (!isSafeRelativePath(file.path)) {
+    if (!isSafeRelativePath(file.path) || isLockPath(file.path)) {
       conflict(`"${file.path}" is not a safe package-relative path.`, file.path);
       continue;
     }
@@ -163,7 +239,7 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
   }
   const produced = new Set(result.files.map((file) => file.path));
   for (const stale of [...(previous?.keys() ?? [])].sort(comparePaths)) {
-    if (produced.has(stale) || stale.startsWith(customRoot)) continue;
+    if (produced.has(stale) || stale.startsWith(customRoot) || isLockPath(stale)) continue;
     if (await checkAncestors(root, stale)) continue;
     const target = path.join(root, stale);
     const info = await stat(target);
@@ -182,7 +258,6 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
   const seeds = new Set(result.manifest.customCode.seeds);
   const owned = writes.filter((file) => !seeds.has(file.path) && file.path !== SDK_ARTIFACT_MANIFEST_FILE);
   const manifestFile = result.files.find((file) => file.path === SDK_ARTIFACT_MANIFEST_FILE);
-  await mkdir(root, { recursive: true });
   // The interim manifest is always replaced by the final one, even when that equals the previous manifest.
   const interimWritten = owned.length > 0 || outcome.deleted.length > 0;
   if (interimWritten) {

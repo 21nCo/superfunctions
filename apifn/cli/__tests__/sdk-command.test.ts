@@ -56,6 +56,22 @@ describe("apifn sdk generate", () => {
     expect(readdirSync(path.join(cwd, "out"))).toEqual(["README.md"]);
   });
 
+  it("exits 1 without writing while another run holds the output directory", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
+    await mkdir(path.join(cwd, "out"));
+    const held = `${JSON.stringify({ pid: 4242, hostname: "build-host", startedAt: "2026-10-22T00:00:00.000Z", nonce: "other" })}\n`;
+    await writeFile(path.join(cwd, "out/.apifn-sdk.lock"), held);
+    for (const extra of [[], ["--check"]]) {
+      const result = await run([...args, ...extra], cwd);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("error SDK_OUTPUT_CONFLICT .apifn-sdk.lock:");
+      expect(result.stderr).toContain("process 4242 on build-host");
+    }
+    expect(readdirSync(path.join(cwd, "out"))).toEqual([".apifn-sdk.lock"]);
+    expect(await readFile(path.join(cwd, "out/.apifn-sdk.lock"), "utf8")).toBe(held);
+  });
+
   it("builds the catalog from --spec and --manifest with the same result", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
     const config = fixture("typescript/sdk.config.json");

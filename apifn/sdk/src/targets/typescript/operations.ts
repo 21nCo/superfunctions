@@ -2,6 +2,7 @@
 // explains what it cannot express.
 
 import type { CatalogContent, CatalogOperation, CatalogParameter, CatalogSecurityScheme, OperationCatalog } from "@apifn/contracts";
+import { compareCodeUnits } from "../../paths.js";
 import { ARRAY, containerMembers, NULL, OBJECT, SCALAR, valueKinds } from "./schema.js";
 
 export type BodyKind = "json" | "text" | "binary";
@@ -216,5 +217,5 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
     reasons.push(`no security alternative uses only supported schemes (unsupported: ${[...unsupportedSchemes].join(", ")}).`);
   }
 
-  return { reasons, parameters, body, success, errors, accept: [...accept].sort(), security, unsupportedSchemes: [...unsupportedSchemes].sort() };
+  return { reasons, parameters, body, success, errors, accept: [...accept].sort(compareCodeUnits), security, unsupportedSchemes: [...unsupportedSchemes].sort(compareCodeUnits) };
 }

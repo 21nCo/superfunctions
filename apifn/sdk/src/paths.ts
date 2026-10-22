@@ -1,9 +1,12 @@
 // Package-relative path rules shared by generation and writing.
 
-/** Orders by UTF-16 code unit, independent of locale. */
-export function comparePaths(left: string, right: string): number {
-  return left === right ? 0 : left < right ? -1 : 1;
+/** Orders by UTF-16 code unit, independent of locale, as the default sort does. */
+export function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
+
+export const comparePaths = compareCodeUnits;
 
 /** A relative POSIX path with no empty, `.` or `..` segments, backslashes, drive letters or control characters. */
 export function isSafeRelativePath(path: string): boolean {

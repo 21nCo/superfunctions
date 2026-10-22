@@ -7,6 +7,11 @@ import type { CatalogOperation, OperationCatalog } from "@apifn/contracts";
 export const SDK_ARTIFACT_MANIFEST_VERSION = "apifn.sdk-artifact/v1" as const;
 /** Written at the root of every generated package. */
 export const SDK_ARTIFACT_MANIFEST_FILE = "apifn.sdk-manifest.json" as const;
+/**
+ * Held at the root of the output directory while writeSdk plans and writes; never generated, owned or packed.
+ * A run that finds it returns SDK_OUTPUT_CONFLICT; one left by a crashed run must be removed by hand.
+ */
+export const SDK_OUTPUT_LOCK_FILE = ".apifn-sdk.lock" as const;
 
 export type SdkDiagnosticCode =
   /** The catalog is not a valid apifn.operation-catalog/v1 document. */
@@ -25,7 +30,7 @@ export type SdkDiagnosticCode =
   | "SDK_SERVERS_IGNORED"
   /** The release identity could not be derived (createReleaseDescriptor rejected the input). */
   | "SDK_INVALID_RELEASE"
-  /** Writing would replace or delete a file the generator does not own, or leave the output directory. */
+  /** Writing would replace or delete a file the generator does not own, leave the output directory, or another run holds its lock. */
   | "SDK_OUTPUT_CONFLICT"
   /** An owned file was edited since the last generation; regeneration replaces it. */
   | "SDK_OWNED_FILE_MODIFIED";

@@ -142,15 +142,6 @@ describe("writeSdk", () => {
     });
   }
 
-  it("gives overlapping writes in one process their own temporary files", async () => {
-    const dir = tempDir();
-    const generation = generate();
-    const results = await Promise.all([writeSdk(dir, generation), writeSdk(dir, generation)]);
-    expect(results.map((result) => result.ok)).toEqual([true, true]);
-    expect(readdirSync(path.join(dir, "src")).filter((name) => name.includes(".apifn-tmp-"))).toEqual([]);
-    expect(await writeSdk(dir, generation, { dryRun: true })).toMatchObject({ ok: true, written: [], deleted: [], seeded: [] });
-  });
-
   it("plans without writing in a dry run", async () => {
     const dir = tempDir();
     const result = await writeSdk(dir, generate(), { dryRun: true });

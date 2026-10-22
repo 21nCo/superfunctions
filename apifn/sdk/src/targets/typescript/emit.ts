@@ -1,6 +1,7 @@
 // Emits the TypeScript package files.
 
 import type { CatalogOperation } from "@apifn/contracts";
+import { compareCodeUnits } from "../../paths.js";
 import type { SdkDiagnostic, SdkFile, SdkTargetContext, SdkTargetOutput } from "../../types.js";
 import { camelCase, docComment, NameRegistry, pascalCase, propertyKey } from "./naming.js";
 import { analyzeOperation, isReadMethod, type ResponseShape, suppliedByCredential } from "./operations.js";
@@ -113,7 +114,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   claimInClient("isOperationError", "the operation error guard");
 
   // Models: every component schema the catalog publishes, sorted by name.
-  const schemaNames = Object.keys(catalog.schemas).sort();
+  const schemaNames = Object.keys(catalog.schemas).sort(compareCodeUnits);
   const typeNames = new Map<string, string>();
   for (const schema of schemaNames) {
     const typeName = Object.prototype.hasOwnProperty.call(options.typeNames, schema) ? options.typeNames[schema] : pascalCase(schema);
@@ -270,7 +271,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
         `  }\n`
     );
   }
-  for (const scheme of [...unsupportedSchemes].sort()) {
+  for (const scheme of [...unsupportedSchemes].sort(compareCodeUnits)) {
     diagnostics.push({
       code: "SDK_UNSUPPORTED_SECURITY_SCHEME",
       severity: "warning",
@@ -300,7 +301,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const client = options.clientName;
   const clientSource =
     header(context) +
-    `\nimport { ApiHttpError, ApiRuntime, ${["BasicCredential", "ClientOptions", "CredentialSource", ...narrowings, "OperationSpec", "RequestOptions", "SdkMetadata"].sort().map((name) => `type ${name}`).join(", ")} } from "./runtime.js";\n` +
+    `\nimport { ApiHttpError, ApiRuntime, ${["BasicCredential", "ClientOptions", "CredentialSource", ...narrowings, "OperationSpec", "RequestOptions", "SdkMetadata"].sort(compareCodeUnits).map((name) => `type ${name}`).join(", ")} } from "./runtime.js";\n` +
     `import type * as Models from "./models.js";\n\n` +
     `const METADATA: SdkMetadata = ${JSON.stringify(metadata, null, 2)};\n\n` +
     `const OPERATIONS: Record<string, OperationSpec> = {\n${specs.join("\n")}\n};\n\n` +

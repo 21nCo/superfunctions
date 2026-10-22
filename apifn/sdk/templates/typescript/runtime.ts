@@ -252,6 +252,18 @@ function own(record: object, key: string): unknown {
 
 class InputError extends Error {}
 
+/** A JSON body: a value JSON.stringify rejects (a BigInt, a cycle, a throwing toJSON) or drops is invalid input. */
+function json(input: unknown): string {
+  let body: string | undefined;
+  try {
+    body = JSON.stringify(input);
+  } catch (error) {
+    throw new InputError(`Parameter body must be JSON-serializable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (body === undefined) throw new InputError("Parameter body must be JSON-serializable.");
+  return body;
+}
+
 function primitive(value: unknown, where: string): string {
   if (!isPrimitive(value)) throw new InputError(`${where} must be a string, finite number or boolean.`);
   return String(value);
@@ -345,11 +357,13 @@ function isReplayable(body: BodyInit | null | undefined): boolean {
   return body === undefined || body === null || typeof body === "string" || body instanceof Uint8Array || body instanceof ArrayBuffer || (typeof Blob !== "undefined" && body instanceof Blob);
 }
 
+let eventCount = 0;
+
+/** A random event ID; without Web Crypto (Node 18 without the global), one unique to this runtime instead. */
 function randomId(): string {
-  const bytes = new Uint8Array(12);
   const crypto = (globalThis as { crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array } }).crypto;
-  if (crypto?.getRandomValues) crypto.getRandomValues(bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  if (!crypto?.getRandomValues) return `evt_${Date.now().toString(36)}_${(eventCount++).toString(36)}`;
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
   return `evt_${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -522,8 +536,7 @@ export class ApiRuntime<Credentials> {
       if (input === undefined) {
         if (op.body.required) throw new InputError("Parameter body is required.");
       } else if (op.body.kind === "json") {
-        body = JSON.stringify(input);
-        if (body === undefined) throw new InputError("Parameter body must be JSON-serializable.");
+        body = json(input);
       } else if (op.body.kind === "text") {
         if (typeof input !== "string") throw new InputError("Parameter body must be a string.");
         body = input;
@@ -540,11 +553,11 @@ export class ApiRuntime<Credentials> {
       if (!applied.some((term) => supplies(term, spec))) throw new InputError(`Parameter ${spec.key} is required.`);
     }
 
-    const base = this.#base.href.replace(/\/+$/, "");
+    const base = trimSlashes(this.#base.href);
     const url = `${base}${path}${query.length > 0 ? `?${query.join("&")}` : ""}`;
     // Host-bound: the request URL keeps the configured origin and path prefix whatever the parameter values.
     const parsed = new URL(url);
-    const prefix = this.#base.pathname.replace(/\/+$/, "");
+    const prefix = trimSlashes(this.#base.pathname);
     if (parsed.origin !== this.#base.origin || (prefix !== "" && parsed.pathname !== prefix && !parsed.pathname.startsWith(`${prefix}/`))) {
       throw new InputError("Parameters must not move the request outside the configured base URL.");
     }
@@ -770,12 +783,19 @@ async function readBody(body: ReadableStream<Uint8Array>, signal: AbortSignal): 
   }
 }
 
-/** Cancels the body of a response that will not be read. */
+/** Cancels the body of a response that will not be read; a transport's response that throws doing so is ignored. */
 function discard(response: Response | undefined): void {
-  try {
-    const body = response?.body;
-    if (body && !body.locked) body.cancel().catch(() => undefined);
-  } catch {
-    // ignored
-  }
+  Promise.resolve(response)
+    .then((late) => {
+      const body = late?.body;
+      return body && !body.locked ? body.cancel() : undefined;
+    })
+    .catch(() => undefined);
+}
+
+/** Removes trailing "/" characters in linear time. */
+function trimSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }

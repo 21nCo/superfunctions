@@ -5,7 +5,7 @@ import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFixtureSdk, cleanupTemp, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
 
 const catalog = fixtureCatalog();
@@ -250,6 +250,27 @@ describe("shared retry vectors", () => {
     expect(calls).toBe(0);
   });
 
+  it("fails a JSON body JSON.stringify rejects as invalid input, observed as validation, without sending it", async () => {
+    const circular: Record<string, unknown> = { title: "t" };
+    circular.self = circular;
+    const bodies = { bigint: { title: "t", estimate: 10n }, circular, "a throwing toJSON": { title: "t", toJSON: () => { throw new Error("no JSON"); } } };
+    const events: any[] = [];
+    const target = client({ onFailure: (event: unknown) => events.push(event) });
+    for (const [name, body] of Object.entries(bodies)) {
+      const error = await target.createTask({ projectId: "p", body }).catch((caught: unknown) => caught);
+      expect(error, name).toBeInstanceOf(sdk.ApiError);
+      expect([error.kind, error.attempts], name).toEqual(["validation", 0]);
+      expect(error.message, name).toMatch(/^Parameter body must be JSON-serializable: /);
+    }
+    expect(server.requests).toHaveLength(0);
+    expect(events.map((event) => [event.failure.kind, event.failure.retryable])).toEqual([
+      ["validation", false],
+      ["validation", false],
+      ["validation", false],
+    ]);
+    for (const event of events) expect(validateClientFailureEvent(event).ok).toBe(true);
+  });
+
   it("rejects a retry budget outside 1 to 10", () => {
     expect(() => client({ retry: { maxAttempts: 0 } })).toThrow(RangeError);
     expect(() => client({ retry: { maxAttempts: 11 } })).toThrow(RangeError);
@@ -436,6 +457,17 @@ describe("host-bound requests", () => {
     expect(urls).toEqual([`${server.baseUrl}/health`]);
   });
 
+  it("trims long runs of trailing slashes from the base URL in linear time, keeping the host and prefix", async () => {
+    const urls: string[] = [];
+    const fetch = async (url: string) => (urls.push(url), new Response("ok", { headers: { "content-type": "text/plain" } }));
+    const slashes = "/".repeat(64 * 1024);
+    const started = performance.now();
+    await new sdk.TasksClient({ fetch, baseUrl: `https://consumer.example.test/api${slashes}` }).getHealth();
+    await new sdk.TasksClient({ fetch, baseUrl: `https://consumer.example.test${slashes}api${slashes}` }).getHealth();
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(urls).toEqual(["https://consumer.example.test/api/health", `https://consumer.example.test${slashes}api/health`]);
+  });
+
   it("rejects base URLs with user info, queries, fragments or other schemes", () => {
     for (const baseUrl of ["https://u:p@api.example.test", "https://api.example.test/v1?x=1", "https://api.example.test/#f", "ftp://api.example.test", "/relative"]) {
       expect(() => client({ baseUrl }), baseUrl).toThrow(RangeError);
@@ -444,6 +476,23 @@ describe("host-bound requests", () => {
 });
 
 describe("failure observation", () => {
+  it("gives events distinct valid IDs without Web Crypto, and never uses Math.random", async () => {
+    const events: any[] = [];
+    const target = client({ onFailure: (event: unknown) => events.push(event) });
+    vi.stubGlobal("crypto", undefined);
+    const random = vi.spyOn(Math, "random");
+    try {
+      await target.getTask({ projectId: "", taskId: "t" }).catch(() => undefined);
+      await target.getTask({ projectId: "", taskId: "t" }).catch(() => undefined);
+    } finally {
+      vi.unstubAllGlobals();
+      random.mockRestore();
+    }
+    expect(random).not.toHaveBeenCalled();
+    expect(new Set(events.map((event) => event.eventId)).size).toBe(2);
+    for (const event of events) expect(validateClientFailureEvent(event).ok).toBe(true);
+  });
+
   it("sends nothing but the API request when no hook is set", async () => {
     const urls: string[] = [];
     const fetch = async (url: string) => (urls.push(url), new Response("", { status: 500 }));

@@ -183,7 +183,7 @@ apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out pac
 - `--check` — write nothing; exit `1` if the directory is out of date
 - `--format <type>` — `text` (default) or `json`
 
-Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts or `--check` drift (nothing written) · `2` missing or unreadable inputs.
+Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts (including another run holding the output directory's `.apifn-sdk.lock`) or `--check` drift (nothing written) · `2` missing or unreadable inputs.
 
 ---
 
