@@ -688,6 +688,7 @@ export class McpFnServer<TContext = undefined> {
       const result = await buildMcpFnEffectiveCatalog({
         canonicalTools: tools,
         knownTools,
+        schemaResources: this.registry.schemaDefinitions(),
         resolved,
       });
       await this.emitProfileEvidence({
