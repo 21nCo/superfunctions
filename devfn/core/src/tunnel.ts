@@ -121,12 +121,22 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
   return { binding: selection.binding.name, timing: selection.timing, urls: selection.urls, ...(selection.postStart.length ? { assignedAfterStart: selection.postStart } : {}) };
 }
 
-/** Whether every hostname of this owner's tunnel receipt is still published for it and routed by the binding's running connector. */
-export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[] }): Promise<boolean> {
+/**
+ * Whether every hostname of this owner's tunnel receipt is still published
+ * for it and routed by the binding's running connector, and, for URLs
+ * assigned after start, whether the receipt's URLs are still the ones that
+ * connector serves: a connector restart assigns new ones.
+ */
+export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[]; urlTiming?: UrlTiming },
+  publicUrls: Readonly<Record<string, string>> | undefined): Promise<boolean> {
   const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === tunnel.binding);
   const status = binding ? await tunnelStatus({ stateDir, binding }) : undefined;
-  return status?.connector === "running" && tunnel.hostnames.every((hostname) =>
-    status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId));
+  if (status?.connector !== "running" || !tunnel.hostnames.every((hostname) =>
+    status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId))) return false;
+  if (tunnel.urlTiming !== "post-start") return true;
+  const live = new Set(tunnel.hostnames.map((hostname) => status.urls[hostname]));
+  const recorded = Object.values(publicUrls ?? {}).map((url) => new URL(url).origin);
+  return recorded.length === tunnel.hostnames.length && recorded.every((origin) => live.has(origin));
 }
 
 /**

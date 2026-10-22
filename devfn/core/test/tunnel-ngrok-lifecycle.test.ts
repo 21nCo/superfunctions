@@ -18,7 +18,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { processBirthSignature } from "@devfn/processes";
-import { readTunnelState, registerTunnelBinding, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
 import { FakeTunnelProvider, ngrokFixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
@@ -128,5 +128,67 @@ it("publishes an ephemeral endpoint's URL only to runtime outputs once its conne
   const env = JSON.parse(await readFile(path.join(root, "started-env.json"), "utf8")) as Record<string, string>;
   expect(Object.keys(env).filter((key) => key.startsWith("DEVFN_PUBLIC_URL_"))).toEqual([]);
   expect((await readTunnelState(stateDir, "eph")).connector!.urls).toEqual({ [hostname]: "https://assigned-1-0.ngrok-free.app" });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
+  // A connector restart for another worktree assigns new URLs: the receipt's snapshot is then no longer ready, and up records the current one.
+  const journal = tunnelPaths(stateDir, "eph").state;
+  const state = JSON.parse(await readFile(journal, "utf8")) as { connector: { urls: Record<string, string> } };
+  state.connector.urls[hostname] = "https://reassigned.ngrok-free.app";
+  await writeFile(journal, JSON.stringify(state), { mode: 0o600 });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  const restarted = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  expect(restarted.publicUrls).toEqual({ web: `${(await readTunnelState(stateDir, "eph")).connector!.urls[restarted.tunnel!.hostnames[0]]}/app` });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
   await orchestrator.down({ config, root, stateDir });
 }, 60_000);
+
+it("keeps a reserved endpoint's pre-start URL for consumers across replacement and crash recovery", async () => {
+  const config = manifest({ binding: "share", routes: ["web"] }, { CALLBACK_URL: "{{env.DEVFN_PUBLIC_URL_WEB}}/callback" });
+  const planned = (await planPublicUrls({ config, root, profile: "share", stateDir })).urls.web;
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const startedEnv = async () => JSON.parse(await readFile(path.join(root, "started-env.json"), "utf8")) as Record<string, string>;
+  await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  await rm(path.join(root, "started-env.json"));
+  // Replacement validates the new lifecycle with the same public template inputs before stopping the old one.
+  const replaced = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true, replace: true });
+  expect((await startedEnv()).CALLBACK_URL).toBe(`${planned}/callback`);
+  expect(replaced.publicUrls).toEqual({ web: planned });
+  // A crashed consumer is recovered by a plain up through the same replacement validation.
+  process.kill(-replaced.processes[0].pid, "SIGKILL");
+  await vi.waitFor(() => expect(() => process.kill(-replaced.processes[0].pid, 0)).toThrow(), { timeout: 5_000 });
+  await rm(path.join(root, "started-env.json"));
+  const recovered = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  expect(recovered.invocationId).not.toBe(replaced.invocationId);
+  expect((await startedEnv()).CALLBACK_URL).toBe(`${planned}/callback`);
+  expect(recovered).toMatchObject({ state: "ready", publicUrls: { web: planned } });
+  await orchestrator.down({ config, root, stateDir });
+}, 90_000);
+
+it("rejects an ephemeral URL reference on replacement while the running lifecycle keeps serving", async () => {
+  const config = manifest({ binding: "eph", routes: ["web"], ephemeral: true });
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  const consumer = manifest({ binding: "eph", routes: ["web"], ephemeral: true }, { CALLBACK_URL: "{{env.DEVFN_PUBLIC_URL_WEB}}/callback" });
+  await expect(orchestrator.up({ config: consumer, root, profile: "share", stateDir, allowPublic: true, replace: true }))
+    .rejects.toThrow("processes.web.env: DEVFN_PUBLIC_URL_WEB is the public URL of ephemeral tunnel route web");
+  expect(process.kill(started.processes[0].pid, 0)).toBe(true);
+  const connector = (await readTunnelState(stateDir, "eph")).connector!;
+  expect(process.kill(connector.pid, 0)).toBe(true);
+  expect(connector.urls).toEqual({ [started.tunnel!.hostnames[0]]: "https://assigned-1-0.ngrok-free.app" });
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
+it("rejects a Compose interpolation of an ephemeral URL from the real Compose source before any state", async () => {
+  const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 20_000 } } },
+    services: { consumer: { adapter: "compose", service: "consumer", dependsOn: ["web"] } },
+    defaultProfile: "share", profiles: { share: { processes: ["web"], services: ["consumer"], proxy: true, tunnel: { binding: "eph", routes: ["web"], ephemeral: true } } },
+    hostnames: { web: { target: "web", path: "/app" } } });
+  await writeFile(path.join(root, "compose.yaml"), "services:\n  consumer:\n    image: busybox\n    environment:\n      CALLBACK: ${DEVFN_PUBLIC_URL_WEB}/callback\n");
+  await expect(new DevFnOrchestrator(overrides).up({ config, root, profile: "share", stateDir, allowPublic: true }))
+    .rejects.toThrow("services.consumer.compose: DEVFN_PUBLIC_URL_WEB is the public URL of ephemeral tunnel route web");
+  expect(provider.calls).toEqual([]);
+  await expect(access(path.join(stateDir, "registry.json"))).rejects.toThrow();
+  await expect(access(path.join(stateDir, "tunnel-owners"))).rejects.toThrow();
+});

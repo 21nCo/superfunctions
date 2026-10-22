@@ -1767,6 +1767,13 @@ describe("public tunnel URL templates", () => {
     expect(resolved.generated.DEVFN_PUBLIC_URL_WEB_APP).toBe("https://web-app-w1-0123.ngrok.example.test");
     expect(resolved.nodes.worker.environment.CALLBACK).toBe("https://web-app-w1-0123.ngrok.example.test/callback");
     expect(resolved.nodes.worker.command).toEqual(["node", "worker.mjs", "--public=https://web-app-w1-0123.ngrok.example.test"]);
+    // A Compose service's environment, which is its interpolation input, carries it too.
+    const compose = fixture();
+    compose.profiles.default.environment = {};
+    compose.services = { db: { adapter: "compose", service: "db" } };
+    compose.profiles.default.services = ["db"];
+    expect(resolve(compose, { publicUrls: { "web-app": "https://web-app-w1-0123.ngrok.example.test" }, composeNetworks: { db: ["fixture_default"] } })
+      .nodes.db.environment.DEVFN_PUBLIC_URL_WEB_APP).toBe("https://web-app-w1-0123.ngrok.example.test");
     // Without a selected tunnel the key does not exist, as in DevFn v0.1.
     expect(() => resolve(publicFixture(), {})).toThrow("missing reference DEVFN_PUBLIC_URL_WEB_APP");
   });

@@ -59,19 +59,26 @@ export function createOriginBridge(options: OriginBridgeOptions): http.Server {
       const headers: http.OutgoingHttpHeaders = {};
       for (const [key, value] of Object.entries(reply.headers)) if (value !== undefined && !HOP_BY_HOP.has(key)) headers[key] = value;
       response.writeHead(reply.statusCode ?? 502, headers);
+      // An origin response cut short ends the public one as failed, never as complete or open.
+      reply.once("close", () => { if (!reply.complete) response.destroy(); });
       reply.pipe(response);
     });
     upstream.once("error", () => {
-      if (!response.headersSent) response.writeHead(502, { "content-length": "0" });
+      if (response.headersSent) { response.destroy(); return; }
+      response.writeHead(502, { "content-length": "0" });
       response.end();
     });
+    // A client that goes away before its response is complete cancels the origin request.
+    response.once("close", () => { if (!response.writableFinished) upstream.destroy(); });
     request.pipe(upstream);
   });
   server.on("upgrade", (request: http.IncomingMessage, socket: Duplex, head: Buffer) => {
     const hostname = hostName(request.headers.host);
     if (!hostname || !allowed.has(hostname)) { socket.end(`HTTP/1.1 404 Not Found\r\n${PUBLIC_ORIGIN_HEADER}: deny\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`); return; }
     const origin = tls.connect({ host: "127.0.0.1", port: options.originPort, servername: hostname, ca: options.ca, rejectUnauthorized: true, ALPNProtocols: ["http/1.1"] });
+    let connected = false;
     origin.once("secureConnect", () => {
+      connected = true;
       const lines = [`${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1`];
       for (const [key, value] of Object.entries(forwardHeaders(request.headers, hostname, true))) {
         for (const item of Array.isArray(value) ? value : [value]) if (item !== undefined) lines.push(`${key}: ${String(item)}`);
@@ -81,7 +88,12 @@ export function createOriginBridge(options: OriginBridgeOptions): http.Server {
       socket.pipe(origin).pipe(socket);
     });
     const close = () => { socket.destroy(); origin.destroy(); };
-    origin.once("error", () => { if (socket.writable) socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); origin.destroy(); });
+    // Before the origin handshake the client gets a 502; once bytes flow either side failing closes both.
+    origin.once("error", () => {
+      if (!connected && socket.writable) socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      else socket.destroy();
+      origin.destroy();
+    });
     socket.once("error", close);
     origin.once("close", () => socket.destroy());
     socket.once("close", () => origin.destroy());

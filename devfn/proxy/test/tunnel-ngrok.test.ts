@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   NgrokTunnelProvider, createOriginBridge, ngrokMarker, parseTunnelBinding, publishTunnelRoutes, readTunnelState, recoverTunnel, registerTunnelBinding, renderNgrokAgentConfig,
@@ -193,6 +193,21 @@ describe("ngrok bindings", () => {
     await provider.verifyDns(ephemeral, `web-a-0123456789abcdef0123.${ephemeral.domain}`);
     expect(requests).toEqual([]);
   });
+
+  it("refuses one assigned URL for two hostnames, which would publish one route's URL for another", async () => {
+    const a = "web-a-0123456789abcdef0123.eph.ngrok.devfn.internal", b = "web-b-0123456789abcdef0123.eph.ngrok.devfn.internal";
+    let urls: Record<string, string> = { [a]: "https://shared.ngrok-free.app", [b]: "https://shared.ngrok-free.app" };
+    const readiness = http.createServer((_request, response) => response.end(JSON.stringify({ urls })));
+    await new Promise<void>((resolve) => readiness.listen(0, "127.0.0.1", resolve));
+    const port = (readiness.address() as net.AddressInfo).port;
+    const provider = new NgrokTunnelProvider({ env: SECRETS });
+    const ephemeral = ngrokFixtureBinding("/repo", "ephemeral");
+    try {
+      await expect(provider.assignedUrls(ephemeral, port, [a, b])).rejects.toThrow(`reported the same public URL for ${a} and ${b}`);
+      urls = { [a]: "https://one.ngrok-free.app", [b]: "https://two.ngrok-free.app" };
+      expect(await provider.assignedUrls(ephemeral, port, [a, b])).toEqual(urls);
+    } finally { readiness.close(); }
+  });
 });
 
 describe("ngrok origin bridge", () => {
@@ -228,6 +243,46 @@ describe("ngrok origin bridge", () => {
       expect(await viaBridge((untrusted.address() as net.AddressInfo).port, A)).toMatchObject({ status: 502 });
       expect(second.seen).toEqual([]);
     } finally { untrusted.close(); second.server.close(); }
+  });
+
+  it("fails a response the origin cuts short and cancels the origin request when the client goes away", async () => {
+    const credentials = issue([`*.${DOMAIN}`], "origin");
+    const closed: string[] = [];
+    const server = https.createServer(credentials, (request, response) => {
+      response.once("close", () => { if (!response.writableFinished) closed.push(request.url ?? ""); });
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.write("partial");
+      // Cut the connection mid-body; /hold keeps it open until the client leaves.
+      if (request.url === "/cut") setTimeout(() => request.socket.destroy(), 50);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const bridge = createOriginBridge({ hostnames: [A], originPort: (server.address() as net.AddressInfo).port, ca: credentials.cert });
+    await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
+    const bridgePort = (bridge.address() as net.AddressInfo).port;
+    /** How the client sees one request end: complete, failed, or still open after three seconds. */
+    const outcome = async (requestPath: string, method: string, act?: (request: http.ClientRequest, response?: http.IncomingMessage) => void) =>
+      await new Promise<string>((resolve) => {
+        const timer = setTimeout(() => { request.destroy(); resolve("hung"); }, 3_000);
+        const done = (result: string) => { clearTimeout(timer); resolve(result); };
+        const request = http.request({ host: "127.0.0.1", port: bridgePort, path: requestPath, method, headers: { host: A } }, (response) => {
+          response.once("data", () => act?.(request, response));
+          response.once("end", () => done("complete"));
+          response.once("error", () => done("failed"));
+          response.once("close", () => { if (!response.complete) done("failed"); });
+        });
+        request.once("error", () => done("failed"));
+        if (method === "POST") { request.write("upload"); act?.(request); } else request.end();
+      });
+    try {
+      expect(await outcome("/cut", "GET")).toBe("failed");
+      // A download the client abandons, and an upload it abandons before the origin answers, end at the origin too.
+      expect(await outcome("/hold", "GET", (request) => request.destroy())).toBe("failed");
+      await vi.waitFor(() => expect(closed).toContain("/hold"), { timeout: 3_000 });
+      await outcome("/upload", "POST", (request) => setTimeout(() => request.destroy(), 100));
+      await vi.waitFor(() => expect(closed).toContain("/upload"), { timeout: 3_000 });
+      // The bridge still serves after each failure.
+      expect(await outcome("/hold", "GET", (request) => request.destroy())).toBe("failed");
+    } finally { bridge.close(); bridge.closeAllConnections(); server.close(); server.closeAllConnections(); }
   });
 
   it("applies the same allowlist and origin verification to WebSocket upgrades", async () => {
@@ -333,7 +388,7 @@ describe("ngrok connector lifecycle", () => {
   });
 
   posixIt("publishes ephemeral URLs only once the connector reports them", { timeout: 120_000 }, async () => {
-    const { stateDir, options, agents, fixtureOrigin, domain } = await setup("ephemeral");
+    const { stateDir, options, agents, record, fixtureOrigin, domain } = await setup("ephemeral");
     const a = `web-a-0123456789abcdef0123.${domain}`, b = `web-b-0123456789abcdef0123.${domain}`;
     try {
       await publishTunnelRoutes(options, "owner-a", [a]);
@@ -348,6 +403,12 @@ describe("ngrok connector lifecycle", () => {
       expect(second.urls[a]).not.toBe(first.urls[a]);
       expect(second.capabilities.gaps.join(" ")).toContain("assigns new ephemeral URLs");
       expect((await readTunnelState(stateDir, "eph")).connector!.urls).toEqual(second.urls);
+      // An agent that reports one URL for two endpoints never becomes ready; the previous connector keeps serving.
+      await writeFile(path.join(record, "same-url"), "");
+      await expect(publishTunnelRoutes({ ...options, readyTimeoutMs: 3_000 }, "owner-a", [a, `api-a-0123456789abcdef0123.${domain}`]))
+        .rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+      await rm(path.join(record, "same-url"));
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: second.pid, urls: second.urls });
     } finally { fixtureOrigin.server.close(); }
   });
 });

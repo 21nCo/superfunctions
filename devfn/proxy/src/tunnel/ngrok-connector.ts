@@ -30,7 +30,9 @@ async function main(): Promise<void> {
   await writeFile(agentFile, renderNgrokAgentConfig(config, typeof address === "object" && address ? address.port : 0), { mode: 0o600 });
 
   const urls: Record<string, string> = {};
-  const ready = () => config.hostnames.every((hostname) => urls[hostname] !== undefined && (config.endpoints === "ephemeral" || urls[hostname] === `https://${hostname}`));
+  // Every endpoint started, each at its own URL; a reserved one at exactly its hostname.
+  const ready = () => new Set(config.hostnames.map((hostname) => urls[hostname])).size === config.hostnames.length &&
+    config.hostnames.every((hostname) => urls[hostname] !== undefined && (config.endpoints === "ephemeral" || urls[hostname] === `https://${hostname}`));
   const readiness = http.createServer((request, response) => {
     const body = request.url === "/ready" && ready() ? JSON.stringify({ urls }) : "";
     response.writeHead(body ? 200 : 503, { "content-type": "application/json" });

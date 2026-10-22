@@ -248,6 +248,9 @@ export class NgrokTunnelProvider implements TunnelProvider {
       const url = urls?.[hostname];
       const valid = typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url) && (ngrok(binding).endpoints === "ephemeral" || url === `https://${hostname}`);
       if (!valid) throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `The ngrok connector did not start the expected endpoint for ${hostname}.`);
+      // One public URL serving two hostnames would publish one route's URL for another.
+      const shared = Object.keys(result).find((other) => result[other] === url);
+      if (shared) throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `The ngrok connector reported the same public URL for ${shared} and ${hostname}; each endpoint needs its own URL.`);
       result[hostname] = url;
     }
     return result;

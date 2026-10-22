@@ -133,7 +133,8 @@ process.stdout.write("authtoken in use: " + process.env.NGROK_AUTHTOKEN + "\\n")
 const tunnels = [...config.matchAll(/^  ("[^"]+"):\\n((?:    .*\\n)+)/gm)];
 for (const [, name, body] of tunnels) {
   const domain = /^    domain: (".*")$/m.exec(body);
-  const url = domain ? "https://" + JSON.parse(domain[1]) : "https://" + Math.random().toString(16).slice(2, 10) + ".ngrok-free.app";
+  const assigned = fs.existsSync(path.join(record, "same-url")) ? "shared" : Math.random().toString(16).slice(2, 10);
+  const url = domain ? "https://" + JSON.parse(domain[1]) : "https://" + assigned + ".ngrok-free.app";
   process.stdout.write(JSON.stringify({ lvl: "info", msg: "started tunnel", obj: "tunnels", name: JSON.parse(name), url }) + "\\n");
 }
 process.on("SIGTERM", () => process.exit(0));
