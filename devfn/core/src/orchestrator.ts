@@ -15,7 +15,7 @@ import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
 import { createPlan } from "./planner.js";
-import { profileTunnel, publicUrlsLive, publishLifecycleTunnel, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
+import { profileTunnel, publicTemplateInputs, publicUrlsLive, publishLifecycleTunnel, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -64,14 +64,17 @@ function provisionalComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, ow
     [node.name, [`${composeProjectName(config.services![node.name].projectName ?? "devfn", ownerId)}_default`]]));
 }
 
+/** Public tunnel URL inputs of the endpoint resolver (publicTemplateInputs). */
+type PublicTemplate = Awaited<ReturnType<typeof publicTemplateInputs>>;
+
 async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity,
-  ports: Record<string, number>, hostnameSuffix?: string): Promise<boolean> {
+  ports: Record<string, number>, hostnameSuffix?: string, publicTemplate: PublicTemplate = {}): Promise<boolean> {
   // A selected sibling URL reference must fail before creating lifecycle state.
   // Without one, pure template validation is enough here; the locked pass
   // below still reads effective Compose networks before startup or publication.
   if (JSON.stringify(config).includes("{{env.DEVFN_URL_")) return true;
   const provisional = resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks: provisionalComposeNetworks(config, plan, identity.instanceId) });
+    composeNetworks: provisionalComposeNetworks(config, plan, identity.instanceId), ...publicTemplate });
   const deadline = Date.now() + 20_000;
   for (const node of plan.nodes) {
     if (node.kind !== "service") continue;
@@ -83,12 +86,13 @@ async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, r
   return false;
 }
 
-async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix?: string): Promise<ReturnType<typeof resolveEndpointTemplates>> {
+async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix?: string,
+  publicTemplate: PublicTemplate = {}): Promise<ReturnType<typeof resolveEndpointTemplates>> {
   // Validate literals before calling Docker. Provisional defaults are used only
   // for that read-only validation; the result is never published or started.
   const ownerId = identity.instanceId;
   const provisionalNetworks = provisionalComposeNetworks(config, plan, ownerId);
-  const provisional = resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks });
+  const provisional = resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate });
   const composeNetworks: Record<string, string[]> = {};
   const composeReferences: Record<string, Set<string>> = {};
   const deadline = Date.now() + 20_000;
@@ -100,7 +104,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
     composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
     composeReferences[node.name] = references;
   }
-  return resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences });
+  return resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate });
 }
 
 function compareCodepoint(left: string, right: string): number {
@@ -313,7 +317,8 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
       allocation.host !== (config.ports?.[allocation.service]?.exposure === "public" ? "0.0.0.0" : "127.0.0.1"))) return false;
     const loadedPolicy = await loadDevFnPolicy(root, config.policy);
     const identity = await resolveInstanceIdentity(config.project.id, root);
-    resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix);
+    resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix,
+      await publicTemplateInputs(config, plan, identity, receipt.stateDir ?? defaultStateDir()));
     if (!receiptRoutesMatch(receipt, await selectedProxyRoutes(config, plan, identity, ports,
       loadedPolicy?.policy.hostnameSuffix ?? ".localhost", receipt.stateDir ?? defaultStateDir(), false))) return false;
     // The receipt is only as live as the proxy: a dead Caddy owner, a missing
@@ -512,11 +517,13 @@ export class DevFnOrchestrator {
     // are reserved because the Compose source can change between these steps.
     const preflightPorts = Object.fromEntries(plan.portNames.map((name) => [name, 1]));
     await selectedProxyRoutes(options.config, plan, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix ?? ".localhost", requestedStateDir);
-    if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix)) {
-      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix);
+    // A reference to a public URL that exists only after start fails here, before any lease, process or connector.
+    const publicTemplate = await publicTemplateInputs(options.config, plan, identity, requestedStateDir);
+    if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)) {
+      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate);
     } else {
       resolveEndpointTemplates({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
-        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId) });
+        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate });
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
@@ -585,7 +592,7 @@ export class DevFnOrchestrator {
     });
     const ports = Object.fromEntries(allocations.map((item) => [item.service, item.port]));
     let resolved: ReturnType<typeof resolveEndpointTemplates>;
-    try { resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix); }
+    try { resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix, await publicTemplateInputs(options.config, plan, identity, stateDir)); }
     catch (error) {
       await registry.release({ invocationId, errorCode: "DEVFN_ENDPOINT_RESOLUTION_FAILED" });
       throw error;
@@ -709,9 +716,9 @@ export class DevFnOrchestrator {
         const publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
         if (publicSelection) {
           await writeReceipt(receipt);
-          const { hostnames, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, this.tunnelOverrides);
-          receipt.tunnel = { binding: publicSelection.binding.name, hostnames, ...(outstanding.length ? { outstanding } : {}) };
-          receipt.publicUrls = publicSelection.urls;
+          const { hostnames, urls, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, options.config, this.tunnelOverrides);
+          receipt.tunnel = { binding: publicSelection.binding.name, hostnames, urlTiming: publicSelection.timing, ...(outstanding.length ? { outstanding } : {}) };
+          receipt.publicUrls = urls;
         } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);
         clearInterval(heartbeat);

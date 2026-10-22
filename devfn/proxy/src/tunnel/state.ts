@@ -15,30 +15,61 @@ export class TunnelError extends Error {
   }
 }
 
-/**
- * A machine-registered public tunnel binding. It names a pre-existing
- * nonproduction provider tunnel and public domain and holds only references
- * to credentials: the connector credentials file path and the name of the
- * environment variable holding a DNS-scoped API token. DevFn never stores
- * either credential, never creates the tunnel and never provisions a zone.
- */
-export interface TunnelBinding {
+interface BindingBase {
   name: string;
-  provider: "cloudflare";
-  /** Public base domain; every public hostname is one label under it. */
+  /** Base domain of the origin names; every public hostname is one label under it. */
   domain: string;
   projectId: string;
   repositoryIdentity: string;
   /** Explicit owner assertion at registration; production bindings are refused. */
   nonproduction: true;
+}
+
+/**
+ * A pre-existing nonproduction Cloudflare named tunnel and public zone. It
+ * holds only references to credentials: the connector credentials file path
+ * and the name of the environment variable holding a DNS-scoped API token.
+ * DevFn never stores either credential, never creates the tunnel and never
+ * provisions a zone.
+ */
+export interface CloudflareTunnelBinding extends BindingBase {
+  provider: "cloudflare";
   cloudflare: { accountId: string; zoneId: string; tunnelId: string; credentialsFile: string; apiTokenEnv: string };
 }
+
+/**
+ * A nonproduction ngrok account. With reserved endpoints, the account
+ * reserves the wildcard domain `*.<domain>`, so every public URL is known
+ * before start. Ephemeral endpoints get provider-assigned URLs only once the
+ * connector runs; their domain is a DevFn-internal origin namespace that is
+ * never published. Only the names of the environment variables holding the
+ * agent authtoken and, for reserved endpoints, a read-only API key are kept.
+ */
+export interface NgrokTunnelBinding extends BindingBase {
+  provider: "ngrok";
+  ngrok: { endpoints: "reserved" | "ephemeral"; authtokenEnv: string; apiKeyEnv?: string };
+}
+
+/** A machine-registered public tunnel binding. */
+export type TunnelBinding = CloudflareTunnelBinding | NgrokTunnelBinding;
+
+/** When a binding's public URLs are known: before start, or once its connector runs. */
+export type UrlTiming = "pre-start" | "post-start";
+
+export const urlTiming = (binding: TunnelBinding): UrlTiming => binding.provider === "ngrok" && binding.ngrok.endpoints === "ephemeral" ? "post-start" : "pre-start";
+
+/** The DevFn-internal origin namespace of an ephemeral ngrok binding; `.internal` is never publicly resolvable. */
+export const ephemeralOriginDomain = (name: string): string => `${name}.ngrok.devfn.internal`;
 
 /** One public hostname a lifecycle owner publishes through a binding. */
 export interface TunnelHostname { hostname: string; ownerId: string; publishedAt: string }
 
-/** A connector process DevFn started for exactly these hostnames; it leads its own process group. */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; hostnames: string[] }
+/**
+ * A connector process DevFn started for exactly these hostnames; it leads its
+ * own process group. urls holds the public URL the provider assigned to each
+ * hostname once it ran, for providers that assign them.
+ */
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; hostnames: string[]; urls?: Record<string, string> }
 
 /**
  * An in-flight publish, written before any provider or connector mutation.
@@ -98,6 +129,10 @@ export interface TunnelProvider {
   validateConnectorConfig(binding: TunnelBinding, configFile: string, hostnames: readonly string[]): Promise<void>;
   /** Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. */
   connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]>;
+  /** Credentials the connector reads from its environment, resolved from the binding's references; their values are redacted from its log. */
+  connectorSecrets?(binding: TunnelBinding): Record<string, string>;
+  /** The public URL the provider assigned to each hostname, read from a ready connector. */
+  assignedUrls?(binding: TunnelBinding, metricsPort: number, hostnames: readonly string[]): Promise<Record<string, string>>;
 }
 
 const BINDING_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -114,26 +149,45 @@ export function isPublicHostname(hostname: string, domain: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname.slice(0, -domain.length - 1)) && hostname.length <= 253;
 }
 
+function parseProviderFields(entry: Record<string, unknown>): string[] {
+  if (entry.provider === "cloudflare") {
+    const cloudflare = entry.cloudflare as Record<string, unknown> | undefined;
+    if (!cloudflare || typeof cloudflare !== "object" || typeof cloudflare.accountId !== "string" || !HEX32.test(cloudflare.accountId) ||
+      typeof cloudflare.zoneId !== "string" || !HEX32.test(cloudflare.zoneId) || typeof cloudflare.tunnelId !== "string" || !UUID.test(cloudflare.tunnelId) ||
+      typeof cloudflare.credentialsFile !== "string" || !path.isAbsolute(cloudflare.credentialsFile) ||
+      typeof cloudflare.apiTokenEnv !== "string" || !ENV_NAME.test(cloudflare.apiTokenEnv)) {
+      throw invalid("A Cloudflare binding needs a 32-hex account and zone ID, a tunnel UUID, an absolute credentials file and an API token environment variable name.");
+    }
+    return Object.keys(cloudflare).filter((key) => !["accountId", "zoneId", "tunnelId", "credentialsFile", "apiTokenEnv"].includes(key));
+  }
+  if (entry.provider === "ngrok") {
+    const ngrok = entry.ngrok as Record<string, unknown> | undefined;
+    if (!ngrok || typeof ngrok !== "object" || (ngrok.endpoints !== "reserved" && ngrok.endpoints !== "ephemeral") ||
+      typeof ngrok.authtokenEnv !== "string" || !ENV_NAME.test(ngrok.authtokenEnv) || (ngrok.apiKeyEnv !== undefined && (typeof ngrok.apiKeyEnv !== "string" || !ENV_NAME.test(ngrok.apiKeyEnv)))) {
+      throw invalid("An ngrok binding needs reserved or ephemeral endpoints and the environment variable names of its authtoken and optional API key.");
+    }
+    // Reserved URLs are read back through the API before any connector routes them.
+    if (ngrok.endpoints === "reserved" && ngrok.apiKeyEnv === undefined) throw invalid("An ngrok binding with reserved endpoints needs an API key environment variable name to verify its reserved domain.");
+    if (ngrok.endpoints === "ephemeral" && entry.domain !== ephemeralOriginDomain(String(entry.name))) {
+      throw invalid("An ephemeral ngrok binding has no public domain; its origin names are DevFn-internal.");
+    }
+    return Object.keys(ngrok).filter((key) => !["endpoints", "authtokenEnv", "apiKeyEnv"].includes(key));
+  }
+  throw invalid("A tunnel provider is cloudflare or ngrok.");
+}
+
 export function parseTunnelBinding(value: unknown): TunnelBinding {
   if (!value || typeof value !== "object") throw invalid("A tunnel binding must be an object.");
   const entry = value as Record<string, unknown>;
-  const cloudflare = entry.cloudflare as Record<string, unknown> | undefined;
   if (typeof entry.name !== "string" || !BINDING_NAME.test(entry.name)) throw invalid("A tunnel binding name must be a lowercase label of at most 32 characters.");
-  if (entry.provider !== "cloudflare") throw invalid("The only tunnel provider is cloudflare.");
   if (entry.nonproduction !== true) throw invalid("A tunnel binding must be registered as nonproduction; DevFn does not expose production accounts or domains.");
   if (typeof entry.domain !== "string") throw invalid("A tunnel binding needs a public domain.");
   try { normalizeDomain(entry.domain); } catch { throw invalid("A tunnel binding domain must be a lowercase, concrete DNS name outside .localhost."); }
   if (typeof entry.projectId !== "string" || !entry.projectId || typeof entry.repositoryIdentity !== "string" || !path.isAbsolute(entry.repositoryIdentity)) {
     throw invalid("A tunnel binding must be bound to a project and repository.");
   }
-  if (!cloudflare || typeof cloudflare !== "object" || typeof cloudflare.accountId !== "string" || !HEX32.test(cloudflare.accountId) ||
-    typeof cloudflare.zoneId !== "string" || !HEX32.test(cloudflare.zoneId) || typeof cloudflare.tunnelId !== "string" || !UUID.test(cloudflare.tunnelId) ||
-    typeof cloudflare.credentialsFile !== "string" || !path.isAbsolute(cloudflare.credentialsFile) ||
-    typeof cloudflare.apiTokenEnv !== "string" || !ENV_NAME.test(cloudflare.apiTokenEnv)) {
-    throw invalid("A Cloudflare binding needs a 32-hex account and zone ID, a tunnel UUID, an absolute credentials file and an API token environment variable name.");
-  }
-  const extra = Object.keys(entry).filter((key) => !["name", "provider", "domain", "projectId", "repositoryIdentity", "nonproduction", "cloudflare"].includes(key));
-  const extraProvider = Object.keys(cloudflare).filter((key) => !["accountId", "zoneId", "tunnelId", "credentialsFile", "apiTokenEnv"].includes(key));
+  const extraProvider = parseProviderFields(entry);
+  const extra = Object.keys(entry).filter((key) => !["name", "provider", "domain", "projectId", "repositoryIdentity", "nonproduction", entry.provider].includes(key));
   if (extra.length || extraProvider.length) throw invalid("A tunnel binding holds credential references only; unexpected fields are refused.");
   return entry as unknown as TunnelBinding;
 }
@@ -179,11 +233,13 @@ async function writeBindings(stateDir: string, bindings: TunnelBinding[]): Promi
  */
 export async function registerTunnelBinding(stateDir: string, input: TunnelBinding): Promise<TunnelBinding> {
   const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity) });
-  let entry;
-  try { entry = await lstat(binding.cloudflare.credentialsFile); }
-  catch { throw invalid("The tunnel credentials file does not exist."); }
-  if (!entry.isFile() || entry.isSymbolicLink() || (process.platform !== "win32" && (entry.mode & 0o077) !== 0)) {
-    throw invalid("The tunnel credentials file must be a regular file readable only by its owner (mode 0600).");
+  if (binding.provider === "cloudflare") {
+    let entry;
+    try { entry = await lstat(binding.cloudflare.credentialsFile); }
+    catch { throw invalid("The tunnel credentials file does not exist."); }
+    if (!entry.isFile() || entry.isSymbolicLink() || (process.platform !== "win32" && (entry.mode & 0o077) !== 0)) {
+      throw invalid("The tunnel credentials file must be a regular file readable only by its owner (mode 0600).");
+    }
   }
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   // Domain registration holds the same proxy lock and reads this registry,
@@ -203,7 +259,7 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     }
     // Two connectors with different allowlists on one tunnel would each
     // receive the other's requests.
-    if (bindings.some((item) => item.cloudflare.tunnelId === binding.cloudflare.tunnelId)) {
+    if (binding.provider === "cloudflare" && bindings.some((item) => item.provider === "cloudflare" && item.cloudflare.tunnelId === binding.cloudflare.tunnelId)) {
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel ${binding.cloudflare.tunnelId} is already bound; one tunnel has one DevFn connector.`);
     }
     await writeBindings(stateDir, [...bindings, binding]);
@@ -313,7 +369,9 @@ const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
   return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
-    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames);
+    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames) &&
+    (item!.urls === undefined || (typeof item!.urls === "object" && item!.urls !== null && Object.entries(item!.urls).every(([hostname, url]) =>
+      item!.hostnames!.includes(hostname) && typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url))));
 };
 const isHostnames = (value: unknown): value is TunnelHostname[] => Array.isArray(value) && value.every((item: Partial<TunnelHostname>) =>
   item && typeof item.hostname === "string" && typeof item.ownerId === "string" && item.ownerId.length > 0 && typeof item.publishedAt === "string") &&

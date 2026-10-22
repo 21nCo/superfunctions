@@ -10,9 +10,10 @@ import { ProcessError, ProcessSupervisor, processGroupStatus, stopProcessGroup }
 
 import { PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
+import { NgrokTunnelProvider } from "./ngrok.js";
 import {
-  InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, writePrivateFile, writeTunnelState,
-  type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState,
+  InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readTunnelState, tunnelDirectory, tunnelPaths, urlTiming, writePrivateFile, writeTunnelState,
+  type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState, type UrlTiming,
 } from "./state.js";
 
 const LOCK_TIMEOUT_MS = 60_000;
@@ -34,8 +35,32 @@ export interface TunnelServiceOptions {
   ownerMayRun?: (ownerId: string) => Promise<boolean>;
 }
 
+/** What a binding's provider can and cannot do, for status and documentation. */
+export interface TunnelCapabilities {
+  provider: TunnelBinding["provider"];
+  /** pre-start: every public URL is deterministic before anything starts; post-start: the provider assigns it once the connector runs. */
+  urlTiming: UrlTiming;
+  /** Whether DevFn creates and removes a public DNS record per hostname, or the provider routes a name only while the connector runs it. */
+  dns: "devfn-records" | "connector-only";
+  /** Provider limits the DevFn contract cannot close. */
+  gaps: string[];
+}
+
+export function tunnelCapabilities(binding: TunnelBinding): TunnelCapabilities {
+  if (binding.provider === "cloudflare") return { provider: "cloudflare", urlTiming: "pre-start", dns: "devfn-records", gaps: ["DevFn does not provision or check edge certificates for the public domain."] };
+  const gaps = ["ngrok keeps no DNS record DevFn can read back; a name is public exactly while the connector runs its endpoint.",
+    "The ngrok agent forwards plain HTTP to the DevFn origin bridge on loopback, which verifies the public origin's TLS for each hostname."];
+  if (binding.ngrok.endpoints === "ephemeral") {
+    gaps.push("Ephemeral URLs are assigned only after the connector starts and cannot satisfy pre-start references.",
+      "Every connector restart, including one for another worktree's publish or withdrawal on this binding, assigns new ephemeral URLs; read the current ones from tunnel status.",
+      "Requests reach the application with the DevFn-internal origin name as Host, not the assigned public host.");
+  }
+  return { provider: "ngrok", urlTiming: urlTiming(binding), dns: "connector-only", gaps };
+}
+
 export interface TunnelStatus {
   binding: string;
+  capabilities: TunnelCapabilities;
   connector: "running" | "stopped" | "unverified";
   pid?: number;
   hostnames: Array<{ hostname: string; ownerId: string }>;
@@ -43,6 +68,8 @@ export interface TunnelStatus {
   retired: number;
   /** The hostnames the running connector routes; none unless it verifiably runs. */
   routed: string[];
+  /** The public URL the provider assigned to each routed hostname, for providers that assign them. */
+  urls: Record<string, string>;
   /** Withdrawn names whose public reachability is not fully confirmed ended, by owner. */
   outstanding: Array<{ ownerId: string; detail: string }>;
 }
@@ -53,7 +80,7 @@ interface Context {
 }
 
 const context = (options: TunnelServiceOptions): Context => ({
-  stateDir: options.stateDir, binding: options.binding, provider: options.provider ?? new CloudflareTunnelProvider(),
+  stateDir: options.stateDir, binding: options.binding, provider: options.provider ?? (options.binding.provider === "ngrok" ? new NgrokTunnelProvider() : new CloudflareTunnelProvider()),
   port: options.originPort ?? PUBLIC_ORIGIN_PORT, readyTimeoutMs: options.readyTimeoutMs ?? 30_000,
   originCa: options.originCa ?? caddyInternalRoot, probeOrigin: options.probeOrigin ?? probePublicOrigin,
   ownerMayRun: options.ownerMayRun ?? (() => Promise.resolve(false)),
@@ -185,8 +212,10 @@ async function connectorConfig(ctx: Context, hostnames: readonly string[]): Prom
  * process group and starts the connector only after onLaunched has durably
  * recorded the wrapper's identity: an interrupted start leaves nothing
  * running or a recorded process for recovery to stop. Its environment is
- * explicit, as in validation: a private empty HOME and no ambient
- * credentials or TUNNEL_* settings that could select another tunnel.
+ * explicit, as in validation: a private empty HOME, the provider's resolved
+ * connector credentials, whose values the wrapper redacts from the log, and
+ * no ambient credentials or TUNNEL_* settings that could select another
+ * tunnel. Public URLs a provider assigns are read from the ready connector.
  */
 async function launchConnector(ctx: Context, hostnames: readonly string[], onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
@@ -196,13 +225,14 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   await ctx.provider.validateConnectorConfig(ctx.binding, configFile, hostnames);
   const metricsPort = await freeLoopbackPort();
   const command = await ctx.provider.connectorCommand(ctx.binding, configFile, metricsPort);
+  const secrets = ctx.provider.connectorSecrets?.(ctx.binding) ?? {};
   const home = path.join(paths.dir, "home");
   await mkdir(home, { recursive: true, mode: 0o700 });
   if (((await stat(paths.log).catch(() => undefined))?.size ?? 0) > LOG_LIMIT_BYTES) await rename(paths.log, `${paths.log}.1`);
   let record: ConnectorRecord | undefined;
   try {
     await new ProcessSupervisor().start({ name: "connector", root: paths.dir, runtimeDir: paths.dir,
-      spec: { adapter: "command", command, env: { HOME: home }, health: { type: "http", url: `http://127.0.0.1:${metricsPort}/ready`, timeoutMs: ctx.readyTimeoutMs } },
+      spec: { adapter: "command", command, env: { HOME: home, ...secrets }, secretEnv: Object.keys(secrets), health: { type: "http", url: `http://127.0.0.1:${metricsPort}/ready`, timeoutMs: ctx.readyTimeoutMs } },
       onStarted: async (managed) => {
         record = { pid: managed.pid, birthSignature: managed.birthSignature!, startedAt: managed.startedAt, configDigest, metricsPort, hostnames: [...hostnames] };
         await onLaunched(record);
@@ -210,6 +240,8 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   } catch (error) {
     throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector did not become ready (${message(error)}); see ${paths.log}.`, record ? { pid: record.pid } : undefined);
   }
+  // The record is journaled as retired until committed, so a launch whose URLs cannot be read is stopped like any failed one.
+  if (ctx.provider.assignedUrls) record!.urls = await ctx.provider.assignedUrls(ctx.binding, metricsPort, hostnames);
   return record!;
 }
 
@@ -582,10 +614,12 @@ export async function tunnelStatus(options: Pick<TunnelServiceOptions, "stateDir
   const status = state.connector ? await connectorStatus(state.connector) : "exited";
   return {
     binding: options.binding.name,
+    capabilities: tunnelCapabilities(options.binding),
     connector: status === "running" ? "running" : status === "unverified" ? "unverified" : "stopped",
     ...(state.connector && status === "running" ? { pid: state.connector.pid } : {}),
     hostnames: state.hostnames.map(({ hostname, ownerId }) => ({ hostname, ownerId })),
     routed: state.connector && status === "running" ? [...state.connector.hostnames] : [],
+    urls: state.connector && status === "running" ? { ...state.connector.urls } : {},
     pending: state.pending !== undefined,
     retired: state.retired.length,
     outstanding: [...new Set(state.residue.map((item) => item.ownerId))].flatMap((ownerId) => outstandingFor(state, ownerId).map((detail) => ({ ownerId, detail }))),

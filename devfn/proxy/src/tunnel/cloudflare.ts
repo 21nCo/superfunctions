@@ -5,20 +5,26 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { TunnelError, compareNames, isPublicHostname, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
+import { TunnelError, compareNames, isPublicHostname, type CloudflareTunnelBinding, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "./state.js";
 
 const execFileAsync = promisify(execFile);
 const API = "https://api.cloudflare.com/client/v4";
 
 interface DnsRecord { id: string; type: string; name: string; content: string; proxied?: boolean; comment?: string | null }
 
+/** The Cloudflare fields of a binding; another provider's binding never reaches this adapter's account. */
+function cloudflare(binding: TunnelBinding): CloudflareTunnelBinding["cloudflare"] {
+  if (binding.provider !== "cloudflare") throw new TunnelError("DEVFN_TUNNEL_INVALID", `Tunnel binding ${binding.name} is not a Cloudflare binding.`);
+  return binding.cloudflare;
+}
+
 /** The comment that marks a DNS record as created by DevFn for one binding; only marked records are ever changed. */
 export const ownershipMarker = (binding: TunnelBinding): string => `devfn-tunnel:${binding.name}`;
-const tunnelTarget = (binding: TunnelBinding): string => `${binding.cloudflare.tunnelId}.cfargotunnel.com`;
+const tunnelTarget = (binding: TunnelBinding): string => `${cloudflare(binding).tunnelId}.cfargotunnel.com`;
 const owned = (binding: TunnelBinding, record: DnsRecord): boolean =>
   record.type === "CNAME" && record.content === tunnelTarget(binding) && record.comment === ownershipMarker(binding);
 
-const zone = (binding: TunnelBinding): string => `/zones/${binding.cloudflare.zoneId}`;
+const zone = (binding: TunnelBinding): string => `/zones/${cloudflare(binding).zoneId}`;
 
 /** cloudflared from an absolute PATH directory; the working directory cannot supply it. */
 export async function cloudflaredCommand(env: NodeJS.ProcessEnv = process.env): Promise<string> {
@@ -63,8 +69,8 @@ export class CloudflareTunnelProvider implements TunnelProvider {
   }
 
   private async api<T>(binding: TunnelBinding, method: string, route: string, body?: unknown): Promise<T> {
-    const token = this.env[binding.cloudflare.apiTokenEnv];
-    if (!token) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The Cloudflare API token reference ${binding.cloudflare.apiTokenEnv} is unset.`);
+    const token = this.env[cloudflare(binding).apiTokenEnv];
+    if (!token) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The Cloudflare API token reference ${cloudflare(binding).apiTokenEnv} is unset.`);
     let response: Response;
     try {
       response = await this.fetcher(`${API}${route}`, {
@@ -116,13 +122,13 @@ export class CloudflareTunnelProvider implements TunnelProvider {
    */
   public async verifyTunnel(binding: TunnelBinding): Promise<void> {
     const tunnel = await this.api<{ id?: unknown; deleted_at?: unknown; remote_config?: unknown; config_src?: unknown } | undefined>(binding, "GET",
-      `/accounts/${binding.cloudflare.accountId}/cfd_tunnel/${binding.cloudflare.tunnelId}`);
-    if (tunnel?.id !== binding.cloudflare.tunnelId || tunnel.deleted_at) {
-      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${binding.cloudflare.tunnelId} does not exist in account ${binding.cloudflare.accountId}.`);
+      `/accounts/${cloudflare(binding).accountId}/cfd_tunnel/${cloudflare(binding).tunnelId}`);
+    if (tunnel?.id !== cloudflare(binding).tunnelId || tunnel.deleted_at) {
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${cloudflare(binding).tunnelId} does not exist in account ${cloudflare(binding).accountId}.`);
     }
     const local = (tunnel.remote_config === false || tunnel.config_src === "local") && tunnel.remote_config !== true && tunnel.config_src !== "cloudflare";
     if (!local) {
-      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${binding.cloudflare.tunnelId} is remotely managed; DevFn runs only locally configured tunnels.`);
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${cloudflare(binding).tunnelId} is remotely managed; DevFn runs only locally configured tunnels.`);
     }
   }
 
@@ -167,7 +173,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
 
   public renderConnectorConfig(binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string {
     if (!hostnames.length) throw new TunnelError("DEVFN_TUNNEL_INVALID", "A connector configuration needs at least one public hostname.");
-    const lines = [`tunnel: ${quoted(binding.cloudflare.tunnelId)}`, `credentials-file: ${quoted(binding.cloudflare.credentialsFile)}`, "no-autoupdate: true", "ingress:"];
+    const lines = [`tunnel: ${quoted(cloudflare(binding).tunnelId)}`, `credentials-file: ${quoted(cloudflare(binding).credentialsFile)}`, "no-autoupdate: true", "ingress:"];
     for (const hostname of [...hostnames].sort(compareNames)) {
       if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
       // The origin sees the allowlisted name as both TLS server name and Host,
@@ -213,6 +219,6 @@ export class CloudflareTunnelProvider implements TunnelProvider {
   }
 
   public async connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]> {
-    return [await this.command(), "tunnel", "--no-autoupdate", "--config", configFile, "--metrics", `127.0.0.1:${metricsPort}`, "run", binding.cloudflare.tunnelId];
+    return [await this.command(), "tunnel", "--no-autoupdate", "--config", configFile, "--metrics", `127.0.0.1:${metricsPort}`, "run", cloudflare(binding).tunnelId];
   }
 }

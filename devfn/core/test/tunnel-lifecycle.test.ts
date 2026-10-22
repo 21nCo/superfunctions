@@ -240,8 +240,9 @@ it("moves an owner's routes off a binding it no longer selects, reporting what t
   await publishTunnelRoutes(preview, "owner", [OTHER]);
   const moved = STAGED;
   provider.failRemove.add(OTHER);
-  expect(await publishLifecycleTunnel(stateDir, "owner", { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides))
-    .toEqual({ hostnames: [moved], outstanding: [`preview: ${OTHER}: public DNS removal is not confirmed`, `preview: provider failure removing ${OTHER}`] });
+  expect(await publishLifecycleTunnel(stateDir, "owner", { binding: staging, timing: "pre-start", routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }],
+    hostnames: { web: moved }, urls: { web: `https://${moved}` }, postStart: [] }, config, overrides))
+    .toEqual({ hostnames: [moved], urls: { web: `https://${moved}` }, outstanding: [`preview: ${OTHER}: public DNS removal is not confirmed`, `preview: provider failure removing ${OTHER}`] });
   expect(await readOwnerBindings(stateDir, "owner")).toEqual(["preview", "staging"]);
   expect((await readTunnelState(stateDir, "preview")).hostnames).toEqual([]);
   expect((await readTunnelState(stateDir, "staging")).hostnames.map((item) => item.hostname)).toEqual([moved]);

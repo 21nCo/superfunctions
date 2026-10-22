@@ -328,11 +328,12 @@ describe("devfn CLI", () => {
       expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("tunnel", "register", "preview", ...fields, "--nonproduction")).toMatchObject({ code: 0, result: { binding: { name: "preview", nonproduction: true } } });
       const urls = await run("tunnel", "urls");
-      expect(urls.result).toEqual({ ok: true, binding: "preview", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
+      expect(urls.result).toEqual({ ok: true, binding: "preview", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
       expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
       expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
       expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
-      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], pending: false, retired: 0, outstanding: [] } } });
+      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], urls: {}, pending: false, retired: 0, outstanding: [],
+        capabilities: { provider: "cloudflare", urlTiming: "pre-start", dns: "devfn-records", gaps: [expect.stringContaining("edge certificates")] } } } });
       // ports gc still collects other released leases while it reports an orphan whose DNS removal fails (no API token in this shell).
       const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
       await registry.reserve({ projectId: "other", instanceId: "released-owner", invocationId: "released", profile: "default", requests: [{ name: "api", spec: {} }] });
@@ -346,6 +347,43 @@ describe("devfn CLI", () => {
       expect((await registry.read()).allocations).toEqual([]);
       expect(await run("tunnel", "status", "preview")).toMatchObject({ result: { tunnel: { hostnames: [], outstanding: [{ ownerId: "orphan-owner", detail: `${orphan}: public DNS removal is not confirmed` }] } } });
       expect(await run("tunnel", "unregister", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_TUNNEL_IN_USE" } } });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("registers ngrok bindings by endpoint kind and reports when their public URLs are known", async () => {
+    const cwd = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-ngrok-cli-")));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-ngrok-state-"));
+    try {
+      const write = async (tunnel: Record<string, unknown>) => await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+        processes: { web: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], ports: ["web"] } },
+        profiles: { default: { processes: ["web"], proxy: true, tunnel } }, hostnames: { web: { target: "web" } } }));
+      await write({ binding: "share", routes: ["web"] });
+      const run = async (...args: string[]) => {
+        let output = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+        return { code, result: JSON.parse(output) as Record<string, any> };
+      };
+      const invalid = { code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } };
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--api-key-env", "NGROK_API_KEY", "--credentials-file", "x", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--domain", "ngrok.example.test", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "other", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--api-key-env", "NGROK_API_KEY", "--nonproduction"))
+        .toMatchObject({ code: 0, result: { binding: { name: "share", provider: "ngrok", domain: "ngrok.example.test", ngrok: { endpoints: "reserved" } } } });
+      expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--nonproduction"))
+        .toMatchObject({ code: 0, result: { binding: { name: "eph", domain: "eph.ngrok.devfn.internal", ngrok: { endpoints: "ephemeral" } } } });
+      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "share", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.ngrok\.example\.test$/) } });
+      // An ephemeral binding must be selected explicitly; its URLs are reported as assigned after start, never guessed.
+      await write({ binding: "eph", routes: ["web"] });
+      expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { message: expect.stringContaining("tunnel.ephemeral: true") } } });
+      await write({ binding: "eph", routes: ["web"], ephemeral: true });
+      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "eph", timing: "post-start", urls: {}, assignedAfterStart: ["web"] });
+      expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect((await run("tunnel", "status", "eph")).result.tunnel.capabilities).toMatchObject({ provider: "ngrok", urlTiming: "post-start", dns: "connector-only",
+        gaps: expect.arrayContaining([expect.stringContaining("cannot satisfy pre-start references")]) });
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(stateDir, { recursive: true, force: true });

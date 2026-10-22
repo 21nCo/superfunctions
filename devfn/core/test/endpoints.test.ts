@@ -1752,3 +1752,47 @@ describe("endpoint and template contract", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
+
+describe("public tunnel URL templates", () => {
+  const publicFixture = (): DevFnConfig => {
+    const config = fixture();
+    config.processes!.worker.env = { ...config.processes!.worker.env, CALLBACK: "{{env.DEVFN_PUBLIC_URL_WEB_APP}}/callback" };
+    config.processes!.worker.command = ["node", "worker.mjs", "--public={{env.DEVFN_PUBLIC_URL_WEB_APP}}"];
+    return config;
+  };
+  const resolve = (config: DevFnConfig, extra: Record<string, unknown>) => resolveEndpointTemplates({ config, plan: createPlan(config), ownerId: "owner", ports: { api: 4101, worker: 4102 }, ...extra });
+
+  it("generates deterministic public URLs before start for templates and outputs", () => {
+    const resolved = resolve(publicFixture(), { publicUrls: { "web-app": "https://web-app-w1-0123.ngrok.example.test" } });
+    expect(resolved.generated.DEVFN_PUBLIC_URL_WEB_APP).toBe("https://web-app-w1-0123.ngrok.example.test");
+    expect(resolved.nodes.worker.environment.CALLBACK).toBe("https://web-app-w1-0123.ngrok.example.test/callback");
+    expect(resolved.nodes.worker.command).toEqual(["node", "worker.mjs", "--public=https://web-app-w1-0123.ngrok.example.test"]);
+    // Without a selected tunnel the key does not exist, as in DevFn v0.1.
+    expect(() => resolve(publicFixture(), {})).toThrow("missing reference DEVFN_PUBLIC_URL_WEB_APP");
+  });
+
+  it("rejects every pre-start reference to a URL the provider assigns after start", () => {
+    const message = /DEVFN_PUBLIC_URL_WEB_APP is the public URL of ephemeral tunnel route web-app, which the provider assigns only after startup/;
+    const ephemeral = { postStartPublicRoutes: ["web-app"] };
+    expect(() => resolve(publicFixture(), ephemeral)).toThrow(message);
+    const sources: Array<[string, (config: DevFnConfig) => void]> = [
+      ["profiles.default.environment", (config) => { config.profiles.default.environment = { URL: "{{env.DEVFN_PUBLIC_URL_WEB_APP}}" }; }],
+      ["processes.api.env", (config) => { config.processes!.api.env = { URL: "{{env.DEVFN_PUBLIC_URL_WEB_APP}}" }; }],
+      ["processes.api.command", (config) => { config.processes!.api.command = ["node", "{{env.DEVFN_PUBLIC_URL_WEB_APP}}"]; }],
+      ["processes.api.health.command", (config) => { config.processes!.api.health = { type: "command", command: ["curl", "{{env.DEVFN_PUBLIC_URL_WEB_APP}}"] }; }],
+    ];
+    for (const [field, edit] of sources) {
+      const config = fixture();
+      edit(config);
+      expect(() => resolve(config, ephemeral)).toThrow(new RegExp(`^${field.replaceAll(".", "\\.")}: DEVFN_PUBLIC_URL_WEB_APP is the public URL`));
+    }
+    // A Compose file's interpolation reference is rejected like a manifest reference.
+    const compose = fixture();
+    compose.services = { db: { adapter: "compose", service: "db" } };
+    compose.profiles.default.services = ["db"];
+    expect(() => resolve(compose, { ...ephemeral, composeReferences: { db: new Set(["DEVFN_PUBLIC_URL_WEB_APP"]) }, composeNetworks: { db: ["fixture_default"] } }))
+      .toThrow(/services\.db\.compose: DEVFN_PUBLIC_URL_WEB_APP is the public URL/);
+    // A profile that does not reference it resolves, without a public URL key.
+    expect(resolve(fixture(), ephemeral).generated).not.toHaveProperty("DEVFN_PUBLIC_URL_WEB_APP");
+  });
+});
