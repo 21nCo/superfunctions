@@ -1,7 +1,4 @@
-/**
- * Trigger ContentFn dataset export. Returns artifact in envelope.
- */
-
+import { contentfnRequest, isRecord } from "../contentfn/response.js";
 export interface ContentfnExportArtifact {
   formatVersion: number;
   dataset: string;
@@ -13,41 +10,16 @@ export interface ContentfnExportArtifact {
   revisions: unknown[];
 }
 
-export interface ExportOpsConfig {
-  contentfnBaseUrl: string;
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "");
-}
-
-/**
- * Call ContentFn POST /contentfn/datasets/export with { dataset }.
- * Returns envelope with artifact or ContentFn error.
- */
-export async function contentfnExport(
-  config: ExportOpsConfig,
-  dataset: string
-): Promise<
-  | { ok: true; result: { artifact: ContentfnExportArtifact } }
-  | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
-> {
-  const base = normalizeBaseUrl(config.contentfnBaseUrl);
-  const res = await fetch(`${base}/contentfn/datasets/export`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataset }),
+export interface ExportOpsConfig { contentfnBaseUrl: string }
+export function contentfnExport(config: ExportOpsConfig, dataset: string) {
+  return contentfnRequest(config.contentfnBaseUrl, "/contentfn/datasets/export", { dataset }, value => {
+    if (!isRecord(value) || !isRecord(value.artifact)) return null;
+    const a = value.artifact;
+    if (a.formatVersion !== 1 || a.dataset !== dataset || typeof a.exportedAt !== "string" ||
+      !("schema" in a) || !Array.isArray(a.publishedDocs) || !Array.isArray(a.draftDocs) ||
+      !Array.isArray(a.assets) || !Array.isArray(a.revisions)) return null;
+    const artifact: ContentfnExportArtifact = { formatVersion: a.formatVersion, dataset, exportedAt: a.exportedAt,
+      schema: a.schema, publishedDocs: a.publishedDocs, draftDocs: a.draftDocs, assets: a.assets, revisions: a.revisions };
+    return { artifact };
   });
-  const data = await res.json();
-  if (!res.ok) {
-    return {
-      ok: false,
-      error: {
-        code: (data?.error?.code ?? "INTERNAL_ERROR") as string,
-        message: (data?.error?.message ?? "Request failed") as string,
-        details: (data?.error?.details ?? {}) as Record<string, unknown>,
-      },
-    };
-  }
-  return data as { ok: true; result: { artifact: ContentfnExportArtifact } };
 }

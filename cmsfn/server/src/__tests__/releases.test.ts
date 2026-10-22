@@ -1,3 +1,4 @@
+import { readResponse, field, array } from "./responseHelpers.js";
 /**
  * PHASE_10: Releases — TV-REL-CREATE-001, TV-REL-ADD-001, TV-REL-PUBLISH-001, TV-REL-PUBLISH-002.
  */
@@ -53,12 +54,12 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", name: "Launch", publishAt: null }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.result?.releaseId).toBeDefined();
-        expect(typeof data.result.releaseId).toBe("string");
-        expect(data.result.releaseId.length).toBeGreaterThan(0);
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result.releaseId")).toBeDefined();
+        expect(typeof field(data, "result.releaseId")).toBe("string");
+        expect(field(data, "result.releaseId.length")).toBeGreaterThan(0);
       } finally {
         close();
       }
@@ -75,18 +76,18 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", name: "Launch", publishAt: null }),
         });
-        const createData = await createRes.json();
-        expect(createData.ok).toBe(true);
-        const releaseId = createData.result.releaseId;
+        const createData = await readResponse(createRes);
+        expect(field(createData, "ok")).toBe(true);
+        const releaseId = field(createData, "result.releaseId");
 
         const addRes = await fetch(`http://127.0.0.1:${port}/cmsfn/releases/add`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", releaseId, docId: "post-1" }),
         });
-        const addData = await addRes.json();
+        const addData = await readResponse(addRes);
         expect(addRes.status).toBe(200);
-        expect(addData.ok).toBe(true);
+        expect(field(addData, "ok")).toBe(true);
       } finally {
         close();
       }
@@ -140,9 +141,9 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", name: "Launch", publishAt: null }),
         });
-        const createData = await createRes.json();
-        expect(createData.ok).toBe(true);
-        const releaseId = createData.result.releaseId;
+        const createData = await readResponse(createRes);
+        expect(field(createData, "ok")).toBe(true);
+        const releaseId = field(createData, "result.releaseId");
 
         await fetch(`http://127.0.0.1:${port}/cmsfn/releases/add`, {
           method: "POST",
@@ -155,13 +156,13 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", releaseId }),
         });
-        const pubData = await pubRes.json();
+        const pubData = await readResponse(pubRes);
         expect(pubRes.status).toBe(200);
-        expect(pubData.ok).toBe(true);
-        expect(pubData.result?.releaseId).toBe(releaseId);
-        expect(Array.isArray(pubData.result?.published)).toBe(true);
-        expect(pubData.result.published).toContain("post-1");
-        expect(Array.isArray(pubData.result?.failures)).toBe(true);
+        expect(field(pubData, "ok")).toBe(true);
+        expect(field(pubData, "result.releaseId")).toBe(releaseId);
+        expect(Array.isArray(field(pubData, "result.published"))).toBe(true);
+        expect(field(pubData, "result.published")).toContain("post-1");
+        expect(Array.isArray(field(pubData, "result.failures"))).toBe(true);
       } finally {
         close();
       }
@@ -201,9 +202,9 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", name: "Launch", publishAt: null }),
         });
-        const createData = await createRes.json();
-        expect(createData.ok).toBe(true);
-        const releaseId = createData.result.releaseId;
+        const createData = await readResponse(createRes);
+        expect(field(createData, "ok")).toBe(true);
+        const releaseId = field(createData, "result.releaseId");
 
         await fetch(`http://127.0.0.1:${port}/cmsfn/releases/add`, {
           method: "POST",
@@ -216,15 +217,15 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", releaseId }),
         });
-        const pubData = await pubRes.json();
+        const pubData = await readResponse(pubRes);
         expect(pubRes.status).toBe(200);
-        expect(pubData.ok).toBe(true);
-        expect(pubData.result?.releaseId).toBe(releaseId);
-        expect(Array.isArray(pubData.result?.failures)).toBe(true);
-        expect(pubData.result.failures.length).toBeGreaterThanOrEqual(1);
-        const failure = pubData.result.failures.find((f: { docId: string }) => f.docId === "post-1");
+        expect(field(pubData, "ok")).toBe(true);
+        expect(field(pubData, "result.releaseId")).toBe(releaseId);
+        expect(Array.isArray(field(pubData, "result.failures"))).toBe(true);
+        expect(field(pubData, "result.failures.length")).toBeGreaterThanOrEqual(1);
+        const failure = array(field(pubData, "result.failures")).find(f => field(f, "docId") === "post-1");
         expect(failure).toBeDefined();
-        expect(failure?.code).toBe("PERMISSION_DENIED");
+        expect(field(failure, "code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }
@@ -242,27 +243,27 @@ describe("PHASE_10: Releases", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", name: "Big", publishAt: null }),
         });
-        const createData = await createRes.json();
-        expect(createData.ok).toBe(true);
-        const releaseId = createData.result.releaseId;
+        const createData = await readResponse(createRes);
+        expect(field(createData, "ok")).toBe(true);
+        const releaseId = field(createData, "result.releaseId");
         for (let i = 0; i < MAX_DOCS_PER_RELEASE; i++) {
           const addRes = await fetch(`http://127.0.0.1:${port}/cmsfn/releases/add`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ dataset: "prod", releaseId, docId: `doc-${i}` }),
           });
-          const addData = await addRes.json();
-          expect(addData.ok).toBe(true);
+          const addData = await readResponse(addRes);
+          expect(field(addData, "ok")).toBe(true);
         }
         const overRes = await fetch(`http://127.0.0.1:${port}/cmsfn/releases/add`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", releaseId, docId: "doc-501" }),
         });
-        const overData = await overRes.json();
+        const overData = await readResponse(overRes);
         expect(overRes.status).toBe(200);
-        expect(overData.ok).toBe(false);
-        expect(overData.error?.code).toBe("VALIDATION_FAILED");
+        expect(field(overData, "ok")).toBe(false);
+        expect(field(overData, "error.code")).toBe("VALIDATION_FAILED");
       } finally {
         close();
       }

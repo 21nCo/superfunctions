@@ -1,3 +1,4 @@
+import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_11: Ops import/export — TV-OPS-EXPORT-001, TV-OPS-IMPORT-001, TV-OPS-IMPORT-002.
  */
@@ -80,12 +81,12 @@ describe("PHASE_11: Ops import/export", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.result?.artifact).toBeDefined();
-        expect(data.result.artifact.formatVersion).toBe(1);
-        expect(data.result.artifact.dataset).toBe("prod");
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result.artifact")).toBeDefined();
+        expect(field(data, "result.artifact.formatVersion")).toBe(1);
+        expect(field(data, "result.artifact.dataset")).toBe("prod");
       } finally {
         close();
       }
@@ -117,9 +118,9 @@ describe("PHASE_11: Ops import/export", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod2", artifact: validArtifact }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
+        expect(field(data, "ok")).toBe(true);
       } finally {
         close();
       }
@@ -154,10 +155,10 @@ describe("PHASE_11: Ops import/export", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod2", artifact: "not-an-object" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("VALIDATION_FAILED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("VALIDATION_FAILED");
       } finally {
         close();
       }
@@ -174,10 +175,10 @@ describe("PHASE_11: Ops import/export", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "other" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("VALIDATION_FAILED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("VALIDATION_FAILED");
       } finally {
         close();
       }

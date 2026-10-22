@@ -70,7 +70,7 @@ export async function fetchContentfnStatus(
   const parsed = parseContentfnStatusResponse(text);
   if (!parsed) return null;
 
-  const required = [...REQUIRED_CAPABILITIES];
+  const required: string[] = [...REQUIRED_CAPABILITIES];
   if (requireRealtime) required.push(REALTIME_CAPABILITY);
 
   for (const cap of required) {

@@ -1,67 +1,26 @@
-/**
- * Fetch ContentFn webhook delivery status.
- * Calls ContentFn POST /contentfn/audit/webhooks.
- */
-
 import type { CmsfnWebhookDeliveryStatus } from "cmsfn";
-
-export interface AuditWebhooksConfig {
-  contentfnBaseUrl: string;
+import { contentfnRequest, isRecord } from "../contentfn/response.js";
+export interface AuditWebhooksConfig { contentfnBaseUrl: string }
+function toDelivery(value: unknown): CmsfnWebhookDeliveryStatus | null {
+  if (!isRecord(value) || typeof value.webhookId !== "string" || typeof value.dataset !== "string" ||
+    typeof value.url !== "string" || typeof value.eventId !== "string" || typeof value.updatedAt !== "string" ||
+    typeof value.attempt !== "number" || !Number.isSafeInteger(value.attempt) || value.attempt < 0 ||
+    (value.status !== "pending" && value.status !== "delivered" && value.status !== "failed") ||
+    (value.lastError !== undefined && typeof value.lastError !== "string")) return null;
+  return { webhookId: value.webhookId, dataset: value.dataset, url: value.url, eventId: value.eventId,
+    updatedAt: value.updatedAt, attempt: value.attempt, status: value.status,
+    ...(value.lastError === undefined ? {} : { lastError: value.lastError }) };
 }
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function toDelivery(raw: Record<string, unknown>): CmsfnWebhookDeliveryStatus {
-  return {
-    webhookId: (raw.webhookId as string) ?? "",
-    dataset: (raw.dataset as string) ?? "",
-    url: (raw.url as string) ?? "",
-    eventId: (raw.eventId as string) ?? "",
-    attempt: typeof raw.attempt === "number" ? raw.attempt : 0,
-    status: (raw.status as "pending" | "delivered" | "failed") ?? "pending",
-    lastError: raw.lastError as string | undefined,
-    updatedAt: (raw.updatedAt as string) ?? "",
-  };
-}
-
-/**
- * Call ContentFn POST /contentfn/audit/webhooks with { dataset, limit?, cursor? }.
- */
-export async function contentfnAuditWebhooks(
-  config: AuditWebhooksConfig,
-  input: { dataset: string; limit?: number; cursor?: string | null }
-): Promise<
-  | { ok: true; result: { deliveries: CmsfnWebhookDeliveryStatus[]; nextCursor: string | null } }
-  | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
-> {
-  const base = normalizeBaseUrl(config.contentfnBaseUrl);
-  const body: Record<string, unknown> = { dataset: input.dataset };
-  if (input.limit != null) body.limit = input.limit;
-  if (input.cursor != null) body.cursor = input.cursor;
-  const res = await fetch(`${base}/contentfn/audit/webhooks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+export function contentfnAuditWebhooks(config: AuditWebhooksConfig, input: { dataset: string; limit?: number; cursor?: string | null }) {
+  return contentfnRequest(config.contentfnBaseUrl, "/contentfn/audit/webhooks", { ...input }, value => {
+    if (!isRecord(value) || !Array.isArray(value.deliveries) ||
+      (value.nextCursor !== null && typeof value.nextCursor !== "string")) return null;
+    const deliveries: CmsfnWebhookDeliveryStatus[] = [];
+    for (const raw of value.deliveries) {
+      const delivery = toDelivery(raw);
+      if (!delivery || delivery.dataset !== input.dataset) return null;
+      deliveries.push(delivery);
+    }
+    return { deliveries, nextCursor: value.nextCursor };
   });
-  const data = await res.json();
-  if (!res.ok) {
-    return {
-      ok: false,
-      error: {
-        code: (data?.error?.code ?? "INTERNAL_ERROR") as string,
-        message: (data?.error?.message ?? "Request failed") as string,
-        details: (data?.error?.details ?? {}) as Record<string, unknown>,
-      },
-    };
-  }
-  const deliveries = Array.isArray(data?.result?.deliveries)
-    ? (data.result.deliveries as Record<string, unknown>[]).map(toDelivery)
-    : [];
-  const nextCursor =
-    data?.result?.nextCursor !== undefined && data?.result?.nextCursor !== null
-      ? String(data.result.nextCursor)
-      : null;
-  return { ok: true, result: { deliveries, nextCursor } };
 }

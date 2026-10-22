@@ -1,3 +1,4 @@
+import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_12: Audit — TV-AUDIT-EVENTS-001, TV-AUDIT-WEBHOOKS-001, TV-AUDIT-DENY-001.
  */
@@ -64,7 +65,7 @@ describe("PHASE_12: Audit", () => {
               { status: 200, headers: { "Content-Type": "application/json" } }
             );
           }
-          return realFetch(input as RequestInfo | URL, init);
+          return realFetch(input, init);
         })
       );
 
@@ -76,14 +77,14 @@ describe("PHASE_12: Audit", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", limit: 10 }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(Array.isArray(data.result?.events)).toBe(true);
-        expect(data.result.events.length).toBe(1);
-        expect(data.result.events[0].eventId).toBe("evt-1");
-        expect(data.result.events[0].type).toBe("doc.published");
-        expect(data.result.events[0].document).toEqual({ _id: "post-1", _type: "post", _rev: "r2" });
+        expect(field(data, "ok")).toBe(true);
+        expect(Array.isArray(field(data, "result.events"))).toBe(true);
+        expect(field(data, "result.events.length")).toBe(1);
+        expect(field(data, "result.events.0.eventId")).toBe("evt-1");
+        expect(field(data, "result.events.0.type")).toBe("doc.published");
+        expect(field(data, "result.events.0.document")).toEqual({ _id: "post-1", _type: "post", _rev: "r2" });
       } finally {
         close();
       }
@@ -119,7 +120,7 @@ describe("PHASE_12: Audit", () => {
               { status: 200, headers: { "Content-Type": "application/json" } }
             );
           }
-          return realFetch(input as RequestInfo | URL, init);
+          return realFetch(input, init);
         })
       );
 
@@ -131,15 +132,15 @@ describe("PHASE_12: Audit", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", limit: 10 }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(Array.isArray(data.result?.deliveries)).toBe(true);
-        expect(data.result.deliveries.length).toBe(1);
-        expect(data.result.deliveries[0].webhookId).toBe("wh-1");
-        expect(data.result.deliveries[0].status).toBe("delivered");
-        expect(data.result.deliveries[0].attempt).toBe(1);
-        expect(data.result.deliveries[0].updatedAt).toBeDefined();
+        expect(field(data, "ok")).toBe(true);
+        expect(Array.isArray(field(data, "result.deliveries"))).toBe(true);
+        expect(field(data, "result.deliveries.length")).toBe(1);
+        expect(field(data, "result.deliveries.0.webhookId")).toBe("wh-1");
+        expect(field(data, "result.deliveries.0.status")).toBe("delivered");
+        expect(field(data, "result.deliveries.0.attempt")).toBe(1);
+        expect(field(data, "result.deliveries.0.updatedAt")).toBeDefined();
       } finally {
         close();
       }
@@ -162,10 +163,10 @@ describe("PHASE_12: Audit", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }

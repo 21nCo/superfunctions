@@ -1,3 +1,4 @@
+import { readResponse, field, array } from "./responseHelpers.js";
 /**
  * PHASE_02 role tests: TV-ROLE-UPSERT-001, TV-ROLE-LIST-001, TV-ROLE-DENY-001, TV-ENV-ERR-001.
  */
@@ -96,11 +97,11 @@ describe("PHASE_02: Roles CRUD + enforcement", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ role }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.result).toBeDefined();
-        expect(data.result.role).toEqual(role);
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result")).toBeDefined();
+        expect(field(data, "result.role")).toEqual(role);
       } finally {
         close();
       }
@@ -139,12 +140,12 @@ describe("PHASE_02: Roles CRUD + enforcement", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(Array.isArray(data.result.roles)).toBe(true);
+        expect(field(data, "ok")).toBe(true);
+        expect(Array.isArray(field(data, "result.roles"))).toBe(true);
         // Deterministic order by id (asc)
-        const ids = data.result.roles.map((r: CmsfnRole) => r.id);
+        const ids = array(field(data, "result.roles")).map(r => field(r, "id"));
         expect(ids).toEqual(["a-role", "b-role"]);
       } finally {
         close();
@@ -178,10 +179,10 @@ describe("PHASE_02: Roles CRUD + enforcement", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", id: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }
@@ -205,12 +206,12 @@ describe("PHASE_02: Roles CRUD + enforcement", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ roleId: "" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("VALIDATION_FAILED");
-        expect(data.error?.message).toBe("Invalid roleId");
-        expect(data.error?.details?.path).toBe("roleId");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("VALIDATION_FAILED");
+        expect(field(data, "error.message")).toBe("Invalid roleId");
+        expect(field(data, "error.details.path")).toBe("roleId");
       } finally {
         close();
       }

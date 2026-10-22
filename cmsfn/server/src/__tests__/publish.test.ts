@@ -1,3 +1,4 @@
+import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_06: Publish/unpublish gating — TV-WF-PUBLISH-GATE-001, workflow gate, unpublish.
  */
@@ -92,11 +93,11 @@ describe("PHASE_06: Publish/unpublish gating", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", id: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
-        expect(data.error?.details?.state).toBe("draft");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
+        expect(field(data, "error.details.state")).toBe("draft");
       } finally {
         close();
       }
@@ -124,10 +125,10 @@ describe("PHASE_06: Publish/unpublish gating", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", id: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }
@@ -155,10 +156,10 @@ describe("PHASE_06: Publish/unpublish gating", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", id: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }

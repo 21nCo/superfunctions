@@ -1,3 +1,4 @@
+import { readResponse, field, text } from "./responseHelpers.js";
 /**
  * PHASE_01 status tests: TV-STATUS-001, TV-STATUS-002, TV-STATUS-CONTENTFN-DOWN-001, TV-ENV-OK-001.
  */
@@ -83,15 +84,15 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.result).toBeDefined();
-        expect(typeof data.result.serverTime).toBe("string");
-        expect(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(data.result.serverTime)).toBe(true);
-        expect(Array.isArray(data.result.capabilities)).toBe(true);
-        expect(data.result.capabilities.length).toBeGreaterThan(0);
-        expect(Array.isArray(data.result.datasets)).toBe(true);
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result")).toBeDefined();
+        expect(typeof field(data, "result.serverTime")).toBe("string");
+        expect(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(text(field(data, "result.serverTime")))).toBe(true);
+        expect(Array.isArray(field(data, "result.capabilities"))).toBe(true);
+        expect(field(data, "result.capabilities.length")).toBeGreaterThan(0);
+        expect(Array.isArray(field(data, "result.datasets"))).toBe(true);
       } finally {
         close();
       }
@@ -114,9 +115,9 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
-        expect(data.ok).toBe(true);
-        expect(data.result.datasets).toEqual(["alpha", "beta", "gamma"]);
+        const data = await readResponse(res);
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result.datasets")).toEqual(["alpha", "beta", "gamma"]);
       } finally {
         close();
       }
@@ -138,10 +139,10 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code === "PERMISSION_DENIED" || data.error?.code === "AUTH_REQUIRED").toBe(true);
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code") === "PERMISSION_DENIED" || field(data, "error.code") === "AUTH_REQUIRED").toBe(true);
         expect(contentfnFetched).toBe(false);
       } finally {
         close();
@@ -159,10 +160,10 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("CONTENTFN_UNAVAILABLE");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("CONTENTFN_UNAVAILABLE");
       } finally {
         close();
       }
@@ -175,9 +176,9 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("CONTENTFN_UNAVAILABLE");
+        const data = await readResponse(res);
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("CONTENTFN_UNAVAILABLE");
       } finally {
         close();
       }
@@ -202,9 +203,9 @@ describe("PHASE_01: Status + ContentFn health", () => {
       const { port, close } = await listen(server);
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
-        const data = await res.json();
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("CONTENTFN_UNAVAILABLE");
+        const data = await readResponse(res);
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("CONTENTFN_UNAVAILABLE");
       } finally {
         close();
       }

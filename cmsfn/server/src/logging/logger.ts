@@ -25,7 +25,7 @@ export type LogSink = (level: string, message: string, meta: Record<string, unkn
 /** Never log these keys; omit entirely. */
 const SENSITIVE_KEYS = new Set(["body", "token", "password", "secret", "authorization"]);
 
-function safeMeta<T extends Record<string, unknown>>(input: T): Record<string, unknown> {
+function safeMeta(input: object): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
     if (v !== undefined && !SENSITIVE_KEYS.has(k)) out[k] = v;
@@ -57,12 +57,12 @@ export function createLogger(config: CmsfnLoggerConfig = {}): {
 
   return {
     logMutation(input: LogMutationInput) {
-      const meta = safeMeta(input as Record<string, unknown>);
+      const meta = safeMeta(input);
       sink("info", "mutation", meta);
     },
 
     logAuth(input: LogAuthInput) {
-      const meta = safeMeta(input as Record<string, unknown>);
+      const meta = safeMeta(input);
       sink("info", "auth", meta);
     },
   };

@@ -1,3 +1,4 @@
+import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_07: Preview token — TV-PREVIEW-TOKEN-001, TV-PREVIEW-DISABLED-001.
  */
@@ -51,17 +52,17 @@ describe("PHASE_07: Preview token", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", docId: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.result).toBeDefined();
-        expect(typeof data.result.token).toBe("string");
-        expect(data.result.token.length).toBeGreaterThan(0);
-        expect(typeof data.result.expiresAt).toBe("string");
-        expect(data.result.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-        expect(data.result.dataset).toBe("prod");
-        expect(Array.isArray(data.result.docIds)).toBe(true);
-        expect(data.result.docIds).toEqual(["post-1"]);
+        expect(field(data, "ok")).toBe(true);
+        expect(field(data, "result")).toBeDefined();
+        expect(typeof field(data, "result.token")).toBe("string");
+        expect(field(data, "result.token.length")).toBeGreaterThan(0);
+        expect(typeof field(data, "result.expiresAt")).toBe("string");
+        expect(field(data, "result.expiresAt")).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+        expect(field(data, "result.dataset")).toBe("prod");
+        expect(Array.isArray(field(data, "result.docIds"))).toBe(true);
+        expect(field(data, "result.docIds")).toEqual(["post-1"]);
       } finally {
         close();
       }
@@ -82,10 +83,10 @@ describe("PHASE_07: Preview token", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", docId: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PREVIEW_NOT_CONFIGURED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PREVIEW_NOT_CONFIGURED");
       } finally {
         close();
       }
@@ -105,10 +106,10 @@ describe("PHASE_07: Preview token", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", docId: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PREVIEW_NOT_CONFIGURED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PREVIEW_NOT_CONFIGURED");
       } finally {
         close();
       }
@@ -136,10 +137,10 @@ describe("PHASE_07: Preview token", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataset: "prod", docId: "post-1" }),
         });
-        const data = await res.json();
+        const data = await readResponse(res);
         expect(res.status).toBe(200);
-        expect(data.ok).toBe(false);
-        expect(data.error?.code).toBe("PERMISSION_DENIED");
+        expect(field(data, "ok")).toBe(false);
+        expect(field(data, "error.code")).toBe("PERMISSION_DENIED");
       } finally {
         close();
       }
