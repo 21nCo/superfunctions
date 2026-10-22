@@ -20,11 +20,15 @@ This category is especially relevant to external library authors. If you publish
 | [`cli`](/docs/tooling/cli) | Command-line config, validation, and migration-generation workflows | You need to initialize config or manage schema generation from the terminal |
 | [`docs-theme`](/docs/tooling/docs-theme) | Shared React and Fumadocs layout primitives | You are building a docs app and want a reusable root layout plus base config helpers |
 
+| [`admin`](/docs/tooling/admin) | Capability manifests, scoped dispatch and operator clients | You need function-owned administration with explicit enablement and mutation controls |
+
 ## How To Choose
 
 Choose `cli` when your job is operational: initialize a config file, validate it, discover compatible library setup, or generate migrations and schema artifacts. Choose `docs-theme` when your job is presentation: set up a docs site shell, define a consistent nav title and GitHub link, and share layout pieces across several documentation apps.
 
 It is common to use only one of these packages. Application teams touching database-backed libraries usually care about `cli` and never need `docs-theme`. Docs platform teams may use `docs-theme` without ever running the CLI. Reach for both only if your organization owns both package operations and the docs surface around those packages.
+
+Choose `admin` when you need a function-owned operator contract with explicit module enablement, scoped dispatch, audit and mutation safety. It supports administration surfaces independently of the CLI and documentation theme.
 
 ## Common Compositions
 

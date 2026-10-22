@@ -6,6 +6,17 @@ import { certifyExtension } from "@mdfn/testing";
 import { calloutExtension, commonmarkExtension, createDirectiveExtension } from "./index";
 
 describe("@mdfn/extensions", () => {
+  it.each(["\t", " \t", "\r"])("round-trips directive bodies containing closing fences followed by %j", (suffix) => {
+    const extensions = [commonmarkExtension, createDirectiveExtension({ name: "note" })];
+    const body = `Before\n:::${suffix}\nAfter`;
+    const originalSource = ":::note\nOriginal\n:::\n";
+    const parsed = parseMarkdown(originalSource, { extensions }).document;
+    const document = { ...parsed, content: parsed.content.map(node => ({ ...node, text: body, source: node.source ? { ...node.source, dirty: true } : undefined })) };
+    const serialized = serializeMarkdown({ document, originalSource, options: { extensions } }).markdown;
+    expect(serialized).toContain("::::note");
+    expect(parseMarkdown(serialized, { extensions }).document.content[0].text).toBe(body);
+  });
+
   it("runs one custom extension through parse, edit, serialize, render, diagnose, and migrate", () => {
     const note = createDirectiveExtension({ name: "note", label: "Note" });
     const extensions = [commonmarkExtension, note];

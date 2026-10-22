@@ -1,0 +1,108 @@
+---
+title: Observability
+description: Shared request observations, structured events, metrics and spans with injected destinations.
+---
+
+## What It Is
+
+`@superfunctions/observability` provides a common observation interface for
+Superfunctions libraries and applications. It groups request measurements,
+structured events and timed spans behind one configurable object. Applications
+choose the event and metric destinations and may supply a logger. The package
+coordinates these interfaces; it does not provision a monitoring backend or
+persist observations in a database by itself.
+
+## When To Use It
+
+Use this package when reusable modules should emit consistent measurements while
+remaining independent of the application's telemetry vendor. A storage adapter,
+HTTP handler and delivery integration can share service labels and request
+identity without importing each other's monitoring clients. It is also useful
+for local tests that collect measurements in memory and inspect the resulting
+request snapshot. Choose the actual collection, retention and export system at
+the application boundary.
+
+## Install
+
+```bash
+npm install @superfunctions/observability
+```
+
+The default Node request context uses AsyncLocalStorage. Non-Node environments
+have a synchronous fallback; applications needing context across asynchronous
+boundaries in those environments must inject a `requestContext` implementation.
+Do not assume browser and Node propagation behavior are interchangeable.
+
+## Quick Start
+
+Create an observation object with explicit service identity and a metric sink.
+This example records measurements in an application-owned array so the behavior
+can be inspected without making a network call or claiming durable retention.
+
+```ts
+import { createObservability } from "@superfunctions/observability";
+import type { ObservationMetric } from "@superfunctions/observability";
+
+const recorded: ObservationMetric[] = [];
+const observations = createObservability({
+  service: "orders", component: "checkout",
+  metrics: metric => { recorded.push(metric); },
+});
+observations.record({
+  kind: "database", operation: "orders.find", durationMs: 12, ok: true,
+});
+```
+
+## Core Concepts
+
+A metric describes a kind and operation, with optional duration, success flag,
+component, resource and labels. An event uses a domain and type plus optional
+severity, identities, outcome and metadata. A span measures an operation until
+its `end` method is called. These are contracts for application observations,
+not an automatic tracing system that instruments every library call.
+
+`startRequest` creates a request observation. `runWithRequest` makes that
+observation current while the supplied work executes, using the configured
+context implementation. Request snapshots include identity, status, total
+duration, grouped measurements and the recorded metrics. Child observation
+objects let a subsystem add scope information while sharing the configured
+channels. `normalizeObservability` accepts existing observation objects, logger
+inputs, configuration objects or disabled values at a library boundary.
+
+## Real-World Example
+
+A request wrapper can explicitly bind a unit of work to request context and
+produce a final snapshot. The application decides where that snapshot belongs,
+such as a structured completion event or a local diagnostic result.
+
+```ts
+import { createObservability } from "@superfunctions/observability";
+
+const telemetry = createObservability({ service: "orders" });
+export async function measureRequest(work: () => Promise<void>) {
+  const request = telemetry.startRequest({ method: "POST", path: "/orders" });
+  await telemetry.runWithRequest(request, async () => {
+    const span = telemetry.span({ kind: "application", operation: "orders.create" });
+    try { await work(); span.end({ ok: true }); }
+    catch (error) { span.end({ ok: false }); throw error; }
+  });
+  return request.finish({ status: 201 });
+}
+```
+
+## Related Packages
+
+[Metrics](/docs/middleware-runtime/metrics) provides additional shared metric
+primitives. [HTTP](/docs/http/http) supplies request and route contracts.
+[Delivery](/docs/middleware-runtime/delivery) describes messaging provider
+boundaries that can emit observations through an application-owned channel.
+
+## Troubleshooting
+
+If measurements are missing from your backend, confirm that channels are actually
+configured and inspect their transport separately. A local snapshot does not
+prove successful export. If request identity disappears after an await in a
+non-Node runtime, supply an asynchronous context implementation instead of relying
+on the synchronous fallback. Keep label cardinality controlled and redact event
+metadata at the application boundary; the observation contract does not make
+arbitrary business data safe to export.
