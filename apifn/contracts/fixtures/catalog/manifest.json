@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "api": { "id": "example.projects", "version": "2026-10-01" },
+  "serialization": { "mediaTypes": ["application/json", "application/problem+json", "text/plain"] },
+  "provenance": { "source": "apifn/contracts/fixtures/catalog/openapi.json", "exporter": "hand-authored" },
+  "operations": [
+    { "id": "projects.list", "operationId": "listProjects", "agent": { "expose": true }, "executionPolicy": "policy.read-only" },
+    { "id": "projects.create", "operationId": "createProject", "name": "createProject", "agent": { "expose": true }, "executionPolicy": "policy.requires-idempotency-key" },
+    { "id": "projects.get", "method": "get", "path": "/workspaces/{workspaceId}/projects/{projectId}", "name": "getProject" },
+    { "id": "projects.delete", "operationId": "removeProject", "name": "deleteProject", "deprecation": { "replacement": "projects.archive", "since": "2026-09-01", "message": "Archive projects instead of deleting them." } },
+    { "id": "projects.archive", "operationId": "archiveProject", "sdk": { "excludeTargets": ["python"] } },
+    { "id": "system.health", "operationId": "getHealth", "sdk": { "include": false } }
+  ]
+}

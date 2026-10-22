@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "apifn.client-failure/v1",
+  "eventId": "evt_01HZX3KA00B1",
+  "occurredAt": "2026-10-11T09:31:00Z",
+  "api": {
+    "id": "example.projects",
+    "version": "2026-10-01"
+  },
+  "operation": {
+    "id": "projects.list"
+  },
+  "release": {
+    "releaseId": "rel_2c4f0d8e1a9b7c3d5e6f7a8b"
+  },
+  "failure": {
+    "kind": "network"
+  }
+}

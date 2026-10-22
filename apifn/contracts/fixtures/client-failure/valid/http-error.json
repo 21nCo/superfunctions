@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "apifn.client-failure/v1",
+  "eventId": "evt_01HZX3K9Q2M4",
+  "occurredAt": "2026-10-11T09:30:12.345Z",
+  "api": {
+    "id": "example.projects",
+    "version": "2026-10-01"
+  },
+  "operation": {
+    "id": "projects.get",
+    "name": "getProject",
+    "method": "get",
+    "pathTemplate": "/workspaces/{workspaceId}/projects/{projectId}"
+  },
+  "release": {
+    "releaseId": "rel_2c4f0d8e1a9b7c3d5e6f7a8b",
+    "catalogDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "sdk": {
+      "target": "typescript",
+      "package": "@example/projects-sdk",
+      "version": "2026.10.1"
+    }
+  },
+  "failure": {
+    "kind": "http",
+    "httpStatus": 503,
+    "errorCode": "service_unavailable",
+    "message": "Upstream returned 503 after 3 attempts",
+    "retryable": true,
+    "attempt": 3
+  },
+  "runtime": {
+    "name": "node",
+    "version": "22.11.0"
+  },
+  "correlation": {
+    "requestId": "req_7f3a9c",
+    "traceId": "4bf92f3577b34da6a3ce929d0e0e4736"
+  },
+  "attributes": {
+    "region": "eu-west-1",
+    "elapsed_ms": 1840,
+    "offline": false
+  }
+}

@@ -92,6 +92,21 @@ paths:
     await expect(validateOpenAPI(parsed)).resolves.toEqual([]);
   });
 
+  it("keeps own __proto__ keys as data when upconverting 3.0.x", () => {
+    const text = (version: string) =>
+      `{"openapi":"${version}","info":{"title":"Old API","version":"1.0.0"},"paths":{"/items":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object","properties":{"__proto__":{"type":"string"}},"default":{"__proto__":"x","a":1}}}}}}}}}}`;
+    const read = (version: string) => {
+      const parsed = parseOpenAPI(text(version));
+      return parsed.paths["/items"]?.get?.responses?.["200"]?.content?.["application/json"]?.schema as Record<string, Record<string, unknown>>;
+    };
+
+    const upconverted = read("3.0.3");
+    expect(Object.getPrototypeOf(upconverted.properties)).toBe(Object.prototype);
+    expect(Object.keys(upconverted.properties)).toEqual(["__proto__"]);
+    expect(Object.keys(upconverted.default)).toEqual(["__proto__", "a"]);
+    expect(JSON.stringify(upconverted)).toBe(JSON.stringify(read("3.1.0")));
+  });
+
   it("does not invent a null-only type for nullable schemas without explicit type", () => {
     const input = {
       openapi: "3.0.3",
