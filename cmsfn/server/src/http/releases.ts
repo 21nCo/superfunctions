@@ -4,8 +4,9 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "cmsfn";
-import { createRelease, listReleases, addDocToRelease, getRelease } from "../storage/releases.js";
+import { err, type CmsfnEnvelope } from "cmsfn";
+import { readJsonObject } from "./jsonBody.js";
+import { createRelease, listReleases, addDocToRelease } from "../storage/releases.js";
 import type { ReleasesStorageConfig } from "../storage/releases.js";
 import { publishRelease } from "../releases/publishRelease.js";
 import { authorize } from "../auth/authorize.js";
@@ -14,38 +15,39 @@ import type { AuthorizeConfig } from "../auth/authorize.js";
 export interface ReleasesHandlerConfig extends AuthorizeConfig {
   releasesStorage: ReleasesStorageConfig;
   contentfnBaseUrl: string;
+  /** Server-configured dataset names; role grants cannot enable another dataset. */
+  allowedDatasets?: readonly string[];
   /** Optional: if provided and returns false, respond PERMISSION_DENIED for create/list/add/publish. */
   authorizeReleases?: (req: IncomingMessage) => Promise<boolean>;
 }
 
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
+export const RELEASE_BODY_MAX_BYTES = 64 * 1024;
 
-async function requireReleaseManage(
+async function readAuthorizedBody(
   config: ReleasesHandlerConfig,
-  req: IncomingMessage,
-  dataset: string
-): Promise<CmsfnEnvelope<never> | null> {
-  if (config.authorizeReleases) {
-    const allowed = await config.authorizeReleases(req);
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
+  req: IncomingMessage
+): Promise<CmsfnEnvelope<Record<string, unknown>>> {
+  // Missing identity configuration and an explicit outer veto need no body read.
+  try {
+    if (!config.getRolesForSubject || (config.authorizeReleases && await config.authorizeReleases(req) !== true)) {
+      return err("PERMISSION_DENIED", "Permission denied");
+    }
+  } catch {
+    return err("PERMISSION_DENIED", "Permission denied");
   }
-  if (config.getRolesForSubject && dataset) {
-    const allowed = await authorize(config, req, { dataset, type: "*", action: "release.manage" });
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
+  const parsed = await readJsonObject(req, RELEASE_BODY_MAX_BYTES);
+  if (!parsed.ok) return parsed;
+  const dataset = typeof parsed.result.dataset === "string" ? parsed.result.dataset.trim() : "";
+  if (!dataset) return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
+  try {
+    if ((config.allowedDatasets && !config.allowedDatasets.includes(dataset)) ||
+      !await authorize(config, req, { dataset, type: "*", action: "release.manage" })) {
+      return err("PERMISSION_DENIED", "Permission denied");
+    }
+  } catch {
+    return err("PERMISSION_DENIED", "Permission denied");
   }
-  return null;
+  return parsed;
 }
 
 /**
@@ -55,7 +57,9 @@ export async function handleReleasesCreate(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<{ releaseId: string }>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   const publishAt = body?.publishAt;
@@ -65,8 +69,6 @@ export async function handleReleasesCreate(
   if (!name) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "name is required", details: { path: "name" } } };
   }
-  const deny = await requireReleaseManage(config, req, dataset);
-  if (deny) return deny;
   return createRelease(config.releasesStorage, {
     dataset,
     name,
@@ -81,13 +83,13 @@ export async function handleReleasesList(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<{ releases: import("cmsfn").CmsfnRelease[] }>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   if (!dataset) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
   }
-  const deny = await requireReleaseManage(config, req, dataset);
-  if (deny) return deny;
   return listReleases(config.releasesStorage, { dataset });
 }
 
@@ -98,7 +100,9 @@ export async function handleReleasesAdd(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<Record<string, never>>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const releaseId = typeof body?.releaseId === "string" ? body.releaseId.trim() : "";
   const docId = typeof body?.docId === "string" ? body.docId.trim() : "";
@@ -111,8 +115,6 @@ export async function handleReleasesAdd(
   if (!docId) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "docId is required", details: { path: "docId" } } };
   }
-  const deny = await requireReleaseManage(config, req, dataset);
-  if (deny) return deny;
   return addDocToRelease(config.releasesStorage, { dataset, releaseId, docId });
 }
 
@@ -123,7 +125,9 @@ export async function handleReleasesPublish(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<import("cmsfn").CmsfnReleasePublishResult>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const releaseId = typeof body?.releaseId === "string" ? body.releaseId.trim() : "";
   if (!dataset) {
@@ -132,11 +136,11 @@ export async function handleReleasesPublish(
   if (!releaseId) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "releaseId is required", details: { path: "releaseId" } } };
   }
-  const deny = await requireReleaseManage(config, req, dataset);
-  if (deny) return deny;
   return publishRelease(
     {
-      getRolesForSubject: config.getRolesForSubject,
+      getRolesForSubject: async (request) => {
+        try { return await config.getRolesForSubject!(request); } catch { return []; }
+      },
       contentfnBaseUrl: config.contentfnBaseUrl,
       releasesStorage: config.releasesStorage,
     },

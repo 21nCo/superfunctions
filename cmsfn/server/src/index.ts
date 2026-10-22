@@ -123,6 +123,7 @@ async function route(
       const envelope = await handleReleasesCreate(
         {
           releasesStorage: { db: config.db },
+          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
           getRolesForSubject: config.getRolesForSubject,
         },
@@ -135,6 +136,7 @@ async function route(
       const envelope = await handleReleasesList(
         {
           releasesStorage: { db: config.db },
+          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
           getRolesForSubject: config.getRolesForSubject,
         },
@@ -147,6 +149,7 @@ async function route(
       const envelope = await handleReleasesAdd(
         {
           releasesStorage: { db: config.db },
+          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
           getRolesForSubject: config.getRolesForSubject,
         },
@@ -159,6 +162,7 @@ async function route(
       const envelope = await handleReleasesPublish(
         {
           releasesStorage: { db: config.db },
+          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
           getRolesForSubject: config.getRolesForSubject,
         },

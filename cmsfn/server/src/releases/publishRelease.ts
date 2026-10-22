@@ -6,7 +6,7 @@
 import type { IncomingMessage } from "http";
 import { ok } from "cmsfn";
 import { CMS_RESERVED_FIELD } from "cmsfn";
-import type { CmsfnWorkflowMetadata } from "cmsfn";
+import type { CmsfnWorkflowMetadata, CmsfnReleasePublishResult, CmsfnEnvelope } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { canPublish } from "../publish/gates.js";
@@ -33,7 +33,7 @@ export async function publishRelease(
   config: PublishReleaseConfig,
   req: IncomingMessage,
   input: { dataset: string; releaseId: string }
-): Promise<{ ok: true; result: CmsfnReleasePublishResult } | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }> {
+): Promise<CmsfnEnvelope<CmsfnReleasePublishResult>> {
   const dataset = typeof input.dataset === "string" ? input.dataset.trim() : "";
   const releaseId = typeof input.releaseId === "string" ? input.releaseId.trim() : "";
   if (!dataset) return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
