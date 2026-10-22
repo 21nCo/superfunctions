@@ -210,11 +210,17 @@ describe("name collisions", () => {
     expect(compile(dir)).toEqual([]);
   });
 
-  it("names an operation that would shadow the client constructor", () => {
-    const catalog = fixtureCatalog();
-    catalog.operations.find((operation: any) => operation.id === "tasks.get").name = "constructor";
-    expect(codes(generate(catalog).diagnostics)).toContain("SDK_NAME_COLLISION");
-  });
+  // The constructor, Promise resolution (then), JSON serialization (toJSON) and Object.prototype members.
+  for (const name of ["constructor", "then", "toJSON", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "toLocaleString"]) {
+    it(`names an operation called ${name}, which JavaScript calls implicitly on the client`, () => {
+      const catalog = fixtureCatalog();
+      const index = catalog.operations.findIndex((operation: any) => operation.id === "system.health");
+      catalog.operations[index].name = name;
+      const collisions = generate(catalog).diagnostics.filter((diagnostic) => diagnostic.code === "SDK_NAME_COLLISION");
+      expect(collisions).toEqual([expect.objectContaining({ severity: "error", operation: "system.health", pointer: `/operations/${index}/name` })]);
+      expect(collisions[0].message).toContain(`"${name}"`);
+    });
+  }
 });
 
 describe("input validation", () => {
@@ -427,6 +433,10 @@ export async function use(): Promise<string> {
       return fields?.title ?? "";
     }
   }
+  // A required parameter an API key credential supplies is optional input; others stay required.
+  await client.findTasks({ projectId: "p" });
+  // @ts-expect-error projectId is required
+  await client.findTasks({ key: "k" });
   const summary: ProjectSummary = await client.getProjectSummary({ projectId: "p" });
   // @ts-expect-error the documented 302 body is an error, never a result
   const moved: { location: string } = await client.getProjectSummary({ projectId: "p" });

@@ -110,7 +110,8 @@ describe("shared serialization vectors", () => {
 });
 
 describe("shared auth vectors", () => {
-  for (const vector of readJson("vectors/auth.json").cases) {
+  const vectors = readJson("vectors/auth.json");
+  for (const vector of vectors.cases) {
     it(vector.name, async () => {
       server.reset([okResponse(catalog, vector.operation)]);
       const outcome = await call(client({ credentials: vector.credentials }), vector);
@@ -118,6 +119,22 @@ describe("shared auth vectors", () => {
       expectRequest(vector, vector.expect);
     });
   }
+  for (const vector of vectors.rejected) {
+    it(`rejects ${vector.name} before sending`, async () => {
+      const outcome = await call(client({ credentials: vector.credentials }), vector);
+      expect(outcome.error).toBeInstanceOf(sdk.ApiError);
+      expect(outcome.error.kind).toBe(vector.kind);
+      expect(server.requests).toHaveLength(0);
+    });
+  }
+
+  it("resolves an awaited or async-returned client to itself and serializes it, sending nothing", async () => {
+    const target = client();
+    expect(await Promise.resolve(target)).toBe(target);
+    expect(await (async () => target)()).toBe(target);
+    expect(JSON.stringify(target)).toBe("{}");
+    expect(server.requests).toHaveLength(0);
+  });
 
   it("resolves credential functions per request", async () => {
     let calls = 0;

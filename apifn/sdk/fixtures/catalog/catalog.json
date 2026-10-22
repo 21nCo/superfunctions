@@ -904,6 +904,194 @@
       },
       "description": null,
       "executionPolicyRef": null,
+      "id": "tasks.filter",
+      "method": "get",
+      "name": "filterTasks",
+      "openapiOperationId": "filterTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "key",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "style": "deepObject"
+        }
+      ],
+      "path": "/projects/{projectId}/filter",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                },
+                "type": "array"
+              }
+            }
+          ],
+          "description": "Matching tasks",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyQuery",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Filter tasks; a deepObject parameter shares its name with the query API key",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "tasks.find",
+      "method": "get",
+      "name": "findTasks",
+      "openapiOperationId": "findTasks",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "key",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "x-api-key",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/find",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                },
+                "type": "array"
+              }
+            }
+          ],
+          "description": "Matching tasks",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyHeader",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "apiKeyQuery",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Find tasks; required parameters share names with the API key credentials",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
       "id": "tasks.get",
       "method": "get",
       "name": "getTask",
@@ -1256,6 +1444,19 @@
           "explode": true,
           "in": "query",
           "name": "q",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "style": "form"
+        },
+        {
+          "allowReserved": true,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "raw",
           "required": false,
           "schema": {
             "type": "string"
@@ -1703,12 +1904,12 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:31d3816e25af985175d8acf2e1e1e4deb7ac41e7255e68bd1e8ea41426746c7e",
+    "manifestDigest": "sha256:a11e77f77fe6dc27dccbd3fcb6ded850dfd20bb2aaefdf6a6477730cd3f7335e",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,
       "source": "apifn/sdk/fixtures/catalog/openapi.json"
     },
-    "specDigest": "sha256:04baa114ad4358167754d203d6fa72fa7a649ab8f4bf376401579e3973896fd0"
+    "specDigest": "sha256:d9104023ca480e71b1ccbb5b1b8b430137de2f9ef8a64ad2c74af36b87442fa3"
   }
 }

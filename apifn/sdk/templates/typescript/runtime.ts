@@ -261,6 +261,22 @@ function queryPairs(spec: ParameterSpec, value: unknown, where: string): string[
   return spec.explode ? values.map((v) => `${name}=${enc(v)}`) : [`${name}=${values.map(enc).join(",")}`];
 }
 
+/** The name of a query pair as a server decodes it (form encoding: "+" is a space). */
+function pairName(pair: string): string {
+  const raw = pair.split("=", 1)[0].replace(/\+/g, " ");
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** Whether an API key credential is sent under a parameter's name and location (header names ignore case). */
+function supplies(term: SecurityTerm, spec: ParameterSpec): boolean {
+  if (term.type !== "apiKey" || term.in !== spec.in) return false;
+  return term.in === "header" ? term.name.toLowerCase() === spec.name.toLowerCase() : term.name === spec.name;
+}
+
 function headerValue(value: string, where: string): string {
   // Header values are Latin-1 text without control characters (tabs allowed), as fetch's Headers requires.
   if (/[^\t\x20-\x7e\x80-\xff]/.test(value)) throw new InputError(`${where} must not contain control characters or characters outside Latin-1.`);
@@ -448,11 +464,14 @@ export class ApiRuntime<Credentials> {
     const headers = new Headers();
     const query: string[] = [];
     let path = op.path;
+    // A required parameter an API key credential can supply is checked once the credential is chosen.
+    const pending: ParameterSpec[] = [];
     for (const spec of op.parameters) {
       const value = own(values, spec.key);
       const where = `Parameter ${spec.key}`;
       if (value === undefined || value === null) {
-        if (spec.required) throw new InputError(`${where} is required.`);
+        if (spec.required && op.security.some((terms) => terms.some((term) => supplies(term, spec)))) pending.push(spec);
+        else if (spec.required) throw new InputError(`${where} is required.`);
         continue;
       }
       if (spec.in === "path") {
@@ -485,7 +504,10 @@ export class ApiRuntime<Credentials> {
       if (body !== undefined) headers.set("content-type", op.body.mediaType);
     }
     if (op.accept.length > 0) headers.set("accept", op.accept.join(", "));
-    await this.#authorize(op, headers, query, signal);
+    const applied = await this.#authorize(op, headers, query, signal);
+    for (const spec of pending) {
+      if (!applied.some((term) => supplies(term, spec))) throw new InputError(`Parameter ${spec.key} is required.`);
+    }
 
     const base = this.#base.href.replace(/\/+$/, "");
     const url = `${base}${path}${query.length > 0 ? `?${query.join("&")}` : ""}`;
@@ -513,12 +535,12 @@ export class ApiRuntime<Credentials> {
   /**
    * Applies the first credentialed security alternative whose credentials are all configured; an
    * anonymous alternative is used only when none is, so optional authentication still sends credentials.
-   * A credential replaces any parameter sent under the same header or query name.
+   * A credential replaces any parameter sent under the same header or query name. Returns the terms applied.
    */
-  async #authorize(op: OperationSpec, headers: Headers, query: string[], signal: AbortSignal): Promise<void> {
+  async #authorize(op: OperationSpec, headers: Headers, query: string[], signal: AbortSignal): Promise<readonly SecurityTerm[]> {
     const satisfied = op.security.filter((terms) => terms.every((term) => own(this.#credentials, term.scheme) !== undefined));
     const alternative = satisfied.find((terms) => terms.length > 0);
-    if (!alternative) return;
+    if (!alternative) return [];
     for (const term of alternative) {
       const source = own(this.#credentials, term.scheme) as CredentialSource<string | BasicCredential>;
       const value = await untilAborted(resolveSource(source), signal);
@@ -535,13 +557,17 @@ export class ApiRuntime<Credentials> {
       if (term.type === "bearer") headers.set("authorization", headerValue(`Bearer ${value}`, where));
       else if (term.in === "header") setHeader(headers, term.name, headerValue(value, where), where);
       else {
-        // Like a header credential, a query credential is the only value sent under its name: parameter
-        // pairs with that name, from any style, are dropped.
-        const name = encode(term.name);
-        const kept = query.filter((pair) => pair.split("=", 1)[0] !== name);
-        query.splice(0, query.length, ...kept, `${name}=${encode(value)}`);
+        // Like a header credential, a query credential is the only value sent under its name. Entries are
+        // split into wire pairs first, since reserved expansion can put "&" and "=" in a value, and every
+        // pair whose decoded name is the credential name or a deepObject member of it ("name[...]") is dropped.
+        const kept = query.flatMap((entry) => entry.split("&")).filter((pair) => {
+          const name = pairName(pair);
+          return name !== term.name && !name.startsWith(`${term.name}[`);
+        });
+        query.splice(0, query.length, ...kept, `${encode(term.name)}=${encode(value)}`);
       }
     }
+    return alternative;
   }
 
   async #attempt(

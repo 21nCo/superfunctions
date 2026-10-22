@@ -101,7 +101,11 @@ export interface SdkTarget<Options = unknown> {
   packageOf(options: Options): { name: string; version: string };
   /** Why the target cannot express an operation; an empty list means supported. */
   unsupportedReasons(operation: CatalogOperation, catalog: OperationCatalog, options: Options): string[];
-  /** Emits the package. Must be deterministic: same context, same bytes. */
+  /**
+   * Emits the package. Must be deterministic: same context, same bytes. Generated names that would
+   * collide, including operation names the language reserves or calls implicitly on a client object
+   * (TypeScript: `constructor`, `then`, `toJSON` and `Object.prototype` members), are `SDK_NAME_COLLISION` errors.
+   */
   emit(context: SdkTargetContext<Options>): SdkTargetOutput;
 }
 

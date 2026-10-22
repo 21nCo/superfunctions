@@ -3,7 +3,7 @@
 import type { CatalogOperation } from "@apifn/contracts";
 import type { SdkDiagnostic, SdkFile, SdkTargetContext, SdkTargetOutput } from "../../types.js";
 import { camelCase, docComment, NameRegistry, pascalCase, propertyKey } from "./naming.js";
-import { analyzeOperation, isReadMethod, type ResponseShape } from "./operations.js";
+import { analyzeOperation, isReadMethod, type ResponseShape, suppliedByCredential } from "./operations.js";
 import type { TypeScriptOptions } from "./options.js";
 import { RUNTIME_SOURCE } from "./runtime-source.js";
 import { aliasCycleCuts, SchemaTypes } from "./schema.js";
@@ -55,6 +55,21 @@ function responseType(shape: ResponseShape, types: SchemaTypes): string {
   );
   return [...new Set(members)].join(" | ") || "unknown";
 }
+
+/**
+ * Client member names JavaScript itself uses: a method with one of these names would replace the
+ * constructor, make the client a thenable (awaiting it or returning it from an async function would send
+ * a request), or run a request on JSON serialization, coercion or a generic Object.prototype call.
+ */
+const RESERVED_MEMBERS = new Map<string, string>([
+  ["constructor", "the client constructor"],
+  ["then", "awaiting a thenable calls it"],
+  ["toJSON", "JSON.stringify calls it"],
+  // Every other Object.prototype member, listed so the reserved set does not vary with the Node version.
+  ...["__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__", "__proto__", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf"].map(
+    (name): [string, string] => [name, "an Object.prototype member"]
+  ),
+]);
 
 export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): SdkTargetOutput {
   const { catalog, options } = context;
@@ -148,9 +163,14 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
     }
     const prefix = pascalCase(operation.name);
     const owner = `operation ${operation.id}`;
-    // A method named constructor would replace the client's constructor.
-    if (operation.name === "constructor") {
-      diagnostics.push({ code: "SDK_NAME_COLLISION", severity: "error", message: `${operation.id}: method name "constructor" collides with the client constructor; set another name in the manifest.`, pointer: `${pointer}/name`, operation: operation.id });
+    if (RESERVED_MEMBERS.has(operation.name)) {
+      diagnostics.push({
+        code: "SDK_NAME_COLLISION",
+        severity: "error",
+        message: `${operation.id}: method name "${operation.name}" is reserved on the client (${RESERVED_MEMBERS.get(operation.name)}); set another name in the manifest.`,
+        pointer: `${pointer}/name`,
+        operation: operation.id,
+      });
     }
     for (const suffix of ["Params", "Result", "Error"]) claimInClient(`${prefix}${suffix}`, owner, `${pointer}/name`, operation.id);
 
@@ -175,15 +195,20 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
       paramSpecs.push(
         `{ key: ${JSON.stringify(key)}, name: ${JSON.stringify(parameter.name)}, in: ${JSON.stringify(parameter.in)}, style: ${JSON.stringify(parameter.style)}, explode: ${parameter.explode}, allowReserved: ${parameter.allowReserved}, required: ${required} }`
       );
-      const doc = docComment([parameter.description, parameter.deprecated ? "@deprecated" : null], "  ");
-      paramFields.push(`${doc}  ${propertyKey(key)}${required ? "" : "?"}: ${clientTypes.type(parameter.schema, "  ")};\n`);
+      const credential = suppliedByCredential(parameter, shape.security);
+      const doc = docComment(
+        [parameter.description, required && credential ? "Required unless the API key credential sent under this name is applied." : null, parameter.deprecated ? "@deprecated" : null],
+        "  "
+      );
+      paramFields.push(`${doc}  ${propertyKey(key)}${required && !credential ? "" : "?"}: ${clientTypes.type(parameter.schema, "  ")};\n`);
     }
     if (shape.body) {
       const bodyType =
         shape.body.kind === "json" ? clientTypes.type(shape.body.schema, "  ") : shape.body.kind === "text" ? "string" : "Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>";
       paramFields.push(`  body${shape.body.required ? "" : "?"}: ${bodyType};\n`);
     }
-    const paramsRequired = operation.parameters.some((parameter) => parameter.in === "path" || parameter.required) || shape.body?.required === true;
+    const paramsRequired =
+      operation.parameters.some((parameter) => parameter.in === "path" || (parameter.required && !suppliedByCredential(parameter, shape.security))) || shape.body?.required === true;
 
     const terms = shape.security.map((alternative) =>
       `[${alternative

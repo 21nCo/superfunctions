@@ -129,7 +129,31 @@
           { "name": "key", "in": "query", "schema": { "type": "string" } },
           { "name": "match", "in": "query", "explode": true, "schema": { "type": "object", "additionalProperties": { "type": "string" } } },
           { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "raw", "in": "query", "allowReserved": true, "schema": { "type": "string" } },
           { "name": "X-Api-Key", "in": "header", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Matching tasks", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } } } } } }
+      }
+    },
+    "/projects/{projectId}/filter": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "filterTasks",
+        "summary": "Filter tasks; a deepObject parameter shares its name with the query API key",
+        "security": [{ "apiKeyQuery": [] }],
+        "parameters": [{ "name": "key", "in": "query", "style": "deepObject", "explode": true, "schema": { "type": "object", "additionalProperties": { "type": "string" } } }],
+        "responses": { "200": { "description": "Matching tasks", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } } } } } }
+      }
+    },
+    "/projects/{projectId}/find": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "findTasks",
+        "summary": "Find tasks; required parameters share names with the API key credentials",
+        "security": [{ "apiKeyQuery": [] }, { "apiKeyHeader": [] }],
+        "parameters": [
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "x-api-key", "in": "header", "required": true, "schema": { "type": "string" } }
         ],
         "responses": { "200": { "description": "Matching tasks", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } } } } } }
       }

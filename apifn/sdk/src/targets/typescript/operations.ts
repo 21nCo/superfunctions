@@ -86,6 +86,22 @@ function merge(target: ResponseShape, source: ResponseShape): void {
   target.contents.push(...source.contents);
 }
 
+/**
+ * Whether an API key credential of some alternative is sent under the parameter's name and location
+ * (header names ignore case). The credential replaces such a parameter, so the parameter is optional
+ * input even when required: the client checks it only when no applied credential supplies it.
+ */
+export function suppliedByCredential(parameter: { name: string; in: string }, security: SecurityTerm[][]): boolean {
+  return security.some((terms) =>
+    terms.some(
+      (term) =>
+        term.type === "apiKey" &&
+        term.in === parameter.in &&
+        (term.in === "header" ? term.name.toLowerCase() === parameter.name.toLowerCase() : term.name === parameter.name)
+    )
+  );
+}
+
 export function analyzeOperation(operation: CatalogOperation, catalog: OperationCatalog): OperationShape {
   const reasons: string[] = [];
   if (FORBIDDEN_METHODS.has(operation.method)) reasons.push(`fetch cannot send ${operation.method.toUpperCase()} requests.`);
