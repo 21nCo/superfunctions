@@ -129,14 +129,18 @@ describe("ElasticsearchAdapter integration", () => {
 });
 
 describe("ElasticsearchAdapter resilience and validation", () => {
-  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+  it("redacts connection secret keys without over-redacting connectionTimeout", () => {
     expect(
       redactElasticSensitive({
         connection: "http://user:pass@example.test",
+        pgConnectionString: "postgres://user:pass@example.test/db",
+        dbConnection: "private-database",
         connectionTimeout: 5000,
       }),
     ).toEqual({
       connection: "[REDACTED]",
+      pgConnectionString: "[REDACTED]",
+      dbConnection: "[REDACTED]",
       connectionTimeout: 5000,
     });
   });

@@ -104,3 +104,5 @@ export class SearchAdapterError extends Error {
     this.code = code;
   }
 }
+
+export { redactSensitive, redactSensitiveString } from "./redaction";
