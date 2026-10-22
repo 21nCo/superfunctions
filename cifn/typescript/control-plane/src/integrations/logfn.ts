@@ -33,75 +33,15 @@ export class MemoryLogsAdapter implements LogsAdapter {
   }
 }
 
+/** @deprecated LogFn is a logger/sink library, not the previously assumed HTTP query server. */
 export class LogFnLogsAdapter implements LogsAdapter {
-  constructor(private config: { baseUrl: string; apiKey?: string; sink?: string }) {}
-
-  async emitEvent(event: LogEvent): Promise<void> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (this.config.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    }
-
-    const sink = this.config.sink ?? 'cifn';
-    const response = await fetch(`${this.config.baseUrl}/sinks/${sink}/events`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(event),
-    });
-
-    if (!response.ok) {
-      throw new Error(`LogFn emitEvent failed: ${response.status} ${response.statusText}`);
-    }
+  constructor(_config: { baseUrl: string; apiKey?: string; sink?: string }) {
+    throw new Error('Standalone LogFn HTTP adapter is unsupported: use durable CiFn remote log delivery (SQLite store); external forwarding requires an actual LogFn sink/receiver');
   }
-
-  async appendJobLogLine(runId: string, jobKey: string, line: JobLogLine): Promise<void> {
-    await this.appendJobLogLines(runId, jobKey, [line]);
-  }
-
-  async appendJobLogLines(runId: string, jobKey: string, lines: JobLogLine[]): Promise<void> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (this.config.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    }
-
-    const sink = this.config.sink ?? 'cifn';
-    const response = await fetch(`${this.config.baseUrl}/sinks/${sink}/logs/${runId}/${jobKey}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ lines }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`LogFn appendJobLogLines failed: ${response.status} ${response.statusText}`);
-    }
-  }
-
-  async readJobLogs(runId: string, jobKey: string): Promise<JobLogLine[]> {
-    const headers: Record<string, string> = {};
-    if (this.config.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    }
-
-    const sink = this.config.sink ?? 'cifn';
-    const response = await fetch(`${this.config.baseUrl}/sinks/${sink}/logs/${runId}/${jobKey}`, {
-      headers,
-    });
-
-    if (response.status === 404) {
-      return [];
-    }
-
-    if (!response.ok) {
-      throw new Error(`LogFn readJobLogs failed: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json() as { lines?: JobLogLine[] };
-    return result.lines ?? [];
-  }
+  async emitEvent(_event: LogEvent): Promise<void> { throw new Error('Unsupported standalone LogFn adapter'); }
+  async appendJobLogLine(_runId: string, _jobKey: string, _line: JobLogLine): Promise<void> { throw new Error('Unsupported standalone LogFn adapter'); }
+  async appendJobLogLines(_runId: string, _jobKey: string, _lines: JobLogLine[]): Promise<void> { throw new Error('Unsupported standalone LogFn adapter'); }
+  async readJobLogs(_runId: string, _jobKey: string): Promise<JobLogLine[]> { throw new Error('Unsupported standalone LogFn adapter'); }
 }
 
 export function createLogsAdapter(config: AdapterConfig['logs']): LogsAdapter {

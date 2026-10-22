@@ -75,6 +75,9 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
     while (!closed && Date.now() < streamsUntil) await delay(10);
     if (!closed) throw new ProcessGroupUncertainError();
     stdout += stdoutDecoder.end(); stderr += stderrDecoder.end();
+    // A forcibly interrupted capture may end in a secret prefix. Withhold the
+    // entire partial step output instead of persisting an unredactable fragment.
+    if (stopping) return { exitCode: 1, stdout: '', stderr: '', lines: [], truncated: true };
     const lines = [...stdout.split('\n'), ...stderr.split('\n')].filter(Boolean);
     return { exitCode: stopping ? 1 : code, stdout, stderr, lines };
   } finally {

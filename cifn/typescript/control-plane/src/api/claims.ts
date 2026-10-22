@@ -1,3 +1,4 @@
+import { validateLogPacket } from "../log-delivery/protocol.js";
 import type { Hono } from 'hono';
 import type { ControlPlaneStore } from '../store/store.js';
 import type { DatabaseStore } from '../store/database-store.js';
@@ -7,7 +8,7 @@ import { ClaimConflictError, validateCompletion, type ClaimIdentity } from '../d
 import { success, error } from './envelope.js';
 
 export function registerClaimRoutes(api: Hono, store: ControlPlaneStore): void {
-  for (const action of ['resume', 'ack', 'complete', 'status', 'stopped'] as const) {
+  for (const action of ['resume', 'ack', 'complete', 'status', 'stopped', 'logs'] as const) {
     api.post(`/runners/claims/${action}`, async c => {
       let body: Record<string, unknown>;
       try { body = await readJsonBody(c.req.raw); }
@@ -27,6 +28,10 @@ export function registerClaimRoutes(api: Hono, store: ControlPlaneStore): void {
           if (typeof body[field] !== 'string' || !body[field] || (body[field] as string).length > 512) return c.json(error('BAD_REQUEST', 'Invalid claim identity'), 400);
         }
         const identity: ClaimIdentity = { runId: body.runId as string, dispatchId: body.dispatchId as string, claimToken: body.claimToken as string, executionId: body.executionId as string, runnerId: runner.id };
+        if (action === 'logs') {
+          if (!validateLogPacket(body.packet)) return c.json(error('BAD_REQUEST', 'Invalid log packet'), 400);
+          return c.json(success(await durable.appendDispatchLogs(identity, body.packet)));
+        }
         if (action === 'status') return c.json(success(await durable.observeDispatch(identity)));
         if (action === 'stopped') return c.json(success(await durable.acknowledgeCancellation(identity)));
         if (action === 'ack') { await durable.acknowledgeDispatch(identity); return c.json(success({ acknowledged: true })); }

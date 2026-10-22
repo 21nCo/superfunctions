@@ -5,6 +5,7 @@ export interface RunStepResult {
   stdout: string;
   stderr: string;
   lines: string[];
+  truncated?: boolean;
 }
 
 export function executeRunStep(command: string, workspacePath: string, env?: Record<string, string>, baseEnv: NodeJS.ProcessEnv = process.env): RunStepResult {

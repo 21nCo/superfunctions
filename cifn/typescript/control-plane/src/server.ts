@@ -1,3 +1,4 @@
+import type { DatabaseStore } from "./store/database-store.js";
 import { createControlPlaneServer } from './http-server.js';
 import { createApp } from './api/routes.js';
 import { parseAdapterConfig, validateAdapterConfig } from './integrations/config.js';
@@ -54,14 +55,25 @@ async function start() {
 
   const server = createControlPlaneServer(app);
   let closing = false;
+  let logCursor: string | undefined;
+  let retentionActive: Promise<void> | undefined;
+  const durableLogs = runtimeStore.store as Partial<Pick<DatabaseStore, 'purgeExpiredLogs'>>;
+  const retain = () => {
+    if (closing || retentionActive || !durableLogs.purgeExpiredLogs) return;
+    retentionActive = durableLogs.purgeExpiredLogs(logCursor).then(page => { logCursor = page.nextCursor; })
+      .catch(() => { console.error('CiFn log expiry cleanup failed; retry pending'); })
+      .finally(() => { retentionActive = undefined; });
+  };
+  const retentionTimer = setInterval(retain, 60_000); retentionTimer.unref(); retain();
   const close = () => {
     if (closing) return;
-    closing = true;
+    closing = true; clearInterval(retentionTimer);
     server.close(async () => {
       try { await dispatchPublisher?.stop(); }
       catch { console.error('CiFn dispatch shutdown failed'); process.exitCode = 1; }
       try { await notificationPublisher?.stop(); }
       catch { console.error('CiFn notification shutdown failed'); process.exitCode = 1; }
+      await retentionActive;
       try { await runtimeStore.close(); }
       catch { console.error('CiFn store shutdown failed'); process.exitCode = 1; }
     });
@@ -69,8 +81,8 @@ async function start() {
   process.once('SIGTERM', close);
   process.once('SIGINT', close);
   server.once('error', () => {
-    process.exitCode = 1;
-    void runtimeStore.close().catch(() => console.error('CiFn store shutdown failed'));
+    process.exitCode = 1; closing = true; clearInterval(retentionTimer);
+    void Promise.resolve(retentionActive).then(() => runtimeStore.close()).catch(() => console.error('CiFn store shutdown failed'));
   });
 
   server.listen(PORT, () => {

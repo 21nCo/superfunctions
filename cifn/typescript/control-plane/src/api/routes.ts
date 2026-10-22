@@ -1,3 +1,4 @@
+import type { DatabaseStore } from "../store/database-store.js";
 import { redactSecrets } from '../secrets/redact.js';
 import { NotificationPublisher, isNotificationStore } from '../sendfn/outbox.js';
 import { registerClaimRoutes } from './claims.js';
@@ -224,6 +225,11 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
       return c.json(error('RUN_NOT_FOUND', `Job ${jobKey} not found in run ${runId}`), 404);
     }
     
+    const durableLogs = runStore as ControlPlaneStore & Partial<Pick<DatabaseStore, 'readDispatchLogs'>>;
+    if (typeof durableLogs.readDispatchLogs === 'function') {
+      const result = await durableLogs.readDispatchLogs(runId, jobKey);
+      if (result.transfer.status !== 'unavailable') return c.json(success(result));
+    }
     let entries: Array<{ line: string; timestamp: string; stepKey: string }> = [];
     if (logs) {
       entries = await logs.readJobLogs(runId, jobKey);

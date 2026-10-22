@@ -82,9 +82,7 @@ export function validateAdapterConfig(config: AdapterConfig): AdapterConfigValid
   }
 
   if (config.logs.type === 'real') {
-    if (!config.logs.logfnBaseUrl) {
-      errors.push('LOGFN_BASE_URL is required when CIFN_LOGS_ADAPTER=real');
-    }
+    errors.push('CIFN_LOGS_ADAPTER=real standalone HTTP mode is unsupported; use SQLite durable remote log delivery and CIFN_LOGS_ADAPTER=memory for lifecycle events');
   }
 
   return {

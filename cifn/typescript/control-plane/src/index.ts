@@ -76,3 +76,5 @@ export { parseNotificationConfig } from './sendfn/sendfn-client.js';
 export type { SendFnConfig, SendFnNotification } from './sendfn/sendfn-client.js';
 
 export { redactSecrets } from './secrets/redact.js';
+
+export * from "./log-delivery/protocol.js";

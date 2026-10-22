@@ -7,6 +7,7 @@ export interface ClaimJournalEntry extends ClaimIdentity {
   version: 1;
   phase: 'prepared' | 'started' | 'completed' | 'finished' | 'reconciliation' | 'cancelled';
   result?: JobCompletion;
+  logOutcome?: 'complete' | 'truncated' | 'failed';
 }
 /** Contains identity/results only; never stores job payload, environment, or logs. */
 export class ClaimJournal {

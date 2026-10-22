@@ -1,3 +1,5 @@
+import { redactSecrets } from "../secrets/redact.js";
+import { LOG_JOB_BYTES, LOG_MAX_EVENTS, LOG_RETENTION_MS, validateLogPacket, type LogPacket, type LogLedger } from "../log-delivery/protocol.js";
 import type { EmailDeliveryResult } from '../sendfn/email-transport.js';
 import { notificationDestination, type SendFnConfig, type NotificationDestination } from '../sendfn/sendfn-client.js';
 import { notificationBackoff, type NotificationIntent } from '../sendfn/outbox.js';
@@ -18,13 +20,14 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent }
+interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent; logs?: Record<string, LogLedger> }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
   encryptionKey: Uint8Array;
   namespace?: string;
   notifications?: SendFnConfig;
+  logRetentionMs?: number;
 }
 export interface RecoveryCandidate { run: Run; definition: CreateRunInput }
 export interface RecoveryPage { candidates: RecoveryCandidate[]; nextCursor?: string }
@@ -38,6 +41,7 @@ export class DatabaseStore implements ControlPlaneStore {
   private readonly key: Buffer;
   private readonly namespace: string;
   private notificationUrl?: NotificationDestination;
+  private logRetentionMs: number;
   private onRunStatusChange?: (run: Run) => void;
 
   private constructor(options: DatabaseStoreOptions) {
@@ -48,6 +52,8 @@ export class DatabaseStore implements ControlPlaneStore {
     if (options.namespace !== undefined && (!options.namespace.trim() || options.namespace.length > 128)) {
       throw new Error('CiFn storage namespace must contain 1 to 128 characters');
     }
+    this.logRetentionMs = options.logRetentionMs ?? LOG_RETENTION_MS;
+    if (!Number.isSafeInteger(this.logRetentionMs) || this.logRetentionMs < 1 || this.logRetentionMs > 30 * 86400000) throw new Error("Invalid log retention");
     this.notificationUrl = notificationDestination(options.notifications ?? { enabled: false });
     this.namespace = options.namespace ?? 'default';
     this.key = Buffer.from(options.encryptionKey);
@@ -300,6 +306,75 @@ export class DatabaseStore implements ControlPlaneStore {
       }
     }
     return { claims, nextCursor: page.nextCursor };
+  }
+  /** One bounded page; removes only expired log payloads, never run/artifact records. */
+  async purgeExpiredLogs(cursor?: string): Promise<{ nextCursor?: string }> {
+    const page = await this.page({ limit: 100, cursor });
+    for (const row of page.rows) {
+      const snapshot = this.decode<RunState>(row);
+      if (!Object.values(snapshot.logs ?? {}).some(ledger => ledger.status !== 'expired' && Date.now() >= ledger.expiresAt)) continue;
+      await this.mutate<RunState, void>('run', snapshot.run.id, state => {
+        let changed = false;
+        for (const ledger of Object.values(state.logs ?? {})) if (ledger.status !== 'expired' && Date.now() >= ledger.expiresAt) {
+          ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0; changed = true;
+        }
+        return { result: undefined, changed };
+      });
+    }
+    return { nextCursor: page.nextCursor };
+  }
+  async appendDispatchLogs(identity: ClaimIdentity, packet: LogPacket): Promise<{ status: LogLedger['status']; nextSequence: number; expiresAt: number }> {
+    // Freeze the accepted request before the first database await.
+    identity = clone(identity); packet = clone(packet);
+    if (!validateLogPacket(packet)) throw new ClaimConflictError();
+    const result = await this.mutate<RunState, { status: LogLedger['status']; nextSequence: number; expiresAt: number }>('run', identity.runId, state => {
+      const intent = this.boundClaim(state, identity);
+      if (intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+      const ledgers = state.logs ??= {};
+      const ledger = ledgers[intent.id] ??= { status: 'pending', expiresAt: Date.parse(intent.claim!.acknowledgedAt ?? intent.claim!.claimedAt) + this.logRetentionMs, bytes: 0, eventCount: 0, packets: [] };
+      const receipt = () => ({ status: ledger.status, nextSequence: ledger.packets.length, expiresAt: ledger.expiresAt });
+      if (Date.now() >= ledger.expiresAt) {
+        ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0;
+        return { result: receipt(), changed: true };
+      }
+      const existing = ledger.packets[packet.sequence];
+      if (existing) {
+        if (existing.digest !== packet.digest) throw new ClaimConflictError();
+        return { result: receipt(), changed: false };
+      }
+      if (ledger.status !== 'pending' || packet.sequence !== ledger.packets.length) throw new ClaimConflictError();
+      if (packet.events.some(event => event.ctx.stepKey !== '__job__' && !state.run.jobs.find(job => job.jobKey === intent.payload.jobKey)?.steps.some(step => step.stepKey === event.ctx.stepKey))) throw new ClaimConflictError();
+      // Reject rather than re-sign a tainted frame: replay identity must remain stable.
+      if (packet.events.some(event => redactSecrets([event.msg], state.secretValues.flatMap(value => value.split(/\r\n|\r|\n/)).filter(value => !/^\*+$/.test(value)))[0] !== event.msg)) throw new ClaimConflictError();
+      const bytes = Buffer.byteLength(JSON.stringify(packet.events));
+      if (ledger.bytes + bytes > LOG_JOB_BYTES || ledger.eventCount + packet.events.length > LOG_MAX_EVENTS) throw new ClaimConflictError();
+      ledger.packets.push(clone(packet)); ledger.bytes += bytes; ledger.eventCount += packet.events.length;
+      if (packet.terminal) ledger.status = packet.terminal;
+      return { result: receipt(), changed: true };
+    });
+    if (!result) throw new ClaimConflictError();
+    return result;
+  }
+  async readDispatchLogs(runId: string, jobKey: string) {
+    const result = await this.mutate<RunState, { lines: Array<{ line: string; timestamp: string; stepKey: string }>; transfer: { status: LogLedger['status'] | 'unavailable'; expiresAt?: number; eventCount: number } }>('run', runId, state => {
+      const intent = state.dispatches?.find(value => value.payload.jobKey === jobKey);
+      const ledger = intent && state.logs?.[intent.id];
+      if (!ledger) {
+        if (!intent?.claim?.executionId) return { result: { lines: [], transfer: { status: 'unavailable', eventCount: 0 } }, changed: false };
+        const expiresAt = Date.parse(intent.claim.acknowledgedAt ?? intent.claim.claimedAt) + this.logRetentionMs;
+        if (Date.now() >= expiresAt) {
+          (state.logs ??= {})[intent.id] = { status: 'expired', expiresAt, bytes: 0, eventCount: 0, packets: [] };
+          return { result: { lines: [], transfer: { status: 'expired', expiresAt, eventCount: 0 } }, changed: true };
+        }
+        return { result: { lines: [], transfer: { status: 'pending', expiresAt, eventCount: 0 } }, changed: false };
+      }
+      let changed = false;
+      if (Date.now() >= ledger.expiresAt && ledger.status !== 'expired') {
+        ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0; changed = true;
+      }
+      return { result: { lines: ledger.packets.flatMap(packet => packet.events.map(event => ({ line: event.msg, timestamp: event.ts, stepKey: event.ctx.stepKey }))), transfer: { status: ledger.status, expiresAt: ledger.expiresAt, eventCount: ledger.eventCount } }, changed };
+    });
+    return result ?? { lines: [], transfer: { status: 'unavailable' as const, eventCount: 0 } };
   }
   async completeDispatch(identity: ClaimIdentity, completion: JobCompletion): Promise<{ accepted: true }> {
     if (!validateCompletion(completion)) throw new ClaimConflictError();

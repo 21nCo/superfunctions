@@ -202,6 +202,7 @@ it('keeps captured secrets and expanded scripts out of durable journal entries a
     else if (url.endsWith('/heartbeat')) { data = { job: offered ? null : payload }; offered = true; }
     else if (url.endsWith('/status')) data = { cancelRequested: false };
     else if (url.endsWith('/ack')) data = { acknowledged: true };
+    else if (url.endsWith('/logs')) { const packet = JSON.parse(String(init?.body)).packet; data = { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + 86400000 }; }
     else if (url.endsWith('/complete')) { completed = true; expect(JSON.parse(String(init?.body)).result.status).toBe('success'); data = { accepted: true }; }
     else throw Error('Unexpected request');
     return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
@@ -210,6 +211,7 @@ it('keeps captured secrets and expanded scripts out of durable journal entries a
   expect(completed).toBe(true);
   expect(new ClaimJournal(path).get('dispatch')?.phase).toBe('finished');
   for (const name of readdirSync(path)) {
+    if (!statSync(join(path, name)).isFile()) continue; // Log spool has separate content/privacy assertions.
     const bytes = readFileSync(join(path, name), 'utf8');
     expect(bytes).not.toContain(secret); expect(bytes).not.toContain('secretSnapshot'); expect(bytes).not.toContain('test ');
   }

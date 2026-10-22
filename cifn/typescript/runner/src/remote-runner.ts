@@ -1,3 +1,5 @@
+import { LogSpool } from "./log-spool.js";
+import type { LogFnClient } from "./reporting/logfn-client.js";
 import { executeOwnedShell, ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { randomUUID } from 'node:crypto';
 import { MemoryStore, MemoryQueueClient, DEFAULT_QUEUE_NAME, type JobPayload, type JobCompletion, type PipelineSpec } from '@cifn/control-plane';
@@ -5,11 +7,11 @@ import { Runner } from './runner.js';
 import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { ClaimJournal, type ClaimJournalEntry } from './claim-journal.js';
 
-export interface RemoteRunnerOptions { baseUrl: string; runnerId: string; runnerSecret: string; stateDirectory: string; fetch?: typeof fetch }
+export interface RemoteRunnerOptions { baseUrl: string; runnerId: string; runnerSecret: string; stateDirectory: string; logRetentionMs?: number; fetch?: typeof fetch }
 interface ResumableClaim { payload?: JobPayload; runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean }
 
 /** Reuses the real shell executor. The memory projection is scratch state only. */
-export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal): Promise<JobCompletion> {
+export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void): Promise<JobCompletion> {
   const failed = (): JobCompletion => ({ status: 'failure', steps: payload.jobSpec.steps.map((_, index) => ({ stepKey: `step-${index}`, status: index === 0 ? 'failure' : 'skipped' })) });
   if (payload.jobSpec.image || payload.jobSpec.steps.some(step => !('run' in step))) {
     console.error('Remote job requires an unsupported executor/provider'); return failed();
@@ -21,7 +23,7 @@ export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortS
   const run = store.createRun({ pipelineSpec: spec, pipelineRef: payload.pipelineRef, trigger: { type: (payload.trigger?.type ?? 'workflow_dispatch') as 'workflow_dispatch', payload: payload.trigger?.payload } });
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
   const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
-  const runner = new Runner({ executionSignal: signal, runCommand: (command, workspace, env) => executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal), executionEnv: baseEnv, store, queue, logClient: new MemoryLogFnClient(), labels: [jobSpec['runs-on']],
+  const runner = new Runner({ executionSignal: signal, runCommand: async (command, workspace, env) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal); if (result.truncated) onTruncated?.(); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
     getSecret: async (_runId, name) => {
       if (!payload.secretSnapshot || !Object.prototype.hasOwnProperty.call(payload.secretSnapshot, name)) throw new Error('Required prepared secret is unavailable');
       return payload.secretSnapshot[name];
@@ -41,13 +43,28 @@ export class RemoteRunner {
   private journal: ClaimJournal;
   private fetcher: typeof fetch;
   private reportedUncertain = new Set<string>();
-  constructor(private options: RemoteRunnerOptions) { this.journal = new ClaimJournal(options.stateDirectory); this.fetcher = options.fetch ?? fetch; }
+  constructor(private options: RemoteRunnerOptions) {
+    if (options.logRetentionMs !== undefined && (!Number.isSafeInteger(options.logRetentionMs) || options.logRetentionMs < 1 || options.logRetentionMs > 30 * 86400000)) throw new Error('Invalid log retention');
+    this.journal = new ClaimJournal(options.stateDirectory); this.fetcher = options.fetch ?? fetch;
+  }
   private async request<T>(path: string, body: unknown): Promise<T> {
     const response = await this.fetcher(this.options.baseUrl + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.options.runnerSecret}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new RunnerProtocolError(response.status);
     const envelope = await response.json() as { ok: boolean; data: T };
     if (!envelope.ok) throw new Error('Runner protocol request failed');
     return envelope.data;
+  }
+  private spool(entry: ClaimJournalEntry) {
+    const { runId, dispatchId, runnerId, claimToken, executionId } = entry;
+    return new LogSpool(this.options.stateDirectory, { runId, dispatchId, runnerId, claimToken, executionId }, this.options.logRetentionMs);
+  }
+  private async transferLogs(entry: ClaimJournalEntry) {
+    try {
+      const spool = this.spool(entry);
+      if (entry.logOutcome) { if (entry.logOutcome === 'truncated') spool.markTruncated(); spool.seal(entry.logOutcome === 'failed' ? 'failed' : 'complete'); }
+      await spool.deliver(packet => this.request('/api/v1/runners/claims/logs', { runId: entry.runId, dispatchId: entry.dispatchId, runnerId: entry.runnerId, claimToken: entry.claimToken, executionId: entry.executionId, packet }));
+    }
+    catch { console.error('CiFn log transfer remains pending; private spool retained'); }
   }
   private async finish(entry: ClaimJournalEntry): Promise<void> {
     try {
@@ -110,12 +127,16 @@ export class RemoteRunner {
     const timer = setInterval(observe, 1_000);
     try {
       observe();
-      const result = await executeRemoteShellJob(claim.payload, cancellation.signal);
-      const completed = { ...entry, phase: 'completed' as const, result };
+      const spool = this.spool(entry);
+      let result: JobCompletion;
+      try { result = await executeRemoteShellJob(claim.payload, cancellation.signal, spool, () => spool.markTruncated()); }
+      catch (cause) { this.journal.save({ ...entry, phase: 'started', logOutcome: 'failed' }); await this.transferLogs({ ...entry, logOutcome: 'failed' }); throw cause; }
+      const completed = { ...entry, phase: 'completed' as const, result, logOutcome: spool.outcome() };
       this.journal.save(completed);
+      await this.transferLogs(completed);
       monitoring = false; clearInterval(timer); await pending;
       if (cancellation.signal.aborted) {
-        const cancelled = { ...entry, phase: 'cancelled' as const };
+        const cancelled = { ...completed, phase: 'cancelled' as const };
         this.journal.save(cancelled); await this.stopped(cancelled);
       } else {
         await this.finish(completed);
@@ -127,6 +148,7 @@ export class RemoteRunner {
   async tick(): Promise<number> {
     let processed = 0;
     for (const entry of this.journal.list()) {
+      if (entry.runnerId === this.options.runnerId && entry.logOutcome && this.journal.hasStarted(entry.dispatchId)) await this.transferLogs(entry);
       if (entry.runnerId === this.options.runnerId && entry.phase === 'cancelled') { await this.stopped(entry); processed++; }
       if (entry.runnerId === this.options.runnerId && entry.phase === 'completed') { await this.finish(entry); processed++; }
     }

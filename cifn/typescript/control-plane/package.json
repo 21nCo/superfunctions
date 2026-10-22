@@ -61,5 +61,9 @@
   "optionalDependencies": {
     "better-sqlite3": "^12.5.0",
     "kysely": "^0.28.0"
-  }
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ]
 }
