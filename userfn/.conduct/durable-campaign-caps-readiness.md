@@ -90,3 +90,20 @@ narrows an absent local identity before reading its ID. An isolated Python3.10
 installation of this checkout's `.[dev]` passes `python -m mypy .` across32 source
 files and all185 tests, without suppressing missing imports or changing checker
 settings. Receipts: `/tmp/user-merge-dev-mypy.log`, `/tmp/user-merge-python.log`.
+
+## Shared/Watch prerequisite integration — 2026-10-22 evening
+
+Ordinary merges preserve the User implementation while incorporating Watch's
+public alert manager and Shared prerequisites through `c0ce24b30`. Normal scoped
+npm11 lock regeneration adds only the SDK's nested React18 development types,
+required alongside Shared's root React19 tools. Scoped `npm ci --dry-run` passes
+without peer bypass flags. Existing installed native bindings were preserved;
+this is a resolution check, not a fresh whole-worktree installation.
+
+Post-merge validation passes219 SDK tests,19 native service tests,10 service unit
+tests,185 Python tests, SDK/service types/builds and the normal Python development
+mypy check. Fresh packed consumers pass real Chrome hydration/SSR with React18.3.1
+and19.3.1 plus compiled Svelte, strict declarations, identity changes and signed
+refresh. Existing sparse node_modules remain distinct from the new root React19
+lock graph; the fresh consumer matrix supplies runtime compatibility evidence.
+Receipts: `/tmp/user-merge-*.log`. Original feature/deployment gaps remain open.
