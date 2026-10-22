@@ -2,16 +2,22 @@
 // by the shared cross-language vectors in fixtures/vectors.
 
 import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildFixtureSdk, cleanupTemp, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
 
 const catalog = fixtureCatalog();
 const server = new FixtureServer();
 let sdk: any;
+/** The generated package's runtime module, for operation specs catalog v1 cannot produce. */
+let runtime: any;
 
 beforeAll(async () => {
   await server.start();
-  ({ sdk } = await buildFixtureSdk());
+  const built = await buildFixtureSdk();
+  sdk = built.sdk;
+  runtime = await import(pathToFileURL(path.join(built.dir, "dist/runtime.js")).href);
 });
 afterAll(async () => {
   await server.stop();
@@ -22,6 +28,44 @@ beforeEach(() => server.reset());
 function client(options: Record<string, unknown> = {}) {
   return new sdk.TasksClient({ baseUrl: server.baseUrl, ...options });
 }
+
+const META = {
+  apiId: "example.tasks",
+  apiVersion: "2026-10-01",
+  catalogDigest: `sha256:${"0".repeat(64)}`,
+  releaseId: "rel_test",
+  target: "typescript",
+  packageName: "@example/tasks-sdk",
+  packageVersion: "1.0.0",
+  defaultBaseUrl: null,
+  defaultTimeoutMs: 2_000,
+  defaultRetry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
+};
+
+/** A runtime operation spec; `retry: "idempotent"` stands for a write a future catalog declares idempotent. */
+function operationSpec(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "files.put",
+    name: "putFile",
+    method: "PUT",
+    path: "/files",
+    parameters: [],
+    body: { mediaType: "application/octet-stream", kind: "binary", required: true },
+    accept: ["application/json"],
+    success: ["json"],
+    errors: [],
+    security: [],
+    retry: "idempotent",
+    ...overrides,
+  };
+}
+
+function directRuntime(options: Record<string, unknown> = {}) {
+  return new runtime.ApiRuntime(META, { baseUrl: server.baseUrl, ...options });
+}
+
+/** A fetch that never settles and ignores its signal, as a misbehaving custom transport might. */
+const stuckFetch = () => new Promise<Response>(() => undefined);
 
 async function call(target: any, vector: any, options?: Record<string, unknown>): Promise<{ result?: unknown; error?: any }> {
   try {
@@ -131,7 +175,29 @@ describe("shared retry vectors", () => {
     expect(server.requests).toHaveLength(2);
   });
 
-  it("never retries a stream body, even for a declared idempotent write", async () => {
+  it("never retries a write under catalog v1, whatever its method or body", async () => {
+    server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+    const error = await client()
+      .uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(sdk.ApiHttpError);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it("retries a declared-idempotent write within the budget, replaying its byte body", async () => {
+    server.reset([{ status: 503 }, { status: 500 }, { status: 503 }, { status: 200 }]);
+    const error = await directRuntime()
+      .request(operationSpec(), { body: new Uint8Array([1, 2]) })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(runtime.ApiHttpError);
+    expect(error.attempts).toBe(3);
+    expect(server.requests.map((request) => [...request.body])).toEqual([[1, 2], [1, 2], [1, 2]]);
+    server.reset([{ status: 504 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+    await expect(directRuntime().request(operationSpec(), { body: new Uint8Array([1, 2]) })).resolves.toEqual({ size: 2 });
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("never retries a stream body, even for a declared-idempotent write", async () => {
     server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -139,18 +205,25 @@ describe("shared retry vectors", () => {
         controller.close();
       },
     });
-    const error = await client()
-      .uploadAttachment({ projectId: "p", taskId: "t", body })
+    const error = await directRuntime()
+      .request(operationSpec(), { body })
       .catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(sdk.ApiHttpError);
+    expect(error).toBeInstanceOf(runtime.ApiHttpError);
     expect(server.requests).toHaveLength(1);
     expect([...server.requests[0].body]).toEqual([1, 2]);
   });
 
-  it("retries a replayable byte body for a declared idempotent write", async () => {
-    server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
-    await expect(client().uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })).resolves.toEqual({ size: 2 });
-    expect(server.requests.map((request) => [...request.body])).toEqual([[1, 2], [1, 2]]);
+  it("fails a request fetch cannot build as invalid input, without sending or retrying it", async () => {
+    let calls = 0;
+    const fetch = async () => (calls++, new Response("{}"));
+    for (const spec of [operationSpec({ method: "TRACE", body: null, retry: "read" }), operationSpec({ method: "GET", body: { mediaType: "application/json", kind: "json", required: true }, retry: "read" })]) {
+      const error = await directRuntime({ fetch })
+        .request(spec, { body: { a: 1 } })
+        .catch((caught: unknown) => caught);
+      expect(error.kind, spec.method).toBe("validation");
+      expect(error.attempts).toBe(0);
+    }
+    expect(calls).toBe(0);
   });
 
   it("rejects a retry budget outside 1 to 10", () => {
@@ -207,12 +280,59 @@ describe("timeouts and cancellation", () => {
     expect(events.map((event) => event.failure)).toEqual([{ kind: "aborted", retryable: false, attempt: 1 }]);
   });
 
-  it("does not send a call whose signal is already aborted", async () => {
-    const error = await client()
+  it("does not send a call whose signal is already aborted, or resolve its credentials", async () => {
+    let resolved = 0;
+    const error = await client({ credentials: { apiKeyQuery: () => (resolved++, "k") } })
       .getTask({ projectId: "p", taskId: "t" }, { signal: AbortSignal.abort() })
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(sdk.ApiAbortError);
+    expect(resolved).toBe(0);
     expect(server.requests).toHaveLength(0);
+  });
+
+  it("aborts and times out while a credential provider never settles", async () => {
+    const credentials = { apiKeyQuery: () => new Promise<string>(() => undefined) };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const started = Date.now();
+    const aborted = await client({ credentials })
+      .getTask({ projectId: "p", taskId: "t" }, { signal: controller.signal })
+      .catch((caught: unknown) => caught);
+    expect(aborted).toBeInstanceOf(sdk.ApiAbortError);
+    const timedOut = await client({ credentials, timeoutMs: 50 })
+      .getTask({ projectId: "p", taskId: "t" })
+      .catch((caught: unknown) => caught);
+    expect(timedOut).toBeInstanceOf(sdk.ApiTimeoutError);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("aborts and times out a custom fetch that ignores its signal", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const started = Date.now();
+    const aborted = await client({ fetch: stuckFetch })
+      .getTask({ projectId: "p", taskId: "t" }, { signal: controller.signal })
+      .catch((caught: unknown) => caught);
+    expect(aborted).toBeInstanceOf(sdk.ApiAbortError);
+    expect(aborted.attempts).toBe(1);
+    const timedOut = await client({ fetch: stuckFetch, timeoutMs: 50, retry: { maxAttempts: 2 } })
+      .getTask({ projectId: "p", taskId: "t" })
+      .catch((caught: unknown) => caught);
+    expect(timedOut).toBeInstanceOf(sdk.ApiTimeoutError);
+    expect(timedOut.attempts).toBe(2);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("times out a response body that never ends", async () => {
+    const fetch = async () =>
+      new Response(new ReadableStream({ start: (controller) => controller.enqueue(new TextEncoder().encode("{")) }), { status: 200, headers: { "content-type": "application/json" } });
+    const started = Date.now();
+    const error = await client({ fetch, timeoutMs: 50, retry: { maxAttempts: 1 } })
+      .getTask({ projectId: "p", taskId: "t" })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(sdk.ApiTimeoutError);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

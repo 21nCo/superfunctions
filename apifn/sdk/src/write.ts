@@ -34,8 +34,21 @@ async function stat(file: string) {
   }
 }
 
-/** Owned paths and digests from the manifest a previous generation wrote, or null when there is none. */
-async function previousFiles(outDir: string): Promise<Map<string, string> | null | string> {
+interface PreviousGeneration {
+  manifest: SdkArtifactManifest;
+  /** Owned paths and the digests their contents had when generated. */
+  owned: Map<string, Set<string>>;
+}
+
+/**
+ * Written before any owned file changes and replaced by the final manifest: it keeps the previous
+ * generation's provenance and digests, adds the paths this run may create, and lists in `pendingFiles`
+ * what this run writes, so after an interruption either version of a file counts as generated.
+ */
+type InterimManifest = SdkArtifactManifest & { pendingFiles: Array<{ path: string; sha256: string }> };
+
+/** The generation a previous run recorded, null when there is none, or why its manifest is unusable. */
+async function previousGeneration(outDir: string): Promise<PreviousGeneration | null | string> {
   const file = path.join(outDir, SDK_ARTIFACT_MANIFEST_FILE);
   const info = await stat(file);
   if (!info) return null;
@@ -47,13 +60,18 @@ async function previousFiles(outDir: string): Promise<Map<string, string> | null
     return `${SDK_ARTIFACT_MANIFEST_FILE} is not valid JSON.`;
   }
   const files = manifest?.files;
-  if (manifest?.manifestVersion !== SDK_ARTIFACT_MANIFEST_VERSION || !Array.isArray(files)) return `${SDK_ARTIFACT_MANIFEST_FILE} is not an ${SDK_ARTIFACT_MANIFEST_VERSION} manifest.`;
-  const owned = new Map<string, string>();
-  for (const entry of files) {
-    if (typeof entry?.path !== "string" || typeof entry.sha256 !== "string" || !isSafeRelativePath(entry.path)) return `${SDK_ARTIFACT_MANIFEST_FILE} lists an invalid file entry.`;
-    owned.set(entry.path, entry.sha256);
+  const pending = (manifest as Partial<InterimManifest> | null)?.pendingFiles ?? [];
+  if (manifest?.manifestVersion !== SDK_ARTIFACT_MANIFEST_VERSION || !Array.isArray(files) || !Array.isArray(pending)) {
+    return `${SDK_ARTIFACT_MANIFEST_FILE} is not an ${SDK_ARTIFACT_MANIFEST_VERSION} manifest.`;
   }
-  return owned;
+  const owned = new Map<string, Set<string>>();
+  for (const entry of [...files, ...pending]) {
+    if (typeof entry?.path !== "string" || typeof entry.sha256 !== "string" || !isSafeRelativePath(entry.path)) return `${SDK_ARTIFACT_MANIFEST_FILE} lists an invalid file entry.`;
+    const digests = owned.get(entry.path) ?? new Set<string>();
+    digests.add(entry.sha256);
+    owned.set(entry.path, digests);
+  }
+  return { manifest: manifest as SdkArtifactManifest, owned };
 }
 
 /** Rejects a path whose existing ancestors inside the output directory include a symlink or non-directory. */
@@ -82,11 +100,12 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
     conflict(`${root} exists and is not a directory.`);
     return outcome;
   }
-  const previous = await previousFiles(root);
-  if (typeof previous === "string") {
-    conflict(`${previous} Remove it, or choose an empty output directory.`, SDK_ARTIFACT_MANIFEST_FILE);
+  const generation = await previousGeneration(root);
+  if (typeof generation === "string") {
+    conflict(`${generation} Remove it, or choose an empty output directory.`, SDK_ARTIFACT_MANIFEST_FILE);
     return outcome;
   }
+  const previous = generation?.owned;
   const customRoot = result.manifest.customCode.root;
 
   // Plan every change before writing anything, so a conflict leaves the directory untouched.
@@ -129,7 +148,7 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
       continue;
     }
     const recorded = previous?.get(file.path);
-    if (recorded !== undefined && recorded !== sha256Hex(current)) {
+    if (recorded !== undefined && !recorded.has(sha256Hex(current))) {
       outcome.diagnostics.push({
         code: "SDK_OWNED_FILE_MODIFIED",
         severity: "warning",
@@ -147,7 +166,7 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
     const target = path.join(root, stale);
     const info = await stat(target);
     if (!info?.isFile()) continue;
-    if (previous?.get(stale) !== sha256Hex(await readFile(target, "utf8"))) {
+    if (!previous?.get(stale)?.has(sha256Hex(await readFile(target, "utf8")))) {
       outcome.diagnostics.push({ code: "SDK_OWNED_FILE_MODIFIED", severity: "warning", message: `"${stale}" was edited after generation and is no longer generated; it is deleted.`, pointer: stale });
     }
     outcome.deleted.push(stale);
@@ -156,12 +175,21 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
   outcome.ok = true;
   if (options.dryRun) return outcome;
 
-  // A crash part-way must not orphan new files: first record every path this run may create as owned.
-  const pending = writes.filter((file) => !previous?.has(file.path) && !result.manifest!.customCode.seeds.includes(file.path) && file.path !== SDK_ARTIFACT_MANIFEST_FILE);
+  // A crash part-way must neither orphan new files nor make rewritten ones look hand-edited: first record
+  // every path this run may create or replace, keeping the previous provenance and digests.
+  const seeds = new Set(result.manifest.customCode.seeds);
+  const owned = writes.filter((file) => !seeds.has(file.path) && file.path !== SDK_ARTIFACT_MANIFEST_FILE);
   const manifestFile = writes.find((file) => file.path === SDK_ARTIFACT_MANIFEST_FILE);
   await mkdir(root, { recursive: true });
-  if (pending.length > 0) {
-    const interim = { ...result.manifest, files: [...result.manifest.files, ...[...(previous ?? [])].filter(([file]) => !produced.has(file)).map(([file, sha256]) => ({ path: file, sha256 }))] };
+  if (owned.length > 0 || outcome.deleted.length > 0) {
+    const base = generation?.manifest ?? result.manifest;
+    const recorded = [...(previous ?? [])].flatMap(([file, digests]) => [...digests].map((sha256) => ({ path: file, sha256 })));
+    const created = owned.filter((file) => !previous?.has(file.path)).map((file) => ({ path: file.path, sha256: sha256Hex(file.contents) }));
+    const interim: InterimManifest = {
+      ...base,
+      files: (generation ? [...recorded, ...created] : created).sort((a, b) => comparePaths(a.path, b.path)),
+      pendingFiles: owned.map((file) => ({ path: file.path, sha256: sha256Hex(file.contents) })),
+    };
     await atomicWrite(path.join(root, SDK_ARTIFACT_MANIFEST_FILE), `${JSON.stringify(interim, null, 2)}\n`);
   }
   for (const file of writes) {

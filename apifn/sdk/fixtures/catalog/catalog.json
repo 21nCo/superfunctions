@@ -83,6 +83,88 @@
       },
       "description": null,
       "executionPolicyRef": null,
+      "id": "projects.summary.get",
+      "method": "get",
+      "name": "getProjectSummary",
+      "openapiOperationId": "getProjectSummary",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/projects/{projectId}/summary",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSummary"
+              }
+            }
+          ],
+          "description": "The summary",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Moved"
+              }
+            }
+          ],
+          "description": "The summary moved; the client returns it as a typed error and does not follow it",
+          "kind": "success",
+          "status": "302"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Get a project summary; credentials are optional and widen what it shows",
+      "tags": []
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
       "id": "reports.upload",
       "method": "post",
       "name": "uploadReport",
@@ -1142,6 +1224,17 @@
       ],
       "type": "object"
     },
+    "Moved": {
+      "properties": {
+        "location": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "location"
+      ],
+      "type": "object"
+    },
     "Problem": {
       "properties": {
         "status": {
@@ -1157,6 +1250,20 @@
       "required": [
         "title",
         "status"
+      ],
+      "type": "object"
+    },
+    "ProjectSummary": {
+      "properties": {
+        "openTasks": {
+          "type": "integer"
+        },
+        "private": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "openTasks"
       ],
       "type": "object"
     },
@@ -1306,12 +1413,12 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:af414762b03e49d03984924d4fc67e575c917214e7e72f8aadaffaaf88c1fecf",
+    "manifestDigest": "sha256:9516304b19bbe7224777d2b3e6a93aad1749a20495c926dc8cc7679f10a4faaa",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,
       "source": "apifn/sdk/fixtures/catalog/openapi.json"
     },
-    "specDigest": "sha256:597c8284e2604ed9f07a2766766e75917fa4ebffcb16ffe7cbc6eb8fd8cf4a90"
+    "specDigest": "sha256:f0d52ba10a613d3366dad196f1c1eafaa5bec50612e301879243044416537f71"
   }
 }

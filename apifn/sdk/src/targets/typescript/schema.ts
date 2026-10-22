@@ -128,7 +128,12 @@ export class SchemaTypes {
   #array(schema: Record<string, unknown>, indent: string, depth: number): string {
     const items = "items" in schema ? schema.items : true;
     if (Array.isArray(schema.prefixItems)) {
-      const head = schema.prefixItems.map((member) => this.type(member, indent, depth));
+      // Positions at or past minItems may be missing, so they are optional elements.
+      const minItems = typeof schema.minItems === "number" && Number.isInteger(schema.minItems) ? schema.minItems : 0;
+      const head = schema.prefixItems.map((member, index) => {
+        const type = this.type(member, indent, depth);
+        return index < minItems ? type : `${group(type)}?`;
+      });
       const tail = items === false ? [] : [`...${group(this.type(items, indent, depth))}[]`];
       return `[${[...head, ...tail].join(", ")}]`;
     }

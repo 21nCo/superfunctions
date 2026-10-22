@@ -1,5 +1,5 @@
 {
-  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS, TRACE) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504; writes retry only when the SDK config declares the operation idempotent (retry.idempotentOperations), never because the method is PUT or DELETE or because an Idempotency-Key is sent. `expect.attempts` is the number of requests the server receives.",
+  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504; writes retry only when the catalog declares that the server makes them idempotent, never because the method is PUT or DELETE, because an Idempotency-Key is sent, or because an SDK config says so. Catalog v1 has no idempotency field, so no write is retried; targets test their declared-idempotent path directly against their runtime. `expect.attempts` is the number of requests the server receives.",
   "cases": [
     {
       "name": "a read retries within the budget",
@@ -52,20 +52,12 @@
       "expect": { "attempts": 1, "outcome": "error", "status": 503 }
     },
     {
-      "name": "a declared idempotent write retries within the budget",
+      "name": "a PUT is not retried without a catalog idempotency declaration",
       "operation": "tasks.replace",
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
       "body": { "title": "x" },
-      "responses": [{ "status": 503 }, { "status": 500 }, { "status": 503 }, { "status": 200 }],
-      "expect": { "attempts": 3, "outcome": "error", "status": 503 }
-    },
-    {
-      "name": "a declared idempotent write succeeds on retry",
-      "operation": "tasks.replace",
-      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
-      "body": { "title": "x" },
-      "responses": [{ "status": 504 }, { "status": 200 }],
-      "expect": { "attempts": 2, "outcome": "success" }
+      "responses": [{ "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
     }
   ]
 }

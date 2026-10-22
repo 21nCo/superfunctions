@@ -15,12 +15,6 @@ export interface TypeScriptOptions {
     maxAttempts: number;
     baseDelayMs: number;
     maxDelayMs: number;
-    /**
-     * Writes whose server provides idempotency semantics, by stable operation ID. Catalog v1 carries no
-     * idempotency field (method, schema and an `Idempotency-Key` parameter grant none), so this reviewed
-     * declaration is the only way a write becomes retryable.
-     */
-    idempotentOperations: string[];
   };
   /** Component schema name → exported type name, to resolve collisions. */
   typeNames: Record<string, string>;
@@ -29,17 +23,12 @@ export interface TypeScriptOptions {
 const FIELDS: Record<string, string[]> = {
   "": ["package", "clientName", "baseUrl", "timeoutMs", "retry", "typeNames"],
   "/package": ["name", "version", "description", "license"],
-  "/retry": ["maxAttempts", "baseDelayMs", "maxDelayMs", "idempotentOperations"],
+  "/retry": ["maxAttempts", "baseDelayMs", "maxDelayMs"],
 };
 const MAX_TIMER_MS = 2_147_483_647;
-const READ_METHODS = new Set(["get", "head", "options", "trace"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function compare(left: string, right: string): number {
-  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function resolveTypeScriptOptions(input: unknown, catalog: OperationCatalog): { options: TypeScriptOptions | null; diagnostics: SdkDiagnostic[] } {
@@ -51,7 +40,12 @@ export function resolveTypeScriptOptions(input: unknown, catalog: OperationCatal
       fail(pointer, "Expected an object.");
       return {};
     }
-    for (const key of Object.keys(value)) if (!FIELDS[pointer]?.includes(key)) fail(`${pointer}/${key}`, `Unknown option "${key}".`);
+    for (const key of Object.keys(value)) {
+      if (pointer === "/retry" && key === "idempotentOperations") {
+        // Only the catalog can declare that a server makes a write safe to repeat; catalog v1 cannot yet.
+        fail("/retry/idempotentOperations", "Write retries come only from catalog idempotency declarations, which catalog v1 does not have; the SDK config cannot make a write retryable.");
+      } else if (!FIELDS[pointer]?.includes(key)) fail(`${pointer}/${key}`, `Unknown option "${key}".`);
+    }
     return value;
   };
   const integer = (value: unknown, pointer: string, min: number, max: number, fallback: number): number => {
@@ -95,20 +89,6 @@ export function resolveTypeScriptOptions(input: unknown, catalog: OperationCatal
   }
 
   const retry = object(root.retry, "/retry");
-  const idempotentOperations: string[] = [];
-  if (retry.idempotentOperations !== undefined) {
-    if (!Array.isArray(retry.idempotentOperations)) fail("/retry/idempotentOperations", "Expected an array of operation IDs.");
-    else {
-      retry.idempotentOperations.forEach((id: unknown, index: number) => {
-        const pointer = `/retry/idempotentOperations/${index}`;
-        const operation = catalog.operations.find((candidate) => candidate.id === id);
-        if (typeof id !== "string" || !operation) fail(pointer, "Expected the ID of an operation in the catalog.");
-        else if (READ_METHODS.has(operation.method)) fail(pointer, `${id} is a ${operation.method.toUpperCase()} operation; reads are retried without a declaration.`);
-        else if (idempotentOperations.includes(id)) fail(pointer, `${id} is listed twice.`);
-        else idempotentOperations.push(id);
-      });
-    }
-  }
 
   // Collected as entries: a "__proto__" schema name must stay an own property.
   const typeNames: Array<[string, string]> = [];
@@ -133,7 +113,6 @@ export function resolveTypeScriptOptions(input: unknown, catalog: OperationCatal
       maxAttempts: integer(retry.maxAttempts, "/retry/maxAttempts", 1, 10, 3),
       baseDelayMs: integer(retry.baseDelayMs, "/retry/baseDelayMs", 0, MAX_TIMER_MS, 200),
       maxDelayMs: integer(retry.maxDelayMs, "/retry/maxDelayMs", 0, MAX_TIMER_MS, 5_000),
-      idempotentOperations: idempotentOperations.sort(compare),
     },
     typeNames: Object.fromEntries(typeNames),
   };

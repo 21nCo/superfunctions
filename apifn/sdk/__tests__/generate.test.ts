@@ -115,6 +115,35 @@ describe("generateSdk", () => {
     expect(client).toContain("export type HeadTaskResult = undefined;");
   });
 
+  it("reports operations fetch cannot send: forbidden methods and bodies on GET or HEAD", () => {
+    const catalog = fixtureCatalog();
+    const create = catalog.operations.find((operation: any) => operation.id === "tasks.create");
+    catalog.operations.push(
+      { ...clone(catalog.operations.find((operation: any) => operation.id === "tasks.get")), id: "tasks.trace", name: "traceTask", method: "trace" },
+      { ...clone(create), id: "tasks.query", name: "queryTasks", method: "get", parameters: [] },
+      { ...clone(create), id: "tasks.probe", name: "probeTasks", method: "head", parameters: [], requestBody: { ...clone(create.requestBody), required: false } }
+    );
+    const excluded = generate(catalog).manifest!.operations.excluded.filter((entry) => ["tasks.trace", "tasks.query", "tasks.probe"].includes(entry.id));
+    expect(excluded.map(({ id, reason, details }) => [id, reason, details])).toEqual([
+      ["tasks.trace", "unsupported", ["fetch cannot send TRACE requests."]],
+      ["tasks.query", "unsupported", ["fetch cannot send a request body with GET."]],
+      ["tasks.probe", "unsupported", ["fetch cannot send a request body with HEAD."]],
+    ]);
+  });
+
+  it("types documented non-2xx responses as errors and only 2xx responses as results", () => {
+    const client = generate().files.find((file) => file.path === "src/client.ts")!.contents;
+    expect(client).toContain("export type GetProjectSummaryResult = Models.ProjectSummary;");
+    expect(client).toMatch(/export type GetProjectSummaryError =\n {2}\| ApiHttpError<302, Models\.Moved, true>\n {2}\| ApiHttpError<number, unknown, false>;/);
+    expect(client).toMatch(/"projects\.summary\.get": \{[\s\S]*?success: \["json"\],\n {4}errors: \[\{ status: "302", kinds: \["json"\] \}\],/);
+  });
+
+  it("emits no write retry under catalog v1", () => {
+    const client = generate().files.find((file) => file.path === "src/client.ts")!.contents;
+    const retries = [...client.matchAll(/method: "(\w+)",[\s\S]*?retry: "(\w+)",/g)].map(([, method, retry]) => `${method}:${retry}`);
+    expect(new Set(retries)).toEqual(new Set(["GET:read", "POST:never", "PUT:never", "DELETE:never"]));
+  });
+
   it("warns that spec servers are ignored for an operation with its own servers", () => {
     const warning = generate().diagnostics.find((diagnostic) => diagnostic.code === "SDK_SERVERS_IGNORED");
     expect(warning).toMatchObject({ severity: "warning", operation: "system.health" });
@@ -160,6 +189,27 @@ describe("name collisions", () => {
     );
   });
 
+  it("names a client or operation type that would shadow a client.ts binding or global", () => {
+    for (const clientName of ["ApiRuntime", "OperationSpec", "SdkMetadata", "Models", "METADATA", "OPERATIONS", "Promise", "Record", "Uint8Array", "ArrayBuffer", "Blob", "ReadableStream"]) {
+      const config = fixtureConfig();
+      config.options.clientName = clientName;
+      const result = generate(fixtureCatalog(), config);
+      expect(result.ok, clientName).toBe(false);
+      expect(result.diagnostics.find((entry) => entry.code === "SDK_NAME_COLLISION"), clientName).toMatchObject({ pointer: "/options/clientName" });
+    }
+  });
+
+  it("lets component schemas use client.ts binding and global names", async () => {
+    const catalog = fixtureCatalog();
+    for (const name of ["ApiRuntime", "Models", "Promise", "Record", "Uint8Array", "ReadableStream"]) catalog.schemas[name] = { type: "object", properties: { x: { type: "string" } } };
+    catalog.operations.find((operation: any) => operation.id === "tasks.get").responses[0].contents[0].schema = { $ref: "#/components/schemas/Promise" };
+    const result = generate(catalog);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const dir = tempDir();
+    expect((await writeSdk(dir, result)).ok).toBe(true);
+    expect(compile(dir)).toEqual([]);
+  });
+
   it("names an operation that would shadow the client constructor", () => {
     const catalog = fixtureCatalog();
     catalog.operations.find((operation: any) => operation.id === "tasks.get").name = "constructor";
@@ -198,8 +248,7 @@ describe("input validation", () => {
     ["a base URL with user info", option((options) => (options.baseUrl = "https://user:pw@api.example.test")), "SDK_INVALID_CONFIG", "/options/baseUrl"],
     ["a base URL with a query", option((options) => (options.baseUrl = "https://api.example.test/?region=eu")), "SDK_INVALID_CONFIG", "/options/baseUrl"],
     ["a retry budget over 10", option((options) => (options.retry.maxAttempts = 11)), "SDK_INVALID_CONFIG", "/options/retry/maxAttempts"],
-    ["an unknown idempotent operation", option((options) => (options.retry.idempotentOperations = ["tasks.nope"])), "SDK_INVALID_CONFIG", "/options/retry/idempotentOperations/0"],
-    ["a read declared idempotent", option((options) => (options.retry.idempotentOperations = ["tasks.get"])), "SDK_INVALID_CONFIG", "/options/retry/idempotentOperations/0"],
+    ["a config that declares writes idempotent", option((options) => (options.retry.idempotentOperations = ["tasks.replace"])), "SDK_INVALID_CONFIG", "/options/retry/idempotentOperations"],
     ["a type name for an unknown schema", option((options) => (options.typeNames = { Nope: "Nope" })), "SDK_INVALID_CONFIG", "/options/typeNames/Nope"],
     ["a client name that is not an identifier", option((options) => (options.clientName = "tasks-client")), "SDK_INVALID_CONFIG", "/options/clientName"]
   );
@@ -222,6 +271,8 @@ describe("generated TypeScript", () => {
       // Parsed, so "__proto__" is an own property name as in a catalog read from JSON.
       "a/b": JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"},"x-y":{"type":"integer"},"*/":{"description":"*/ closes comments"}}}'),
       "1st": { type: "array", prefixItems: [{ type: "string" }, { type: "number" }], items: false },
+      Pair: { type: "array", prefixItems: [{ type: "string" }, { type: ["number", "null"] }], minItems: 1, items: false },
+      Head: { type: "array", prefixItems: [{ type: "string" }], items: { type: "number" } },
       "é": { anyOf: [{ $ref: "#/components/schemas/a~1b" }, { const: "x" }, true] },
       Closed: { type: "object", additionalProperties: false },
       Never: false,
@@ -234,7 +285,10 @@ describe("generated TypeScript", () => {
     expect(compile(dir)).toEqual([]);
     const models = readFileSync(path.join(dir, "src/models.ts"), "utf8");
     expect(models).toContain('export type AB = {\n  /**\n   * *\\/ closes comments\n   */\n  "*/"?: unknown;\n  __proto__?: string;\n  "x-y"?: number;\n};');
-    expect(models).toContain("export type Model1st = [string, number];");
+    // Positions at or past minItems (default 0) may be missing.
+    expect(models).toContain("export type Model1st = [string?, number?];");
+    expect(models).toContain("export type Pair = [string, (number | null)?];");
+    expect(models).toContain("export type Head = [string?, ...number[]];");
     expect(models).toContain("export type É = unknown;");
     expect(models).toContain("export type Closed = { [key: string]: never };");
     expect(models).toContain("export type Tree = {\n  children?: Tree[];\n};");
@@ -245,7 +299,7 @@ describe("generated TypeScript", () => {
     expect((await writeSdk(dir, generate())).ok).toBe(true);
     writeFileSync(
       path.join(dir, "src/custom/consumer-types.ts"),
-      `import { TasksClient, isOperationError, type Task, type TasksClientOptions } from "../index.js";
+      `import { TasksClient, isOperationError, type ProjectSummary, type Task, type TasksClientOptions } from "../index.js";
 const client = new TasksClient({ credentials: { bearerAuth: () => "t", basicAuth: { username: "u", password: "p" } } } satisfies TasksClientOptions);
 export async function use(): Promise<string> {
   const task: Task = await client.getTask({ projectId: "p", taskId: "t" });
@@ -265,7 +319,15 @@ export async function use(): Promise<string> {
       return fields?.title ?? "";
     }
   }
-  return task.title + text;
+  const summary: ProjectSummary = await client.getProjectSummary({ projectId: "p" });
+  // @ts-expect-error the documented 302 body is an error, never a result
+  const moved: { location: string } = await client.getProjectSummary({ projectId: "p" });
+  try {
+    await client.getProjectSummary({ projectId: "p" });
+  } catch (error) {
+    if (isOperationError(error, "projects.summary.get") && error.declared && error.status === 302) return error.body.location;
+  }
+  return task.title + text + summary.openTasks + moved.location;
 }
 `
     );

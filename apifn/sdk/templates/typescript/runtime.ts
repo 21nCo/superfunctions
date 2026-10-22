@@ -43,7 +43,7 @@ export interface ClientOptions<Credentials> {
   /** Transport; defaults to the global `fetch`. */
   fetch?: (input: string, init: RequestInit) => Promise<Response>;
   credentials?: Credentials;
-  /** Per-attempt timeout, including reading the response body. */
+  /** Per-attempt timeout, including reading the response body; it also bounds resolving credentials before the first attempt. */
   timeoutMs?: number;
   retry?: RetryOptions;
   /** Called once per failed call. Nothing is observed or sent unless this is set. */
@@ -138,7 +138,7 @@ export interface OperationSpec {
   errors: readonly { status: string; kinds: readonly BodyKind[] }[];
   /** OR of ANDs; an empty alternative is anonymous. */
   security: readonly (readonly SecurityTerm[])[];
-  /** "read": safe method; "idempotent": a write the server declares idempotent; "never": not retried. */
+  /** "read": safe method; "idempotent": a write the catalog declares idempotent; "never": not retried. */
   retry: "read" | "idempotent" | "never";
 }
 
@@ -306,6 +306,31 @@ function randomId(): string {
   return `evt_${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/**
+ * Settles with `promise`, or rejects with the signal's reason as soon as it aborts, so a consumer
+ * callback (credential provider, transport, body stream) that ignores the signal cannot hold the call.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => undefined);
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
 /** Waits `ms`, or rejects with the signal's reason as soon as it aborts. */
 function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -365,7 +390,7 @@ export class ApiRuntime<Credentials> {
       checkDuration(options.timeoutMs, "timeoutMs", 1);
       const retry = resolveRetry(this.#retry, options.retry);
       const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
-      const prepared = await this.#prepare(op, values);
+      const prepared = await this.#guard(op, timeoutMs, options.signal, attempts, (signal) => this.#prepare(op, values, signal));
       // Only reads and declared-idempotent writes are retried, and never with a body that cannot be sent twice (a stream).
       const eligible = op.retry !== "never" && isReplayable(prepared.init.body);
       const budget = eligible ? retry.maxAttempts : 1;
@@ -394,7 +419,32 @@ export class ApiRuntime<Credentials> {
     }
   }
 
-  async #prepare(op: OperationSpec, values: Record<string, unknown>): Promise<{ url: string; init: RequestInit }> {
+  /**
+   * Runs `task` under the caller signal and a `timeoutMs` timer: it rejects with ApiAbortError or
+   * ApiTimeoutError as soon as either fires, whether or not `task` observes the signal it is given.
+   */
+  async #guard<T>(op: OperationSpec, timeoutMs: number, signal: AbortSignal | undefined, attempt: number, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const label = `${op.method} ${op.path}`;
+    if (signal?.aborted) throw new ApiAbortError(op.id, `${label} was aborted.`, attempt, signal.reason);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(TIMEOUT), timeoutMs);
+    try {
+      return await untilAborted(task(controller.signal), controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        if (controller.signal.reason === TIMEOUT) throw new ApiTimeoutError(op.id, `${label} timed out after ${timeoutMs} ms.`, attempt);
+        throw new ApiAbortError(op.id, `${label} was aborted.`, attempt, signal?.reason);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  async #prepare(op: OperationSpec, values: Record<string, unknown>, signal: AbortSignal): Promise<{ url: string; init: RequestInit }> {
     const headers = new Headers();
     const query: string[] = [];
     let path = op.path;
@@ -435,7 +485,7 @@ export class ApiRuntime<Credentials> {
       if (body !== undefined) headers.set("content-type", op.body.mediaType);
     }
     if (op.accept.length > 0) headers.set("accept", op.accept.join(", "));
-    await this.#authorize(op, headers, query);
+    await this.#authorize(op, headers, query, signal);
 
     const base = this.#base.href.replace(/\/+$/, "");
     const url = `${base}${path}${query.length > 0 ? `?${query.join("&")}` : ""}`;
@@ -447,16 +497,30 @@ export class ApiRuntime<Credentials> {
     }
     const init: RequestInit & { duplex?: "half" } = { method: op.method, headers, body, redirect: "manual" };
     if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) init.duplex = "half";
+    // A request fetch refuses to build (a forbidden method, a body on GET or HEAD) fails here as invalid
+    // input, never later as a retryable network error. The body is checked without consuming a stream.
+    if ((op.method === "GET" || op.method === "HEAD") && body !== undefined) throw new InputError(`A ${op.method} request cannot have a body.`);
+    if (typeof Request === "function") {
+      try {
+        new Request(url, { method: op.method, headers });
+      } catch (error) {
+        throw new InputError(`${op.method} ${op.path} cannot be sent with fetch: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     return { url, init };
   }
 
-  /** Applies the first security alternative whose credentials are all configured. */
-  async #authorize(op: OperationSpec, headers: Headers, query: string[]): Promise<void> {
-    const alternative = op.security.find((terms) => terms.every((term) => own(this.#credentials, term.scheme) !== undefined));
+  /**
+   * Applies the first credentialed security alternative whose credentials are all configured; an
+   * anonymous alternative is used only when none is, so optional authentication still sends credentials.
+   */
+  async #authorize(op: OperationSpec, headers: Headers, query: string[], signal: AbortSignal): Promise<void> {
+    const satisfied = op.security.filter((terms) => terms.every((term) => own(this.#credentials, term.scheme) !== undefined));
+    const alternative = satisfied.find((terms) => terms.length > 0);
     if (!alternative) return;
     for (const term of alternative) {
       const source = own(this.#credentials, term.scheme) as CredentialSource<string | BasicCredential>;
-      const value = await resolveSource(source);
+      const value = await untilAborted(resolveSource(source), signal);
       const where = `Credential ${term.scheme}`;
       if (term.type === "basic") {
         const pair = value as BasicCredential;
@@ -494,7 +558,7 @@ export class ApiRuntime<Credentials> {
     try {
       let response: Response;
       try {
-        response = await this.#fetch(prepared.url, { ...prepared.init, signal: controller.signal });
+        response = await untilAborted(Promise.resolve().then(() => this.#fetch(prepared.url, { ...prepared.init, signal: controller.signal })), controller.signal);
       } catch (error) {
         settle(new ApiError("network", op.id, `${label} failed before a response was received.`, attempt, { cause: error }));
         throw error;
@@ -502,7 +566,7 @@ export class ApiRuntime<Credentials> {
       const status = response.status;
       let body: Decoded = { kind: "none", value: undefined };
       try {
-        body = await decode(response);
+        body = await untilAborted(decode(response), controller.signal);
       } catch (error) {
         settle(new ApiError("network", op.id, `${label} failed while reading the response body.`, attempt, { cause: error }));
       }

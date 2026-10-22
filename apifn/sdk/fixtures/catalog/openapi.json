@@ -83,6 +83,18 @@
         "responses": { "200": { "description": "Stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Attachment" } } } } }
       }
     },
+    "/projects/{projectId}/summary": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "operationId": "getProjectSummary",
+        "summary": "Get a project summary; credentials are optional and widen what it shows",
+        "security": [{ "bearerAuth": [] }, {}],
+        "responses": {
+          "200": { "description": "The summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectSummary" } } } },
+          "302": { "description": "The summary moved; the client returns it as a typed error and does not follow it", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Moved" } } } }
+        }
+      }
+    },
     "/projects/{projectId}/export": {
       "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
       "get": {
@@ -157,6 +169,8 @@
         "required": ["items"],
         "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } }, "nextCursor": { "type": ["string", "null"] } }
       },
+      "ProjectSummary": { "type": "object", "required": ["openTasks"], "properties": { "openTasks": { "type": "integer" }, "private": { "type": "boolean" } } },
+      "Moved": { "type": "object", "required": ["location"], "properties": { "location": { "type": "string" } } },
       "Attachment": { "type": "object", "required": ["size"], "properties": { "size": { "type": "integer" } } },
       "Problem": {
         "type": "object",

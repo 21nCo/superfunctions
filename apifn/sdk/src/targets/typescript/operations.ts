@@ -20,9 +20,9 @@ export interface ResponseShape {
 export interface OperationShape {
   reasons: string[];
   body: { mediaType: string; kind: BodyKind; required: boolean; schema: unknown } | null;
-  /** Union of documented 2xx responses; null when the operation documents none, so any 2xx body is returned. */
+  /** Union of documented 2xx responses (exact or `2XX`); null when the operation documents none, so any 2xx body is returned. */
   success: ResponseShape | null;
-  /** Error statuses, `4XX`-style ranges and `default`, in catalog order. */
+  /** Every other documented status (1xx, 3xx, 4xx, 5xx), range and `default`, in catalog order: the client throws them. */
   errors: Array<{ status: string; shape: ResponseShape }>;
   accept: string[];
   security: SecurityTerm[][];
@@ -30,6 +30,8 @@ export interface OperationShape {
 }
 
 const READ_METHODS = new Set(["get", "head", "options", "trace"]);
+/** Methods fetch refuses to send (Fetch standard "forbidden method"). */
+const FORBIDDEN_METHODS = new Set(["connect", "trace", "track"]);
 
 export function isReadMethod(method: string): boolean {
   return READ_METHODS.has(method);
@@ -86,6 +88,10 @@ function merge(target: ResponseShape, source: ResponseShape): void {
 
 export function analyzeOperation(operation: CatalogOperation, catalog: OperationCatalog): OperationShape {
   const reasons: string[] = [];
+  if (FORBIDDEN_METHODS.has(operation.method)) reasons.push(`fetch cannot send ${operation.method.toUpperCase()} requests.`);
+  if (operation.requestBody && (operation.method === "get" || operation.method === "head")) {
+    reasons.push(`fetch cannot send a request body with ${operation.method.toUpperCase()}.`);
+  }
   for (const parameter of operation.parameters) {
     if (parameter.in === "cookie") reasons.push(`cookie parameter "${parameter.name}" cannot be sent: browsers forbid setting the Cookie header from fetch.`);
   }
@@ -112,8 +118,9 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
   for (const response of operation.responses) {
     for (const content of response.contents) if (mediaKind(content.mediaType) !== null) accept.add(content.mediaType);
     const { shape, unsupported } = responseShape(response.contents);
-    // `default` documents every status not listed; the client reads it for non-2xx responses only.
-    if (response.kind !== "success") {
+    // Only 2xx responses resolve a call; every other documented status (redirects are not followed) and
+    // `default`, which documents every status not listed, become typed errors.
+    if (!/^2(?:\d\d|XX)$/.test(response.status)) {
       errors.push({ status: response.status, shape });
       continue;
     }

@@ -52,6 +52,13 @@
       "expect": { "error": { "kind": "http", "status": 302, "declared": false, "body": null } }
     },
     {
+      "name": "a documented redirect is a declared error, never a result",
+      "operation": "projects.summary.get",
+      "parameters": { "path": { "projectId": "p1" } },
+      "response": { "status": 302, "headers": { "content-type": "application/json", "location": "http://127.0.0.1:9/elsewhere" }, "body": "{\"location\":\"/v2/summary\"}" },
+      "expect": { "error": { "kind": "http", "status": 302, "declared": true, "body": { "location": "/v2/summary" } } }
+    },
+    {
       "name": "malformed JSON in a success is a decode failure",
       "operation": "tasks.get",
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
