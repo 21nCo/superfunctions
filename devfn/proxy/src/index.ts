@@ -19,6 +19,15 @@ const DEFAULT_LISTENER_PORTS = process.platform === "darwin" ? { httpPort: 8080,
 
 export function proxyListenerPorts(): { httpPort: number; httpsPort: number } { return { ...DEFAULT_LISTENER_PORTS }; }
 
+/**
+ * The loopback HTTPS listener that serves only public tunnel origin routes.
+ * A tunnel connector reaches DevFn through this port alone, so private
+ * routes, which never render on it, are unreachable through a tunnel.
+ */
+export const PUBLIC_ORIGIN_PORT = 8444;
+/** Marks the public origin's own responses: "fallback" on an allowlisted host's unrouted paths, "deny" for any other name. */
+export const PUBLIC_ORIGIN_HEADER = "Devfn-Public-Origin";
+
 /** Deterministic, locale-independent ordering of identifiers and hostnames. */
 const compareText = (a: string, b: string): number => {
   if (a === b) return 0;
@@ -55,6 +64,10 @@ export interface ProxyRoute {
   certificateDigest?: string;
   /** A route to a process group leader DevFn started outside a lifecycle; the next transition that changes routes drops it once that whole group is verified gone. */
   serviceProcess?: { pid: number; birthSignature: string };
+  /** A public tunnel origin route: served only on PUBLIC_ORIGIN_PORT with internal TLS. */
+  exposure?: "public";
+  /** The tunnel binding's public domain; the hostname is one of its subdomains. */
+  publicDomain?: string;
 }
 interface ProxyState { version: 1; routes: ProxyRoute[] }
 
@@ -80,15 +93,28 @@ export class ProxyError extends Error {
   }
 }
 
-export function renderCaddyfile(routes: readonly ProxyRoute[], ipv6Loopback = false, ports = proxyListenerPorts()): string {
-  const lines = ["{", "  admin 127.0.0.1:2019", `  http_port ${ports.httpPort}`, `  https_port ${ports.httpsPort}`, `  default_bind 127.0.0.1${ipv6Loopback ? " [::1]" : ""}`, "  skip_install_trust", "  auto_https disable_redirects", "}", ""];
+const isPublic = (route: Pick<ProxyRoute, "exposure">): boolean => route.exposure === "public";
+
+export function renderCaddyfile(routes: readonly ProxyRoute[], ipv6Loopback = false, ports = proxyListenerPorts(), publicPort = PUBLIC_ORIGIN_PORT): string {
+  if (publicPort === ports.httpPort || publicPort === ports.httpsPort) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "The public origin port must differ from the local proxy listener ports.");
+  const publicRoutes = routes.filter(isPublic);
+  // strict_sni_host keyed by the first bound address applies to every bind of
+  // that server; a bare :port key silently matches nothing under default_bind.
+  const lines = ["{", "  admin 127.0.0.1:2019", `  http_port ${ports.httpPort}`, `  https_port ${ports.httpsPort}`, `  default_bind 127.0.0.1${ipv6Loopback ? " [::1]" : ""}`, "  skip_install_trust", "  auto_https disable_redirects",
+    ...(publicRoutes.length ? [`  servers 127.0.0.1:${publicPort} {`, "    strict_sni_host on", "  }"] : []), "}", ""];
   const hosts = new Map<string, ProxyRoute[]>();
+  const publicHosts = new Map<string, ProxyRoute[]>();
+  const hostExposure = new Map<string, boolean>();
   const routeKeys = new Set<string>();
   const hostOwners = new Map<string, string>();
   for (const route of routes) {
     if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(route.hostname) || route.hostname.length > 253 ||
-      (!route.hostname.toLowerCase().endsWith(".localhost") && (!route.registeredDomain || !domainContains(route.registeredDomain, route.hostname)))) {
+      (!isPublic(route) && route.publicDomain === undefined && !route.hostname.toLowerCase().endsWith(".localhost") && (!route.registeredDomain || !domainContains(route.registeredDomain, route.hostname)))) {
       throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Proxy hostname ${route.hostname} must be a concrete .localhost or registered domain name.`);
+    }
+    if ((isPublic(route) || route.publicDomain !== undefined) && (!isPublic(route) || !route.publicDomain || route.publicDomain.endsWith(".localhost") ||
+      !route.hostname.toLowerCase().endsWith(`.${route.publicDomain.toLowerCase()}`) || route.tls !== "internal" || route.registeredDomain || route.serviceProcess)) {
+      throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Public route ${route.id} must use internal TLS for a subdomain of its tunnel domain.`);
     }
     if (route.targetHost !== "127.0.0.1" && route.targetHost !== "::1") throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Proxy target ${route.targetHost} must be a literal loopback address.`);
     if (!Number.isInteger(route.targetPort) || route.targetPort < 1 || route.targetPort > 65535) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Proxy target port ${route.targetPort} must be an integer between 1 and 65535.`);
@@ -104,16 +130,19 @@ export function renderCaddyfile(routes: readonly ProxyRoute[], ipv6Loopback = fa
     const owner = hostOwners.get(hostname);
     if (owner !== undefined && owner !== route.instanceId) throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", `Proxy hostname ${route.hostname} is already owned by another instance.`);
     hostOwners.set(hostname, route.instanceId);
+    if (hostExposure.has(hostname) && hostExposure.get(hostname) !== isPublic(route)) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Proxy hostname ${route.hostname} cannot be both public and local.`);
+    hostExposure.set(hostname, isPublic(route));
     // Caddy path matchers ignore case. Prefix /api and /api/ also render
     // identical matchers, so both must have one canonical ownership key.
     const canonicalPath = (match === "prefix" ? routePath.replace(/\/$/, "") || "/" : routePath).toLowerCase();
     const key = `${hostname}\0${match}\0${canonicalPath}`;
     if (routeKeys.has(key)) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Ambiguous route for ${route.hostname}${routePath}; path is already owned.`);
     routeKeys.add(key);
-    const hostRoutes = hosts.get(route.hostname.toLowerCase()) ?? [];
+    const group = isPublic(route) ? publicHosts : hosts;
+    const hostRoutes = group.get(hostname) ?? [];
     if (hostRoutes.length && hostRoutes[0].tls !== route.tls) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", `Conflicting TLS modes for ${route.hostname}.`);
     hostRoutes.push(route);
-    hosts.set(route.hostname.toLowerCase(), hostRoutes);
+    group.set(hostname, hostRoutes);
   }
   const httpsPortSuffix = ports.httpsPort === 443 ? "" : `:${ports.httpsPort}`;
   const redirect = (hostname: string) => [`${plainHttpSite(hostname)} {`, `  redir https://{host}${httpsPortSuffix}{uri} 308`, "}", ""];
@@ -131,33 +160,51 @@ export function renderCaddyfile(routes: readonly ProxyRoute[], ipv6Loopback = fa
       if (tls.tls !== "off") lines.push(...redirect(hostname));
       continue;
     }
-    lines.push(`${site} {`, ...tlsLine, "  route {");
     // Exact routes outrank prefixes; longer paths outrank shorter ones.
-    const exactRank = (route: ProxyRoute) => ((route.match ?? "prefix") === "exact" ? 1 : 0);
-    const ordered = [...hostRoutes].sort((a, b) => exactRank(b) - exactRank(a) || (b.path ?? "/").length - (a.path ?? "/").length);
-    const pathMatcher = (route: ProxyRoute): string => {
-      const routePath = route.path ?? "/";
-      if ((route.match ?? "prefix") === "exact") return routePath;
-      const prefix = routePath.replace(/\/$/, "");
-      return prefix ? `${prefix} ${prefix}/*` : "/*";
-    };
-    ordered.forEach((route, index) => {
-      const routePath = route.path ?? "/";
-      const targetHost = route.targetHost === "::1" ? "[::1]" : route.targetHost;
-      const matcher = pathMatcher(route);
-      lines.push(`    @route${index} path ${matcher}`, `    handle @route${index} {`, ...(route.stripPrefix ? [`      uri strip_prefix ${routePath.replace(/\/$/, "")}`] : []), `      reverse_proxy ${targetHost}:${route.targetPort}`, "    }");
-    });
-    lines.push("    handle {", "      respond 404", "    }", "  }", "}", "");
+    lines.push(`${site} {`, ...tlsLine);
+    lines.push(...pathRoutes(hostRoutes), "}", "");
     if (tls.tls !== "off") lines.push(...redirect(hostname));
   }
   if (hosts.size) lines.push(`${plainHttpSite("")} {`, "  respond 404", "}", "");
+  // The public origin is an explicit allowlist: each public host serves only
+  // its selected paths (404 elsewhere), a Host header that differs from the
+  // TLS server name is refused (421), and any other name Caddy holds a
+  // certificate for, including every local route, is denied (403).
+  for (const [hostname, hostRoutes] of [...publicHosts].sort(([a], [b]) => compareText(a, b))) {
+    lines.push(`https://${hostname}:${publicPort} {`, "  tls internal", ...pathRoutes(hostRoutes, `header ${PUBLIC_ORIGIN_HEADER} fallback`), "}", "");
+  }
+  if (publicHosts.size) lines.push(`https://:${publicPort} {`, "  tls internal", `  header ${PUBLIC_ORIGIN_HEADER} deny`, "  respond 403", "}", "");
   return lines.join("\n");
 }
 
-/** TCP listener ports a rendered configuration binds: every site uses HTTP; TLS sites also use HTTPS. */
-export function proxyListenerPortsFor(routes: readonly Pick<ProxyRoute, "tls">[], ports = proxyListenerPorts()): number[] {
-  if (!routes.length) return [];
-  return routes.some((route) => route.tls !== "off") ? [ports.httpPort, ports.httpsPort] : [ports.httpPort];
+/** Path routes of one host, exact before prefix and longer before shorter, with a 404 fallback. */
+function pathRoutes(hostRoutes: readonly ProxyRoute[], fallbackHeader?: string): string[] {
+  const exactRank = (route: ProxyRoute) => ((route.match ?? "prefix") === "exact" ? 1 : 0);
+  const ordered = [...hostRoutes].sort((a, b) => exactRank(b) - exactRank(a) || (b.path ?? "/").length - (a.path ?? "/").length);
+  const pathMatcher = (route: ProxyRoute): string => {
+    const routePath = route.path ?? "/";
+    if ((route.match ?? "prefix") === "exact") return routePath;
+    const prefix = routePath.replace(/\/$/, "");
+    return prefix ? `${prefix} ${prefix}/*` : "/*";
+  };
+  const lines = ["  route {"];
+  ordered.forEach((route, index) => {
+    const routePath = route.path ?? "/";
+    const targetHost = route.targetHost === "::1" ? "[::1]" : route.targetHost;
+    lines.push(`    @route${index} path ${pathMatcher(route)}`, `    handle @route${index} {`, ...(route.stripPrefix ? [`      uri strip_prefix ${routePath.replace(/\/$/, "")}`] : []), `      reverse_proxy ${targetHost}:${route.targetPort}`, "    }");
+  });
+  lines.push("    handle {", ...(fallbackHeader ? [`      ${fallbackHeader}`] : []), "      respond 404", "    }", "  }");
+  return lines;
+}
+
+/**
+ * TCP listener ports a rendered configuration binds: every local site uses
+ * HTTP; local TLS sites also use HTTPS; public routes use only the public origin port.
+ */
+export function proxyListenerPortsFor(routes: readonly Pick<ProxyRoute, "tls" | "exposure">[], ports = proxyListenerPorts()): number[] {
+  const local = routes.filter((route) => !isPublic(route));
+  const listeners = !local.length ? [] : local.some((route) => route.tls !== "off") ? [ports.httpPort, ports.httpsPort] : [ports.httpPort];
+  return routes.some(isPublic) ? [...listeners, PUBLIC_ORIGIN_PORT] : listeners;
 }
 
 async function listenerAccepts(port: number, host: string): Promise<boolean> {
@@ -390,7 +437,7 @@ export class CaddyProxyController {
       // when it started or reloaded; it still holds them while it runs.
       const ownedPorts = ownerVerified ? proxyListenerPortsFor(committed?.routes ?? []) : [];
       const ipv6 = await ipv6LoopbackAvailable();
-      for (const port of Object.values(proxyListenerPorts())) {
+      for (const port of [...Object.values(proxyListenerPorts()), ...(candidateRoutes.some(isPublic) ? [PUBLIC_ORIGIN_PORT] : [])]) {
         const listeners = scan.listeners.filter((listener) => listener.protocol === "tcp" && listener.port === port);
         if (listeners.some((listener) => ownerStatus !== "active" || listener.pid !== owner?.pid)) {
           throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", `Caddy listener port ${port} is occupied by another process.`);

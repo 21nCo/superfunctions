@@ -309,6 +309,49 @@ describe("devfn CLI", () => {
     expect((await registry.read()).allocations.find((item) => item.invocationId === "stale-invocation")?.state).toBe("active");
   });
 
+  it("previews public tunnel URLs, refuses a binding without the nonproduction assertion and keeps tunnel profiles behind --allow-public", async () => {
+    const cwd = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-tunnel-cli-")));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-tunnel-state-"));
+    try {
+      await writeFile(path.join(cwd, "credentials.json"), "{}", { mode: 0o600 });
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+        processes: { web: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], ports: ["web"] } },
+        profiles: { default: { processes: ["web"], proxy: true, tunnel: { binding: "preview", routes: ["web"] } } }, hostnames: { web: { target: "web", path: "/app" } } }));
+      const run = async (...args: string[]) => {
+        let output = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+        return { code, result: JSON.parse(output) as Record<string, any> };
+      };
+      const fields = ["--domain", "tunnel.example.test", "--account-id", "a".repeat(32), "--zone-id", "b".repeat(32), "--tunnel-id", "00000000-0000-4000-8000-000000000001",
+        "--credentials-file", "credentials.json", "--api-token-env", "DEVFN_FIXTURE_TOKEN"];
+      expect(await run("tunnel", "register", "preview", ...fields)).toMatchObject({ code: 1, result: { error: { message: expect.stringContaining("--nonproduction") } } });
+      expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      expect(await run("tunnel", "register", "preview", ...fields, "--nonproduction")).toMatchObject({ code: 0, result: { binding: { name: "preview", nonproduction: true } } });
+      const urls = await run("tunnel", "urls");
+      expect(urls.result).toEqual({ ok: true, binding: "preview", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
+      expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
+      expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], pending: false, retired: 0, outstanding: [] } } });
+      // ports gc still collects other released leases while it reports an orphan whose DNS removal fails (no API token in this shell).
+      const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+      await registry.reserve({ projectId: "other", instanceId: "released-owner", invocationId: "released", profile: "default", requests: [{ name: "api", spec: {} }] });
+      await registry.release({ invocationId: "released" });
+      const orphan = "web-orphan-0123456789abcdef0123.tunnel.example.test";
+      await mkdir(path.join(stateDir, "tunnels", "preview"), { recursive: true, mode: 0o700 });
+      await writeFile(path.join(stateDir, "tunnels", "preview", "state.json"), JSON.stringify({ version: 1, binding: "preview", hostnames: [{ hostname: orphan, ownerId: "orphan-owner", publishedAt: "2026-01-01T00:00:00.000Z" }], retired: [], residue: [] }));
+      await mkdir(path.join(stateDir, "tunnel-owners"));
+      await writeFile(path.join(stateDir, "tunnel-owners", "orphan-owner.json"), JSON.stringify({ version: 1, bindings: ["preview"] }));
+      expect(await run("ports", "gc")).toMatchObject({ code: 1, result: { error: { details: { recovered: ["orphan-owner"], removed: 1, failures: [expect.stringContaining("public DNS removal is not confirmed"), expect.stringContaining("DEVFN_FIXTURE_TOKEN is unset")] } } } });
+      expect((await registry.read()).allocations).toEqual([]);
+      expect(await run("tunnel", "status", "preview")).toMatchObject({ result: { tunnel: { hostnames: [], outstanding: [{ ownerId: "orphan-owner", detail: `${orphan}: public DNS removal is not confirmed` }] } } });
+      expect(await run("tunnel", "unregister", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_TUNNEL_IN_USE" } } });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("requires a separate confirmation for public exposure", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));

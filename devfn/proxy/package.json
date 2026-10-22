@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./oauth-relay": { "types": "./dist/oauth-relay/index.d.ts", "import": "./dist/oauth-relay/index.js" } },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./oauth-relay": { "types": "./dist/oauth-relay/index.d.ts", "import": "./dist/oauth-relay/index.js" }, "./tunnel": { "types": "./dist/tunnel/index.d.ts", "import": "./dist/tunnel/index.js" } },
   "files": ["dist", "README.md"],
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc --noEmit -p tsconfig.json", "test": "vitest run", "lint": "echo 'lint not configured'", "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"" },
   "dependencies": { "@devfn/ports": "0.1.0", "@devfn/processes": "0.1.0" },
