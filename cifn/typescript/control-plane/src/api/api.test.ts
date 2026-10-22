@@ -710,3 +710,19 @@ describe('Control Plane API', () => {
     });
   });
 });
+
+it('redacts multiline and overlapping configured secrets in authenticated log reads', async () => {
+  const secFn = new MemorySecFnClient();
+  await secFn.setSecret('CIFN_API_KEYS', VALID_API_KEY);
+  const entries = ['alpha-key', 'beta-key', 'abcde', '$$$'];
+  const { app, store } = createApp({ secFn, logClient: {
+    getLines: () => entries.map(line => ({ line, timestamp: '2026-10-22T00:00:00Z', stepKey: 'step-0' })),
+  } });
+  const run = store.createRun({ pipelineSpec: validPipelineSpec, trigger: { type: 'workflow_dispatch' } });
+  store.registerJobSecretValues(run.id, 'build', ['alpha-key\r\nbeta-key', 'abc', 'abcde', '$$$', '*']);
+  const response = await makeRequest(app, `/api/v1/runs/${run.id}/jobs/build/logs`, { headers: authHeaders() });
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.data.lines.map((entry: { line: string }) => entry.line)).toEqual(['***', '***', '***', '***']);
+  expect(entries).toEqual(['alpha-key', 'beta-key', 'abcde', '$$$']);
+});

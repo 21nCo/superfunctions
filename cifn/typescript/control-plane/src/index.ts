@@ -74,3 +74,5 @@ export type { JobCompletion, ClaimIdentity } from './dispatch/types.js';
 export { NotificationPublisher } from './sendfn/outbox.js';
 export { parseNotificationConfig } from './sendfn/sendfn-client.js';
 export type { SendFnConfig, SendFnNotification } from './sendfn/sendfn-client.js';
+
+export { redactSecrets } from './secrets/redact.js';

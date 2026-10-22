@@ -1,3 +1,4 @@
+import { redactSecrets } from '../secrets/redact.js';
 import { NotificationPublisher, isNotificationStore } from '../sendfn/outbox.js';
 import { registerClaimRoutes } from './claims.js';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
@@ -232,15 +233,8 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
     
     const secretValues = await runStore.getSecretValues(runId);
     
-    const lines = entries.map(e => {
-      let redactedLine = e.line;
-      for (const secret of secretValues) {
-        if (secret.length > 0) {
-          redactedLine = redactedLine.split(secret).join('***');
-        }
-      }
-      return { line: redactedLine, timestamp: e.timestamp, stepKey: e.stepKey };
-    });
+    const redacted = redactSecrets(entries.map(entry => entry.line), secretValues);
+    const lines = entries.map((entry, index) => ({ line: redacted[index], timestamp: entry.timestamp, stepKey: entry.stepKey }));
     return c.json(success({ lines }));
   });
 

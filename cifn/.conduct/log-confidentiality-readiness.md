@@ -27,3 +27,13 @@ complete line batches; a future streaming transport must retain sufficient secre
 boundary context before publishing. Durable authenticated log batches, encrypted
 storage/spool, retention, replay and separate transfer status remain open. No remote
 log-persistence or production-readiness claim is made by this checkpoint.
+
+## Authenticated read boundary
+
+The control-plane log API contained a second copy of the old redactor. An
+HTTP-handler regression reproduced multiline component leakage there even when
+the runner implementation was corrected. Both sides now use the same exported
+control-plane helper; the runner's existing public export remains compatible.
+Authenticated reads mask returned text without mutating the adapter's entries.
+All187 control-plane cases, source and strict durable types, and dual builds pass.
+The runner suite also exercises the shared helper through the built dependency.
