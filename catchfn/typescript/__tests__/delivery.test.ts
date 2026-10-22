@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { catchFn } from "../src/index.js";
 
 describe("canonical delivery contract", () => {
+  it.each([{}, {url:""}, {url:"   "}, {url:null}])("rejects an upload receipt without a usable URL before report delivery: %j", async receipt => {
+    const capture = vi.fn(async () => undefined);
+    const catcher = catchFn({name:"test",watch:{client:{capture}},reporter:{maxInlineBytes:1},
+      uploadAttachment: async () => receipt as {url:string}});
+    try {
+      await expect(catcher.captureBug({title:"Attachment",attachments:[{id:"file",name:"f",type:"image/png",size:0,dataUrl:"data:image/png;base64,AAEC"}]}))
+        .rejects.toThrow("Attachment upload must return a URL");
+      expect(capture).not.toHaveBeenCalled();
+    } finally { catcher.stop(); }
+  });
+
   it("awaits delivery and redacts context after hooks", async () => {
     const capture = vi.fn(async () => ({integration:{issueId:"one",issueUrl:"https://example.com/issues/one"}}));
     const catcher = catchFn({name:"shop",sessionId:"session",watch:{client:{capture}},beforeSend:event=>({...event,metadata:{password:"secret",valid:true}})});

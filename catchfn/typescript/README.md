@@ -315,9 +315,14 @@ The reporter provides masked screenshots, DrawFn annotation, title/description/s
 severity/tags and console/network consent. Use `data-catchfn-mask` on private DOM
 content; password and payment inputs are masked automatically. Additional selectors
 can be configured through `reporter.maskSelectors`. Large screenshots require an
-`uploadAttachment(blob, attachment)` callback returning an HTTP(S) URL; the default
+`uploadAttachment(blob, attachment)` callback returning `{ url: "https://..." }`; the URL must use HTTP(S) and contain no credentials. Missing or empty URLs reject capture before report delivery. The default
 inline limit is 64 KiB. Screenshot bytes and annotation metadata count toward the
 final payload limit.
+
+The application owns upload authentication, storage access, request timeouts, size
+limits and orphan cleanup. A failed upload prevents report delivery; retrying a
+prepared report through `CatchFnDeliveryError.retry()` reuses its existing upload
+reference. CatchFn cannot retract a file already stored by an upload service.
 
 React applications can render `CatchFnReporterButton` from `catchfn/react` with a
 `catcher` prop and optional `onReporterError` handler. The application owns SDK

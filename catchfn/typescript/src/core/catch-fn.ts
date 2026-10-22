@@ -294,7 +294,9 @@ export class CatchFn {
           if (blob.size > (this.config.reporter?.maxInlineBytes ?? 65536)) {
             if (!this.config.uploadAttachment) throw new RangeError("Attachment exceeds inline size limit; configure uploadAttachment");
             const uploaded = await this.config.uploadAttachment(blob, next);
-            next = {...next, url:uploaded.url};
+            const uploadedUrl = uploaded?.url;
+            if (typeof uploadedUrl !== "string" || !uploadedUrl.trim()) throw new TypeError("Attachment upload must return a URL");
+            next = {...next, url:uploadedUrl};
             delete next.dataUrl;
           }
         }
