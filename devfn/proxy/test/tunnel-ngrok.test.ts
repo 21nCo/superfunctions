@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -630,6 +630,52 @@ describe("ngrok connector lifecycle", () => {
       expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [a], outstanding: [] });
       expect(() => process.kill(orphan, 0)).toThrow();
       expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", hostnames: [], retired: 0, outstanding: [] });
+      expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("keeps an unreadable agent record of a killed connector and fails closed until it can be read (reserved)", { timeout: 120_000 }, async () => {
+    const { stateDir, options, fixtureOrigin } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      const agentFile = tunnelPaths(stateDir, "share").agent((await readTunnelState(stateDir, "share")).connector!.launchId!);
+      const orphan = await killConnectorOnly(stateDir, "share");
+      await chmod(agentFile, 0o000);
+      try {
+        // An unreadable record is not an absent agent: nothing reports A unrouted, starts beside the agent or forgets it.
+        expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified" });
+        await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+        await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+        expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified", hostnames: [], outstanding: [{ ownerId: "owner-a", detail: expect.stringContaining(A) }] });
+        expect(() => process.kill(orphan, 0)).not.toThrow();
+      } finally { await chmod(agentFile, 0o600); }
+      // Readable again, the next withdrawal stops the agent and only then removes its record.
+      expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+      expect(() => process.kill(orphan, 0)).toThrow();
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "stopped", retired: 0, outstanding: [] });
+      expect((await readdir(tunnelPaths(stateDir, "share").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("keeps a malformed agent record of a killed connector and fails closed until it is complete (ephemeral)", { timeout: 120_000 }, async () => {
+    const { stateDir, options, fixtureOrigin, domain } = await setup("ephemeral");
+    const a = `web-a-0123456789abcdef0123.${domain}`;
+    try {
+      await publishTunnelRoutes(options, "owner-a", [a]);
+      const agentFile = tunnelPaths(stateDir, "eph").agent((await readTunnelState(stateDir, "eph")).connector!.launchId!);
+      const orphan = await killConnectorOnly(stateDir, "eph");
+      const original = await readFile(agentFile, "utf8");
+      for (const malformed of ["{", JSON.stringify({ ...JSON.parse(original) as object, pid: "not-a-pid" })]) {
+        await writeFile(agentFile, malformed);
+        expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified" });
+        await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+        await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+        expect(await readFile(agentFile, "utf8")).toBe(malformed);
+        expect(() => process.kill(orphan, 0)).not.toThrow();
+      }
+      await writeFile(agentFile, original);
+      expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+      expect(() => process.kill(orphan, 0)).toThrow();
       expect((await readdir(tunnelPaths(stateDir, "eph").dir)).filter((file) => file.startsWith("agent-"))).toEqual([]);
     } finally { fixtureOrigin.server.close(); }
   });

@@ -334,12 +334,24 @@ export const LAUNCH_ID = /^[a-f0-9]{32}$/;
 /** A recorded agent process and the connector configuration file it was started for. */
 export interface AgentIdentity { pid: number; birthSignature: string; startedAt: string; configFile: string }
 
-/** A recorded agent identity, or undefined when none is recorded; one that cannot be parsed is undefined too, as a connector writes it atomically. */
-export async function readAgentIdentity(file: string): Promise<AgentIdentity | undefined> {
-  const value = await readFile(file, "utf8").then((text) => JSON.parse(text) as Partial<AgentIdentity> & { version?: unknown }, () => undefined);
+/**
+ * A launch's agent identity record. Only an absent file means no agent was
+ * recorded. A connector writes the file atomically, so one that cannot be
+ * read or is not a complete record is unreadable evidence of an agent that
+ * may run, never its absence.
+ */
+export type AgentRecord = { status: "absent" } | { status: "unreadable"; reason: string } | { status: "recorded"; agent: AgentIdentity };
+
+export async function readAgentIdentity(file: string): Promise<AgentRecord> {
+  let value: Partial<AgentIdentity> & { version?: unknown };
+  try { value = JSON.parse(await readFile(file, "utf8")) as typeof value; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "absent" };
+    return { status: "unreadable", reason: error instanceof SyntaxError ? "it is not valid JSON" : (error as NodeJS.ErrnoException).code ?? "it cannot be read" };
+  }
   if (!value || value.version !== 1 || !Number.isInteger(value.pid) || value.pid! <= 0 || typeof value.birthSignature !== "string" || !canonicalBirthSignature(value.birthSignature) ||
-    typeof value.startedAt !== "string" || typeof value.configFile !== "string") return undefined;
-  return { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile };
+    typeof value.startedAt !== "string" || typeof value.configFile !== "string") return { status: "unreadable", reason: "it is not a complete agent record" };
+  return { status: "recorded", agent: { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile } };
 }
 
 export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string; agent: (launchId: string) => string } {

@@ -13,7 +13,7 @@ import { CloudflareTunnelProvider } from "./cloudflare.js";
 import { NgrokTunnelProvider } from "./ngrok.js";
 import {
   InstalledWriteError, TunnelError, assertBindingRegistered, compareNames, isPublicHostname, markOwnerBinding, ownerMarkerFile, readAgentIdentity, readTunnelState, tunnelDirectory, tunnelPaths, urlTiming, writePrivateFile, writeTunnelState,
-  type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState, type UrlTiming,
+  type AgentIdentity, type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelResidue, type TunnelState, type UrlTiming,
 } from "./state.js";
 
 const LOCK_TIMEOUT_MS = 60_000;
@@ -181,14 +181,17 @@ async function freeLoopbackPort(): Promise<number> {
 
 /**
  * The agent process a connector launch recorded (see agentIdentityFile) and
- * whether it still runs; "exited" when it recorded none. Only the file of
- * this record's own launch is read: no other launch's agent is attributed to it.
+ * whether it still runs; "exited" when it recorded none, "unverified" with
+ * the reason when its record cannot be read. Only the file of this record's
+ * own launch is read: no other launch's agent is attributed to it.
  */
-async function recordedAgent(paths: TunnelPaths, record: ConnectorRecord) {
-  if (!record.launchId) return { status: "exited" as const };
+async function recordedAgent(paths: TunnelPaths, record: ConnectorRecord): Promise<{ file?: string; agent?: AgentIdentity; status: Awaited<ReturnType<typeof processIdentityStatus>>; reason?: string }> {
+  if (!record.launchId) return { status: "exited" };
   const file = paths.agent(record.launchId);
-  const agent = await readAgentIdentity(file);
-  if (!agent) return { file, status: "exited" as const };
+  const recorded = await readAgentIdentity(file);
+  if (recorded.status === "absent") return { file, status: "exited" };
+  if (recorded.status === "unreadable") return { file, status: "unverified", reason: recorded.reason };
+  const { agent } = recorded;
   return { file, agent, status: await processIdentityStatus(agent.pid, agent.birthSignature, agent.startedAt) };
 }
 
@@ -215,7 +218,9 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function stopOrphanAgent(paths: TunnelPaths, record: ConnectorRecord): Promise<string | undefined> {
   const leader = await processIdentityStatus(record.pid, record.birthSignature, record.startedAt);
   if (leader === "running" || leader === "unverified") return undefined;
-  const { file, agent, status } = await recordedAgent(paths, record);
+  const { file, agent, status, reason } = await recordedAgent(paths, record);
+  // An unreadable record is kept: it is the only way a later attempt can still stop that agent.
+  if (!agent && status === "unverified") return `The agent identity recorded by tunnel connector ${record.pid} cannot be read (${reason}), so its agent may still run`;
   if (!agent || status === "exited" || status === "identity-mismatch") { if (file) await rm(file, { force: true }); return undefined; }
   const label = `The agent (PID ${agent.pid}) of tunnel connector ${record.pid}`;
   for (const signal of ["SIGTERM", "SIGKILL"] as const) {
