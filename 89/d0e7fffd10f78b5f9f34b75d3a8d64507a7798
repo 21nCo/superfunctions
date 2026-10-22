@@ -1,0 +1,35 @@
+userfn/.conduct/durable-campaign-caps-readiness.md
+  s_e1c5fc1a65c0cf::t_a12f7564687f14 25,32-66
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_64bd5d1abf04ee 95-100
+userfn/python/src/userfn/core/messaging_http.py
+  s_e1c5fc1a65c0cf::t_5e92966acca84f 84,91,94,99-100,102-103
+userfn/python/tests/test_messaging_durable.py
+  s_e1c5fc1a65c0cf::t_6788deaf299ab7 1-33
+userfn/service/src/messaging.ts
+  s_e1c5fc1a65c0cf::t_93f2b731884db6 39-41
+userfn/service/tests/messaging-http.test.ts
+  s_e1c5fc1a65c0cf::t_85453c55329cc6 28,30,55-60
+userfn/typescript/src/__tests__/messaging-durable.test.ts
+  s_e1c5fc1a65c0cf::t_d155d56294f2c6 43-82
+userfn/typescript/src/core/messaging-http.ts
+  s_e1c5fc1a65c0cf::t_d294ed38b97c26 55,65,68
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_cd268223466a59 106-107,126-127,132-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89d0e7fffd10f78b5f9f34b75d3a8d64507a7798",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
