@@ -126,3 +126,10 @@ alert results hide their credentials. Memory storage remains process-local.
 
 See [public alert manager behavior and remaining limits](../.conduct/public-alert-manager-readiness.md)
 for cap, recovery, delivery and credential-storage semantics.
+
+Alert definition updates replace optional metadata and recovery policy; omitted
+`enabled` retains its current value. Evaluation conflicts when an alert changes
+during its observation scan and must be retried with fresh observations. Missing
+database or unsupported hybrid alert storage fails explicitly. Sender completion
+after its deadline or lease expiry does not acknowledge delivery; providers should
+deduplicate by notification ID because retry outcomes can remain uncertain.

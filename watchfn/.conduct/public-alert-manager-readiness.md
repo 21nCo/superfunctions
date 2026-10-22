@@ -77,3 +77,41 @@ storage; this change does not establish Python lifecycle/persistence parity.
 Smart escalation, durable callback execution, hosted provider acceptance and
 full original WatchFn readiness remain unproven. No deployment or real message
 send is part of this evidence.
+
+## Lifecycle and delivery fencing
+
+Full definition replacement now removes omitted optional fields, including an
+old `autoResolve` policy. The existing enabled state is retained when `enabled`
+is omitted. Admitted lifecycle inputs are captured before database waits, so
+later changes to the caller's object cannot bypass actor/value validation or
+replace the requested note.
+
+Evaluation binds its observations to the alert revision read before the scan.
+A concurrent resolution, acknowledgement, definition edit or delivery-summary
+update makes that evaluation conflict and require a fresh scan; stale evidence
+cannot undo a newer operator decision. The scan itself is still not a database
+snapshot of concurrently ingested events.
+
+A successful sender return after the timeout is not acknowledged as delivered.
+Both AbortSignal and elapsed wall time are checked, including delayed timer
+execution. Completion requires the same token, a sending job and an unexpired
+lease. A reclaimed job retains its notification ID for provider deduplication;
+an old sender cannot complete or fail the new owner's attempt. Expired claims
+consume attempts, and exhaustion produces a durable dead letter. A dead letter
+may represent an uncertain remote delivery, not proof that the provider rejected
+it. Custom senders still must honor cancellation: they remain awaited and cannot
+be forcibly terminated by this library.
+
+Accessing alerts with a missing database adapter or unsupported hybrid backend
+now fails instead of silently creating volatile alert records. Empty dead-letter
+IDs are rejected before any namespace query, preventing accidental deletion of
+an unrelated notification.
+
+Additional native tests cover the lifecycle/definition races, mutable admitted
+inputs, timeout outcomes, lease reclaim and attempt exhaustion, unavailable
+storage, invalid dismissal IDs, and a complete shutdown of every SQLite
+connection followed by reopen and retry with the same notification key. The
+full suite now passes 224 tests across 24 files (20 public-manager tests), plus
+TypeScript and CommonJS/ESM/declaration builds. Logs:
+`/tmp/watch-alert-audit-full.log`, `/tmp/watch-alert-audit-focused.log`,
+`/tmp/watch-alert-audit-types.log`, `/tmp/watch-alert-audit-build.log`.

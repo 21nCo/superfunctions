@@ -317,6 +317,7 @@ export class WatchFn implements WatchFnInstance {
   
   get alerts() {
     if (!this.alertManager) {
+      if (this.config.storage !== 'memory' && (this.config.storage !== 'database' || !this.config.database)) throw new Error('Alert storage is unavailable; configure memory or a shared database adapter');
       const database = this.config.storage === 'database' ? this.config.database : undefined;
       if (database && !('create' in database)) throw new TypeError('Durable alerts require a shared DB Adapter');
       this.alertManager = new AlertManager({

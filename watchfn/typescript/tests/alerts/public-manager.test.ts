@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { AlertHost } from '../../src/alerts/alert-manager';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -134,4 +135,139 @@ it('keeps event-only nontransactional adapters usable and rejects alert use clea
   const watch = new WatchFn({ name: 'events-only', storage: 'database', database: restricted, infra: { enabled: false } }); watches.push(watch); watch.start();
   await observe(watch, 10); expect(await watch.query({ metric: 'latency' })).toHaveLength(1);
   expect(() => watch.alerts).toThrow('transactions');
+});
+
+it('replaces omitted definition fields instead of retaining an old recovery policy', async () => {
+  const { watch, create } = await setup();
+  const alert = await watch.alerts.create({ name: 'old', condition: rule, channels: [], description: 'removed description', tags: ['old'], runbook: 'https://old.example', severity: 'critical', autoResolve: { enabled: true, condition: { ...rule, operator: 'lt', threshold: 2 } } });
+  await watch.alerts.trigger(alert.id);
+  const updated = await watch.alerts.update(alert.id, { name: 'replacement', condition: rule, channels: [] });
+  expect(updated).not.toHaveProperty('autoResolve');
+  for (const field of ['description', 'tags', 'runbook', 'severity']) expect(updated).not.toHaveProperty(field);
+  await observe(watch, 1); await watch.alerts.evaluate();
+  expect((await create().alerts.get(alert.id)).state).toBe('triggered');
+});
+it('rejects a stale observation snapshot after a concurrent manual resolution', async () => {
+  const { watch, create } = await setup(); const now = Date.now();
+  const alert = await watch.alerts.create({ name: 'racing evaluation', condition: rule, channels: [] });
+  await observe(watch, 10, now); await watch.alerts.trigger(alert.id);
+  const host = Reflect.get(watch.alerts, 'host') as AlertHost;
+  const original = host.observations;
+  let entered!: () => void, release!: () => void;
+  const entering = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const spy = vi.spyOn(host, 'observations').mockImplementation(async (...args) => {
+    const observations = await original(...args); entered(); await released; return observations;
+  });
+  const evaluation = watch.alerts.evaluate({ now });
+  await entering; const second = create(); await second.alerts.resolve(alert.id, { resolvedBy: 'operator' }); release();
+  try { await expect(evaluation).rejects.toThrow('changed during evaluation'); }
+  finally { spy.mockRestore(); }
+  expect((await second.alerts.get(alert.id)).state).toBe('resolved');
+});
+it('does not treat a sender returning after its deadline as a successful delivery', async () => {
+  const { watch } = await setup({ timeoutMs: 5, leaseMs: 105, maxAttempts: 1, emailSender: async (_notification: unknown, _channel: unknown, signal: AbortSignal) => {
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  } });
+  const alert = await watch.alerts.create({ name: 'timed out', condition: rule, channels: [{ type: 'email', recipients: ['test@example.test'] }] });
+  await watch.alerts.trigger(alert.id); await watch.alerts.processNotifications();
+  expect(await watch.alerts.notifications()).toMatchObject([{ state: 'dead', attempts: 1 }]);
+  expect(await watch.alerts.get(alert.id)).not.toHaveProperty('lastNotification');
+});
+it('fences a previous sender after another manager reclaims an expired notification lease', async () => {
+  const deliveries: { id: string; release: () => void }[] = [];
+  const { watch, create } = await setup({ timeoutMs: 10000, leaseMs: 10100, maxAttempts: 2, emailSender: async (notification: { id: string }) => {
+    await new Promise<void>(resolve => deliveries.push({ id: notification.id, release: resolve }));
+  } });
+  const alert = await watch.alerts.create({ name: 'lease ownership', condition: rule, channels: [{ type: 'email', recipients: ['test@example.test'] }] });
+  await watch.alerts.trigger(alert.id);
+  const first = watch.alerts.processNotifications();
+  let second: Promise<unknown> | undefined, clock: ReturnType<typeof vi.spyOn> | undefined;
+  try {
+    await vi.waitFor(() => expect(deliveries).toHaveLength(1));
+    clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10101);
+    const reopened = create(); second = reopened.alerts.processNotifications();
+    await vi.waitFor(() => expect(deliveries).toHaveLength(2));
+    expect(deliveries[1].id).toBe(deliveries[0].id);
+    deliveries[0].release(); await first;
+    expect(await reopened.alerts.notifications()).toMatchObject([{ state: 'sending', attempts: 2 }]);
+    expect(await watch.alerts.processNotifications()).toEqual({ processed: 0 });
+    deliveries[1].release(); await second;
+    expect(await reopened.alerts.notifications()).toEqual([]);
+    expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(0);
+  } finally {
+    for (const delivery of deliveries) delivery.release();
+    await Promise.allSettled([first, ...(second ? [second] : [])]); clock?.mockRestore();
+  }
+});
+it('exhausts expired claims durably and never starts another sender beyond maxAttempts', async () => {
+  let entered = false, release!: () => void;
+  const { watch, create } = await setup({ timeoutMs: 10000, leaseMs: 10100, maxAttempts: 1, emailSender: async () => {
+    entered = true; await new Promise<void>(resolve => { release = resolve; });
+  } });
+  const alert = await watch.alerts.create({ name: 'expired attempt', condition: rule, channels: [{ type: 'email', recipients: ['test@example.test'] }] });
+  await watch.alerts.trigger(alert.id); const dispatch = watch.alerts.processNotifications();
+  let clock: ReturnType<typeof vi.spyOn> | undefined;
+  try {
+    await vi.waitFor(() => expect(entered).toBe(true));
+    clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10101);
+    const reopened = create(); expect(await reopened.alerts.processNotifications()).toEqual({ processed: 0 });
+    expect(await reopened.alerts.notifications()).toMatchObject([{ state: 'dead', attempts: 1 }]);
+    release(); await dispatch;
+    const jobs = await reopened.alerts.notifications(); expect(jobs).toMatchObject([{ state: 'dead', attempts: 1 }]);
+    expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(1);
+    expect(await reopened.alerts.dismissNotification(jobs[0].id)).toBe(true);
+    expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(0);
+  } finally { release?.(); await dispatch; clock?.mockRestore(); }
+});
+it.each(['database', 'hybrid'] as const)('does not silently create volatile alerts for unavailable %s storage', storage => {
+  const watch = new WatchFn({ name: 'missing-durable-storage', storage, infra: { enabled: false } }); watches.push(watch);
+  expect(() => watch.alerts).toThrow('Alert storage is unavailable');
+});
+it('snapshots admitted lifecycle inputs before database waits', async () => {
+  const { watch } = await setup();
+  const alert = await watch.alerts.create({ name: 'input snapshot', condition: rule, channels: [] });
+  await watch.alerts.trigger(alert.id);
+  const actor = { acknowledgedBy: 'original-actor' };
+  const acknowledgement = watch.alerts.acknowledge(alert.id, actor); actor.acknowledgedBy = 'x'.repeat(10000);
+  expect((await acknowledgement).acknowledgedBy).toBe('original-actor');
+  const resolution = { resolvedBy: 'original-resolver' };
+  const resolving = watch.alerts.resolve(alert.id, resolution); resolution.resolvedBy = '';
+  expect((await resolving).resolvedBy).toBe('original-resolver');
+  const note = { content: 'original-note', createdBy: 'note-author' };
+  const noting = watch.alerts.addNote(alert.id, note); note.content = 'changed-after-admission';
+  expect((await noting).notes[0].content).toBe('original-note');
+  let received: unknown;
+  watch.alerts.onTrigger((_alert, context) => { received = context.value; });
+  const trigger = { value: 3 };
+  const triggering = watch.alerts.trigger(alert.id, trigger); trigger.value = Infinity;
+  await triggering; expect(received).toBe(3);
+});
+it('rejects an empty dead-letter id without deleting an unrelated notification', async () => {
+  const { watch } = await setup({ maxAttempts: 1 }); const target = await endpoint(500);
+  const alert = await watch.alerts.create({ name: 'dead-letter identity', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
+  await watch.alerts.trigger(alert.id); await watch.alerts.processNotifications();
+  const jobs = await watch.alerts.notifications();
+  await expect(Promise.resolve().then(() => watch.alerts.dismissNotification(''))).rejects.toThrow('Invalid notification id');
+  expect(await watch.alerts.notifications()).toEqual(jobs);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(1);
+});
+it('retains lifecycle and retry attempts after all SQLite connections close and reopen', async () => {
+  const { watch, create } = await setup({ maxAttempts: 2 }); const target = await endpoint(500);
+  const alert = await watch.alerts.create({ name: 'physical reopen', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
+  await watch.alerts.trigger(alert.id);
+  await watch.alerts.addNote(alert.id, { content: 'Before shutdown', createdBy: 'operator' });
+  await watch.alerts.processNotifications();
+  const [pending] = await watch.alerts.notifications(); expect(pending).toMatchObject({ state: 'pending', attempts: 1 });
+  await watch.stop();
+  for (const db of databases.splice(0)) await db.destroy();
+  const reopened = create();
+  expect(await reopened.alerts.notifications()).toEqual([pending]);
+  expect(await reopened.alerts.get(alert.id)).toMatchObject({ state: 'triggered', pendingNotifications: 1, notes: [{ content: 'Before shutdown' }] });
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(pending.availableAt + 1);
+  try { await reopened.alerts.processNotifications(); }
+  finally { clock.mockRestore(); }
+  expect(await reopened.alerts.notifications()).toMatchObject([{ id: pending.id, state: 'dead', attempts: 2 }]);
+  expect(target.received).toHaveLength(2);
+  expect(target.received[0].headers['idempotency-key']).toBe(target.received[1].headers['idempotency-key']);
 });

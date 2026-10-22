@@ -82,7 +82,14 @@ export class AlertManager {
       return rows.filter(row => !filter.status || row.payload.state === filter.status).map(row => this.public(row.payload));
     });
   }
-  update(id: string, input: AlertConfig) { const config = this.validate(input); return this.host.admit(() => this.mutate(id, record => { Object.assign(record, config, { enabled: config.enabled ?? record.enabled }); })); }
+  update(id: string, input: AlertConfig) {
+    const config = this.validate(input);
+    return this.host.admit(() => this.mutate(id, record => {
+      // A full definition replacement must remove omitted recovery/routing metadata.
+      for (const key of ['description', 'severity', 'tags', 'runbook', 'autoResolve'] as const) delete record[key];
+      Object.assign(record, config, { enabled: config.enabled ?? record.enabled });
+    }));
+  }
   onTrigger(callback: (alert: PublicAlert, context: any) => unknown) { this.listeners.triggered.push(callback); }
   onResolve(callback: (alert: PublicAlert, context: any) => unknown) { this.listeners.resolved.push(callback); }
   private note(record: AlertRecord, content: unknown, createdBy: unknown, now: number) {
@@ -90,31 +97,37 @@ export class AlertManager {
     if (record.notes.length >= 100) throw new Error('Alert note capacity reached');
     record.notes.push({ content, createdBy, createdAt: now });
   }
-  addNote(id: string, input: { content: string; createdBy: string }) { return this.host.admit(() => this.mutate(id, (record, now) => this.note(record, input.content, input.createdBy, now))); }
+  addNote(id: string, input: { content: string; createdBy: string }) {
+    const { content, createdBy } = input;
+    return this.host.admit(() => this.mutate(id, (record, now) => this.note(record, content, createdBy, now)));
+  }
   acknowledge(id: string, input: { acknowledgedBy: string; note?: string }) {
-    if (!text(input.acknowledgedBy, 255)) throw new TypeError('Acknowledgement actor is required');
+    const { acknowledgedBy, note } = input;
+    if (!text(acknowledgedBy, 255)) throw new TypeError('Acknowledgement actor is required');
     return this.host.admit(() => this.mutate(id, (record, now) => {
       if (record.state === 'acknowledged') return;
       if (record.state !== 'triggered') throw new Error('Only triggered alerts can be acknowledged');
-      record.state = 'acknowledged'; record.acknowledgedBy = input.acknowledgedBy;
-      if (input.note) this.note(record, input.note, input.acknowledgedBy, now);
+      record.state = 'acknowledged'; record.acknowledgedBy = acknowledgedBy;
+      if (note) this.note(record, note, acknowledgedBy, now);
       return { event: 'acknowledged' as const };
     }));
   }
   resolve(id: string, input: { resolvedBy: string; resolution?: string }) {
-    if (!text(input.resolvedBy, 255)) throw new TypeError('Resolution actor is required');
+    const { resolvedBy, resolution } = input;
+    if (!text(resolvedBy, 255)) throw new TypeError('Resolution actor is required');
     return this.host.admit(() => this.mutate(id, (record, now) => {
       if (!active(record)) return;
-      record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = input.resolvedBy;
-      if (input.resolution) this.note(record, input.resolution, input.resolvedBy, now);
+      record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = resolvedBy;
+      if (resolution) this.note(record, resolution, resolvedBy, now);
       return { event: 'resolved' as const };
     }));
   }
   trigger(id: string, input: { value?: number } = {}) {
-    if (input.value !== undefined && !Number.isFinite(input.value)) throw new TypeError('Invalid trigger value');
+    const { value } = input;
+    if (value !== undefined && !Number.isFinite(value)) throw new TypeError('Invalid trigger value');
     return this.host.admit(() => this.mutate(id, (record, now) => {
       if (!record.enabled || active(record)) return;
-      this.triggerState(record, now); return { event: 'triggered' as const, value: input.value };
+      this.triggerState(record, now); return { event: 'triggered' as const, value };
     }));
   }
   private triggerState(record: AlertRecord, now: number) { record.state = 'triggered'; record.triggeredAt = now; delete record.resolvedAt; delete record.resolvedBy; delete record.acknowledgedBy; }
@@ -148,15 +161,17 @@ export class AlertManager {
             const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, observations, now);
             if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value }; }
           }
-        }, now);
+        }, now, row.revision);
         results.push({ alert, observed: matched !== null, matched });
       }
       return { results, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
     }, true);
   }
-  private async mutate(id: string, change: (record: AlertRecord, now: number) => { event: AlertNotification['event']; value?: number } | void, now = Date.now()): Promise<PublicAlert> {
+  private async mutate(id: string, change: (record: AlertRecord, now: number) => { event: AlertNotification['event']; value?: number } | void, now = Date.now(), expectedRevision?: number): Promise<PublicAlert> {
     const committed = await this.db.transaction(async tx => {
-      const row = await this.row(id, tx), record = copy(row.payload), transition = change(record, now);
+      const row = await this.row(id, tx);
+      if (expectedRevision !== undefined && row.revision !== expectedRevision) throw new Conflict('Alert changed during evaluation; retry');
+      const record = copy(row.payload), transition = change(record, now);
       record.updatedAt = now;
       if (transition && record.pendingNotifications + record.channels.length > this.config.maxPendingPerAlert) throw new Error('Alert notification capacity reached; drain or explicitly dismiss dead letters');
       if (transition) record.pendingNotifications += record.channels.length;
@@ -182,11 +197,14 @@ export class AlertManager {
     const limit = this.limit(options.limit);
     return this.host.admit(async () => (await this.db.findMany<Job>({ model: ALERT_OUTBOX, where: [...this.where(), ...(options.after ? [{ field: 'id', operator: 'gt' as const, value: options.after }] : [])], orderBy: [{ field: 'id', direction: 'asc' }], limit })).map(job => ({ id: job.id, alertId: job.alertId, state: job.state, attempts: job.attempts, availableAt: job.availableAt, event: job.payload.notification.event })));
   }
-  dismissNotification(id: string) { return this.host.admit(() => this.finish(id)); }
+  dismissNotification(id: string) {
+    if (!text(id, 128)) throw new TypeError('Invalid notification id');
+    return this.host.admit(() => this.finish(id));
+  }
   private async finish(id: string, token?: string): Promise<boolean> {
     return this.db.transaction(async tx => {
       const job = await tx.findOne<Job>({ model: ALERT_OUTBOX, where: this.where(id) });
-      if (!job || (token ? job.leaseToken !== token : job.state !== 'dead')) return false;
+      if (!job || (token ? job.leaseToken !== token || job.state !== 'sending' || job.availableAt <= Date.now() : job.state !== 'dead')) return false;
       const row = await this.row(job.alertId, tx), record = copy(row.payload);
       record.pendingNotifications--; if (token) record.lastNotification = { event: job.payload.notification.event, deliveredAt: Date.now() };
       const count = await tx.updateMany({ model: ALERTS, where: [...this.where(row.id), { field: 'revision', operator: 'eq', value: row.revision }], data: { revision: row.revision + 1, state: record.state, payload: record } });
@@ -220,16 +238,20 @@ export class AlertManager {
     }, true);
   }
   private async send(notification: AlertNotification, channel: AlertChannel): Promise<void> {
-    const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const controller = new AbortController(); const deadline = Date.now() + this.config.timeoutMs;
+    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const assertTimely = () => { if (controller.signal.aborted || Date.now() >= deadline) throw new Error('Notification delivery timed out'); };
     try {
       if (channel.type === 'email' || channel.type === 'pagerduty') {
         const sender = channel.type === 'email' ? this.config.emailSender : this.config.pagerDutySender;
         if (!sender) throw new Error('Notification sender unavailable after restart');
-        await sender(copy(notification), copy(channel), controller.signal); return;
+        await sender(copy(notification), copy(channel), controller.signal);
+        assertTimely(); return;
       }
       const payload = channel.type === 'slack' ? { text: `[${notification.alert.severity}] ${notification.alert.name}: ${notification.event}`, ...(channel.channel ? { channel: channel.channel } : {}) } : notification;
       const response = await fetch(channel.webhook!, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': notification.id }, body: JSON.stringify(payload), signal: controller.signal, redirect: 'error' });
       await response.body?.cancel();
+      assertTimely();
       if (!response.ok) throw new Error('Notification delivery failed');
     } finally { clearTimeout(timeout); }
   }
