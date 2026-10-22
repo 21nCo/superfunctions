@@ -33,7 +33,7 @@ const RUNTIME_EXPORTS = [
  * names would shadow it or redeclare it. Model types live in models.ts and are referenced as `Models.X`,
  * so they may use these names.
  */
-const CLIENT_BINDINGS = ["ApiRuntime", "OperationSpec", "SdkMetadata", "Models", "METADATA", "OPERATIONS"];
+const CLIENT_BINDINGS = ["ApiRuntime", "DeepObjectValue", "OperationSpec", "ParamValue", "SdkMetadata", "Models", "METADATA", "OPERATIONS"];
 const CLIENT_GLOBALS = ["ArrayBuffer", "Blob", "Promise", "ReadableStream", "Record", "Uint8Array"];
 
 /**
@@ -148,6 +148,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const methods: string[] = [];
   const errorEntries: string[] = [];
   const unsupportedSchemes = new Set<string>();
+  const narrowings = new Set<string>();
   for (const operation of context.operations) {
     const shape = analyzeOperation(operation, catalog);
     const pointer = `/operations/${catalog.operations.indexOf(operation)}`;
@@ -200,7 +201,12 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
         [parameter.description, required && credential ? "Required unless the API key credential sent under this name is applied." : null, parameter.deprecated ? "@deprecated" : null],
         "  "
       );
-      paramFields.push(`${doc}  ${propertyKey(key)}${required && !credential ? "" : "?"}: ${clientTypes.type(parameter.schema, "  ")};\n`);
+      // A type that also admits values the client cannot serialize is narrowed to the ones it can.
+      const narrowing = shape.parameters[position];
+      const type = clientTypes.type(parameter.schema, "  ");
+      if (narrowing !== null) narrowings.add(narrowing === "value" ? "ParamValue" : "DeepObjectValue");
+      const fieldType = narrowing === "value" ? `ParamValue<${type}>` : narrowing === "deepObject" ? `DeepObjectValue<${type}>` : type;
+      paramFields.push(`${doc}  ${propertyKey(key)}${required && !credential ? "" : "?"}: ${fieldType};\n`);
     }
     if (shape.body) {
       const bodyType =
@@ -294,7 +300,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const client = options.clientName;
   const clientSource =
     header(context) +
-    `\nimport { ApiHttpError, ApiRuntime, type BasicCredential, type ClientOptions, type CredentialSource, type OperationSpec, type RequestOptions, type SdkMetadata } from "./runtime.js";\n` +
+    `\nimport { ApiHttpError, ApiRuntime, ${["BasicCredential", "ClientOptions", "CredentialSource", ...narrowings, "OperationSpec", "RequestOptions", "SdkMetadata"].sort().map((name) => `type ${name}`).join(", ")} } from "./runtime.js";\n` +
     `import type * as Models from "./models.js";\n\n` +
     `const METADATA: SdkMetadata = ${JSON.stringify(metadata, null, 2)};\n\n` +
     `const OPERATIONS: Record<string, OperationSpec> = {\n${specs.join("\n")}\n};\n\n` +

@@ -1,7 +1,8 @@
 // Reads catalog operations into what the TypeScript client needs, and
 // explains what it cannot express.
 
-import type { CatalogContent, CatalogOperation, CatalogSecurityScheme, OperationCatalog } from "@apifn/contracts";
+import type { CatalogContent, CatalogOperation, CatalogParameter, CatalogSecurityScheme, OperationCatalog } from "@apifn/contracts";
+import { ARRAY, containerMembers, NULL, OBJECT, SCALAR, valueKinds } from "./schema.js";
 
 export type BodyKind = "json" | "text" | "binary";
 export type ResponseKind = BodyKind | "none";
@@ -17,8 +18,16 @@ export interface ResponseShape {
   contents: Array<{ kind: ResponseKind; schema: unknown }>;
 }
 
+/**
+ * How a parameter's emitted type is narrowed to the values the client serializes (see `parameterSupport`):
+ * `value` (runtime `ParamValue`), `deepObject` (runtime `DeepObjectValue`), or null to keep the schema type.
+ */
+export type ParameterNarrowing = "value" | "deepObject" | null;
+
 export interface OperationShape {
   reasons: string[];
+  /** Narrowing of each parameter, in catalog order. */
+  parameters: ParameterNarrowing[];
   body: { mediaType: string; kind: BodyKind; required: boolean; schema: unknown } | null;
   /** Union of documented 2xx responses (exact or `2XX`); null when the operation documents none, so any 2xx body is returned. */
   success: ResponseShape | null;
@@ -102,14 +111,56 @@ export function suppliedByCredential(parameter: { name: string; in: string }, se
   );
 }
 
+const CONTAINER = ARRAY | OBJECT;
+
+/**
+ * Whether the client can serialize the values a parameter's type admits. It sends strings, finite numbers
+ * and booleans, arrays of them and objects whose members are them or null (null members are skipped); a
+ * deepObject parameter must be such an object. A position whose type admits none of these makes the
+ * parameter unsupported, with a reason. A type that admits them and other values too, such as an
+ * `unknown` member, is narrowed to the serializable part instead.
+ */
+export function parameterSupport(parameter: CatalogParameter, schemas: Readonly<Record<string, unknown>>): { reasons: string[]; narrowing: ParameterNarrowing } {
+  const label = `${parameter.in} parameter "${parameter.name}"`;
+  const reasons = new Set<string>();
+  const deepObject = parameter.style === "deepObject";
+  const top = valueKinds(parameter.schema, schemas);
+  const found = containerMembers(parameter.schema, schemas);
+  let narrow = found.opaque;
+  if (deepObject) {
+    if ((top & OBJECT) === 0) reasons.add(`${label} uses deepObject serialization, but its schema admits no object.`);
+    else if ((top & (SCALAR | ARRAY)) !== 0) narrow = true;
+  } else {
+    for (const kinds of found.items) {
+      if ((kinds & SCALAR) === 0 && (kinds & (NULL | CONTAINER)) !== 0) {
+        reasons.add(`${label}: its array items admit no string, number or boolean, the only items the client can serialize.`);
+      } else if ((kinds & (NULL | CONTAINER)) !== 0) narrow = true;
+    }
+  }
+  for (const { name, kinds } of found.members) {
+    if ((kinds & SCALAR) === 0 && (kinds & CONTAINER) !== 0) {
+      reasons.add(`${label}: ${name === null ? "its additional members admit" : `its member "${name}" admits`} only nested objects or arrays, which the client cannot serialize.`);
+    } else if ((kinds & CONTAINER) !== 0) narrow = true;
+  }
+  return { reasons: [...reasons], narrowing: reasons.size > 0 || !narrow ? null : deepObject ? "deepObject" : "value" };
+}
+
 export function analyzeOperation(operation: CatalogOperation, catalog: OperationCatalog): OperationShape {
   const reasons: string[] = [];
   if (FORBIDDEN_METHODS.has(operation.method)) reasons.push(`fetch cannot send ${operation.method.toUpperCase()} requests.`);
   if (operation.requestBody && (operation.method === "get" || operation.method === "head")) {
     reasons.push(`fetch cannot send a request body with ${operation.method.toUpperCase()}.`);
   }
+  const parameters: ParameterNarrowing[] = [];
   for (const parameter of operation.parameters) {
-    if (parameter.in === "cookie") reasons.push(`cookie parameter "${parameter.name}" cannot be sent: browsers forbid setting the Cookie header from fetch.`);
+    if (parameter.in === "cookie") {
+      reasons.push(`cookie parameter "${parameter.name}" cannot be sent: browsers forbid setting the Cookie header from fetch.`);
+      parameters.push(null);
+      continue;
+    }
+    const support = parameterSupport(parameter, catalog.schemas);
+    reasons.push(...support.reasons);
+    parameters.push(support.narrowing);
   }
 
   let body: OperationShape["body"] = null;
@@ -165,5 +216,5 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
     reasons.push(`no security alternative uses only supported schemes (unsupported: ${[...unsupportedSchemes].join(", ")}).`);
   }
 
-  return { reasons, body, success, errors, accept: [...accept].sort(), security, unsupportedSchemes: [...unsupportedSchemes].sort() };
+  return { reasons, parameters, body, success, errors, accept: [...accept].sort(), security, unsupportedSchemes: [...unsupportedSchemes].sort() };
 }

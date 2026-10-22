@@ -56,6 +56,37 @@ export interface RequestOptions {
   retry?: RetryOptions;
 }
 
+/** A value the client serializes on its own or inside a parameter: a string, finite number or boolean. */
+export type ParamScalar = string | number | boolean;
+
+/** The serializable part of an array item or object member type; null and undefined members are skipped. */
+export type ParamMember<T> = unknown extends T ? ParamScalar | null | undefined : Extract<T, ParamScalar | null | undefined>;
+
+/**
+ * The part of a parameter type the client serializes: scalars, arrays of scalars and objects whose
+ * members are scalars. Generated params use it where a schema also admits nested values.
+ */
+export type ParamValue<T> = unknown extends T
+  ? ParamScalar | ParamScalar[] | { [key: string]: ParamScalar | null | undefined }
+  : T extends ParamScalar | null | undefined
+    ? T
+    : T extends readonly (infer Item)[]
+      ? Extract<ParamMember<Item>, ParamScalar>[]
+      : T extends object
+        ? { [K in keyof T]: ParamMember<T[K]> }
+        : never;
+
+/** As `ParamValue`, for a deepObject parameter: only objects whose members are scalars. */
+export type DeepObjectValue<T> = unknown extends T
+  ? { [key: string]: ParamScalar | null | undefined }
+  : T extends null | undefined
+    ? T
+    : T extends ParamScalar | readonly unknown[]
+      ? never
+      : T extends object
+        ? { [K in keyof T]: ParamMember<T[K]> }
+        : never;
+
 export class ApiError extends Error {
   readonly kind: ApiFailureKind;
   readonly operationId: string;

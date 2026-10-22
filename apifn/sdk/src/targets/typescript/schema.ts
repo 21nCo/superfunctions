@@ -122,6 +122,138 @@ export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<
   return cuts;
 }
 
+/** Kinds of value a schema's type admits at its top level, as bit flags. */
+export const SCALAR = 1;
+export const NULL = 2;
+export const ARRAY = 4;
+export const OBJECT = 8;
+const ANY = SCALAR | NULL | ARRAY | OBJECT;
+
+function literalKind(value: unknown): number {
+  if (value === null) return NULL;
+  return literal(value) === null ? ANY : SCALAR;
+}
+
+/**
+ * The kinds of value (`SCALAR` strings, numbers and booleans, `NULL`, `ARRAY`, `OBJECT`) the type
+ * `SchemaTypes.type` gives a schema admits at its top level, following component references in
+ * `schemas`. Anything typed `unknown` admits every kind.
+ */
+export function valueKinds(schema: unknown, schemas: Readonly<Record<string, unknown>>, seen: ReadonlySet<string> = new Set(), depth = 0): number {
+  if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null || !isRecord(schema)) return schema === false ? 0 : ANY;
+  const next = depth + 1;
+  let kinds = ANY;
+  for (const keyword of ["$ref", "$dynamicRef"]) {
+    const ref = schema[keyword];
+    if (typeof ref !== "string") continue;
+    const component = componentName(ref);
+    if (component !== null && !seen.has(component) && Object.prototype.hasOwnProperty.call(schemas, component)) {
+      kinds &= valueKinds(schemas[component], schemas, new Set([...seen, component]), next);
+    }
+  }
+  if ("const" in schema) kinds &= literalKind(schema.const);
+  if (Array.isArray(schema.enum)) kinds &= schema.enum.reduce((all: number, value) => all | literalKind(value), 0);
+  const types = "const" in schema || Array.isArray(schema.enum) ? (primitiveOnly(schema.type) ? null : typeList(schema)) : typeList(schema);
+  if (types !== null) {
+    kinds &= types.reduce((all: number, type) => {
+      switch (type) {
+        case "string":
+        case "number":
+        case "integer":
+        case "boolean":
+          return all | SCALAR;
+        case "null":
+          return all | NULL;
+        case "array":
+          return all | ARRAY;
+        case "object":
+          return all | OBJECT;
+        default:
+          return ANY;
+      }
+    }, 0);
+  }
+  if (Array.isArray(schema.allOf)) for (const member of schema.allOf) kinds &= valueKinds(member, schemas, seen, next);
+  for (const keyword of ["anyOf", "oneOf"]) {
+    const members = schema[keyword];
+    if (Array.isArray(members)) kinds &= members.reduce((all: number, member) => all | valueKinds(member, schemas, seen, next), 0);
+  }
+  return kinds;
+}
+
+/** What a schema's type admits inside its array and object types: see `containerMembers`. */
+export interface ContainerMembers {
+  /** Kinds admitted by the items of each array type. */
+  items: number[];
+  /** Kinds admitted by each declared property and index signature of each object type. */
+  members: Array<{ name: string | null; kinds: number }>;
+  /** Whether some part of the type is `unknown`, so its arrays and objects are not described. */
+  opaque: boolean;
+}
+
+/**
+ * The array item and object member kinds (see `valueKinds`) of every array and object type a schema's
+ * top level may be: through component references and `allOf`/`anyOf`/`oneOf`, as `SchemaTypes.type`
+ * types them. Object types list declared properties by name and an index signature as null.
+ */
+export function containerMembers(
+  schema: unknown,
+  schemas: Readonly<Record<string, unknown>>,
+  found: ContainerMembers = { items: [], members: [], opaque: false },
+  seen: ReadonlySet<string> = new Set(),
+  depth = 0
+): ContainerMembers {
+  if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null || !isRecord(schema)) {
+    if (schema !== false) found.opaque = true;
+    return found;
+  }
+  const next = depth + 1;
+  let described = false;
+  for (const keyword of ["$ref", "$dynamicRef"]) {
+    const ref = schema[keyword];
+    if (typeof ref !== "string") continue;
+    described = true;
+    const component = componentName(ref);
+    if (component === null || seen.has(component) || !Object.prototype.hasOwnProperty.call(schemas, component)) found.opaque = true;
+    else containerMembers(schemas[component], schemas, found, new Set([...seen, component]), next);
+  }
+  if ("const" in schema || Array.isArray(schema.enum)) {
+    described = true;
+    // A non-primitive literal makes the type unknown.
+    const values = [...("const" in schema ? [schema.const] : []), ...(Array.isArray(schema.enum) ? schema.enum : [])];
+    if (values.some((value) => value !== null && literal(value) === null)) found.opaque = true;
+  }
+  const types = typeList(schema);
+  if (types !== null) {
+    described = true;
+    if (types.some((type) => typeof type !== "string" || !["string", "number", "integer", "boolean", "null", "array", "object"].includes(type))) found.opaque = true;
+    if (types.includes("array")) {
+      const items = "items" in schema ? schema.items : true;
+      let kinds = Array.isArray(schema.prefixItems) ? schema.prefixItems.reduce((all: number, member) => all | valueKinds(member, schemas), 0) : 0;
+      if (items !== false) kinds |= valueKinds(items, schemas);
+      found.items.push(kinds);
+    }
+    if (types.includes("object")) {
+      // Mirrors SchemaTypes#object: declared properties, then the index signature it would emit.
+      const properties = isRecord(schema.properties) ? schema.properties : {};
+      for (const name of Object.keys(properties)) found.members.push({ name, kinds: valueKinds(properties[name], schemas) });
+      const additional = schema.additionalProperties;
+      const hasProperties = Object.keys(properties).length > 0;
+      if (additional !== false && (additional !== undefined || isRecord(schema.patternProperties) || !hasProperties)) {
+        found.members.push({ name: null, kinds: hasProperties || additional === undefined ? ANY : valueKinds(additional, schemas) });
+      }
+    }
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    const members = schema[keyword];
+    if (!Array.isArray(members)) continue;
+    described = true;
+    for (const member of members) containerMembers(member, schemas, found, seen, next);
+  }
+  if (!described) found.opaque = true;
+  return found;
+}
+
 const NO_CUTS: ReadonlySet<string> = new Set();
 
 export class SchemaTypes {

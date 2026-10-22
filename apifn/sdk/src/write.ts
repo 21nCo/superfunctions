@@ -2,6 +2,7 @@
 // generator owns are created, replaced or deleted; seeds are created once; the
 // custom-code area and every other file are left alone.
 
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, rm, stat as follow, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sha256Hex } from "@apifn/contracts";
@@ -208,7 +209,8 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
 }
 
 async function atomicWrite(file: string, contents: string): Promise<void> {
-  const temporary = `${file}.apifn-tmp-${process.pid}`;
+  // Unique per write, so failure cleanup never removes a temporary file another write still owns.
+  const temporary = `${file}.apifn-tmp-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(temporary, contents);
     await rename(temporary, file);

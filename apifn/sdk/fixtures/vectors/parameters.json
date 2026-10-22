@@ -1,0 +1,88 @@
+{
+  "description": "Which parameter schemas a client can serialize. A client sends strings, finite numbers and booleans, arrays of them and objects whose members are them or null (null members are skipped); a deepObject parameter must be such an object. `schemas` are component schemas the parameter may reference. When `expect.supported` is false the operation is unsupported (generation fails, or the operation is excluded under the exclude policy) with a reason containing `expect.reason`. When `expect.admitsUnserializable` is true the schema also admits values the client cannot serialize: the target must narrow its input type to the serializable ones or reject the others as validation errors before sending.",
+  "cases": [
+    {
+      "name": "a primitive array",
+      "parameter": { "in": "query", "name": "tags", "style": "form", "explode": true, "required": true, "schema": { "type": "array", "items": { "type": "string" } } },
+      "expect": { "supported": true, "admitsUnserializable": false }
+    },
+    {
+      "name": "an array of component enum values",
+      "parameter": { "in": "query", "name": "status", "style": "form", "explode": false, "required": false, "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Status" } } },
+      "schemas": { "Status": { "type": "string", "enum": ["open", "closed"] } },
+      "expect": { "supported": true, "admitsUnserializable": false }
+    },
+    {
+      "name": "a flat deepObject through a component reference",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": true, "schema": { "$ref": "#/components/schemas/Filter" } },
+      "schemas": { "Filter": { "type": "object", "required": ["owner"], "properties": { "owner": { "type": "string" }, "due": { "type": ["string", "null"] } } } },
+      "expect": { "supported": true, "admitsUnserializable": false }
+    },
+    {
+      "name": "a flat exploded form object with string additional members",
+      "parameter": { "in": "query", "name": "match", "style": "form", "explode": true, "required": false, "schema": { "type": "object", "additionalProperties": { "type": "string" } } },
+      "expect": { "supported": true, "admitsUnserializable": false }
+    },
+    {
+      "name": "a required nested object member of a deepObject",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": true, "schema": { "type": "object", "required": ["owner"], "properties": { "owner": { "type": "object", "properties": { "id": { "type": "string" } } } } } },
+      "expect": { "supported": false, "reason": "its member \"owner\" admits only nested objects or arrays" }
+    },
+    {
+      "name": "an optional array member of a form object",
+      "parameter": { "in": "query", "name": "match", "style": "form", "explode": true, "required": false, "schema": { "type": "object", "properties": { "q": { "type": "string" }, "tags": { "type": "array", "items": { "type": "string" } } } } },
+      "expect": { "supported": false, "reason": "its member \"tags\" admits only nested objects or arrays" }
+    },
+    {
+      "name": "additional members that are objects",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": false, "schema": { "type": "object", "additionalProperties": { "type": "object" } } },
+      "expect": { "supported": false, "reason": "its additional members admit only nested objects or arrays" }
+    },
+    {
+      "name": "an array of arrays",
+      "parameter": { "in": "query", "name": "matrix", "style": "form", "explode": true, "required": true, "schema": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } } },
+      "expect": { "supported": false, "reason": "its array items admit no string, number or boolean" }
+    },
+    {
+      "name": "an array of component objects",
+      "parameter": { "in": "header", "name": "X-Owners", "style": "simple", "explode": false, "required": false, "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Owner" } } },
+      "schemas": { "Owner": { "type": "object", "properties": { "id": { "type": "string" } } } },
+      "expect": { "supported": false, "reason": "its array items admit no string, number or boolean" }
+    },
+    {
+      "name": "a path parameter that is an array of arrays",
+      "parameter": { "in": "path", "name": "ids", "style": "simple", "explode": false, "required": true, "schema": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } } },
+      "expect": { "supported": false, "reason": "its array items admit no string, number or boolean" }
+    },
+    {
+      "name": "a deepObject whose schema admits no object",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": false, "schema": { "type": "string" } },
+      "expect": { "supported": false, "reason": "uses deepObject serialization, but its schema admits no object" }
+    },
+    {
+      "name": "a free-form object",
+      "parameter": { "in": "query", "name": "match", "style": "form", "explode": true, "required": false, "schema": { "type": "object" } },
+      "expect": { "supported": true, "admitsUnserializable": true }
+    },
+    {
+      "name": "a member that is a string or an object",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": false, "schema": { "type": "object", "properties": { "owner": { "anyOf": [{ "type": "string" }, { "type": "object" }] } }, "additionalProperties": false } },
+      "expect": { "supported": true, "admitsUnserializable": true }
+    },
+    {
+      "name": "an array of nullable strings",
+      "parameter": { "in": "query", "name": "tags", "style": "form", "explode": true, "required": false, "schema": { "type": "array", "items": { "type": ["string", "null"] } } },
+      "expect": { "supported": true, "admitsUnserializable": true }
+    },
+    {
+      "name": "a deepObject that may also be a string",
+      "parameter": { "in": "query", "name": "filter", "style": "deepObject", "explode": true, "required": false, "schema": { "type": ["object", "string"], "additionalProperties": { "type": "string" } } },
+      "expect": { "supported": true, "admitsUnserializable": true }
+    },
+    {
+      "name": "a schema without type keywords",
+      "parameter": { "in": "header", "name": "X-Trace", "style": "simple", "explode": false, "required": false, "schema": { "description": "Anything" } },
+      "expect": { "supported": true, "admitsUnserializable": true }
+    }
+  ]
+}

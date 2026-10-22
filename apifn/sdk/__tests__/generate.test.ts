@@ -452,3 +452,89 @@ export async function use(): Promise<string> {
     expect(compile(dir)).toEqual([]);
   });
 });
+
+describe("parameter support (shared vectors)", () => {
+  const vectors: any[] = readJson("vectors/parameters.json").cases;
+
+  /** The fixture catalog plus one GET operation `vectors.v<index>` (method `vector<index>`) per vector, with its parameter and schemas. */
+  function vectorCatalog(cases: Array<{ vector: any; index: number }>): any {
+    const catalog = fixtureCatalog();
+    const template = catalog.operations.find((operation: any) => operation.id === "tasks.get");
+    for (const { vector, index } of cases) {
+      const parameter = { allowReserved: false, deprecated: false, description: null, ...vector.parameter };
+      const route = parameter.in === "path" ? `/vectors/${index}/{${parameter.name}}` : `/vectors/${index}`;
+      catalog.operations.push({ ...clone(template), id: `vectors.v${index}`, name: `vector${index}`, openapiOperationId: `vector${index}`, path: route, parameters: [parameter] });
+      Object.assign(catalog.schemas, clone(vector.schemas ?? {}));
+    }
+    return catalog;
+  }
+
+  for (const [index, vector] of vectors.entries()) {
+    it(vector.name, () => {
+      const result = generate(vectorCatalog([{ vector, index }]));
+      expect(result.ok).toBe(true);
+      const { included, excluded } = result.manifest!.operations;
+      const id = `vectors.v${index}`;
+      if (!vector.expect.supported) {
+        expect(included.map((entry) => entry.id)).not.toContain(id);
+        const entry = excluded.find((candidate) => candidate.id === id)!;
+        expect(entry.reason).toBe("unsupported");
+        expect(entry.details.join("\n")).toContain(vector.expect.reason);
+        return;
+      }
+      expect(included.map((entry) => entry.id)).toContain(id);
+      const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
+      const field = client.match(new RegExp(`export interface Vector${index}Params \\{[\\s\\S]*?\\n\\}`))![0];
+      expect(/\b(?:ParamValue|DeepObjectValue)</.test(field)).toBe(vector.expect.admitsUnserializable);
+    });
+  }
+
+  it("fails generation by default on a parameter the client cannot serialize, naming it", () => {
+    const index = vectors.findIndex((vector) => vector.name === "a required nested object member of a deepObject");
+    const catalog = vectorCatalog([{ vector: vectors[index], index }]);
+    for (const operation of catalog.operations) if (operation.id === "reports.upload" || operation.id === "session.get") operation.sdk.include = false;
+    const config = fixtureConfig();
+    delete config.unsupported;
+    const result = generate(catalog, config);
+    expect(result.ok).toBe(false);
+    expect(result.files).toEqual([]);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => [diagnostic.code, diagnostic.operation, diagnostic.message])).toEqual([
+      ["SDK_UNSUPPORTED_OPERATION", `vectors.v${index}`, `vectors.v${index}: query parameter "filter": its member "owner" admits only nested objects or arrays, which the client cannot serialize.`],
+    ]);
+  });
+
+  it("compiles narrowed parameter types that accept serializable values and reject nested ones", async () => {
+    const supported = vectors.map((vector, index) => ({ vector, index })).filter(({ vector }) => vector.expect.supported);
+    const at = (name: string) => supported.find(({ vector }) => vector.name === name)!.index;
+    const dir = tempDir();
+    const result = generate(vectorCatalog(supported));
+    expect(result.ok).toBe(true);
+    expect((await writeSdk(dir, result)).ok).toBe(true);
+    writeFileSync(
+      path.join(dir, "src/custom/consumer-params.ts"),
+      `import { TasksClient } from "../index.js";
+const client = new TasksClient();
+export async function use(): Promise<void> {
+  await client.vector${at("a free-form object")}({ match: { a: 1, b: "x", c: null } });
+  // @ts-expect-error nested values cannot be serialized
+  await client.vector${at("a free-form object")}({ match: { a: { b: 1 } } });
+  await client.vector${at("a member that is a string or an object")}({ filter: { owner: "me" } });
+  // @ts-expect-error the object alternative of owner cannot be serialized
+  await client.vector${at("a member that is a string or an object")}({ filter: { owner: { id: "me" } } });
+  await client.vector${at("an array of nullable strings")}({ tags: ["a"] });
+  // @ts-expect-error null items cannot be serialized
+  await client.vector${at("an array of nullable strings")}({ tags: [null] });
+  await client.vector${at("a deepObject that may also be a string")}({ filter: { owner: "me" } });
+  // @ts-expect-error a deepObject parameter must be an object
+  await client.vector${at("a deepObject that may also be a string")}({ filter: "me" });
+  await client.vector${at("a schema without type keywords")}({ xTrace: ["a", 1] });
+  // @ts-expect-error nested values cannot be serialized
+  await client.vector${at("a schema without type keywords")}({ xTrace: [["a"]] });
+  await client.vector${at("a flat deepObject through a component reference")}({ filter: { owner: "me", due: null } });
+  await client.vector${at("an array of component enum values")}({ status: ["open"] });
+}
+`
+    );
+    expect(compile(dir)).toEqual([]);
+  });
+});
