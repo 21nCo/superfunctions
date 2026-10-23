@@ -53,6 +53,15 @@ describe("PHASE_12: Audit panes", () => {
     });
   });
 
+  it("shows unknown legacy time and processing state without inventing a timestamp", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, result: {
+      deliveries: [{ webhookId: "deleted", dataset: "prod", url: null, eventId: "legacy", attempt: 2, status: "processing", updatedAt: null, timestampKnown: false }], nextCursor: null,
+    } }))));
+    render(<WebhooksPane cmsfnApiUrl={API_URL} dataset="prod" />);
+    await waitFor(() => expect(screen.getByText("Timestamp unknown")).toBeDefined());
+    expect(screen.getByText("processing")).toBeDefined();
+  });
+
   it("renders authoritative audit targets without inventing document fields", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, result: {
       events: [{ eventId: "audit-1", dataset: "prod", type: "docs.publish", timestamp: "2026-10-23T00:00:00Z", targetIds: ["prod", "article-1"] }], nextCursor: null,

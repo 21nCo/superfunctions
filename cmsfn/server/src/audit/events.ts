@@ -10,24 +10,25 @@ export const AUDIT_MAX_OFFSET = Number.MAX_SAFE_INTEGER - 1001;
 /** Audit errors are metadata-only too: upstream messages/details may echo private content. */
 export function safeAuditResponse<T>(response: CmsfnEnvelope<T>): CmsfnEnvelope<T> {
   if (response.ok) return response;
-  const { upstreamCode, upstreamStatus } = response.error.details;
+  const { upstreamCode, upstreamStatus, reason } = response.error.details;
   return err(response.error.code, "ContentFn audit request failed", {
     ...(typeof upstreamCode === "string" ? { upstreamCode } : {}),
     ...(typeof upstreamStatus === "number" ? { upstreamStatus } : {}),
+    ...(upstreamCode === "STORAGE_ERROR" && reason === "WEBHOOK_AUDIT_NOT_READY" ? { reason } : {}),
   });
 }
 
-export function auditOffset(dataset: string, cursor?: string | null): number | null {
+export function auditOffset(dataset: string, cursor?: string | null, kind: "events" | "webhooks" = "events"): number | null {
   if (cursor === undefined || cursor === null) return 0;
   if (typeof cursor !== "string" || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
   try {
     const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    if (!isRecord(value) || value.v !== 1 || value.order !== "desc" || value.dataset !== dataset || !Number.isSafeInteger(value.offset) || typeof value.offset !== "number" || value.offset < 0 || value.offset > AUDIT_MAX_OFFSET) return null;
+    if (!isRecord(value) || value.v !== 1 || (kind === "events" ? value.kind !== undefined && value.kind !== "events" : value.kind !== "webhooks") || value.order !== "desc" || value.dataset !== dataset || !Number.isSafeInteger(value.offset) || typeof value.offset !== "number" || value.offset < 0 || value.offset > AUDIT_MAX_OFFSET) return null;
     return value.offset;
   } catch { return null; }
 }
-function cursorFor(dataset: string, offset: number): string {
-  return Buffer.from(JSON.stringify({ v: 1, dataset, order: "desc", offset })).toString("base64url");
+export function cursorFor(dataset: string, offset: number, kind: "events" | "webhooks" = "events"): string {
+  return Buffer.from(JSON.stringify({ v: 1, dataset, order: "desc", offset, kind })).toString("base64url");
 }
 function toSafeEvent(value: unknown, dataset: string): CmsfnAuditEvent | null {
   if (!isRecord(value) || typeof value.id !== "string" || !value.id || value.dataset !== dataset ||

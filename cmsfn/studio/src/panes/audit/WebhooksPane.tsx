@@ -76,7 +76,7 @@ export function WebhooksPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: Webh
           <li key={`${d.webhookId}-${d.eventId}-${i}`} data-audit-delivery data-webhook-id={d.webhookId}>
             <span data-audit-delivery-status>{d.status}</span>
             <span data-audit-delivery-attempt>{d.attempt}</span>
-            <span data-audit-delivery-updated>{d.updatedAt}</span>
+            <span data-audit-delivery-updated>{d.updatedAt ?? "Timestamp unknown"}</span>
           </li>
         ))}
       </ul>

@@ -34,12 +34,13 @@ export interface CmsfnAuditEvent {
 export interface CmsfnWebhookDeliveryStatus {
   webhookId: string;
   dataset: string;
-  url: string;
+  url: string | null;
   eventId: string;
   attempt: number;
-  status: "pending" | "delivered" | "failed";
+  status: "pending" | "processing" | "delivered" | "failed";
   lastError?: string;
-  updatedAt: string; // ISO 8601
+  updatedAt: string | null; // Legacy history may have no known timestamp.
+  timestampKnown?: boolean;
 }
 
 export interface CmsfnServerAPI {

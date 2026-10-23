@@ -16,7 +16,7 @@ const clients: Array<{ name: string; call: (base: string) => Promise<CmsfnEnvelo
   { name: "import", call: base => contentfnImport({ contentfnBaseUrl: base }, { dataset: "prod", artifact }), result: {}, invalid: [] },
   { name: "export", call: base => contentfnExport({ contentfnBaseUrl: base }, "prod"), result: { artifact }, invalid: { artifact: { ...artifact, dataset: "other" } } },
   { name: "events", call: base => contentfnAuditEvents({ contentfnBaseUrl: base }, { dataset: "prod" }), result: { records: [], nextOffset: null }, invalid: { records: [null], nextOffset: null } },
-  { name: "webhooks", call: base => contentfnAuditWebhooks({ contentfnBaseUrl: base }, { dataset: "prod" }), result: { deliveries: [], nextCursor: null }, invalid: { deliveries: [], nextCursor: 3 } },
+  { name: "webhooks", call: base => contentfnAuditWebhooks({ contentfnBaseUrl: base }, { dataset: "prod" }), result: { records: [], nextOffset: null }, invalid: { records: [], nextOffset: 3 } },
 ];
 async function fixture(run: (base: string, reply: (body: unknown, status?: number, raw?: boolean) => void) => Promise<void>) {
   let body = "{}", status = 200;
@@ -31,7 +31,7 @@ async function fixture(run: (base: string, reply: (body: unknown, status?: numbe
 describe("ContentFn transport validation over owned HTTP", () => {
   for (const client of clients) it(`${client.name}: validates envelope and result and never promotes a transport failure`, async () => fixture(async (base, reply) => {
     reply({ ok: true, result: client.result });
-    expect(await client.call(base)).toEqual({ ok: true, result: client.name === "events" ? { events: [], nextCursor: null } : client.result });
+    expect(await client.call(base)).toEqual({ ok: true, result: client.name === "events" ? { events: [], nextCursor: null } : client.name === "webhooks" ? { deliveries: [], nextCursor: null } : client.result });
     for (const invalid of [null, [], {}, { ok: "true", result: client.result }, { ok: true }, { ok: true, result: client.invalid }, { ok: false, error: null }, { ok: false, error: { code: "CONFLICT", message: {}, details: {} } }]) {
       reply(invalid);
       expect(await client.call(base)).toMatchObject({ ok: false, error: { code: "CONTENTFN_UNAVAILABLE" } });

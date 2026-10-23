@@ -52,8 +52,8 @@ try {
   assert.equal(denied.ok, false); assert.equal(denied.error.code, 'PERMISSION_DENIED');
   assert.equal(seen.at(-1).authorization, undefined, 'browser credential must not be forwarded');
   const webhook = await fetch(`${base}/cmsfn/audit/webhooks`, { method: 'POST', body: JSON.stringify({ dataset: 'prod' }) });
-  assert.equal((await webhook.json()).ok, false, 'unsupported webhook route must not manufacture an empty successful page');
-  console.log('Installed CMS audit → real authorized ContentFn schema3 query: descending pages/targets/actor, dataset and role denials, trusted headers, upstream denial, unsupported webhook error passed.');
+  assert.equal((await webhook.json()).ok, false, 'webhook audit without schema4 acknowledgement must not manufacture an empty successful page');
+  console.log('Installed CMS audit → real authorized ContentFn schema3 query: descending pages/targets/actor, dataset and role denials, trusted headers, upstream denial, unconfigured webhook error passed.');
 } finally {
   for (const server of [cms, upstream]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   await db.close();

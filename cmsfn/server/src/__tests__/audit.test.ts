@@ -16,6 +16,7 @@ function minimalConfig(overrides: Partial<CmsfnServerConfig> = {}): CmsfnServerC
     datasets: [{ name: "prod" }],
     desk: { kind: "divider" },
     auth: { kind: "custom" },
+    contentfnAuditHeaders: () => ({ authorization: "Bearer service" }),
     getRolesForSubject: async (): Promise<CmsfnRole[]> => [
       { id: "auditor", name: "Auditor", rules: [{ datasets: "*", types: "*", actions: ["audit.read"] }] },
     ],
@@ -100,12 +101,14 @@ describe("PHASE_12: Audit", () => {
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/audit/webhooks")) {
+            expect(new Headers(init?.headers).get("authorization")).toBe("Bearer service");
             return new Response(
               JSON.stringify({
                 ok: true,
                 result: {
-                  deliveries: [
+                  records: [
                     {
+                      id: "delivery-1", timestampKnown: true, lastError: null,
                       webhookId: "wh-1",
                       dataset: "prod",
                       url: "https://example.com/hook",
@@ -115,7 +118,7 @@ describe("PHASE_12: Audit", () => {
                       updatedAt: "2026-02-11T12:00:00Z",
                     },
                   ],
-                  nextCursor: null,
+                  nextOffset: null,
                 },
               }),
               { status: 200, headers: { "Content-Type": "application/json" } }

@@ -42,9 +42,12 @@ export async function handleAuditEvents(config: AuditHandlerConfig, req: Incomin
   } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn audit request could not be configured"); }
 }
 
-/** The dataset-wide webhook producer route remains unsupported by current ContentFn. */
+/** Authorized dataset-wide delivery metadata from ContentFn schema4. */
 export async function handleAuditWebhooks(config: AuditHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<{ deliveries: import("cmsfn").CmsfnWebhookDeliveryStatus[]; nextCursor: string | null }>> {
   const input = await readAuthorizedInput(config, req);
   if (!input.ok) return input;
-  return contentfnAuditWebhooks({ contentfnBaseUrl: config.contentfnBaseUrl }, input.result);
+  try {
+    const headers = await config.contentfnAuditHeaders?.(req);
+    return await contentfnAuditWebhooks({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, input.result);
+  } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn audit request could not be configured"); }
 }

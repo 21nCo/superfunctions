@@ -218,6 +218,7 @@ async function route(
     const envelope = await handleAuditWebhooks(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        contentfnAuditHeaders: config.contentfnAuditHeaders,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
       },
