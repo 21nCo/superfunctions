@@ -35,16 +35,18 @@ async function postJson<T>(
   body: unknown
 ): Promise<ContentfnEnvelope<T>> {
   const url = `${baseUrl}${path}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { ok: false, error: parseEnvelopeError(data) };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data: unknown = await res.json();
+    if (!res.ok) return { ok: false, error: parseEnvelopeError(data) };
+    return data as ContentfnEnvelope<T>;
+  } catch {
+    return { ok: false, error: { code: "INTERNAL_ERROR", message: "Content request could not be completed", details: {} } };
   }
-  return data as ContentfnEnvelope<T>;
 }
 
 /**
@@ -93,6 +95,11 @@ export async function patchDoc(
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
   const base = normalizeBaseUrl(config.baseUrl);
   return postJson<ContentfnDocument>(base, "/contentfn/docs/patch", input);
+}
+
+/** Explicitly create a draft from a checked published revision. */
+export async function forkDoc(config: ContentfnClientConfig, input: { dataset: string; id: string; ifRev: string }): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  return postJson(normalizeBaseUrl(config.baseUrl), "/contentfn/docs/fork", input);
 }
 
 export interface AssetListItem {

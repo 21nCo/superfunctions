@@ -3,9 +3,9 @@
  * Handles VALIDATION_FAILED (field path) and REV_CONFLICT (ConflictBanner).
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ContentfnSchema, ContentfnDocument, ContentfnDocumentType } from "@contentfn/core";
-import { getSchema, getDoc, patchDoc } from "../../contentfn/client.js";
+import { getSchema, getDoc, patchDoc, forkDoc } from "../../contentfn/client.js";
 import { buildPatchOps } from "../../editor/save/buildPatchOps.js";
 import { checkRichtextLimits } from "../../limits/precheck.js";
 import { renderField } from "../../editor/renderField.js";
@@ -21,9 +21,12 @@ export interface DocumentEditorPaneProps {
   baseUrl: string;
   dataset: string;
   docId: string;
+  perspective?: "draft" | "published";
+  onOpenDraft?: (id: string) => void;
+  onUnpublished?: () => void;
   /** When set, Publish/Unpublish are shown and call CmsFn server. */
   cmsfnApiUrl?: string;
-  /** When true, show Unpublish instead of Publish. */
+  /** Compatibility hint; configured publication controls verify current state through ContentFn. */
   isPublished?: boolean;
   /** When set, preview pane is shown (token + iframe). */
   previewConfig?: { enabled: boolean; targetOrigin: string; resolveUrl: (doc: unknown) => string };
@@ -37,7 +40,12 @@ export interface DocumentEditorPaneProps {
   onClearRemoteChanged?: () => void;
 }
 
-export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
+export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
+  const generation = useRef(0);
+  const scope = JSON.stringify([baseUrl, dataset, docId, perspective]);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
+  const [published, setPublished] = useState<boolean | null>(isPublished ?? null);
+  const [publicationError, setPublicationError] = useState<string | null>(null);
   const [schema, setSchema] = useState<ContentfnSchema | null>(null);
   const [originalDoc, setOriginalDoc] = useState<ContentfnDocument | null>(null);
   const [formState, setFormState] = useState<Record<string, unknown>>({});
@@ -51,14 +59,22 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
 
   const load = useCallback(async () => {
     if (!dataset || !docId) return;
+    const requestGeneration = ++generation.current;
     setLoading(true);
+    setSaveLoading(false);
+    setOriginalDoc(null);
+    setFormState({});
+    setPublished(null);
+    setPublicationError(null);
     setValidationError(null);
     setServerError(null);
     setConflict(false);
-    const [schemaRes, docRes] = await Promise.all([
+    const [schemaRes, docRes, publishedRes] = await Promise.all([
       getSchema({ baseUrl }, dataset),
-      getDoc({ baseUrl }, { dataset, id: docId, perspective: "draft" }),
+      getDoc({ baseUrl }, { dataset, id: docId, perspective }),
+      cmsfnApiUrl && perspective === "draft" ? getDoc({ baseUrl }, { dataset, id: docId.replace(/^drafts\./, ""), perspective: "published" }) : Promise.resolve(null),
     ]);
+    if (requestGeneration !== generation.current) return;
     setLoading(false);
     if (!schemaRes.ok) {
       setServerError({ code: schemaRes.error.code, message: schemaRes.error.message });
@@ -68,22 +84,29 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
       setServerError({ code: docRes.error.code, message: docRes.error.message, path: (docRes.error.details as { path?: string })?.path });
       return;
     }
+    if (perspective === "published") setPublished(true);
+    else if (publishedRes?.ok) setPublished(true);
+    else if (publishedRes && publishedRes.error.code === "DOCUMENT_NOT_FOUND") setPublished(false);
+    else if (publishedRes) setPublicationError("Publication state could not be verified");
     setSchema(schemaRes.result);
     setOriginalDoc(docRes.result);
+    setLoadedScope(scope);
     const doc = docRes.result as Record<string, unknown>;
     const userFields = Object.fromEntries(Object.entries(doc).filter(([k]) => !k.startsWith("_")));
     setFormState(userFields);
-  }, [baseUrl, dataset, docId]);
+  }, [baseUrl, dataset, docId, perspective, cmsfnApiUrl, scope]);
 
   useEffect(() => {
-    load();
+    void load();
+    return () => { generation.current++; };
   }, [load]);
 
   const docType = schema?.documentTypes?.find((t) => t.name === originalDoc?._type);
   const typeNotFound = originalDoc && schema && !docType;
 
   const handleSave = useCallback(async () => {
-    if (!originalDoc || !schema || !docType) return;
+    if (loadedScope !== scope || perspective !== "draft" || !originalDoc || !schema || !docType) return;
+    const requestGeneration = generation.current;
     setValidationError(null);
     setServerError(null);
     setConflict(false);
@@ -105,6 +128,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
       { baseUrl },
       { dataset, id: originalDoc._id, ifRev: originalDoc._rev, ops }
     );
+    if (requestGeneration !== generation.current) return;
     setSaveLoading(false);
     if (res.ok) {
       setOriginalDoc(res.result);
@@ -121,7 +145,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
         });
       }
     }
-  }, [baseUrl, dataset, docId, originalDoc, schema, docType, formState]);
+  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope]);
 
   const handleRefresh = useCallback(async () => {
     setConflict(false);
@@ -129,8 +153,10 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
   }, [load]);
 
   const handleReApply = useCallback(async () => {
-    if (!originalDoc || !schema || !docType) return;
+    if (loadedScope !== scope || perspective !== "draft" || !originalDoc || !schema || !docType) return;
+    const requestGeneration = generation.current;
     const docRes = await getDoc({ baseUrl }, { dataset, id: docId, perspective: "draft" });
+    if (requestGeneration !== generation.current) return;
     if (!docRes.ok) {
       setServerError({ code: docRes.error.code, message: docRes.error.message });
       return;
@@ -144,6 +170,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
       { baseUrl },
       { dataset, id: docRes.result._id, ifRev: docRes.result._rev, ops }
     );
+    if (requestGeneration !== generation.current) return;
     setSaveLoading(false);
     if (res.ok) {
       setOriginalDoc(res.result);
@@ -157,9 +184,23 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
         path: (res.error.details as { path?: string })?.path,
       });
     }
-  }, [baseUrl, dataset, docId, schema, docType, formState]);
+  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope]);
 
-  if (loading) return <div data-editor-pane data-loading>Loading…</div>;
+  const handleFork = async () => {
+    if (loadedScope !== scope || perspective !== "published" || !originalDoc || !onOpenDraft) return;
+    const requestGeneration = generation.current;
+    setSaveLoading(true); setServerError(null);
+    const result = await forkDoc({ baseUrl }, { dataset, id: originalDoc._id, ifRev: originalDoc._rev });
+    if (requestGeneration !== generation.current) return;
+    const draft = !result.ok && result.error.code === "DOCUMENT_ALREADY_EXISTS"
+      ? await getDoc({ baseUrl }, { dataset, id: originalDoc._id, perspective: "draft" }) : result;
+    if (requestGeneration !== generation.current) return;
+    setSaveLoading(false);
+    if (draft.ok) onOpenDraft(draft.result._id);
+    else setServerError({ code: draft.error.code, message: draft.error.message });
+  };
+
+  if (loading || (originalDoc !== null && loadedScope !== scope)) return <div data-editor-pane data-loading>Loading…</div>;
   if (serverError && !originalDoc) {
     return (
       <div data-editor-pane data-error data-error-code={serverError.code}>
@@ -176,13 +217,26 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
   }
   if (!docType || !originalDoc) return null;
 
+  if (perspective === "published") return (
+    <section data-editor-pane data-perspective="published" data-doc-id={originalDoc._id}>
+      <h2>Published document</h2>
+      <p>This is the published version. Create or open a draft to edit.</p>
+      <button type="button" data-published-refresh disabled={saveLoading} onClick={() => void load()}>Refresh published version</button>
+      {serverError && <p role="alert" data-fork-error>{serverError.message}</p>}
+      <dl>{docType.fields.map(field => <div key={field.name}><dt>{field.name}</dt><dd>{typeof originalDoc[field.name] === "string" ? String(originalDoc[field.name]) : JSON.stringify(originalDoc[field.name])}</dd></div>)}</dl>
+      {onOpenDraft && <button type="button" data-create-draft disabled={saveLoading} onClick={() => void handleFork()}>Create or open draft</button>}
+      {cmsfnApiUrl && <PublishButton cmsfnApiUrl={cmsfnApiUrl} dataset={dataset} docId={originalDoc._id} isPublished allowPublish={false} disabled={saveLoading} onUnpublished={onUnpublished ?? (() => void load())} />}
+    </section>
+  );
+
   const errorPath = serverError?.path ?? validationError ?? null;
 
   const docRecord = originalDoc as Record<string, unknown>;
   const currentCms = docRecord._cms as CmsfnWorkflowMetadata | undefined;
 
   return (
-    <div data-editor-pane data-doc-id={docId} data-draft-indicator={currentCms?.state === "draft" ? "true" : undefined}>
+    <div data-editor-pane data-perspective="draft" data-doc-id={docId} data-draft-indicator={currentCms?.state === "draft" ? "true" : undefined}>
+      <h2>Draft document</h2>
       {remoteChanged && (
         <div data-remote-changed-banner role="alert">
           <span>Document changed elsewhere.</span>
@@ -197,18 +251,19 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
       <WorkflowControls
         baseUrl={baseUrl}
         dataset={dataset}
-        docId={docId}
+        docId={originalDoc._id}
         currentRev={originalDoc._rev}
         currentCms={currentCms}
         onStateSaved={() => load()}
         disabled={saveLoading}
       />
-      {cmsfnApiUrl && (
+      {publicationError && <p role="alert">{publicationError}</p>}
+      {cmsfnApiUrl && published !== null && (
         <PublishButton
           cmsfnApiUrl={cmsfnApiUrl}
           dataset={dataset}
-          docId={docId}
-          isPublished={isPublished}
+          docId={originalDoc._id.replace(/^drafts\./, "")}
+          isPublished={published}
           onPublished={() => load()}
           onUnpublished={() => load()}
           disabled={saveLoading}

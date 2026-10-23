@@ -18,7 +18,7 @@ def add(name):
  if name in selected or name not in packages:return
  selected[name]=packages[name]
  for dependency in packages[name][1].get('dependencies',{}):add(dependency)
-for name in ['@cmsfn/studio','@contentfn/server','@superfunctions/db']:add(name)
+for name in ['@cmsfn/studio','@cmsfn/server','@contentfn/server','@superfunctions/db']:add(name)
 deps={}
 for name,(path,m) in selected.items():
  packed=json.loads(subprocess.check_output(['npm','pack','--ignore-scripts','--json','--pack-destination',str(out)],cwd=path,text=True))

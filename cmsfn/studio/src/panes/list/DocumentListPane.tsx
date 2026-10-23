@@ -10,6 +10,7 @@ import { ListErrorState } from "./ListErrorState.js";
 export interface DocumentListPaneProps {
   baseUrl: string;
   dataset: string;
+  perspective?: "published" | "draft";
   node: Extract<CmsfnDeskNode, { kind: "documentList" }>;
   limit?: number;
   /** When set, clicking a doc opens it in the editor. */
@@ -18,10 +19,11 @@ export interface DocumentListPaneProps {
   refreshTrigger?: number;
 }
 
-export function DocumentListPane({ baseUrl, dataset, node, limit = 20, onOpenDoc, refreshTrigger }: DocumentListPaneProps) {
+export function DocumentListPane({ baseUrl, dataset, perspective = "published", node, limit = 20, onOpenDoc, refreshTrigger }: DocumentListPaneProps) {
   const { data, nextCursor, loading, error, runQuery, loadNextPage } = useCfqlQuery({
     baseUrl,
     dataset,
+    perspective,
     types: node.types,
     orderBy: node.defaultOrder,
     limit,

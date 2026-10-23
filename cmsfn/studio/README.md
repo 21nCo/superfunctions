@@ -30,4 +30,8 @@ npm run typecheck -w ./cmsfn/studio
 npm test -w ./cmsfn/studio
 ```
 
-The current App lists published documents and loads their draft counterpart for editing. Draft-only discovery, editing published-only documents, and App-level unpublish state are still incomplete. Individual audit, release, and operational panes are not all integrated into this shell. See `../.conduct/studio-packaging-readiness.md` for exact validated behavior and remaining acceptance work.
+The App defaults to a Drafts list and offers a separate Published view. Published documents are read-only; **Create or open draft** copies the displayed published revision through ContentFn `docs.fork`, or loads an existing draft through the authorized read route. Draft saves and workflow changes use the draft ID/revision. Publication state is checked against ContentFn; publishing and unpublishing call the role-gated CmsFn server.
+
+Serve Studio and its API paths under one browser origin (or explicitly configure an appropriate authenticated CORS policy in the host). To expose publish/unpublish, configure `cmsfn.apiUrl` for Studio and provide the CmsFn server with its database and `getRolesForSubject` callback. ContentFn editor policies must explicitly allow `query.drafts`, `docs.fork`, and appropriate `docs.get`/`docs.patch` operations. A public `query` allowance does not grant draft queries.
+
+Singleton desk navigation and full audit/release/operational shell integration remain incomplete. See `../.conduct/studio-lifecycle-readiness.md` for current verified behavior and `../.conduct/studio-packaging-readiness.md` for the preceding packaging checkpoint.

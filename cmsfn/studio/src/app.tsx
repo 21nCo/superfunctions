@@ -31,6 +31,7 @@ export function App({ config: configProp }: AppProps = {}) {
     config ? getInitialDataset(config) : ""
   );
   const [selectedList, setSelectedList] = useState<DocumentListNode | null>(null);
+  const [perspective, setPerspective] = useState<"draft" | "published">("draft");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [listRefreshTrigger, setListRefreshTrigger] = useState(0);
   const [remoteChanged, setRemoteChanged] = useState(false);
@@ -70,13 +71,21 @@ export function App({ config: configProp }: AppProps = {}) {
         <DatasetSelector
           config={config}
           value={dataset}
-          onDatasetChange={setDataset}
+          onDatasetChange={(next) => { setDataset(next); setSelectedDocId(null); setRemoteChanged(false); }}
         />
+        <label>Document perspective
+          <select aria-label="Document perspective" value={perspective} onChange={(event) => {
+            setPerspective(event.target.value === "published" ? "published" : "draft");
+            setSelectedDocId(null); setRemoteChanged(false);
+          }}>
+            <option value="draft">Drafts</option><option value="published">Published</option>
+          </select>
+        </label>
       </header>
       <aside data-studio-desk>
         <DeskTree
           root={config.desk}
-          onSelectDocumentList={setSelectedList}
+          onSelectDocumentList={(list) => { setSelectedList(list); setSelectedDocId(null); setRemoteChanged(false); }}
         />
       </aside>
       <main data-studio-pane>
@@ -86,11 +95,14 @@ export function App({ config: configProp }: AppProps = {}) {
               Back to list
             </button>
             <DocumentEditorPane
+              key={`${dataset}:${perspective}:${selectedDocId}`}
+              perspective={perspective}
+              onOpenDraft={(id) => { setPerspective("draft"); setSelectedDocId(id); }}
+              onUnpublished={() => { setSelectedDocId(null); setListRefreshTrigger((value) => value + 1); }}
               baseUrl={config.contentfn.baseUrl}
               dataset={dataset}
               docId={selectedDocId}
               cmsfnApiUrl={config.cmsfn?.apiUrl}
-              isPublished={undefined}
               previewConfig={config.preview}
               realtimeUrl={config.contentfn.realtimeUrl}
               maxUploadBytes={config.limits?.maxUploadBytes}
@@ -100,6 +112,8 @@ export function App({ config: configProp }: AppProps = {}) {
           </>
         ) : selectedList ? (
           <DocumentListPane
+            key={`${dataset}:${perspective}`}
+            perspective={perspective}
             baseUrl={config.contentfn.baseUrl}
             dataset={dataset}
             node={selectedList}

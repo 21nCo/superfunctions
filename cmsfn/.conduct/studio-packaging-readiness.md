@@ -36,3 +36,5 @@ Logs are retained under `/tmp/cms-studio-*`; screenshot `/tmp/cms-studio-browser
 This is a packaging and bounded editor checkpoint, not full Studio readiness. The actual browser also reproduces: published-only documents cannot load a nonexistent draft, draft-only documents are absent from the published CFQL list, and App passes no publication state to expose Unpublish. Producer-side perspective semantics and coherent Studio lifecycle integration remain necessary. No client-side partial aggregation is claimed complete.
 
 Singleton desk navigation and wiring all audit/release/operational panes into the complete shell remain separate original product acceptance work. Native Safari, deployments, live providers, and production authentication configuration were not validated here. Server-side authorization remains mandatory; browser configuration cannot supply service secrets.
+
+The subsequent lifecycle checkpoint is documented in `studio-lifecycle-readiness.md`; it supersedes the three reproduced draft/publication gaps above.

@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 /**
  * Workflow state selector: set draft / in_review / approved and persist _cms via patch.
  */
@@ -28,10 +29,16 @@ export function WorkflowControls({
   onStateSaved,
   disabled,
 }: WorkflowControlsProps) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
+  useEffect(() => { setPending(false); setError(null); return () => { generation.current++; }; }, [baseUrl, dataset, docId, currentRev]);
   const currentState = currentCms?.state ?? "draft";
 
   const handleStateChange = async (state: CmsfnWorkflowState) => {
-    if (state === currentState) return;
+    if (state === currentState || pending || disabled) return;
+    const requestGeneration = generation.current;
+    setPending(true); setError(null);
     const meta = writeCmsMetadata(state);
     const res = await patchDoc(
       { baseUrl },
@@ -42,13 +49,16 @@ export function WorkflowControls({
         ops: [{ op: "set", path: CMS_RESERVED_FIELD, value: meta }],
       }
     );
+    if (requestGeneration !== generation.current) return;
+    setPending(false);
     if (res.ok) {
       onStateSaved?.(meta);
-    }
+    } else setError(res.error.message);
   };
 
   return (
     <div data-workflow-controls data-current-state={currentState}>
+      {error && <p role="alert" data-workflow-error>{error}</p>}
       <span data-workflow-label>Workflow</span>
       {WORKFLOW_STATES.map((state) => (
         <button
@@ -56,7 +66,7 @@ export function WorkflowControls({
           type="button"
           data-workflow-state={state}
           data-workflow-active={state === currentState ? "true" : undefined}
-          disabled={disabled}
+          disabled={disabled || pending}
           onClick={() => handleStateChange(state)}
         >
           {state === "draft"

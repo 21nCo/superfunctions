@@ -12,7 +12,7 @@ export { loadConfig } from "./config/loadConfig.js";
 export { DocumentListPane } from "./panes/list/DocumentListPane.js";
 export { ListErrorState } from "./panes/list/ListErrorState.js";
 export { useCfqlQuery } from "./panes/list/useCfqlQuery.js";
-export { queryContentfn, getSchema, getDoc, patchDoc } from "./contentfn/client.js";
+export { queryContentfn, getSchema, getDoc, patchDoc, forkDoc } from "./contentfn/client.js";
 export { DocumentEditorPane } from "./panes/editor/DocumentEditorPane.js";
 export { ConflictBanner } from "./editor/conflicts/ConflictBanner.js";
 export { buildPatchOps } from "./editor/save/buildPatchOps.js";
