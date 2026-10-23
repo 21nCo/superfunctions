@@ -1,0 +1,25 @@
+probefn/.conduct/devserver-http-readiness.md
+  s_e1c5fc1a65c0cf::t_bb90c2666c3e93 42-56
+probefn/.conduct/installed-browser-readiness.md
+  s_e1c5fc1a65c0cf::t_46f79ca119a82e 37-38
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_a8d9ac41d45775 146,311-313,423
+probefn/packages/dev-server/test/process-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_311be169fb4c9d 63-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59f3cdb1202c87844ecba32810b893808cd2a3f5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
