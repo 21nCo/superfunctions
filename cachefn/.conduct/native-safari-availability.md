@@ -31,3 +31,27 @@ persists. A reusable native runner now exists at
 in Chrome but has not executed in native Safari. Current cleanup reports no
 created session and a confirmed owned-driver exit. See
 [`browser-matrix-20261023.md`](browser-matrix-20261023.md) for exact scope and receipts.
+
+## Authorized temporary-setting attempt — 2026-10-23
+
+The host owner explicitly authorized temporarily enabling Safari remote automation
+and restoring it after isolated CacheFn acceptance. Native settings readback showed
+`Show features for web developers = 0`. It was temporarily enabled to expose the
+Developer panel, where `Allow remote automation and external agents = 0` was read.
+
+Attempting to enable that checkbox produced Safari's protected confirmation:
+
+> Safari detected an app or service that interfered with clicking. Are you sure
+> you want to change this setting? Enter your password to continue with Safari.
+
+The prompt was cancelled without entering credentials or bypassing protection.
+Developer-panel readback confirmed remote automation still0. Advanced-panel
+readback then confirmed developer-feature visibility restored to0. The settings
+window was closed. No WebDriver session or storage test was started in this
+attempt, and there is no new Safari acceptance result.
+
+The remaining gate requires the host owner to approve the native setting and its
+password confirmation manually. Temporary authorization alone cannot satisfy
+Safari's protected UI authentication. Once enabled, run the checked-in isolated
+`safari-acceptance.mjs` fixture, then restore remote automation and developer-menu
+visibility to the recorded original off states and verify both readbacks.
