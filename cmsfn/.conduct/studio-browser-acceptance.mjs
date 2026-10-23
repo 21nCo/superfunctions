@@ -10,8 +10,8 @@ import { memoryAdapter } from '@superfunctions/db/adapters';
 const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); return value.result; };
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
-let denySingletonReads = false;
-const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+let denySingletonReads = false; let denyHistory = false;
+const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
 const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
@@ -88,6 +88,19 @@ try {
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' })).title, 'Concurrent edit');
   await page.locator('[data-conflict-refresh]').click();
   await page.waitForFunction(() => document.querySelector('input[data-field-path="title"]')?.value === 'Concurrent edit');
+  // Full real revision pages, including content snapshots and authorization revocation.
+  for (let index = 0; index < 22; index++) unwrap(await content.api.docs.patch({ dataset: 'prod', id: 'drafts.editable', ops: [{ op: 'set', path: 'title', value: `History value ${index}` }] }));
+  const expectedHistory = unwrap(await content.api.docs.history({ dataset: 'prod', id: 'editable', limit: 20 }));
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.locator('[data-history-revision]').first().waitFor();
+  assert.deepEqual(await page.locator('[data-history-revision]').evaluateAll(rows => rows.map(row => row.getAttribute('data-history-revision'))), expectedHistory.revisions.map(row => row._rev));
+  assert.equal(JSON.parse(await page.locator('[data-history-revision] pre').first().textContent()).title, expectedHistory.revisions[0].title);
+  await page.getByRole('button', { name: 'Older revisions' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-history-revision]').length > 0 && document.querySelectorAll('[data-history-revision]').length < 20);
+  assert.ok((await page.locator('[data-history-content]').textContent()).includes('Original title'));
+  denyHistory = true; await page.getByRole('button', { name: 'Refresh history' }).click();
+  await page.getByText('No access to document history.', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-history-revision]').count(), 0); denyHistory = false;
   await page.locator('[data-editor-back]').click();
   await page.getByRole('combobox', { name: 'Document perspective' }).selectOption('published');
   await page.locator('[data-doc-id="published-only"] [data-doc-open]').click();
@@ -129,7 +142,7 @@ try {
   await page.locator('[data-doc-id="editable"] [data-doc-open]').click();
   const winningDraft = unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' }));
   await page.locator('[data-create-draft]').click();
-  await page.waitForFunction(() => document.querySelector('input[data-field-path="title"]')?.value === 'Concurrent edit');
+  await page.waitForFunction(expected => document.querySelector('input[data-field-path="title"]')?.value === expected, winningDraft.title);
   assert.deepEqual(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' })), winningDraft);
   await page.getByRole('combobox', { name: /select dataset/i }).selectOption('staging');
   assert.equal(await page.locator('[data-editor-pane]').count(), 0);
@@ -146,9 +159,17 @@ try {
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, 'Production home edit');
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, 'staging home');
+  await page.getByRole('button', { name: 'History', exact: true }).click(); await page.locator('[data-history-revision]').first().waitFor();
+  assert.ok((await page.locator('[data-history-content]').textContent()).includes('Production home edit'));
   await page.getByRole('button', { name: 'Staging home', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('input[data-field-path="title"]')?.value === 'staging home');
   assert.equal(await page.getByRole('combobox', { name: 'Select dataset' }).inputValue(), 'staging');
+  assert.equal(await page.locator('[data-history-revision]').count(), 0);
+  await page.getByRole('button', { name: 'History', exact: true }).click(); await page.locator('[data-history-revision]').first().waitFor();
+  assert.ok(!(await page.locator('[data-history-content]').textContent()).includes('Production home edit'));
+  assert.ok((await page.locator('[data-history-content]').textContent()).includes('staging home'));
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+
   await title.fill('Staging home edit');
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, 'Staging home edit');
@@ -288,8 +309,8 @@ try {
   statusMode = 'normal'; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-download]').waitFor();
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
-    remaining: ['history and remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
+    remaining: ['remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();
 }

@@ -48,4 +48,29 @@ Imports default to same-dataset restores. For an intentional migration, a host m
 
 Hosts should await the server’s initial `readiness` promise before marking Studio ready; Content-backed operations also perform feature-specific capability checks. See `../server/README.md`.
 
-Automatic release scheduling and the specified history view remain incomplete. Media/preview are already mounted in the editor but broader native acceptance remains separate; diff UI is explicitly optional. See `../.conduct/studio-singleton-readiness.md` for singleton acceptance, `../.conduct/studio-lifecycle-readiness.md` for current verified behavior and `../.conduct/studio-packaging-readiness.md` for the preceding packaging checkpoint.
+Automatic release scheduling requires the schema migration and trusted host execution described in `../server/README.md`; the document history view is described below. Media/preview are already mounted in the editor but broader native acceptance remains separate; diff UI is explicitly optional. See `../.conduct/studio-singleton-readiness.md` for singleton acceptance, `../.conduct/studio-lifecycle-readiness.md` for current verified behavior and `../.conduct/studio-packaging-readiness.md` for the preceding packaging checkpoint.
+
+## Document history
+
+Every opened document has a History control. It requests the configured
+ContentFn `/contentfn/docs/history` endpoint and displays full immutable draft
+and published snapshots, newest first, with revision identity and timestamp.
+“Older revisions” replaces the current 20-row page; Refresh returns to the newest
+page. View snapshot expands the full JSON content, rendered as text. This viewer
+does not restore revisions or provide a diff editor.
+
+Hosts must authorize ContentFn's `docs.history` action for the current caller;
+this action exposes private draft history, independently of document-read access.
+HTTP 401/403 and permission-denied envelopes show “No access” and clear all
+snapshots. Dataset/document changes cancel requests and remove old results.
+Requests time out after 10 seconds. Each response is limited to 2 MiB before JSON
+parsing. Overflow retries the same cursor with limits 20, 10, 5, 2, then 1,
+sharing the original deadline; no revision is skipped. A single oversized
+snapshot or malformed page fails visibly rather than showing partial data.
+The default fetch credential policy applies; configure the normal same-origin
+proxy/session integration for the ContentFn API.
+
+Requires ContentFn's versioned document-bound history cursors (checkpoint
+`3b87a303d8c37a22ba1b08bad6b9cbfb2c65a8bc`, sf-next PR 56). Legacy cursor pages
+must restart. The producer bounds materialized candidates but still requires a
+supporting index migration and query-plan validation for large-history performance.

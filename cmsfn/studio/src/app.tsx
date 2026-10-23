@@ -1,3 +1,4 @@
+import { HistoryPane } from "./panes/history/HistoryPane.js";
 /**
  * Studio app shell: desk + dataset selector + list pane.
  * Renders at /studio; config loaded via loadConfig() or passed in for tests.
@@ -115,6 +116,7 @@ export function App({ config: configProp }: AppProps = {}) {
             <button type="button" data-editor-back onClick={() => setSelectedDocId(null)}>
               {selectedList ? "Back to list" : "Back to desk"}
             </button>
+            <HistoryPane key={`history:${dataset}:${perspective}:${selectedDocId}`} baseUrl={config.contentfn.baseUrl} dataset={dataset} docId={selectedDocId} />
             <DocumentEditorPane
               key={`${dataset}:${perspective}:${selectedDocId}`}
               perspective={perspective}
