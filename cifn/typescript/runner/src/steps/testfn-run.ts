@@ -1,4 +1,4 @@
-import { TestRunner, JsonReporter, type TestFnConfig } from '@testfn/core';
+import type { TestFnConfig } from '@testfn/core';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
@@ -21,85 +21,10 @@ export interface TestFnRunResult {
   error?: string;
 }
 
-export function executeTestFnRun(options: TestFnRunOptions): TestFnRunResult {
-  const {
-    framework = 'vitest',
-    testPattern,
-    reporter,
-    outputPath = './testfn-results.json',
-    workspace,
-    env,
-    parallel,
-    timeout,
-    retries
-  } = options;
-  const lines: string[] = [];
-
-  lines.push(`Running tests with testfn SDK (framework: ${framework})`);
-
-  try {
-    if (!['vitest', 'playwright', 'jest'].includes(framework)) {
-      throw new Error(`Unsupported framework: ${framework}. Supported: vitest, playwright, jest`);
-    }
-
-    const config: TestFnConfig = {
-      framework: framework as 'vitest' | 'playwright' | 'jest',
-      testPattern: testPattern || './tests/**/*.{test,spec}.{ts,js}',
-      parallel,
-      timeout,
-      retries,
-      env,
-      reporters: reporter === 'json' ? [new JsonReporter(join(workspace, outputPath))] : undefined,
-    };
-
-    const originalCwd = process.cwd();
-    try {
-      process.chdir(workspace);
-      
-      const runner = new TestRunner(config);
-      const results = runner.run();
-      
-      process.chdir(originalCwd);
-
-      if (results && typeof results === 'object' && 'then' in results) {
-        throw new Error('executeTestFnRun must be called from async context or use sync adapter');
-      }
-
-      lines.push(`Tests completed: ${(results as any).summary?.total || 0} total`);
-      lines.push(`Passed: ${(results as any).summary?.passed || 0}, Failed: ${(results as any).summary?.failed || 0}`);
-      
-      if (reporter === 'json' && outputPath) {
-        const fullPath = join(workspace, outputPath);
-        if (existsSync(fullPath)) {
-          lines.push(`JSON report written to ${outputPath}`);
-        }
-      }
-
-      const hasFailed = (results as any).summary?.failed > 0;
-      if (hasFailed) {
-        return {
-          success: false,
-          exitCode: 1,
-          lines,
-          error: 'Tests failed'
-        };
-      }
-
-      return { success: true, exitCode: 0, lines };
-    } catch (innerErr) {
-      process.chdir(originalCwd);
-      throw innerErr;
-    }
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    lines.push(`Test execution failed: ${errorMessage}`);
-    return {
-      success: false,
-      exitCode: 1,
-      lines,
-      error: errorMessage
-    };
-  }
+/** @deprecated TestFn execution is asynchronous; use executeTestFnRunAsync. */
+export function executeTestFnRun(_options: TestFnRunOptions): TestFnRunResult {
+  const error = 'TestFn execution requires executeTestFnRunAsync; synchronous execution is unavailable.';
+  return { success: false, exitCode: 1, lines: [`Test execution failed: ${error}`], error };
 }
 
 export async function executeTestFnRunAsync(options: TestFnRunOptions): Promise<TestFnRunResult> {
@@ -123,6 +48,7 @@ export async function executeTestFnRunAsync(options: TestFnRunOptions): Promise<
       throw new Error(`Unsupported framework: ${framework}. Supported: vitest, playwright, jest`);
     }
 
+    const { TestRunner, JsonReporter } = await import('@testfn/core');
     const config: TestFnConfig = {
       framework: framework as 'vitest' | 'playwright' | 'jest',
       testPattern: testPattern || './tests/**/*.{test,spec}.{ts,js}',

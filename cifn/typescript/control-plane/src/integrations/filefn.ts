@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { ArtifactsAdapter } from './types.js';
 import type { AdapterConfig } from './config.js';
 
@@ -15,7 +15,7 @@ export class MemoryArtifactsAdapter implements ArtifactsAdapter {
   private keyIndex = new Map<string, string>();
 
   async upload(namespace: string, key: string, data: Buffer): Promise<string> {
-    const fileId = uuidv4();
+    const fileId = randomUUID();
     const compositeKey = `${namespace}:${key}`;
     const entry: FileEntry = {
       fileId,

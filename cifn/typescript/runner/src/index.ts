@@ -15,7 +15,7 @@ export type { CacheSaveOptions, CacheSaveResult } from './steps/cache-save.js';
 export { executeCacheRestore } from './steps/cache-restore.js';
 export type { CacheRestoreOptions, CacheRestoreResult } from './steps/cache-restore.js';
 export { redactSecrets } from './reporting/redact.js';
-export { executeTestFnRun } from './steps/testfn-run.js';
+export { executeTestFnRun, executeTestFnRunAsync } from './steps/testfn-run.js';
 export type { TestFnRunOptions, TestFnRunResult } from './steps/testfn-run.js';
 export { executeHostFnDeploy } from './steps/hostfn-deploy.js';
 export type { HostFnDeployOptions, HostFnDeployResult } from './steps/hostfn-deploy.js';

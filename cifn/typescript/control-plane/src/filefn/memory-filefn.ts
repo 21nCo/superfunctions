@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 
 export interface FileEntry {
   fileId: string;
@@ -21,7 +21,7 @@ export class MemoryFileFnClient implements FileFnClient {
   private keyIndex = new Map<string, string>();
 
   async upload(namespace: string, key: string, data: Buffer): Promise<string> {
-    const fileId = uuidv4();
+    const fileId = randomUUID();
     const compositeKey = `${namespace}:${key}`;
     const entry: FileEntry = {
       fileId,

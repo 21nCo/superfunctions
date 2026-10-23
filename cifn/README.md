@@ -189,3 +189,21 @@ with uncertain execution ownership still requires reconciliation before automati
 spool recovery; pending status alone does not prove a running transfer. External
 LogFn forwarding and the broader provider/deployment requirements remain open.
 See [live log evidence](.conduct/live-log-readiness.md).
+
+### TestFn dependency and module integration
+
+CiFn uses the current TestFn core0.0.4 prerequisite and its tinyglobby discovery
+implementation. Control-plane IDs use Node's cryptographic `randomUUID()`;
+control-plane/runner no longer require the separate UUID package.
+
+`executeTestFnRunAsync(options)` is the supported public helper in both CJS and
+ESM consumers. The pipeline runner already awaits this path. The legacy
+synchronous `executeTestFnRun` cannot synchronously complete framework execution;
+it now returns an explicit failure before importing TestFn, changing directories,
+or launching work. Migrate callers to `await executeTestFnRunAsync(...)`.
+
+Install a maintained compatible test framework in the consumer project. Optional
+framework versions have their own security posture; an audit of CiFn's default
+production closure does not clear every historical peer version or the entire
+monorepo development graph. See [dependency checkpoint evidence](.conduct/dependency-readiness.md) for exact
+versions, audit scope and remaining original readiness requirements.

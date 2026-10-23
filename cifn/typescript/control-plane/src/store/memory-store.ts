@@ -1,6 +1,6 @@
 import { createRunRecord } from './records.js';
 import type { ControlPlaneStore } from './store.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Run, RunStatus, JobStatus, StepStatus, Job, Step, PipelineSpec, TriggerType } from '../pipeline/types.js';
 
 export interface CreateRunInput {
@@ -151,7 +151,7 @@ export class MemoryStore implements ControlPlaneStore {
   }
 
   createRunner(labels: string[] = [], secretHash: string): Runner {
-    const runnerId = uuidv4();
+    const runnerId = randomUUID();
     const runner: Runner = {
       id: runnerId,
       labels,
