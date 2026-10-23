@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     edge: 'src/edge.ts',
+    'adapters/aws-ses': 'src/email/aws-ses-adapter.ts',
     'adapters/meta-whatsapp': 'src/whatsapp/meta-cloud-adapter.ts',
     'adapters/apns': 'src/push/apns.ts',
     'adapters/fcm': 'src/push/fcm.ts',
