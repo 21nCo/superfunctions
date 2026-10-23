@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { isAuthSession } from "@superfunctions/auth";
 import { compareDeploymentMetrics, DeploymentComparisonOptions } from "../analysis/deployment-comparison";
 import { WatchFnConfig, WatchFnConfigSchema, WatchFnInstance } from "./types";
@@ -173,9 +174,12 @@ export class WatchFn implements WatchFnInstance {
     const auth = this.config.auth;
     if (auth?.provider) return false; // Provider authentication is asynchronous; use authorizeHttp.
     if (auth?.enabled === false) return true;
-    if (!auth?.enabled && !auth?.apiKey) return true;
-    if (!auth.apiKey) return false;
-    return request.headers.get("authorization") === `Bearer ${auth.apiKey}` || request.headers.get("x-api-key") === auth.apiKey;
+    if (!auth?.apiKey) return false;
+    // Fixed-size digests avoid length-dependent comparison errors and prefix comparisons.
+    const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+    const bearer = timingSafeEqual(digest(request.headers.get("authorization") ?? ""), digest(`Bearer ${auth.apiKey}`));
+    const apiKey = timingSafeEqual(digest(request.headers.get("x-api-key") ?? ""), digest(auth.apiKey));
+    return bearer || apiKey;
   }
 
   /** Scope checks apply to HTTP only; programmatic methods remain trusted host APIs. */

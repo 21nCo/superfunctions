@@ -3,7 +3,7 @@ import { WatchFn } from "../../src/core/watch-fn";
 
 const active: WatchFn[] = [];
 function setup(options: Record<string, unknown> = {}) {
-  const watch = new WatchFn({ name: "query-test", storage: "memory", infra: { enabled: false }, ...options } as any);
+  const watch = new WatchFn({ name: "query-test", storage: "memory", infra: { enabled: false }, auth: { enabled: false }, ...options } as any);
   active.push(watch); watch.start(); return watch;
 }
 function request(body: unknown, headers?: HeadersInit) {

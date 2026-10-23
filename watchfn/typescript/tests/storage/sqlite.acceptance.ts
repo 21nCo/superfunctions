@@ -23,7 +23,7 @@ it("persists ingested JSON through native SQLite close and reopen", async () => 
       migration = migration.addColumn(name, "text", column => name === "id" ? column.primaryKey() : field.required ? column.notNull() : column);
     }
     await migration.execute();
-    watch = new WatchFn({ name: "test", storage: "database", database: db, infra: { enabled: false } } as any);
+    watch = new WatchFn({ name: "test", storage: "database", database: db, infra: { enabled: false }, auth: { enabled: false } } as any);
     watch.start();
     const event = { name: "log", timestamp: "2026-10-20T00:00:00Z", traceId: "trace", ctx: { nested: [1, true, null, "文"] } };
     const response = await watch.httpRouter.handle(new Request("http://local/ingest", { method: "POST", body: JSON.stringify(event) }));

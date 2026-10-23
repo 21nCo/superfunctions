@@ -156,7 +156,15 @@ legacy `apiKey`, with no fallback, and cannot be combined with `enabled:false`.
 The synchronous `authorizeIngest` compatibility method returnsfalse when a
 provider is configured; HTTP routes use asynchronous `authorizeHttp` instead.
 
-Without a provider, existing API-key/no-auth configuration retains its behavior.
+Without a provider, HTTP ingestion, query and issue-status routes deny access by default.
+Omitted auth, an empty auth object, or a missing/empty API key returns 401 before reading
+request bodies or storage. Configure a provider or a nonempty `auth.apiKey`; static keys
+are compared as fixed-size SHA-256 digests with Node's timing-safe comparison. Both
+`Authorization: Bearer <key>` and `x-api-key` remain supported. Anonymous HTTP access
+requires the explicit trusted-host choice `auth: { enabled: false }`; do not use this on
+an exposed deployment. This changes the previous implicit anonymous HTTP default;
+existing intentionally public hosts must opt in explicitly. Programmatic collection and
+query APIs remain available without HTTP credentials, and `/health` remains public.
 Keep the legacy full-access key server-side. Provider lifecycle, key rotation,
 revocation, authentication deadlines and origin/rate policy are host-owned.
 These scopes are operation-level authority within one trusted deployment, not

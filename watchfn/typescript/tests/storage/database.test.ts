@@ -21,7 +21,7 @@ describe("shared DB event storage", () => {
   });
 
   it("round trips metadata through HTTP ingest and canonical query filtering", async () => {
-    const watch = new WatchFn({ name: "test", storage: "database", database: memoryAdapter(), infra: { enabled: false } } as any);
+    const watch = new WatchFn({ name: "test", storage: "database", database: memoryAdapter(), infra: { enabled: false }, auth: { enabled: false } } as any);
     watch.start();
     try {
       const response = await watch.httpRouter.handle(new Request("http://local/ingest", {

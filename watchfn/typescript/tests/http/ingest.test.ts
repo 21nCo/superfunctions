@@ -6,7 +6,7 @@ function setup(options: Record<string, unknown> = {}) {
   const insertEvent = vi.fn(async (_event: unknown) => {});
   const watch = new WatchFn({ name: "ingest-test", storage: "database", database: {
     insertEvent, queryEvents: async () => [],
-  }, infra: { enabled: false }, ...options } as any);
+  }, infra: { enabled: false }, auth: { enabled: false }, ...options } as any);
   active.push(watch);
   watch.start();
   return { watch, insertEvent };

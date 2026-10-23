@@ -21,6 +21,21 @@ try {
  await writeFile(join(temporary,'package.json'),JSON.stringify({private:true,type:'module',dependencies,overrides:Object.fromEntries(Object.keys(dependencies).map(name=>[name,'$'+name]))}));
  runNpm(['install','--ignore-scripts'],temporary);
  const body=`
+ const closed=new WatchFn({name:'closed',infra:{enabled:false}});
+ closed.start();
+ try {
+ await closed.ingest([{name:'host-only'}]);
+ assert.equal((await closed.query({})).length,1);
+ for(const path of ['/ingest','/query','/issues/status']){
+ const req=new Request('http://local'+path,{method:'POST',body:'invalid'});
+ assert.equal((await closed.httpRouter.handle(req)).status,401);assert.equal(req.bodyUsed,false);
+ }
+ }finally{await closed.stop();}
+ const keyed=new WatchFn({name:'keyed',infra:{enabled:false},auth:{apiKey:'private'}});
+ try{
+ for(const headers of [{authorization:'Bearer private'},{'x-api-key':'private'}])assert.equal(await keyed.authorizeHttp(new Request('http://local',{headers}),'watchfn:query'),null);
+ assert.equal(await keyed.authorizeHttp(new Request('http://local',{headers:{'x-api-key':'privat'}}),'watchfn:query'),401);
+ }finally{await keyed.stop();}
  const watch=new WatchFn({name:'packed',infra:{enabled:false},auth:{provider:{authenticate:async request=>({id:'key',type:'api-key',subject:{actorId:'browser',actorType:'api-key'},scopes:request.headers.get('authorization')==='Bearer operator'?['watchfn:query']:['watchfn:ingest']})}}});
  watch.start();
  try {
