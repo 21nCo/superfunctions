@@ -88,17 +88,18 @@ export async function listHistory(
       const value: unknown = JSON.parse(Buffer.from(input.cursor, "base64").toString("utf8"));
       if (!value || typeof value !== "object" || Array.isArray(value)) throw Error();
       const c = value as Record<string, unknown>;
-      if (c.version !== 1 || c.dataset !== input.dataset || c.docId !== docId || typeof c.timestamp !== "string" || !c.timestamp || typeof c.rev !== "string" || !c.rev || typeof c.rowId !== "string" || !c.rowId) throw Error();
+      const sameScope = c.version === 2 ? c.scope === documentStorageId(input.dataset, docId) : c.version === 1 && c.dataset === input.dataset && c.docId === docId;
+      if (!sameScope || typeof c.timestamp !== "string" || !c.timestamp || typeof c.rev !== "string" || !c.rev || typeof c.rowId !== "string" || !c.rowId) throw Error();
       cursor = { timestamp: c.timestamp, rev: c.rev, rowId: c.rowId };
     } catch { return err("VALIDATION_FAILED", "Invalid history cursor; restart pagination", { path: "cursor" }); }
   }
   if (!await datasetExists(config, input.dataset)) return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
   const scope: WhereClause[] = [
     { field: "dataset", operator: "eq", value: input.dataset },
-    { field: "docId", operator: "in", value: [docId, `drafts.${docId}`] },
   ];
   // The shared adapter expresses flat predicates. Three disjoint bounded ranges
-  // implement lexicographic keyset pagination without nested adapter-specific SQL.
+  // per exact document identity implement keyset pagination without nested SQL.
+  // Separate perspectives let a directional composite index satisfy ordering.
   const ranges: WhereClause[][] = cursor ? [
     [{ field: "timestamp", operator: "lt", value: cursor.timestamp }],
     [{ field: "timestamp", operator: "eq", value: cursor.timestamp }, { field: "rev", operator: "gt", value: cursor.rev }],
@@ -106,8 +107,8 @@ export async function listHistory(
   ] : [[]];
   type Row = { id: string; timestamp: string; rev: string; docJson: ContentfnDocument };
   const rows: Row[] = [];
-  for (const range of ranges) rows.push(...await config.db.findMany<Row>({
-    model: CONTENTFN_TABLE_NAMES.revisions, where: [...scope, ...range],
+  for (const identity of [docId, `drafts.${docId}`]) for (const range of ranges) rows.push(...await config.db.findMany<Row>({
+    model: CONTENTFN_TABLE_NAMES.revisions, where: [...scope, { field: "docId", operator: "eq", value: identity }, ...range],
     orderBy: [{ field: "timestamp", direction: "desc" }, { field: "rev", direction: "asc" }, { field: "id", direction: "asc" }],
     select: ["id", "timestamp", "rev", "docJson"], limit: limit + 1,
   }));
@@ -115,7 +116,7 @@ export async function listHistory(
   rows.sort((a, b) => compare(b.timestamp, a.timestamp) || compare(a.rev, b.rev) || compare(a.id, b.id));
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
-  const nextCursor = rows.length > limit && last ? Buffer.from(JSON.stringify({ version: 1, dataset: input.dataset, docId, timestamp: last.timestamp, rev: last.rev, rowId: last.id })).toString("base64") : null;
+  const nextCursor = rows.length > limit && last ? Buffer.from(JSON.stringify({ version: 2, scope: documentStorageId(input.dataset, docId), timestamp: last.timestamp, rev: last.rev, rowId: last.id })).toString("base64") : null;
   return ok({ revisions: page.map(row => structuredClone(row.docJson)), nextCursor });
 }
 
