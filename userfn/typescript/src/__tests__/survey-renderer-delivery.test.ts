@@ -65,6 +65,32 @@ it('preserves local mode without claiming durable storage', async () => {
   expect(await renders[0].submit(response())).toBe('local'); expect(record).toHaveBeenCalledTimes(1); expect(fetch).not.toHaveBeenCalled();
 });
 
+it('opens only the requested survey while retaining audience, schedule, consent and response caps', async () => {
+  const { value, renders } = client(false);
+  const survey = { id: 'survey', enabled: true, questions: [{ id: 'q', title: 'Score', type: 'nps' as const }], triggers: [], caps: { global: 1 } };
+  value.setSurveys([{ ...survey, id: 'unrelated' }, survey]);
+  const campaigns = vi.spyOn((value as any).messaging, 'getEligibleMessages');
+  expect(await value.openSurvey('missing')).toBe(false);
+  value.setConsent({ messaging: false }); expect(await value.openSurvey('survey')).toBe(false);
+  value.setConsent({ messaging: true });
+  for (const denied of [{ enabled: false }, { schedule: { endAt: 1 } }, { segmentId: 'missing-segment' }, { caps: { global: 0 } }]) {
+    value.setSurveys([{ ...survey, ...denied }]); expect(await value.openSurvey('survey')).toBe(false);
+  }
+  expect(renders).toHaveLength(0); expect(campaigns).not.toHaveBeenCalled();
+  value.setSurveys([survey]); expect(await value.openSurvey('survey')).toBe(true);
+  expect(await renders[0].submit(response())).toBe('local');
+  expect(await value.openSurvey('survey')).toBe(false);
+  value.reset(); expect(await value.openSurvey('survey')).toBe(false);
+  await expect(value.openSurvey('../survey')).rejects.toThrow('Invalid survey ID');
+});
+
+it('returns false without a browser renderer', async () => {
+  const value = new UserFnClient({ apiKey: 'local' });
+  value.identify('alice');
+  value.setSurveys([{ id: 'survey', enabled: true, questions: [], triggers: [] }]);
+  expect(await value.openSurvey('survey')).toBe(false);
+});
+
 it('submits with cryptographic UUIDs when randomUUID is unavailable', async () => {
   const getRandomValues = vi.fn(crypto.getRandomValues.bind(crypto));
   vi.stubGlobal('crypto', { getRandomValues });

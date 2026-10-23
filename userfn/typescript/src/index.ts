@@ -151,12 +151,24 @@ export class UserFnClient {
 
     // Admission can await the network; never fall through to a stale user's survey.
     if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
-    // 2. Surveys
+    await this.presentSurvey(type, context);
+  }
+
+  /** Explicitly open one eligible survey without running campaign triggers. */
+  async openSurvey(surveyId: string): Promise<boolean> {
+    if (typeof surveyId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(surveyId)) throw new TypeError('Invalid survey ID');
+    return this.presentSurvey('event', '', surveyId);
+  }
+
+  private async presentSurvey(type: 'url_match' | 'event', context: string, explicitId?: string): Promise<boolean> {
+    if (!this.syncConsent().messaging || !this.renderer) return false;
+    const epoch = this.messagingEpoch;
+    const user = this.identity.getUser();
     const journal = this.surveyJournal && user ? await this.surveyJournal.snapshot(user.id) : undefined;
-    if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
+    if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return false;
     if (journal) for (const [owner, entry] of Object.entries(journal)) this.surveys.setResponseCount(user!.id, JSON.parse(owner)[1], entry.count);
     const recovering = new Set(journal ? Object.entries(journal).filter(([, entry]) => entry.pending).map(([owner]) => JSON.parse(owner)[1] as string) : []);
-    const surveys = this.surveys.getEligibleSurveys(type, context, user, recovering);
+    const surveys = this.surveys.getEligibleSurveys(type, context, user, recovering, explicitId);
     if (surveys.length > 0) {
       const survey = surveys[0];
       const presentation = Symbol('survey');
@@ -208,7 +220,9 @@ export class UserFnClient {
         () => { if (this.surveyPresentation === presentation) this.surveyPresentation = undefined; },
         journal?.[owner]?.pending?.response ?? this.surveyAttempts.get(owner)?.response,
       );
+      return true;
     }
+    return false;
   }
 
   // Test method to inject campaigns for verification

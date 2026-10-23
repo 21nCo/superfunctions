@@ -22,12 +22,14 @@ export class SurveyEngine {
     triggerContext: string,
     user: UserIdentity | null,
     recovering: ReadonlySet<string> = new Set(),
+    explicitId?: string,
   ): Survey[] {
     if (!user) return [];
 
     const eligible: Survey[] = [];
 
     for (const survey of this.surveys.values()) {
+      if (explicitId !== undefined && survey.id !== explicitId) continue;
       // Recovery can only resend a previously frozen journal entry; service policy
       // still decides whether it is a replay or an inadmissible new response.
       if (recovering.has(survey.id)) { eligible.unshift(survey); continue; }
@@ -42,7 +44,7 @@ export class SurveyEngine {
         }
         return false;
       });
-      if (!matchesTrigger) continue;
+      if (explicitId === undefined && !matchesTrigger) continue;
 
       // 2. Audience
       if (survey.segmentId) {

@@ -17,7 +17,7 @@ try {
   await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   npm(['install', '--no-fund', ...tarballs, 'typescript@5.6.3', '@types/node@22']);
   for (const extension of ['mts', 'cts']) {
-    await writeFile(join(directory, `consumer.${extension}`), `import {UserFnClient,type SurveyJournalOptions} from 'userfn'; const journal:SurveyJournalOptions={storageKey:'owned',storage:{getItem:()=>null,setItem:()=>{}}}; new UserFnClient({apiKey:'key',endpoint:'https://example.test',surveyJournal:journal});`);
+    await writeFile(join(directory, `consumer.${extension}`), `import {UserFnClient,type SurveyJournalOptions} from 'userfn'; const journal:SurveyJournalOptions={storageKey:'owned',storage:{getItem:()=>null,setItem:()=>{}}}; const client=new UserFnClient({apiKey:'key',endpoint:'https://example.test',surveyJournal:journal}); const opened:Promise<boolean>=client.openSurvey('survey'); void opened;`);
     run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', `consumer.${extension}`]);
   }
   await writeFile(join(directory, 'runtime.mjs'), `import {UserFnClient} from 'userfn'; import {createRequire} from 'node:module'; for(const Client of [UserFnClient,createRequire(import.meta.url)('userfn').UserFnClient]) new Client({apiKey:'key',endpoint:'https://example.test',surveyJournal:{storageKey:'owned',storage:{getItem:()=>null,setItem:()=>{}}}});`);

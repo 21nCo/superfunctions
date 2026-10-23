@@ -288,7 +288,26 @@ try {
     assert.equal(requests.length, beforeTabs + 1, 'Web Locks prevent a stale peer form sending a second key');
     assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 6);
   } finally { release?.(); release = undefined; await peer.close(); }
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 6, crossTabJournal: true, conditionalBranches: true, cesAndCustomScale: true, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: true }));
+  await page.reload();
+  const explicit = await page.evaluate(async questions => {
+    const { UserFnClient } = await import('/sdk.js');
+    globalThis.client = new UserFnClient({ apiKey: 'explicit-open', endpoint: location.origin });
+    client.identify('alice');
+    client.setCampaigns([{ id: 'other', enabled: true, kind: 'modal', triggers: [{ type: 'event' }], priority: 100, content: { title: 'Unrelated campaign', body: 'Must not open' } }]);
+    client.setSurveys([{ id: 'survey', enabled: true, title: 'Explicit survey', questions, triggers: [], caps: { global: 1 } }]);
+    return [await client.openSurvey('missing'), await client.openSurvey('survey')];
+  }, questions);
+  assert.deepEqual(explicit, [false, true]);
+  assert.equal(await page.getByRole('dialog').count(), 1);
+  assert.equal(await page.getByRole('dialog', { name: 'Explicit survey' }).count(), 1);
+  await fill('explicitly opened');
+  await page.getByRole('button', { name: 'Submit', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response saved.');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => client.openSurvey('survey')), false);
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 7);
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), explicitSurveyOpening: true, lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 7, crossTabJournal: true, conditionalBranches: true, cesAndCustomScale: true, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: true }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

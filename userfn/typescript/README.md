@@ -640,3 +640,25 @@ and must coordinate it with active tabs and unresolved receipts. Deletion or
 browser eviction loses replay keys and counts, so a later submission may get a
 new key; service-side quotas remain authoritative. No automatic deletion on logout,
 consent withdrawal, credential rotation or service retention expiry is claimed.
+
+### Open a survey explicitly
+
+`await client.openSurvey('survey-id')` opens that configured survey using the
+same dialog, validation and submission path as automatic triggers. It returns
+`true` when presented and `false` when no renderer/identity is available, consent
+is denied, the ID is unknown or the survey is ineligible. Malformed IDs throw.
+Explicit opening selects the survey without matching its automatic URL/event
+triggers or displaying an unrelated campaign. Enabled state, audience, schedule
+and response caps still apply. Configured journal recovery can surface a frozen
+pending response after local expiry, with service replay/admission authoritative.
+
+```ts
+client.setSurveys([{ id: 'checkout-score', enabled: true, triggers: [],
+  questions: [{ id: 'score', type: 'csat', title: 'How was checkout?', required: true }],
+  caps: { global: 1 } }]);
+const shown = await client.openSurvey('checkout-score');
+```
+
+Opening does not imply service acceptance: the dialog reports local recording or
+verified service storage only after submission. This API uses the modal renderer;
+an inline mounting API remains separate work. Python has no browser renderer.
