@@ -109,3 +109,19 @@ been validated here. In particular, unrestricted public `docId` values are TEXT;
 MySQL prefix indexes/byte budgets and PostgreSQL index-entry limits need a distinct
 bounded-key design before claiming equivalent performance for all supported IDs.
 Memory storage keeps functional behavior but has no physical index acceleration.
+
+Richtext fields have a default limit of 5,000 blocks per field. Configure
+`limits.maxRichtextBlocks` with a positive safe integer; status reports the resolved
+value. The limit applies recursively through declared objects/array alternatives on
+create, patch, draft fork, restore, manual and scheduled publication. Existing oversized
+documents remain readable and can be patched down to the limit; failed writes do not
+append content revisions, events or audit records. Schema compatibility checks also use
+the configured limit unless an explicit migration is declared.
+
+Imports check the declared richtext limit on current documents and revision snapshots
+before writing. Archives carry only the latest schema, so removed historical fields or
+unknown JSON cannot be classified as richtext; their contents remain compatible rather
+than being truncated or reinterpreted. This is not a global archive-array cap. A later
+restore or publish validates against the current schema and limit. Hosts upgrading from
+uncapped versions should retain readable archives, inspect oversized fields and either
+correct content or explicitly configure an appropriate limit before publication.

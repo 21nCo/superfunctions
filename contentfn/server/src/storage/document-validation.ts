@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_RICHTEXT_BLOCKS } from "../limits/limits.js";
 import { documentStorageId } from "./documentIdentity.js";
 import type { ContentfnEnvelope, ContentfnSchema, ContentfnField, ContentfnFieldType } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
@@ -58,7 +59,7 @@ function stable(value: unknown): string {
 function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
-function validateFields(fields: ContentfnField[], value: Record<string, unknown>, path: string): Check {
+function validateFields(fields: ContentfnField[], value: Record<string, unknown>, path: string, maxRichtextBlocks = Infinity): Check {
   for (const field of fields) {
     const fieldPath = path ? `${path}.${field.name}` : field.name;
     if (!own(value, field.name) || value[field.name] == null) {
@@ -66,7 +67,7 @@ function validateFields(fields: ContentfnField[], value: Record<string, unknown>
       continue;
     }
     const current = value[field.name];
-    const checked = validateFieldType(field.type, current, fieldPath);
+    const checked = validateFieldType(field.type, current, fieldPath, maxRichtextBlocks);
     if (!checked.ok) return checked;
     for (const rule of field.validation ?? []) {
       if (rule.rule === "min" || rule.rule === "max") {
@@ -86,7 +87,7 @@ function validateFields(fields: ContentfnField[], value: Record<string, unknown>
   return { ok: true };
 }
 
-function validateFieldType(type: ContentfnFieldType, value: unknown, path: string): Check {
+function validateFieldType(type: ContentfnFieldType, value: unknown, path: string, maxRichtextBlocks = Infinity): Check {
   switch (type.kind) {
     case "primitive": {
       if (type.type === "json") return jsonValue(value) ? { ok: true } : fail(path, "expected JSON value");
@@ -97,12 +98,12 @@ function validateFieldType(type: ContentfnFieldType, value: unknown, path: strin
       if (type.type === "datetime" && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !validDate(value.slice(0, 10)) || !Number.isFinite(Date.parse(value)))) return fail(path, "expected ISO datetime with timezone");
       return { ok: true };
     }
-    case "object": return record(value) ? validateFields(type.fields, value, path) : fail(path, "expected object");
+    case "object": return record(value) ? validateFields(type.fields, value, path, maxRichtextBlocks) : fail(path, "expected object");
     case "array": {
       if (!Array.isArray(value)) return fail(path, "expected array");
       if (type.maxLength !== undefined && value.length > type.maxLength) return fail(path, "array exceeds maxLength");
       for (let index = 0; index < value.length; index++) {
-        const results = type.of.map(candidate => validateFieldType(candidate, value[index], `${path}[${index}]`));
+        const results = type.of.map(candidate => validateFieldType(candidate, value[index], `${path}[${index}]`, maxRichtextBlocks));
         if (!results.some(result => result.ok)) return results.find(result => !result.ok)!;
       }
       return { ok: true };
@@ -116,6 +117,7 @@ function validateFieldType(type: ContentfnFieldType, value: unknown, path: strin
     case "asset": return record(value) && value._type === "asset" && typeof value._ref === "string" && !!value._ref.trim() && value.assetType === type.assetType ? { ok: true } : fail(path, "expected matching canonical asset reference");
     case "richtext": {
       if (!Array.isArray(value)) return fail(path, "expected richtext block array");
+      if (value.length > maxRichtextBlocks) return fail(path, "richtext exceeds maxRichtextBlocks");
       const keys = new Set<string>();
       for (let index = 0; index < value.length; index++) {
         const block = value[index], itemPath = `${path}[${index}]`;
@@ -157,11 +159,11 @@ function validateFieldType(type: ContentfnFieldType, value: unknown, path: strin
   }
 }
 
-export function validateDocumentAgainstSchema(schema: ContentfnSchema, docType: string, doc: Record<string, unknown>): ContentfnEnvelope<void> {
+export function validateDocumentAgainstSchema(schema: ContentfnSchema, docType: string, doc: Record<string, unknown>, maxRichtextBlocks = DEFAULT_MAX_RICHTEXT_BLOCKS): ContentfnEnvelope<void> {
   const type = schema.documentTypes.find(candidate => candidate.name === docType);
   if (!type) return err("VALIDATION_FAILED", "Document type not found in schema", { type: docType });
   if (!record(doc) || !jsonValue(doc)) return err("VALIDATION_FAILED", "Document must contain only JSON values", { path: "" });
-  const result = validateFields(type.fields, doc, "");
+  const result = validateFields(type.fields, doc, "", maxRichtextBlocks);
   return result.ok ? ok(undefined) : err("VALIDATION_FAILED", result.error, { path: result.field });
 }
 
@@ -274,6 +276,31 @@ export async function validateReferences(
   for (const field of type.fields) {
     const result = await visit(field.type, doc[field.name], field.name);
     if (!result.ok) return err("VALIDATION_FAILED", result.error, { path: result.field });
+  }
+  return ok(undefined);
+}
+
+/** Archive snapshots lack their historical schemas. Apply only declared richtext limits,
+ * without retroactively requiring current fields or coercing unknown JSON. */
+export function validateImportedRichtextLimits(schema: ContentfnSchema, doc: Record<string, unknown>, maxBlocks = DEFAULT_MAX_RICHTEXT_BLOCKS): ContentfnEnvelope<void> {
+  const visit = (type: ContentfnFieldType, value: unknown, path: string): Check => {
+    if (value == null) return { ok: true };
+    if (type.kind === 'richtext' && Array.isArray(value)) return value.length > maxBlocks ? fail(path, 'richtext exceeds maxRichtextBlocks') : { ok: true };
+    if (type.kind === 'object' && record(value)) {
+      for (const field of type.fields) { const checked = visit(field.type, value[field.name], `${path}.${field.name}`); if (!checked.ok) return checked; }
+    }
+    if (type.kind === 'array' && Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++) {
+        const checks = type.of.filter(candidate => sameShape(candidate, value[index])).map(candidate => visit(candidate, value[index], `${path}[${index}]`));
+        if (checks.length && checks.every(check => !check.ok)) return checks[0];
+      }
+    }
+    return { ok: true };
+  };
+  const type = schema.documentTypes.find(type => type.name === doc._type);
+  for (const field of type?.fields ?? []) {
+    const result = visit(field.type, doc[field.name], field.name);
+    if (!result.ok) return err('VALIDATION_FAILED', result.error, { path: result.field });
   }
   return ok(undefined);
 }

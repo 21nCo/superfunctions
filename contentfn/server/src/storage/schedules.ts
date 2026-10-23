@@ -33,7 +33,7 @@ export async function cancelScheduledPublish(config: { db: ContentfnDatabase }, 
   return ok({});
 }
 /** Invoke periodically from the deployment scheduler; persisted schedules survive process restarts. */
-export async function processScheduledPublishes(config: { db: ContentfnDatabase; onPublished?: (dataset: string, document: Record<string, unknown>) => void | Promise<void> }): Promise<{ published: number; failed: number }> {
+export async function processScheduledPublishes(config: { db: ContentfnDatabase; maxRichtextBlocks?: number; onPublished?: (dataset: string, document: Record<string, unknown>) => void | Promise<void> }): Promise<{ published: number; failed: number }> {
   const rows = await config.db.findMany({ model: SCHEDULES_TABLE, where: [{ field: "status", operator: "eq", value: "pending" }] });
   let published = 0, failed = 0;
   for (const candidate of rows) {
@@ -44,7 +44,7 @@ export async function processScheduledPublishes(config: { db: ContentfnDatabase;
       if (!row || Date.parse(String(row.publishAt)) > Date.now()) return ok(null);
       const claim = await db.updateMany({ model: SCHEDULES_TABLE, where: [{ field: "id", operator: "eq", value: row.id }, { field: "status", operator: "eq", value: "pending" }], data: { status: "processing" } });
       if (claim !== 1) return ok(null);
-      const publication = await docPublish({ db }, { dataset: String(row.dataset), id: String(row.documentId), ifRev: String(row.ifRev) });
+      const publication = await docPublish({ db, maxRichtextBlocks: config.maxRichtextBlocks }, { dataset: String(row.dataset), id: String(row.documentId), ifRev: String(row.ifRev) });
       if (!publication.ok) return publication;
       await appendAudit(db, "docs.publish", { dataset: row.dataset, id: row.documentId }, publication.result, "system:scheduler");
       await db.deleteMany({ model: SCHEDULES_TABLE, where: [{ field: "id", operator: "eq", value: row.id }] });

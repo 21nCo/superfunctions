@@ -19,6 +19,7 @@ import { CONTENTFN_TABLE_NAMES } from "./schema.js";
 import { documentStorageId, revisionStorageId } from "./documentIdentity.js";
 
 export interface RevisionsStorageConfig {
+  maxRichtextBlocks?: number;
   db: Adapter;
   actor?: { subject: string };
 }
@@ -164,7 +165,7 @@ export async function restoreRevision(
   if (!schema.ok) return schema;
   const normalized = normalizeMarkdownFields(schema.result, restoredDoc._type, restoredDoc);
   if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
-  const validation = validateDocumentAgainstSchema(schema.result, restoredDoc._type, normalized.value);
+  const validation = validateDocumentAgainstSchema(schema.result, restoredDoc._type, normalized.value, config.maxRichtextBlocks);
   if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
   const references = await validateReferences(config.db, schema.result, input.dataset, "draft", restoredDoc._type, normalized.value, `drafts.${docId}`);
   if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;

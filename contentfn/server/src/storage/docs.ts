@@ -23,6 +23,7 @@ import { documentStorageId } from "./documentIdentity.js";
 import { validateDocumentAgainstSchema, normalizeMarkdownFields, validateReferences } from "./document-validation.js";
 
 export interface DocsStorageConfig {
+  maxRichtextBlocks?: number;
   db: Adapter;
   actor?: { subject: string };
 }
@@ -76,7 +77,7 @@ export async function docCreate(
   const normalized = normalizeMarkdownFields(schema, input.type, input.doc);
   if (!normalized.ok) return err("VALIDATION_FAILED", `Field "${normalized.field}" has invalid type: ${normalized.error}`, { path: normalized.field });
   // Validate document against schema
-  const validation = validateDocumentAgainstSchema(schema, input.type, normalized.value);
+  const validation = validateDocumentAgainstSchema(schema, input.type, normalized.value, config.maxRichtextBlocks);
   if (!validation.ok) {
     return validation as ContentfnEnvelope<ContentfnDocument>;
   }
@@ -365,7 +366,7 @@ export async function docPatch(
   if (!schemaRes.ok) return schemaRes as ContentfnEnvelope<ContentfnDocument>;
   const normalized = normalizeMarkdownFields(schemaRes.result, currentDoc._type, updatedDoc);
   if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
-  const validation = validateDocumentAgainstSchema(schemaRes.result, currentDoc._type, normalized.value);
+  const validation = validateDocumentAgainstSchema(schemaRes.result, currentDoc._type, normalized.value, config.maxRichtextBlocks);
   if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
   const references = await validateReferences(config.db, schemaRes.result, input.dataset, perspective, currentDoc._type, normalized.value, input.id);
   if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;

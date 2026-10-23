@@ -13,6 +13,7 @@ import { appendRevision, appendRemovalRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
 
 export interface PublishStorageConfig {
+  maxRichtextBlocks?: number;
   db: Adapter;
   actor?: { subject: string };
 }
@@ -59,7 +60,7 @@ export async function docPublish(
   if (!schema.ok) return schema;
   const normalized = normalizeMarkdownFields(schema.result, draftDoc._type, draftDoc);
   if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
-  const validation = validateDocumentAgainstSchema(schema.result, draftDoc._type, normalized.value);
+  const validation = validateDocumentAgainstSchema(schema.result, draftDoc._type, normalized.value, config.maxRichtextBlocks);
   if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
   const references = await validateReferences(config.db, schema.result, input.dataset, "published", draftDoc._type, normalized.value, publishedId);
   if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;
