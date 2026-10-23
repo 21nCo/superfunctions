@@ -215,3 +215,113 @@ def test_invalid_endpoint_rejected(value):
         AwsSesConfig(
             accessKeyId="key", secretAccessKey="secret", region="us-east-1", endpointUrl=value
         )
+
+
+@pytest.mark.asyncio
+async def test_failed_construction_retries_once_for_concurrent_callers(endpoint, monkeypatch):
+    config, state, entered, release = endpoint
+    provider = AwsSesProvider(config)
+    started, finish = threading.Event(), threading.Event()
+    factory = provider._create_client
+    attempts = []
+
+    def fail_once():
+        attempts.append(True)
+        if len(attempts) == 1:
+            started.set()
+            finish.wait(5)
+            raise RuntimeError("temporary construction failure")
+        return factory()
+
+    monkeypatch.setattr(provider, "_create_client", fail_once)
+    first = asyncio.create_task(provider.initialize())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        second = asyncio.create_task(provider.initialize())
+        await asyncio.sleep(0)
+        finish.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+        assert all(isinstance(result, RuntimeError) for result in results)
+        assert len(attempts) == 1
+        await asyncio.gather(provider.initialize(), provider.initialize())
+        assert len(attempts) == 2
+        assert (await provider.send_email(request())).success
+        assert len(state["requests"]) == 1
+    finally:
+        finish.set()
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_close_during_failed_construction_never_retries(endpoint, monkeypatch):
+    config, state, entered, release = endpoint
+    provider = AwsSesProvider(config)
+    started, finish = threading.Event(), threading.Event()
+    attempts = []
+
+    def fail():
+        attempts.append(True)
+        started.set()
+        finish.wait(5)
+        raise RuntimeError("temporary construction failure")
+
+    monkeypatch.setattr(provider, "_create_client", fail)
+    opening = asyncio.create_task(provider.initialize())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        closing = asyncio.create_task(provider.close())
+        await asyncio.sleep(0)
+        finish.set()
+        with pytest.raises(RuntimeError, match="temporary"):
+            await opening
+        await closing
+        with pytest.raises(EmailProviderError, match="closing"):
+            await provider.initialize()
+        assert len(attempts) == 1 and provider.pending_operations == 0
+        assert not state["requests"]
+    finally:
+        finish.set()
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_consumes_detached_error_but_later_await_observes_it(
+    endpoint, monkeypatch
+):
+    config, state, entered, release = endpoint
+    provider = AwsSesProvider(config)
+    await provider.initialize()
+    started, finish = threading.Event(), threading.Event()
+    original_close = provider._client.close
+    observed = []
+    consume = provider._consume_error
+
+    def observe(task):
+        observed.append(task)
+        consume(task)
+
+    def fail_close():
+        started.set()
+        finish.wait(5)
+        original_close()
+        raise RuntimeError("owned close failure")
+
+    monkeypatch.setattr(provider._client, "close", fail_close)
+    monkeypatch.setattr(provider, "_consume_error", observe)
+    closing = asyncio.create_task(provider.close())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        finish.set()
+        with pytest.raises(RuntimeError, match="owned close failure"):
+            await asyncio.wait_for(asyncio.shield(provider._close_task), timeout=2)
+        await asyncio.sleep(0)
+        assert provider._close_task in observed
+        with pytest.raises(RuntimeError, match="owned close failure"):
+            await provider.close()
+        assert not state["requests"]
+    finally:
+        finish.set()
+        await asyncio.gather(provider._close_task, return_exceptions=True)

@@ -68,6 +68,11 @@ class AwsSesProvider:
         """SDK operations still owned, including those whose callers cancelled."""
         return len(self._pending)
 
+    @staticmethod
+    def _consume_error(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            task.exception()  # Preserve await semantics without detached-error logging.
+
     def _start_work(self, operation: Callable[..., Any], **kwargs: Any) -> asyncio.Task[Any]:
         self._assert_loop()
         if self._closing:
@@ -77,8 +82,7 @@ class AwsSesProvider:
 
         def completed(result: asyncio.Task[Any]) -> None:
             self._pending.discard(result)
-            if not result.cancelled():
-                result.exception()  # Consume detached caller errors without logging secrets.
+            self._consume_error(result)
 
         task.add_done_callback(completed)
         return task
@@ -111,6 +115,15 @@ class AwsSesProvider:
             raise EmailProviderError("AWS SES provider is closing", retryable=False)
         if self._client is not None:
             return
+        if (
+            self._initializing is not None
+            and self._initializing.done()
+            and not self._initializing.cancelled()
+            and self._initializing.exception() is not None
+        ):
+            # Only a fully settled construction failure can be retried. Caller
+            # cancellation leaves the shielded construction owned and reusable.
+            self._initializing = None
         if self._initializing is None:
             self._initializing = self._start_work(self._create_client)
         client = await asyncio.shield(self._initializing)
@@ -215,6 +228,7 @@ class AwsSesProvider:
         if self._close_task is None:
             self._closing = True
             self._close_task = asyncio.create_task(self._drain_and_close())
+            self._close_task.add_done_callback(self._consume_error)
         await asyncio.shield(self._close_task)
 
     async def _drain_and_close(self) -> None:

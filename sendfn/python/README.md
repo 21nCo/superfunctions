@@ -281,6 +281,10 @@ or fragments; use HTTPS for production. Credentials remain explicit. The SDK mak
 remains responsible for any retry. This removes hidden multiplication of retries
 inside Botocore.
 
+A fully settled client-construction failure can be retried by a later call;
+concurrent callers share one construction task. Cancelled construction remains
+owned, and closing prevents any new construction attempt.
+
 Provider initialization, sends and health checks run off the event loop and remain
 tracked if their awaiting caller cancels. `pending_operations` reports outstanding
 SDK operations. Cancellation means the external result is unknown: it does not
@@ -289,7 +293,8 @@ the same email again. `close()` stops new admissions, drains admitted operations
 and then closes the SDK client. Cancelling a `close()` await leaves its drain owned;
 await `close()` again on the same event loop to observe completion. Do not close the
 event loop or discard the provider until that drain completes. A close failure is
-reported, not converted to success.
+retained for subsequent close awaits, including when its original caller cancelled;
+detached failures are consumed without logging raw errors, not converted to success.
 
 Socket bounds are **not a hard overall wall-clock deadline**: DNS resolution or a
 peer that keeps supplying bytes can extend operation/drain time. A shutdown that

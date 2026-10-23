@@ -14,6 +14,10 @@ tracked SDK client and owns all initialization/send/health worker tasks. A calle
 cancellation cannot cancel those tasks or discard their ownership. `close()` stops
 new admission, drains admitted work and closes the real SDK client. Cancelling a
 close await leaves a retained close task; awaiting close again observes completion.
+A fully settled client-construction failure permits a later initialization retry;
+concurrent callers still share one attempt. Caller cancellation retains the original
+construction task. Closing prevents all new attempts. Detached close errors are
+consumed without logging and remain observable by every later close await.
 Instances remain on their owning event loop and cannot reopen after close.
 
 Botocore receives explicit connect/read socket bounds (default5/10seconds,
@@ -39,12 +43,14 @@ close still draining, refusal of new sends during close, and cancelled client
 initialization eventually closing its SDK client. Malformed endpoints/timeouts
 reject before client creation.
 
-- Focused native provider + existing email service:27passed.
-- Normal Python CI:84passed; source archive/wheel, Ruff and mypy passed.
-- Fresh five-wheel installed consumer:84passed, imports verified from site-packages.
+- Focused native lifecycle suite:17passed, including failed-once concurrent
+  initialization recovery, close during failed initialization, and a cancelled
+  close caller whose retained close failure remains observable.
+- Normal Python CI:87passed; source archive/wheel, Ruff and mypy passed.
+- Fresh five-wheel installed consumer:87passed, imports verified from site-packages.
   The fixture installs SendFn's actual email/push/framework extras and all shared
   wheels, then runs the complete copied Python suite outside the checkout.
-- Final lint/mypy after adding the installed fixture:pass,34sourcefiles.
+- Normal CI lint/mypy:pass,34sourcefiles.
 - Owned servers, SDK clients, worker tasks and temporary installed environments
   closed/removed. Source venv removed after validation; no active runners remain.
 - git diff --check passed. Evidence tracked under .conduct; no ignore/dependency/
