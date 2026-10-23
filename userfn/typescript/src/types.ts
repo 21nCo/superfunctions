@@ -123,6 +123,8 @@ export interface UserFnOptions {
   /** Exact, case-sensitive local flag environment; omitted means base configuration. */
   environment?: string;
   endpoint?: string;
+  surveyMaxAttempts?: number;
+  surveyTimeoutMs?: number;
   feedbackMaxAttempts?: number;
   feedbackTimeoutMs?: number;
   /** Optional override; otherwise endpoint/apiKey configure the HTTP service. */
@@ -231,6 +233,8 @@ export interface Survey {
     global?: number;
   };
 }
+
+export interface SurveyReceipt { id: string; surveyId: string; submittedAt: number; accepted: true; }
 
 export interface SurveyResponse {
   surveyId: string;

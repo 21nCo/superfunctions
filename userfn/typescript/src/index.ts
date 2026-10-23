@@ -1,3 +1,5 @@
+import { HttpSurveyService, SurveyDeliveryError } from './core/surveys-http';
+export { SurveyDeliveryError } from './core/surveys-http';
 import { HttpMessaging, MessagingDeliveryError } from './core/messaging-http';
 export { MessagingDeliveryError } from './core/messaging-http';
 export type { DurableMessagingOptions, MessageStorage } from './core/messaging-http';
@@ -26,6 +28,7 @@ export class UserFnClient {
   private messaging: MessagingEngine;
   private durableMessaging?: HttpMessaging;
   private surveys: SurveyEngine;
+  private surveyService?: HttpSurveyService;
   private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
@@ -55,6 +58,7 @@ export class UserFnClient {
     this.messaging = new MessagingEngine(this.segments);
     this.durableMessaging = options.messaging ? new HttpMessaging(options) : undefined;
     this.surveys = new SurveyEngine(this.segments);
+    if (options.endpoint) this.surveyService = new HttpSurveyService(options);
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
@@ -154,6 +158,12 @@ export class UserFnClient {
   // Test method to inject campaigns for verification
   setCampaigns(campaigns: Campaign[]) {
     this.messaging.setCampaigns(campaigns);
+  }
+
+  /** Persist explicit answers. Retain the caller-owned key until acceptance is known. */
+  submitSurveyResponse(surveyId: string, answers: import('./types').SurveyResponse['answers'], options: { idempotencyKey: string }) {
+    if (!this.surveyService) throw new SurveyDeliveryError('Survey service is not configured');
+    return this.surveyService.submit(surveyId, answers, options.idempotencyKey);
   }
 
   setSurveys(surveys: Survey[]) {

@@ -1,3 +1,5 @@
+from .core.surveys_http import HttpSurveyService, SurveyDeliveryError
+from .types import SurveyResponseAnswer, SurveyReceipt
 from .core.messaging_http import HttpMessaging, MessagingDeliveryError
 from .core.exposures import FlagExposures
 from .core.consent import ConsentPolicy
@@ -15,6 +17,7 @@ from .core.messaging import MessagingEngine
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
+        self.survey_service = HttpSurveyService(options) if options.endpoint else None
         self._messaging_epoch = 0
         self.durable_messaging = HttpMessaging(options) if options.messaging_state_path else None
         self.consent = ConsentPolicy(options.consent, options.do_not_track)
@@ -34,6 +37,11 @@ class UserFnClient:
             FlagConfig(key=key, default_value=value, variations=[], rules=[], enabled=True)
             for key, value in (options.bootstrap_flags or {}).items()
         ])
+
+    async def submit_survey_response(self, survey_id: str, answers: List[SurveyResponseAnswer], *, idempotency_key: str) -> SurveyReceipt:
+        if not self.survey_service:
+            raise SurveyDeliveryError('Survey service is not configured')
+        return await self.survey_service.submit(survey_id, answers, idempotency_key)
 
     def identify(self, id: str, traits: Optional[UserTraits] = None):
         self._messaging_epoch += 1

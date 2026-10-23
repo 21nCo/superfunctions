@@ -232,5 +232,6 @@ Caps count accepted responses, not display impressions. Transactions and a
 counter compare-and-swap coordinate concurrent service instances. Keep historical
 responses when changing rolling policies; deleting them changes rolling-cap
 history. This API has no automatic retention, anonymous submission, response
-listing, SDK transport, display reservation, or WatchFn outbox yet. The existing
+listing, display reservation, or WatchFn outbox yet. TypeScript and Python SDKs
+provide explicit response submission; they do not reserve display capacity. The existing
 local survey renderer is not connected to this endpoint automatically.

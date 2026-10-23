@@ -487,6 +487,32 @@ identity change or messaging-consent withdrawal invalidates existing survey
 submission callbacks; each presentation accepts at most one matching response.
 
 These counts are process-local. They do not survive reloads or coordinate other
-clients. Durable survey admission, server-side response persistence, rolling
-window caps and analytics delivery are still unfinished; local acceptance is not
-a server persistence receipt.
+clients. The separate survey service persists responses and enforces lifetime and rolling
+response quotas. This local renderer is not connected to that service yet.
+Durable display admission and analytics delivery remain unfinished; local
+acceptance is not a server persistence receipt.
+
+### Submit a survey response
+
+`submitSurveyResponse(surveyId, answers, {idempotencyKey})` submits explicit
+answers to the configured UserFn service and returns its verified persistence
+receipt. Generate and persist a key for each intended response before calling;
+reuse that key with identical answers after a timeout or lost response. Keep the
+same verified server credential when reconciling. Local `identify()` values do
+not override the service's authenticated user. The service controls questions,
+audience and response quotas.
+
+```ts
+const receipt = await client.submitSurveyResponse('nps', [
+  {questionId: 'score', value: 8}
+], {idempotencyKey: savedResponseKey});
+```
+
+`surveyMaxAttempts` defaults to3 (range1–5); `surveyTimeoutMs` defaults to10000
+(range1–60000) per attempt, including response-body consumption. Retries preserve
+the serialized body and key. Cap denial429 and other permanent4xx errors are
+returned without automatic retries. Redirects and ambient cookies are disabled;
+requests and receipts are bounded to64KiB. Cancellation or timeout cannot undo a
+server commit. Explicit submission is user initiated and does not depend on
+passive messaging consent. The local survey renderer is not yet wired to this
+transport; there is no automatic durable queue or analytics forwarding.

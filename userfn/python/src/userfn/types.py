@@ -126,6 +126,8 @@ class UserFnOptions:
     do_not_track: bool = False
     messaging_state_path: Optional[str] = None
     messaging_allow_insecure_http: bool = False
+    survey_max_attempts: int = 3
+    survey_timeout_ms: int = 10000
 
 EventProperties = Dict[str, Any]
 
@@ -253,3 +255,11 @@ class FeedbackService(Protocol):
     async def submit(self, feedback: FeedbackSubmission, context: FeedbackContext) -> FeedbackReceipt:
         """Return acceptance only after the backing service accepts the submission."""
         ...
+
+
+@dataclass
+class SurveyReceipt:
+    id: str
+    survey_id: str
+    submitted_at: int
+    accepted: bool

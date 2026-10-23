@@ -1,3 +1,7 @@
+import { UserFnClient } from 'userfn';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect, sql as query } from 'kysely';
@@ -29,12 +33,15 @@ it('stores validated survey responses atomically across HTTP races, rolling boun
   ] };
   const options = { auth, surveys: { resolvePolicy: () => policy } };
   let services = [createUserFnService({ ...options, database: first.adapter }), createUserFnService({ ...options, database: second.adapter })];
+  const lostReceipts = new Set(['ts-lost', 'py-lost']);
   let next = 0;
   const server = createServer(async (incoming, outgoing) => {
     try {
       const chunks: Buffer[] = []; for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
       const headers = new Headers(); for (const [key, value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : value);
       const response = await services[next++ % 2].router.handle(new Request('http://local' + incoming.url, { method: incoming.method, headers, body: Buffer.concat(chunks) }));
+      const key = incoming.headers['idempotency-key'];
+      if (typeof key === 'string' && lostReceipts.delete(key)) { outgoing.destroy(); return; }
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer()));
     } catch { outgoing.writeHead(500); outgoing.end(); }
   });
@@ -79,6 +86,32 @@ it('stores validated survey responses atomically across HTTP races, rolling boun
       policy = { ...policy!, perUser: 3, ...limited };
       expect((await send('zero', 'tenant:zero')).status).toBe(429);
     }
+    policy = { ...policy!, perUser: 3, window: { limit: 2, durationMs: 1000 } };
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    const ts = new UserFnClient({ endpoint, apiKey: 'tenant:ts', surveyMaxAttempts: 3 });
+    const tsReceipt = await ts.submitSurveyResponse('survey', answers, { idempotencyKey: 'ts-lost' });
+    expect(tsReceipt.accepted).toBe(true);
+    expect(await ts.submitSurveyResponse('survey', answers, { idempotencyKey: 'ts-lost' })).toEqual(tsReceipt);
+    await ts.submitSurveyResponse('survey', answers, { idempotencyKey: 'ts-next' });
+    await expect(ts.submitSurveyResponse('survey', answers, { idempotencyKey: 'ts-capped' })).rejects.toMatchObject({ status: 429 });
+    await promisify(execFile)(process.env.USERFN_SURVEY_PYTHON ?? 'python3', ['-c', `
+import asyncio, sys
+from userfn import UserFnClient, UserFnOptions, SurveyResponseAnswer, SurveyDeliveryError
+async def run():
+    client = UserFnClient(UserFnOptions(api_key='tenant:python', endpoint=sys.argv[1]))
+    answers = [SurveyResponseAnswer(question_id='score', value=8)]
+    first = await client.submit_survey_response('survey', answers, idempotency_key='py-lost')
+    assert first.accepted
+    assert await client.submit_survey_response('survey', answers, idempotency_key='py-lost') == first
+    await client.submit_survey_response('survey', answers, idempotency_key='py-next')
+    try:
+        await client.submit_survey_response('survey', answers, idempotency_key='py-capped')
+        raise AssertionError('cap not enforced')
+    except SurveyDeliveryError as error:
+        assert error.status == 429
+asyncio.run(run())
+`, endpoint], { env: { ...process.env, PYTHONPATH: resolve('../python/src') } });
+    expect(lostReceipts.size).toBe(0);
     policy = { ...policy!, window: undefined, enabled: false };
     expect((await send('new-disabled')).status).toBe(403);
     expect(await (await send('race-' + winning)).json()).toEqual(saved);

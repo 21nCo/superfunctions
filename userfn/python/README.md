@@ -407,3 +407,28 @@ returned campaign promptly: the SDK cannot cancel arbitrary delayed host UI.
 Late confirmation reconciles an existing presentation without consuming cooldown
 again. The service README documents the two required timing tables and the
 conservative migration for older counters without timestamps.
+
+## Survey response submission
+
+Install `userfn[surveys]` for asynchronous HTTP submission. Configure `endpoint`
+and `api_key`, then call:
+
+```python
+from userfn import SurveyResponseAnswer
+receipt = await client.submit_survey_response(
+    'nps', [SurveyResponseAnswer(question_id='score', value=8)],
+    idempotency_key=saved_response_key,
+)
+```
+
+Persist the key before the first attempt and reuse it with identical answers and
+the same server identity when the outcome is unknown. The returned receipt
+confirms server persistence; client `identify()` does not authorize another user.
+`survey_max_attempts` defaults to3 (1–5); `survey_timeout_ms` defaults to10000
+(1–60000) per attempt across request and streamed receipt. Redirects, ambient
+proxy configuration and cookies are excluded by the fresh HTTP client. Requests
+and receipts are bounded to64KiB. Permanent errors, including cap denial429, do
+not retry automatically. Task cancellation cancels transport but cannot reverse
+a committed response. Explicit submissions do not use passive messaging consent.
+Python survey eligibility/rendering, persistent submission queues and automatic
+WatchFn analytics remain unfinished.
