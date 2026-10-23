@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -70,6 +70,81 @@ describe("apifn sdk generate", () => {
     }
     expect(readdirSync(path.join(cwd, "out"))).toEqual([".apifn-sdk.lock"]);
     expect(await readFile(path.join(cwd, "out/.apifn-sdk.lock"), "utf8")).toBe(held);
+  });
+
+  const listing = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? listing(path.join(dir, entry.name)).map((file) => `${entry.name}/${file}`) : [entry.name])).sort();
+  // Permission bits do not restrict root, and Windows ignores them.
+  const permissionsApply = process.platform !== "win32" && process.getuid?.() !== 0;
+
+  it.skipIf(!permissionsApply)("checks a read-only output directory without writing to it", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
+    expect((await run(args, cwd)).code).toBe(0);
+    const out = path.join(cwd, "out");
+    const before = listing(out);
+    await chmod(out, 0o555);
+    try {
+      const upToDate = await run([...args, "--check"], cwd);
+      expect(upToDate.stderr).toBe("");
+      expect(upToDate.code).toBe(0);
+      const json = await run([...args, "--check", "--format", "json"], cwd);
+      expect(json.code).toBe(0);
+      const errors = (result: { diagnostics: Array<{ severity: string }> }) => result.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+      const upToDateJson = JSON.parse(json.stdout);
+      expect(upToDateJson).toMatchObject({ ok: true, check: true, files: { written: [], deleted: [], seeded: [] } });
+      expect(errors(upToDateJson)).toEqual([]);
+
+      // Drift is still reported, not a permission error.
+      await chmod(path.join(out, "src/models.ts"), 0o644);
+      await writeFile(path.join(out, "src/models.ts"), "// stale\n");
+      const stale = await run([...args, "--check", "--format", "json"], cwd);
+      expect(stale.code).toBe(1);
+      const staleJson = JSON.parse(stale.stdout);
+      expect(staleJson).toMatchObject({ ok: false, check: true, files: { written: ["src/models.ts"] } });
+      expect(errors(staleJson)).toEqual([]);
+      expect(listing(out)).toEqual(before);
+    } finally {
+      await chmod(out, 0o755);
+    }
+  });
+
+  it.skipIf(!permissionsApply)("prints one JSON result with an error diagnostic when the output directory cannot be read or written", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--format", "json"];
+    expect((await run(args, cwd)).code).toBe(0);
+    const out = path.join(cwd, "out");
+    const failed = (stdout: string) => {
+      const result = JSON.parse(stdout);
+      expect(result.ok).toBe(false);
+      expect(result.files).toBeNull();
+      const errors = result.diagnostics.filter((diagnostic: { severity: string }) => diagnostic.severity === "error");
+      expect(errors).toEqual([expect.objectContaining({ code: "SDK_OUTPUT_FAILED", message: expect.stringContaining("EACCES") })]);
+    };
+
+    // Writing: the lock file cannot be created in a read-only directory.
+    await chmod(out, 0o555);
+    try {
+      const written = await run(args, cwd);
+      expect(written.code).toBe(1);
+      failed(written.stdout);
+      const text = await run([...args.slice(0, -2), "--no-color"], cwd);
+      expect(text.code).toBe(1);
+      expect(text.stderr).toContain("error SDK_OUTPUT_FAILED: Could not write");
+    } finally {
+      await chmod(out, 0o755);
+    }
+
+    // Checking: an owned file cannot be read.
+    await chmod(path.join(out, "src/models.ts"), 0o000);
+    try {
+      const checked = await run([...args, "--check"], cwd);
+      expect(checked.code).toBe(1);
+      failed(checked.stdout);
+    } finally {
+      await chmod(path.join(out, "src/models.ts"), 0o644);
+    }
+    expect(existsSync(path.join(out, ".apifn-sdk.lock"))).toBe(false);
   });
 
   it("builds the catalog from --spec and --manifest with the same result", async () => {

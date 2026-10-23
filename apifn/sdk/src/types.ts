@@ -32,6 +32,8 @@ export type SdkDiagnosticCode =
   | "SDK_INVALID_RELEASE"
   /** Writing would replace or delete a file the generator does not own, leave the output directory, or another run holds its lock. */
   | "SDK_OUTPUT_CONFLICT"
+  /** Reading or writing the output directory failed with a filesystem error (writeSdk throws it; the CLI reports it). */
+  | "SDK_OUTPUT_FAILED"
   /** An owned file was edited since the last generation; regeneration replaces it. */
   | "SDK_OWNED_FILE_MODIFIED";
 

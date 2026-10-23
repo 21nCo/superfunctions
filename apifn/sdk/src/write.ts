@@ -1,7 +1,8 @@
 // Writes a generation result into a package directory. Only files the
 // generator owns are created, replaced or deleted; seeds are created once; the
 // custom-code area and every other file are left alone. One run at a time holds
-// the directory's lock file from reading the previous manifest to writing the new one.
+// the directory's lock file from reading the previous manifest to writing the new one;
+// a dry run only reads, and reports a held lock instead of taking it.
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, rename, rm, stat as follow, writeFile } from "node:fs/promises";
@@ -19,7 +20,10 @@ import {
 } from "./types.js";
 
 export interface WriteSdkOptions {
-  /** Plan only: report what would change without changing the directory (the lock is still taken while planning). */
+  /**
+   * Plan only: report what would change without creating, changing or removing anything, so the directory
+   * may be read-only. The lock is not taken; a lock held before or during planning is SDK_OUTPUT_CONFLICT.
+   */
   dryRun?: boolean;
 }
 
@@ -105,6 +109,18 @@ interface OutputLock {
   nonce: string;
 }
 
+/** Who holds the lock file at `file`, for a conflict message. */
+async function lockConflict(file: string): Promise<string> {
+  let holder = "holder unknown";
+  try {
+    const held = JSON.parse(await readFile(file, "utf8")) as { pid?: unknown; hostname?: unknown; startedAt?: unknown };
+    holder = `process ${String(held.pid)} on ${String(held.hostname)} since ${String(held.startedAt)}`;
+  } catch {
+    // Unreadable, or its holder has not finished writing it.
+  }
+  return `${file} exists: another run is writing this directory (${holder}). If no run is active, a crashed run left it behind: remove it and rerun.`;
+}
+
 /** Creates the lock file exclusively, or explains who holds it. A held lock is never taken over. */
 async function acquireLock(root: string): Promise<OutputLock | string> {
   const file = path.join(root, SDK_OUTPUT_LOCK_FILE);
@@ -114,14 +130,7 @@ async function acquireLock(root: string): Promise<OutputLock | string> {
     handle = await open(file, "wx");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    let holder = "holder unknown";
-    try {
-      const held = JSON.parse(await readFile(file, "utf8")) as { pid?: unknown; hostname?: unknown; startedAt?: unknown };
-      holder = `process ${String(held.pid)} on ${String(held.hostname)} since ${String(held.startedAt)}`;
-    } catch {
-      // Unreadable, or its holder has not finished writing it.
-    }
-    return `${file} exists: another run is writing this directory (${holder}). If no run is active, a crashed run left it behind: remove it and rerun.`;
+    return lockConflict(file);
   }
   try {
     await handle.writeFile(`${JSON.stringify({ pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString(), nonce })}\n`);
@@ -132,6 +141,12 @@ async function acquireLock(root: string): Promise<OutputLock | string> {
   }
   await handle.close();
   return { file, nonce };
+}
+
+/** Why a dry run cannot rely on its plan: another run holds the lock. Null when no lock file exists. */
+async function heldLock(root: string): Promise<string | null> {
+  const file = path.join(root, SDK_OUTPUT_LOCK_FILE);
+  return (await stat(file)) ? lockConflict(file) : null;
 }
 
 /** Removes the lock only while it is still this run's own. */
@@ -158,8 +173,16 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
     conflict(`${root} exists and is not a directory.`);
     return outcome;
   }
-  // A dry run of a missing directory has nothing to read, so it needs no lock.
-  if (!rootInfo && options.dryRun) return transaction(root, generated, options, outcome);
+  if (options.dryRun) {
+    // Read-only: a run that holds the lock before or while this plans may change what it read.
+    const before = rootInfo ? await heldLock(root) : null;
+    if (before === null) await transaction(root, generated, options, outcome);
+    const held = before ?? (rootInfo ? await heldLock(root) : null);
+    if (held === null) return outcome;
+    const conflicted: WriteSdkResult = { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] };
+    conflicted.diagnostics.push({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message: held, pointer: SDK_OUTPUT_LOCK_FILE });
+    return conflicted;
+  }
   if (!rootInfo) await mkdir(root, { recursive: true });
   const lock = await acquireLock(root);
   if (typeof lock === "string") {
@@ -175,7 +198,7 @@ export async function writeSdk(outDir: string, result: SdkGenerationResult, opti
 
 type Generated = SdkGenerationResult & { manifest: SdkArtifactManifest };
 
-/** Plans and applies the write; the caller holds the directory's lock. */
+/** Plans and applies the write; the caller holds the directory's lock unless this is a dry run. */
 async function transaction(root: string, result: Generated, options: WriteSdkOptions, outcome: WriteSdkResult): Promise<WriteSdkResult> {
   const conflict = (message: string, pointer?: string) => outcome.diagnostics.push({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message, pointer });
   const generation = await previousGeneration(root);

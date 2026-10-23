@@ -9,7 +9,7 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { buildOperationCatalog } from "@apifn/contracts";
-import { generateSdk, SDK_TARGETS, writeSdk, type SdkDiagnostic } from "@apifn/sdk";
+import { generateSdk, SDK_TARGETS, writeSdk, type SdkDiagnostic, type WriteSdkResult } from "@apifn/sdk";
 import type { Output } from "../utils/output.js";
 
 export interface SdkGenerateCommandOptions {
@@ -86,8 +86,17 @@ export async function runSdkGenerateCommand(options: SdkGenerateCommandOptions):
 
   const result = generateSdk({ catalog, config, targets: SDK_TARGETS });
   const outDir = path.resolve(cwd, options.outDir);
-  const written = result.ok ? await writeSdk(outDir, result, { dryRun: options.check }) : null;
-  const diagnostics: SdkDiagnostic[] = [...result.diagnostics, ...(written?.diagnostics ?? [])];
+  let written: WriteSdkResult | null = null;
+  const failures: SdkDiagnostic[] = [];
+  if (result.ok) {
+    try {
+      written = await writeSdk(outDir, result, { dryRun: options.check });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ code: "SDK_OUTPUT_FAILED", severity: "error", message: `Could not ${options.check ? "read" : "write"} ${outDir}: ${message}` });
+    }
+  }
+  const diagnostics: SdkDiagnostic[] = [...result.diagnostics, ...(written?.diagnostics ?? []), ...failures];
   const ok = result.ok && written?.ok === true;
   const drift = written ? written.written.length + written.deleted.length + written.seeded.length > 0 : false;
 
@@ -117,6 +126,7 @@ export async function runSdkGenerateCommand(options: SdkGenerateCommandOptions):
   if (!ok || !written || !result.manifest) {
     if (!json) {
       if (!result.ok) options.output.error("SDK generation failed; nothing was written.");
+      else if (failures.length > 0 && !options.check) options.output.error(`Writing ${outDir} failed; rerun to finish (its manifest records any files already replaced).`);
       else if (options.check) options.output.error(`${outDir} cannot be checked: resolve the output conflicts above.`);
       else options.output.error(`${outDir} conflicts with the generated SDK; nothing was written.`);
     }

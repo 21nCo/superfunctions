@@ -3,7 +3,7 @@
 
 import type { CatalogContent, CatalogOperation, CatalogParameter, CatalogSecurityScheme, OperationCatalog } from "@apifn/contracts";
 import { compareCodeUnits } from "../../paths.js";
-import { ARRAY, containerMembers, NULL, OBJECT, SCALAR, valueKinds } from "./schema.js";
+import { ARRAY, containerMembers, INCOMPLETE, NULL, OBJECT, SCALAR, valueKinds } from "./schema.js";
 
 export type BodyKind = "json" | "text" | "binary";
 export type ResponseKind = BodyKind | "none";
@@ -119,7 +119,8 @@ const CONTAINER = ARRAY | OBJECT;
  * and booleans, arrays of them and objects whose members are them or null (null members are skipped); a
  * deepObject parameter must be such an object. A position whose type admits none of these makes the
  * parameter unsupported, with a reason. A type that admits them and other values too, such as an
- * `unknown` member, is narrowed to the serializable part instead.
+ * `unknown` member, is narrowed to the serializable part instead. A schema nested too deeply to analyze is
+ * unsupported too, rather than narrowed on a guess.
  */
 export function parameterSupport(parameter: CatalogParameter, schemas: Readonly<Record<string, unknown>>): { reasons: string[]; narrowing: ParameterNarrowing } {
   const label = `${parameter.in} parameter "${parameter.name}"`;
@@ -128,6 +129,7 @@ export function parameterSupport(parameter: CatalogParameter, schemas: Readonly<
   const top = valueKinds(parameter.schema, schemas);
   const found = containerMembers(parameter.schema, schemas);
   let narrow = found.opaque;
+  if ((top & INCOMPLETE) !== 0 || found.incomplete) reasons.add(`${label}: its schema nests subschemas too deeply for the generator to analyze.`);
   if (deepObject) {
     if ((top & OBJECT) === 0) reasons.add(`${label} uses deepObject serialization, but its schema admits no object.`);
     else if ((top & (SCALAR | ARRAY)) !== 0) narrow = true;

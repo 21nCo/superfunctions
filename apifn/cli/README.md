@@ -180,10 +180,10 @@ apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out pac
 - `--sdk-config <path>` — `{ "target": "typescript", "unsupported": "fail" | "exclude", "options": { … } }` (see `@apifn/sdk`)
 - `--catalog <path>` — catalog built by `@apifn/contracts`; or `--spec <path>` with `--manifest <path>` to build it
 - `--out <dir>` — package directory; only files the generator owns are written, and `src/custom/` is never touched
-- `--check` — write nothing; exit `1` if the directory is out of date
+- `--check` — write nothing (a read-only directory works); exit `1` if the directory is out of date
 - `--format <type>` — `text` (default) or `json`
 
-Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts (including another run holding the output directory's `.apifn-sdk.lock`) or `--check` drift (nothing written) · `2` missing or unreadable inputs.
+Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts (including another run holding the output directory's `.apifn-sdk.lock`), filesystem errors reading or writing it (`SDK_OUTPUT_FAILED`) or `--check` drift (nothing written; with `--format json`, every outcome prints one JSON result) · `2` missing or unreadable inputs.
 
 ---
 

@@ -4,7 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -12,12 +12,20 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { generateSdk, SDK_ARTIFACT_MANIFEST_FILE, SDK_OUTPUT_LOCK_FILE, writeSdk, type SdkGenerationResult, type WriteSdkResult } from "../src/index.js";
 import { cleanupTemp, fixtureCatalog, generate, PACKAGE_DIR, tempDir } from "./helpers.js";
 
-const pause = vi.hoisted(() => ({ target: null as string | null, reached: () => {}, resume: Promise.resolve() }));
+const pause = vi.hoisted(() => ({ target: null as string | null, reached: () => {}, resume: Promise.resolve(), onRead: null as { file: string; run: () => void } | null }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    readFile: (async (file: string, ...rest: unknown[]) => {
+      if (pause.onRead !== null && file === pause.onRead.file) {
+        const { run } = pause.onRead;
+        pause.onRead = null;
+        run();
+      }
+      return (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+    }) as typeof actual.readFile,
     rename: async (from: string, to: string) => {
       if (pause.target !== null && to === pause.target) {
         pause.target = null;
@@ -172,6 +180,38 @@ describe("the output directory lock", () => {
     rmSync(lock);
     expect((await writeSdk(dir, generationB())).ok).toBe(true);
     expectConsistent(dir);
+  });
+
+  // Permission bits do not restrict root, and Windows ignores them.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("is not needed by a dry run, which works on a read-only directory", async () => {
+    const dir = tempDir();
+    expect((await writeSdk(dir, generate())).ok).toBe(true);
+    const before = tree(dir);
+    const directories = [dir, ...Object.keys(tree(dir)).map((file) => path.join(dir, path.dirname(file)))].filter((directory, index, all) => all.indexOf(directory) === index);
+    for (const directory of directories) chmodSync(directory, 0o555);
+    try {
+      const upToDate = await writeSdk(dir, generate(), { dryRun: true });
+      expect(upToDate).toMatchObject({ ok: true, written: [], deleted: [], seeded: [], diagnostics: [] });
+      const stale = await writeSdk(dir, generationB(), { dryRun: true });
+      expect(stale.ok).toBe(true);
+      expect([...stale.written].sort()).toEqual([SDK_ARTIFACT_MANIFEST_FILE, "README.md", "src/client.ts", "src/models.ts"].sort());
+      expect(tree(dir)).toEqual(before);
+    } finally {
+      for (const directory of directories) chmodSync(directory, 0o755);
+    }
+  });
+
+  it("makes a dry run report a lock taken while it plans", async () => {
+    const dir = tempDir();
+    expect((await writeSdk(dir, generate())).ok).toBe(true);
+    const lock = path.join(dir, SDK_OUTPUT_LOCK_FILE);
+    const held = `${JSON.stringify({ pid: 4242, hostname: "build-host", startedAt: "2026-10-22T00:00:00.000Z", nonce: "other" })}\n`;
+    pause.onRead = { file: path.join(dir, "src/models.ts"), run: () => writeFileSync(lock, held) };
+    const result = await writeSdk(dir, generationB(), { dryRun: true });
+    expect(pause.onRead).toBeNull();
+    expectLockConflict(result);
+    expect(result.diagnostics[0]!.message).toContain("process 4242 on build-host");
+    expect(readFileSync(lock, "utf8")).toBe(held);
   });
 
   it("is released after a planning conflict, a dry run and a failed write", async () => {

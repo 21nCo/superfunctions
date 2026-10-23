@@ -547,11 +547,11 @@ export async function use(): Promise<void> {
 
   it("analyzes each referenced component once, however often it is referenced", () => {
     const cases = [
-      { name: "array items through a repeated chain", schemas: chain("Chain", 40, { type: "string" }), parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Chain0" } } }, expect: { supported: true, admitsUnserializable: false } },
-      { name: "a nested member through a repeated chain", schemas: chain("Deep", 40, { type: "object", properties: { owner: { type: "object" } } }), parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Deep0" } }, expect: { supported: false } },
+      { name: "array items through a repeated chain", schemas: chain("Chain", 200, { type: "string" }), parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Chain0" } } }, expect: { supported: true, admitsUnserializable: false } },
+      { name: "a nested member through a repeated chain", schemas: chain("Deep", 200, { type: "object", properties: { owner: { type: "object" } } }), parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Deep0" } }, expect: { supported: false } },
       // Every level also refers back to the first, so each one is in a cycle too; the cut references are
       // unknown in an intersection, so the items are strings, as the emitted types say.
-      { name: "a repeated chain that is also cyclic", schemas: chain("Loop", 40, { type: "string" }, [{ $ref: "#/components/schemas/Loop0" }]), parameter: { in: "header", name: "X-Loop", style: "simple", explode: false, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Loop0" } } }, expect: { supported: true, admitsUnserializable: false } },
+      { name: "a repeated chain that is also cyclic", schemas: chain("Loop", 200, { type: "string" }, [{ $ref: "#/components/schemas/Loop0" }]), parameter: { in: "header", name: "X-Loop", style: "simple", explode: false, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Loop0" } } }, expect: { supported: true, admitsUnserializable: false } },
     ];
     const started = performance.now();
     const result = generate(vectorCatalog(cases.map((vector, index) => ({ vector, index }))));
@@ -566,6 +566,63 @@ export async function use(): Promise<void> {
       const params = client.match(new RegExp(`export interface Vector${index}Params \\{[\\s\\S]*?\\n\\}`))![0];
       expect(/\bParamValue</.test(params), cases[index]!.name).toBe(cases[index]!.expect.admitsUnserializable);
     }
+  });
+
+  it("gives each parameter the same support whichever operations are analyzed with it, and in whatever order", () => {
+    // Hop0 … Hop80 each refer to the next; Hop80 is an array of strings, so array items that are any HopN are arrays.
+    const hops = chain("Hop", 80, { type: "array", items: { type: "string" } });
+    // Pick0 … Pick80 likewise, ending in an object whose member "owner" is an object.
+    const picks = chain("Pick", 80, { type: "object", properties: { owner: { type: "object", properties: { id: { type: "string" } } } } });
+    const items = (component: string) => ({ name: component, schemas: { ...hops, ...picks }, parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: `#/components/schemas/${component}` } } } });
+    const members = (component: string) => ({ name: component, schemas: { ...hops, ...picks }, parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: `#/components/schemas/${component}` } } });
+    const vectors = [items("Hop0"), items("Hop60"), members("Pick0"), members("Pick60")];
+    const itemReason = 'query parameter "tags": its array items admit no string, number or boolean, the only items the client can serialize.';
+    const memberReason = 'query parameter "filter": its member "owner" admits only nested objects or arrays, which the client cannot serialize.';
+
+    /** Each vector's support when generated in `order`, with vector i as operation `vectors.v<ids[i]>`. */
+    const outcomes = (order: number[], ids: number[]) => {
+      const result = generate(vectorCatalog(order.map((position) => ({ vector: vectors[position]!, index: ids[position]! }))));
+      expect(result.ok).toBe(true);
+      return Object.fromEntries(
+        order.map((position) => {
+          const id = `vectors.v${ids[position]}`;
+          const excluded = result.manifest!.operations.excluded.find((entry) => entry.id === id);
+          return [vectors[position]!.name, excluded ? excluded.details : "included"];
+        })
+      );
+    };
+    const expected = { Hop0: [itemReason], Hop60: [itemReason], Pick0: [memberReason], Pick60: [memberReason] };
+    for (const order of [[0, 1, 2, 3], [3, 2, 1, 0], [1, 0, 3, 2], [2, 3, 0, 1]]) {
+      // Operation IDs in both directions too, in case analysis follows them.
+      expect(outcomes(order, [0, 1, 2, 3])).toEqual(expected);
+      expect(outcomes(order, [3, 2, 1, 0])).toEqual(expected);
+    }
+    for (const [position, vector] of vectors.entries()) expect(outcomes([position], [0, 1, 2, 3])[vector.name]).toEqual(expected[vector.name as keyof typeof expected]);
+  });
+
+  it("analyzes objects with tens of thousands of members in linear time, reporting members in declaration order", () => {
+    const count = 32_000;
+    const flat: Record<string, unknown> = {};
+    const mixed: Record<string, unknown> = {};
+    for (let member = 0; member < count; member++) {
+      flat[`p${member}`] = { type: "string" };
+      mixed[`p${member}`] = member === 31_000 || member === 100 ? { type: "object", properties: { id: { type: "string" } } } : { type: "string" };
+    }
+    const cases = [
+      { name: "wide and flat", parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties: flat, additionalProperties: false } } },
+      { name: "wide with nested members", parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties: mixed, additionalProperties: false } } },
+    ];
+    const started = performance.now();
+    const result = generate(vectorCatalog(cases.map((vector, index) => ({ vector, index }))));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.ok).toBe(true);
+    expect(result.manifest!.operations.included.map((entry) => entry.id)).toContain("vectors.v0");
+    expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([
+      'query parameter "filter": its member "p100" admits only nested objects or arrays, which the client cannot serialize.',
+      'query parameter "filter": its member "p31000" admits only nested objects or arrays, which the client cannot serialize.',
+    ]);
+    const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
+    expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).not.toMatch(/\bDeepObjectValue</);
   });
 
   it("types a cut alias cycle as unknown in the analysis, as in the emitted types", async () => {
