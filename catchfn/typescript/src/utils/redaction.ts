@@ -63,7 +63,12 @@ export function redactString(str: string): string {
  */
 export function redactUrl(url: string, sensitiveParams: string[] = []): string {
   try {
-    const urlObj = new URL(url);
+    // A browser accepts path/query/protocol-relative URLs. Parse those too,
+    // without inserting a fabricated origin into captured report metadata.
+    const input = url.trim();
+    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(input);
+    const authorityRelative = /^[\\/]{2}/.test(input);
+    const urlObj = new URL(input, "https://catchfn.invalid/");
     const defaultSensitiveParams = [
       "token",
       "key",
@@ -82,12 +87,19 @@ export function redactUrl(url: string, sensitiveParams: string[] = []): string {
     for (const param of [...urlObj.searchParams.keys()]) {
       if (names.has(param.toLowerCase())) urlObj.searchParams.set(param, "[REDACTED]");
     }
-    if (/token|secret|password|api[_-]?key/i.test(urlObj.hash)) urlObj.hash = "[REDACTED]";
+    // Fragments can carry percent-encoded OAuth parameter names. A malformed
+    // encoding is not safe to echo into a report either.
+    try {
+      if (/token|secret|password|api[_-]?key/i.test(decodeURIComponent(urlObj.hash))) urlObj.hash = "[REDACTED]";
+    } catch { urlObj.hash = "[REDACTED]"; }
 
-    return urlObj.toString();
+    if (absolute) return urlObj.toString();
+    if (authorityRelative) return urlObj.toString().replace(/^https:/, "");
+    const path = input.split(/[?#]/, 1)[0];
+    return path + urlObj.search + urlObj.hash;
   } catch {
-    // If URL parsing fails, return original
-    return url;
+    // Malformed authorities may still contain credentials; never echo them.
+    return "[REDACTED_URL]";
   }
 }
 

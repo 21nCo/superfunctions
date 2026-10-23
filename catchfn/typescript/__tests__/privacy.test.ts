@@ -25,6 +25,24 @@ describe("capture privacy and lifecycle", () => {
     expect(value.message).not.toContain("4111");
     expect(redactUrl("https://example.com/#access_token=secret")).not.toContain("secret");
   });
+  it.each(['/api?TOKEN=relative-secret&ok=1', '../api?token=relative-secret', '?%74oken=relative-secret', '//user:relative-secret@example.com/api?key=relative-secret', '/api#access_token=relative-secret', '/api#%74oken=relative-secret', '/api#token%=relative-secret', 'https://user:relative-secret@[invalid/?token=relative-secret'])('scrubs relative or malformed network URL %s', url => {
+    expect(redactUrl(url)).not.toContain('relative-secret');
+    expect(redactUrl(url)).not.toContain('catchfn.invalid');
+    expect(redactObject({ networkLogs: [{ url }] }).networkLogs[0].url).not.toContain('relative-secret');
+  });
+  it('keeps relative fetch requests unchanged while redacting captured metadata', async () => {
+    const original = globalThis.fetch;
+    const fetcher = vi.fn(async () => new Response('ok'));
+    globalThis.fetch = fetcher;
+    const collector = new NetworkCollector();
+    try {
+      collector.start();
+      await fetch('/api?token=relative-secret&safe=visible');
+      expect(fetcher).toHaveBeenCalledWith('/api?token=relative-secret&safe=visible', undefined);
+      expect(collector.collect()[0].url).not.toContain('relative-secret');
+      expect(collector.collect()[0].url).toContain('safe=visible');
+    } finally { collector.stop(); globalThis.fetch = original; }
+  });
   it("enforces UTF-8 payload bounds and zero-sized buffers", () => {
     expect(trimArray([1,2], 0)).toEqual([]);
     const payload = { title: "small", consoleLogs: Array.from({length:30}, (_, id) => ({id, message:"🙂".repeat(20)})) };

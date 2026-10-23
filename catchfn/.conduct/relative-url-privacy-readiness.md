@@ -1,0 +1,9 @@
+# Relative network URL privacy
+
+The URL sanitizer previously accepted only absolute URLs. Ordinary browser fetch/XHR inputs such as `/api?token=private` failed parsing and were copied unchanged into report metadata, including the final redaction boundary. It now parses relative paths, query-only references and protocol-relative authorities, preserves relative display paths without fabricating an origin, removes authority credentials and redacts sensitive query values. Encoded sensitive fragment names are recognized; malformed fragments and malformed authorities are not echoed. Actual application requests are unchanged.
+
+Six initial regressions reproduced the leak before the fix. The final SDK suite passes116 tests across10 files, including encoded parameter names/fragments, malformed authority fallback, final nested report redaction and unchanged fetch arguments. Strict types and ESM/CJS/declaration builds pass.
+
+`node catchfn/typescript/scripts/relative-url-privacy-acceptance.mjs` passes in installed Chrome154.0.8037.58: two real loopback fetch/XHR requests carry their original secret-bearing query values, while their canonical captured report contains both sanitized entries and neither secret. Report acknowledgement is an injected client, not a new WatchFn delivery proof. The first fixture snapshotted at XHR load before the collector's loadend handler, producing one entry; waiting for loadend dispatch completion fixes the fixture and the final run passes. Owned browser and server close in finally.
+
+Receipts: `/tmp/catch-relative-before.log`, `/tmp/catch-relative-tests-final.log`, `/tmp/catch-relative-types-final.log`, `/tmp/catch-relative-build-final.log`, `/tmp/catch-relative-browser-final.log`. No Python source change: this is the browser collector and final browser report boundary. Broader provider, deployment, historical runtime and original readiness requirements remain open.
