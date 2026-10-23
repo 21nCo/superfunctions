@@ -38,7 +38,7 @@ class DurableAlertManager:
         self.max_pending = max_pending
         self.active = active
         from ..models import AlertDeliveryConfig
-        self.delivery = delivery or AlertDeliveryConfig()
+        self.delivery = (delivery or AlertDeliveryConfig()).model_copy(deep=True)
 
     def _where(self, identifier=None):
         return [WhereClause(field='namespace', value=self.namespace)] + ([WhereClause(field='id', value=identifier)] if identifier else [])

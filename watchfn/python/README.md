@@ -411,3 +411,61 @@ or cancellation; no automatic replay/backfill is performed.
 
 Terminal receipt retention must preserve predecessor links. No TTL deletion is
 introduced: unknown/rejected obligations and referenced receipts remain protected.
+
+### Durable SES email notifications
+
+On Python3.10+, install `watchfn[email]` with the SendFn SES operation-ownership prerequisite from
+[SendFn PR256](https://github.com/21nCo/superfunctions/pull/256). The current package
+version alone does not identify that unreleased change; configuration fails before
+claiming work when its required provider capabilities are absent. Configure the
+sender on the host, never in public alert definitions:
+
+```python
+watch = WatchFn("production", storage="database", database=adapter, alerts={
+    "email": {
+        "fromEmail": "alerts@example.com",
+        "fromName": "Monitoring",
+        "awsSes": {
+            "accessKeyId": access_key,
+            "secretAccessKey": secret_key,
+            "region": "us-east-1",
+            "connectTimeout": 5.0,
+            "readTimeout": 10.0,
+        },
+    },
+})
+# An alert definition uses channels=[{"type": "email", "recipients": ["oncall@example.com"]}].
+# Start Watch and explicitly run alerts.process_notifications() as documented above.
+```
+
+Email configuration is copied and omitted from configuration serialization/repr.
+Outbox rows retain recipient addresses until delivery/reconciliation; treat the
+owned database as sensitive and enforce host access control and encryption at rest.
+Bodies escape alert content, and the sender validates recipient addresses before
+claiming an obligation. Missing sender configuration leaves jobs pending without
+consuming an attempt. The built-in sender calls the real SendFn SES provider once;
+it does not invoke SendFn service retries, templates, or suppression workflows.
+
+A delivered receipt means SES accepted the request, not that a mailbox received it.
+All SES failures or lost responses are conservatively unknown and require explicit
+operator reconciliation; no automatic email replay occurs. Independent workers use
+the existing durable CAS claim. Email lifecycle notifications are independent
+messages, with no ordering guarantee like the PagerDuty incident chain.
+
+`timeout_ms` limits how long the caller waits for the provider outcome, but **does
+not bound total dispatch or shutdown time**. The dispatcher retains ownership while
+SendFn drains its admitted worker, even if cancellation arrives during client close.
+`stop()` waits for that operation before stopping the storage loop. DNS/trickling
+peers can extend socket waits; a host requiring hard termination needs process
+supervision. Cleanup errors surface as `SES provider cleanup incomplete`; they do
+not acknowledge delivery. An expired lease cannot acknowledge a late result and
+is parked as unknown on the next scan. Preserve the owning process while cleanup
+remains outstanding. No stronger shutdown guarantee or inbox-delivery proof is made.
+
+Concurrent first-start workers converge only after a duplicate marker insertion
+rolls back and a fresh transaction verifies identical namespace ownership; other
+errors remain fail-closed.
+
+Stop older Python dispatch writers before enabling email: the existing python-v1
+namespace marker separates runtimes, not releases. Terminal receipt retention,
+TS built-in provider parity, and the rest of full readiness remain separate work.

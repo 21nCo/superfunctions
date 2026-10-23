@@ -24,10 +24,14 @@ class HttpAuthConfig(BaseModel):
 
 class AlertDeliveryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    email: Any = Field(None, exclude=True, repr=False)
     pagerduty_endpoint: str = Field("https://events.pagerduty.com/v2/enqueue", alias="pagerDutyEndpoint", strict=True)
 
     @model_validator(mode="after")
     def validate_endpoint(self):
+        if self.email is not None:
+            from .alerts.email import configuration
+            self.email = configuration(self.email)
         from urllib.parse import urlsplit
         try:
             url = urlsplit(self.pagerduty_endpoint)

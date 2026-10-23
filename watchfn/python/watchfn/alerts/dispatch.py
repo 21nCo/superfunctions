@@ -4,12 +4,16 @@ from copy import deepcopy
 import json
 import time
 from uuid import uuid4
-from superfunctions.db import AdapterError, CreateParams, FindOneParams, FindManyParams, OrderBy, WhereClause, UpdateManyParams
+from superfunctions.db import AdapterError, DuplicateKeyError, CreateParams, FindOneParams, FindManyParams, OrderBy, WhereClause, UpdateManyParams
 from .schema import ALERTS, OUTBOX, RUNTIME
 from .durable import AlertConflict, encode, text
 from .pagerduty import request as pagerduty_request, route_key
 
 PROTOCOL = 'python-v1'
+
+
+class _MarkerCollision(Exception):
+    pass
 
 
 def clock():
@@ -26,19 +30,30 @@ class Dispatcher:
             raise ValueError('Invalid dispatch timeout/lease/retry bounds')
         self.manager, self.limit, self.timeout, self.lease, self.attempts = manager, limit, timeout_ms, lease_ms, max_attempts
 
-    async def protocol(self, tx):
+    async def protocol(self, tx, *, existing_only=False):
         row = await tx.find_one(FindOneParams(model=RUNTIME, where=[WhereClause(field='id', value=self.manager.namespace)]))
         if row:
             if row.get('protocol') != PROTOCOL: raise RuntimeError('Alert namespace belongs to an incompatible dispatch protocol')
         else:
-            await tx.create(CreateParams(model=RUNTIME, data={'id': self.manager.namespace, 'protocol': PROTOCOL}))
+            if existing_only: raise RuntimeError('Alert namespace ownership could not be verified')
+            try:
+                await tx.create(CreateParams(model=RUNTIME, data={'id': self.manager.namespace, 'protocol': PROTOCOL}))
+            except DuplicateKeyError:
+                # Only insertion of this immutable marker can converge below.
+                # Let the failed transaction fully roll back before reading it.
+                raise _MarkerCollision() from None
 
     async def transaction(self, action):
-        async def run(tx):
+        async def run(tx, *, existing_only=False):
             if not callable(getattr(tx, 'update_many', None)): raise RuntimeError('Durable dispatch requires atomic transaction.update_many')
-            await self.protocol(tx)
+            await self.protocol(tx, existing_only=existing_only)
             return await action(tx)
-        return await self.manager.storage.db.transaction(run)
+        try:
+            return await self.manager.storage.db.transaction(run)
+        except _MarkerCollision:
+            async def existing(tx):
+                return await run(tx, existing_only=True)
+            return await self.manager.storage.db.transaction(existing)
 
     def run(self, operation):
         if not self.manager.active(): raise RuntimeError('WatchFn storage is unavailable')
@@ -60,6 +75,9 @@ class Dispatcher:
 
     async def _send(self, notification, channel, metadata=None):
         """Built-in HTTP clients only; no unbounded arbitrary sender callback."""
+        if channel['type'] == 'email':
+            from .email import send
+            return await send(self.manager.delivery.email, notification, channel)
         import httpx
         payload = notification
         endpoint = channel.get('webhook')
@@ -110,9 +128,13 @@ class Dispatcher:
                 return None
             channel = value.get('channel')
             if not isinstance(channel, dict): raise ValueError('Missing pending notification channel')
-            if channel.get('type') not in ('slack', 'webhook', 'pagerduty'): return None
+            if channel.get('type') not in ('slack', 'webhook', 'pagerduty', 'email'): return None
+            if channel['type'] == 'email' and self.manager.delivery.email is None: return None
             # Revalidate stored routing before any claim/request; credentials stay private.
             self.manager._definition({'name': 'dispatch', 'condition': {'metric': 'dispatch', 'window': '1m', 'operator': 'gt', 'threshold': 0}, 'channels': [channel]})
+            if channel['type'] == 'email':
+                from .email import recipients
+                recipients(channel)
             if channel['type'] == 'pagerduty':
                 metadata = value.get('pagerDuty')
                 if (not isinstance(metadata, dict) or not text(metadata.get('episode'), 128)
@@ -204,7 +226,10 @@ class Dispatcher:
                 if not self.manager.active(): break
                 processed += 1
                 try: outcome = await asyncio.wait_for(self._send(deepcopy(payload['notification']), deepcopy(payload['channel']), deepcopy(payload.get('pagerDuty'))), self.timeout / 1000)
-                except Exception: outcome = 'unknown'
+                except Exception as error:
+                    from .email import EmailCleanupError
+                    if isinstance(error, EmailCleanupError): raise
+                    outcome = 'unknown'
                 await self._settle(job, outcome)
             return {'processed': processed, 'nextCursor': rows[-1]['id'] if len(rows) == self.limit else None}
         return self.run(operation)

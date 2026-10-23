@@ -1,4 +1,4 @@
-"""Build/install local shared and WatchFn wheels; exercise real framework adapters."""
+"""Build/install six local shared, SendFn and WatchFn wheels; exercise HTTP and SES."""
 from pathlib import Path
 import os
 import shutil
@@ -10,14 +10,14 @@ with tempfile.TemporaryDirectory(prefix="watchfn-http-wheel-") as temporary:
     directory = Path(temporary)
     wheels = directory / "wheels"
     wheels.mkdir()
-    for package in ["packages/python-core", "packages/python-fastapi", "packages/python-flask", "packages/python-sqlalchemy", "watchfn/python"]:
+    for package in ["packages/python-core", "packages/python-fastapi", "packages/python-flask", "packages/python-sqlalchemy", "sendfn/python", "watchfn/python"]:
         subprocess.run(["uv", "build", "--wheel", "--out-dir", str(wheels), str(root / package)], check=True)
     environment = directory / "venv"
     subprocess.run(["uv", "venv", str(environment)], check=True)
     python = environment / "bin/python"
-    subprocess.run(["uv", "pip", "install", "--python", str(python), *[str(wheel) + ("[dispatch]" if wheel.name.startswith("watchfn-") else "") for wheel in wheels.glob("*.whl")], "pytest", "pytest-asyncio"], check=True)
+    subprocess.run(["uv", "pip", "install", "--python", str(python), *[str(wheel) + ("[dispatch,email]" if wheel.name.startswith("watchfn-") else "") for wheel in wheels.glob("*.whl")], "pytest", "pytest-asyncio"], check=True)
     shutil.copytree(root / "watchfn/python/tests", directory / "tests")
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
-    subprocess.run([str(python), "-c", "import watchfn; assert 'site-packages' in watchfn.__file__, watchfn.__file__; print(watchfn.__file__)"], cwd=directory, env=env, check=True)
+    subprocess.run([str(python), "-c", "import watchfn, sendfn; assert 'site-packages' in watchfn.__file__, watchfn.__file__; assert 'site-packages' in sendfn.__file__, sendfn.__file__; print(watchfn.__file__, sendfn.__file__)"], cwd=directory, env=env, check=True)
     subprocess.run([str(python), "-m", "pytest", "tests", "-q"], cwd=directory, env=env, check=True)
