@@ -1,3 +1,4 @@
+import { nativeStore } from './native-store.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm, readdir, writeFile, readFile, chmod, symlink, realpath, link, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -11,12 +12,14 @@ import { createBotWorker, createMemoryStore, MemoryQueueAdapter, MemoryLogger } 
 
 const roots: string[] = [];
 const managers: RecordingScratch[] = [];
+const databaseClosers: Array<() => Promise<void>> = [];
 const children: Array<{ process: ChildProcessWithoutNullStreams; exited: Promise<unknown> }> = [];
 afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.process.exitCode === null && child.process.signalCode === null) child.process.kill('SIGKILL');
     await child.exited;
   }
+  for (const close of databaseClosers.splice(0)) await close();
   for (const manager of managers.splice(0)) await manager.close();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -97,9 +100,12 @@ it('preserves unsupported/foreign identities and incomplete metadata conservativ
 
 it('uses managed scratch for actual capture, disposes it, and enforces the production worker boundary', async () => {
   const { directory, scratch } = await fixture();
-  const deps = { store: createMemoryStore(), queue: new MemoryQueueAdapter(), logger: new MemoryLogger(), environment: 'production' as const };
+  const deps = { store: createMemoryStore(), queue: new MemoryQueueAdapter(), logger: new MemoryLogger(), environment: 'production' as const, recoveryNamespaces: ['ns'] };
   expect(() => createBotWorker(deps)).toThrow('managed');
   expect(() => createBotWorker({ ...deps, captureOptions: { temporaryDirectory: directory } })).toThrow('managed');
+  expect(() => createBotWorker({ ...deps, captureOptions: { scratch } })).toThrow('durable');
+  const native = await nativeStore(); databaseClosers.push(native.close);
+  deps.store = native.store;
   const worker = createBotWorker({ ...deps, captureOptions: { scratch } }); await worker.cancelCaptures();
   const artifact = await captureToFile(new ReadableStream({ start(c) { c.enqueue({ data: new Uint8Array(3200), timestamp: 0, encoding: 'pcm_s16le', sampleRate: 16000, channels: 1 }); c.close(); } }), { recordingFormat: 'audio_only', scratch });
   expect((await readdir(directory)).filter(name => name.startsWith('capture-'))).toHaveLength(1);

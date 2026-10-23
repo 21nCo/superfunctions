@@ -1,3 +1,4 @@
+import { unresolvedWork, workWhere, type BotWork } from './bot-work.js';
 import { randomUUID } from 'node:crypto';
 import type { Adapter, TransactionAdapter, WhereClause } from '@superfunctions/db';
 import { createError, ErrorCode, isTerminalState, type Bot, type Recording } from '@recfn/core';
@@ -53,6 +54,7 @@ export function deletionMethods(adapter: Adapter) {
         const bot = await tx.findOne<Bot>({ model: 'bots', where: where(id, namespace) });
         if (!bot) return null;
         await lockBot(tx, id, namespace);
+        if (unresolvedWork(await tx.findOne<BotWork>({ model: 'botWork', where: workWhere(id, namespace) }))) throw blocked();
         const concurrent = await tx.findOne<BotDeletion>({ model: 'botDeletions', where: where(id, namespace) });
         if (concurrent) return concurrent;
         const current = await tx.findOne<Bot>({ model: 'bots', where: where(id, namespace) });

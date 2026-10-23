@@ -36,15 +36,7 @@ export async function transitionBot(
   newStatus: BotStatus,
   errorMessage?: string,
 ): Promise<Bot | null> {
-  const {
-    store,
-    logger,
-    streamManager,
-    realtimePipeline,
-    webhookDeliverer,
-    metrics,
-    queue,
-  } = deps;
+  const { store } = deps;
 
   const bot = await store.getBot(botId, namespace);
   if (!bot) return null;
@@ -63,6 +55,13 @@ export async function transitionBot(
 
   const updated = await store.updateBot(botId, namespace, updates);
 
+  return notifyBotTransition(deps, bot, updated, newStatus, errorMessage);
+}
+
+/** Emit effects after a transition already committed by an atomic store claim. */
+export async function notifyBotTransition(deps: LifecycleDeps, bot: Bot, updated: Bot | null, newStatus: BotStatus, errorMessage?: string): Promise<Bot | null> {
+  const { store, logger, streamManager, realtimePipeline, webhookDeliverer, metrics, queue } = deps;
+  const botId = bot.id; const namespace = bot.namespace;
   logger.info('bot.status_change', {
     botId,
     from: bot.status,

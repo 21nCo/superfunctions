@@ -21,8 +21,10 @@ export async function lockBotAdmission(tx: TransactionAdapter, namespace: string
   if (policy.namespace !== namespace || policy.maximum !== maximum) throw new Error('Bot admission policy differs from persisted namespace policy; migrate policy with writers stopped.');
 }
 export async function assertBotCapacity(tx: Pick<Adapter, 'count'>, namespace: string, maximum: number): Promise<void> {
-  const count = await tx.count({ model: 'bots', where: activeBotWhere(namespace) });
-  if (!Number.isSafeInteger(count) || count < 0) throw new Error('Database returned an invalid active bot count.');
+  const active = await tx.count({ model: 'bots', where: activeBotWhere(namespace) });
+  const held = await tx.count({ model: 'botWork', where: [{ field: 'namespace', operator: 'eq', value: namespace }, { field: 'heldTerminalCapacity', operator: 'eq', value: true }] });
+  const count = active + held;
+  if (!Number.isSafeInteger(active) || active < 0 || !Number.isSafeInteger(held) || held < 0 || !Number.isSafeInteger(count)) throw new Error('Database returned an invalid active bot count.');
   if (count >= maximum) throw createError(ErrorCode.RATE_LIMIT_EXCEEDED, `Maximum ${maximum} concurrent bots per namespace.`, { limit: maximum, active: count });
 }
 

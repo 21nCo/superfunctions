@@ -1,3 +1,4 @@
+import { botWorkMethods, unresolvedWork, workWhere, type BotWork } from './bot-work.js';
 import { deletionMethods, fenceStore, readAll, lockBot, assertBotWritable, blocked, type ProducerIntent } from './deletion.js';
 import { lockBotAdmission, assertBotCapacity, validateBotLimit } from './admission.js';
 import { loadLimitsConfig } from '../config.js';
@@ -141,6 +142,7 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
 
   const store: RecFnStore = {
     ...deletionMethods(adapter),
+    ...botWorkMethods(adapter, admit),
     capabilities: {
       durable,
       ...(admissionSupported ? { botAdmission: { atomic: true as const, maximum } } : {}),
@@ -152,7 +154,7 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
       const now = new Date().toISOString();
       return admit(input.namespace, async tx => {
         await assertBotCapacity(tx, input.namespace, maximum);
-        return tx.create<Bot>({
+        const bot = await tx.create<Bot>({
           model: 'bots',
           data: {
             id: generateId('bot'),
@@ -165,6 +167,8 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
             updatedAt: now,
           },
         });
+        await tx.create({ model: 'botWork', data: { id: bot.id, namespace: input.namespace, state: 'pending', heldTerminalCapacity: false, createdAt: now, updatedAt: now } });
+        return bot;
       });
     },
 
@@ -212,12 +216,20 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
       id: string,
       namespace: string,
       updates: Partial<Pick<Bot, 'status' | 'errorMessage' | 'updatedAt'>>,
+      ownerToken?: string,
     ): Promise<Bot | null> {
       return admit(namespace, async tx => {
         // Namespace before aggregate root: admission and reactivation share lock order.
         const current = await tx.findOne<Bot>({ model: 'bots', where: withNamespace(namespace, [{ field: 'id', operator: 'eq', value: id }]) });
         if (!current) return null;
         await assertBotWritable(tx, id, namespace);
+        const work = await tx.findOne<BotWork>({ model: 'botWork', where: workWhere(id, namespace) });
+        if (ownerToken && (work?.ownerToken !== ownerToken || work.state === 'uncertain' || (work.state === 'closed' && updates.status && !isTerminalState(updates.status) && updates.status !== 'left'))) throw blocked();
+        if (unresolvedWork(work) && (!ownerToken && updates.status && updates.status !== 'leaving' || updates.status && isTerminalState(updates.status))) throw blocked();
+        if (updates.status && isTerminalState(current.status) && !isTerminalState(updates.status) && work?.ownerToken) throw blocked();
+        if (work && !work.ownerToken && updates.status) {
+          await tx.update({ model: 'botWork', where: workWhere(id, namespace), data: { state: updates.status === 'creating' ? 'pending' : 'closed', updatedAt: new Date().toISOString() } });
+        }
         if (updates.status && isTerminalState(current.status) && !isTerminalState(updates.status)) await assertBotCapacity(tx, namespace, maximum);
         return tx.update<Bot>({ model: 'bots', where: withNamespace(namespace, [{ field: 'id', operator: 'eq', value: id }]),
           data: { ...updates, updatedAt: updates.updatedAt ?? new Date().toISOString() } });
@@ -237,6 +249,8 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
           return false;
         }
         await lockBot(transaction, id, namespace);
+        if (unresolvedWork(await transaction.findOne<BotWork>({ model: 'botWork', where: workWhere(id, namespace) }))) throw blocked();
+        await transaction.deleteMany({ model: 'botWork', where: workWhere(id, namespace) });
         const producers = await readAll<ProducerIntent>(transaction, 'botProducers', withNamespace(namespace, [
           { field: 'botId', operator: 'eq', value: id },
         ]));

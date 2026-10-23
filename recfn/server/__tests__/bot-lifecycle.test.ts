@@ -1,3 +1,4 @@
+import { nativeStore } from './native-store.js';
 import { mkdtemp, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,7 +120,8 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   let temporaryDirectory: string;
   const workers: ReturnType<typeof createBotWorker>[] = [];
   const scratchManagers: RecordingScratch[] = [];
-  const trackedWorker = (config: Parameters<typeof createBotWorker>[0]) => { const worker = createBotWorker(config); workers.push(worker); return worker; };
+  const databaseClosers: Array<() => Promise<void>> = [];
+  const trackedWorker = (config: Parameters<typeof createBotWorker>[0]) => { const worker = createBotWorker({ recoveryNamespaces: ['ns_test'], ...config }); workers.push(worker); return worker; };
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-worker-test-'));
@@ -131,6 +133,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   afterEach(async () => {
     vi.useRealTimers();
     await Promise.all(workers.splice(0).map(worker => worker.cancelCaptures()));
+    for (const close of databaseClosers.splice(0)) await close();
     for (const scratch of scratchManagers.splice(0)) { await scratch.close(); await rm(scratch.directory, { recursive: true, force: true }); }
     await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -188,6 +191,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   });
 
   it.each([false, true])('finalizes and uploads a recording after leave with managed production scratch=%s (TV-BOT-001)', async managed => {
+    if (managed) { const native = await nativeStore(); store = native.store; databaseClosers.push(native.close); }
     const storage = new MemoryStorageAdapter();
     const bot = await store.createBot({
       meetingUrl: 'https://zoom.us/j/123',
@@ -297,7 +301,8 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
       const updated = await store.getBot(bot.id, 'ns_test');
       const recordings = await store.getRecordings(bot.id, 'ns_test');
-      expect(updated!.status).toBe('left');
+      expect(updated!.status).toBe('done');
+      expect(logger.findByEvent('bot.status_change').map(entry => entry.data.to)).toEqual(expect.arrayContaining(['left', 'done']));
       expect(recordings).toHaveLength(0);
       expect(logger.findByEvent('bot.join_only.finalization.complete')).toHaveLength(1);
     } finally {

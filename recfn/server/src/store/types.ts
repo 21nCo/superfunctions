@@ -42,7 +42,7 @@ export interface CreateBotInput {
   namespace: string;
 }
 
-export interface RecFnStore extends ReturnType<typeof import('./deletion.js').deletionMethods> {
+export interface RecFnStore extends ReturnType<typeof import('./deletion.js').deletionMethods>, ReturnType<typeof import('./bot-work.js').botWorkMethods> {
   readonly capabilities: RecFnStoreCapabilities;
 
   createBot(input: CreateBotInput): Promise<Bot>;
@@ -52,6 +52,7 @@ export interface RecFnStore extends ReturnType<typeof import('./deletion.js').de
     id: string,
     namespace: string,
     updates: Partial<Pick<Bot, 'status' | 'errorMessage' | 'updatedAt'>>,
+    ownerToken?: string,
   ): Promise<Bot | null>;
   deleteBot(id: string, namespace: string): Promise<boolean>;
 

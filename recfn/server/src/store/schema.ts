@@ -1,6 +1,16 @@
 import type { TableSchema, TableSchemaMap } from '@superfunctions/db';
 
 export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
+  botWork: {
+    modelName: 'botWork',
+    fields: {
+      id: { type: 'string', required: true, unique: true }, namespace: { type: 'string', required: true },
+      state: { type: 'string', required: true }, ownerToken: { type: 'string' }, reason: { type: 'string' },
+      heldTerminalCapacity: { type: 'boolean', required: true },
+      createdAt: { type: 'date', required: true }, updatedAt: { type: 'date', required: true },
+    },
+    indexes: [{ name: 'bot_work_pending_idx', fields: ['namespace', 'state', 'id'] }, { name: 'bot_work_held_idx', fields: ['namespace', 'heldTerminalCapacity'] }],
+  },
   botAdmission: {
     modelName: 'botAdmission',
     fields: {

@@ -64,8 +64,10 @@ See [admission and migration details](.conduct/bot-admission-readiness.md).
 
 An ambiguous queue-enqueue failure retains its creating bot and capacity. It does
 not prove that no worker will run. Reconcile the existing operation before retrying
-or releasing it. Atomic cross-worker join ownership/durable queue handoff remain
-unfinished; this cap counts bot rows and does not prove an exact live-process cap.
+or releasing it. Workers now claim durable per-bot work before provider access.
+An errored bot with an unresolved external operation continues holding capacity.
+See [worker ownership and migration](.conduct/bot-worker-ownership-readiness.md);
+this is not remote provider termination attestation.
 
 ### Bot worker
 
@@ -76,11 +78,14 @@ const worker = createBotWorker({
   store,
   queue,
   logger,
-  platformAdapters: new Map([['zoom', zoomAdapter]]),
+  recoveryNamespaces: ['your-namespace'],
+  platformAdapterFactories: new Map([['zoom', () => createZoomAdapter()]]),
 });
 
-// Poll for jobs
+// Drain current work; repeat this on the host polling schedule after idle.
 while (await worker.processNext()) {}
+// Stop polling before shutdown. Any unresolved IDs require reconciliation.
+const { unresolvedBotIds } = await worker.cancelCaptures();
 ```
 
 ## Webhook delivery options

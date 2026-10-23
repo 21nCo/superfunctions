@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   });
 
   const worker = createBotWorker({
+    recoveryNamespaces: [namespace],
     store,
     storage,
     queue,
