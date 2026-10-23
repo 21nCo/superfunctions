@@ -78,3 +78,21 @@ remain unfinished.
 
 Receipts: `/tmp/user-temporal-{sdk,types,python,mypy,native-all,service-unit,sdk-build,service-build,browser}.log`.
 No external provider sends, deployment, release, base merge or push occurred.
+
+## Normal Python entrypoint and wheel consumer
+
+`PATH=/tmp/user-temporal-venv/bin:$PATH node scripts/ci-run-python-package.mjs
+userfn/python` passed the repository's actual Python entrypoint with its normal
+editable development dependency installation, wheel+sdist builds, mypy32-source
+check and188 tests (Python3.12.12). No check policy was suppressed.
+
+A separate clean Python3.11 environment installed the produced wheel without an
+editable checkout or optional dependencies. `python -I` verified the imported
+package came from that environment, constructed `CampaignSchedule`/`cooldown_ms`
+through public types, and exercised admitted handoff, uncertain restart fencing,
+shown confirmation and missing-expiry denial using an explicit synthetic
+transport. It sent no HTTP requests. Actual HTTP/browser behavior is covered by
+the separate built-service acceptance above. Receipts:
+`/tmp/user-temporal-ci-python.log` and
+`/tmp/user-temporal-wheel-consumer.log`. Both owned environments and consumer
+temporary journals were removed after validation.
