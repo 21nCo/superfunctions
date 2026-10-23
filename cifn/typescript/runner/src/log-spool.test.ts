@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LogSpool } from './log-spool.js';
+import { LogSpool, replayStartedLogSnapshot } from './log-spool.js';
 import { executeRemoteShellJob } from './remote-runner.js';
 import { LOG_RETENTION_MS, type LogPacket } from '@cifn/control-plane';
 const paths: string[] = [];
@@ -128,3 +128,57 @@ it('redacts split secrets and UTF-8 before a running shell is released', async (
   expect(events.join('\n')).not.toContain('configured-sensitive-value');
   expect(events.join('\n')).not.toContain('\ufffd');
 }, 10_000);
+
+
+it('replays a read-only snapshot without overwriting concurrent owner appends or acknowledgements', async () => {
+  const path = directory(); const spool = new LogSpool(path, identity);
+  spool.appendLines('run', 'job', 'step', ['first']);
+  let release!: () => void; let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const replayed: LogPacket[] = [];
+  const replay = replayStartedLogSnapshot(path, identity, async packet => {
+    replayed.push(packet); entered(); await gate;
+    return { status: 'pending', nextSequence: 2, expiresAt: Date.now() + LOG_RETENTION_MS };
+  });
+  await ready;
+  spool.appendLines('run', 'job', 'step', ['second']);
+  await spool.deliver(async packet => ({ status: 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS }));
+  const file = join(path, 'logs', readdirSync(join(path, 'logs'))[0]);
+  const before = readFileSync(file); const info = statSync(file);
+  release(); await replay;
+  expect(readFileSync(file).equals(before)).toBe(true); expect(statSync(file).mtimeMs).toBe(info.mtimeMs);
+  expect(replayed.flatMap(packet => packet.events.map(event => event.msg))).toEqual(['first']);
+  const reopened = new LogSpool(path, identity); reopened.seal();
+  const sent: LogPacket[] = [];
+  await reopened.deliver(async packet => { sent.push(packet); return { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS }; });
+  expect(sent).toHaveLength(1); expect(sent[0].sequence).toBe(2); expect(sent[0].terminal).toBe('complete');
+});
+
+it('never creates, seals, acknowledges or expires a started snapshot on disk', async () => {
+  const path = directory(); const send = vi.fn(async (packet: LogPacket) => ({ status: 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS }));
+  await replayStartedLogSnapshot(path, identity, send); expect(readdirSync(path)).toEqual([]);
+  const spool = new LogSpool(path, identity); spool.appendLines('run', 'job', 'step', ['safe']); spool.seal();
+  const file = join(path, 'logs', readdirSync(join(path, 'logs'))[0]); const before = readFileSync(file);
+  await replayStartedLogSnapshot(path, identity, send); await replayStartedLogSnapshot(path, identity, send);
+  expect(send.mock.calls.map(([packet]) => packet.sequence)).toEqual([0, 0]);
+  expect(send.mock.calls.every(([packet]) => !packet.terminal)).toBe(true);
+  expect(readFileSync(file).equals(before)).toBe(true);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + LOG_RETENTION_MS + 1);
+  send.mockClear(); await replayStartedLogSnapshot(path, identity, send);
+  expect(send).not.toHaveBeenCalled(); expect(readFileSync(file).equals(before)).toBe(true);
+});
+
+it.each(['identity', 'digest', 'sequence', 'bytes', 'incomplete', 'oversized'])('rejects %s snapshots before transport without modifying them', async mode => {
+  const path = directory(); const spool = new LogSpool(path, identity); spool.appendLines('run', 'job', 'step', ['safe']);
+  const file = join(path, 'logs', readdirSync(join(path, 'logs'))[0]);
+  const value = JSON.parse(readFileSync(file, 'utf8'));
+  if (mode === 'identity') value.identity.claimToken = 'sensitive-wrong-claim';
+  if (mode === 'digest') value.packets[0].digest = '0'.repeat(64);
+  if (mode === 'sequence') value.packets[0].sequence = 2;
+  if (mode === 'bytes') value.bytes++;
+  writeFileSync(file, mode === 'incomplete' ? '{"sensitive-token":' : mode === 'oversized' ? 'x'.repeat(3 * 1024 * 1024 + 1) : JSON.stringify(value));
+  const before = readFileSync(file); const send = vi.fn();
+  await expect(replayStartedLogSnapshot(path, identity, send)).rejects.toThrow(/Log spool/);
+  expect(send).not.toHaveBeenCalled(); expect(readFileSync(file).equals(before)).toBe(true);
+});

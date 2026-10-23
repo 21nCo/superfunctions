@@ -1,3 +1,4 @@
+import { LogSpool } from './log-spool.js';
 import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { spawn } from 'node:child_process';
 import { executeOwnedShell } from './executor/owned-shell.js';
@@ -256,3 +257,32 @@ it('retains uncertainty when group probes remain EPERM through the cleanup deadl
       .rejects.toThrow('Owned process group termination requires reconciliation');
   } finally { clearTimeout(timer); kill.mockRestore(); }
 }, 10_000);
+
+
+it('replays started logs without execution, journal transition or local ACK writes', async () => {
+  const path = directory(); const journal = new ClaimJournal(path);
+  const identity = { runnerId: 'runner', runId: 'run', dispatchId: 'dispatch', claimToken: 'claim', executionId: 'owner' };
+  const entry = { ...identity, version: 1 as const, phase: 'prepared' as const };
+  journal.save(entry); journal.markStarted(entry);
+  const spool = new LogSpool(path, identity); spool.appendLines('run', 'job', 'step-0', ['redacted ***']);
+  const file = join(path, 'logs', readdirSync(join(path, 'logs'))[0]); const before = readFileSync(file);
+  const requests: Array<{ url: string; body: Record<string, any> }> = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = String(input); const body = JSON.parse(String(init?.body)); requests.push({ url, body });
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer credential');
+    const data = url.endsWith('/logs') ? { status: 'pending', nextSequence: 1, expiresAt: Date.now() + 10000 }
+      : url.endsWith('/resume') ? { claims: [{ ...identity, reconciliationRequired: false, payload: { runId: 'run', jobKey: 'job', jobSpec: { 'runs-on': 'default', steps: [{ run: 'exit 99' }] } } }] }
+      : { job: null };
+    return new Response(JSON.stringify({ ok: true, data }));
+  };
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const runner = new RemoteRunner({ baseUrl: 'http://localhost', runnerId: 'runner', runnerSecret: 'credential', stateDirectory: path, fetch: fetcher });
+    expect(await runner.tick()).toBe(0); expect(await runner.tick()).toBe(0);
+    expect(requests.filter(request => request.url.endsWith('/logs'))).toHaveLength(2);
+    expect(requests.every(request => ['/logs', '/resume', '/heartbeat'].some(suffix => request.url.endsWith(suffix)))).toBe(true);
+    expect(readFileSync(file)).toEqual(before); expect(journal.get('dispatch')?.phase).toBe('started');
+    expect(journal.get('dispatch')?.result).toBeUndefined();
+    expect(error.mock.calls.flat().join(' ')).not.toContain('credential');
+  } finally { error.mockRestore(); }
+});

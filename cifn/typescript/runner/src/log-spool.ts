@@ -1,10 +1,69 @@
-import { mkdirSync, chmodSync, openSync, closeSync, writeFileSync, fsyncSync, renameSync, readFileSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, chmodSync, openSync, closeSync, writeFileSync, fsyncSync, renameSync, existsSync, unlinkSync, readdirSync, statSync, fstatSync, readSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createLogger } from '@logfn/core';
 import { LOG_BATCH_BYTES, LOG_JOB_BYTES, LOG_MAX_EVENTS, LOG_RETENTION_MS, logDigest, validateLogPacket, type ClaimIdentity, type LogPacket, type RunnerLogEvent } from '@cifn/control-plane';
 import type { LogFnClient, LogEntry } from './reporting/logfn-client.js';
 interface Spool { version: 1; identity: ClaimIdentity; expiresAt: number; packets: LogPacket[]; acknowledged: number; bytes: number; count: number; status: 'pending' | 'complete' | 'truncated' | 'failed' | 'expired' }
+function readSpool(path: string): Spool {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let value: Spool;
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile() || info.size > 3 * LOG_JOB_BYTES) throw new Error('Log spool exceeds its size bound');
+      const buffer = Buffer.alloc(3 * LOG_JOB_BYTES + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const count = readSync(fd, buffer, length, buffer.length - length, null);
+        if (count === 0) break;
+        length += count;
+      }
+      if (length > 3 * LOG_JOB_BYTES) throw new Error('Log spool exceeds its size bound');
+      try { value = JSON.parse(buffer.toString('utf8', 0, length)) as Spool; }
+      catch { throw new Error('Log spool requires repair'); }
+    } finally { closeSync(fd); }
+    if (!value || typeof value !== 'object') throw new Error('Log spool requires repair');
+    if (value.version !== 1 || !Array.isArray(value.packets) || value.packets.length > LOG_MAX_EVENTS + 1 || !value.packets.every((packet, index) => validateLogPacket(packet) && packet.sequence === index && (!packet.terminal || index === value.packets.length - 1)) ||
+      !Number.isSafeInteger(value.acknowledged) || value.acknowledged < 0 || value.acknowledged > value.packets.length ||
+      !Number.isFinite(value.expiresAt) || !['pending', 'complete', 'truncated', 'failed', 'expired'].includes(value.status)) throw new Error('Log spool requires repair');
+    const bytes = value.packets.reduce((total, packet) => total + Buffer.byteLength(JSON.stringify(packet.events)), 0);
+    const count = value.packets.reduce((total, packet) => total + packet.events.length, 0);
+    if (bytes !== value.bytes || count !== value.count || bytes > LOG_JOB_BYTES || count > LOG_MAX_EVENTS) throw new Error('Log spool requires repair');
+    return value;
+  }
+
+function spoolPath(directory: string, identity: ClaimIdentity): string {
+  return join(directory, 'logs', createHash('sha256').update(identity.dispatchId).digest('hex') + '.json');
+}
+function sameIdentity(actual: ClaimIdentity, expected: ClaimIdentity): boolean {
+  const fields = ['claimToken', 'dispatchId', 'executionId', 'runId', 'runnerId'] as const;
+  return !!actual && typeof actual === 'object' && Object.keys(actual).sort().join(',') === fields.join(',') &&
+    fields.every(field => typeof expected[field] === 'string' && expected[field].length > 0 && actual[field] === expected[field]);
+}
+/** Replay one immutable checkpoint without taking over, writing acknowledgements, or sealing it. */
+export async function replayStartedLogSnapshot(directory: string, identity: ClaimIdentity,
+  send: (packet: LogPacket) => Promise<{ status: string; nextSequence: number; expiresAt: number }>): Promise<void> {
+  let snapshot: Spool;
+  try { snapshot = readSpool(spoolPath(directory, identity)); }
+  catch (cause) { if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return; throw cause; }
+  if (!sameIdentity(snapshot.identity, identity)) throw new Error('Log spool identity conflict');
+  if (snapshot.status === 'expired') return;
+  let cursor = snapshot.acknowledged;
+  while (cursor < snapshot.packets.length && Date.now() < snapshot.expiresAt) {
+    const packet = snapshot.packets[cursor];
+    // Execution remains uncertain. Only its owner may publish a terminal packet.
+    if (packet.terminal) return;
+    const receipt = await send(packet);
+    if (!['pending', 'complete', 'truncated', 'failed', 'expired'].includes(receipt.status) ||
+      !Number.isFinite(receipt.expiresAt) || !Number.isSafeInteger(receipt.nextSequence) ||
+      receipt.nextSequence < 0 || receipt.nextSequence > LOG_MAX_EVENTS + 1) throw new Error('Invalid log acknowledgement');
+    if (receipt.status === 'expired') return;
+    if (receipt.nextSequence <= packet.sequence) throw new Error('Invalid log acknowledgement');
+    // A live writer can have advanced the receiver beyond this snapshot; never overwrite its ACK.
+    cursor = receipt.nextSequence;
+  }
+}
+
 /** Redacted LogFn events only. Atomic private checkpoints never persist shell environments or unredacted output. */
 export class LogSpool implements LogFnClient {
   private path: string;
@@ -33,17 +92,7 @@ export class LogSpool implements LogFnClient {
     });
     this.save();
   }
-  private read(): Spool {
-    if (statSync(this.path).size > 3 * LOG_JOB_BYTES) throw new Error('Log spool exceeds its size bound');
-    const value = JSON.parse(readFileSync(this.path, 'utf8')) as Spool;
-    if (value.version !== 1 || !Array.isArray(value.packets) || value.packets.length > LOG_MAX_EVENTS + 1 || !value.packets.every((packet, index) => validateLogPacket(packet) && packet.sequence === index && (!packet.terminal || index === value.packets.length - 1)) ||
-      !Number.isSafeInteger(value.acknowledged) || value.acknowledged < 0 || value.acknowledged > value.packets.length ||
-      !Number.isFinite(value.expiresAt) || !['pending', 'complete', 'truncated', 'failed', 'expired'].includes(value.status)) throw new Error('Log spool requires repair');
-    const bytes = value.packets.reduce((total, packet) => total + Buffer.byteLength(JSON.stringify(packet.events)), 0);
-    const count = value.packets.reduce((total, packet) => total + packet.events.length, 0);
-    if (bytes !== value.bytes || count !== value.count || bytes > LOG_JOB_BYTES || count > LOG_MAX_EVENTS) throw new Error('Log spool requires repair');
-    return value;
-  }
+  private read(): Spool { return readSpool(this.path); }
   private save() {
     if (Date.now() >= this.value.expiresAt) { this.value.status = 'expired'; this.value.packets = []; this.value.bytes = 0; this.value.count = 0; this.value.acknowledged = 0; }
     const temporary = this.path + '.' + randomUUID() + '.tmp';

@@ -15,6 +15,10 @@ const secret = 'configured-log-secret-ascii';
 const token = 'local-registration';
 const stateDirectory = join(directory, 'runner');
 const witness = join(directory, 'witness');
+const crashGate = join(directory, 'crash-release');
+const crashDone = join(directory, 'crash-done');
+const crashPid = join(directory, 'crash-pid');
+let crashShellStarted = false;
 let control, proxy, port = 0, output = '';
 const children = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -22,6 +26,17 @@ async function stop(child, signal = 'SIGTERM') {
   if (!child) return;
   if (child.process.exitCode === null && child.process.signalCode === null) child.process.kill(signal);
   await child.exited;
+}
+async function waitCrashShellExit() {
+  let pid;
+  try { pid = Number(await readFile(crashPid, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  assert.ok(Number.isSafeInteger(pid) && pid > 0);
+  for (let i = 0; i < 800; i++) {
+    try { process.kill(pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') return; throw error; }
+    await delay(20);
+  }
+  throw new Error('Owned crash fixture shell process did not exit; directory retained');
 }
 async function start() {
   const processChild = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url))], {
@@ -120,6 +135,51 @@ try {
   assert.equal(liveLogs.lines.filter(line => line.line === 'live stdout ***').length, 1);
   assert.equal(liveLogs.lines.filter(line => line.line === 'live stderr ***').length, 1);
   assert.ok(!JSON.stringify(requests).includes('live stdout '+secret.slice(0,8)), 'partial secret prefix withheld across captures');
+  // Kill a real runner after its line checkpoint but before any log acknowledgement.
+  logsOffline = true;
+  const crashWitness = join(directory, 'crash-executions');
+  const crashJs = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(crashPid)},String(process.pid));fs.appendFileSync(${JSON.stringify(crashWitness)},'once\\n');process.on('exit',()=>fs.writeFileSync(${JSON.stringify(crashDone)},'done'));process.stdout.write('started stdout '+process.env.TOKEN+'\\n');process.stderr.write('started stderr '+process.env.TOKEN+'\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(crashGate)})){clearInterval(timer);process.exit(0)}},20);setTimeout(()=>process.exit(9),15000);`;
+  const crashInput = structuredClone(input);
+  crashInput.pipelineSpec.jobs.build.steps = [{ run: `${quote(process.execPath)} -e ${quote(crashJs)}` }];
+  const crashRun = await data('/api/v1/runs', crashInput); const crashId = crashRun.runId ?? crashRun.id;
+  const childCode = `import {RemoteRunner} from ${JSON.stringify(new URL('../../runner/dist/index.mjs', import.meta.url).href)}; await new RemoteRunner(${JSON.stringify(options)}).tick();`;
+  const childProcess = spawn(process.execPath, ['--input-type=module', '-e', childCode], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const crashChild = { process: childProcess, exited: once(childProcess, 'exit') }; children.push(crashChild);
+  childProcess.stdout.on('data', chunk => { output += chunk; }); childProcess.stderr.on('data', chunk => { output += chunk; });
+  let startedFile, startedSpool;
+  for (let i = 0; i < 150; i++) {
+    for (const name of await readdir(join(stateDirectory, 'logs'))) {
+      if (!name.endsWith('.json')) continue;
+      const value = JSON.parse(await readFile(join(stateDirectory, 'logs', name), 'utf8'));
+      if (value.identity.runId !== crashId) continue;
+      crashShellStarted = true;
+      if (['started stdout ***', 'started stderr ***'].every(line => value.packets.some(packet => packet.events.some(event => event.msg === line)))) {
+        startedFile = join(stateDirectory, 'logs', name); startedSpool = value;
+      }
+    }
+    if (startedFile) break;
+    await delay(50);
+  }
+  assert.ok(startedFile, 'started runner persisted both redacted lines before being killed');
+  assert.equal(startedSpool.acknowledged, 0);
+  await stop(crashChild, 'SIGKILL');
+  await writeFile(crashGate, 'release');
+  for (let i = 0; i < 150; i++) { try { await stat(crashDone); break; } catch { await delay(20); } }
+  assert.ok(await stat(crashDone), 'owned orphan shell exited through its release gate');
+  await waitCrashShellExit();
+  const spoolBefore = await readFile(startedFile);
+  assert.equal((await data(`/api/v1/runs/${crashId}/jobs/build/logs`)).lines.length, 0);
+  await stop(control); control = await start(); logsOffline = false;
+  await new RemoteRunner(options).tick(); await new RemoteRunner(options).tick();
+  const recovered = await data(`/api/v1/runs/${crashId}/jobs/build/logs`);
+  assert.equal(recovered.transfer.status, 'pending');
+  for (const line of ['started stdout ***', 'started stderr ***']) assert.equal(recovered.lines.filter(entry => entry.line === line).length, 1);
+  assert.equal((await data(`/api/v1/runs/${crashId}`)).status, 'running');
+  assert.equal(await readFile(crashWitness, 'utf8'), 'once\n');
+  assert.deepEqual(await readFile(startedFile), spoolBefore, 'recovery never writes stale spool ACKs or status');
+  const journalEntries = await Promise.all((await readdir(stateDirectory)).filter(name => name.endsWith('.json')).map(name => readFile(join(stateDirectory, name), 'utf8').then(JSON.parse)));
+  const retained = journalEntries.find(entry => entry.runId === crashId);
+  assert.equal(retained.phase, 'started'); assert.equal(retained.result, undefined); assert.equal(retained.logOutcome, undefined);
   await stop(control); control = undefined;
   async function inspect(path) {
     for (const name of await readdir(path)) {
@@ -128,9 +188,13 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, startedExecutionStillUncertain: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
-  if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
-  for (const child of children) await stop(child);
+  const failures = [];
+  try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }
+  for (const child of children) { try { await stop(child); } catch (error) { failures.push(error); } }
+  try { if (crashShellStarted) await waitCrashShellExit(); } catch (error) { failures.push(error); }
+  try { if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); } } catch (error) { failures.push(error); }
+  if (failures.length) throw new AggregateError(failures, 'Owned fixture cleanup incomplete; directory retained');
   await rm(directory, { recursive: true, force: true });
 }

@@ -1,4 +1,4 @@
-import { LogSpool } from "./log-spool.js";
+import { LogSpool, replayStartedLogSnapshot } from "./log-spool.js";
 import type { LogFnClient } from "./reporting/logfn-client.js";
 import { executeOwnedShell, ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { randomUUID } from 'node:crypto';
@@ -169,6 +169,13 @@ export class RemoteRunner {
     let processed = 0;
     for (const entry of this.journal.list()) {
       if (entry.runnerId === this.options.runnerId && entry.logOutcome && this.journal.hasStarted(entry.dispatchId)) await this.transferLogs(entry);
+      else if (entry.runnerId === this.options.runnerId && entry.phase === 'started' && this.journal.hasStarted(entry.dispatchId)) {
+        const { runId, dispatchId, runnerId, claimToken, executionId } = entry;
+        try {
+          await replayStartedLogSnapshot(this.options.stateDirectory, { runId, dispatchId, runnerId, claimToken, executionId },
+            packet => this.request('/api/v1/runners/claims/logs', { runId, dispatchId, runnerId, claimToken, executionId, packet }));
+        } catch { console.error('CiFn started log replay remains pending; checkpoint unchanged'); }
+      }
       if (entry.runnerId === this.options.runnerId && entry.phase === 'cancelled') { await this.stopped(entry); processed++; }
       if (entry.runnerId === this.options.runnerId && entry.phase === 'completed') { await this.finish(entry); processed++; }
     }
