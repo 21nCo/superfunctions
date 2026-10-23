@@ -1,0 +1,19 @@
+_conduct/shared-python-packaging-readiness.md
+  s_e1c5fc1a65c0cf::t_fd175d5c035ef4 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a4b0f8f9d319bac5eac0220067afdd39cc8f6ed",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
