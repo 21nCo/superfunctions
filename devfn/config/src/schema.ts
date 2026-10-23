@@ -244,12 +244,13 @@ function profileSpec(value: unknown, field: string): ProfileSpec {
 
 function profileTunnelSpec(value: unknown, field: string): ProfileTunnelSpec {
   const input = record(value, field);
-  for (const key of Object.keys(input)) if (key !== "binding" && key !== "routes") fail(`${field}.${key} is not a tunnel field; credentials and provider accounts belong to the machine binding.`, `${field}.${key}`);
+  for (const key of Object.keys(input)) if (!["binding", "routes", "ephemeral"].includes(key)) fail(`${field}.${key} is not a tunnel field; credentials and provider accounts belong to the machine binding.`, `${field}.${key}`);
   const binding = string(input.binding, `${field}.binding`);
   if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(binding)) fail(`${field}.binding must be a registered tunnel binding name.`, `${field}.binding`);
   const routes = stringArray(input.routes, `${field}.routes`) ?? [];
   if (!routes.length || new Set(routes).size !== routes.length) fail(`${field}.routes must name each public route once.`, `${field}.routes`);
-  return { binding, routes };
+  const ephemeral = optionalBoolean(input.ephemeral, `${field}.ephemeral`);
+  return { binding, routes, ...(ephemeral ? { ephemeral } : {}) };
 }
 
 function hostnameSpec(value: unknown, field: string): HostnameSpec {

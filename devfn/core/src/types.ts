@@ -58,9 +58,14 @@ export interface LifecycleReceipt {
   startupFingerprints?: Record<string, string>;
   /** Selected non-secret port declarations at startup; absent in legacy receipts. */
   portSpecFingerprints?: Record<string, string>;
-  /** Public hostnames this lifecycle published through a machine tunnel binding, and withdrawals from other bindings still journaled for retry. */
-  tunnel?: { binding: string; hostnames: string[]; outstanding?: string[] };
-  /** Deterministic public URLs by route name, present only after an explicitly public start. */
+  /**
+   * Public hostnames this lifecycle published through a machine tunnel
+   * binding, when their URLs were known (urlTiming, absent in receipts of
+   * earlier releases: pre-start), and withdrawals from other bindings still
+   * journaled for retry.
+   */
+  tunnel?: { binding: string; hostnames: string[]; urlTiming?: "pre-start" | "post-start"; outstanding?: string[] };
+  /** Public URLs by route name, present only after an explicitly public start: deterministic ones, or those the provider assigned once its connector ran. */
   publicUrls?: Record<string, string>;
   cleanup?: CleanupResult;
   error?: { code: string; message: string };

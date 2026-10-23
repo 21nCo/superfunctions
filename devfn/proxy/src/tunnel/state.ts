@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
-import { canonicalBirthSignature, withFileLock, withRoutingLock } from "@devfn/ports";
+import { canonicalBirthSignature, isProcessId, withFileLock, withRoutingLock } from "@devfn/ports";
 
 import { domainContains, normalizeDomain, readRegisteredDomains } from "../domains.js";
 
@@ -15,30 +15,73 @@ export class TunnelError extends Error {
   }
 }
 
-/**
- * A machine-registered public tunnel binding. It names a pre-existing
- * nonproduction provider tunnel and public domain and holds only references
- * to credentials: the connector credentials file path and the name of the
- * environment variable holding a DNS-scoped API token. DevFn never stores
- * either credential, never creates the tunnel and never provisions a zone.
- */
-export interface TunnelBinding {
+interface BindingBase {
   name: string;
-  provider: "cloudflare";
-  /** Public base domain; every public hostname is one label under it. */
+  /** Base domain of the origin names; every public hostname is one label under it. */
   domain: string;
   projectId: string;
   repositoryIdentity: string;
   /** Explicit owner assertion at registration; production bindings are refused. */
   nonproduction: true;
+}
+
+/**
+ * A pre-existing nonproduction Cloudflare named tunnel and public zone. It
+ * holds only references to credentials: the connector credentials file path
+ * and the name of the environment variable holding a DNS-scoped API token.
+ * DevFn never stores either credential, never creates the tunnel and never
+ * provisions a zone.
+ */
+export interface CloudflareTunnelBinding extends BindingBase {
+  provider: "cloudflare";
   cloudflare: { accountId: string; zoneId: string; tunnelId: string; credentialsFile: string; apiTokenEnv: string };
 }
+
+/**
+ * A nonproduction ngrok account. With reserved endpoints, the account
+ * reserves the wildcard domain `*.<domain>`, so every public URL is known
+ * before start. Ephemeral endpoints get provider-assigned URLs only once the
+ * connector runs; their domain is a DevFn-internal origin namespace that is
+ * never published. Only the names of the environment variables holding the
+ * agent authtoken and, for reserved endpoints, a read-only API key are kept,
+ * with a random registration ID that marks this registration's endpoints:
+ * another machine's binding of the same name on the same account derives
+ * the same hostnames but never carries it.
+ */
+export interface NgrokTunnelBinding extends BindingBase {
+  provider: "ngrok";
+  ngrok: { endpoints: "reserved" | "ephemeral"; authtokenEnv: string; apiKeyEnv?: string; registrationId: string };
+}
+
+/** A machine-registered public tunnel binding. */
+export type TunnelBinding = CloudflareTunnelBinding | NgrokTunnelBinding;
+
+/** A binding to register; registration assigns an ngrok binding its registration ID. */
+export type TunnelBindingInput = CloudflareTunnelBinding | (Omit<NgrokTunnelBinding, "ngrok"> & { ngrok: Omit<NgrokTunnelBinding["ngrok"], "registrationId"> });
+
+/** When a binding's public URLs are known: before start, or once its connector runs. */
+export type UrlTiming = "pre-start" | "post-start";
+
+export const urlTiming = (binding: TunnelBinding): UrlTiming => binding.provider === "ngrok" && binding.ngrok.endpoints === "ephemeral" ? "post-start" : "pre-start";
+
+/** The DevFn-internal origin namespace of an ephemeral ngrok binding; `.internal` is never publicly resolvable. */
+export const ephemeralOriginDomain = (name: string): string => `${name}.ngrok.devfn.internal`;
 
 /** One public hostname a lifecycle owner publishes through a binding. */
 export interface TunnelHostname { hostname: string; ownerId: string; publishedAt: string }
 
-/** A connector process DevFn started for exactly these hostnames; it leads its own process group. */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; hostnames: string[] }
+/**
+ * A connector process DevFn started for exactly these hostnames; it leads its
+ * own process group. urls holds the public URL the provider assigned to each
+ * hostname once it ran, for providers that assign them. launchId is unique
+ * to this launch and names the only agent identity file it may own. readBack
+ * is set once the launch passed its post-launch readbacks (assigned URLs and
+ * the provider's serving check); a running record without it is read back
+ * before it can become the recorded connector. unconfirmed lists the names a
+ * withdrawal's narrowing replacement routes whose serving check failed: it
+ * was promoted without readBack so the withdrawn names stop being routed.
+ */
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; launchId?: string; hostnames: string[]; urls?: Record<string, string>; readBack?: true; unconfirmed?: string[] }
 
 /**
  * An in-flight publish, written before any provider or connector mutation.
@@ -96,8 +139,20 @@ export interface TunnelProvider {
   renderConnectorConfig(binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string;
   /** Validate a rendered configuration locally before any connector runs it. */
   validateConnectorConfig(binding: TunnelBinding, configFile: string, hostnames: readonly string[]): Promise<void>;
-  /** Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. */
-  connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]>;
+  /**
+   * Connector argv for configFile; it answers GET /ready on 127.0.0.1:metricsPort once connected. A connector that runs
+   * a separate agent process records it at agentFile, which belongs to this launch only, before that agent may route.
+   */
+  connectorCommand(binding: TunnelBinding, configFile: string, metricsPort: number, agentFile: string): Promise<string[]>;
+  /** Credentials the connector reads from its environment, resolved from the binding's references; their values are redacted from its log. */
+  connectorSecrets?(binding: TunnelBinding): Record<string, string>;
+  /** The public URL the provider assigned to each hostname, read from a ready connector. */
+  assignedUrls?(binding: TunnelBinding, metricsPort: number, hostnames: readonly string[]): Promise<Record<string, string>>;
+  /**
+   * Read back, once a launched connector is ready and before its transition commits, that no agent outside this
+   * registration serves its hostnames; for providers whose endpoints another agent can join once online.
+   */
+  verifyServing?(binding: TunnelBinding, hostnames: readonly string[]): Promise<void>;
 }
 
 const BINDING_NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -114,26 +169,46 @@ export function isPublicHostname(hostname: string, domain: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname.slice(0, -domain.length - 1)) && hostname.length <= 253;
 }
 
+function parseProviderFields(entry: Record<string, unknown>): string[] {
+  if (entry.provider === "cloudflare") {
+    const cloudflare = entry.cloudflare as Record<string, unknown> | undefined;
+    if (!cloudflare || typeof cloudflare !== "object" || typeof cloudflare.accountId !== "string" || !HEX32.test(cloudflare.accountId) ||
+      typeof cloudflare.zoneId !== "string" || !HEX32.test(cloudflare.zoneId) || typeof cloudflare.tunnelId !== "string" || !UUID.test(cloudflare.tunnelId) ||
+      typeof cloudflare.credentialsFile !== "string" || !path.isAbsolute(cloudflare.credentialsFile) ||
+      typeof cloudflare.apiTokenEnv !== "string" || !ENV_NAME.test(cloudflare.apiTokenEnv)) {
+      throw invalid("A Cloudflare binding needs a 32-hex account and zone ID, a tunnel UUID, an absolute credentials file and an API token environment variable name.");
+    }
+    return Object.keys(cloudflare).filter((key) => !["accountId", "zoneId", "tunnelId", "credentialsFile", "apiTokenEnv"].includes(key));
+  }
+  if (entry.provider === "ngrok") {
+    const ngrok = entry.ngrok as Record<string, unknown> | undefined;
+    if (!ngrok || typeof ngrok !== "object" || (ngrok.endpoints !== "reserved" && ngrok.endpoints !== "ephemeral") ||
+      typeof ngrok.authtokenEnv !== "string" || !ENV_NAME.test(ngrok.authtokenEnv) || (ngrok.apiKeyEnv !== undefined && (typeof ngrok.apiKeyEnv !== "string" || !ENV_NAME.test(ngrok.apiKeyEnv))) ||
+      typeof ngrok.registrationId !== "string" || !HEX32.test(ngrok.registrationId)) {
+      throw invalid("An ngrok binding needs reserved or ephemeral endpoints, the environment variable names of its authtoken and optional API key, and a 32-hex registration ID.");
+    }
+    // Reserved URLs are read back through the API before any connector routes them.
+    if (ngrok.endpoints === "reserved" && ngrok.apiKeyEnv === undefined) throw invalid("An ngrok binding with reserved endpoints needs an API key environment variable name to verify its reserved domain.");
+    if (ngrok.endpoints === "ephemeral" && entry.domain !== ephemeralOriginDomain(String(entry.name))) {
+      throw invalid("An ephemeral ngrok binding has no public domain; its origin names are DevFn-internal.");
+    }
+    return Object.keys(ngrok).filter((key) => !["endpoints", "authtokenEnv", "apiKeyEnv", "registrationId"].includes(key));
+  }
+  throw invalid("A tunnel provider is cloudflare or ngrok.");
+}
+
 export function parseTunnelBinding(value: unknown): TunnelBinding {
   if (!value || typeof value !== "object") throw invalid("A tunnel binding must be an object.");
   const entry = value as Record<string, unknown>;
-  const cloudflare = entry.cloudflare as Record<string, unknown> | undefined;
   if (typeof entry.name !== "string" || !BINDING_NAME.test(entry.name)) throw invalid("A tunnel binding name must be a lowercase label of at most 32 characters.");
-  if (entry.provider !== "cloudflare") throw invalid("The only tunnel provider is cloudflare.");
   if (entry.nonproduction !== true) throw invalid("A tunnel binding must be registered as nonproduction; DevFn does not expose production accounts or domains.");
   if (typeof entry.domain !== "string") throw invalid("A tunnel binding needs a public domain.");
   try { normalizeDomain(entry.domain); } catch { throw invalid("A tunnel binding domain must be a lowercase, concrete DNS name outside .localhost."); }
   if (typeof entry.projectId !== "string" || !entry.projectId || typeof entry.repositoryIdentity !== "string" || !path.isAbsolute(entry.repositoryIdentity)) {
     throw invalid("A tunnel binding must be bound to a project and repository.");
   }
-  if (!cloudflare || typeof cloudflare !== "object" || typeof cloudflare.accountId !== "string" || !HEX32.test(cloudflare.accountId) ||
-    typeof cloudflare.zoneId !== "string" || !HEX32.test(cloudflare.zoneId) || typeof cloudflare.tunnelId !== "string" || !UUID.test(cloudflare.tunnelId) ||
-    typeof cloudflare.credentialsFile !== "string" || !path.isAbsolute(cloudflare.credentialsFile) ||
-    typeof cloudflare.apiTokenEnv !== "string" || !ENV_NAME.test(cloudflare.apiTokenEnv)) {
-    throw invalid("A Cloudflare binding needs a 32-hex account and zone ID, a tunnel UUID, an absolute credentials file and an API token environment variable name.");
-  }
-  const extra = Object.keys(entry).filter((key) => !["name", "provider", "domain", "projectId", "repositoryIdentity", "nonproduction", "cloudflare"].includes(key));
-  const extraProvider = Object.keys(cloudflare).filter((key) => !["accountId", "zoneId", "tunnelId", "credentialsFile", "apiTokenEnv"].includes(key));
+  const extraProvider = parseProviderFields(entry);
+  const extra = Object.keys(entry).filter((key) => !["name", "provider", "domain", "projectId", "repositoryIdentity", "nonproduction", entry.provider].includes(key));
   if (extra.length || extraProvider.length) throw invalid("A tunnel binding holds credential references only; unexpected fields are refused.");
   return entry as unknown as TunnelBinding;
 }
@@ -175,15 +250,22 @@ async function writeBindings(stateDir: string, bindings: TunnelBinding[]): Promi
  * repository and project. The credentials file must be an owner-only regular
  * file; its content is never read. A public domain may not overlap a
  * loopback development domain or another binding, so local and public
- * validation never apply to the same names.
+ * validation never apply to the same names. Each ngrok registration gets a
+ * fresh random registration ID.
  */
-export async function registerTunnelBinding(stateDir: string, input: TunnelBinding): Promise<TunnelBinding> {
-  const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity) });
-  let entry;
-  try { entry = await lstat(binding.cloudflare.credentialsFile); }
-  catch { throw invalid("The tunnel credentials file does not exist."); }
-  if (!entry.isFile() || entry.isSymbolicLink() || (process.platform !== "win32" && (entry.mode & 0o077) !== 0)) {
-    throw invalid("The tunnel credentials file must be a regular file readable only by its owner (mode 0600).");
+export async function registerTunnelBinding(stateDir: string, input: TunnelBindingInput): Promise<TunnelBinding> {
+  // A caller-supplied registration ID is replaced: only registration assigns one.
+  const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity),
+    ...(input.provider === "ngrok" ? { ngrok: { ...input.ngrok, registrationId: randomBytes(16).toString("hex") } } : {}) });
+  // Repeating a registration, such as a retry of one whose write succeeded, returns the stored binding with its registration ID.
+  const requested = (item: TunnelBinding): string => JSON.stringify(item.provider === "ngrok" ? { ...item, ngrok: { ...item.ngrok, registrationId: undefined } } : item);
+  if (binding.provider === "cloudflare") {
+    let entry;
+    try { entry = await lstat(binding.cloudflare.credentialsFile); }
+    catch { throw invalid("The tunnel credentials file does not exist."); }
+    if (!entry.isFile() || entry.isSymbolicLink() || (process.platform !== "win32" && (entry.mode & 0o077) !== 0)) {
+      throw invalid("The tunnel credentials file must be a regular file readable only by its owner (mode 0600).");
+    }
   }
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   // Domain registration holds the same proxy lock and reads this registry,
@@ -195,7 +277,7 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     const bindings = await readTunnelBindings(stateDir);
     const existing = bindings.find((item) => item.name === binding.name);
     if (existing) {
-      if (JSON.stringify(existing) === JSON.stringify(binding)) return existing;
+      if (requested(existing) === requested(binding)) return existing;
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel binding ${binding.name} is already registered.`);
     }
     if (bindings.some((item) => domainContains(item.domain, binding.domain) || domainContains(binding.domain, item.domain))) {
@@ -203,7 +285,7 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     }
     // Two connectors with different allowlists on one tunnel would each
     // receive the other's requests.
-    if (bindings.some((item) => item.cloudflare.tunnelId === binding.cloudflare.tunnelId)) {
+    if (binding.provider === "cloudflare" && bindings.some((item) => item.provider === "cloudflare" && item.cloudflare.tunnelId === binding.cloudflare.tunnelId)) {
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel ${binding.cloudflare.tunnelId} is already bound; one tunnel has one DevFn connector.`);
     }
     await writeBindings(stateDir, [...bindings, binding]);
@@ -236,11 +318,49 @@ export async function assertBindingRegistered(stateDir: string, binding: TunnelB
   if (!current || JSON.stringify(current) !== JSON.stringify(binding)) throw new TunnelError("DEVFN_TUNNEL_UNREGISTERED", `Tunnel binding ${binding.name} is no longer registered as resolved.`);
 }
 
-export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string } {
+/**
+ * Where the connector launch launchId, whose configuration is in dir,
+ * records the identity of an agent process it runs, before that agent may
+ * route anything. A connector that dies without running any code leaves
+ * such an agent outside its supervision; the tunnel service stops it
+ * through this record. The launch ID is random per launch, unlike a
+ * readiness port, which a later launch may reuse once a connector exits, so
+ * a record is only ever read, signalled through or removed for the launch
+ * that wrote it.
+ */
+export const agentIdentityFile = (dir: string, launchId: string): string => path.join(dir, `agent-${launchId}.json`);
+
+/** A connector launch ID: random, and the only key of its agent identity file. */
+export const LAUNCH_ID = /^[a-f0-9]{32}$/;
+
+/** A recorded agent process and the connector configuration file it was started for. */
+export interface AgentIdentity { pid: number; birthSignature: string; startedAt: string; configFile: string }
+
+/**
+ * A launch's agent identity record. Only an absent file means no agent was
+ * recorded. A connector writes the file atomically, so one that cannot be
+ * read or is not a complete record is unreadable evidence of an agent that
+ * may run, never its absence.
+ */
+export type AgentRecord = { status: "absent" } | { status: "unreadable"; reason: string } | { status: "recorded"; agent: AgentIdentity };
+
+export async function readAgentIdentity(file: string): Promise<AgentRecord> {
+  let value: Partial<AgentIdentity> & { version?: unknown };
+  try { value = JSON.parse(await readFile(file, "utf8")) as typeof value; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "absent" };
+    return { status: "unreadable", reason: error instanceof SyntaxError ? "it is not valid JSON" : (error as NodeJS.ErrnoException).code ?? "it cannot be read" };
+  }
+  if (!value || value.version !== 1 || !isProcessId(value.pid) || typeof value.birthSignature !== "string" || !canonicalBirthSignature(value.birthSignature) ||
+    typeof value.startedAt !== "string" || typeof value.configFile !== "string") return { status: "unreadable", reason: "it is not a complete agent record" };
+  return { status: "recorded", agent: { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile } };
+}
+
+export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string; agent: (launchId: string) => string } {
   if (!BINDING_NAME.test(name)) throw invalid("Invalid tunnel binding name.");
   const dir = path.join(stateDir, "tunnels", name);
   return { dir, state: path.join(dir, "state.json"), lock: path.join(dir, "tunnel.lock"), originCa: path.join(dir, "origin-ca.pem"),
-    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`) };
+    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`), agent: (launchId) => agentIdentityFile(dir, launchId) };
 }
 
 export async function tunnelDirectory(stateDir: string, name: string): Promise<string> {
@@ -311,9 +431,13 @@ export function compareNames(a: string, b: string): number {
 const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
-  return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
+  return Boolean(item) && isProcessId(item!.pid) && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
-    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames);
+    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && (item!.launchId === undefined || (typeof item!.launchId === "string" && LAUNCH_ID.test(item!.launchId))) && isNames(item!.hostnames) &&
+    (item!.readBack === undefined || item!.readBack === true) &&
+    (item!.unconfirmed === undefined || (isNames(item!.unconfirmed) && item!.unconfirmed.every((hostname) => item!.hostnames!.includes(hostname)))) &&
+    (item!.urls === undefined || (typeof item!.urls === "object" && item!.urls !== null && Object.entries(item!.urls).every(([hostname, url]) =>
+      item!.hostnames!.includes(hostname) && typeof url === "string" && /^https:\/\/[a-z0-9.-]+$/.test(url))));
 };
 const isHostnames = (value: unknown): value is TunnelHostname[] => Array.isArray(value) && value.every((item: Partial<TunnelHostname>) =>
   item && typeof item.hostname === "string" && typeof item.ownerId === "string" && item.ownerId.length > 0 && typeof item.publishedAt === "string") &&

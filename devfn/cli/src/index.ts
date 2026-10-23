@@ -15,7 +15,7 @@ import {
 } from "@devfn/config";
 import {
   DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
-  resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding,
+  ephemeralOriginDomain, resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding, type TunnelBindingInput,
 } from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
 import { defaultStateDir } from "@devfn/config";
@@ -36,8 +36,9 @@ interface ParsedArgs {
   certificateFile?: string;
   keyFile?: string;
   host?: string;
-  tunnel: Partial<Record<"domain" | "accountId" | "zoneId" | "tunnelId" | "credentialsFile" | "apiTokenEnv", string>>;
+  tunnel: Partial<Record<"provider" | "domain" | "accountId" | "zoneId" | "tunnelId" | "credentialsFile" | "apiTokenEnv" | "authtokenEnv" | "apiKeyEnv", string>>;
   nonproduction: boolean;
+  ephemeral: boolean;
 }
 
 export interface CliOptions { cwd?: string; env?: NodeJS.ProcessEnv; stdout?: (text: string) => void; stderr?: (text: string) => void }
@@ -75,12 +76,17 @@ Options:
   --cert <path>        Certificate PEM for certificate TLS
   --key <path>         Private key PEM for certificate TLS
   --host <label>       OAuth relay host label under its domain (default auth)
+  --provider <name>    Tunnel binding provider: cloudflare (default) or ngrok
   --domain, --account-id, --zone-id, --tunnel-id, --credentials-file, --api-token-env
-                       Tunnel binding fields; the token is read from the named variable, never stored
+                       Cloudflare binding fields; the token is read from the named variable, never stored
+  --authtoken-env, --api-key-env
+                       ngrok binding credential variable names; values are never stored
+  --ephemeral          Register an ngrok binding whose URLs are assigned only after start
   --nonproduction      Confirm a tunnel binding uses a nonproduction account and domain
 `;
 
-const TUNNEL_OPTIONS = { "--domain": "domain", "--account-id": "accountId", "--zone-id": "zoneId", "--tunnel-id": "tunnelId", "--credentials-file": "credentialsFile", "--api-token-env": "apiTokenEnv" } as const;
+const TUNNEL_OPTIONS = { "--provider": "provider", "--domain": "domain", "--account-id": "accountId", "--zone-id": "zoneId", "--tunnel-id": "tunnelId", "--credentials-file": "credentialsFile",
+  "--api-token-env": "apiTokenEnv", "--authtoken-env": "authtokenEnv", "--api-key-env": "apiKeyEnv" } as const;
 
 function parse(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
@@ -93,7 +99,7 @@ function parse(argv: readonly string[]): ParsedArgs {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${token} requires a value.`);
       values[token] = value; index += 1;
-    } else if (["--json", "--yes", "--trust", "--allow-public", "--nonproduction", "--help"].includes(token)) values[token] = true;
+    } else if (["--json", "--yes", "--trust", "--allow-public", "--nonproduction", "--ephemeral", "--help"].includes(token)) values[token] = true;
     else throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown option ${token}.`);
   }
   const tailValue = values["--tail"];
@@ -117,6 +123,7 @@ function parse(argv: readonly string[]): ParsedArgs {
     ...(typeof values["--host"] === "string" ? { host: values["--host"] } : {}),
     tunnel: Object.fromEntries(Object.entries(TUNNEL_OPTIONS).flatMap(([flag, key]) => typeof values[flag] === "string" ? [[key, values[flag]]] : [])),
     nonproduction: values["--nonproduction"] === true,
+    ephemeral: values["--ephemeral"] === true,
   };
 }
 
@@ -237,21 +244,38 @@ async function oauthRelayCommand(args: ParsedArgs, stateDir: string, load: () =>
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown oauth-relay action ${action}. Expected status, start or stop.`);
 }
 
-/** Machine tunnel bindings of the current repository and project, and its deterministic public URLs. */
+/** The binding a tunnel register command describes; the options of one provider only. */
+function tunnelBindingInput(args: ParsedArgs, cwd: string, name: string, identity: { projectId: string; repositoryIdentity: string }): TunnelBindingInput {
+  const { provider = "cloudflare", domain, accountId, zoneId, tunnelId, credentialsFile, apiTokenEnv, authtokenEnv, apiKeyEnv } = args.tunnel;
+  if (!args.nonproduction) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register requires --nonproduction; DevFn binds only nonproduction tunnels and domains.");
+  const base = { name, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, nonproduction: true as const };
+  if (provider === "cloudflare") {
+    if (!domain || !accountId || !zoneId || !tunnelId || !credentialsFile || !apiTokenEnv || authtokenEnv || apiKeyEnv || args.ephemeral) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for cloudflare requires --domain, --account-id, --zone-id, --tunnel-id, --credentials-file and --api-token-env, and no ngrok options.");
+    }
+    return { ...base, provider, domain, cloudflare: { accountId, zoneId, tunnelId, credentialsFile: path.resolve(cwd, credentialsFile), apiTokenEnv } };
+  }
+  if (provider !== "ngrok") throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown tunnel provider ${provider}. Expected cloudflare or ngrok.`);
+  if (!authtokenEnv || accountId || zoneId || tunnelId || credentialsFile || apiTokenEnv) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for ngrok requires --authtoken-env and takes no Cloudflare options.");
+  }
+  if (args.ephemeral) {
+    if (domain) throw new DevFnError("DEVFN_RUNTIME_INVALID", "An ephemeral ngrok binding takes no --domain; the provider assigns its URLs after start.");
+    return { ...base, provider, domain: ephemeralOriginDomain(name), ngrok: { endpoints: "ephemeral", authtokenEnv, ...(apiKeyEnv ? { apiKeyEnv } : {}) } };
+  }
+  if (!domain || !apiKeyEnv) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for ngrok reserved endpoints requires --domain, whose wildcard *.<domain> the account reserves, and --api-key-env; use --ephemeral for assigned URLs.");
+  return { ...base, provider, domain, ngrok: { endpoints: "reserved", authtokenEnv, apiKeyEnv } };
+}
+
+/** Machine tunnel bindings of the current repository and project, and its public URLs and their timing. */
 async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
   const [action = "list", name, ...extra] = args.positionals;
   const identity = await resolveInstanceIdentity(loaded.config.project.id, loaded.root);
   if (extra.length || (["list", "urls"].includes(action) ? name !== undefined : !name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} ${["list", "urls"].includes(action) ? "takes no binding name" : "requires exactly one binding name"}.`);
-  if (action !== "register" && (Object.keys(args.tunnel).length || args.nonproduction)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} takes no binding fields.`);
+  if (action !== "register" && (Object.keys(args.tunnel).length || args.nonproduction || args.ephemeral)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} takes no binding fields.`);
   if (action === "list") return { ok: true, bindings: (await readTunnelBindings(stateDir)).filter((item) => item.projectId === identity.projectId && item.repositoryIdentity === identity.repositoryIdentity) };
   if (action === "urls") return { ok: true, ...await planPublicUrls({ config: loaded.config, root: loaded.root, profile: args.profile, stateDir }) };
-  if (action === "register") {
-    const { domain, accountId, zoneId, tunnelId, credentialsFile, apiTokenEnv } = args.tunnel;
-    if (!domain || !accountId || !zoneId || !tunnelId || !credentialsFile || !apiTokenEnv) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register requires --domain, --account-id, --zone-id, --tunnel-id, --credentials-file and --api-token-env.");
-    if (!args.nonproduction) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register requires --nonproduction; DevFn binds only nonproduction tunnels and domains.");
-    return { ok: true, binding: await registerTunnelBinding(stateDir, { name: name!, provider: "cloudflare", domain, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, nonproduction: true,
-      cloudflare: { accountId, zoneId, tunnelId, credentialsFile: path.resolve(cwd, credentialsFile), apiTokenEnv } }) };
-  }
+  if (action === "register") return { ok: true, binding: await registerTunnelBinding(stateDir, tunnelBindingInput(args, cwd, name!, identity)) };
   if (action === "unregister") { await unregisterTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity); return { ok: true, binding: name, removed: true }; }
   const binding = await resolveTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity);
   if (action === "status") return { ok: true, tunnel: await tunnelStatus({ stateDir, binding }) };
@@ -283,8 +307,33 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   return await handler();
 }
 
+/** Tunnel binding fields that name the environment variable holding a credential, never the credential. */
+const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv"]);
+
+/** Result maps keyed by route names or hostnames, which carry worktree labels, not field names. */
+const URL_MAPS = new Set(["urls", "publicUrls"]);
+
+/**
+ * JSON output under the shared redaction, with two exceptions. The keys of a
+ * `urls` or `publicUrls` map are data: only their values go through the
+ * redaction, so a route named like a secret field still shows its URL. In
+ * tunnel output a credential reference holding a variable name is shown: it
+ * tells the operator which variable a binding reads, and the shared key
+ * pattern would hide it.
+ */
+function redactResult(value: unknown, credentialReferences: boolean): unknown {
+  if (Array.isArray(value)) return value.map((item) => redactResult(item, credentialReferences));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key,
+    credentialReferences && CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
+      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] !== null ? "[REDACTED]"
+        : URL_MAPS.has(key) && nested && typeof nested === "object" && !Array.isArray(nested)
+          ? Object.fromEntries(Object.entries(nested).map(([name, url]) => [name, redactResult(url, credentialReferences)]))
+          : redactResult(nested, credentialReferences)]));
+}
+
 function renderResult(args: ParsedArgs, result: unknown, output: ReturnType<typeof createOutput>): void {
-  if (args.json) { output.json(redactValue(result)); return; }
+  if (args.json) { output.json(redactResult(result, args.command === "tunnel")); return; }
   if (args.command === "logs" && result && typeof result === "object") {
     for (const [name, log] of Object.entries(result)) output.info(`${name}\n${log}`);
     return;

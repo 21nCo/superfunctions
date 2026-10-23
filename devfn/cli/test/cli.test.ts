@@ -2,10 +2,10 @@ import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, write
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FilePortRegistry, isPortAvailable } from "@devfn/ports";
 import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
-import { readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
+import { DevFnOrchestrator, readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
 import { runCli } from "../src/index.js";
 
 async function withListenerTools<T>(action: () => Promise<T>): Promise<T> {
@@ -328,11 +328,14 @@ describe("devfn CLI", () => {
       expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("tunnel", "register", "preview", ...fields, "--nonproduction")).toMatchObject({ code: 0, result: { binding: { name: "preview", nonproduction: true } } });
       const urls = await run("tunnel", "urls");
-      expect(urls.result).toEqual({ ok: true, binding: "preview", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
+      expect(urls.result).toEqual({ ok: true, binding: "preview", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
       expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
+      // Credential references are variable names, shown so the operator knows what a binding reads.
+      expect(await run("tunnel", "list")).toMatchObject({ result: { bindings: [{ name: "preview", cloudflare: { apiTokenEnv: "DEVFN_FIXTURE_TOKEN" } }] } });
       expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
       expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
-      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], pending: false, retired: 0, outstanding: [] } } });
+      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], routed: [], urls: {}, pending: false, retired: 0, outstanding: [],
+        capabilities: { provider: "cloudflare", urlTiming: "pre-start", dns: "devfn-records", gaps: [expect.stringContaining("edge certificates")] } } } });
       // ports gc still collects other released leases while it reports an orphan whose DNS removal fails (no API token in this shell).
       const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
       await registry.reserve({ projectId: "other", instanceId: "released-owner", invocationId: "released", profile: "default", requests: [{ name: "api", spec: {} }] });
@@ -351,6 +354,79 @@ describe("devfn CLI", () => {
       await rm(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("registers ngrok bindings by endpoint kind and reports when their public URLs are known", async () => {
+    const cwd = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-ngrok-cli-")));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-ngrok-state-"));
+    try {
+      const write = async (tunnel: Record<string, unknown>) => await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+        processes: { web: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], ports: ["web"] } },
+        profiles: { default: { processes: ["web"], proxy: true, tunnel } }, hostnames: { web: { target: "web" }, "session-id": { target: "web" } } }));
+      await write({ binding: "share", routes: ["web", "session-id"] });
+      const run = async (...args: string[]) => {
+        let output = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+        return { code, result: JSON.parse(output) as Record<string, any> };
+      };
+      const invalid = { code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } };
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--api-key-env", "NGROK_API_KEY", "--credentials-file", "x", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--domain", "ngrok.example.test", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "other", "--nonproduction")).toMatchObject(invalid);
+      expect(await run("tunnel", "register", "share", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--domain", "ngrok.example.test", "--api-key-env", "NGROK_API_KEY", "--nonproduction"))
+        .toMatchObject({ code: 0, result: { binding: { name: "share", provider: "ngrok", domain: "ngrok.example.test", ngrok: { endpoints: "reserved", authtokenEnv: "NGROK_AUTHTOKEN", apiKeyEnv: "NGROK_API_KEY" } } } });
+      expect(await run("tunnel", "register", "eph", "--provider", "ngrok", "--authtoken-env", "NGROK_AUTHTOKEN", "--ephemeral", "--nonproduction"))
+        .toMatchObject({ code: 0, result: { binding: { name: "eph", domain: "eph.ngrok.devfn.internal", ngrok: { endpoints: "ephemeral" } } } });
+      // URL map keys are route names or hostnames, never secret field names, even when they read like one.
+      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "share", timing: "pre-start", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.ngrok\.example\.test$/),
+        "session-id": expect.stringMatching(/^https:\/\/session-id-[a-z0-9-]+\.ngrok\.example\.test$/) } });
+      // An ephemeral binding must be selected explicitly; its URLs are reported as assigned after start, never guessed.
+      await write({ binding: "eph", routes: ["web"] });
+      expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { message: expect.stringContaining("tunnel.ephemeral: true") } } });
+      await write({ binding: "eph", routes: ["web"], ephemeral: true });
+      expect((await run("tunnel", "urls")).result).toEqual({ ok: true, binding: "eph", timing: "post-start", urls: {}, assignedAfterStart: ["web"] });
+      expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect((await run("tunnel", "status", "eph")).result.tunnel.capabilities).toMatchObject({ provider: "ngrok", urlTiming: "post-start", dns: "connector-only",
+        gaps: expect.arrayContaining([expect.stringContaining("cannot satisfy pre-start references")]) });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows lifecycle URL map entries whose route names read like secret fields", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-url-keys-"));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-url-keys-state-"));
+    await writeFile(path.join(cwd, "server.mjs"), "import { createServer } from 'node:http'; createServer((_request, response) => response.end('ready')).listen(Number(process.env.DEVFN_PORT_SESSION_ID), '127.0.0.1');\n");
+    await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "url-keys" }, ports: { "session-id": {} },
+      processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["session-id"], health: { type: "http", port: "session-id", timeoutMs: 5000 } } },
+      profiles: { default: { processes: ["web"] } } }));
+    const invoke = async (command: string) => {
+      let stdout = "";
+      const code = await runCli([command, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+      return { code, value: JSON.parse(stdout) as Record<string, any> };
+    };
+    // A tunnel's public URLs need a running connector, which the core suites provide; here status reports fixture URLs for the same routes.
+    const status = DevFnOrchestrator.prototype.status;
+    const spy = vi.spyOn(DevFnOrchestrator.prototype, "status").mockImplementation(async function (this: DevFnOrchestrator, input) {
+      return { ...await status.call(this, input), publicUrls: { "session-id": "https://assigned-1-0.ngrok-free.app", web: "https://assigned-1-1.ngrok-free.app" }, publicUrlsChanged: true, sessionToken: "fixture-secret" } as never;
+    });
+    try {
+      const up = await invoke("up");
+      expect(up.code, JSON.stringify(up.value)).toBe(0);
+      expect(up.value.urls).toEqual({ "session-id": expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/) });
+      const result = await invoke("status");
+      expect(result.value).toMatchObject({ state: "ready", urls: up.value.urls, publicUrlsChanged: true,
+        publicUrls: { "session-id": "https://assigned-1-0.ngrok-free.app", web: "https://assigned-1-1.ngrok-free.app" } });
+      // Only map keys are data: secret-named fields elsewhere stay redacted.
+      expect(result.value.sessionToken).toBe("[REDACTED]");
+    } finally {
+      spy.mockRestore();
+      await invoke("down").catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it("requires a separate confirmation for public exposure", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));

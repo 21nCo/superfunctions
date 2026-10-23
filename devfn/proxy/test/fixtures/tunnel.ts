@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { compareNames, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "../../src/tunnel/index.js";
+import { compareNames, ephemeralOriginDomain, type CloudflareTunnelBinding, type NgrokTunnelBinding, type PublicOrigin, type TunnelBinding, type TunnelProvider } from "../../src/tunnel/index.js";
 
 /**
  * A connector stand-in: answers GET /ready on its metrics port until stopped,
@@ -22,7 +22,7 @@ export async function writeConnectorScript(dir: string): Promise<string> {
   return file;
 }
 
-export function fixtureBinding(repositoryIdentity: string, credentialsFile: string, name = "preview"): TunnelBinding {
+export function fixtureBinding(repositoryIdentity: string, credentialsFile: string, name = "preview"): CloudflareTunnelBinding {
   return { name, provider: "cloudflare", domain: "tunnel.example.test", projectId: "fixture", repositoryIdentity, nonproduction: true,
     cloudflare: { accountId: "a".repeat(32), zoneId: "b".repeat(32), tunnelId: "00000000-0000-4000-8000-000000000001", credentialsFile, apiTokenEnv: "DEVFN_FIXTURE_TOKEN" } };
 }
@@ -99,4 +99,52 @@ export class FakeTunnelProvider implements TunnelProvider {
     await this.beforeLaunch?.();
     return this.connector === "ready" ? [process.execPath, this.script, String(metricsPort), configFile] : [process.execPath, "-e", "process.exit(3)"];
   }
+}
+
+/** A registered-shape ngrok binding; registering it assigns a fresh registration ID. */
+export function ngrokFixtureBinding(repositoryIdentity: string, endpoints: "reserved" | "ephemeral" = "reserved", name = "share", registrationId = "c".repeat(32)): NgrokTunnelBinding {
+  return { name, provider: "ngrok", domain: endpoints === "reserved" ? "ngrok.example.test" : ephemeralOriginDomain(name), projectId: "fixture", repositoryIdentity, nonproduction: true,
+    ngrok: { endpoints, authtokenEnv: "DEVFN_FIXTURE_NGROK_AUTHTOKEN", ...(endpoints === "reserved" ? { apiKeyEnv: "DEVFN_FIXTURE_NGROK_API_KEY" } : {}), registrationId } };
+}
+
+/**
+ * An ngrok agent stand-in. `config check` accepts a configuration unless it
+ * contains REJECT. `start --all --config <file>` records its argv,
+ * environment and configuration under the record directory, prints its
+ * authtoken (so a test can prove it is redacted) and reports every tunnel
+ * started the way the agent's JSON log does: at its reserved domain, or at a
+ * fresh ephemeral URL. SIGUSR2 reports every tunnel started again, as after
+ * a reconnect: a reserved one at its domain, an ephemeral one at a new URL.
+ * It exits at once while <record>/fail exists, and records when it was
+ * asked to stop in <record>/exited-<pid>.
+ */
+export async function writeFakeNgrok(dir: string, record: string): Promise<string> {
+  const file = path.join(dir, "fake-ngrok");
+  await writeFile(file, `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const record = ${JSON.stringify(record)};
+const args = process.argv.slice(2);
+const config = fs.readFileSync(args[args.indexOf("--config") + 1], "utf8");
+if (args[0] === "config") {
+  fs.writeFileSync(path.join(record, "checked.yml"), config);
+  if (config.includes("REJECT")) { process.stderr.write("ERROR: invalid configuration in " + args[3] + "\\n"); process.exit(1); }
+  process.exit(0);
+}
+if (fs.existsSync(path.join(record, "fail"))) process.exit(1);
+fs.writeFileSync(path.join(record, "agent-" + process.pid + ".json"), JSON.stringify({ startedAt: performance.timeOrigin + performance.now(), args, env: process.env, config }));
+process.stdout.write("authtoken in use: " + process.env.NGROK_AUTHTOKEN + "\\n");
+const tunnels = [...config.matchAll(/^  ("[^"]+"):\\n((?:    .*\\n)+)/gm)];
+const start = () => { for (const [, name, body] of tunnels) {
+  const domain = /^    domain: (".*")$/m.exec(body);
+  const assigned = fs.existsSync(path.join(record, "same-url")) ? "shared" : Math.random().toString(16).slice(2, 10);
+  const url = domain ? "https://" + JSON.parse(domain[1]) : "https://" + assigned + ".ngrok-free.app";
+  process.stdout.write(JSON.stringify({ lvl: "info", msg: "started tunnel", obj: "tunnels", name: JSON.parse(name), url }) + "\\n");
+} };
+start();
+process.on("SIGUSR2", start);
+process.on("SIGTERM", () => { fs.writeFileSync(path.join(record, "exited-" + process.pid), String(performance.timeOrigin + performance.now())); process.exit(0); });
+setInterval(() => undefined, 1000);
+`, { mode: 0o755 });
+  return file;
 }

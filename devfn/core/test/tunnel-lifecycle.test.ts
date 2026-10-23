@@ -21,7 +21,7 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
-import { publicUrlsLive, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
+import { livePublicUrls, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
 import { writeTunnelState } from "../../proxy/src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
@@ -240,8 +240,9 @@ it("moves an owner's routes off a binding it no longer selects, reporting what t
   await publishTunnelRoutes(preview, "owner", [OTHER]);
   const moved = STAGED;
   provider.failRemove.add(OTHER);
-  expect(await publishLifecycleTunnel(stateDir, "owner", { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides))
-    .toEqual({ hostnames: [moved], outstanding: [`preview: ${OTHER}: public DNS removal is not confirmed`, `preview: provider failure removing ${OTHER}`] });
+  expect(await publishLifecycleTunnel(stateDir, "owner", { binding: staging, timing: "pre-start", routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }],
+    hostnames: { web: moved }, urls: { web: `https://${moved}` }, postStart: [] }, config, overrides))
+    .toEqual({ hostnames: [moved], urls: { web: `https://${moved}` }, outstanding: [`preview: ${OTHER}: public DNS removal is not confirmed`, `preview: provider failure removing ${OTHER}`] });
   expect(await readOwnerBindings(stateDir, "owner")).toEqual(["preview", "staging"]);
   expect((await readTunnelState(stateDir, "preview")).hostnames).toEqual([]);
   expect((await readTunnelState(stateDir, "staging")).hostnames.map((item) => item.hostname)).toEqual([moved]);
@@ -251,12 +252,13 @@ it("reports public URLs live only while the running connector routes every one o
   const tunnel = await registerPreview();
   const added = "api-other-0123456789abcdef0123.tunnel.example.test";
   await publishTunnelRoutes(tunnel, "owner", [OTHER]);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER] })).toBe(true);
+  const selection = { binding: tunnel.binding, timing: "pre-start" as const, routes: [], hostnames: { web: OTHER }, urls: { web: `https://${OTHER}` }, postStart: [] };
+  expect(await livePublicUrls(stateDir, "owner", { binding: "preview", hostnames: [OTHER] }, config, selection)).toEqual({ web: `https://${OTHER}` });
   // A name committed for the owner that the running connector does not route is not live.
   const state = await readTunnelState(stateDir, "preview");
   state.hostnames.push({ hostname: added, ownerId: "owner", publishedAt: "now" });
   await writeTunnelState(stateDir, state);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] })).toBe(false);
+  expect(await livePublicUrls(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] }, config, selection)).toBeUndefined();
 });
 
 it("reads no tunnel state for a lifecycle that never published and fails closed for one that may have", async () => {
@@ -293,4 +295,4 @@ it("recovers every other orphan when one orphan's withdrawal fails", async () =>
   provider.connector = "ready";
   expect(await recover()).toEqual(["orphan-a"]);
   expect([...provider.records.keys()]).toEqual([live]);
-});
+}, 30_000);

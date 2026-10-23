@@ -983,6 +983,9 @@ async function selectedComposeSourceState(spec: ComposeServiceSpec, root: string
   return { sourceFile, inventory, interpolation, envFileState };
 }
 
+/** Generated sibling (DEVFN_URL_) and public tunnel (DEVFN_PUBLIC_URL_) URL names. */
+const isEndpointReference = (name: string): boolean => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_PUBLIC_URL_");
+
 /** Read selected raw references without a Compose config subprocess. */
 export async function selectedComposeEndpointReferences(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv, deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS): Promise<Set<string>> {
@@ -1004,9 +1007,9 @@ export async function selectedComposeEndpointReferences(spec: ComposeServiceSpec
     }
     const active = assertActiveReferences(references, (name) => interpolation.references.get(name), implicitInterpolationKeys(spec));
     for (const name of assertActiveReferences(resourceReferences, (item) => interpolation.references.get(item), new Set())) {
-      if (name.startsWith("DEVFN_URL_")) active.add(name);
+      if (isEndpointReference(name)) active.add(name);
     }
-    return new Set([...active].filter((name) => name.startsWith("DEVFN_URL_")));
+    return new Set([...active].filter(isEndpointReference));
   } catch {
     throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to inspect selected Compose endpoint references for ${spec.service}.`);
   }

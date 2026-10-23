@@ -52,8 +52,11 @@ const canonicalBirthSignatures: Record<string, (text: string) => boolean> = {
   },
 };
 // Node's process APIs take a 32-bit PID and probe a group as the negated PID,
-// so a service PID beyond int32 can never be judged and would keep its route forever.
-const MAX_SERVICE_PID = 2 ** 31 - 1;
+// so a recorded PID beyond int32 can never be judged: it is malformed, never
+// evidence that the recorded process exited.
+const MAX_PID = 2 ** 31 - 1;
+/** Whether a recorded PID is one Node's process APIs can judge: an integer in 1..2^31-1. */
+export const isProcessId = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_PID;
 export const canonicalBirthSignature = (signature: string): boolean => {
   const format = signature.includes(":") ? signature.slice(0, signature.indexOf(":")) : "";
   return !Object.hasOwn(canonicalBirthSignatures, format) || canonicalBirthSignatures[format](signature.slice(format.length + 1));
@@ -104,7 +107,7 @@ export function parsePersistedProxyRoutes(value: unknown): PersistedProxyRoute[]
     }
     if (route.certificateDigest !== undefined && (typeof route.certificateDigest !== "string" || !/^[a-f0-9]{64}$/.test(route.certificateDigest))) throw new Error("Invalid certificate digest.");
     const service = route.serviceProcess as { pid?: unknown; birthSignature?: unknown } | undefined;
-    if (service !== undefined && (!service || typeof service !== "object" || !Number.isInteger(service.pid) || (service.pid as number) < 1 || (service.pid as number) > MAX_SERVICE_PID ||
+    if (service !== undefined && (!service || typeof service !== "object" || !isProcessId(service.pid) ||
       !nonempty(service.birthSignature) || !canonicalBirthSignature(service.birthSignature))) throw new Error("Invalid route service process.");
     const hostname = route.hostname.toLowerCase();
     const host = hosts.get(hostname);
