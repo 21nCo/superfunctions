@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
 import time
+import inspect
 
 
 @dataclass
@@ -57,7 +58,8 @@ class ContextManager:
         
         token = _context_var.set(store)
         try:
-            return await func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
         finally:
             _context_var.reset(token)
     

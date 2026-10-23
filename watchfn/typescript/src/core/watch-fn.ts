@@ -1,3 +1,4 @@
+import { isAuthSession } from "@superfunctions/auth";
 import { compareDeploymentMetrics, DeploymentComparisonOptions } from "../analysis/deployment-comparison";
 import { WatchFnConfig, WatchFnConfigSchema, WatchFnInstance } from "./types";
 import { EventRouter } from "./event-router";
@@ -85,10 +86,11 @@ export class WatchFn implements WatchFnInstance {
 
   constructor(config: WatchFnConfig) {
     this.config = WatchFnConfigSchema.parse(config);
-    if (this.config.botfn && (this.config.storage !== "database" || !this.config.database || this.config.auth?.enabled === false || !this.config.auth?.apiKey?.trim())) {
+    if (this.config.botfn && (this.config.storage !== "database" || !this.config.database || this.config.auth?.enabled === false || (!this.config.auth?.apiKey?.trim() && !this.config.auth?.provider))) {
       throw new TypeError("BotFn issue ingestion requires database storage and a configured API key");
     }
     if (this.config.retention && (this.config.storage !== "database" || !this.config.database)) throw new TypeError("Event retention requires shared database storage");
+    if (this.config.auth?.provider && this.config.auth.enabled === false) throw new TypeError("Auth provider cannot be disabled");
     this.eventRouter = new EventRouter();
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
@@ -169,10 +171,24 @@ export class WatchFn implements WatchFnInstance {
 
   authorizeIngest(request: Request): boolean {
     const auth = this.config.auth;
+    if (auth?.provider) return false; // Provider authentication is asynchronous; use authorizeHttp.
     if (auth?.enabled === false) return true;
     if (!auth?.enabled && !auth?.apiKey) return true;
     if (!auth.apiKey) return false;
     return request.headers.get("authorization") === `Bearer ${auth.apiKey}` || request.headers.get("x-api-key") === auth.apiKey;
+  }
+
+  /** Scope checks apply to HTTP only; programmatic methods remain trusted host APIs. */
+  async authorizeHttp(request: Request, scope: "watchfn:ingest" | "watchfn:query" | "watchfn:issues:status"): Promise<401 | 403 | 503 | null> {
+    const provider = this.config.auth?.provider;
+    if (!provider) return this.authorizeIngest(request) ? null : 401;
+    try {
+      const session = await provider.authenticate(request);
+      if (!isAuthSession(session)) return 401;
+      if (session.expiresAt !== undefined && (!Number.isFinite(session.expiresAt.getTime()) || session.expiresAt.getTime() <= Date.now())) return 401;
+      if (!session.scopes?.includes(scope)) return 403;
+      return null;
+    } catch { return 503; }
   }
 
   start() {

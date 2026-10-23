@@ -80,6 +80,7 @@ class WatchFn:
         self.batcher.add(event)
 
     def query(self, metric: Optional[str] = None) -> List[Event]:
+        self.batcher.flush()
         return self.storage.query(metric)
 
 def watch_fn(name: str, **kwargs) -> WatchFn:

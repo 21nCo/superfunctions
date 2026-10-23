@@ -39,7 +39,7 @@ class MetricAggregator:
         self.functions = functions or ["count", "avg", "p95"]
         self.window_size = window_size
         self.windows: Dict[str, Dict[str, List]] = {}  # metric -> {values, timestamps}
-        self.aggregations: Dict[str, Dict[float, AggregatedMetric]] = {}
+        self.aggregations: Dict[str, Dict[tuple, AggregatedMetric]] = {}
     
     def add(self, metric: str, point: MetricPoint) -> None:
         """Add a metric point and update rolling windows."""
@@ -71,12 +71,14 @@ class MetricAggregator:
         tags: Optional[Dict[str, str]] = None
     ) -> List[AggregatedMetric]:
         """Get aggregated metrics for a time range."""
+        if from_time > to_time:
+            return []
         key = self._get_aggregation_key(metric, interval, tags)
         aggs = self.aggregations.get(key, {})
         
         results = []
-        for timestamp, agg in aggs.items():
-            if from_time <= timestamp <= to_time:
+        for agg in aggs.values():
+            if agg.timestamp + self._get_interval_ms(interval) > from_time and agg.timestamp <= to_time:
                 if function is None or agg.function == function:
                     results.append(agg)
         
@@ -88,7 +90,7 @@ class MetricAggregator:
         
         for key in list(self.aggregations.keys()):
             aggs = self.aggregations[key]
-            to_delete = [ts for ts in aggs if ts < cutoff]
+            to_delete = [key for key, agg in aggs.items() if agg.timestamp < cutoff]
             for ts in to_delete:
                 del aggs[ts]
             
@@ -143,7 +145,7 @@ class MetricAggregator:
             if agg_key not in self.aggregations:
                 self.aggregations[agg_key] = {}
             
-            self.aggregations[agg_key][bucket_timestamp] = AggregatedMetric(
+            self.aggregations[agg_key][(bucket_timestamp, func)] = AggregatedMetric(
                 metric=metric,
                 interval=interval,
                 timestamp=bucket_timestamp,

@@ -22,7 +22,8 @@ export class HttpHandlers {
     const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
       status, headers: { "Content-Type": "application/json" },
     });
-    if (!this.watch.authorizeIngest(request)) return reply({ error: "Unauthorized" }, 401);
+    const denied = await this.watch.authorizeHttp(request, "watchfn:ingest");
+    if (denied) return reply({ error: denied === 503 ? "Authentication unavailable" : denied === 403 ? "Forbidden" : "Unauthorized" }, denied);
     let body: unknown;
     try {
       body = await createRouteContext(request, {}, { maxBodyBytes: 8 * 1024 * 1024 }).json();
@@ -58,7 +59,8 @@ export class HttpHandlers {
     const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
       status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
-    if (!this.watch.authorizeIngest(request)) return reply({ error: "Unauthorized" }, 401);
+    const denied = await this.watch.authorizeHttp(request, "watchfn:issues:status");
+    if (denied) return reply({ error: denied === 503 ? "Authentication unavailable" : denied === 403 ? "Forbidden" : "Unauthorized" }, denied);
     let body: any;
     try { body = await createRouteContext(request, {}, { maxBodyBytes: 4096 }).json(); }
     catch (error) { return reply({ error: "Invalid status request" }, error instanceof PayloadTooLargeError ? 413 : 400); }
@@ -87,7 +89,8 @@ export class HttpHandlers {
     const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
       status, headers: { "Content-Type": "application/json" },
     });
-    if (!this.watch.authorizeIngest(request)) return reply({ error: "Unauthorized" }, 401);
+    const denied = await this.watch.authorizeHttp(request, "watchfn:query");
+    if (denied) return reply({ error: denied === 503 ? "Authentication unavailable" : denied === 403 ? "Forbidden" : "Unauthorized" }, denied);
     let body: unknown;
     try {
       body = await createRouteContext(request, {}, { maxBodyBytes: 64 * 1024 }).json();

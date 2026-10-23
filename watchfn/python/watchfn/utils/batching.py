@@ -1,67 +1,89 @@
+"""Threaded batching with shared pending state and serialized delivery."""
+
+import math
 import threading
-import queue
 import time
-from typing import List, Any, Callable
+from collections import deque
+from typing import Any, Callable, List
+
 
 class Batcher:
     def __init__(self, on_flush: Callable[[List[Any]], Any], max_size=100, max_wait=5.0):
-        self.queue = queue.Queue()
+        if (isinstance(max_size, bool) or not isinstance(max_size, int) or max_size <= 0
+                or not math.isfinite(max_wait) or max_wait <= 0):
+            raise ValueError("Batch size and wait must be positive")
         self.on_flush = on_flush
         self.max_size = max_size
         self.max_wait = max_wait
-        self._stop_event = threading.Event()
+        self._pending = deque()
+        self._condition = threading.Condition()
+        self._delivery = threading.Lock()
+        self._stopped = True
         self._thread = None
 
     def start(self):
-        if self._thread:
-            return
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        with self._condition:
+            if self._thread is not None:
+                return
+            self._stopped = False
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
 
     def stop(self):
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join()
-            self.flush()
+        # Stop the generation captured below. A concurrent restart after another
+        # stop must remain owned by its new thread, not cleared by this caller.
+        with self._condition:
+            self._stopped = True
+            self._condition.notify_all()
+            thread = self._thread
+        if thread is not None:
+            thread.join()
+        with self._condition:
+            if self._thread is thread:
+                self._thread = None
+        self.flush()
 
     def add(self, item: Any):
-        self.queue.put(item)
+        with self._condition:
+            self._pending.append(item)
+            self._condition.notify_all()
 
     def _run(self):
-        batch = []
-        last_flush = time.time()
-
-        while not self._stop_event.is_set():
+        deadline = time.monotonic() + self.max_wait
+        while True:
+            with self._condition:
+                while not self._stopped:
+                    remaining = deadline - time.monotonic()
+                    if len(self._pending) >= self.max_size or remaining <= 0:
+                        break
+                    self._condition.wait(remaining)
+                if self._stopped:
+                    return
             try:
-                # Wait for item or timeout (flush interval)
-                timeout = max(0.1, self.max_wait - (time.time() - last_flush))
-                item = self.queue.get(timeout=timeout)
-                batch.append(item)
-            except queue.Empty:
-                pass
-
-            if len(batch) >= self.max_size or (time.time() - last_flush >= self.max_wait and batch):
-                self.flush_batch(batch)
-                batch = []
-                last_flush = time.time()
+                self.flush()
+            except Exception:
+                # Pending events are restored; explicit flush/stop surfaces errors.
+                # Back off even when the size threshold remains exceeded.
+                with self._condition:
+                    self._condition.wait_for(lambda: self._stopped, self.max_wait)
+            deadline = time.monotonic() + self.max_wait
 
     def flush_batch(self, batch):
-        if not batch:
-            return
-        try:
-            # This handles both sync and async functions if wrapped correctly, 
-            # but usually on_flush here should be sync or run_until_complete.
+        if batch:
             self.on_flush(batch)
-        except Exception:
-            pass
-            
+
     def flush(self):
-        # Manual flush logic (drain queue)
-        batch = []
-        while not self.queue.empty():
-            try:
-                batch.append(self.queue.get_nowait())
-            except queue.Empty:
-                break
-        self.flush_batch(batch)
+        # A query/stop waits for any active delivery before reading storage.
+        with self._delivery:
+            with self._condition:
+                count = len(self._pending)
+            while count:
+                with self._condition:
+                    batch = [self._pending.popleft() for _ in range(min(count, self.max_size))]
+                try:
+                    self.flush_batch(batch)
+                except BaseException:
+                    with self._condition:
+                        self._pending.extendleft(reversed(batch))
+                    raise
+                count -= len(batch)
