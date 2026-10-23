@@ -83,8 +83,11 @@ export class UserFnClient {
   // ... trigger ...
 
   openFeedbackWidget() {
+    const user = this.identity.getUser();
+    const key = uuidv4();
     this.renderer?.renderFeedbackWidget(async (submission) => {
-      await this.feedback.submit(submission);
+      if (this.identity.getUser() !== user) throw new Error('Feedback identity changed');
+      await this.feedback.submit(submission, { idempotencyKey: key });
     });
   }
 
@@ -257,6 +260,7 @@ export class UserFnClient {
   identify(id: string, traits: UserTraits = {}) {
     this.surveyPresentation = undefined;
     this.renderer?.dismissSurveys?.();
+    this.renderer?.dismissFeedback?.();
     this.messagingEpoch++;
     this.identity.identify(id, traits);
     this.publishFlags();
@@ -266,6 +270,7 @@ export class UserFnClient {
   reset() {
     this.surveyPresentation = undefined;
     this.renderer?.dismissSurveys?.();
+    this.renderer?.dismissFeedback?.();
     this.messagingEpoch++;
     this.identity.reset();
     this.publishFlags();

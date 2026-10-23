@@ -23,4 +23,4 @@ Owned browser/server/SQLite/tempfiles cleaned by fixture. Diff whitespace passes
 
 This is concrete keyboard acceptance, not full accessibility certification.
 Screen-reader testing, other browser engines, richer campaign surfaces and feedback
-widget accessibility remain open. No deployment, provider send or release occurred.
+widget acceptance in other engines remain open. Feedback keyboard and retry acceptance is recorded in feedback-dialog-readiness.md. No deployment, provider send or release occurred.

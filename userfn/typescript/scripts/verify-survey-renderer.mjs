@@ -17,19 +17,19 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const directory = await mkdtemp(join(tmpdir(), 'userfn-survey-renderer-'));
 let browser, server, adapter, release;
 const requests = [];
-let dropNext = true, holdNext = false;
+let dropNext = true, holdNext = false, denyAckNext = false;
 try {
   const database = new Kysely({ dialect: new SqliteDialect({ database: new Database(join(directory, 'state.sqlite')) }) });
   adapter = kyselyAdapter({ db: database, dialect: 'sqlite', schema: Object.fromEntries(Object.keys(getUserFnSchema()).map(key => [key, key])) });
-  for (const table of Object.values(getUserFnSchema()).filter(table => table.modelName.startsWith('userfn_survey_'))) {
+  for (const table of Object.values(getUserFnSchema())) {
     let migration = database.schema.createTable(table.modelName);
-    for (const [name, field] of Object.entries(table.fields)) migration = migration.addColumn(name, field.type === 'number' ? 'integer' : 'text', column => name === 'id' ? column.primaryKey() : column.notNull());
+    for (const [name, field] of Object.entries(table.fields)) migration = migration.addColumn(name, field.type === 'number' ? 'integer' : 'text', column => name === 'id' ? column.primaryKey() : field.required ? column.notNull() : column);
     await migration.execute();
   }
   const questions = [{ id: 'score', type: 'csat', title: 'Score', required: true }, { id: 'choice', type: 'choice', title: 'Choice', required: true, choices: [{ label: 'Yes', value: true }, { label: 'No', value: false }] }, { id: 'text', type: 'text', title: 'Details' }];
   const service = createUserFnService({ database: adapter, auth: { async authenticate(request) {
     const actorId = request.headers.get('authorization')?.replace('Bearer ', '');
-    return actorId ? { id: actorId, type: 'session', subject: { actorType: 'user', actorId, tenantId: 'owned' }, scopes: ['userfn:surveys:write'] } : null;
+    return actorId ? { id: actorId, type: 'session', subject: { actorType: 'user', actorId, tenantId: 'owned' }, scopes: ['userfn:surveys:write', 'userfn:feedback:write'] } : null;
   } }, surveys: { resolvePolicy: () => ({ enabled: true, questions, perUser: 1 }) } });
   execFileSync(join(root, 'node_modules/.bin/esbuild'), [join(root, 'userfn/typescript/dist/index.js'), '--bundle', '--format=esm', '--platform=browser', '--outfile=' + join(directory, 'sdk.js')], { stdio: 'pipe' });
   const bundle = await readFile(join(directory, 'sdk.js'));
@@ -42,6 +42,7 @@ try {
       for (const [key, value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : value);
       requests.push({ key: headers.get('idempotency-key'), body: body.toString() });
       const result = await service.router.handle(new Request('http://localhost' + incoming.url, { method: incoming.method, headers, body }));
+      if (denyAckNext && result.ok) { denyAckNext = false; outgoing.writeHead(503); outgoing.end('{}'); return; }
       if (dropNext && result.ok) { dropNext = false; incoming.socket.destroy(); return; }
       if (holdNext && result.ok) { holdNext = false; await new Promise(resolve => { release = resolve; }); }
       outgoing.writeHead(result.status, Object.fromEntries(result.headers)); outgoing.end(Buffer.from(await result.arrayBuffer()));
@@ -159,7 +160,43 @@ try {
   });
   assert.equal(campaignKeys.length, 1);
   assert.match(campaignKeys[0], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, reducedMotion: true, reloadJournal: false }));
+  await page.evaluate(async()=>{
+    const {UserFnClient}=await import('/sdk.js');
+    client=new UserFnClient({apiKey:'feedback-browser',endpoint:location.origin,feedbackMaxAttempts:1});
+    client.identify('feedback-owner');
+    document.querySelector('#outside').focus(); client.openFeedbackWidget();
+  });
+  assert.equal(await page.getByRole('dialog',{name:'Send feedback'}).getAttribute('aria-modal'),'true');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await page.getByRole('button',{name:'Send Feedback',exact:true}).evaluate(node=>node===document.activeElement),true);
+  await page.getByRole('textbox',{name:'Feedback title'}).fill('Original feedback');
+  await page.getByRole('textbox',{name:'Feedback details'}).fill('Original details');
+  const beforeFeedback=requests.length; denyAckNext=true;
+  await page.getByRole('button',{name:'Send Feedback',exact:true}).click();
+  await page.getByRole('button',{name:'Retry feedback',exact:true}).waitFor();
+  assert.equal(await page.getByRole('textbox',{name:'Feedback title'}).isDisabled(),true);
+  assert.equal((await query`SELECT count(*) AS count FROM userfn_feedback`.execute(database)).rows[0].count,1);
+  await page.getByRole('button',{name:'Retry feedback',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[role=status]')?.textContent==='Feedback sent.');
+  assert.deepEqual(requests[beforeFeedback],requests[beforeFeedback+1]);
+  assert.equal((await query`SELECT count(*) AS count FROM userfn_feedback`.execute(database)).rows[0].count,1);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true);
+  await page.evaluate(()=>client.openFeedbackWidget());
+  await page.getByRole('textbox',{name:'Feedback title'}).fill('Late feedback');
+  await page.getByRole('textbox',{name:'Feedback details'}).fill('Close while pending');
+  holdNext=true; release=undefined;
+  await page.getByRole('button',{name:'Send Feedback',exact:true}).click();
+  for(let count=0;count<100&&!release;count++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(typeof release,'function');
+  await page.evaluate(()=>client.identify('new-owner'));
+  assert.equal(await page.getByRole('dialog').count(),0);
+  release(); release=undefined;
+  await page.waitForTimeout(100);
+  assert.equal(await page.getByRole('dialog').count(),0);
+  await page.locator('#outside').focus();
+  assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true);
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: false }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

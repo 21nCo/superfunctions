@@ -6,6 +6,7 @@ type SurveySubmit = (response: SurveyResponse) => void | false | 'local' | 'stor
 
 export class VanillaRenderer {
   private readonly dialogs = new Map<HTMLElement, () => void>();
+  private readonly feedbackNodes = new Set<HTMLElement>();
   private readonly surveyNodes = new Set<HTMLElement>();
   private readonly messages = new Set<HTMLElement>();
   private readonly messageTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
@@ -15,11 +16,13 @@ export class VanillaRenderer {
     }
   }
 
+  dismissFeedback(): void { for (const node of [...this.feedbackNodes]) this.removeMessage(node); }
   dismissSurveys(): void { for (const node of [...this.surveyNodes]) this.removeMessage(node); }
   dismissMessages(): void { for (const node of [...this.messages]) this.removeMessage(node); }
   private removeMessage(node: HTMLElement): void {
     const cleanup = this.dialogs.get(node); this.dialogs.delete(node);
     node.remove();
+    this.feedbackNodes.delete(node);
     cleanup?.(); this.messages.delete(node); this.surveyNodes.delete(node);
     const timer = this.messageTimers.get(node); if (timer !== undefined) clearTimeout(timer);
     this.messageTimers.delete(node);
@@ -73,6 +76,7 @@ export class VanillaRenderer {
   }
 
   renderFeedbackWidget(onSubmit: (f: FeedbackSubmission) => Promise<void>) {
+    for (const node of [...this.feedbackNodes]) this.removeMessage(node);
     const overlay = document.createElement('div');
     overlay.className = 'userfn-overlay';
 
@@ -84,7 +88,8 @@ export class VanillaRenderer {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'userfn-close';
     closeBtn.innerHTML = '&times;';
-    closeBtn.onclick = () => document.body.removeChild(overlay);
+    closeBtn.setAttribute('aria-label', 'Close feedback');
+    closeBtn.onclick = () => this.removeMessage(overlay);
     modal.appendChild(closeBtn);
 
     // Title
@@ -106,6 +111,7 @@ export class VanillaRenderer {
     form.appendChild(categoryLabel);
 
     const categorySelect = document.createElement('select');
+    categorySelect.setAttribute('aria-label', 'Category');
     categorySelect.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
     ['feature', 'bug', 'general'].forEach(cat => {
       const opt = document.createElement('option');
@@ -118,12 +124,16 @@ export class VanillaRenderer {
     // Title Input
     const titleInput = document.createElement('input');
     titleInput.placeholder = 'Short summary';
+    titleInput.setAttribute('aria-label', 'Feedback title');
+    titleInput.maxLength = 200;
     titleInput.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
     form.appendChild(titleInput);
 
     // Body Input
     const bodyInput = document.createElement('textarea');
     bodyInput.placeholder = 'Describe your feedback...';
+    bodyInput.setAttribute('aria-label', 'Feedback details');
+    bodyInput.maxLength = 20000;
     bodyInput.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px; height: 100px; resize: vertical;';
     form.appendChild(bodyInput);
 
@@ -131,35 +141,40 @@ export class VanillaRenderer {
     const submitBtn = document.createElement('button');
     submitBtn.className = 'userfn-cta';
     submitBtn.innerText = 'Send Feedback';
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    let snapshot: FeedbackSubmission | undefined;
+    let sending = false; let completed = false;
     submitBtn.onclick = async () => {
-      if (!titleInput.value || !bodyInput.value) {
-        alert('Please fill in all fields');
-        return;
+      if (sending || completed || !this.feedbackNodes.has(overlay)) return;
+      if (!snapshot) {
+        if (!titleInput.value.trim() || !bodyInput.value.trim()) {
+          status.textContent = 'Please provide a title and details.';
+          (!titleInput.value.trim() ? titleInput : bodyInput).focus(); return;
+        }
+        snapshot = { title: titleInput.value, body: bodyInput.value, category: categorySelect.value as FeedbackCategory };
       }
-      
-      submitBtn.disabled = true;
-      submitBtn.innerText = 'Sending...';
-
+      sending = true; submitBtn.disabled = true; submitBtn.innerText = 'Sending…';
+      titleInput.disabled = true; bodyInput.disabled = true; categorySelect.disabled = true;
+      status.textContent = 'Submitting your feedback…';
       try {
-        await onSubmit({
-          title: titleInput.value,
-          body: bodyInput.value,
-          category: categorySelect.value as FeedbackCategory,
-        });
-        document.body.removeChild(overlay);
-        // Maybe show success toast?
-        alert('Feedback sent!');
-      } catch (e) {
-        submitBtn.disabled = false;
-        submitBtn.innerText = 'Send Feedback';
-        alert('Failed to send feedback');
-      }
+        await onSubmit({ ...snapshot });
+        if (!this.feedbackNodes.has(overlay)) return;
+        completed = true; status.textContent = 'Feedback sent.'; submitBtn.innerText = 'Submitted';
+      } catch {
+        if (!this.feedbackNodes.has(overlay)) return;
+        status.textContent = 'Delivery not confirmed. Keep this dialog open; retry sends the same feedback.';
+        submitBtn.disabled = false; submitBtn.innerText = 'Retry feedback';
+      } finally { sending = false; }
     };
+    form.appendChild(status);
     form.appendChild(submitBtn);
 
     modal.appendChild(form);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    this.feedbackNodes.add(overlay);
+    this.manageDialog(overlay, modal, closeBtn, 'Send feedback');
   }
 
   private renderQuestion(
