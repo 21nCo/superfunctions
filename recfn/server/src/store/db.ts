@@ -1,4 +1,7 @@
-import { deletionMethods, fenceStore, readAll, lockBot, blocked, type ProducerIntent } from './deletion.js';
+import { deletionMethods, fenceStore, readAll, lockBot, assertBotWritable, blocked, type ProducerIntent } from './deletion.js';
+import { lockBotAdmission, assertBotCapacity, validateBotLimit } from './admission.js';
+import { loadLimitsConfig } from '../config.js';
+import { isTerminalState } from '@recfn/core';
 import { getRecFnSchema } from './schema.js';
 import { NotFoundError, wrapWithSchema, type Adapter, type WhereClause } from '@superfunctions/db';
 import type {
@@ -20,6 +23,8 @@ import type {
 
 export interface CreateDbStoreOptions {
   adapter: Adapter;
+  /** Durable namespace policy; defaults to RECFN_MAX_CONCURRENT_BOTS or 100. */
+  maxConcurrentBots?: number;
   /** Explicit assertion that the configured backend persists across process restarts.
    * Defaults false; database adapter identity alone cannot distinguish SQLite :memory:.
    * The built-in memory adapter is always rejected when true.
@@ -110,10 +115,12 @@ export function assertProductionStore(store: RecFnStore): void {
       `RecFn production server requires a durable @superfunctions/db-backed store; received ${store.capabilities.adapterName}.`,
     );
   }
+  if (!store.capabilities.botAdmission?.atomic) throw new Error('RecFn production server requires atomic namespace bot admission.');
 }
 
 export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
-  return buildStore(options, wrapWithSchema(options.adapter, getRecFnSchema()), true);
+  const configured = { ...options, maxConcurrentBots: validateBotLimit(options.maxConcurrentBots ?? loadLimitsConfig().maxConcurrentBots) };
+  return buildStore(configured, wrapWithSchema(options.adapter, getRecFnSchema()), true);
 }
 
 function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boolean): RecFnStore {
@@ -123,30 +130,41 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
   }
   const durable = options.durable === true && !isMemory;
   const adapterName = options.adapterName ?? options.adapter.name;
+  const maximum = options.maxConcurrentBots!;
+  const admissionSupported = ['memory', 'kysely', 'drizzle'].includes(options.adapter.id) &&
+    adapter.capabilities.transactions.supported && adapter.capabilities.operations.upsert;
+  const admit = <T>(namespace: string, action: (tx: import('@superfunctions/db').TransactionAdapter) => Promise<T>) => {
+    if (!admissionSupported) throw new Error('Bot admission requires a supported shared memory/Kysely/Drizzle adapter with transactional atomic upsert support.');
+    return adapter.transaction(async tx => { await lockBotAdmission(tx, namespace, maximum); return action(tx); });
+  };
 
 
   const store: RecFnStore = {
     ...deletionMethods(adapter),
     capabilities: {
       durable,
+      ...(admissionSupported ? { botAdmission: { atomic: true as const, maximum } } : {}),
       backend: isMemory ? 'memory' : 'db',
       adapterName,
     },
 
     async createBot(input: CreateBotInput): Promise<Bot> {
       const now = new Date().toISOString();
-      return adapter.create<Bot>({
-        model: 'bots',
-        data: {
-          id: generateId('bot'),
-          namespace: input.namespace,
-          meetingUrl: input.meetingUrl,
-          platform: input.platform,
-          status: 'creating',
-          config: input.config,
-          createdAt: now,
-          updatedAt: now,
-        },
+      return admit(input.namespace, async tx => {
+        await assertBotCapacity(tx, input.namespace, maximum);
+        return tx.create<Bot>({
+          model: 'bots',
+          data: {
+            id: generateId('bot'),
+            namespace: input.namespace,
+            meetingUrl: input.meetingUrl,
+            platform: input.platform,
+            status: 'creating',
+            config: input.config,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
       });
     },
 
@@ -195,23 +213,15 @@ function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boo
       namespace: string,
       updates: Partial<Pick<Bot, 'status' | 'errorMessage' | 'updatedAt'>>,
     ): Promise<Bot | null> {
-      try {
-        return await adapter.update<Bot>({
-          model: 'bots',
-          where: withNamespace(namespace, [
-            { field: 'id', operator: 'eq', value: id },
-          ]),
-          data: {
-            ...updates,
-            updatedAt: updates.updatedAt ?? new Date().toISOString(),
-          },
-        });
-      } catch (error) {
-        if (error instanceof NotFoundError) {
-          return null;
-        }
-        throw error;
-      }
+      return admit(namespace, async tx => {
+        // Namespace before aggregate root: admission and reactivation share lock order.
+        const current = await tx.findOne<Bot>({ model: 'bots', where: withNamespace(namespace, [{ field: 'id', operator: 'eq', value: id }]) });
+        if (!current) return null;
+        await assertBotWritable(tx, id, namespace);
+        if (updates.status && isTerminalState(current.status) && !isTerminalState(updates.status)) await assertBotCapacity(tx, namespace, maximum);
+        return tx.update<Bot>({ model: 'bots', where: withNamespace(namespace, [{ field: 'id', operator: 'eq', value: id }]),
+          data: { ...updates, updatedAt: updates.updatedAt ?? new Date().toISOString() } });
+      });
     },
 
     async deleteBot(id: string, namespace: string): Promise<boolean> {

@@ -8,33 +8,6 @@ import type { RecFnLimitsConfig } from '../config.js';
 import { ErrorCode } from '@recfn/core';
 import { createError } from '@recfn/core';
 
-const NON_TERMINAL_BOT_STATUSES = [
-  'creating',
-  'joining',
-  'joined',
-  'recording',
-  'leaving',
-  'left',
-] as const;
-
-export async function checkConcurrentBots(
-  store: RecFnStore,
-  namespace: string,
-  limits: RecFnLimitsConfig,
-): Promise<void> {
-  const result = await store.listBots(namespace, { limit: limits.maxConcurrentBots + 1 });
-  const nonTerminal = result.items.filter(
-    (b) => NON_TERMINAL_BOT_STATUSES.includes(b.status as (typeof NON_TERMINAL_BOT_STATUSES)[number]),
-  );
-  if (nonTerminal.length >= limits.maxConcurrentBots) {
-    throw createError(
-      ErrorCode.BAD_REQUEST,
-      `Maximum ${limits.maxConcurrentBots} concurrent bots per namespace.`,
-      { limit: limits.maxConcurrentBots },
-    );
-  }
-}
-
 export async function checkWebhookCount(
   store: RecFnStore,
   namespace: string,

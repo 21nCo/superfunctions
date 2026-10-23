@@ -14,6 +14,8 @@ import type {
 
 export interface RecFnStoreCapabilities {
   durable: boolean;
+  /** Built-in store atomic namespace admission; custom stores must explicitly implement this contract. */
+  botAdmission?: { atomic: true; maximum: number };
   backend: 'memory' | 'db';
   adapterName: string;
 }

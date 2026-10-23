@@ -32,7 +32,7 @@ export async function lockBot(adapter: Pick<Adapter, 'update' | 'findOne'>, botI
   const bot = await adapter.update<Bot>({ model: 'bots', where: where(botId, namespace), data: { id: botId } });
   if (!bot || bot.id !== botId || !await adapter.findOne({ model: 'bots', where: where(botId, namespace) })) throw blocked();
 }
-export async function assertBotWritable(adapter: Adapter, botId: string, namespace: string): Promise<void> {
+export async function assertBotWritable(adapter: Pick<Adapter, 'update' | 'findOne'>, botId: string, namespace: string): Promise<void> {
   await lockBot(adapter, botId, namespace);
   if (await adapter.findOne({ model: 'botDeletions', where: where(botId, namespace) })) throw blocked();
 }
@@ -112,7 +112,7 @@ export function deletionMethods(adapter: Adapter) {
 }
 
 export function fenceStore(store: RecFnStore, adapter: Adapter, scoped: (tx: Adapter) => RecFnStore): RecFnStore {
-  const botMethods = new Set(['updateBot', 'addParticipant', 'updateParticipant', 'addChatMessage', 'upsertMetadata']);
+  const botMethods = new Set(['addParticipant', 'updateParticipant', 'addChatMessage', 'upsertMetadata']);
   const guarded = new Set([...botMethods, 'createRecording', 'createTranscript', 'updateTranscript', 'setEventBotId']);
   return new Proxy(store, { get(target, property, receiver) {
     if (typeof property !== 'string' || !guarded.has(property)) return Reflect.get(target, property, receiver);

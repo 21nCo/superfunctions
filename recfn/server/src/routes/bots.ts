@@ -9,7 +9,7 @@ import {
   canTransition,
 } from '@recfn/core';
 import type { RecFnStore, ListBotsOptions } from '../store/types.js';
-import { checkConcurrentBots, checkPaginationLimit } from '../middleware/limits.js';
+import { checkPaginationLimit } from '../middleware/limits.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';
 import { ok, err } from '../middleware/envelope.js';
@@ -54,7 +54,6 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
       path: '/api/v1/bots',
       handler: async (request: Request, ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
-        await checkConcurrentBots(store, auth.namespace, limits);
         const body = await ctx.json<{
           meetingUrl?: string;
           platform?: Platform;

@@ -44,6 +44,29 @@ const store = createDbStore({ adapter, durable: true });
 
 The store schema uses JSON text and ISO date text, and requires a unique `(namespace, botId)` index for meeting metadata. Existing installations must migrate those representations and resolve duplicate metadata rows before applying this schema. Do not switch existing native JSON columns without a matching migration. File-backed SQLite close/reopen is covered by the store acceptance test; other providers require their own migration and persistence validation.
 
+### Bot admission policy
+
+Built-in stores enforce a persisted per-namespace nonterminal bot limit, default
+100 (`RECFN_MAX_CONCURRENT_BOTS`), configurable with
+`createDbStore({ adapter, maxConcurrentBots: 100, durable: true })` or
+`createMemoryStore({ maxConcurrentBots: 100 })`. The environment is sampled when
+the store is constructed; an explicit option wins. API creation, calendar scheduling,
+and direct store creation share the transaction; finalizing bots remain counted,
+and direct reactivation requires available capacity. Full capacity returns 429.
+
+Existing installations must migrate the `botAdmission` model and seed namespace
+policies before restarting writers. Policy changes require stopped writers and a
+matching database/configuration update; lowering below occupancy permits draining.
+Supported paths are shared memory and transactional native-upsert Kysely/Drizzle;
+Prisma, unknown adapters, and Drizzle SQLite remain unsupported for this admission
+contract. Native acceptance covers Kysely SQLite, not every database deployment.
+See [admission and migration details](.conduct/bot-admission-readiness.md).
+
+An ambiguous queue-enqueue failure retains its creating bot and capacity. It does
+not prove that no worker will run. Reconcile the existing operation before retrying
+or releasing it. Atomic cross-worker join ownership/durable queue handoff remain
+unfinished; this cap counts bot rows and does not prove an exact live-process cap.
+
 ### Bot worker
 
 ```ts

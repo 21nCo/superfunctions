@@ -79,8 +79,11 @@ The initial design considered reusable admission slots. Source analysis identifi
 an ABA race between two cleaners and a new slot owner; that design was removed
 before acceptance. This implementation does not infer an atomic global admission
 cap by counting files. Per-artifact encoded limits, encryption overhead, capture
-and upload deadlines remain unchanged. Deployment-wide admission, total physical
-disk limits, and offline repair of unknown remnants remain open requirements.
+and upload deadlines remain unchanged. Deployment-wide resource admission, total physical disk limits, and offline repair
+of unknown remnants remain operational concerns. Original LIMIT-001 specifically
+requires a per-namespace bot limit; its admission successor is documented in
+`bot-admission-readiness.md`. A global OS scratch quota is not explicitly required
+by the original specification.
 
 ## Bounds
 
