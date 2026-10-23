@@ -3,6 +3,7 @@ import path from "node:path";
 import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, sha256Hex } from "@apifn/contracts";
 import { afterAll, describe, expect, it } from "vitest";
 import { GENERATOR_VERSION, SDK_ARTIFACT_MANIFEST_FILE, TYPESCRIPT_TARGET_VERSION, writeSdk } from "../src/index.js";
+import { parameterSupport } from "../src/targets/typescript/operations.js";
 import { RUNTIME_SOURCE } from "../src/targets/typescript/runtime-source.js";
 import { cleanupTemp, clone, compile, fixtureCatalog, fixtureConfig, FIXTURES, generate, PACKAGE_DIR, readJson, tempDir } from "./helpers.js";
 
@@ -601,26 +602,32 @@ export async function use(): Promise<void> {
   });
 
   it("analyzes objects with tens of thousands of members in linear time, reporting members in declaration order", () => {
-    const count = 32_000;
-    const flat: Record<string, unknown> = {};
-    const mixed: Record<string, unknown> = {};
-    for (let member = 0; member < count; member++) {
-      flat[`p${member}`] = { type: "string" };
-      mixed[`p${member}`] = member === 31_000 || member === 100 ? { type: "object", properties: { id: { type: "string" } } } : { type: "string" };
-    }
-    const cases = [
-      { name: "wide and flat", parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties: flat, additionalProperties: false } } },
-      { name: "wide with nested members", parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties: mixed, additionalProperties: false } } },
-    ];
+    const wide = (count: number, nested: number[]) => {
+      const properties: Record<string, unknown> = {};
+      for (let member = 0; member < count; member++) {
+        properties[`p${member}`] = nested.includes(member) ? { type: "object", properties: { id: { type: "string" } } } : { type: "string" };
+      }
+      return { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties, additionalProperties: false } };
+    };
+    const reason = (member: number) => `query parameter "filter": its member "p${member}" admits only nested objects or arrays, which the client cannot serialize.`;
+
+    // Only the analysis is timed, not emission: about 80 ms here for 128k members, where a scan per member
+    // (quadratic) took 16 s. The ceiling leaves slow shared runners room and still catches that.
+    const parameter = wide(128_000, [100, 127_000]);
     const started = performance.now();
+    const support = parameterSupport(parameter as any, {});
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(support.reasons).toEqual([reason(100), reason(127_000)]);
+
+    // The same reasons and types reach the generated package.
+    const cases = [
+      { name: "wide and flat", parameter: wide(2000, []) },
+      { name: "wide with nested members", parameter: wide(2000, [100, 1900]) },
+    ];
     const result = generate(vectorCatalog(cases.map((vector, index) => ({ vector, index }))));
-    expect(performance.now() - started).toBeLessThan(1000);
     expect(result.ok).toBe(true);
     expect(result.manifest!.operations.included.map((entry) => entry.id)).toContain("vectors.v0");
-    expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([
-      'query parameter "filter": its member "p100" admits only nested objects or arrays, which the client cannot serialize.',
-      'query parameter "filter": its member "p31000" admits only nested objects or arrays, which the client cannot serialize.',
-    ]);
+    expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([reason(100), reason(1900)]);
     const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
     expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).not.toMatch(/\bDeepObjectValue</);
   });

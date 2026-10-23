@@ -12,20 +12,33 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { generateSdk, SDK_ARTIFACT_MANIFEST_FILE, SDK_OUTPUT_LOCK_FILE, writeSdk, type SdkGenerationResult, type WriteSdkResult } from "../src/index.js";
 import { cleanupTemp, fixtureCatalog, generate, PACKAGE_DIR, tempDir } from "./helpers.js";
 
-const pause = vi.hoisted(() => ({ target: null as string | null, reached: () => {}, resume: Promise.resolve(), onRead: null as { file: string; run: () => void } | null }));
+const pause = vi.hoisted(() => ({
+  target: null as string | null,
+  reached: () => {},
+  resume: Promise.resolve(),
+  /** Runs once, and is awaited, just before the next read (or lstat) of its file. */
+  onRead: new Map<string, () => unknown>(),
+  onStat: new Map<string, () => unknown>(),
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const before = async (hooks: Map<string, () => unknown>, file: unknown) => {
+    const run = hooks.get(file as string);
+    if (run === undefined) return;
+    hooks.delete(file as string);
+    await run();
+  };
   return {
     ...actual,
     readFile: (async (file: string, ...rest: unknown[]) => {
-      if (pause.onRead !== null && file === pause.onRead.file) {
-        const { run } = pause.onRead;
-        pause.onRead = null;
-        run();
-      }
+      await before(pause.onRead, file);
       return (actual.readFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
     }) as typeof actual.readFile,
+    lstat: (async (file: string, ...rest: unknown[]) => {
+      await before(pause.onStat, file);
+      return (actual.lstat as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+    }) as typeof actual.lstat,
     rename: async (from: string, to: string) => {
       if (pause.target !== null && to === pause.target) {
         pause.target = null;
@@ -206,12 +219,86 @@ describe("the output directory lock", () => {
     expect((await writeSdk(dir, generate())).ok).toBe(true);
     const lock = path.join(dir, SDK_OUTPUT_LOCK_FILE);
     const held = `${JSON.stringify({ pid: 4242, hostname: "build-host", startedAt: "2026-10-22T00:00:00.000Z", nonce: "other" })}\n`;
-    pause.onRead = { file: path.join(dir, "src/models.ts"), run: () => writeFileSync(lock, held) };
+    pause.onRead.set(path.join(dir, "src/models.ts"), () => writeFileSync(lock, held));
     const result = await writeSdk(dir, generationB(), { dryRun: true });
-    expect(pause.onRead).toBeNull();
+    expect(pause.onRead.size).toBe(0);
     expectLockConflict(result);
     expect(result.diagnostics[0]!.message).toContain("process 4242 on build-host");
     expect(readFileSync(lock, "utf8")).toBe(held);
+  });
+
+  describe("a dry run while another run writes", () => {
+    const tsconfig = (dir: string) => path.join(dir, "tsconfig.json");
+    const sorted = (files: string[]) => [...files].sort();
+
+    it("plans again when a write completes while it reads, rather than reporting mixed files", async () => {
+      const dir = tempDir();
+      const a = generate();
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      writeFileSync(tsconfig(dir), "{}\n");
+      // Just before the dry run of A reads tsconfig.json, a run writes B, which also restores tsconfig.json.
+      pause.onRead.set(tsconfig(dir), async () => expect((await writeSdk(dir, generationB())).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onRead.size).toBe(0);
+      // Taken as first read, A's README, client and models and B's restored tsconfig.json would all look up to date.
+      expect(result.ok).toBe(true);
+      expect(sorted(result.written)).toEqual(sorted([SDK_ARTIFACT_MANIFEST_FILE, "README.md", "src/client.ts", "src/models.ts"]));
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+      expectConsistent(dir);
+      expect(JSON.parse(readFileSync(path.join(dir, SDK_ARTIFACT_MANIFEST_FILE), "utf8"))).toEqual(generationB().manifest);
+    });
+
+    it("sees writes of B and then A again during planning", async () => {
+      const dir = tempDir();
+      const a = generate();
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      writeFileSync(tsconfig(dir), "{}\n");
+      // models.ts is read while B is on disk; A is written back, restoring tsconfig.json, before that is read.
+      pause.onRead.set(path.join(dir, "src/models.ts"), async () => {
+        expect((await writeSdk(dir, generationB())).ok).toBe(true);
+        pause.onRead.set(tsconfig(dir), async () => expect((await writeSdk(dir, a)).ok).toBe(true));
+      });
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onRead.size).toBe(0);
+      // Taken as first read, B's models.ts would look like drift, though A is back on disk before the plan ends.
+      expect(result).toEqual({ ok: true, written: [], unchanged: expect.any(Array), deleted: [], seeded: [], diagnostics: [] });
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+    });
+
+    it("sees a write that creates the directory while it plans", async () => {
+      const dir = path.join(tempDir(), "out");
+      const a = generate();
+      // The directory is missing when the dry run starts; B creates and fills it before src/models.ts is examined.
+      pause.onStat.set(path.join(dir, "src/models.ts"), async () => expect((await writeSdk(dir, generationB())).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onStat.size).toBe(0);
+      expect(result.ok).toBe(true);
+      expect(sorted(result.written)).toEqual(sorted([SDK_ARTIFACT_MANIFEST_FILE, "README.md", "src/client.ts", "src/models.ts"]));
+      expect(result.seeded).toEqual([]);
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+    });
+
+    it("reports a conflict when the directory keeps changing, and changes nothing itself", async () => {
+      const dir = tempDir();
+      const a = generate();
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      const models = path.join(dir, "src/models.ts");
+      let writes = 0;
+      const flip = async () => {
+        expect((await writeSdk(dir, writes++ % 2 === 0 ? generationB() : a)).ok).toBe(true);
+        pause.onRead.set(models, flip);
+      };
+      pause.onRead.set(models, flip);
+      const result = await writeSdk(dir, a, { dryRun: true });
+      pause.onRead.clear();
+      expect(writes).toBe(3);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SDK_OUTPUT_CONFLICT", severity: "error", message: expect.stringContaining("changed while it was being checked, 3 times") })]);
+      expect(result.written).toEqual([]);
+      const after = tree(dir);
+      expect(Object.keys(after).filter((file) => file.includes(".apifn-tmp-") || file === SDK_OUTPUT_LOCK_FILE)).toEqual([]);
+      expectConsistent(dir);
+    });
   });
 
   it("is released after a planning conflict, a dry run and a failed write", async () => {
