@@ -1,0 +1,33 @@
+probefn/.conduct/session-ownership-readiness.md
+  s_e1c5fc1a65c0cf::t_ca7a5adcb37d95 1-20
+probefn/packages/contracts/src/config.ts
+  s_e1c5fc1a65c0cf::t_833aa8a326dad0 108
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_df5e212a7fb718 707
+probefn/packages/storage/src/caps.ts
+  s_e1c5fc1a65c0cf::t_a715c7057c3d7d 8-9
+probefn/packages/storage/src/index.ts
+  s_e1c5fc1a65c0cf::t_6be290b2aa2a67 10-11
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_79cd7de7e4d97c 195
+probefn/packages/storage/src/session-ownership.ts
+  s_e1c5fc1a65c0cf::t_b0badb6405a8b9 1-123
+probefn/packages/storage/test/session-ownership.test.ts
+  s_e1c5fc1a65c0cf::t_005af7f1e4ab02 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91fade174d0c726b784a26e71280e23b7d20005e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
