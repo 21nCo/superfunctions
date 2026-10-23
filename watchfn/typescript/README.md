@@ -317,3 +317,49 @@ The schema wrapper does not automatically migrate a production database. Project
 integrity assumes cooperating supported writers on an owned database. Missing or
 inconsistent projections encountered by dispatch/maintenance fail closed.
 See [receipt-retention acceptance](../.conduct/receipt-retention-readiness.md).
+
+### Built-in SES alert email
+
+Install a SendFn build exposing `sendfn/adapters/aws-ses` (the single-attempt,
+abortable SES transport), then configure email only in trusted server code:
+
+```ts
+const watch = new WatchFn({
+  name: 'production', storage: 'database', database,
+  alerts: {
+    email: {
+      from: 'alerts@example.com', replyTo: 'operations@example.com',
+      awsSes: { region: 'us-east-1', accessKeyId, secretAccessKey },
+    },
+  },
+});
+const alert = await watch.alerts.create({
+  name: 'High latency',
+  condition: { metric: 'latency', window: '5m', operator: 'gt', threshold: 500 },
+  channels: [{ type: 'email', recipients: ['operator@example.com'] }],
+});
+```
+
+The optional `sendfn` peer does not enable automatic delivery. Hosts still invoke
+`processNotifications()` and retain the existing durable namespace/schema and
+receipt-maintenance obligations. Missing or incompatible transport installation
+fails before claiming an email job. `configured` reports server configuration,
+not provider availability or verified credentials. The built-in channel accepts
+1–50 bare recipient addresses; sender/reply-to addresses are validated, subject
+control characters are removed, and HTML is escaped. Credentials and the trusted
+optional SES `endpoint` remain outside durable definitions, receipts and public
+channel projections. Protect recipient-bearing pending records at rest.
+
+Only a successful SES response with a nonempty message receipt counts as delivered.
+Failures, lost responses, oversized responses and timeouts become retained unknown
+outcomes, with no automatic replay. SES has no send idempotency guarantee. Resolve
+uncertainty explicitly using the existing notification reconciliation API.
+
+`alerts.timeoutMs` aborts the actual SES request; optional
+`alerts.email.awsSes.timeoutMs` can shorten the transport deadline. The transport
+response cap defaults to 1 MiB (`maxResponseBytes`). Dispatch retains its host
+operation until `close()` settles, including timeout paths. Cleanup failure is
+surfaced and leaves the claimed lease for conservative recovery; it is not a clean
+shutdown. Event-loop stalls can delay timers, so this is not a real-time deadline.
+The legacy `emailSender` override takes precedence when present and remains
+cooperatively cancellable host code; its existing 100-recipient limit is unchanged.

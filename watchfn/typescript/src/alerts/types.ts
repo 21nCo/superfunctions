@@ -17,11 +17,22 @@ export interface AlertNotification {
 }
 /** Senders must honor AbortSignal and use notification.id for downstream deduplication. */
 export type AlertSender = (notification: AlertNotification, channel: AlertChannel, signal: AbortSignal) => Promise<void>;
+export interface AlertEmailConfig {
+  from: string; replyTo?: string;
+  awsSes: {
+    region: string; accessKeyId: string; secretAccessKey: string;
+    configurationSetName?: string; endpoint?: string;
+    timeoutMs?: number; maxResponseBytes?: number;
+  };
+}
 export interface AlertRuntimeConfig {
   namespace?: string; maxObservations?: number; maxPendingPerAlert?: number;
   timeoutMs?: number; leaseMs?: number; maxAttempts?: number;
   /** Trusted Events v2 endpoint; default is the official PagerDuty HTTPS endpoint. */
   pagerDutyEndpoint?: string;
+  /** Trusted SES configuration; credentials never enter durable alert records. */
+  email?: AlertEmailConfig;
+  /** Legacy override; takes precedence over the built-in SES transport. */
   emailSender?: AlertSender;
   /** Legacy host-owned override, without built-in Events v2 response validation. */
   pagerDutySender?: AlertSender;

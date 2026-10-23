@@ -15,7 +15,7 @@ try {
  }
  const closure=new Map();
  function add(name){if(closure.has(name)||!packages.has(name))return;const item=packages.get(name);closure.set(name,item);for(const dependency of Object.keys(item.manifest.dependencies??{}))add(dependency);}
- add('@watchfn/core');
+ add('@watchfn/core');add('sendfn');
  const dependencies={};
  for(const [name,item] of closure){const [packed]=JSON.parse(runNpm(['pack','--ignore-scripts','--json','--pack-destination',temporary],item.path));dependencies[name]='file:'+join(temporary,packed.filename);}
  await writeFile(join(temporary,'package.json'),JSON.stringify({private:true,type:'module',dependencies,overrides:Object.fromEntries(Object.keys(dependencies).map(name=>[name,'$'+name]))}));
@@ -23,11 +23,11 @@ try {
  const body=`
  const {createServer}=await import('node:http');
  const {memoryAdapter}=await import('@superfunctions/db/adapters/memory');
- const received=[];let drop=false;
- const server=createServer((request,response)=>{const chunks=[];request.on('data',chunk=>chunks.push(chunk));request.on('end',()=>{const body=JSON.parse(Buffer.concat(chunks).toString());received.push(body);if(drop){request.socket.destroy();return;}response.writeHead(202,{'content-type':'application/json'});response.end(JSON.stringify({status:'success',dedup_key:body.dedup_key}));});});
+ const received=[],emails=[];let drop=false,emailDrop=false;
+ const server=createServer((request,response)=>{const chunks=[];request.on('data',chunk=>chunks.push(chunk));request.on('end',()=>{if(request.headers['content-type']?.includes('application/x-www-form-urlencoded')){emails.push(new URLSearchParams(Buffer.concat(chunks).toString()));if(emailDrop){request.socket.destroy();return;}response.end('<SendEmailResponse xmlns="http://ses.amazonaws.com/doc/2010-12-01/"><SendEmailResult><MessageId>packed-email-id</MessageId></SendEmailResult></SendEmailResponse>');return;}const body=JSON.parse(Buffer.concat(chunks).toString());received.push(body);if(drop){request.socket.destroy();return;}response.writeHead(202,{'content-type':'application/json'});response.end(JSON.stringify({status:'success',dedup_key:body.dedup_key}));});});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const database=memoryAdapter();
- const create=()=>new WatchFn({name:'packed-alerts',storage:'database',database,infra:{enabled:false},alerts:{pagerDutyEndpoint:'http://127.0.0.1:'+server.address().port+'/events'}});
+ const create=()=>new WatchFn({name:'packed-alerts',storage:'database',database,infra:{enabled:false},alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'packed-local-key',secretAccessKey:'packed-local-secret',endpoint:'http://127.0.0.1:'+server.address().port}},pagerDutyEndpoint:'http://127.0.0.1:'+server.address().port+'/events'}});
  const first=create(),second=create();first.start();second.start();
  const drain=async watch=>{for(let index=0;index<8;index++)await watch.alerts.processNotifications();};
  try{
@@ -55,6 +55,9 @@ try {
  await new Promise(resolve=>setTimeout(resolve,2));
  let after,removed=0;for(let index=0;index<10;index++){const result=await second.alerts.pruneNotifications({completedBefore:Date.now(),limit:1,after});removed+=result.deleted;after=result.nextCursor;if(!after)break;}
  assert.equal(removed,3);assert.equal((await first.alerts.notifications()).length,1);
+ const emailAlert=await first.alerts.create({name:'packed email',condition:{metric:'latency',window:'1m',operator:'gt',threshold:1},channels:[{type:'email',recipients:['operator@example.test']}]});
+ await first.alerts.trigger(emailAlert.id);await Promise.all([drain(first),drain(second)]);assert.equal(emails.length,1);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,0);
+ emailDrop=true;await first.alerts.resolve(emailAlert.id,{resolvedBy:'operator'});await drain(second);await drain(first);assert.equal(emails.length,2);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,1);assert.ok(!JSON.stringify(await first.alerts.list()).includes('packed-local-secret'));
  await assert.rejects(first.alerts.migrateStoppedLegacyNamespace(),/existing ts-v1/);
  await assert.rejects(first.flush(),error=>error instanceof AggregateError && error.errors.length===1 && /existing ts-v1/.test(error.errors[0].message));
  }finally{const stopped=await Promise.allSettled([first.stop(),second.stop()]);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));const failures=stopped.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw new AggregateError(failures,'Installed consumer cleanup failed');}
@@ -63,8 +66,15 @@ try {
   const path=join(temporary,'consumer.'+extension);await writeFile(path,imports+'\n(async()=>{'+body+'})().catch(error=>{console.error(error);process.exitCode=1;});');execFileSync(process.execPath,[path],{cwd:temporary,stdio:'inherit',timeout:30000});
  }
  await writeFile(join(temporary,'consumer.ts'), `import {WatchFn} from '@watchfn/core';
- const watch=new WatchFn({name:'typed',storage:'memory'});
+ const watch=new WatchFn({name:'typed',storage:'memory',alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'local',secretAccessKey:'local',timeoutMs:1000,maxResponseBytes:1024}}}});
  async function maintenance(){const status=await watch.alerts.receiptRetentionStatus();const migration=await watch.alerts.migrateReceiptRetention({limit:1});const page=await watch.alerts.pruneNotifications({completedBefore:Date.now(),limit:1});if(page.nextCursor)await watch.alerts.pruneNotifications({completedBefore:Date.now(),after:page.nextCursor});const done:boolean=migration.done;const protocol:string|undefined=status?.protocol;return {done,protocol};}void maintenance;`);
  execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
- console.log(`Fresh ${closure.size}-tarball typed ESM/CJS durable PagerDuty and receipt-retention consumers passed`);
+ await rm(join(temporary,'node_modules/sendfn'),{recursive:true,force:true});
+ const missing=join(temporary,'missing-email.mjs');
+ await writeFile(missing,`import assert from 'node:assert/strict';import {WatchFn} from '@watchfn/core';
+ const watch=new WatchFn({name:'missing-email',storage:'memory',infra:{enabled:false},alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'local',secretAccessKey:'local'}}}});watch.start();
+ try{const alert=await watch.alerts.create({name:'optional email',condition:{metric:'x',window:'1m',operator:'gt',threshold:1},channels:[{type:'email',recipients:['operator@example.test']}]});await watch.alerts.trigger(alert.id);await assert.rejects(watch.alerts.processNotifications(),/requires SendFn/);assert.equal((await watch.alerts.notifications())[0].state,'pending');assert.equal((await watch.alerts.get(alert.id)).pendingNotifications,1);await assert.rejects(watch.flush(),error=>error instanceof AggregateError&&error.errors.length===1&&/requires SendFn/.test(error.errors[0].message));}finally{await watch.stop();}`);
+ execFileSync(process.execPath,[missing],{cwd:temporary,stdio:'inherit',timeout:30000});
+ execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
+ console.log(`Fresh ${closure.size}-tarball typed ESM/CJS durable PagerDuty, SES email, optional-peer and receipt-retention consumers passed`);
 }finally{await rm(temporary,{recursive:true,force:true});}

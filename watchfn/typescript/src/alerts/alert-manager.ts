@@ -1,3 +1,4 @@
+import { EmailCleanupError, loadSesProvider, sendSesEmail, validEmail, validateEmailConfig } from './channels/email-ses';
 import { randomUUID } from 'node:crypto';
 import { wrapWithSchema, type Adapter, type TransactionAdapter, type WhereClause } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
@@ -39,6 +40,7 @@ export class AlertManager {
     this.namespace = host.config?.namespace ?? host.name;
     if (!text(this.namespace, 128)) throw new TypeError('Invalid alert namespace');
     this.config = { pagerDutyEndpoint: 'https://events.pagerduty.com/v2/enqueue', maxObservations: 10000, maxPendingPerAlert: 100, timeoutMs: 10000, leaseMs: 30000, maxAttempts: 5, ...host.config };
+    if (this.config.email !== undefined) this.config.email = validateEmailConfig(this.config.email);
     let endpoint: URL;
     try { endpoint = new URL(this.config.pagerDutyEndpoint!); } catch { throw new TypeError('Invalid PagerDuty endpoint'); }
     if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || this.config.pagerDutyEndpoint!.length > 4096) throw new TypeError('Invalid PagerDuty endpoint');
@@ -82,7 +84,7 @@ export class AlertManager {
     const row = await db.findOne<Row>({ model: ALERTS, where: this.where(id) });
     if (!row) throw new Error('Alert not found'); return row;
   }
-  private public(record: AlertRecord): PublicAlert { const { pagerDuty: _internal, ...value } = copy(record); return { ...value, channels: record.channels.map(channel => ({ type: channel.type, configured: channel.type !== 'email' || !!this.config.emailSender })) }; }
+  private public(record: AlertRecord): PublicAlert { const { pagerDuty: _internal, ...value } = copy(record); return { ...value, channels: record.channels.map(channel => ({ type: channel.type, configured: channel.type !== 'email' || !!(this.config.emailSender || this.config.email) })) }; }
   private validate(input: AlertConfig): AlertConfig {
     if (!input || !text(input.name, 255) || !Array.isArray(input.channels) || input.channels.length > 10) throw new TypeError('Invalid alert definition');
     if (input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new TypeError('Invalid alert enabled value');
@@ -93,7 +95,7 @@ export class AlertManager {
     if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 32 || input.tags.some(tag => !text(tag, 128)))) throw new TypeError('Invalid alert tags');
     for (const channel of input.channels) {
       if (!channel || !['email', 'slack', 'pagerduty', 'webhook'].includes(channel.type)) throw new TypeError('Unsupported alert channel');
-      if (channel.type === 'email' && (!this.config.emailSender || !Array.isArray(channel.recipients) || !channel.recipients.length || channel.recipients.length > 100 || channel.recipients.some(recipient => !text(recipient, 320)))) throw new TypeError('Email alerts require recipients and a configured sender');
+      if (channel.type === 'email' && (!(this.config.emailSender || this.config.email) || !Array.isArray(channel.recipients) || !channel.recipients.length || channel.recipients.length > (this.config.emailSender ? 100 : 50) || channel.recipients.some(recipient => this.config.emailSender ? !text(recipient, 320) : !validEmail(recipient)))) throw new TypeError('Email alerts require recipients and a configured sender');
       if (channel.type === 'pagerduty' && (!text(channel.integrationKey, 1024) || (channel.severity !== undefined && !['info', 'warning', 'error', 'critical'].includes(channel.severity)))) throw new TypeError('Invalid PagerDuty channel');
       if (channel.type === 'slack' || channel.type === 'webhook') {
         let url: URL; try { url = new URL(channel.webhook!); } catch { throw new TypeError('Invalid alert webhook'); }
@@ -362,7 +364,7 @@ export class AlertManager {
       const channel = job.payload.channel;
       if (!channel) throw new TypeError('Missing notification channel');
       // Missing host configuration must not consume an attempt or obligation.
-      if (channel.type === 'email' && !this.config.emailSender) return null;
+      if (channel.type === 'email' && !(this.config.emailSender || this.config.email)) return null;
       this.validate({ name: 'dispatch', condition: { metric: 'dispatch', window: '1m', operator: 'gt', threshold: 0 }, channels: [channel] });
       if (channel.type === 'pagerduty') {
         const metadata = job.payload.pagerDuty, event = job.payload.notification.event;
@@ -411,9 +413,10 @@ export class AlertManager {
       const rows = await this.db.findMany<Job>({ model: ALERT_OUTBOX, where: [...this.where(), { field: 'state', operator: 'in', value: ['pending', 'sending'] }, { field: 'availableAt', operator: 'lte', value: Date.now() }, ...(after ? [{ field: 'id', operator: 'gt' as const, value: after }] : [])], orderBy: [{ field: 'id', direction: 'asc' }], limit });
       let processed = 0;
       for (const row of rows) {
+        const provider = row.payload?.channel?.type === 'email' && this.config.email && !this.config.emailSender ? await loadSesProvider() : undefined;
         const job = await this.claim(row.id); if (!job) continue;
         processed++;
-        const outcome = await this.send(job.payload.notification, job.payload.channel!, job.payload.pagerDuty);
+        const outcome = await this.send(job.payload.notification, job.payload.channel!, job.payload.pagerDuty, provider);
         // A failed/ambiguous local receipt commit preserves the lease. Never
         // convert a persistence failure into permission to send again.
         await this.settle(job, outcome);
@@ -421,11 +424,16 @@ export class AlertManager {
       return { processed, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
     }, true);
   }
-  private async send(notification: AlertNotification, channel: AlertChannel, metadata?: PagerDutyJob): Promise<Outcome> {
+  private async send(notification: AlertNotification, channel: AlertChannel, metadata?: PagerDutyJob, provider?: Awaited<ReturnType<typeof loadSesProvider>>): Promise<Outcome> {
     const controller = new AbortController(), deadline = Date.now() + this.config.timeoutMs;
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     const timely = () => !controller.signal.aborted && Date.now() < deadline;
     try {
+      if (channel.type === 'email' && !this.config.emailSender) {
+        if (!this.config.email || !provider) return { outcome: 'unknown' };
+        const delivered = await sendSesEmail(notification, channel, this.config.email, provider, controller.signal);
+        return { outcome: delivered && timely() ? 'delivered' : 'unknown' };
+      }
       if (channel.type === 'email' || (channel.type === 'pagerduty' && this.config.pagerDutySender)) {
         const sender = channel.type === 'email' ? this.config.emailSender : this.config.pagerDutySender;
         if (!sender) return { outcome: 'unknown' };
@@ -458,7 +466,7 @@ export class AlertManager {
         }
         return { outcome: [400, 401, 403, 404, 410, 422].includes(response.status) ? 'rejected' : 'unknown' };
       } finally { await response.body?.cancel().catch(() => {}); }
-    } catch { return { outcome: 'unknown' }; }
+    } catch (error) { if (error instanceof EmailCleanupError) throw error; return { outcome: 'unknown' }; }
     finally { clearTimeout(timeout); }
   }
 }
