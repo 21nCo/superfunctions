@@ -5,6 +5,7 @@ import {
   fetchDueEntries,
   claimDelivery,
   failExhaustedDelivery,
+  failUnavailableDelivery,
   markDelivered,
   markFailed,
 } from "../storage/webhookQueue.js";
@@ -96,7 +97,7 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
     });
 
     if (!webhookRow) {
-      await markDelivered({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId);
+      if (await failUnavailableDelivery({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId, "configuration")) failed++;
       continue;
     }
 
@@ -108,7 +109,7 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
     });
 
     if (!eventRow) {
-      await markDelivered({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId);
+      if (await failUnavailableDelivery({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId, "event")) failed++;
       continue;
     }
 

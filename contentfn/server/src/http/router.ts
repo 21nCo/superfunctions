@@ -1,3 +1,4 @@
+import { queryWebhookAudit } from "../storage/webhookAudit.js";
 import { queryAudit } from "../storage/audit.js";
 import { webhookDeliveries } from "../storage/webhooks.js";
 import { schedulePublish, cancelScheduledPublish } from "../storage/schedules.js";
@@ -29,12 +30,14 @@ import type { ContentfnLimits } from "../limits/limits.js";
 import type { ContentfnLogger } from "../logging/logger.js";
 
 export interface RouterConfig extends DatasetsEndpointsConfig, SchemaEndpointsConfig, DocsEndpointsConfig, PublishEndpointsConfig, HistoryEndpointsConfig, QueryEndpointsConfig, AssetsEndpointsConfig, WebhooksEndpointsConfig, ImportExportEndpointsConfig {
+  webhookAuditWriterSchemaVersion?: 4;
   authorize?: AuthorizeFn;
   limits: ContentfnLimits;
   logger: ContentfnLogger;
 }
 
 export const endpointHandlers = {
+  "/contentfn/audit/webhooks": { action: "audit.webhooks", handle: queryWebhookAudit },
   "/contentfn/audit/query": { action: "audit.query", handle: queryAudit },
   "/contentfn/webhooks/deliveries": { action: "webhooks.deliveries", handle: webhookDeliveries },
   "/contentfn/docs/schedule": { action: "docs.schedule", handle: schedulePublish },

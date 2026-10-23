@@ -135,6 +135,11 @@ export const contentfnWebhookQueue: TableDef = {
     nextRunAt: { type: "datetime", nullable: false },
     status: { type: "string", nullable: false },
     lastError: { type: "string", nullable: true },
+    dataset: { type: "string", nullable: true },
+    destinationUrl: { type: "string", nullable: true },
+    updatedAt: { type: "datetime", nullable: true },
+    timestampKnown: { type: "boolean", nullable: true },
+    auditMetadataVersion: { type: "number", nullable: true },
   },
 };
 
@@ -229,7 +234,7 @@ export function getContentfnSchema(options: { jsonStorage?: "native" | "json-tex
 export function getSchema(config: { jsonStorage?: "native" | "json-text" } = {}): { version: number; schemas: import("@superfunctions/db").TableSchema[] } {
   const runtime = getContentfnSchema(config);
   return {
-    version: 3,
+    version: 4,
     schemas: ALL_TABLES.map(table => ({
       ...runtime[table.name],
       fields: Object.fromEntries(Object.entries(runtime[table.name].fields).map(([name, field]) => [name,

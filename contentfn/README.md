@@ -205,3 +205,8 @@ outside the database transaction and may need backend orphan cleanup after a
 failure. Direct imports of internal storage helpers and external database writes
 are outside this server API audit boundary. No tamper-proof storage or automated
 retention is implied.
+
+Dataset-wide webhook delivery audit is available through `api.audit.webhooks`
+(and the typed client) with the `audit.webhooks` authorization action. Existing
+installations must apply schema4 and backfill legacy queue provenance before
+acknowledging the writer version. See the [schema4 upgrade and query contract](.conduct/webhook-audit-readiness.md).

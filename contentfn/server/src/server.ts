@@ -1,3 +1,5 @@
+import { queryWebhookAudit } from "./storage/webhookAudit.js";
+import type { WebhookAuditQuery } from "@contentfn/core";
 import { appendAudit, type AuditQuery, type queryAudit } from "./storage/audit.js";
 import { atomicMutation } from "./storage/database.js";
 import { randomUUID } from "node:crypto";
@@ -36,6 +38,8 @@ import { getContentfnSchema } from "./storage/schema.js";
 
 export interface ContentfnServerConfig {
   db: Adapter;
+  /** Host attests all legacy writers are stopped and schema4 DDL is installed. Not a distributed fence. */
+  webhookAuditWriterSchemaVersion?: 4;
   /** Use native for database drivers that encode/decode JSON columns (PostgreSQL/MySQL). */
   jsonStorage?: "native" | "json-text";
   storage?: import("./storage/storageBackend.js").AssetStorageBackend;
@@ -51,7 +55,7 @@ export interface ContentfnServerConfig {
 export interface ContentfnServer {
   /** Programmatic API (datasets + schema + docs). */
   api: {
-    audit: { query: (input: AuditQuery) => ReturnType<typeof queryAudit> };
+    audit: { webhooks: (input: WebhookAuditQuery) => ReturnType<typeof queryWebhookAudit>; query: (input: AuditQuery) => ReturnType<typeof queryAudit> };
     datasets: {
       create: (input: { dataset: string }) => ReturnType<typeof datasetCreate>;
       list: (input?: {}) => ReturnType<typeof datasetList>;
@@ -158,6 +162,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
 
   const routerConfig = {
     ...storage,
+    webhookAuditWriterSchemaVersion: config.webhookAuditWriterSchemaVersion,
     authorize: config.authorize,
     limits,
     logger,

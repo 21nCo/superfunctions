@@ -45,4 +45,5 @@ export const ACTIONS = {
   REALTIME_SUBSCRIBE: "realtime.subscribe",
   STATUS: "status",
   AUDIT_QUERY: "audit.query",
+  AUDIT_WEBHOOKS: "audit.webhooks",
 } as const;

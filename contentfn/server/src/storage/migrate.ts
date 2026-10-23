@@ -18,3 +18,16 @@ export async function runContentfnMigrations(adapter: MigrationAdapter): Promise
     await adapter.createTableIfNotExists(table);
   }
 }
+
+/** Upgrade existing schema3 queue tables before any schema4 writer starts.
+ * The host adapter must implement idempotent DDL using its database's schema tools.
+ * Baseline create-only adapters remain supported for fresh databases.
+ */
+export async function upgradeWebhookAuditSchema(adapter: {
+  addColumnIfNotExists(table: string, name: string, column: import("./schema.js").ColumnDef): Promise<void>;
+}): Promise<void> {
+  const { contentfnWebhookQueue } = await import("./schema.js");
+  for (const name of ["dataset", "destinationUrl", "updatedAt", "timestampKnown", "auditMetadataVersion"]) {
+    await adapter.addColumnIfNotExists(contentfnWebhookQueue.name, name, contentfnWebhookQueue.columns[name]);
+  }
+}

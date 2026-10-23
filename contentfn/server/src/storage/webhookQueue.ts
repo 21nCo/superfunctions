@@ -1,3 +1,4 @@
+import { auditDestinationUrl } from "./webhookAudit.js";
 import { documentStorageId } from "./documentIdentity.js";
 import type { ContentfnDatabase as Adapter } from "./database.js";
 import { nowISO } from "../time/clock.js";
@@ -26,6 +27,9 @@ export async function enqueueWebhookDelivery(
   }
 ): Promise<void> {
   const now = nowISO();
+  const event = await config.db.findOne<{ dataset: string }>({ model: CONTENTFN_TABLE_NAMES.events, where: [{ field: "eventId", operator: "eq", value: input.eventId }] });
+  const hook = await config.db.findOne<{ dataset: string; url: string }>({ model: CONTENTFN_TABLE_NAMES.webhooks, where: [{ field: "webhookId", operator: "eq", value: input.webhookId }] });
+  if (!event || !hook || event.dataset !== hook.dataset) throw new Error("Webhook delivery provenance is unavailable");
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.webhookQueue,
     data: {
@@ -36,6 +40,8 @@ export async function enqueueWebhookDelivery(
       nextRunAt: now,
       status: "pending",
       lastError: null,
+      dataset: event.dataset, destinationUrl: auditDestinationUrl(hook.url),
+      updatedAt: now, timestampKnown: true, auditMetadataVersion: 1,
     },
   });
 }
@@ -66,7 +72,7 @@ export async function markDelivered(
       { field: "webhookId", operator: "eq", value: webhookId },
       ...(config.leaseUntil ? [{ field: "nextRunAt", operator: "eq" as const, value: config.leaseUntil }, { field: "status", operator: "eq" as const, value: "processing" }] : []),
     ],
-    data: { status: "delivered", lastError: null },
+    data: { updatedAt: nowISO(), timestampKnown: true, status: "delivered", lastError: null },
   });
 }
 
@@ -81,7 +87,7 @@ export async function failExhaustedDelivery(config: WebhookQueueConfig, entry: W
     { field: "status", operator: "eq", value: entry.status },
     { field: "attempt", operator: "eq", value: entry.attempt },
     { field: "nextRunAt", operator: "eq", value: entry.nextRunAt },
-  ], data: { status: "failed", lastError: "Attempt limit reached; the last delivery outcome may be unknown" } });
+  ], data: { updatedAt: nowISO(), timestampKnown: true, status: "failed", lastError: "Attempt limit reached; the last delivery outcome may be unknown" } });
   return count === 1;
 }
 
@@ -108,7 +114,7 @@ export async function markFailed(
       { field: "webhookId", operator: "eq", value: webhookId },
       ...(config.leaseUntil ? [{ field: "nextRunAt", operator: "eq" as const, value: config.leaseUntil }, { field: "status", operator: "eq" as const, value: "processing" }] : []),
     ],
-    data: { attempt: nextAttempt, nextRunAt, status: isFinal ? "failed" : "pending", lastError: errorMsg },
+    data: { updatedAt: nowISO(), timestampKnown: true, attempt: nextAttempt, nextRunAt, status: isFinal ? "failed" : "pending", lastError: errorMsg },
   });
 }
 
@@ -120,6 +126,21 @@ export async function claimDelivery(config: WebhookQueueConfig, entry: WebhookQu
     { field: "status", operator: "eq", value: entry.status },
     { field: "attempt", operator: "eq", value: entry.attempt },
     { field: "nextRunAt", operator: "eq", value: entry.nextRunAt },
-  ], data: { status: "processing", nextRunAt: leaseUntil, attempt: entry.attempt + 1 } });
+  ], data: { updatedAt: nowISO(), timestampKnown: true, status: "processing", nextRunAt: leaseUntil, attempt: entry.attempt + 1 } });
+  return count === 1;
+}
+
+/** Missing resources are terminal, but no network send must be represented as delivered. */
+export async function failUnavailableDelivery(
+  config: WebhookQueueConfig & { leaseUntil: string }, eventId: string, webhookId: string,
+  resource: "configuration" | "event",
+): Promise<boolean> {
+  const count = await config.db.updateMany({ model: CONTENTFN_TABLE_NAMES.webhookQueue, where: [
+    { field: "eventId", operator: "eq", value: eventId },
+    { field: "webhookId", operator: "eq", value: webhookId },
+    { field: "nextRunAt", operator: "eq", value: config.leaseUntil },
+    { field: "status", operator: "eq", value: "processing" },
+  ], data: { status: "failed", updatedAt: nowISO(), timestampKnown: true,
+    lastError: `Webhook ${resource} is unavailable; delivery was not attempted` } });
   return count === 1;
 }

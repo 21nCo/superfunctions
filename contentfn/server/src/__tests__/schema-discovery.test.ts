@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { ALL_TABLES, getSchema, getContentfnSchema } from '../storage/schema.js';
 it('exposes physical schemas with bounded identities and JSON text columns for shared CLI discovery', () => {
   const schema = getSchema();
-  expect(schema.version).toBe(3);
+  expect(schema.version).toBe(4);
   expect(schema.schemas.map(table => table.modelName)).toEqual(ALL_TABLES.map(table => table.name));
   const revisions = schema.schemas.find(table => table.modelName === 'contentfn_revisions')!;
   expect(revisions.fields.id).toMatchObject({ maxLength: 64 });

@@ -45,3 +45,6 @@ export { contentfnSchedules, getContentfnSchema, getSchema } from "./storage/sch
 
 export { contentfnAudit } from "./storage/schema.js";
 export type { AuditRecord, AuditQuery } from "./storage/audit.js";
+export { upgradeWebhookAuditSchema } from "./storage/migrate.js";
+export { backfillWebhookAudit } from "./storage/webhookAudit.js";
+export type { WebhookAuditRecord, WebhookAuditQuery } from "@contentfn/core";
