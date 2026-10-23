@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { MemoryAdapter } from "../adapters/memory.js";
 import { createFlow, type FlowFn } from "../core/flow-fn.js";
 const flows: FlowFn[] = [];
 const make = () => {
@@ -112,4 +113,53 @@ it("validates worker concurrency and removes completed records when requested", 
   queue.process(async () => 1);
   await vi.advanceTimersByTimeAsync(30);
   expect(await queue.getJob(job.id)).toBeNull();
+});
+
+it("drains promptly when the final local worker observes an empty queue", async () => {
+  const queue = make().queue("drain-notify");
+  await queue.add("work", 1);
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const handler = vi.fn(async () => { await hold; });
+  queue.process(handler);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(handler).toHaveBeenCalledTimes(1);
+  let drained = false;
+  const drain = queue.drain().then(() => { drained = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(drained).toBe(false);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(drained).toBe(true); // No 20 ms polling-timer advance is necessary.
+  await drain;
+});
+
+it("retains an idle notification that arrives while drain awaits stale statistics", async () => {
+  const adapter = new MemoryAdapter();
+  const flow = createFlow({ adapter }); flows.push(flow);
+  const queue = flow.queue("drain-race");
+  await queue.add("work", 1);
+  let finish!: () => void;
+  const handler = new Promise<void>(resolve => { finish = resolve; });
+  queue.process(async () => { await handler; });
+  await vi.advanceTimersByTimeAsync(0);
+  let releaseStats!: () => void;
+  const holdStats = new Promise<void>(resolve => { releaseStats = resolve; });
+  const read = adapter.getQueueStats.bind(adapter);
+  vi.spyOn(adapter, "getQueueStats").mockImplementationOnce(async name => {
+    const stale = await read(name);
+    expect(stale.active).toBe(1);
+    await holdStats;
+    return stale;
+  });
+  let drained = false;
+  const drain = queue.drain().then(() => { drained = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(drained).toBe(false);
+  releaseStats();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(drained).toBe(true);
+  await drain;
 });

@@ -27,6 +27,8 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private producers = new Set<Promise<unknown>>();
   private inFlight = 0;
   private wakes = new Set<() => void>();
+  private drainWakes = new Set<() => void>();
+  private drainEpoch = 0;
   private controllers = new Set<AbortController>();
   private workerErrors: unknown[] = [];
   private dlq?: MemoryDLQManager;
@@ -83,7 +85,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     const duration = this.options.leaseDuration ?? 30_000;
     let pending = false;
     let validUntil = claimedAt + duration;
-    const guard = { token: job.lease.token, lost: false, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
+    const guard = { token: job.lease.token, lost: performance.now() >= validUntil, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
       if (guard.lost) return;
       if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); return; }
       if (pending) return;
@@ -105,19 +107,24 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private open() {
     if (this.closed) throw new Error("Queue is closed");
   }
-  private async sleep(ms = 20) {
+  private async sleep(ms = 20, wakes = this.wakes) {
     await new Promise<void>((resolve) => {
       const wake = () => {
         clearTimeout(timer);
-        this.wakes.delete(wake);
+        wakes.delete(wake);
         resolve();
       };
       const timer = setTimeout(wake, Math.min(ms, 2147483647));
-      this.wakes.add(wake);
+      wakes.add(wake);
     });
+  }
+  private wakeDrains() {
+    this.drainEpoch++;
+    for (const wake of [...this.drainWakes]) wake();
   }
   private wake() {
     for (const wake of [...this.wakes]) wake();
+    this.wakeDrains();
   }
   private emitSafe(event: string, ...args: any[]) {
     try {
@@ -282,7 +289,12 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     }
     const claimedAt = performance.now();
     const raw = await this.adapter.dequeue(this.name, name, this.options.leaseDuration ?? 30_000);
-    if (!raw) return null;
+    if (!raw) {
+      // An empty storage claim after local work settled can unblock drain now.
+      // Notify only drain callers, never other idle processors (which would spin).
+      if (!this.inFlight) this.wakeDrains();
+      return null;
+    }
     if ((name && raw.name !== name) || this.paused || this.closed) {
       await this.adapter.nack(this.name, raw.id, true, raw.lease?.token);
       return null;
@@ -538,12 +550,15 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   async drain() {
     for (;;) {
       if (this.workerErrors.length) throw this.workerErrors[0];
+      const epoch = this.drainEpoch;
       const stats = await this.adapter.getQueueStats(this.name);
       if (!this.inFlight && !stats.waiting && !stats.active && !stats.delayed)
         return;
       if (this.closed || this.paused || !this.workers.size)
         throw new Error("Cannot drain pending jobs without running workers");
-      await this.sleep();
+      // A notification during the awaited stats read must not be lost.
+      // Keep the timer fallback for progress made by remote workers.
+      if (epoch === this.drainEpoch) await this.sleep(20, this.drainWakes);
     }
   }
   async clean(grace: number, status: JobStatus) {

@@ -110,3 +110,22 @@ unprofiled results when assessing thresholds. Local repeated measurements after
 the atomic claim exceeded PostgreSQL's 1,000 jobs/sec throughput target, but its
 latency targets and Redis's 10,000 jobs/sec/enqueue latency targets remain unmet.
 See `flowfn/.conduct/queue-claim-performance-readiness.md` for bounded evidence.
+
+
+Redis create, claim and write calls submitted together are coalesced separately
+per queue/script at the next microtask, up to 32 requests / 64 KiB of encoded
+arguments. Oversized single inputs retain compatibility by running alone. This is
+not prefetch: claims correspond only to submitted calls, with individual tokens,
+results and errors. Each operation samples storage TIME. Lua request errors do not
+roll back earlier writes or discard successful neighbors. Unknown transport
+outcomes reject the affected callers without replay; claims may remain active
+until lease recovery. Await operations when cross-operation order is required.
+
+Queue drain now observes local idle notifications while retaining authoritative
+stats checks and a 20ms fallback for remote progress. A claim reply that arrives
+after its conservative monotonic lease deadline cannot start a handler. Native
+fixtures exercise expired replies, lost batch replies, shutdown and recovery.
+October 23 paired measurements improve enqueue latency but still fail Redis's
+original throughput and enqueue p99 gates; full records and unchanged limits are
+in `flowfn/.conduct/queue-claim-performance-readiness.md`. To run only native Redis
+contracts locally, use `node flowfn/typescript/scripts/provider-acceptance.mjs --redis-only`.

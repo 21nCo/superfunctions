@@ -1,6 +1,7 @@
 /** Run from any directory: node flowfn/typescript/scripts/provider-acceptance.mjs.
  * Requires Docker and the workspace npm installation. Creates only disposable
  * loopback-bound Redis/PostgreSQL containers, and removes them in finally.
+ * Add --redis-only to create only Redis and run only Redis native cases.
  * Add --python for the complete Python source suite (requires uv; defaults to
  * Python 3.12, overridable with FLOWFN_PYTHON_VERSION).
  * Use --python-wheel instead to test a fresh installed wheel outside the checkout.
@@ -14,6 +15,7 @@ import { join } from "node:path";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const suffix = randomUUID();
 const containers = [];
+const redisOnly = process.argv.includes("--redis-only");
 const pythonWheel = process.argv.includes("--python-wheel");
 const python = pythonWheel || process.argv.includes("--python");
 const pythonRoot = fileURLToPath(new URL("../../python/", import.meta.url));
@@ -81,7 +83,7 @@ try {
   }
   if (!python) command('npm', ['run', 'build'], { stdio: 'inherit' });
   const redis = await start("redis", "redis:7-alpine", 6379);
-  const postgres = await start("postgres", "postgres:16-alpine", 5432, [
+  const postgres = redisOnly ? undefined : await start("postgres", "postgres:16-alpine", 5432, [
     "-e",
     "POSTGRES_PASSWORD=flowfn-local-acceptance",
   ]);
@@ -95,14 +97,15 @@ try {
     "--hookTimeout",
     "30000",
     "src/adapters/redis.test.ts",
-    "src/adapters/postgres/postgres.test.ts",
-    ...process.argv.slice(2).filter(arg => arg !== "--python" && arg !== "--python-wheel"),
+    ...(redisOnly ? [] : ["src/adapters/postgres/postgres.test.ts"]),
+    ...process.argv.slice(2).filter(arg => arg !== "--python" && arg !== "--python-wheel" && arg !== "--redis-only"),
   ];
   const environment = {
     ...process.env,
     FLOWFN_REDIS_URL: `redis://127.0.0.1:${redis}`,
-    FLOWFN_POSTGRES_URL: `postgres://postgres:flowfn-local-acceptance@127.0.0.1:${postgres}/postgres`,
+    ...(postgres ? { FLOWFN_POSTGRES_URL: `postgres://postgres:flowfn-local-acceptance@127.0.0.1:${postgres}/postgres` } : {}),
   };
+  if (redisOnly) delete environment.FLOWFN_POSTGRES_URL;
   if (pythonWheel) delete environment.PYTHONPATH;
   command(python ? "uv" : process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", python ? [
     "run", "--isolated", "--no-project", "--python", process.env.FLOWFN_PYTHON_VERSION ?? "3.12",

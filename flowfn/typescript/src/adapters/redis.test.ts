@@ -16,6 +16,7 @@ import { JobImpl } from "../queue/job.js";
 import { QueueImpl } from "../queue/queue.js";
 import { StreamImpl } from "../stream/stream.js";
 import type { Message } from "../stream/types.js";
+import type { Job } from "../queue/types.js";
 
 describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
   "Redis native contract (requires FLOWFN_REDIS_URL)",
@@ -88,9 +89,163 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       const cached = vi.spyOn(redis, "evalsha").mockImplementation(async (...args) => { await execute(...args); throw failure; });
       const results = await Promise.allSettled([adapter.createJob("scripts", new JobImpl("work", 1)), adapter.createJob("scripts", new JobImpl("work", 2))]);
       expect(results).toEqual([{ status: "rejected", reason: failure }, { status: "rejected", reason: failure }]);
-      expect(cached).toHaveBeenCalledTimes(2);
+      expect(cached).toHaveBeenCalledTimes(1);
       expect(source).not.toHaveBeenCalled(); expect(scripts).not.toHaveBeenCalled();
       expect(await redis.hlen(`${prefix}jobs:scripts`)).toBe(3);
+    });
+    it("coalesces enqueue without merging failures, IDs, deduplication or payloads", async () => {
+      await adapter.createJob("create-batch", new JobImpl("work", "warm"));
+      const commands = vi.spyOn(redis, "evalsha");
+      const shared = Object.assign(new JobImpl("work", "first"), { deduplicationId: "shared" });
+      const duplicate = Object.assign(new JobImpl("work", "second"), { deduplicationId: "shared" });
+      const invalid = new JobImpl("work", "invalid");
+      invalid.opts.priority = Number.NaN; // JSON null fails ZADD without creating this job.
+      const sameId = new JobImpl("work", "replacement", { jobId: shared.id });
+      const other = new JobImpl("work", "independent");
+      const results = await Promise.allSettled([shared, invalid, duplicate, sameId, other].map(job => adapter.createJob("create-batch", job)));
+      expect(commands).toHaveBeenCalledTimes(1);
+      expect(results[0]).toMatchObject({ status: "fulfilled", value: { id: shared.id, data: "first" } });
+      expect(results[1].status).toBe("rejected");
+      expect(results[2]).toMatchObject({ status: "fulfilled", value: { id: shared.id, data: "first" } });
+      expect(results[3]).toMatchObject({ status: "fulfilled", value: { id: shared.id, data: "first" } });
+      expect(results[4]).toMatchObject({ status: "fulfilled", value: { id: other.id, data: "independent" } });
+      expect(await adapter.getJob("create-batch", invalid.id)).toBeNull();
+      expect(await adapter.getAllJobs("create-batch")).toHaveLength(3);
+    });
+    it("bounds enqueue batches by request count and encoded bytes without rejecting large jobs", async () => {
+      await adapter.createJob("create-bound", new JobImpl("work", "warm"));
+      const commands = vi.spyOn(redis, "evalsha");
+      await Promise.all(Array.from({ length: 65 }, (_, i) => adapter.createJob("create-bound", new JobImpl("work", i))));
+      expect(commands).toHaveBeenCalledTimes(3);
+      commands.mockClear();
+      const values = ["x".repeat(40_000), "é".repeat(35_000), "tail"];
+      const jobs = await Promise.all(values.map(value => adapter.createJob("create-bound", new JobImpl("work", value))));
+      expect(commands).toHaveBeenCalledTimes(3);
+      expect(jobs.map(job => job.data)).toEqual(values);
+      expect(await adapter.getAllJobs("create-bound")).toHaveLength(69);
+    });
+    it("settles completion batches independently while preserving stale-owner fences", async () => {
+      for (let i = 0; i < 6; i++) await adapter.createJob("write-batch", new JobImpl("work", i));
+      const jobs = await Promise.all(Array.from({ length: 6 }, () => adapter.dequeue("write-batch")));
+      await adapter.saveJob("write-batch", jobs[0]!); // Warm this script before counting commands.
+      const commands = vi.spyOn(redis, "evalsha");
+      const changes = jobs.map((job, index): Job => ({ ...job!, state: index === 5 ? "active" : "completed", progress: index === 5 ? 70 : 100 }));
+      changes[4].lease = { ...changes[4].lease!, token: "stale-owner" };
+      const results = await Promise.allSettled(changes.map(job => adapter.saveJob("write-batch", job)));
+      expect(commands).toHaveBeenCalledTimes(1);
+      expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled", "fulfilled", "rejected", "fulfilled"]);
+      expect(results[4]).toMatchObject({ status: "rejected", reason: new Error("Job lease lost") });
+      expect(await adapter.getJobs("write-batch", "completed")).toHaveLength(4);
+      expect((await adapter.getJob("write-batch", jobs[4]!.id))!.lease).toEqual(jobs[4]!.lease);
+      expect(await adapter.getJob("write-batch", jobs[5]!.id)).toMatchObject({ state: "active", progress: 70, lease: jobs[5]!.lease });
+    });
+    it("bounds concurrent claims to 32 per script and returns distinct FIFO leases", async () => {
+      await adapter.dequeue("claim-batch"); // Cache the batch script before counting.
+      for (let i = 0; i < 65; i++) await adapter.createJob("claim-batch", new JobImpl("work", i));
+      const commands = vi.spyOn(redis, "evalsha");
+      const jobs = await Promise.all(Array.from({ length: 65 }, () => adapter.dequeue("claim-batch")));
+      expect(commands).toHaveBeenCalledTimes(3);
+      expect(jobs.map(job => job!.data)).toEqual(Array.from({ length: 65 }, (_, i) => i));
+      expect(new Set(jobs.map(job => job!.id)).size).toBe(65);
+      expect(new Set(jobs.map(job => job!.lease!.token)).size).toBe(65);
+      for (const job of jobs) expect((await adapter.getJob("claim-batch", job!.id))!.lease).toEqual(job!.lease);
+    });
+    it("keeps claim filters and per-request failures independent inside a batch", async () => {
+      await adapter.createJob("claim-errors", new JobImpl("blocked", 0, { priority: 100, waitFor: ["missing"] }));
+      await adapter.createJob("claim-errors", new JobImpl("beta", 1, { priority: 10 }));
+      await adapter.createJob("claim-errors", new JobImpl("alpha", 2));
+      const results = await Promise.allSettled([
+        adapter.dequeue("claim-errors", undefined, Number.NaN),
+        adapter.dequeue("claim-errors", "alpha"),
+        adapter.dequeue("claim-errors", "beta"),
+        adapter.dequeue("claim-errors", "missing"),
+      ]);
+      expect(results[0].status).toBe("rejected");
+      expect(results[1]).toMatchObject({ status: "fulfilled", value: { name: "alpha", data: 2 } });
+      expect(results[2]).toMatchObject({ status: "fulfilled", value: { name: "beta", data: 1 } });
+      expect(results[3]).toEqual({ status: "fulfilled", value: null });
+      expect((await adapter.getJobs("claim-errors", "active"))).toHaveLength(2);
+      expect((await adapter.getJobs("claim-errors", "waiting"))).toHaveLength(1);
+    });
+    it("does not replay a committed claim batch after a lost response and recovers its leases", async () => {
+      await adapter.dequeue("claim-lost");
+      for (let i = 0; i < 4; i++) await adapter.createJob("claim-lost", new JobImpl("work", i));
+      const execute = redis.evalsha.bind(redis);
+      const failure = new Error("claim response lost after commit");
+      const commands = vi.spyOn(redis, "evalsha").mockImplementation(async (...args) => { await execute(...args); throw failure; });
+      const source = vi.spyOn(redis, "eval");
+      const results = await Promise.allSettled(Array.from({ length: 4 }, () => adapter.dequeue("claim-lost", undefined, 30)));
+      expect(results).toEqual(Array.from({ length: 4 }, () => ({ status: "rejected", reason: failure })));
+      expect(commands).toHaveBeenCalledTimes(1);
+      expect(source).not.toHaveBeenCalled();
+      commands.mockRestore();
+      const active = await adapter.getJobs("claim-lost", "active");
+      expect(active).toHaveLength(4);
+      expect(new Set(active.map(job => job.lease!.token)).size).toBe(4);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(await adapter.recoverStalledJobs("claim-lost", 1)).toHaveLength(4);
+      const recovered = await Promise.all(Array.from({ length: 4 }, () => adapter.dequeue("claim-lost")));
+      expect(new Set(recovered.map(job => job!.id))).toEqual(new Set(active.map(job => job.id)));
+      for (const job of recovered) expect(job!.lease!.token).not.toBe(active.find(old => old.id === job!.id)!.lease!.token);
+    });
+    it("does not start a handler from a claim reply received after its lease deadline", async () => {
+      const queue = new QueueImpl("claim-expired-reply", adapter, { leaseDuration: 200, leaseRenewInterval: 50, stalledInterval: 5 });
+      await queue.add("work", 1);
+      let release!: () => void;
+      const hold = new Promise<void>(resolve => { release = resolve; });
+      let oldToken: string | undefined;
+      const dequeue = adapter.dequeue.bind(adapter);
+      vi.spyOn(adapter, "dequeue").mockImplementation(async (...args) => {
+        const job = await dequeue(...args);
+        if (job && !oldToken) { oldToken = job.lease!.token; await hold; }
+        return job;
+      });
+      const tokens: string[] = [];
+      queue.process(async job => { tokens.push(job.lease!.token); });
+      try {
+        await vi.waitFor(() => expect(oldToken).toBeDefined());
+        await new Promise(resolve => setTimeout(resolve, 250));
+        release();
+        await queue.drain();
+        expect(tokens).toHaveLength(1);
+        expect(tokens[0]).not.toBe(oldToken);
+        expect(await adapter.getJobs("claim-expired-reply", "completed")).toHaveLength(1);
+      } finally { release(); await queue.close(); }
+    });
+    it("returns every pending claim when its processor closes before receiving the batch", async () => {
+      const queue = new QueueImpl("claim-stop", adapter);
+      for (let i = 0; i < 8; i++) await queue.add("work", i);
+      let release!: () => void;
+      const hold = new Promise<void>(resolve => { release = resolve; });
+      const dequeue = adapter.dequeue.bind(adapter);
+      let received = 0;
+      vi.spyOn(adapter, "dequeue").mockImplementation(async (...args) => {
+        const job = await dequeue(...args); received++; await hold; return job;
+      });
+      const handler = vi.fn(async () => {});
+      const processor = queue.createProcessor(4, handler);
+      try {
+        await vi.waitFor(() => expect(received).toBe(4));
+        const closed = processor.close();
+        release();
+        await closed;
+        expect(handler).not.toHaveBeenCalled();
+        expect(await adapter.getJobs("claim-stop", "active")).toHaveLength(0);
+        expect(await adapter.getJobs("claim-stop", "waiting")).toHaveLength(8);
+      } finally { release(); await queue.close(); }
+    });
+    it("rejects an unsent claim batch when its adapter closes without reserving jobs", async () => {
+      await adapter.createJob("claim-close", new JobImpl("work", 1));
+      const client = new Redis(process.env.FLOWFN_REDIS_URL!);
+      const closing = new RedisAdapter({ connection: client, prefix });
+      const claim = closing.dequeue("claim-close");
+      const create = closing.createJob("claim-close", new JobImpl("work", 2));
+      const cleanup = closing.cleanup();
+      await expect(claim).rejects.toThrow("Adapter is closed");
+      await expect(create).rejects.toThrow("Adapter is closed");
+      await cleanup;
+      expect(await adapter.getJobs("claim-close", "waiting")).toHaveLength(1);
+      expect(await adapter.getJobs("claim-close", "active")).toHaveLength(0);
     });
     it("preserves FIFO ties and LIFO priority without scanning completed history", async () => {
       const sameTime = vi.spyOn(Date, "now").mockReturnValue(Date.now());

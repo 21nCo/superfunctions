@@ -41,6 +41,132 @@ const QUEUE_INDEX_LUA = `
   end
 `;
 
+const CREATE_JOB_BATCH_LUA = `${QUEUE_INDEX_LUA}
+  local function create(ARGV)
+      local proposed = cjson.decode(ARGV[1])
+      local existing = redis.call('HGET', KEYS[1], proposed.id)
+      if existing then return existing end
+      if proposed.deduplicationId then
+        local entries = redis.call('HVALS', KEYS[1])
+        for _,entry in ipairs(entries) do
+          local job = cjson.decode(entry)
+          if job.deduplicationId == proposed.deduplicationId and job.state ~= 'completed' and job.state ~= 'failed' then return entry end
+        end
+      end
+      local time = redis.call('TIME')
+      proposed.timestamp = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      indexJob(proposed)
+      local encoded = cjson.encode(proposed)
+      redis.call('HSET', KEYS[1], proposed.id, encoded)
+      return encoded
+  end
+  local results = {}
+  for _,encoded in ipairs(ARGV) do
+    local ok, result = pcall(create, {encoded})
+    if ok then table.insert(results, result or false)
+    else table.insert(results, {err=tostring(result)}) end
+  end
+  return results
+`;
+
+// Requests share a queue, but retain independent tokens, results and errors.
+// Lua pcall preserves the existing no-rollback behavior of a failed command.
+const DEQUEUE_BATCH_LUA = `${QUEUE_INDEX_LUA}
+  local function claim(ARGV)
+
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',now)) do
+        local raw = redis.call('HGET',KEYS[1],id)
+        if raw then
+          local job = cjson.decode(raw)
+          redis.call('ZADD',KEYS[3],-(job.opts.priority or 0),job.queueMember)
+        end
+        redis.call('ZREM',KEYS[2],id)
+      end
+      local chosen = nil
+      local offset = 0
+      while not chosen do
+        local members = redis.call('ZRANGE',KEYS[3],offset,offset+31)
+        if #members == 0 then break end
+        local removed = 0
+        for _,member in ipairs(members) do
+          local raw = redis.call('HGET',KEYS[1],string.sub(member,24))
+          if raw then
+            local job = cjson.decode(raw)
+            local ready = job.state == 'waiting' or job.state == 'delayed'
+            if ready and (ARGV[2] == '' or job.name == ARGV[2]) then
+              for _,id in ipairs(job.opts.waitFor or {}) do
+                local dependency = redis.call('HGET',KEYS[1],id)
+                if not dependency or cjson.decode(dependency).state ~= 'completed' then ready = false end
+              end
+              if ready then chosen = job; break end
+            end
+          else redis.call('ZREM',KEYS[3],member); removed = removed + 1 end
+        end
+        offset = offset + #members - removed
+      end
+      if not chosen then return nil end
+      chosen.state = 'active'; chosen.processedOn = now; chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
+      local encoded = cjson.encode(chosen)
+      redis.call('HSET',KEYS[1],chosen.id,encoded)
+      redis.call('ZREM',KEYS[2],chosen.id)
+      redis.call('ZREM',KEYS[3],chosen.queueMember)
+      return encoded
+  end
+  local results = {}
+  local function decodeAndClaim(encoded) return claim(cjson.decode(encoded)) end
+  for _,encoded in ipairs(ARGV) do
+    local ok, result = pcall(decodeAndClaim, encoded)
+    if ok then table.insert(results, result or false)
+    else table.insert(results, {err=tostring(result)}) end
+  end
+  return results
+`;
+
+const WRITE_JOB_BATCH_LUA = `${QUEUE_INDEX_LUA}
+  local function write(value, enqueue)
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      local raw = redis.call('HGET', KEYS[1], value.id)
+      local old = raw and cjson.decode(raw) or nil
+      local token = value.lease and value.lease.token
+      if old and old.lease then
+        if old.lease.token ~= token or old.lease.expiresAt <= now then return 0 end
+      elseif token then return 0 end
+      if enqueue and value.deduplicationId then
+        for _,entry in ipairs(redis.call('HVALS',KEYS[1])) do
+          local other = cjson.decode(entry)
+          if other.id ~= value.id and other.deduplicationId == value.deduplicationId and other.state ~= 'completed' and other.state ~= 'failed' then return -1 end
+        end
+      end
+      if enqueue or value.state == 'completed' or value.state == 'failed' then value.lease = nil
+      elseif old and old.lease then value.lease = old.lease end
+      if old and old.queueMember then redis.call('ZREM',KEYS[3],old.queueMember) end
+      if enqueue then value.queueMember = nil; value.timestamp = now elseif old then value.queueMember = old.queueMember end
+      indexJob(value)
+      redis.call('HSET',KEYS[1],value.id,cjson.encode(value))
+      return 1
+  end
+  local function decodeAndWrite(encoded)
+    local request = cjson.decode(encoded)
+    return write(request[1], request[2])
+  end
+  local results = {}
+  for _,encoded in ipairs(ARGV) do
+    local ok, result = pcall(decodeAndWrite, encoded)
+    if ok then table.insert(results, result)
+    else table.insert(results, {err=tostring(result)}) end
+  end
+  return results
+`;
+
+interface ScriptRequest {
+  argument: string;
+  resolve(result: unknown): void;
+  reject(error: unknown): void;
+}
+
+interface QueueScriptBatch { requests: ScriptRequest[]; bytes: number }
+
 export interface RedisAdapterOptions {
   connection?: Redis | RedisOptions;
   prefix?: string;
@@ -108,24 +234,7 @@ export class RedisAdapter implements FlowAdapter {
   }
   async createJob(queue: string, job: Job): Promise<Job> {
     const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
-    const result = await this.executeScript(`${QUEUE_INDEX_LUA}
-      local proposed = cjson.decode(ARGV[1])
-      local existing = redis.call('HGET', KEYS[1], proposed.id)
-      if existing then return existing end
-      if proposed.deduplicationId then
-        local entries = redis.call('HVALS', KEYS[1])
-        for _,entry in ipairs(entries) do
-          local job = cjson.decode(entry)
-          if job.deduplicationId == proposed.deduplicationId and job.state ~= 'completed' and job.state ~= 'failed' then return entry end
-        end
-      end
-      local time = redis.call('TIME')
-      proposed.timestamp = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
-      indexJob(proposed)
-      local encoded = cjson.encode(proposed)
-      redis.call('HSET', KEYS[1], proposed.id, encoded)
-      return encoded
-    `, 5, ...this.queueKeys(queue), JSON.stringify(value));
+    const result = await this.batchQueueScript(queue, CREATE_JOB_BATCH_LUA, JSON.stringify(value));
     return JSON.parse(String(result));
   }
   async enqueue(queue: string, job: Job): Promise<string> {
@@ -137,82 +246,63 @@ export class RedisAdapter implements FlowAdapter {
     await this.writeJob(queue, value as Job, true);
     return job.id;
   }
+  private readonly queueScriptBatches = new Map<string, Map<string, QueueScriptBatch>>();
+
   async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
-    const result = await this.executeScript(
-      `
-      ${QUEUE_INDEX_LUA}
-      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
-      for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',now)) do
-        local raw = redis.call('HGET',KEYS[1],id)
-        if raw then
-          local job = cjson.decode(raw)
-          redis.call('ZADD',KEYS[3],-(job.opts.priority or 0),job.queueMember)
-        end
-        redis.call('ZREM',KEYS[2],id)
-      end
-      local chosen = nil
-      local offset = 0
-      while not chosen do
-        local members = redis.call('ZRANGE',KEYS[3],offset,offset+31)
-        if #members == 0 then break end
-        local removed = 0
-        for _,member in ipairs(members) do
-          local raw = redis.call('HGET',KEYS[1],string.sub(member,24))
-          if raw then
-            local job = cjson.decode(raw)
-            local ready = job.state == 'waiting' or job.state == 'delayed'
-            if ready and (ARGV[2] == '' or job.name == ARGV[2]) then
-              for _,id in ipairs(job.opts.waitFor or {}) do
-                local dependency = redis.call('HGET',KEYS[1],id)
-                if not dependency or cjson.decode(dependency).state ~= 'completed' then ready = false end
-              end
-              if ready then chosen = job; break end
-            end
-          else redis.call('ZREM',KEYS[3],member); removed = removed + 1 end
-        end
-        offset = offset + #members - removed
-      end
-      if not chosen then return nil end
-      chosen.state = 'active'; chosen.processedOn = now; chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
-      local encoded = cjson.encode(chosen)
-      redis.call('HSET',KEYS[1],chosen.id,encoded)
-      redis.call('ZREM',KEYS[2],chosen.id)
-      redis.call('ZREM',KEYS[3],chosen.queueMember)
-      return encoded
-    `,
-      5,
-      ...this.queueKeys(queue),
-      0, // Reserved argument: queue time comes from Redis TIME.
-      name ?? "",
-      randomUUID(),
-      leaseDuration,
-    );
+    const result = await this.batchQueueScript(queue, DEQUEUE_BATCH_LUA, JSON.stringify([0, name ?? "", randomUUID(), leaseDuration]));
     return result ? JSON.parse(String(result)) : null;
   }
+
+  /** Coalesce calls already submitted in this microtask, capped at 32 requests / 64 KiB arguments per queue/script.
+   * A pre-existing oversized single-job input is sent alone, never merged with peers.
+   * This does not prefetch jobs or change any caller-owned Redis client options.
+   * Each request is serialized before admission, so one invalid input cannot poison peers.
+   */
+  private batchQueueScript(queue: string, script: string, argument: string): Promise<unknown> {
+    if (this.closed) return Promise.reject(new Error("Adapter is closed"));
+    return new Promise((resolve, reject) => {
+      const bytes = Buffer.byteLength(argument);
+      let batch = this.queueScriptBatches.get(script)?.get(queue);
+      if (batch && batch.bytes + bytes > 65_536) {
+        this.flushQueueScript(queue, script, batch);
+        batch = undefined;
+      }
+      if (!batch) {
+        let queues = this.queueScriptBatches.get(script);
+        if (!queues) { queues = new Map(); this.queueScriptBatches.set(script, queues); }
+        batch = { requests: [], bytes: 0 };
+        queues.set(queue, batch);
+        const pending = batch;
+        queueMicrotask(() => this.flushQueueScript(queue, script, pending));
+      }
+      batch.requests.push({ argument, resolve, reject });
+      batch.bytes += bytes;
+      if (batch.requests.length === 32 || batch.bytes >= 65_536) this.flushQueueScript(queue, script, batch);
+    });
+  }
+
+  private flushQueueScript(queue: string, script: string, batch: QueueScriptBatch): void {
+    const queues = this.queueScriptBatches.get(script);
+    if (queues?.get(queue) !== batch) return;
+    queues.delete(queue);
+    if (!queues.size) this.queueScriptBatches.delete(script);
+    if (this.closed) {
+      for (const request of batch.requests) request.reject(new Error("Adapter is closed"));
+      return;
+    }
+    void this.executeScript(script, 5, ...this.queueKeys(queue), ...batch.requests.map(request => request.argument)).then(result => {
+      if (!Array.isArray(result) || result.length !== batch.requests.length) {
+        for (const request of batch.requests) request.reject(new Error("Redis queue batch returned incomplete results; outcome unknown"));
+        return;
+      }
+      result.forEach((value, index) => {
+        if (value instanceof Error) batch.requests[index].reject(value);
+        else batch.requests[index].resolve(value);
+      });
+    }, error => { for (const request of batch.requests) request.reject(error); });
+  }
   private async writeJob(queue: string, job: Job, enqueue = false): Promise<void> {
-    const result = await this.executeScript(`${QUEUE_INDEX_LUA}
-      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
-      local value = cjson.decode(ARGV[1])
-      local raw = redis.call('HGET', KEYS[1], value.id)
-      local old = raw and cjson.decode(raw) or nil
-      local token = value.lease and value.lease.token
-      if old and old.lease then
-        if old.lease.token ~= token or old.lease.expiresAt <= now then return 0 end
-      elseif token then return 0 end
-      if ARGV[3] == '1' and value.deduplicationId then
-        for _,entry in ipairs(redis.call('HVALS',KEYS[1])) do
-          local other = cjson.decode(entry)
-          if other.id ~= value.id and other.deduplicationId == value.deduplicationId and other.state ~= 'completed' and other.state ~= 'failed' then return -1 end
-        end
-      end
-      if ARGV[3] == '1' or value.state == 'completed' or value.state == 'failed' then value.lease = nil
-      elseif old and old.lease then value.lease = old.lease end
-      if old and old.queueMember then redis.call('ZREM',KEYS[3],old.queueMember) end
-      if ARGV[3] == '1' then value.queueMember = nil; value.timestamp = now elseif old then value.queueMember = old.queueMember end
-      indexJob(value)
-      redis.call('HSET',KEYS[1],value.id,cjson.encode(value))
-      return 1
-    `, 5, ...this.queueKeys(queue), JSON.stringify(job), 0, enqueue ? "1" : "0");
+    const result = await this.batchQueueScript(queue, WRITE_JOB_BATCH_LUA, JSON.stringify([job, enqueue]));
     if (Number(result) === -1) throw new Error("Active job already owns deduplication key");
     if (Number(result) !== 1) throw new Error("Job lease lost");
   }
