@@ -73,3 +73,74 @@ def test_stop_surfaces_failure_without_discarding_pending():
     batcher.on_flush = received.extend
     batcher.flush()
     assert received == [1]
+
+
+def test_overlapping_stops_cannot_disown_a_replacement_worker(monkeypatch):
+    batcher = Batcher(lambda batch: None, max_wait=60)
+    batcher.start()
+    original = batcher._thread
+    joined, release = threading.Event(), threading.Event()
+    original_join = original.join
+
+    def delayed_join(*args, **kwargs):
+        original_join(*args, **kwargs)
+        if threading.current_thread() is late_stop:
+            joined.set()
+            assert release.wait(2)
+
+    monkeypatch.setattr(original, 'join', delayed_join)
+    late_stop = threading.Thread(target=batcher.stop, daemon=True)
+    replacement = None
+    try:
+        late_stop.start()
+        assert joined.wait(2)
+        batcher.stop()
+        batcher.start()
+        replacement = batcher._thread
+        assert replacement is not original and replacement.is_alive()
+        release.set()
+        late_stop.join(2)
+        assert not late_stop.is_alive()
+        assert batcher._thread is replacement
+        batcher.start()
+        assert batcher._thread is replacement
+        batcher.stop()
+        assert not replacement.is_alive()
+        assert batcher._thread is None
+    finally:
+        release.set()
+        late_stop.join(2)
+        batcher.stop()
+        if replacement is not None:
+            replacement.join(2)
+
+
+def test_stop_does_not_hold_lifecycle_lock_while_callback_calls_start():
+    entered, restart, callback_done = threading.Event(), threading.Event(), threading.Event()
+
+    def deliver(batch):
+        entered.set()
+        assert restart.wait(2)
+        batcher.start()
+        callback_done.set()
+
+    batcher = Batcher(deliver, max_size=1)
+    batcher.start()
+    stopping = threading.Thread(target=batcher.stop, daemon=True)
+    try:
+        batcher.add(1)
+        assert entered.wait(2)
+        stopping.start()
+        with batcher._condition:
+            assert batcher._condition.wait_for(lambda: batcher._stopped, 2)
+        restart.set()
+        assert callback_done.wait(2)
+        stopping.join(2)
+        assert not stopping.is_alive()
+        assert batcher._thread is None
+    finally:
+        restart.set()
+        if stopping.ident is not None:
+            stopping.join(2)
+        if not stopping.is_alive():
+            batcher.stop()

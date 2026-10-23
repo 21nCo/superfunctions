@@ -129,3 +129,12 @@ def test_all_functions_coexist_and_partial_range_overlaps_bucket():
         'count': 2, 'sum': 30, 'avg': 15, 'min': 10, 'max': 20,
     }
     assert aggregator.get('metric', '1m', 120000, 120001) == []
+
+
+def test_reversed_range_does_not_return_an_overlapping_bucket():
+    aggregator = MetricAggregator(intervals=['1m'], functions=['count', 'sum'])
+    aggregator.add('metric', MetricPoint(timestamp=62000, value=10))
+    assert aggregator.get('metric', '1m', 62500, 61500) == []
+    assert {point.function: point.value for point in aggregator.get('metric', '1m', 62000, 62000)} == {
+        'count': 1, 'sum': 10,
+    }

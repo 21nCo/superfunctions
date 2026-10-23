@@ -30,6 +30,8 @@ class Batcher:
             self._thread.start()
 
     def stop(self):
+        # Stop the generation captured below. A concurrent restart after another
+        # stop must remain owned by its new thread, not cleared by this caller.
         with self._condition:
             self._stopped = True
             self._condition.notify_all()
@@ -37,7 +39,8 @@ class Batcher:
         if thread is not None:
             thread.join()
         with self._condition:
-            self._thread = None
+            if self._thread is thread:
+                self._thread = None
         self.flush()
 
     def add(self, item: Any):

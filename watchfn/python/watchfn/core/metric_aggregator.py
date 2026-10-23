@@ -71,6 +71,8 @@ class MetricAggregator:
         tags: Optional[Dict[str, str]] = None
     ) -> List[AggregatedMetric]:
         """Get aggregated metrics for a time range."""
+        if from_time > to_time:
+            return []
         key = self._get_aggregation_key(metric, interval, tags)
         aggs = self.aggregations.get(key, {})
         
