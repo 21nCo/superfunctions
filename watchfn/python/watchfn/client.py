@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, overload
 from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
-from .query import Query
+from .query import Query, Aggregate
 from .storage.memory_storage import MemoryStorage
 from .storage.database import DatabaseStorage
 from .http.routes import create_routes
@@ -101,6 +101,11 @@ class WatchFn:
             return query.execute(self.storage.query())
         self.batcher.flush()
         return self.storage.query(metric)
+
+    def aggregate(self, options: Dict[str, Any]) -> List[Dict[str, Any]]:
+        query = Aggregate(options)
+        self.batcher.flush()
+        return query.execute(self.storage.query())
 
 def watch_fn(name: str, **kwargs) -> WatchFn:
     return WatchFn(name, **kwargs)

@@ -1,5 +1,5 @@
 """Bounded structured queries over one admitted storage scan."""
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import cmp_to_key
 import json
@@ -152,6 +152,34 @@ def timestamp(value):
     raise QueryValidationError('Expected epoch milliseconds or timezone-aware ISO timestamp')
 
 
+def calendar_range(shortcut, now):
+    current = time.localtime(now / 1000)
+    today = date(current.tm_year, current.tm_mon, current.tm_mday)
+    def midnight(day):
+        # Date-compatible disambiguation: earlier fold, forward through a gap.
+        target = (day.year, day.month, day.day, 0, 0, 0)
+        candidates = []
+        for daylight in (-1, 0, 1):
+            try:
+                instant = time.mktime((*target, 0, 0, daylight))
+                wall = tuple(time.localtime(instant)[:6])
+                candidates.append((wall, instant))
+            except (OverflowError, ValueError):
+                continue
+        exact = [instant for wall, instant in candidates if wall == target]
+        if exact:
+            return min(exact) * 1000
+        later = [(wall, instant) for wall, instant in candidates if wall > target]
+        if not later:
+            raise QueryValidationError('Calendar midnight unavailable in host timezone')
+        return min(later)[1] * 1000
+    if shortcut == 'today': return midnight(today), now
+    if shortcut == 'yesterday': return midnight(today - timedelta(days=1)), midnight(today)
+    if shortcut == 'this-week': return midnight(today - timedelta(days=(today.weekday() + 1) % 7)), now
+    if shortcut == 'this-month': return midnight(today.replace(day=1)), now
+    raise QueryValidationError('Unsupported calendar shortcut')
+
+
 class Query:
     def __init__(self, options):
         if not isinstance(options, dict) or set(options) - {'metric', 'where', 'timeRange', 'groupBy', 'aggregations', 'orderBy', 'limit'}:
@@ -186,6 +214,8 @@ class Query:
                     if duration > 9007199254740991: raise QueryValidationError('Range too large')
                     now = time.time() * 1000
                     self.range = (now - duration, now)
+                elif value in ('today', 'yesterday', 'this-week', 'this-month'):
+                    self.range = calendar_range(value, time.time() * 1000)
                 else: self.range = (timestamp(value), time.time() * 1000)
             elif isinstance(value, list) and len(value) == 2:
                 self.range = tuple(timestamp(item) for item in value)
@@ -214,9 +244,13 @@ class Query:
             for name, config in self.aggregations.items():
                 field(name)
                 if name in {key for key, _ in self.groups}: raise QueryValidationError('Aggregation/group collision')
-                if not isinstance(config, dict) or set(config) - {'operation', 'field', 'percentile'} or config.get('operation') not in ('count', 'sum', 'avg', 'min', 'max', 'percentile', 'count_distinct'):
+                if not isinstance(config, dict) or set(config) - {'operation', 'field', 'percentile', 'numerator', 'denominator'} or config.get('operation') not in ('count', 'sum', 'avg', 'min', 'max', 'percentile', 'count_distinct', 'rate'):
                     raise QueryValidationError('Unsupported aggregation')
-                if config['operation'] != 'count' or 'field' in config: field(config.get('field'))
+                if config['operation'] == 'rate':
+                    for selector in (config.get('numerator'), config.get('denominator')):
+                        if not isinstance(selector, dict) or set(selector) != {'metric'} or not isinstance(selector['metric'], str) or not selector['metric'].strip():
+                            raise QueryValidationError('Rate requires metric selectors')
+                elif config['operation'] != 'count' or 'field' in config: field(config.get('field'))
                 if config['operation'] == 'percentile' and (not number(config.get('percentile')) or not 0 <= config['percentile'] <= 100): raise QueryValidationError('Invalid percentile')
         order = options.get('orderBy')
         if 'orderBy' in options:
@@ -225,11 +259,17 @@ class Query:
 
     def execute(self, events):
         rows = []
+        metric = self.options.get('metric')
+        rates = [config for config in (self.aggregations or {}).values() if config['operation'] == 'rate']
+        only_rates = bool(rates) and len(rates) == len(self.aggregations)
+        metrics = {selector['metric'] for config in rates for selector in (config['numerator'], config['denominator'])}
+        if metric: metrics.add(metric)
         for event in events:
             row = event.model_dump(mode='json')
             row['timestamp'] = (event.timestamp.replace(tzinfo=timezone.utc) if event.timestamp.tzinfo is None else event.timestamp).astimezone(timezone.utc).isoformat()
-            metric = self.options.get('metric')
-            if metric and row.get('name') != metric and row.get('type') != metric: continue
+            if rates:
+                if (metric or only_rates) and row.get('name') not in metrics and row.get('type') not in metrics: continue
+            elif metric and row.get('name') != metric and row.get('type') != metric: continue
             if not matches(row, self.options.get('where', {})): continue
             if self.range and not self.range[0] <= timestamp(event.timestamp) <= self.range[1]: continue
             rows.append(row)
@@ -250,9 +290,15 @@ class Query:
                 result = dict(labels)
                 for name, config in self.aggregations.items():
                     operation = config['operation']
-                    values = [read(row, config['field']) for row in members] if operation != 'count' else []
+                    if operation == 'rate':
+                        numerator = sum(row.get('name') == config['numerator']['metric'] or row.get('type') == config['numerator']['metric'] for row in members)
+                        denominator = sum(row.get('name') == config['denominator']['metric'] or row.get('type') == config['denominator']['metric'] for row in members)
+                        result[name] = numerator / denominator if denominator else None
+                        continue
+                    selected = [row for row in members if not rates or not metric or row.get('name') == metric or row.get('type') == metric]
+                    values = [read(row, config['field']) for row in selected] if operation != 'count' else []
                     numeric = [float(value) for value in values if number(value)]
-                    if operation == 'count': value = len(members)
+                    if operation == 'count': value = len(selected)
                     elif operation == 'count_distinct':
                         distinct = set()
                         for item in values:
@@ -284,3 +330,43 @@ class Query:
                 return result if order['direction'] == 'asc' else -result
             rows.sort(key=cmp_to_key(compare))
         return rows[:self.limit]
+
+
+class Aggregate:
+    """Public scalar aggregate forms, including exact-metric-first suffix fallback."""
+    def __init__(self, options):
+        if not isinstance(options, dict):
+            raise QueryValidationError('Invalid aggregate options')
+        self.original = dict(options)
+        operation = options.get('aggregation')
+        if not isinstance(operation, str):
+            raise QueryValidationError('Aggregation is required')
+        shorthand = re.fullmatch(r'p(\d+(?:\.\d+)?)', operation)
+        config = {'operation': 'percentile' if shorthand else operation}
+        if 'field' in options:
+            config['field'] = options['field']
+        elif operation != 'count':
+            config['field'] = 'value'
+        if shorthand: config['percentile'] = float(shorthand[1])
+        elif 'percentile' in options: config['percentile'] = options['percentile']
+        for key in ('numerator', 'denominator'):
+            if key in options: config[key] = options[key]
+        query = {key: value for key, value in options.items() if key not in ('aggregation', 'field', 'percentile', 'numerator', 'denominator')}
+        if 'aggregations' in query:
+            raise QueryValidationError('Use aggregation for scalar aggregate')
+        query['aggregations'] = {'value': config}
+        self.query = Query(query)
+        metric = options.get('metric')
+        self.fallback = None
+        if 'field' not in options and operation not in ('count', 'rate') and isinstance(metric, str) and '.' in metric:
+            base, suffix = metric.rsplit('.', 1)
+            fallback = dict(query, metric=base, aggregations={'value': dict(config, field=suffix)})
+            self.fallback = Query(fallback)
+
+    def execute(self, events):
+        metric = self.original.get('metric')
+        # Presence precedes residual filters/time. A real exact metric with no
+        # matching observations must yield an empty result, not a second metric.
+        if self.fallback and not any(event.name == metric or event.type == metric for event in events):
+            return self.fallback.execute(events)
+        return self.query.execute(events)

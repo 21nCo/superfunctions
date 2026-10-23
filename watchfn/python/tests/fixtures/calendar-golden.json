@@ -1,0 +1,74 @@
+[
+  {
+    "timezone": "UTC",
+    "now": 1767960000000,
+    "shortcut": "today",
+    "expected": {
+      "from": 1767916800000,
+      "to": 1767960000000
+    }
+  },
+  {
+    "timezone": "Asia/Kolkata",
+    "now": 1767960000000,
+    "shortcut": "today",
+    "expected": {
+      "from": 1767897000000,
+      "to": 1767960000000
+    }
+  },
+  {
+    "timezone": "Asia/Kolkata",
+    "now": 1767960000000,
+    "shortcut": "this-week",
+    "expected": {
+      "from": 1767465000000,
+      "to": 1767960000000
+    }
+  },
+  {
+    "timezone": "America/New_York",
+    "now": 1773072000000,
+    "shortcut": "yesterday",
+    "expected": {
+      "from": 1772946000000,
+      "to": 1773028800000
+    }
+  },
+  {
+    "timezone": "America/New_York",
+    "now": 1793638800000,
+    "shortcut": "yesterday",
+    "expected": {
+      "from": 1793505600000,
+      "to": 1793595600000
+    }
+  },
+  {
+    "timezone": "America/New_York",
+    "now": 1773072000000,
+    "shortcut": "this-month",
+    "expected": {
+      "from": 1772341200000,
+      "to": 1773072000000
+    }
+  },
+  {
+    "timezone": "America/Havana",
+    "now": 1793556000000,
+    "shortcut": "today",
+    "expected": {
+      "from": 1793505600000,
+      "to": 1793556000000
+    }
+  },
+  {
+    "timezone": "America/Sao_Paulo",
+    "now": 1541343600000,
+    "shortcut": "today",
+    "expected": {
+      "from": 1541300400000,
+      "to": 1541343600000
+    }
+  }
+]

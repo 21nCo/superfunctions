@@ -63,12 +63,16 @@ HTTP keeps `{"results": [...]}`. Supported options are:
   arrays, and contains converts scalar/array/object values to JavaScript-style text.
   Numeric aggregates ignore strings, booleans, missing and nonfinite values.
 - `timeRange`: inclusive epoch-millisecond or timezone-aware ISO bounds, a two-item
-  array, an object with from/to, or last-Nm/h/d/w (also `{shortcut: ...}`). Relative
+  array, an object with from/to, or last-Nm/h/d/w and today/yesterday/this-week/this-month (also `{shortcut: ...}`). Relative
   bounds are resolved once for the query, not separately per row.
 - `groupBy`: a dotted scalar field, `{interval: "5m"}`, or a list of both.
   Supported units are ms/s/m/h/d/w. Grouping requires aggregations.
-- `aggregations`: named count/sum/avg/min/max/percentile/count_distinct operations.
-  Non-count operations require field; percentile requires a value from0 through100.
+- `aggregations`: named count/sum/avg/min/max/percentile/count_distinct/rate operations.
+  Numeric/distinct operations require field; percentile requires a value from0 through100.
+  Rate requires numerator/denominator objects each containing a metric string, and
+  counts matching events after common filters/time/grouping; zero denominator yields
+  null. With a primary metric, non-rate aggregates count only that metric while
+  rate selectors can read their separately named metric streams.
   Empty count/sum/distinct yield0; empty avg/min/max/percentile yield null.
 - `orderBy`: `{field: "mean", direction: "desc"}` (or asc).
 - `limit`:0–1000, default1000, applied after filtering/grouping/ordering. Unlike the
@@ -98,10 +102,28 @@ Invalid options/group values/nonfinite aggregate results reject, and HTTP return
 failure returns503. Query validates before flushing the synchronous batcher and
 uses one complete bounded storage scan, so limit/aggregation never hides scan
 capacity overflow. Numeric semantics target JavaScript IEEE doubles, including
-sequential sums. Calendar shortcuts, timezone-less date parsing, rate aggregation,
-scalar aggregate shorthand/suffix fallback, alert observation queries, query pushdown
+sequential sums. Timezone-less arbitrary date parsing, alert observation queries, query pushdown
 and unbounded TypeScript result sizes are not implemented by this slice. Unsupported
 options fail explicitly; this is not full query/metrics parity.
+
+Calendar shortcuts follow the host local timezone, matching TypeScript Date:
+local midnight→now for today; previous midnight→today midnight for yesterday;
+Sunday-start week; first day of month. Endpoints are inclusive, even yesterday's
+upper midnight. DST days can be23 or25 hours; a repeated midnight selects the
+earlier instant and a nonexistent midnight advances through the gap. Hosts must
+align their timezone and timezone database versions across languages. The package
+does not silently switch calendar queries to UTC or infer a tenant timezone.
+Shared vectors cover UTC/Kolkata, New York spring/fall and Havana/Sao Paulo midnight
+transitions; they do not certify every historical timezone database rule.
+
+`watch.aggregate({"metric": "request.duration", "aggregation": "avg"})` provides
+the scalar aggregate API. It returns value rows and accepts pNN percentile
+shorthand, grouping, filters and time ranges. An exact request.duration event uses
+its value field. Only when no exact event exists anywhere in the admitted scan
+can it use request events' duration field. Exact presence is checked before
+where/time filters, so an exact metric outside the selected window disables
+fallback and can yield null. An explicit field, count or rate disables suffix
+fallback. This uses one bounded storage scan; complete-scan overflow still fails.
 
 The shared Request protocol exposes buffered `body()`, not a streaming iterator.
 Declared length is checked before reading and actual bytes before JSON parsing,

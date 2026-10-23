@@ -670,6 +670,768 @@
           }
         }
       ]
+    },
+    {
+      "name": "grouped rate null denominator",
+      "query": {
+        "groupBy": "endpoint",
+        "aggregations": {
+          "ratio": {
+            "operation": "rate",
+            "numerator": {
+              "metric": "error"
+            },
+            "denominator": {
+              "metric": "request"
+            }
+          }
+        }
+      },
+      "expected": [
+        {
+          "endpoint": "a",
+          "ratio": 0.5
+        },
+        {
+          "endpoint": "b",
+          "ratio": 2
+        },
+        {
+          "endpoint": "c",
+          "ratio": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 10
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 20
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 1
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 30
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 2
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 3
+          }
+        },
+        {
+          "type": "track",
+          "name": "noise",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 100
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "c",
+            "value": 4
+          }
+        }
+      ],
+      "aggregate": false
+    },
+    {
+      "name": "mixed primary metric and rate",
+      "query": {
+        "metric": "request",
+        "groupBy": "endpoint",
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          },
+          "ratio": {
+            "operation": "rate",
+            "numerator": {
+              "metric": "error"
+            },
+            "denominator": {
+              "metric": "request"
+            }
+          }
+        }
+      },
+      "expected": [
+        {
+          "endpoint": "a",
+          "count": 2,
+          "ratio": 0.5
+        },
+        {
+          "endpoint": "b",
+          "count": 1,
+          "ratio": 2
+        },
+        {
+          "endpoint": "c",
+          "count": 0,
+          "ratio": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 10
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 20
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 1
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 30
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 2
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 3
+          }
+        },
+        {
+          "type": "track",
+          "name": "noise",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 100
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "c",
+            "value": 4
+          }
+        }
+      ],
+      "aggregate": false
+    },
+    {
+      "name": "mixed rates without primary include other events",
+      "query": {
+        "groupBy": "endpoint",
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          },
+          "ratio": {
+            "operation": "rate",
+            "numerator": {
+              "metric": "error"
+            },
+            "denominator": {
+              "metric": "request"
+            }
+          }
+        }
+      },
+      "expected": [
+        {
+          "endpoint": "a",
+          "count": 4,
+          "ratio": 0.5
+        },
+        {
+          "endpoint": "b",
+          "count": 3,
+          "ratio": 2
+        },
+        {
+          "endpoint": "c",
+          "count": 1,
+          "ratio": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 10
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 20
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 1
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 30
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 2
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 3
+          }
+        },
+        {
+          "type": "track",
+          "name": "noise",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 100
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "c",
+            "value": 4
+          }
+        }
+      ],
+      "aggregate": false
+    },
+    {
+      "name": "scalar rate",
+      "query": {
+        "aggregation": "rate",
+        "numerator": {
+          "metric": "error"
+        },
+        "denominator": {
+          "metric": "request"
+        }
+      },
+      "expected": [
+        {
+          "value": 1.3333333333333333
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 10
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 20
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 1
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 30
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 2
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "b",
+            "value": 3
+          }
+        },
+        {
+          "type": "track",
+          "name": "noise",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "a",
+            "value": 100
+          }
+        },
+        {
+          "type": "track",
+          "name": "error",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "endpoint": "c",
+            "value": 4
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "scalar suffix average",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "avg"
+      },
+      "expected": [
+        {
+          "value": 10
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "scalar suffix percentile",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "p95"
+      },
+      "expected": [
+        {
+          "value": 19
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "scalar exact disables fallback before where",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "avg",
+        "where": {
+          "scope": "match"
+        }
+      },
+      "expected": [
+        {
+          "value": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request.duration",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "value": 100,
+            "scope": "other"
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "scalar exact disables fallback before time",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "avg",
+        "timeRange": [
+          1767916800000,
+          1767916860000
+        ]
+      },
+      "expected": [
+        {
+          "value": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request.duration",
+          "timestamp": "2020-01-01T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "value": 100
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "explicit field disables suffix fallback",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "avg",
+        "field": "duration"
+      },
+      "expected": [
+        {
+          "value": null
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        }
+      ],
+      "aggregate": true
+    },
+    {
+      "name": "count never uses suffix fallback",
+      "query": {
+        "metric": "request.duration",
+        "aggregation": "count"
+      },
+      "expected": [
+        {
+          "value": 0
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 0,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 10,
+            "scope": "match"
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "duration": 20,
+            "scope": "match"
+          }
+        }
+      ],
+      "aggregate": true
     }
   ]
 }

@@ -263,3 +263,33 @@ def test_structured_query_after_reopen_and_complete_scan(tmp_path, framework):
         assert post('query', grouped).status_code == 503  # Limit1 never bypasses the scan cap.
     finally:
         watch.stop(); engine.dispose()
+
+
+@pytest.mark.parametrize('framework', ['fastapi', 'flask'])
+def test_rates_calendar_scalar_fallback_after_reopen(tmp_path, framework):
+    from datetime import datetime, timezone
+    engine = create_engine('sqlite:///' + str(tmp_path / 'scalar.sqlite'))
+    migrate(engine)
+    watch = start(create_adapter(engine))
+    try:
+        events = [Event(type='track', name='request', properties={'endpoint':'/api','duration':value}) for value in (10,30)]
+        events += [Event(type='track',name='error',properties={'endpoint':'/api'}), Event(type='track', name='request.duration', properties={'value':999}, timestamp=datetime(2000,1,1,tzinfo=timezone.utc))]
+        events += [Event(type='track',name='latency',properties={'duration':value}) for value in (4,8)]
+        watch.storage.add_batch(events)
+    finally:
+        watch.stop(); engine.dispose()
+    engine = create_engine('sqlite:///' + str(tmp_path / 'scalar.sqlite'))
+    watch = start(create_adapter(engine))
+    try:
+        post, body = http(watch, framework)
+        options = {'metric':'request','timeRange':'today','groupBy':'endpoint','aggregations':{'count':{'operation':'count'},'rate':{'operation':'rate','numerator':{'metric':'error'},'denominator':{'metric':'request'}}}}
+        assert body(post('query', options))['results'] == [{'endpoint':'/api','count':2,'rate':0.5}]
+        assert watch.aggregate({'metric':'latency.duration','aggregation':'avg'}) == [{'value':6}]
+        assert watch.aggregate({'metric':'latency.duration','aggregation':'p50'}) == [{'value':6}]
+        assert watch.aggregate({'metric':'request.duration','aggregation':'avg','timeRange':'today'}) == [{'value':None}]
+        watch.storage.SCAN_LIMIT = 1
+        assert post('query', options).status_code == 503
+        with pytest.raises(ValueError, match='scan limit'):
+            watch.aggregate({'metric':'latency.duration','aggregation':'avg'})
+    finally:
+        watch.stop(); engine.dispose()
