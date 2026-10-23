@@ -59,7 +59,7 @@ try {
   const connect = () => {
     sql = new Kysely({ dialect: new SqliteDialect({ database: new Database(join(temporary, 'bugs.sqlite')) }) });
     watch = new WatchFn({ name: 'shop', storage: 'database', database: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { watchfn_events: 'watchfn_events', watchfn_bug_issues: 'watchfn_bug_issues' } }),
-      infra: { enabled: false }, auth: { apiKey: 'full-watch-fixture-key' }, retention: { apps: ['shop'], bugReportTtlMs: 1 }, botfn: { namespace: 'shop-test', routes: [{ app: 'shop', target: 'github', project: 'acme/bugs', client: github }] } });
+      infra: { enabled: false }, auth: { provider: { authenticate: async request => { const token = request.headers.get('authorization'); const scopes = token === 'Bearer full-watch-fixture-key' ? ['watchfn:ingest','watchfn:query','watchfn:issues:status'] : token === 'Bearer browser-only-key' ? ['watchfn:ingest','watchfn:issues:status'] : null; return scopes ? {id:'fixture',type:'api-key',subject:{actorId:'fixture',actorType:'api-key'},scopes} : null; } } }, retention: { apps: ['shop'], bugReportTtlMs: 1 }, botfn: { namespace: 'shop-test', routes: [{ app: 'shop', target: 'github', project: 'acme/bugs', client: github }] } });
     watch.start();
   };
   connect();
@@ -124,9 +124,10 @@ try {
   assert.deepEqual(linked.context, requests[0][0].context);
   // Submit through a real browser and built browser-compatible CatchFn source.
   bundle = join(temporary, 'browser.js');
-  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/dist/index.js'; window.catcher=catchFn({name:'shop',reporter:{screenshot:true,floatingButton:true,maxInlineBytes:1},uploadAttachment:async blob=>{const response=await fetch('/upload',{method:'POST',headers:{authorization:'Bearer upload-only'},body:blob});if(!response.ok)throw new Error('Upload failed');return response.json();},issueStatus:{enabled:true,intervalMs:100,maxAttempts:30,timeoutMs:5000},integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'full-watch-fixture-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
+  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/dist/index.js'; window.catcher=catchFn({name:'shop',reporter:{screenshot:true,floatingButton:true,maxInlineBytes:1},uploadAttachment:async blob=>{const response=await fetch('/upload',{method:'POST',headers:{authorization:'Bearer upload-only'},body:blob});if(!response.ok)throw new Error('Upload failed');return response.json();},issueStatus:{enabled:true,intervalMs:100,maxAttempts:30,timeoutMs:5000},integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'browser-only-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   const page = await browser.newPage({viewport:{width:800,height:600}}); await page.goto(origin);
+  assert.equal(await page.evaluate(async()=> (await fetch('/watch/query',{method:'POST',headers:{authorization:'Bearer browser-only-key','content-type':'application/json'},body:'{}'})).status),403);
   const browserReport = await page.evaluate(() => window.catcher.captureBug({ title: 'Browser issue', severity: 'high' }));
   assert.equal(browserReport.delivery, 'sent'); assert.equal(browserReport.integration.issueId, undefined);
   await watch.processBugIssues(); assert.equal(issues.length, 2);
