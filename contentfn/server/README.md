@@ -28,3 +28,29 @@ See the [complete ContentFn documentation](https://github.com/21nCo/super-functi
 Opaque query cursors bind the dataset, perspective, filter/types, order, and projection. Restart pagination after changing these inputs. Legacy unbound cursors now return `QUERY_INVALID`; they cannot safely prove their original dataset or perspective.
 
 `docs.fork({ dataset, id, ifRev })` creates a draft from the exact published revision and requires the distinct `docs.fork` permission. The source revision is conditionally locked inside the same transaction as draft/revision/event/audit insertion. It leaves published fields and revision unchanged, generates new draft identity/timestamps/revision, removes `_publishedAt`, and preserves application content fields. An existing draft returns `DOCUMENT_ALREADY_EXISTS` without exposing or overwriting its body; reading that draft still requires `docs.get` authorization. On `REV_CONFLICT`, refresh the published source before explicitly retrying. This endpoint is also available on the typed client and at `POST /contentfn/docs/fork`.
+
+### Durable publish replay
+
+When a trusted host `context(request)` resolver is configured, status advertises
+`content.docs.publish.idempotency.v1`. For keyed `docs.publish` requests this
+contract requires a nonempty `context.subject`, checks authorization on every
+request, and binds the stored successful response to dataset, key, action, exact
+input and subject. The resolver must authenticate the caller; copying an
+unverified browser header into `subject` does not establish an identity.
+Missing subjects deny keyed publication. Servers without a context resolver keep
+the legacy anonymous idempotency behavior and do not advertise this capability.
+
+A successful publication, audit entry and replay record commit atomically. Replay
+works after the draft has been removed, including after database reopen. Reusing
+the key with a different subject or input returns `VALIDATION_FAILED`; no cached
+document is disclosed and no new write occurs. Unsuccessful results are not
+recorded as successes. Callers must persist the original input and stable key
+before sending, and keep the same verified subject during recovery.
+
+Upgrade barrier: drain old writers before relying on actor-bound replay. Legacy
+successful publish records have no verifiable actor provenance; their same
+key/input produces a deterministic fingerprint conflict after enabling this
+contract. Reconcile those operations explicitly rather than changing keys to
+retry an unknown outcome. Keep replay records for the lifetime of pending
+operations. Dataset deletion removes replay records; delete/recreate, database
+rollback, or independent writes by older servers are outside this guarantee.

@@ -14,11 +14,12 @@ export async function executeIdempotent(
   db: Adapter, key: string, action: string, input: Record<string, unknown>,
   operation: (db: ContentfnDatabase) => Promise<ContentfnEnvelope<unknown>>,
   onReplay?: () => void,
+  publishSubject?: string,
 ): Promise<ContentfnEnvelope<unknown>> {
   if (!key || key.length > 200) return err("VALIDATION_FAILED", "Idempotency-Key must contain 1 to 200 characters", {});
   const dataset = typeof input.dataset === "string" ? input.dataset : "";
   const id = createHash("sha256").update(JSON.stringify([dataset, key])).digest("hex");
-  const requestHash = createHash("sha256").update(JSON.stringify([action, canonical(input)])).digest("hex");
+  const requestHash = createHash("sha256").update(JSON.stringify(action === "docs.publish" && publishSubject !== undefined ? [action, canonical(input), { contract: "publish-v1", subject: publishSubject ?? null }] : [action, canonical(input)])).digest("hex");
   const where = [{ field: "id", operator: "eq" as const, value: id }];
   const replay = (row: Record<string, unknown>) => row.requestHash === requestHash ? row.responseJson as ContentfnEnvelope<unknown> : err("VALIDATION_FAILED", "Idempotency key was already used for different input", {});
   const result = await atomicMutation(db, async transaction => {
