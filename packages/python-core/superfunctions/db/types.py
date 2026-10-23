@@ -352,9 +352,9 @@ class NamespaceConfig(BaseModel):
     """Namespace configuration."""
 
     separator: str = "_"
-    use_schema: bool = Field(False, alias="useSchema")
-    default_namespace: str = Field("default", alias="defaultNamespace")
-    known_namespaces: Optional[Set[str]] = Field(None, alias="knownNamespaces")
+    use_schema: bool = Field(default=False, alias="useSchema")
+    default_namespace: str = Field(default="default", alias="defaultNamespace")
+    known_namespaces: Optional[Set[str]] = Field(default=None, alias="knownNamespaces")
 
     class Config:
         populate_by_name = True
