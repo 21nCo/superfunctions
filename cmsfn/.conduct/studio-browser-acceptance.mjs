@@ -11,7 +11,7 @@ const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); r
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
 let denySingletonReads = false;
-const content = createContentfnServer({ db, authorize: (context, action, input) => !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const content = createContentfnServer({ db, webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
 const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
@@ -24,10 +24,13 @@ for (const asDraft of [false, true]) unwrap(await content.api.docs.create({ data
 unwrap(await content.api.docs.create({ dataset: 'prod', id: 'published-only', type: 'post', doc: { title: 'Published only' } }));
 unwrap(await content.api.docs.create({ dataset: 'prod', id: 'draft-only', type: 'post', doc: { title: 'Draft only' }, asDraft: true }));
 unwrap(await content.api.docs.create({ dataset: 'staging', id: 'staging-post', type: 'post', doc: { title: 'Staging' } }));
+// Register an inert destination; this fixture inspects queued metadata without sending.
+const auditHook = unwrap(await content.api.webhooks.register({ dataset: 'prod', url: 'https://example.invalid/hook?token=never-render', events: ['doc.created'], secret: 'never-render-signing' }));
+for (let n = 0; n < 25; n++) unwrap(await content.api.docs.create({ dataset: 'prod', id: `audit-${n}`, type: 'page', doc: { title: 'Never render audit document body' } }));
 await writeFile('studio-entry.mjs', `import React from 'react'; import { createRoot } from 'react-dom/client'; import { App } from '@cmsfn/studio'; createRoot(document.getElementById('root')).render(React.createElement(App));`);
 await build({ entryPoints: ['studio-entry.mjs'], outfile: 'studio-bundle.js', bundle: true, platform: 'browser', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
 const bundle = await readFile('studio-bundle.js');
-let base = ''; let cmsBase = ''; let cms; let allowPublish = true;
+let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true;
 const requests = [];
 const server = createServer((req, res) => {
   if (req.url?.startsWith('/cmsfn/')) { requests.push(req.url); cms.emit('request', req, res); return; }
@@ -51,7 +54,7 @@ let browser;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  cms = createCmsfnServer({ db: cmsDb, contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => allowPublish ? [{ id: 'editor', name: 'Editor', rules: [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] }] : [] });
+  cms = createCmsfnServer({ db: cmsDb, contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
   browser = await chromium.launch({ headless: true });
@@ -160,10 +163,41 @@ try {
   await page.getByRole('button', { name: 'Unconfigured home', exact: true }).click();
   await page.locator('[data-desk-error]').waitFor();
   assert.equal(requests.length, beforeUnavailable);
+  await page.getByRole('button', { name: 'Audit events', exact: true }).click();
+  await page.locator('[data-audit-event]').first().waitFor();
+  assert.equal(await page.locator('[data-audit-event]').count(), 20);
+  const firstEventIds = await page.locator('[data-audit-event]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-event-id')));
+  await page.locator('[data-audit-events-load-more]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-audit-event]').length === 40);
+  const eventIds = await page.locator('[data-audit-event]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-event-id')));
+  assert.equal(new Set(eventIds).size, 40); assert.deepEqual(eventIds.slice(0, 20), firstEventIds);
+  while (await page.locator('[data-audit-events-load-more]').count()) {
+    await page.locator('[data-audit-events-load-more]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-audit-events-load-more]')?.disabled);
+  }
+  const allEvents = await page.locator('[data-audit-event]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-event-id')));
+  const expectedEvents = unwrap(await content.api.audit.query({ dataset: 'prod', limit: 1000, order: 'desc' })).records;
+  assert.deepEqual(allEvents, expectedEvents.map(row => row.id));
+
+  assert.equal((await page.textContent('body')).includes('Never render audit document body'), false);
+  await page.getByRole('button', { name: 'Webhook deliveries', exact: true }).click();
+  await page.locator('[data-audit-delivery]').first().waitFor(); assert.equal(await page.locator('[data-audit-delivery]').count(), 20);
+  await page.locator('[data-audit-webhooks-load-more]').click();
+  const expectedDeliveries = unwrap(await content.api.audit.webhooks({ dataset: 'prod', limit: 1000, order: 'desc' })).records;
+  await page.waitForFunction(count => document.querySelectorAll('[data-audit-delivery]').length === count, expectedDeliveries.length);
+  assert.deepEqual(await page.locator('[data-audit-delivery-event]').allTextContents(), expectedDeliveries.map(row => row.eventId));
+  assert.ok((await page.locator('[data-audit-delivery-webhook]').allTextContents()).every(id => id === auditHook.webhookId));
+  assert.doesNotMatch(await page.textContent('body'), /never-render|Never render audit document body/);
+  await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('staging');
+  await page.waitForFunction(() => document.querySelector('[data-audit-webhooks-pane]')?.getAttribute('data-dataset') === 'staging' && !document.querySelector('[data-audit-webhooks-loading]'));
+  assert.equal(await page.locator('[data-audit-delivery]').count(), 0);
+  await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('prod'); await page.locator('[data-audit-delivery]').first().waitFor();
+  allowAudit = false; await page.locator('[data-audit-webhooks-refresh]').click(); await page.locator('[data-audit-denied]').waitFor(); assert.equal(await page.locator('[data-audit-delivery]').count(), 0);
+  await page.getByRole('button', { name: 'Audit events', exact: true }).click(); await page.locator('[data-audit-events-pane][data-audit-denied]').waitFor(); assert.equal(await page.locator('[data-audit-event]').count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request'], requests: requests.length,
-    remaining: ['full audit/release/operational shell integration', 'native Safari and deployment acceptance'] }));
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue'], requests: requests.length,
+    remaining: ['release and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();
 }

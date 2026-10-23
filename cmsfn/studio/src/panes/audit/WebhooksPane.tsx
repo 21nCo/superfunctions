@@ -2,7 +2,7 @@
  * Webhook deliveries pane: list delivery attempts (webhookId, status, attempt, timestamps), deterministic order.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { record, useAuditPage } from "./useAuditPage.js";
 import type { CmsfnWebhookDeliveryStatus } from "cmsfn";
 
 export interface WebhooksPaneProps {
@@ -12,56 +12,20 @@ export interface WebhooksPaneProps {
   hasAuditRead?: boolean;
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
+function parseDelivery(value: unknown, dataset: string): CmsfnWebhookDeliveryStatus | null {
+  if (!record(value) || value.dataset !== dataset || typeof value.webhookId !== "string" || typeof value.eventId !== "string" || typeof value.attempt !== "number" || !Number.isSafeInteger(value.attempt) || value.attempt < 0 || !(value.updatedAt === null || typeof value.updatedAt === "string")) return null;
+  if (value.status !== "pending" && value.status !== "processing" && value.status !== "delivered" && value.status !== "failed") return null;
+  return { webhookId: value.webhookId, dataset, eventId: value.eventId, attempt: value.attempt, status: value.status, updatedAt: value.updatedAt, url: null };
 }
 
-const DEFAULT_LIMIT = 20;
-
 export function WebhooksPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: WebhooksPaneProps) {
-  const [deliveries, setDeliveries] = useState<CmsfnWebhookDeliveryStatus[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { rows: deliveries, cursor: nextCursor, loading, error, denied, load } = useAuditPage(cmsfnApiUrl, dataset, hasAuditRead, "webhooks", parseDelivery);
 
-  const load = useCallback(
-    async (cursor?: string | null) => {
-      if (!dataset || !hasAuditRead) return;
-      setLoading(true);
-      setError(null);
-      const base = normalizeBaseUrl(cmsfnApiUrl);
-      const body: Record<string, unknown> = { dataset, limit: DEFAULT_LIMIT };
-      if (cursor != null) body.cursor = cursor;
-      const res = await fetch(`${base}/cmsfn/audit/webhooks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      setLoading(false);
-      if (data.ok && data.result) {
-        if (cursor) {
-          setDeliveries((prev) => [...prev, ...(data.result.deliveries ?? [])]);
-        } else {
-          setDeliveries(data.result.deliveries ?? []);
-        }
-        setNextCursor(data.result.nextCursor ?? null);
-      } else {
-        setError(data?.error?.message ?? "Failed to load deliveries");
-        if (!cursor) setDeliveries([]);
-      }
-    },
-    [cmsfnApiUrl, dataset, hasAuditRead]
-  );
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (!hasAuditRead) {
+  if (denied) {
     return (
       <div data-audit-webhooks-pane data-audit-denied>
         <p data-audit-denied-message>No access</p>
+        {hasAuditRead && <button type="button" onClick={() => void load()}>Retry</button>}
       </div>
     );
   }
@@ -69,11 +33,16 @@ export function WebhooksPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: Webh
   return (
     <div data-audit-webhooks-pane data-dataset={dataset}>
       <h2 data-audit-webhooks-title>Webhook deliveries</h2>
-      {error && <p data-audit-webhooks-error>{error}</p>}
+      {error && <p role="alert" data-audit-webhooks-error>{error}</p>}
       {loading && deliveries.length === 0 && <p data-audit-webhooks-loading>Loading…</p>}
+      <button type="button" onClick={() => void load()} disabled={loading} data-audit-webhooks-refresh>Refresh</button>
+      {error && <button type="button" onClick={() => void load(nextCursor)} disabled={loading}>Retry</button>}
+      {!loading && !error && deliveries.length === 0 && <p data-audit-empty>No webhook deliveries.</p>}
       <ul data-audit-webhooks-list>
         {deliveries.map((d, i) => (
           <li key={`${d.webhookId}-${d.eventId}-${i}`} data-audit-delivery data-webhook-id={d.webhookId}>
+            <span data-audit-delivery-webhook>{d.webhookId}</span>
+            <span data-audit-delivery-event>{d.eventId}</span>
             <span data-audit-delivery-status>{d.status}</span>
             <span data-audit-delivery-attempt>{d.attempt}</span>
             <span data-audit-delivery-updated>{d.updatedAt ?? "Timestamp unknown"}</span>

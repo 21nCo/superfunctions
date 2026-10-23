@@ -2,7 +2,7 @@
  * Audit events pane: list event metadata (no raw doc bodies), deterministic order and pagination.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { record, useAuditPage } from "./useAuditPage.js";
 import type { CmsfnAuditEvent } from "cmsfn";
 
 export interface EventsPaneProps {
@@ -11,56 +11,23 @@ export interface EventsPaneProps {
   hasAuditRead?: boolean;
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
+function parseEvent(value: unknown, dataset: string): CmsfnAuditEvent | null {
+  if (!record(value) || value.dataset !== dataset || typeof value.eventId !== "string" || typeof value.type !== "string" || typeof value.timestamp !== "string") return null;
+  if (value.targetIds !== undefined && (!Array.isArray(value.targetIds) || !value.targetIds.every(id => typeof id === "string"))) return null;
+  if (value.document !== undefined && (!record(value.document) || typeof value.document._id !== "string" || typeof value.document._type !== "string")) return null;
+  return { eventId: value.eventId, dataset, type: value.type, timestamp: value.timestamp,
+    ...(Array.isArray(value.targetIds) ? { targetIds: value.targetIds.filter((id): id is string => typeof id === "string") } : {}),
+    ...(record(value.document) && typeof value.document._id === "string" && typeof value.document._type === "string" ? { document: { _id: value.document._id, _type: value.document._type } } : {}) };
 }
 
-const DEFAULT_LIMIT = 20;
-
 export function EventsPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: EventsPaneProps) {
-  const [events, setEvents] = useState<CmsfnAuditEvent[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { rows: events, cursor: nextCursor, loading, error, denied, load } = useAuditPage(cmsfnApiUrl, dataset, hasAuditRead, "events", parseEvent);
 
-  const load = useCallback(
-    async (cursor?: string | null) => {
-      if (!dataset || !hasAuditRead) return;
-      setLoading(true);
-      setError(null);
-      const base = normalizeBaseUrl(cmsfnApiUrl);
-      const body: Record<string, unknown> = { dataset, limit: DEFAULT_LIMIT };
-      if (cursor != null) body.cursor = cursor;
-      const res = await fetch(`${base}/cmsfn/audit/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      setLoading(false);
-      if (data.ok && data.result) {
-        if (cursor) {
-          setEvents((prev) => [...prev, ...(data.result.events ?? [])]);
-        } else {
-          setEvents(data.result.events ?? []);
-        }
-        setNextCursor(data.result.nextCursor ?? null);
-      } else {
-        setError(data?.error?.message ?? "Failed to load events");
-        if (!cursor) setEvents([]);
-      }
-    },
-    [cmsfnApiUrl, dataset, hasAuditRead]
-  );
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (!hasAuditRead) {
+  if (denied) {
     return (
       <div data-audit-events-pane data-audit-denied>
         <p data-audit-denied-message>No access</p>
+        {hasAuditRead && <button type="button" onClick={() => void load()}>Retry</button>}
       </div>
     );
   }
@@ -68,8 +35,11 @@ export function EventsPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: Events
   return (
     <div data-audit-events-pane data-dataset={dataset}>
       <h2 data-audit-events-title>Events</h2>
-      {error && <p data-audit-events-error>{error}</p>}
+      {error && <p role="alert" data-audit-events-error>{error}</p>}
       {loading && events.length === 0 && <p data-audit-events-loading>Loading…</p>}
+      <button type="button" onClick={() => void load()} disabled={loading} data-audit-events-refresh>Refresh</button>
+      {error && <button type="button" onClick={() => void load(nextCursor)} disabled={loading}>Retry</button>}
+      {!loading && !error && events.length === 0 && <p data-audit-empty>No audit events.</p>}
       <ul data-audit-events-list>
         {events.map((evt) => (
           <li key={evt.eventId} data-audit-event data-event-id={evt.eventId}>
