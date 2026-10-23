@@ -166,3 +166,26 @@ for step expressions instead of fetching current values. Commands are source
 substitution, not shell escaping: use environment variables for arbitrary data.
 See [secret snapshot behavior and validation](.conduct/secret-snapshot-readiness.md)
 for redaction, compatibility and remaining remote integration requirements.
+
+
+### Live remote shell logs
+
+Remote shell runners persist and send complete stdout/stderr lines while the step
+is running. Each stream buffers split UTF-8 and incomplete lines; configured
+literal secrets (including multiline components) are redacted before LogFn or
+private-spool persistence. Interrupted trailing fragments are withheld and log
+status records truncation. Output without a newline becomes visible after normal
+step completion. Cross-stream arrival order is not a total ordering guarantee.
+
+A single spool instance owns appends and acknowledgements during execution. A
+250 ms timer attempts delivery without overlapping requests; network failures
+retain packets for replay and do not turn shell success into log success. The
+existing packet/job byte and event limits still apply. Finalization waits for
+the active bounded request before sealing and reporting the execution result.
+This is a polling interval, not a delivery-latency SLA.
+
+Known literal redaction is not arbitrary secret discovery. A crashed runner
+with uncertain execution ownership still requires reconciliation before automatic
+spool recovery; pending status alone does not prove a running transfer. External
+LogFn forwarding and the broader provider/deployment requirements remain open.
+See [live log evidence](.conduct/live-log-readiness.md).

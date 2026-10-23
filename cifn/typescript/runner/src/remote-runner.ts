@@ -11,7 +11,7 @@ export interface RemoteRunnerOptions { baseUrl: string; runnerId: string; runner
 interface ResumableClaim { payload?: JobPayload; runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean }
 
 /** Reuses the real shell executor. The memory projection is scratch state only. */
-export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void): Promise<JobCompletion> {
+export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void, onLogFailure?: () => void): Promise<JobCompletion> {
   const failed = (): JobCompletion => ({ status: 'failure', steps: payload.jobSpec.steps.map((_, index) => ({ stepKey: `step-${index}`, status: index === 0 ? 'failure' : 'skipped' })) });
   if (payload.jobSpec.image || payload.jobSpec.steps.some(step => !('run' in step))) {
     console.error('Remote job requires an unsupported executor/provider'); return failed();
@@ -23,7 +23,7 @@ export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortS
   const run = store.createRun({ pipelineSpec: spec, pipelineRef: payload.pipelineRef, trigger: { type: (payload.trigger?.type ?? 'workflow_dispatch') as 'workflow_dispatch', payload: payload.trigger?.payload } });
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
   const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
-  const runner = new Runner({ executionSignal: signal, runCommand: async (command, workspace, env) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal); if (result.truncated) onTruncated?.(); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
+  const runner = new Runner({ executionSignal: signal, runCommand: async (command, workspace, env, onLines) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal, lines => { try { onLines?.(lines); } catch { onLogFailure?.(); } }); if (result.truncated) onTruncated?.(); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
     getSecret: async (_runId, name) => {
       if (!payload.secretSnapshot || !Object.prototype.hasOwnProperty.call(payload.secretSnapshot, name)) throw new Error('Required prepared secret is unavailable');
       return payload.secretSnapshot[name];
@@ -128,9 +128,29 @@ export class RemoteRunner {
     try {
       observe();
       const spool = this.spool(entry);
+      // One spool instance owns appends and acknowledgements throughout execution.
+      // Never reopen it concurrently: a stale copy could overwrite newly captured packets.
+      let sending: Promise<void> | undefined;
+      const pump = () => {
+        if (sending) return;
+        sending = spool.deliver(packet => this.request('/api/v1/runners/claims/logs', { runId: entry!.runId, dispatchId: entry!.dispatchId, runnerId: entry!.runnerId, claimToken: entry!.claimToken, executionId: entry!.executionId, packet }))
+          .catch(() => { /* Persisted packets remain eligible for replay. */ })
+          .finally(() => { sending = undefined; });
+      };
+      const logTimer = setInterval(pump, 250);
       let result: JobCompletion;
-      try { result = await executeRemoteShellJob(claim.payload, cancellation.signal, spool, () => spool.markTruncated()); }
-      catch (cause) { this.journal.save({ ...entry, phase: 'started', logOutcome: 'failed' }); await this.transferLogs({ ...entry, logOutcome: 'failed' }); throw cause; }
+      try {
+        try {
+          result = await executeRemoteShellJob(claim.payload, cancellation.signal, spool, () => spool.markTruncated(), () => spool.markFailed());
+        } finally {
+          clearInterval(logTimer);
+          await sending;
+        }
+      } catch (cause) {
+        this.journal.save({ ...entry, phase: 'started', logOutcome: 'failed' });
+        await this.transferLogs({ ...entry, logOutcome: 'failed' });
+        throw cause;
+      }
       const completed = { ...entry, phase: 'completed' as const, result, logOutcome: spool.outcome() };
       this.journal.save(completed);
       await this.transferLogs(completed);

@@ -7,7 +7,7 @@ export class ProcessGroupUncertainError extends Error {
   constructor() { super('Owned process group termination requires reconciliation'); }
 }
 /** POSIX only. Never uses process identities recovered from persistent state. */
-export async function executeOwnedShell(command: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<RunStepResult> {
+export async function executeOwnedShell(command: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, onLines?: (lines: string[]) => void): Promise<RunStepResult> {
   const empty = { exitCode: 1, stdout: '', stderr: '', lines: [] };
   if (signal?.aborted) return empty;
   if (process.platform === 'win32') throw new ProcessGroupUncertainError();
@@ -17,6 +17,14 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   let stdout = ''; let stderr = ''; let bytes = 0; let stopping = false;
   const stdoutDecoder = new StringDecoder('utf8');
   const stderrDecoder = new StringDecoder('utf8');
+  const partial = { stdout: '', stderr: '' };
+  const publish = (text: string, output: 'stdout' | 'stderr') => {
+    if (!onLines) return;
+    partial[output] += text;
+    const lines = partial[output].split('\n');
+    partial[output] = lines.pop()!;
+    if (lines.length) onLines(lines.filter(Boolean));
+  };
   const alive = () => {
     if (!child.pid) return false;
     try { process.kill(-child.pid, 0); return true; }
@@ -54,7 +62,9 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   const capture = (chunk: Buffer, output: 'stdout' | 'stderr') => {
     bytes += chunk.length;
     if (bytes > 1_048_576) { stop(); return; }
-    if (output === 'stdout') stdout += stdoutDecoder.write(chunk); else stderr += stderrDecoder.write(chunk);
+    const decoded = output === 'stdout' ? stdoutDecoder.write(chunk) : stderrDecoder.write(chunk);
+    if (output === 'stdout') stdout += decoded; else stderr += decoded;
+    publish(decoded, output);
   };
   child.stdout.on('data', chunk => capture(chunk, 'stdout'));
   child.stderr.on('data', chunk => capture(chunk, 'stderr'));
@@ -74,12 +84,16 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
     const streamsUntil = Date.now() + 1_000;
     while (!closed && Date.now() < streamsUntil) await delay(10);
     if (!closed) throw new ProcessGroupUncertainError();
-    stdout += stdoutDecoder.end(); stderr += stderrDecoder.end();
+    const outTail = stdoutDecoder.end(), errTail = stderrDecoder.end();
+    stdout += outTail; stderr += errTail;
     // A forcibly interrupted capture may end in a secret prefix. Withhold the
-    // entire partial step output instead of persisting an unredactable fragment.
-    if (stopping) return { exitCode: 1, stdout: '', stderr: '', lines: [], truncated: true };
+    // partial lines instead of persisting an unredactable fragment. Completed
+    // lines were already passed through the caller's literal-secret redaction.
+    if (stopping) return { exitCode: 1, stdout: '', stderr: '', lines: [], truncated: true, streamed: !!onLines };
+    publish(outTail, 'stdout'); publish(errTail, 'stderr');
+    if (onLines) onLines([partial.stdout, partial.stderr].filter(Boolean));
     const lines = [...stdout.split('\n'), ...stderr.split('\n')].filter(Boolean);
-    return { exitCode: stopping ? 1 : code, stdout, stderr, lines };
+    return { exitCode: stopping ? 1 : code, stdout, stderr, lines, streamed: !!onLines };
   } finally {
     clearTimeout(timeout); signal?.removeEventListener('abort', stop);
     child.stdout.destroy(); child.stderr.destroy();

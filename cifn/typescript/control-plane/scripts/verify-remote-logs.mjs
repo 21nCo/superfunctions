@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -92,6 +92,34 @@ try {
   await new RemoteRunner(options).tick();
   assert.equal((await data(`/api/v1/runs/${outageId}/jobs/build/logs`)).transfer.status, 'complete');
   assert.equal(await readFile(witness, 'utf8'), 'once\nonce\n');
+  // A shell waits on an owned gate: observing output must precede job completion.
+  const liveGate = join(directory, 'live-gate');
+  const liveJs = `const fs=require('fs');process.stdout.write('live stdout '+process.env.TOKEN.slice(0,8));setTimeout(()=>{process.stdout.write(process.env.TOKEN.slice(8)+'\\n');process.stderr.write('live stderr '+process.env.TOKEN+'\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(liveGate)})){clearInterval(timer);process.exit(0);}},20);setTimeout(()=>process.exit(9),15000);},350);`;
+  const liveInput = structuredClone(input);
+  liveInput.pipelineSpec.jobs.build.steps = [{ run: `${quote(process.execPath)} -e ${quote(liveJs)}` }];
+  const liveRun = await data('/api/v1/runs', liveInput);
+  const liveId = liveRun.runId ?? liveRun.id;
+  const liveExecution = new RemoteRunner(options).tick();
+  // Observe rejection promptly but still await execution in finally.
+  void liveExecution.catch(() => {});
+  try {
+    let streamed;
+    for (let i = 0; i < 150; i++) {
+      streamed = await data(`/api/v1/runs/${liveId}/jobs/build/logs`);
+      if (['live stdout ***', 'live stderr ***'].every(expected => streamed.lines.some(line => line.line === expected))) break;
+      await delay(50);
+    }
+    assert.ok(streamed.lines.some(line => line.line === 'live stdout ***'), 'stdout available before shell exits');
+    assert.ok(streamed.lines.some(line => line.line === 'live stderr ***'), 'stderr available before shell exits');
+    assert.equal(streamed.transfer.status, 'pending');
+    assert.equal((await data(`/api/v1/runs/${liveId}`)).status, 'running');
+    assert.ok(!JSON.stringify(streamed).includes(secret));
+  } finally { await writeFile(liveGate, 'release'); await liveExecution; }
+  const liveLogs = await data(`/api/v1/runs/${liveId}/jobs/build/logs`);
+  assert.equal(liveLogs.transfer.status, 'complete');
+  assert.equal(liveLogs.lines.filter(line => line.line === 'live stdout ***').length, 1);
+  assert.equal(liveLogs.lines.filter(line => line.line === 'live stderr ***').length, 1);
+  assert.ok(!JSON.stringify(requests).includes('live stdout '+secret.slice(0,8)), 'partial secret prefix withheld across captures');
   await stop(control); control = undefined;
   async function inspect(path) {
     for (const name of await readdir(path)) {
@@ -100,7 +128,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
   for (const child of children) await stop(child);

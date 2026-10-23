@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LogSpool } from './log-spool.js';
@@ -75,3 +75,56 @@ it('bounds escaped control-character messages without false truncation', async (
   expect(packets[packets.length - 1].terminal).toBe('complete');
   for (const packet of packets) expect(Buffer.byteLength(JSON.stringify(packet.events))).toBeLessThanOrEqual(64 * 1024);
 });
+
+
+it('retains packets appended while an earlier acknowledgement is in flight', async () => {
+  const path = directory();
+  const spool = new LogSpool(path, identity);
+  spool.appendLines('run', 'job', 'step', ['first']);
+  let release!: () => void;
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const received: LogPacket[] = [];
+  const delivery = spool.deliver(async packet => {
+    received.push(packet);
+    if (packet.sequence === 0) { entered(); await gate; }
+    return { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS };
+  });
+  await ready;
+  spool.appendLines('run', 'job', 'step', ['second']);
+  release(); await delivery;
+  spool.seal();
+  const reopened = new LogSpool(path, identity);
+  await reopened.deliver(async packet => {
+    received.push(packet);
+    return { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS };
+  });
+  expect(received.flatMap(packet => packet.events.map(event => event.msg))).toEqual(['first', 'second']);
+  expect(received.map(packet => packet.sequence)).toEqual([0, 1, 2]);
+  expect(received.at(-1)?.terminal).toBe('complete');
+});
+
+
+it('redacts split secrets and UTF-8 before a running shell is released', async () => {
+  const path = directory();
+  const gate = join(path, 'release');
+  const spool = new LogSpool(path, identity);
+  const original = spool.appendLines.bind(spool);
+  let observed = false;
+  spool.appendLines = (runId, jobKey, stepKey, lines) => {
+    original(runId, jobKey, stepKey, lines);
+    if (lines.includes('safe ✓ secret ***')) { observed = true; writeFileSync(gate, 'release'); }
+  };
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const script = `const fs=require('fs');const text=Buffer.from('safe '+String.fromCodePoint(10003)+' secret '+process.env.TOKEN+'\\n');process.stdout.write(text.subarray(0,6));setTimeout(()=>process.stdout.write(text.subarray(6,15)),30);setTimeout(()=>process.stdout.write(text.subarray(15)),60);const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(gate)})){clearInterval(timer);process.exit(0)}},10);setTimeout(()=>process.exit(9),5000);`;
+  const result = await executeRemoteShellJob({ runId: 'run', jobKey: 'job', env: { TOKEN: 'configured-sensitive-value' }, jobSpec: { 'runs-on': 'default', steps: [{ run: `${quote(process.execPath)} -e ${quote(script)}` }] } }, undefined, spool);
+  expect(observed).toBe(true);
+  expect(result.status).toBe('success');
+  spool.seal();
+  const events: string[] = [];
+  await spool.deliver(async packet => { events.push(...packet.events.map(event => event.msg)); return { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + LOG_RETENTION_MS }; });
+  expect(events.filter(line => line === 'safe ✓ secret ***')).toHaveLength(1);
+  expect(events.join('\n')).not.toContain('configured-sensitive-value');
+  expect(events.join('\n')).not.toContain('\ufffd');
+}, 10_000);

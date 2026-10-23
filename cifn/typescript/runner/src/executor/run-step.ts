@@ -6,6 +6,8 @@ export interface RunStepResult {
   stderr: string;
   lines: string[];
   truncated?: boolean;
+  /** Complete output lines have already been delivered through the callback. */
+  streamed?: boolean;
 }
 
 export function executeRunStep(command: string, workspacePath: string, env?: Record<string, string>, baseEnv: NodeJS.ProcessEnv = process.env): RunStepResult {

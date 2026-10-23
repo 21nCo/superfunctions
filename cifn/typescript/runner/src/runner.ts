@@ -23,7 +23,7 @@ import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
 
 export interface RunnerOptions {
-  runCommand?: (command: string, workspace: string, env?: Record<string, string>) => Promise<RunStepResult>;
+  runCommand?: (command: string, workspace: string, env?: Record<string, string>, onLines?: (lines: string[]) => void) => Promise<RunStepResult>;
   executionSignal?: AbortSignal;
   executionEnv?: NodeJS.ProcessEnv;
   store: MemoryStore;
@@ -527,9 +527,9 @@ export class Runner {
           `Step "${step.stepKey}" started: ${runCommand}`,
         ]);
 
-        const result = await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv);
+        const result = await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv, lines => logLines(step.stepKey, lines));
 
-        logLines(step.stepKey, result.lines);
+        if (!result.streamed) logLines(step.stepKey, result.lines);
 
         if (result.exitCode === 0) {
           step.status = 'success';
@@ -575,6 +575,7 @@ export class Runner {
     workspace: string,
     jobSpec: JobPayload['jobSpec'],
     env?: Record<string, string>,
+    onLines?: (lines: string[]) => void,
   ) {
     if (this.shouldUseDocker(jobSpec) && this.dockerExecutor) {
       return this.dockerExecutor.execute({
@@ -585,7 +586,7 @@ export class Runner {
       });
     }
 
-    if (this.runCommand) return this.runCommand(command, workspace, env);
+    if (this.runCommand) return this.runCommand(command, workspace, env, onLines);
     return executeRunStep(command, workspace, env, this.executionEnv);
   }
 

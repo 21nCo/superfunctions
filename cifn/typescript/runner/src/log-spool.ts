@@ -63,7 +63,7 @@ export class LogSpool implements LogFnClient {
   appendLines(_runId: string, _jobKey: string, stepKey: string, lines: string[]): void {
     if (this.value.status !== 'pending') return;
     this.events = [];
-    // Redaction is performed by Runner on complete output before this sink. Split only afterward.
+    // Redaction is performed by Runner on complete lines before this sink. Split only afterward.
     for (const line of lines) {
       let piece = '';
       for (const char of line) {
@@ -82,6 +82,7 @@ export class LogSpool implements LogFnClient {
     this.events = [];
     try { this.save(); } catch { this.value.status = 'failed'; }
   }
+  markFailed(): void { this.value.status = 'failed'; try { this.save(); } catch { /* Keep failure explicit in memory for final journal. */ } }
   markTruncated(): void { if (this.value.status === 'pending') { this.value.status = 'truncated'; try { this.save(); } catch { this.value.status = 'failed'; } } }
   outcome(): 'complete' | 'truncated' | 'failed' { return this.value.status === 'truncated' ? 'truncated' : this.value.status === 'failed' || this.value.status === 'expired' ? 'failed' : 'complete'; }
   seal(status: 'complete' | 'failed' = 'complete'): void {
