@@ -29,6 +29,7 @@ describe.skipIf(!image)('Docker browser network isolation', () => {
     denied=`http://[::1]:${(privateServer.address() as {port:number}).port}`;
     publicServer=createServer((req,res)=>{
       if(req.url==='/page') receivedHeaders.push(req.headers);
+      if(req.url==='/expanded-page'){res.setHeader('content-type','text/html; charset=utf-8');res.end('<html><body><script>document.body.append("é".repeat(6*1024*1024))</script></body></html>');return;}
       if(req.url==='/redirect'){res.writeHead(302,{location:'/page'}).end();return;}
       if(req.url==='/private-redirect'){res.writeHead(302,{location:denied+'/redirected'}).end();return;}
       if(req.url==='/private-subresource'){res.end(`<html><img src="${denied}/image"><script>fetch('${denied}/fetch').catch(()=>{})</script></html>`);return;}
@@ -104,6 +105,11 @@ describe.skipIf(!image)('Docker browser network isolation', () => {
     expect(privateRequests).toEqual([]);
     expect(execFileSync('docker',['ps','-aq','--filter','name=browsefn-'],{encoding:'utf8'}).trim()).toBe('');
   });
+  it('rejects decoded DOM growth beyond10MiB before returning a browser page',async()=>{
+    const provider=new PlaywrightProvider({isolation:{dockerImage:image!}});
+    await expect(provider.getPage(allowed+'/expanded-page',{security:{},timeout:30_000})).rejects.toMatchObject({code:'DOWNLOAD_TOO_LARGE'});
+    expect(execFileSync('docker',['ps','-aq','--filter','name=browsefn-'],{encoding:'utf8'}).trim()).toBe('');
+  },45_000);
   it('allows public WebSockets through the pinned proxy',async()=>{
     const provider=new PlaywrightProvider({isolation:{dockerImage:image!}});
     const message=await provider.scrape(allowed+'/page',{security:{},timeout:30_000,script:async(page:any)=>page.evaluate((url:string)=>new Promise((resolve,reject)=>{

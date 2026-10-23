@@ -14,7 +14,7 @@ import type { ImageDownloadOptions } from '../core/types.js';
 
 export async function fetchImageBytes(input: string, options: ImageDownloadOptions): Promise<Uint8Array> {
   const deadline = Date.now() + 30_000;
-  const maxBytes = options.maxPayloadBytes ?? 20 * 1024 * 1024;
+  const maxBytes = options.maxPayloadBytes ?? 25 * 1024 * 1024;
   let url = new URL(input);
   for (let redirects = 0; ; redirects++) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw denied();

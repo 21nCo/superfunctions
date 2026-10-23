@@ -116,8 +116,14 @@ function serializeData(data: unknown): unknown {
   }
 
   const record = { ...(data as Record<string, unknown>) };
-  if (record.screenshot instanceof Uint8Array) {
-    record.screenshot = Buffer.from(record.screenshot).toString('base64');
+  const screenshotLimit = 10 * 1024 * 1024;
+  const screenshot = record.screenshot;
+  if ((screenshot instanceof Uint8Array && 4 * Math.ceil(screenshot.byteLength / 3) > screenshotLimit) ||
+      (typeof screenshot === 'string' && Buffer.byteLength(screenshot, 'utf8') > screenshotLimit)) {
+    throw new BrowseFnError({ code: 'DOWNLOAD_TOO_LARGE', message: 'Encoded screenshot exceeds the 10 MiB limit.' });
+  }
+  if (screenshot instanceof Uint8Array) {
+    record.screenshot = Buffer.from(screenshot).toString('base64');
   }
   return record;
 }

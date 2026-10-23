@@ -21,6 +21,8 @@ def _error_status(error: BrowseFnError) -> int:
         return 400
     if error.code == "UPSTREAM_NOT_FOUND":
         return 404
+    if error.code == "DOWNLOAD_TOO_LARGE":
+        return 413
     if error.code == "DOWNLOAD_EXISTS":
         return 409
     if error.code == "SECURITY_POLICY_BLOCKED":
@@ -42,12 +44,17 @@ def _serialize_data(value: Any) -> Any:
     elif isinstance(value, list):
         return [_serialize_data(item) for item in value]
     elif isinstance(value, dict):
-        return {key: _serialize_data(item) for key, item in value.items()}
+        data = value
     else:
         return value
 
-    if isinstance(data, dict) and isinstance(data.get("screenshot"), (bytes, bytearray)):
-        data["screenshot"] = base64.b64encode(data["screenshot"]).decode("ascii")
+    screenshot = data.get("screenshot") if isinstance(data, dict) else None
+    maximum = 10 * 1024 * 1024
+    if ((isinstance(screenshot, (bytes, bytearray)) and 4 * ((len(screenshot) + 2) // 3) > maximum)
+            or (isinstance(screenshot, str) and len(screenshot.encode("utf-8")) > maximum)):
+        raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Encoded screenshot exceeds the 10 MiB limit.")
+    if isinstance(data, dict) and isinstance(screenshot, (bytes, bytearray)):
+        data = {**data, "screenshot": base64.b64encode(screenshot).decode("ascii")}
     return {key: _serialize_data(item) for key, item in data.items()}
 
 

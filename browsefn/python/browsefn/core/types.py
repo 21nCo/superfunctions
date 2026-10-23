@@ -356,7 +356,7 @@ class ImageDownloadOptions(BaseModel):
     security: Optional[DestinationSecurity] = None
     allow_private_hosts: bool = Field(False, alias="allowPrivateHosts")
     max_redirects: int = Field(5, alias="maxRedirects", ge=0, strict=True)
-    max_payload_bytes: int = Field(20 * 1024 * 1024, alias="maxPayloadBytes", gt=0, strict=True)
+    max_payload_bytes: int = Field(25 * 1024 * 1024, alias="maxPayloadBytes", gt=0, strict=True)
     provider: Optional[str] = None
     destination: Optional[str] = None
     filename: Optional[str] = None

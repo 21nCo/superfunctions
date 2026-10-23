@@ -28,6 +28,8 @@ def _open(content: bytes) -> Image.Image:
 
 async def transform_image(content: bytes, options: ImageDownloadOptions) -> tuple[bytes, ImageMetadata]:
     try:
+        if len(content) > options.max_payload_bytes:
+            raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Image payload exceeds the configured maximum size.")
         watermark_bytes = None
         if options.watermark and options.watermark.image:
             source = options.watermark.image

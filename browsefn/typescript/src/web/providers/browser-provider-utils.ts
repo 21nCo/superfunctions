@@ -1,3 +1,4 @@
+import { BrowseFnError } from '../../core/errors.js';
 /**
  * Shared helpers for browser-backed web providers.
  */
@@ -57,6 +58,13 @@ export async function buildBrowserPageResult({
   provider: string;
   startedAt: number;
 }): Promise<PageResult> {
+  const checkContentSize = (value: string) => {
+    if (Buffer.byteLength(value, 'utf8') > 10 * 1024 * 1024) throw new BrowseFnError({ code: 'DOWNLOAD_TOO_LARGE', message: 'Page payload exceeds the 10 MiB limit.' });
+  };
+  // Reject before parsing, formatting, screenshot capture or cache publication.
+  // page.content() itself has already materialized the browser protocol response.
+  let html = await page.content();
+  checkContentSize(html);
   let screenshot: Uint8Array | undefined;
 
   if (options.screenshot) {
@@ -69,13 +77,13 @@ export async function buildBrowserPageResult({
     });
   }
 
-  let html = await page.content();
   if (options.selectors) {
     html = applySelectors(html, options.selectors);
   }
 
   const metadata = extractMetadata(html, sanitizedUrl);
   const content = await formatBrowserContent(page, html, options.format || 'html');
+  checkContentSize(content);
 
   return {
     url: sanitizedUrl,

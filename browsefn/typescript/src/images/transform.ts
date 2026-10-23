@@ -18,7 +18,7 @@ async function watermarkBytes(input: string, options: ImageDownloadOptions): Pro
   try {
     for await (const chunk of file.createReadStream({ autoClose: false })) {
       size += chunk.length;
-      if (size > (options.maxPayloadBytes ?? 20 * 1024 * 1024)) throw invalid('Watermark image exceeds the configured maximum size.');
+      if (size > (options.maxPayloadBytes ?? 25 * 1024 * 1024)) throw invalid('Watermark image exceeds the configured maximum size.');
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
@@ -27,6 +27,7 @@ async function watermarkBytes(input: string, options: ImageDownloadOptions): Pro
 
 export async function transformImage(input: Uint8Array, options: ImageDownloadOptions): Promise<{ bytes: Uint8Array; metadata: ImageMetadata }> {
   try {
+    if (input.byteLength > (options.maxPayloadBytes ?? 25 * 1024 * 1024)) throw new BrowseFnError({ code: 'DOWNLOAD_TOO_LARGE', message: 'Image payload exceeds the configured maximum size.' });
     const source = await decode(input).metadata();
     if (!['jpeg', 'png', 'webp'].includes(source.format ?? '') || (source.pages ?? 1) > 1) throw invalid('Only static JPEG, PNG and WebP images are supported.');
     const hasTransform = ['format', 'quality', 'maxWidth', 'maxHeight', 'crop', 'watermark'].some(key => options[key as keyof ImageDownloadOptions] !== undefined) || (options.size !== undefined && options.size !== 'original');
@@ -77,7 +78,7 @@ export async function transformImage(input: Uint8Array, options: ImageDownloadOp
     else if (format === 'webp') pipeline = pipeline.webp({ quality });
     else pipeline = options.quality === undefined ? pipeline.png() : pipeline.png({ palette: true, quality });
     const output = await pipeline.toBuffer({ resolveWithObject: true });
-    if (output.data.length > (options.maxPayloadBytes ?? 20 * 1024 * 1024)) throw new BrowseFnError({ code: 'DOWNLOAD_TOO_LARGE', message: 'Transformed image exceeds the configured maximum size.' });
+    if (output.data.length > (options.maxPayloadBytes ?? 25 * 1024 * 1024)) throw new BrowseFnError({ code: 'DOWNLOAD_TOO_LARGE', message: 'Transformed image exceeds the configured maximum size.' });
     return { bytes: output.data, metadata: { format, width: output.info.width, height: output.info.height, size: output.data.length, hasAlpha: format !== 'jpeg' && output.info.channels === 4 } };
   } catch (error) {
     if (error instanceof BrowseFnError) throw error;

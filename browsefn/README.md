@@ -327,8 +327,16 @@ denied.
 This implements the hostname portion of the original security configuration.
 Configurable global `maxResponseBytes`, `maxDownloadBytes` and `maxRedirects`
 remain unimplemented; existing transport limits still apply. See
-[hostname policy evidence](./.conduct/hostname-policy-readiness.md) for remaining
-payload-cap discrepancies and validation.
+[hostname policy evidence](./.conduct/hostname-policy-readiness.md) for hostname validation. Fixed output limits and their allocation boundaries are
+documented in [payload-cap evidence](./.conduct/payload-cap-readiness.md).
+
+Browser-rendered HTML and formatted content are each limited to 10 MiB of UTF-8
+bytes. HTML is checked before parsing, formatting and screenshot capture, but
+`page.content()` has already materialized the browser protocol response. HTTP
+routers limit base64 screenshot output to 10 MiB; raw screenshot size is checked
+before base64 allocation, while existing encoded strings are checked as UTF-8.
+Oversized output returns HTTP 413. These are output limits, not bounds on all
+intermediate browser or image-processing allocations.
 
 ## Isolated browser destinations
 
@@ -427,7 +435,7 @@ owned-fixture coverage and remaining release gates.
 
 The built-in TypeScript downloader and Python browser/provider downloaders now use a shared helper within each SDK. These helpers are specialized network/file transfer policy, not framework HTTP adapters.
 
-- HTTP(S) only; credentials in URLs rejected; every redirect is revalidated. Default maximum is five redirects, 20 MiB, and a 30-second overall deadline (including DNS and body transfer).
+- HTTP(S) only; credentials in URLs rejected; every redirect is revalidated. Default maximum is five redirects, 25 MiB, and a 30-second overall deadline (including DNS and body transfer).
 - Socket lookup in Node validates every DNS answer and hands only those checked addresses to the connection. Python resolves each hop, validates every answer, and connects to a checked IP while preserving the original Host header and TLS SNI/certificate hostname. Python disables environment proxy inheritance and keepalive pooling so pinned IP connections cannot reuse a TLS identity across redirect hostnames.
 - Default policy rejects private, loopback, link-local, carrier NAT, multicast, documentation/reserved IPv4, and non-global/transition/documentation IPv6 ranges. It is deliberately conservative. `allowPrivateHosts` (`allow_private_hosts` in Python) explicitly opts into private targets; protocol/redirect/size bounds still apply.
 - Payload length is checked against both headers and streamed bytes. Redirect/error streams are closed. Identity encoding is requested; unsolicited compressed HTTP encodings are rejected rather than expanding an unbounded decompression stream. Completed bytes remain buffered up to the configured cap for metadata and publication.
