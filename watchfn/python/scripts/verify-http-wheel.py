@@ -10,12 +10,12 @@ with tempfile.TemporaryDirectory(prefix="watchfn-http-wheel-") as temporary:
     directory = Path(temporary)
     wheels = directory / "wheels"
     wheels.mkdir()
-    for package in ["packages/python-core", "packages/python-fastapi", "packages/python-flask", "watchfn/python"]:
+    for package in ["packages/python-core", "packages/python-fastapi", "packages/python-flask", "packages/python-sqlalchemy", "watchfn/python"]:
         subprocess.run(["uv", "build", "--wheel", "--out-dir", str(wheels), str(root / package)], check=True)
     environment = directory / "venv"
     subprocess.run(["uv", "venv", str(environment)], check=True)
     python = environment / "bin/python"
-    subprocess.run(["uv", "pip", "install", "--python", str(python), *map(str, wheels.glob("*.whl")), "pytest", "pytest-asyncio", "httpx", "flask[async]"], check=True)
+    subprocess.run(["uv", "pip", "install", "--python", str(python), *map(str, wheels.glob("*.whl")), "pytest", "pytest-asyncio", "httpx"], check=True)
     shutil.copytree(root / "watchfn/python/tests", directory / "tests")
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)

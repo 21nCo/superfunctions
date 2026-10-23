@@ -39,13 +39,13 @@ calls remain trusted host APIs.
 
 ## Implemented storage and payload contract
 
-HTTP storage currently supports `storage="memory"` only. POST `/ingest` accepts
+HTTP storage supports memory and transactional database adapters. POST `/ingest` accepts
 one event, a list, or `{"events": [...]}` with1–500 events. Each event has a
 nonblank `name`, optional object `properties` and `context`, and optional
 `type="track"`. Unsupported fields/types reject the entire batch before writes.
 The request limit is8MiB and each JSON event limit is64KiB. HTTP202 with
-`{"accepted": count}` means the batch has been added to the bounded memory store;
-it does not mean durable persistence. A stopped instance or storage error returns
+`{"accepted": count}` means the batch has been added to the memory store or the database transaction
+has returned successfully. Memory mode does not mean durable persistence. A stopped instance or storage error returns
 503. The default memory store retains the latest1000 events, including events
 from programmatic collectors; older events may be evicted immediately as new
 batches arrive. Memory admission is serialized with background batch writes.
@@ -63,18 +63,61 @@ Declared length is checked before reading and actual bytes before JSON parsing,
 but the host/proxy must enforce transport memory and request-time limits. WatchFn
 also does not bound time spent in a custom auth provider or a blocked batch flush.
 
-Database HTTP operations explicitly return503 because the existing Python
-database implementation is incomplete. Schema-backed asynchronous database
-storage, database querying, issue status/bug-report integration, alert lifecycle,
-tenant filtering and broader TypeScript parity remain required follow-up work.
-No HTTP success is synthesized for those unsupported paths.
+## Transactional database storage
+
+Pass `storage="database", database=adapter` to WatchFn. Missing adapters and
+adapters without transaction capability reject construction. The implementation
+uses shared `superfunctions.db` operations, with a Watch-owned JSON-text codec
+and `get_watchfn_schema()` returning a shared `TableSchema`. Consumers do not
+provide an adapter schema. Apply migrations before starting WatchFn: the shared
+SQLAlchemy adapter does not implement schema creation. The default table is
+`watchfn_events`, with string primary-key `id`, text `payload`, and the nullable
+projection columns declared by the exported schema. It matches the TypeScript
+JSON-text storage shape; Python writes projectionVersion0 so TypeScript retains
+its scan fallback. This does not migrate the old unfinished `watch_events` stub
+or guarantee full interoperability with arbitrary TypeScript event shapes.
+
+WatchFn owns one database worker thread/event loop per started instance. Every
+adapter operation runs there and is serialized, including synchronous track
+batch flushes and queries. HTTP ingestion awaits an atomic transaction; query
+runs its synchronous flush/bridge off the request loop. No request loop is run
+recursively. `stop()` drains admitted operations and shuts down the worker without
+closing the caller-owned adapter/engine. Always stop before disposing the engine.
+Requests after stop cannot write; database queries after stop return503. Calling
+start again creates a new owner loop. The validated adapter is shared SQLAlchemy
+with a synchronous, thread-compatible engine and a file-backed SQLite database.
+Already initialized foreign-loop clients, non-thread-compatible connections and
+SQLite thread-local in-memory pools are not supported by this bridge. Custom
+adapters must honor the shared transaction contract and be usable on the owned
+loop, including a new loop after restart. A blocked adapter can delay stop; there
+is no safe forced cancellation/commit claim.
+
+Each in-process Event receives a private stable UUID and frozen JSON payload on
+its first database write. A restored batch retries those same IDs and verifies
+existing payloads, so a postcommit acknowledgement failure does not duplicate
+that batch. These IDs are not public HTTP idempotency keys: a new HTTP request
+creates new events and can duplicate an earlier uncertain request. HTTP delivery
+remains at least once. Cancellation stops waiting but does not cancel an admitted
+transaction; its outcome may remain uncertain to the caller. The batcher queue
+itself is not durable across process crashes.
+
+Database queries scan in bounded100-row pages in one adapter transaction, with
+limits of10000 rows and16MiB of encoded payload. Overflow, malformed/unsupported
+stored event shapes or missing migrations return503, never partial success.
+Query ordering is receivedAt then id (not strict insertion ordering for ties).
+The requested limit applies after scanning/filtering. Snapshot isolation depends
+on the backend transaction semantics. Stored payloads are limited to64KiB on
+write; querying preexisting oversized rows detects size only after the adapter
+has fetched them. Hosts must protect table contents and adapter allocation.
+Index-backed queries, retention, broader query/issue/alert parity and tenant
+filtering remain required follow-up work.
 
 ## Validation
 
 Run the normal repository Python CI entrypoint:
 `node scripts/ci-run-python-package.mjs watchfn/python`.
 With `uv` installed, `python watchfn/python/scripts/verify-http-wheel.py` builds
-four local wheels, installs them in an isolated environment and runs tests through
+five local wheels, installs them in an isolated environment and runs tests through
 the actual shared FastAPI and Flask adapters. It removes the temporary consumer
 and uses no external service. The tests exercise framework HTTP stacks in-process;
 they do not certify a deployed server or proxy's transport limits.

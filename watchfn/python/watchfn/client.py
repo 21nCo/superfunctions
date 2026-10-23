@@ -16,7 +16,9 @@ class WatchFn:
         self.is_started = False
         
         # Storage
-        if self.config.storage == "database" and database:
+        if self.config.storage == "database":
+            if database is None:
+                raise ValueError("Database storage requires an adapter")
             self.storage = DatabaseStorage(database)
         else:
             self.storage = MemoryStorage()
@@ -41,6 +43,8 @@ class WatchFn:
     def start(self):
         if self.is_started:
             return
+        if isinstance(self.storage, DatabaseStorage):
+            self.storage.start()
         self.is_started = True
         self.batcher.start()
         # Enable collectors based on config
@@ -51,7 +55,11 @@ class WatchFn:
         self.is_started = False
         self.system_metrics.stop()
         self.process_metrics.stop()
-        self.batcher.stop()
+        try:
+            self.batcher.stop()
+        finally:
+            if isinstance(self.storage, DatabaseStorage):
+                self.storage.close()
 
     def track(self, name: str, properties: Optional[Dict[str, Any]] = None):
         if not self.is_started:

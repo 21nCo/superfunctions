@@ -1,6 +1,7 @@
+from uuid import uuid4
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing import Any, Dict, List, Optional, Union, Literal
+from pydantic import BaseModel, Field, ConfigDict, model_validator, PrivateAttr
 
 class HttpAuthConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, arbitrary_types_allowed=True)
@@ -25,12 +26,14 @@ class WatchFnConfig(BaseModel):
     name: str
     auth: Optional[HttpAuthConfig] = None
     project_id: Optional[str] = None
-    storage: str = "memory"
+    storage: Literal["memory", "database"] = "memory"
     apm_enabled: bool = True
     errors_enabled: bool = True
     trace_enabled: bool = True
 
 class Event(BaseModel):
+    _storage_id: str = PrivateAttr(default_factory=lambda: str(uuid4()))
+    _storage_payload: Optional[str] = PrivateAttr(default=None)
     type: str
     name: Optional[str] = None
     properties: Dict[str, Any] = Field(default_factory=dict)

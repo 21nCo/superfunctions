@@ -1,4 +1,4 @@
-"""Operation-scoped HTTP support for the implemented in-memory event store."""
+"""Operation-scoped HTTP support with completed memory/database admission."""
 import asyncio
 import hmac
 import json
@@ -8,6 +8,7 @@ from superfunctions.auth import AuthProvider, AuthSession, validate_auth_session
 from superfunctions.http import Request, Response, RouteContext
 from ..models import Event
 from ..storage.memory_storage import MemoryStorage
+from ..storage.database import DatabaseStorage
 
 
 def reply(status, body):
@@ -93,10 +94,15 @@ class HttpHandlers:
             return reply(413, {"error": "Request or event too large"})
         except Exception:
             return reply(400, {"error": "Invalid event batch"})
-        if not self.watch.is_started or self.watch.config.storage != "memory" or not isinstance(self.watch.storage, MemoryStorage):
+        if not self.watch.is_started or (not isinstance(self.watch.storage, (MemoryStorage, DatabaseStorage)) or (self.watch.config.storage == "database" and not isinstance(self.watch.storage, DatabaseStorage))):
             return reply(503, {"error": "Storage unavailable"})
         try:
-            self.watch.storage.add_batch(events)
+            if isinstance(self.watch.storage, DatabaseStorage):
+                await self.watch.storage.add_batch_async(events)
+            else:
+                self.watch.storage.add_batch(events)
+        except OverflowError:
+            return reply(413, {"error": "Event too large"})
         except Exception:
             return reply(503, {"error": "Storage unavailable"})
         return reply(202, {"accepted": len(events)})
@@ -118,7 +124,7 @@ class HttpHandlers:
             return reply(413, {"error": "Request body too large"})
         except Exception:
             return reply(400, {"error": "Invalid query"})
-        if self.watch.config.storage != "memory" or not isinstance(self.watch.storage, MemoryStorage):
+        if (not isinstance(self.watch.storage, (MemoryStorage, DatabaseStorage)) or (self.watch.config.storage == "database" and not isinstance(self.watch.storage, DatabaseStorage))):
             return reply(503, {"error": "Query unavailable"})
         try:
             events = await asyncio.to_thread(self.watch.query, metric)
