@@ -1,0 +1,31 @@
+recfn/.conduct/encrypted-capture-hour-receipt.json
+  s_e1c5fc1a65c0cf::t_e3988e34531dc8 1-21
+recfn/.conduct/encrypted-capture-readiness.md
+  s_e1c5fc1a65c0cf::t_e7846e64255fe5 1-106
+recfn/.conduct/media-streaming-readiness.md
+  s_e1c5fc1a65c0cf::t_c963319fad4bfd 4-5
+recfn/server/__tests__/encrypted-capture-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_8ce30d0595b1ff 1-58
+recfn/server/__tests__/encrypted-media-file.test.ts
+  s_e1c5fc1a65c0cf::t_6ca107ee3c287e 1-62
+recfn/server/src/recording/capture.ts
+  s_e1c5fc1a65c0cf::t_316f920039dab0 3,7-8,29,41-58,61-113,124,177,190-191,230,246,248-259,261-263,265-269,276,279,285,298-300
+recfn/server/src/recording/encrypted-media-file.ts
+  s_e1c5fc1a65c0cf::t_9350b020c6668b 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e77bc7bb90aea2067c809960654965a38baf346a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
