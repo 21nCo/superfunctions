@@ -29,6 +29,37 @@ async function fixture(code: string, run: (manager: DevServerManager, options: P
 const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; } };
 
 describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership', () => {
+  it('does not accept a readiness URL printed by a failed server', async () => {
+    await fixture("console.error(\"SyntaxError near console.log('Local: http://127.0.0.1:1');\"); process.exit(23);", async (manager, options, root) => {
+      await expect(manager.startSession(options)).rejects.toMatchObject({ code: 'E_DEVSERVER_EXIT_EARLY' });
+      expect(gone(Number(await readFile(path.join(root, 'pid'), 'utf8')))).toBe(true);
+      expect(JSON.parse(await readFile(path.join(root, '.artifacts/runs/run/session.json'), 'utf8')).status).toBe('failed');
+    });
+  });
+  it('does not accept a matching banner while the HTTP endpoint is unreachable', async () => {
+    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options, root) => {
+      await expect(manager.startSession(options)).rejects.toMatchObject({ code: 'E_DEVSERVER_START_TIMEOUT' });
+      expect(gone(Number(await readFile(path.join(root, 'pid'), 'utf8')))).toBe(true);
+    });
+  });
+  it('waits through unavailable HTTP responses after the readiness banner', async () => {
+    await fixture("import { createServer } from 'node:http'; let ready=false; setTimeout(()=>{ready=true;},250); const server=createServer((_req,res)=>{res.statusCode=ready?200:503;res.end('status');}); server.listen(0,'127.0.0.1',()=>console.log('Local: http://127.0.0.1:'+server.address().port));", async (manager, options) => {
+      const started=await manager.startSession({...options,devServer:{...options.devServer,timeoutMs:2000}});
+      const response=await fetch(started.resolvedUrl);
+      expect(response.status).toBe(200);
+      await response.body?.cancel();
+      await manager.stopSession('session');
+    });
+  });
+  it('aborts a hung spawned HTTP readiness probe when stopped', async () => {
+    await fixture("import { createServer } from 'node:http'; const server=createServer(()=>writeFileSync('request-arrived','yes')); server.listen(0,'127.0.0.1',()=>console.log('Local: http://127.0.0.1:'+server.address().port));", async (manager, options, root) => {
+      const starting=expect(manager.startSession({...options,devServer:{...options.devServer,timeoutMs:120000}})).rejects.toMatchObject({code:'E_SESSION_START_CANCELLED'});
+      await vi.waitFor(async()=>expect(await readFile(path.join(root,'request-arrived'),'utf8')).toBe('yes'));
+      await manager.stopSession('session');
+      await starting;
+      expect(gone(Number(await readFile(path.join(root,'pid'),'utf8')))).toBe(true);
+    });
+  });
   it('rejects invalid readiness expressions before spawning a process', async () => {
     await fixture("setInterval(() => {}, 1000);", async (manager, options, root) => {
       await expect(manager.startSession({ ...options, devServer: { ...options.devServer, readyPattern: '[' } })).rejects.toMatchObject({ code: 'E_CONFIG_INVALID' });
@@ -44,7 +75,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership',
     });
   });
   it('escalates normal stop for a ready server that ignores SIGTERM', async () => {
-    await fixture("process.on('SIGTERM', () => {}); console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options, root) => {
+    await fixture("process.on('SIGTERM', () => {}); const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options, root) => {
       await manager.startSession({ ...options, devServer: { ...options.devServer, timeoutMs: 120000 } });
       await manager.stopSession('session');
       expect(gone(Number(await readFile(path.join(root, 'pid'), 'utf8')))).toBe(true);
@@ -54,7 +85,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership',
     const descendant = "import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync('descendant.pid', String(process.pid)); setInterval(() => {}, 1000);";
     await fixture(`import { spawn } from 'node:child_process'; import { existsSync } from 'node:fs';
 spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(descendant)}], { stdio: 'ignore' });
-const ready = setInterval(() => { if (existsSync('descendant.pid')) { clearInterval(ready); console.log('Local: http://127.0.0.1:1'); } }, 5);
+const ready = setInterval(async () => { if (existsSync('descendant.pid')) { clearInterval(ready); const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); } }, 5);
 setInterval(() => {}, 1000);`, async (manager, options, root) => {
       let pid: number | undefined;
       try {
@@ -69,7 +100,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
     });
   });
   it('waits for ESRCH after a transient permission error from the existence probe', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options, root) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options, root) => {
       await manager.startSession({ ...options, devServer: { ...options.devServer, timeoutMs: 2000 } });
       const kill = process.kill.bind(process);
       let injected = false;
@@ -88,7 +119,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
     });
   });
   it('surfaces persistent probe permission errors without releasing session ownership', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options) => {
       await manager.startSession({ ...options, devServer: { ...options.devServer, timeoutMs: 2000 } });
       const kill = process.kill.bind(process);
       let probes = 0;
@@ -106,7 +137,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
     });
   });
   it('joins and cancels startup when stop arrives during the first manifest write', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options, root, store) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options, root, store) => {
       let release!: () => void;
       const gate = new Promise<void>(resolve => { release = resolve; });
       const write = store.writeRunManifest.bind(store);
@@ -169,7 +200,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
     });
   });
   it('rejects concurrent duplicate starts before the first manifest write finishes', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options) => {
       const starting = manager.startSession(options);
       await expect(manager.startSession(options)).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
       await starting;
@@ -177,7 +208,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
     });
   });
   it('lets a successful start/stop process exit naturally with a long readiness deadline', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (_manager, options, root) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (_manager, options, root) => {
       const worker = path.join(root, 'worker.ts');
       const managerSource = fileURLToPath(new URL('../src/dev-server-manager.ts', import.meta.url));
       const storeSource = fileURLToPath(new URL('../../storage/src/index.ts', import.meta.url));
@@ -199,7 +230,7 @@ main().catch(error => {console.error(error); process.exitCode = 1;});`);
     });
   });
   it('reports output persistence failure on stop and finalizes a failed manifest', async () => {
-    await fixture("console.log('Local: http://127.0.0.1:1'); setTimeout(() => console.log('unpersisted'), 50); setInterval(() => {}, 1000);", async (manager, options, root, store) => {
+    await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setTimeout(() => console.log('unpersisted'), 50); setInterval(() => {}, 1000);", async (manager, options, root, store) => {
       const original = store.createEventSink.bind(store);
       vi.spyOn(store, 'createEventSink').mockImplementation((...args) => {
         const sink = original(...args);

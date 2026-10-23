@@ -361,6 +361,31 @@ export class DevServerManager {
       void stderrProcessor.push(chunk).catch(recordOutputFailure);
     });
 
+    let httpReady = false;
+    const probeAbort = new AbortController();
+    const probeSignal = AbortSignal.any([session.startupAbort.signal, probeAbort.signal]);
+    let healthCheck: Promise<string> | undefined;
+    const verifyReadiness = async (url: string): Promise<string> => {
+      // A banner (including source printed in a startup error) is not availability.
+      while (true) {
+        probeSignal.throwIfAborted();
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw createProbefnError({ code: 'E_DEVSERVER_EXIT_EARLY', message: 'Dev server exited before HTTP readiness.', retryable: true });
+        }
+        let available = false;
+        try {
+          const response = await fetch(url, { signal: AbortSignal.any([probeSignal, AbortSignal.timeout(1000)]) });
+          await response.body?.cancel();
+          available = response.ok;
+        } catch { /* Retry under the original overall startup deadline. */ }
+        probeSignal.throwIfAborted();
+        if (available && child.exitCode === null && child.signalCode === null) {
+          httpReady = true;
+          return url;
+        }
+        await delay(100);
+      }
+    };
     let readinessTimer: ReturnType<typeof setTimeout> | undefined;
     const exitPromise = once(child, 'close').then(async ([code, signal]) => {
       // Readiness has ended when the owned process closes. Durable evidence
@@ -370,7 +395,7 @@ export class DevServerManager {
       const failedDrain = drains.find((result): result is PromiseRejectedResult => result.status === 'rejected');
       if (failedDrain) throw failedDrain.reason;
 
-      if (!settled) {
+      if (!httpReady) {
         throw createProbefnError({
           code: 'E_DEVSERVER_EXIT_EARLY',
           message: `Dev server exited before readiness with code ${code ?? 'null'} and signal ${signal ?? 'null'}.`,
@@ -392,7 +417,7 @@ export class DevServerManager {
 
     try {
       const readyUrl = await Promise.race([
-        readinessPromise,
+        readinessPromise.then(url => { healthCheck = verifyReadiness(url); return healthCheck; }),
         exitPromise,
         new Promise<never>((_resolve, reject) => {
           readinessTimer = setTimeout(() => reject(createProbefnError({
@@ -408,6 +433,8 @@ export class DevServerManager {
 
       return readyUrl;
     } finally {
+      probeAbort.abort(new Error('Readiness verification finished'));
+      await healthCheck?.catch(() => undefined);
       clearTimeout(readinessTimer);
       session.startupAbort.signal.removeEventListener('abort', cancelReadiness);
     }
