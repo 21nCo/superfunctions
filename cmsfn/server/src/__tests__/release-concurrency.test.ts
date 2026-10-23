@@ -13,7 +13,7 @@ it.each([0, 499])('preserves concurrent SQLite additions and the capacity limit 
   const dir = await mkdtemp(join(tmpdir(), 'cms-release-cas-'));
   const path = join(dir, 'db.sqlite');
   const first = new Database(path); first.pragma('journal_mode = WAL');
-  first.exec('CREATE TABLE cmsfn_releases (releaseId TEXT PRIMARY KEY, dataset TEXT NOT NULL, name TEXT NOT NULL, publishAt TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL)');
+  first.exec('CREATE TABLE cmsfn_releases (releaseId TEXT PRIMARY KEY, dataset TEXT NOT NULL, name TEXT NOT NULL, publishAt TEXT, nextRunAt TEXT, execution TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL)');
   const second = new Database(path);
   const connections = [first, second].map(database => new Kysely({ dialect: new SqliteDialect({ database }) }));
   const adapters = connections.map(db => kyselyAdapter({ db, dialect: 'sqlite', schema: { cmsfn_releases: 'cmsfn_releases' } }));

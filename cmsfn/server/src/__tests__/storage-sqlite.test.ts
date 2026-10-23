@@ -35,7 +35,7 @@ for (const legacySchema of [false, true]) {
         for (const namespace of ["first", "second"]) opened.database.exec(`
           CREATE TABLE ${namespace}_roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, rules TEXT NOT NULL);
           CREATE TABLE ${namespace}_releases (releaseId TEXT PRIMARY KEY, dataset TEXT NOT NULL,
-            name TEXT NOT NULL, publishAt TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
+            name TEXT NOT NULL, publishAt TEXT, nextRunAt TEXT, execution TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
         `);
         expect(await rolesUpsert(opened.first, { role })).toEqual({ ok: true, result: { role } });
         await rolesUpsert(opened.second, { role: { ...role, name: "Other tenant" } });

@@ -46,3 +46,27 @@ it('rejects foreign dataset release lists', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => response({ releases: [{ ...release, dataset: 'private' }] })));
   render(<ReleasesPane cmsfnApiUrl="http://cms.test" dataset="prod" />); await screen.findByRole('alert'); expect(screen.queryByText('Launch')).toBeNull();
 });
+it('shows scheduling only when configured and sends a canonical UTC time while preserving uncertain run outcomes', async () => {
+  const mutations: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith('/list')) return response({ schedulingEnabled: true, releases: [{ ...release, execution: { runId: 'run', state: 'uncertain', published: [], failures: [], pending: ['a','b'] } }] });
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>; mutations.push(body);
+    if (url.endsWith('/create')) return response({ releaseId: 'new' });
+    return response({ releaseId: 'r1', published: [], failures: [], execution: { runId: 'run', state: 'uncertain', pending: ['a','b'] } });
+  }));
+  render(<ReleasesPane cmsfnApiUrl="http://cms.test" dataset="prod" />); await screen.findByText('Execution: uncertain');
+  fireEvent.change(screen.getByLabelText('Release name'), { target: { value: 'Timed' } });
+  fireEvent.change(screen.getByLabelText('Publish at (local time)'), { target: { value: '2030-01-01T12:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create release' }));
+  await waitFor(() => expect(mutations).toHaveLength(1));
+  expect(mutations[0]).toEqual({ dataset: 'prod', name: 'Timed', publishAt: new Date('2030-01-01T12:00').toISOString() });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Publish release' }).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish release' }));
+  await screen.findByText('Execution uncertain; 2 pending. Publication is not complete.');
+  expect(mutations).toHaveLength(2);
+});
+it('hides schedule creation for an unconfigured server', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => response({ releases: [], schedulingEnabled: false })));
+  render(<ReleasesPane cmsfnApiUrl="http://cms.test" dataset="prod" />); await screen.findByText('No releases.');
+  expect(screen.queryByLabelText('Publish at (local time)')).toBeNull();
+});

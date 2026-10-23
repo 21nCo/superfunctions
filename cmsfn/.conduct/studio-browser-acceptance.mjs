@@ -11,7 +11,7 @@ const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); r
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
 let denySingletonReads = false;
-const content = createContentfnServer({ db, webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
 const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
@@ -31,7 +31,7 @@ await writeFile('studio-entry.mjs', `import React from 'react'; import { createR
 await build({ entryPoints: ['studio-entry.mjs'], outfile: 'studio-bundle.js', bundle: true, platform: 'browser', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
 const bundle = await readFile('studio-bundle.js');
 let base = ''; let cmsBase = ''; let cms; let statusMode = 'normal'; let allowPublish = true; let allowAudit = true; let allowReleases = true; let allowMigration = false;
-const requests = [];
+const requests = []; const scheduledKeys = []; let dropScheduledAck = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith('/cmsfn/')) { requests.push(req.url); cms.emit('request', req, res); return; }
   if (req.url === '/contentfn/status' && statusMode !== 'normal') {
@@ -40,7 +40,7 @@ const server = createServer((req, res) => {
     else res.end(JSON.stringify({ ok: true, result: { serverTime: new Date().toISOString(), capabilities: ['content.docs'] } }));
     return;
   }
-  if (req.url?.startsWith('/contentfn/')) { requests.push(req.url); void content.handler(req, res); return; }
+  if (req.url?.startsWith('/contentfn/')) { if (req.url === '/contentfn/docs/publish' && req.headers['idempotency-key']) { scheduledKeys.push(req.headers['idempotency-key']); if (dropScheduledAck) { dropScheduledAck = false; res.end = () => { res.destroy(); return res; }; } } requests.push(req.url); void content.handler(req, res); return; }
   if (req.url === '/studio-bundle.js') { res.setHeader('content-type', 'text/javascript'); res.end(bundle); return; }
   if (req.url?.startsWith('/studio')) {
     const config = { contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] },
@@ -60,7 +60,7 @@ let browser;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  cms = createCmsfnServer({ db: cmsDb, contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
+  cms = createCmsfnServer({ db: cmsDb, releaseExecutionSchemaVersion: 2, resolveReleaseExecutionIdentity: async () => ({ subject: 'scheduler', headers: { authorization: 'Bearer fixture-release-service' }, roles: [{ id: 'service', name: 'Service', rules: [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage', 'doc.publish'] }] }] }), contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
   unwrap(await cms.readiness);
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
@@ -215,6 +215,38 @@ try {
   assert.match((await page.locator('[data-release-failure]').allTextContents()).join(''), /release-a: PERMISSION_DENIED/);
   assert.equal((await content.api.docs.get({ dataset: 'prod', id: 'release-a' })).ok, false);
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'release-z' })).title, 'release-z');
+  // Actual Studio schedule creation, host invocation and real producer committed-response loss.
+  unwrap(await content.api.docs.create({ dataset: 'prod', id: 'scheduled-browser-doc', type: 'post', asDraft: true, doc: { title: 'Scheduled', _cms: { workflow: 'default', state: 'approved' } } }));
+  await page.getByLabel('Release name', { exact: true }).fill('Scheduled browser');
+  await page.getByLabel('Publish at (local time)', { exact: true }).fill('2020-01-01T12:00');
+  await page.locator('[data-releases-create-submit]').click(); await page.getByRole('heading', { name: 'Scheduled browser', exact: true }).waitFor();
+  const scheduledRow = page.locator('[data-releases-item]').filter({ has: page.getByRole('heading', { name: 'Scheduled browser', exact: true }) });
+  const scheduledId = await scheduledRow.getAttribute('data-release-id');
+  const keysBeforeEmpty = scheduledKeys.length;
+  const emptySweep = await cms.executeDueReleases();
+  assert.equal(emptySweep.results[0].outcome.error.code, 'VALIDATION_FAILED');
+  const emptyRow = await cmsDb.findOne({ model: 'cmsfn_releases', where: [{ field: 'releaseId', operator: 'eq', value: scheduledId }] });
+  assert.equal(emptyRow.execution, null);
+  assert.equal(scheduledKeys.length, keysBeforeEmpty);
+  await scheduledRow.locator('[data-release-doc-input]').fill('scheduled-browser-doc');
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/cmsfn/releases/add')), scheduledRow.locator('[data-release-add]').click()]);
+  await page.waitForFunction(() => !document.querySelector('[data-releases-refresh]')?.disabled);
+  // Advance the empty-authoring backoff without creating or changing a journal.
+  await cmsDb.updateMany({ model: 'cmsfn_releases', where: [{ field: 'releaseId', operator: 'eq', value: scheduledId }], data: { nextRunAt: new Date().toISOString() } });
+  const auditBefore = unwrap(await content.api.audit.query({ dataset: 'prod', action: 'docs.publish', limit: 100 })).records.length;
+  dropScheduledAck = true;
+  const firstSweep = await cms.executeDueReleases();
+  assert.equal(firstSweep.results.length, 1); assert.equal(firstSweep.results[0].outcome.result.execution.state, 'uncertain');
+  assert.equal((await content.api.docs.get({ dataset: 'prod', id: 'drafts.scheduled-browser-doc' })).ok, false);
+  await page.locator('[data-releases-refresh]').click(); await scheduledRow.getByText('Execution: uncertain', { exact: true }).waitFor();
+  // Advance only this fixture's persisted retry due time, preserving the original journal/key/subject.
+  await cmsDb.updateMany({ model: 'cmsfn_releases', where: [{ field: 'releaseId', operator: 'eq', value: scheduledId }], data: { nextRunAt: new Date().toISOString() } });
+  const secondSweep = await cms.executeDueReleases();
+  assert.deepEqual(secondSweep.results[0].outcome.result.published, ['scheduled-browser-doc']);
+  assert.equal(scheduledKeys.at(-1), scheduledKeys.at(-2));
+  assert.equal(unwrap(await content.api.audit.query({ dataset: 'prod', action: 'docs.publish', limit: 100 })).records.length, auditBefore + 1);
+  await page.locator('[data-releases-refresh]').click(); await scheduledRow.getByText('Execution: complete', { exact: true }).waitFor();
+  assert.deepEqual((await cms.executeDueReleases()).results, []);
   await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('staging'); await page.getByText('No releases.', { exact: true }).waitFor();
   assert.equal(await page.locator('[data-releases-item]').count(), 0); assert.equal(await page.locator('[data-releases-publish-result]').count(), 0);
   await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('prod'); await page.getByRole('heading', { name: 'Browser batch' }).waitFor();
@@ -256,8 +288,8 @@ try {
   statusMode = 'normal'; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-download]').waitFor();
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
-    remaining: ['automatic release scheduling and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
+    remaining: ['history and remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();
 }

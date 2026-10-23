@@ -13,9 +13,12 @@ import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 
 import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+import type { ReleaseExecutorConfig } from "../releases/executor.js";
 export interface ReleasesHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
   releasesStorage: ReleasesStorageConfig;
   contentfnBaseUrl: string;
+  releaseExecutionSchemaVersion?: 2;
+  resolveExecutionIdentity?: ReleaseExecutorConfig["resolveIdentity"];
   /** Server-configured dataset names; role grants cannot enable another dataset. */
   allowedDatasets?: readonly string[];
   /** Optional: if provided and returns false, respond PERMISSION_DENIED for create/list/add/publish. */
@@ -70,6 +73,7 @@ export async function handleReleasesCreate(
   if (!name) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "name is required", details: { path: "name" } } };
   }
+  if (publishAt != null && (!config.resolveExecutionIdentity || config.releaseExecutionSchemaVersion !== 2)) return err("CONFLICT", "Scheduled publication is not configured");
   return createRelease(config.releasesStorage, {
     dataset,
     name,
@@ -83,7 +87,7 @@ export async function handleReleasesCreate(
 export async function handleReleasesList(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ releases: import("cmsfn").CmsfnRelease[] }>> {
+): Promise<CmsfnEnvelope<{ releases: import("cmsfn").CmsfnRelease[]; schedulingEnabled?: boolean }>> {
   const parsed = await readAuthorizedBody(config, req);
   if (!parsed.ok) return parsed;
   const body = parsed.result;
@@ -91,7 +95,8 @@ export async function handleReleasesList(
   if (!dataset) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
   }
-  return listReleases(config.releasesStorage, { dataset });
+  const listed = await listReleases(config.releasesStorage, { dataset });
+  return listed.ok ? { ok: true, result: { ...listed.result, schedulingEnabled: !!config.resolveExecutionIdentity && config.releaseExecutionSchemaVersion === 2 } } : listed;
 }
 
 /**
@@ -145,6 +150,8 @@ export async function handleReleasesPublish(
       },
       contentfnBaseUrl: config.contentfnBaseUrl,
       releasesStorage: config.releasesStorage,
+      allowedDatasets: config.allowedDatasets,
+      resolveExecutionIdentity: config.resolveExecutionIdentity,
     },
     req,
     { dataset, releaseId }

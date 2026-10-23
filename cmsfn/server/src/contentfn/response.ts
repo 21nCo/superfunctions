@@ -84,7 +84,7 @@ export async function contentfnRequest<T>(
     return err("CONTENTFN_UNAVAILABLE", "Invalid ContentFn response", { upstreamStatus: response.status });
   }
   const result = parseResult(data.result);
-  return result === null ? err("CONTENTFN_UNAVAILABLE", "Invalid ContentFn result", { upstreamStatus: response.status }) : ok(result);
+  return result === null ? err("CONTENTFN_UNAVAILABLE", "Invalid ContentFn result", { upstreamStatus: response.status, failureKind: "invalid-result" }) : ok(result);
 }
 
 export function emptyResult(value: unknown): Record<string, never> | null {

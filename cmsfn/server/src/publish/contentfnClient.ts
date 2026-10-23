@@ -1,7 +1,7 @@
 /** ContentFn HTTP document projection; the transport dependency is validated at runtime. */
-import { contentfnRequest, emptyResult, isRecord } from "../contentfn/response.js";
+import { contentfnRequest, emptyResult, isRecord, type ContentfnRequestOptions } from "../contentfn/response.js";
 
-export interface ContentfnClientConfig { baseUrl: string }
+export interface ContentfnClientConfig extends ContentfnRequestOptions { baseUrl: string }
 export interface ContentfnDocument extends Record<string, unknown> {
   _id: string;
   _type: string;
@@ -19,11 +19,12 @@ export function getDraftDoc(config: ContentfnClientConfig, dataset: string, id: 
     const document = documentResult(value, draftId);
     // Publishing must compare the exact revision whose workflow and type were checked.
     if (!document || typeof document._rev !== "string" || !document._rev.trim()) return null;
-    return { ...document, _rev: document._rev };
-  });
+    const checked: ContentfnDocument & { _rev: string } = { ...document, _rev: document._rev };
+    return checked;
+  }, config);
 }
 export function contentfnPublish(config: ContentfnClientConfig, dataset: string, id: string, ifRev?: string) {
-  return contentfnRequest(config.baseUrl, "/contentfn/docs/publish", { dataset, id, ...(ifRev ? { ifRev } : {}) }, value => documentResult(value, id.startsWith("drafts.") ? id.substring(7) : id));
+  return contentfnRequest(config.baseUrl, "/contentfn/docs/publish", { dataset, id, ...(ifRev ? { ifRev } : {}) }, value => documentResult(value, id.startsWith("drafts.") ? id.substring(7) : id), config);
 }
 export function contentfnUnpublish(config: ContentfnClientConfig, dataset: string, id: string) {
   return contentfnRequest(config.baseUrl, "/contentfn/docs/unpublish", { dataset, id: id.startsWith("drafts.") ? id.substring(7) : id }, emptyResult);

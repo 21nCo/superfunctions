@@ -52,3 +52,13 @@ it('bounds malformed, oversized, redirected and stalled status bodies and creden
     await expect(resolveStatusHeaders(() => new Promise(() => undefined))).rejects.toThrow('timed out');
   } finally { await close(upstream); await close(target); }
 }, 10_000);
+it('requires actor-bound publish replay for configured scheduling readiness', async () => {
+  const upstream = createServer((req, res) => { req.resume(); res.end(JSON.stringify({ ok: true, result: { serverTime: new Date().toISOString(), capabilities: full } })); });
+  const db = memoryAdapter();
+  const cms = createCmsfnServer({ db, contentfn: { baseUrl: await listen(upstream) }, datasets: [{ name: 'prod' }], desk: { kind: 'divider' }, auth: { kind: 'custom' }, releaseExecutionSchemaVersion: 2, resolveReleaseExecutionIdentity: async () => ({ subject: 'service', roles: [], headers: {} }) });
+  try {
+    const base = await listen(cms);
+    expect(await cms.readiness).toMatchObject({ ok: false, error: { code: 'CONTENTFN_UNAVAILABLE' } });
+    expect(await (await fetch(base + '/cmsfn/status')).json()).toMatchObject({ ok: false, error: { code: 'CONTENTFN_UNAVAILABLE' } });
+  } finally { await close(cms); await close(upstream); await db.close(); }
+});

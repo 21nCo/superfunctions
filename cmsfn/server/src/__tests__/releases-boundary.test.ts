@@ -34,7 +34,7 @@ async function fixture(run: (value: {
 }) => Promise<void>) {
   const database = new Database(":memory:");
   database.exec(`CREATE TABLE cmsfn_releases (releaseId TEXT PRIMARY KEY, dataset TEXT NOT NULL,
-    name TEXT NOT NULL, publishAt TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL)`);
+    name TEXT NOT NULL, publishAt TEXT, nextRunAt TEXT, execution TEXT, docIds TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL)`);
   const sql = new Kysely({ dialect: new SqliteDialect({ database }) });
   const upstream: string[] = [];
   const content = createServer((req, res) => {
@@ -93,7 +93,7 @@ describe("release authorization over HTTP and SQLite", () => {
     config.getRolesForSubject = async () => [{ ...role, rules: [{ datasets: "*", types: "*", actions: "*" }] }];
     for (const path of paths) expect(await post(path, { dataset: "unconfigured", name: "No", releaseId, docId: "article" })).toMatchObject({ ok: false, error: { code: "PERMISSION_DENIED" } });
     for (const path of ["add", "publish"]) expect(await post(path, { dataset: "staging", releaseId, docId: "article" })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
-    expect(await post("list", { dataset: "staging" })).toEqual({ ok: true, result: { releases: [] } });
+    expect(await post("list", { dataset: "staging" })).toEqual({ ok: true, result: { releases: [], schedulingEnabled: false } });
     expect(upstream).toEqual([]);
     expect(await post("add", { dataset: "prod", releaseId, docId: "article" })).toEqual({ ok: true, result: {} });
     expect(await post("publish", { dataset: "prod", releaseId })).toEqual({ ok: true, result: { releaseId, published: ["article"], failures: [] } });
@@ -105,7 +105,7 @@ describe("release authorization over HTTP and SQLite", () => {
     const { result: { releaseId } } = await post("create", { dataset: "prod", name: "Launch" });
     await post("add", { dataset: "prod", releaseId, docId: "article" });
     let calls = 0;
-    config.getRolesForSubject = async () => { if (++calls > 1) throw new Error("private detail"); return [role]; };
+    config.getRolesForSubject = async () => { if (++calls > 2) throw new Error("private detail"); return [role]; };
     expect(await post("publish", { dataset: "prod", releaseId })).toEqual({ ok: true, result: { releaseId, published: [], failures: [{ docId: "article", code: "PERMISSION_DENIED", message: "Permission denied" }] } });
     expect(upstream).toEqual(["/contentfn/docs/get"]);
   }));
@@ -125,7 +125,7 @@ describe("release authorization over HTTP and SQLite", () => {
     const prefix = '{"dataset":"prod","padding":"';
     const exact = prefix + "x".repeat(RELEASE_BODY_MAX_BYTES - Buffer.byteLength(prefix) - 2) + '"}';
     expect(Buffer.byteLength(exact)).toBe(RELEASE_BODY_MAX_BYTES);
-    expect(await raw("list", exact, false)).toEqual({ ok: true, result: { releases: [] } });
+    expect(await raw("list", exact, false)).toEqual({ ok: true, result: { releases: [], schedulingEnabled: false } });
     expect(database.prepare("SELECT count(*) AS count FROM cmsfn_releases").get()).toEqual({ count: 0 });
   }));
 });
@@ -150,3 +150,13 @@ for (const handler of [handleReleasesCreate, handleReleasesList, handleReleasesA
     }
   });
 }
+it('gates scheduled creation on configured migration and validates canonical UTC times without upstream sends', async () => fixture(async ({ config, post, database, upstream }) => {
+  expect(await post('create', { dataset: 'prod', name: 'Timed', publishAt: '2030-01-01T00:00:00.000Z' })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  config.releaseExecutionSchemaVersion = 2;
+  config.resolveReleaseExecutionIdentity = async () => ({ subject: 'service', roles: [role], headers: {} });
+  for (const publishAt of ['tomorrow', '2030-01-01', '+020000-01-01T00:00:00.000Z', 42]) expect(await post('create', { dataset: 'prod', name: 'Bad', publishAt })).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
+  expect(database.prepare('SELECT count(*) AS n FROM cmsfn_releases').get()).toEqual({ n: 0 });
+  expect(await post('create', { dataset: 'prod', name: 'Timed', publishAt: '2030-01-01T00:00:00.000Z' })).toMatchObject({ ok: true });
+  expect(database.prepare('SELECT publishAt, nextRunAt, execution FROM cmsfn_releases').get()).toEqual({ publishAt: '2030-01-01T00:00:00.000Z', nextRunAt: '2030-01-01T00:00:00.000Z', execution: null });
+  expect(upstream).toEqual([]);
+}));

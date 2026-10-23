@@ -2,8 +2,11 @@
  * @cmsfn/server — CmsFn HTTP server (status, roles, preview, releases, etc.).
  */
 
+import { executeDueReleases, PUBLISH_REPLAY_CAPABILITY, type ReleaseExecutorConfig } from "./releases/executor.js";
+export { executeDueReleases } from "./releases/executor.js";
+export type { ReleaseExecutorConfig, ReleaseExecutionIdentity, DueReleaseResult } from "./releases/executor.js";
 import type { IncomingMessage, ServerResponse } from "http";
-import { fetchContentfnStatus, resolveStatusHeaders, type ContentfnStatusResult } from "./contentfn/statusClient.js";
+import { fetchContentfnStatus, resolveStatusHeaders, BASE_CAPABILITIES, type ContentfnStatusResult } from "./contentfn/statusClient.js";
 import { err, ok } from "cmsfn";
 import { createServer } from "http";
 import type { CmsfnEnvelope, CmsfnStudioConfig } from "cmsfn";
@@ -36,6 +39,7 @@ export type {
   CmsfnServerAPI,
 } from "cmsfn";
 
+export { backfillReleaseSchedules } from "./releases/migrate.js";
 export { getCmsfnStorageSchema } from "./storage/schema.js";
 
 /** Server config: studio config plus optional status auth and roles. */
@@ -51,6 +55,10 @@ export interface CmsfnServerConfig extends CmsfnStudioConfig {
   getRolesForSubject?: (req: IncomingMessage) => Promise<CmsfnRole[]>;
   /** Required for preview token when config.preview?.enabled; used to sign tokens. */
   previewSecret?: string;
+  /** Host assertion that additive storage migration/backfill completed and old writers drained. */
+  releaseExecutionSchemaVersion?: 2;
+  /** Trusted service identity for durable manual recovery and host-driven scheduled publication. */
+  resolveReleaseExecutionIdentity?: ReleaseExecutorConfig["resolveIdentity"];
   /** Trusted headers for ContentFn audit requests, resolved after local audit.read authorization.
    * Use a server service credential or explicitly derived upstream subject; browser headers are not copied.
    */
@@ -81,6 +89,7 @@ async function route(
         contentfnBaseUrl: config.contentfn.baseUrl,
         datasetNames: config.datasets.map((d) => d.name),
         requireRealtime: config.preview?.enabled === true,
+        requirePublishReplay: !!config.resolveReleaseExecutionIdentity && config.releaseExecutionSchemaVersion === 2,
         authorizeStatus: config.authorizeStatus,
         contentfnStatusHeaders: config.contentfnStatusHeaders,
       },
@@ -140,6 +149,8 @@ async function route(
       const envelope = await handleReleasesCreate(
         {
           releasesStorage: { db: config.db },
+          resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
+          releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
           checkCapabilities,
           allowedDatasets: config.datasets.map(dataset => dataset.name),
@@ -154,6 +165,8 @@ async function route(
       const envelope = await handleReleasesList(
         {
           releasesStorage: { db: config.db },
+          resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
+          releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
           checkCapabilities,
           allowedDatasets: config.datasets.map(dataset => dataset.name),
@@ -168,6 +181,8 @@ async function route(
       const envelope = await handleReleasesAdd(
         {
           releasesStorage: { db: config.db },
+          resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
+          releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
           checkCapabilities,
           allowedDatasets: config.datasets.map(dataset => dataset.name),
@@ -182,6 +197,8 @@ async function route(
       const envelope = await handleReleasesPublish(
         {
           releasesStorage: { db: config.db },
+          resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
+          releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
           checkCapabilities,
           allowedDatasets: config.datasets.map(dataset => dataset.name),
@@ -284,7 +301,8 @@ export function createCmsfnServer(config: CmsfnServerConfig) {
   async function check(required?: readonly string[]): Promise<CmsfnEnvelope<ContentfnStatusResult>> {
     try {
       const headers = await resolveStatusHeaders(config.contentfnStatusHeaders, controller.signal);
-      const status = await fetchContentfnStatus(config.contentfn.baseUrl, config.preview?.enabled === true, { headers, required, signal: controller.signal });
+      const startupRequired = [...BASE_CAPABILITIES, ...(config.preview?.enabled ? ["content.realtime"] : []), ...(config.resolveReleaseExecutionIdentity && config.releaseExecutionSchemaVersion === 2 ? [PUBLISH_REPLAY_CAPABILITY] : [])];
+      const status = await fetchContentfnStatus(config.contentfn.baseUrl, config.preview?.enabled === true, { headers, required: required ?? startupRequired, signal: controller.signal });
       return status ? ok(status) : err("CONTENTFN_UNAVAILABLE", "ContentFn is unreachable or missing required capabilities.");
     } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn status identity could not be configured."); }
   }
@@ -297,5 +315,8 @@ export function createCmsfnServer(config: CmsfnServerConfig) {
   });
   server.on('listening', () => { if (controller.signal.aborted) controller = new AbortController(); void check().then(resolveReadiness); });
   server.on('close', () => { controller.abort(); resolveReadiness(err("CONTENTFN_UNAVAILABLE", "Server closed before readiness completed.")); });
-  return Object.assign(server, { readiness });
+  return Object.assign(server, { readiness, executeDueReleases: (options?: { limit?: number; maxDocuments?: number }) => {
+    if (!config.db) throw new Error("Release execution requires a database");
+    return executeDueReleases({ db: config.db, contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), resolveIdentity: config.resolveReleaseExecutionIdentity, schemaVersion: config.releaseExecutionSchemaVersion }, options);
+  } });
 }

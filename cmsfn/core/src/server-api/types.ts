@@ -55,7 +55,7 @@ export interface CmsfnServerAPI {
   };
   releases: {
     create: (input: { dataset: string; name: string; publishAt?: string | null }) => Promise<CmsfnEnvelope<{ releaseId: string }>>;
-    list: (input: { dataset: string }) => Promise<CmsfnEnvelope<{ releases: CmsfnRelease[] }>>;
+    list: (input: { dataset: string }) => Promise<CmsfnEnvelope<{ releases: CmsfnRelease[]; schedulingEnabled?: boolean }>>;
     add: (input: { dataset: string; releaseId: string; docId: string }) => Promise<CmsfnEnvelope<Record<string, never>>>;
     publish: (input: { dataset: string; releaseId: string }) => Promise<CmsfnEnvelope<CmsfnReleasePublishResult>>;
   };

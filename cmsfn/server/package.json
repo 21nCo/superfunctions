@@ -1,7 +1,7 @@
 {
   "name": "@cmsfn/server",
   "version": "0.0.2",
-  "description": "cmsfn server API types and runtime (types-only in this phase)",
+  "description": "cmsfn server API and runtime",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -28,7 +28,7 @@
   },
   "superfunctions": {
     "initFunction": "cmsFn",
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "namespace": "cmsfn"
   },
   "scripts": {

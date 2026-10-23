@@ -1,4 +1,4 @@
-/** Dataset-scoped manual batch publishing. Scheduling is not implemented. */
+/** Dataset-scoped release publishing and explicitly configured host scheduling. */
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { CmsfnRelease, CmsfnReleasePublishResult } from "cmsfn";
 import { record } from "../audit/useAuditPage.js";
@@ -6,7 +6,13 @@ export interface ReleasesPaneProps { cmsfnApiUrl: string; dataset: string; }
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === "string");
 function release(value: unknown, dataset: string): CmsfnRelease | null {
   if (!record(value) || value.dataset !== dataset || typeof value.releaseId !== "string" || !value.releaseId || typeof value.name !== "string" || !strings(value.docIds) || typeof value.createdAt !== "string" || typeof value.updatedAt !== "string" || !(value.publishAt === undefined || value.publishAt === null || typeof value.publishAt === "string")) return null;
-  return { releaseId: value.releaseId, dataset, name: value.name, docIds: value.docIds, createdAt: value.createdAt, updatedAt: value.updatedAt, publishAt: value.publishAt };
+  let execution: CmsfnRelease['execution'];
+  if (value.execution !== undefined) {
+    const projected = summary({ ...value.execution, releaseId: value.releaseId }, value.releaseId);
+    if (!projected || !record(value.execution) || typeof value.execution.runId !== 'string' || !['running','complete','uncertain','blocked'].includes(String(value.execution.state)) || !strings(value.execution.pending)) return null;
+    execution = { runId: value.execution.runId, state: value.execution.state as NonNullable<CmsfnRelease['execution']>['state'], published: projected.published, failures: projected.failures, pending: value.execution.pending };
+  }
+  return { execution, releaseId: value.releaseId, dataset, name: value.name, docIds: value.docIds, createdAt: value.createdAt, updatedAt: value.updatedAt, publishAt: value.publishAt };
 }
 function summary(value: unknown, releaseId: string): CmsfnReleasePublishResult | null {
   if (!record(value) || value.releaseId !== releaseId || !strings(value.published) || !Array.isArray(value.failures)) return null;
@@ -15,7 +21,12 @@ function summary(value: unknown, releaseId: string): CmsfnReleasePublishResult |
     if (!record(item) || typeof item.docId !== 'string' || typeof item.code !== 'string' || typeof item.message !== 'string') return null;
     failures.push({ docId: item.docId, code: item.code, message: item.message });
   }
-  return { releaseId, published: value.published, failures };
+  let execution: CmsfnReleasePublishResult['execution'];
+  if (value.execution !== undefined) {
+    if (!record(value.execution) || typeof value.execution.runId !== 'string' || !['running','uncertain','blocked'].includes(String(value.execution.state)) || !strings(value.execution.pending)) return null;
+    execution = { runId: value.execution.runId, state: value.execution.state as NonNullable<CmsfnReleasePublishResult['execution']>['state'], pending: value.execution.pending };
+  }
+  return { releaseId, published: value.published, failures, ...(execution ? { execution } : {}) };
 }
 /** Remount the session so a previous dataset's pending mutation cannot populate this view. */
 export function ReleasesPane(props: ReleasesPaneProps) { return <ReleaseSession key={JSON.stringify([props.cmsfnApiUrl, props.dataset])} {...props} />; }
@@ -24,6 +35,7 @@ function ReleaseSession({ cmsfnApiUrl, dataset }: ReleasesPaneProps) {
   const [releases, setReleases] = useState<CmsfnRelease[]>([]);
   const [busy, setBusy] = useState(false); const [ready, setReady] = useState(false);
   const [denied, setDenied] = useState(false); const [error, setError] = useState<string | null>(null);
+  const [publishAt, setPublishAt] = useState(''); const [schedulingEnabled, setSchedulingEnabled] = useState(false);
   const [name, setName] = useState(''); const [docIds, setDocIds] = useState<Record<string, string>>({});
   const [result, setResult] = useState<CmsfnReleasePublishResult | null>(null);
   const request = useCallback(async (action: string, input: Record<string, unknown>) => {
@@ -42,7 +54,7 @@ function ReleaseSession({ cmsfnApiUrl, dataset }: ReleasesPaneProps) {
     if (!Array.isArray(data.releases)) throw new Error('Invalid release list');
     const rows = data.releases.map(item => release(item, dataset));
     if (rows.some(row => row === null)) throw new Error('Invalid release list');
-    if (alive.current) { setReleases(rows.filter((row): row is CmsfnRelease => row !== null)); setDenied(false); setReady(true); }
+    if (alive.current) { setReleases(rows.filter((row): row is CmsfnRelease => row !== null)); setDenied(false); setSchedulingEnabled(data.schedulingEnabled === true); setReady(true); }
   }, [request, dataset]);
   const run = useCallback(async (operation: () => Promise<void>, mutation = false) => {
     if (locked.current) return;
@@ -54,24 +66,26 @@ function ReleaseSession({ cmsfnApiUrl, dataset }: ReleasesPaneProps) {
   useEffect(() => { alive.current = true; void run(load); return () => { alive.current = false; }; }, [run, load]);
   return <div data-releases-pane data-dataset={dataset}>
     <h2>Releases</h2>
-    <p>Manual batch publishing. Automatic scheduling is not available.</p>
+    <p>{schedulingEnabled ? "Scheduled releases publish automatically when processing reaches their scheduled time. Times are selected in your local timezone." : "Manual batch publishing. Scheduling is not configured on this server."}</p>
     {denied && <p data-releases-denied>No access</p>}
     {error && <p role="alert" data-releases-error>{error}</p>}
     <button type="button" disabled={busy} onClick={() => void run(load)} data-releases-refresh>Refresh releases</button>
     {busy && <p data-releases-loading>Working…</p>}
     {!denied && ready && <>
       <form data-releases-create-form onSubmit={event => { event.preventDefault(); if (!name.trim()) return; void run(async () => {
-        const created = await request('create', { name: name.trim(), publishAt: null });
+        const created = await request('create', { name: name.trim(), publishAt: schedulingEnabled && publishAt ? new Date(publishAt).toISOString() : null });
         if (typeof created.releaseId !== 'string' || !created.releaseId) throw new Error('Invalid create result');
-        if (!alive.current) return; setName(''); await load();
+        if (!alive.current) return; setName(''); setPublishAt(''); await load();
       }, true); }}>
         <label>Release name<input value={name} onChange={event => setName(event.target.value)} data-releases-create-name disabled={busy} /></label>
+        {schedulingEnabled && <label>Publish at (local time)<input type="datetime-local" value={publishAt} onChange={event => setPublishAt(event.target.value)} disabled={busy} data-release-publish-at /></label>}
         <button type="submit" disabled={busy || !name.trim()} data-releases-create-submit>Create release</button>
       </form>
       {releases.length === 0 && <p>No releases.</p>}
       <ul data-releases-list>{releases.map(item => <li key={item.releaseId} data-releases-item data-release-id={item.releaseId}>
         <h3 data-releases-item-name>{item.name}</h3><span data-releases-item-doc-count>{item.docIds.length} docs</span>
-        {item.publishAt && <p>Requested time: {item.publishAt}. Automatic scheduling is not available.</p>}
+        {item.publishAt && <p>Scheduled time: {item.publishAt}.</p>}
+        {item.execution && <div data-release-execution><p>Execution: {item.execution.state}</p><p>Published: {item.execution.published.length}; failed: {item.execution.failures.length}; pending: {item.execution.pending.length}</p><ul>{item.execution.published.map(id => <li key={id} data-release-execution-published>Published: {id}</li>)}{item.execution.failures.map(failure => <li key={failure.docId} data-release-execution-failed>{failure.docId}: {failure.code} — {failure.message}</li>)}{item.execution.pending.map(id => <li key={id} data-release-execution-waiting>Pending: {id}</li>)}</ul>{item.execution.state === 'uncertain' && <p>A publication outcome is unconfirmed. The host must recover the original run; do not create a replacement run.</p>}</div>}
         <ul>{item.docIds.map(id => <li key={id} data-release-document>{id}</li>)}</ul>
         <form onSubmit={event => { event.preventDefault(); const id = (docIds[item.releaseId] ?? '').trim().replace(/^drafts\./, ''); if (!id) return; void run(async () => {
           await request('add', { releaseId: item.releaseId, docId: id }); if (!alive.current) return;
@@ -86,6 +100,7 @@ function ReleaseSession({ cmsfnApiUrl, dataset }: ReleasesPaneProps) {
         }, true)}>Publish release</button>
       </li>)}</ul>
       {result && <section data-releases-publish-result data-release-id={result.releaseId} aria-live="polite">
+        {result.execution && <p data-release-execution-pending>Execution {result.execution.state}; {result.execution.pending.length} pending. Publication is not complete.</p>}
         <p>Published: {result.published.length}</p><ul>{result.published.map(id => <li key={id} data-release-published>{id}</li>)}</ul>
         <p data-releases-failures>Failures: {result.failures.length}</p><ul>{result.failures.map(failure => <li key={failure.docId} data-release-failure>{failure.docId}: {failure.code} — {failure.message}</li>)}</ul>
       </section>}

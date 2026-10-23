@@ -4,6 +4,7 @@
  * List order: createdAt desc, releaseId asc.
  */
 
+import { canonicalTime, parseExecution, nextReleaseVersion } from "../releases/journal.js";
 import type { Adapter } from "@superfunctions/db";
 import { cmsfnStorageAdapter } from "./schema.js";
 import type { CmsfnEnvelope, CmsfnRelease } from "cmsfn";
@@ -22,9 +23,23 @@ interface ReleaseRow {
   dataset: string;
   name: string;
   publishAt: string | null;
+  nextRunAt: string | null;
+  execution: unknown;
   docIds: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+
+function publicExecution(value: unknown): Pick<CmsfnRelease, "execution"> {
+  if (value == null) return {};
+  const execution = parseExecution(value);
+  if (!execution) throw new Error("Invalid release execution");
+  return { execution: { runId: execution.runId, state: execution.state,
+    published: execution.documents.filter(doc => doc.state === "published").map(doc => doc.docId),
+    pending: execution.documents.filter(doc => doc.state === "pending" || doc.state === "sending").map(doc => doc.docId),
+    failures: execution.documents.filter(doc => doc.state === "failed").map(doc => ({ docId: doc.docId, code: doc.code ?? "INTERNAL_ERROR", message: doc.message ?? "Publication failed" })),
+  } };
 }
 
 function nowIso(): string {
@@ -42,12 +57,8 @@ export async function createRelease(
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!dataset) return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
   if (!name) return err("VALIDATION_FAILED", "name is required", { path: "name" });
-  const publishAt =
-    input.publishAt === undefined || input.publishAt === null
-      ? null
-      : typeof input.publishAt === "string"
-        ? input.publishAt.trim() || null
-        : null;
+  const publishAt = input.publishAt ?? null;
+  if (publishAt !== null && !canonicalTime(publishAt)) return err("VALIDATION_FAILED", "publishAt must be a canonical UTC ISO timestamp", { path: "publishAt" });
 
   const releaseId = randomUUID();
   const now = nowIso();
@@ -56,6 +67,8 @@ export async function createRelease(
     dataset,
     name,
     publishAt,
+    nextRunAt: publishAt,
+    execution: null,
     docIds: [],
     createdAt: now,
     updatedAt: now,
@@ -86,11 +99,12 @@ export async function listReleases(
     ],
   });
   const releases: CmsfnRelease[] = (rows as ReleaseRow[]).map((r) => ({
+    ...publicExecution(r.execution),
     releaseId: r.releaseId,
     dataset: r.dataset,
     name: r.name,
     publishAt: r.publishAt,
-    docIds: Array.isArray(r.docIds) ? r.docIds : [],
+    docIds: Array.isArray(r.docIds) ? [...r.docIds] : [],
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));
@@ -118,11 +132,12 @@ export async function getRelease(
   if (!row || typeof row !== "object") return null;
   const r = row as ReleaseRow;
   return {
+    ...publicExecution(r.execution),
     releaseId: r.releaseId,
     dataset: r.dataset,
     name: r.name,
     publishAt: r.publishAt,
-    docIds: Array.isArray(r.docIds) ? r.docIds : [],
+    docIds: Array.isArray(r.docIds) ? [...r.docIds] : [],
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -156,7 +171,8 @@ export async function addDocToRelease(
     if (docIds.length >= MAX_DOCS_PER_RELEASE) return err("VALIDATION_FAILED", "Release has reached max document count", { path: "docId", limit: MAX_DOCS_PER_RELEASE });
     docIds.push(docId);
     docIds.sort();
-    const updatedAt = new Date(Math.max(Date.now(), observed + 1)).toISOString();
+    const updatedAt = nextReleaseVersion(release.updatedAt);
+    if (!updatedAt) return err("CONFLICT", "Release version timestamp is exhausted");
     const changed = await cmsfnStorageAdapter(config.db).updateMany({
       model: CMSFN_RELEASES_TABLE,
       where: [

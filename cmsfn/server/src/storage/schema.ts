@@ -23,11 +23,13 @@ export function getCmsfnStorageSchema(): TableSchemaMap {
         dataset: { type: "string", required: true },
         name: { type: "string", required: true },
         publishAt: { type: "string" },
+        nextRunAt: { type: "string" },
+        execution: { type: "json", jsonStorageType: "json-text" },
         docIds: { type: "json", jsonStorageType: "json-text", required: true },
         createdAt: { type: "string", required: true },
         updatedAt: { type: "string", required: true },
       },
-      indexes: [{ name: "cmsfn_releases_dataset", fields: ["dataset"] }],
+      indexes: [{ name: "cmsfn_releases_dataset", fields: ["dataset"] }, { name: "cmsfn_releases_due", fields: ["dataset", "nextRunAt", "releaseId"] }],
     },
   };
 }
@@ -44,6 +46,7 @@ export function cmsfnStorageAdapter(adapter: Adapter): Adapter {
     if (adapter.id === "memory") {
       schema.cmsfn_roles.fields.rules.jsonStorageType = "native";
       schema.cmsfn_releases.fields.docIds.jsonStorageType = "native";
+      schema.cmsfn_releases.fields.execution.jsonStorageType = "native";
     }
     wrapped = wrapWithSchema(adapter, schema);
     adapters.set(adapter, wrapped);

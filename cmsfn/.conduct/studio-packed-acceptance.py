@@ -38,6 +38,8 @@ const element: React.ReactElement = <App config={config} />;
 boot(config);
 const server = createCmsfnServer(config);
 void server.readiness.then(result => { if (result.ok) result.result.capabilities.map(value => value.toUpperCase()); });
+const runDue: () => Promise<import("@cmsfn/server").DueReleaseResult> = () => server.executeDueReleases({ limit: 2, maxDocuments: 5 });
+void runDue;
 """)
 (out / 'consumer.cts').write_text("""import { App, boot } from '@cmsfn/studio';
 import { createElement } from 'react';
