@@ -176,7 +176,15 @@ export const contentfnIdempotency: TableDef = {
     requestHash: { type: "string", nullable: false }, responseJson: { type: "json", nullable: false }, createdAt: { type: "datetime", nullable: false },
   },
 };
+export const contentfnAudit: TableDef = {
+  name: "contentfn_audit", columns: {
+    id: { type: "string", primaryKey: true }, dataset: { type: "string", nullable: false },
+    action: { type: "string", nullable: false }, actor: { type: "json", nullable: true },
+    targetIds: { type: "json", nullable: false }, timestamp: { type: "datetime", nullable: false },
+  },
+};
 export const ALL_TABLES: TableDef[] = [
+  contentfnAudit,
   contentfnIdempotency,
   contentfnSchedules,
   contentfnDatasets,
@@ -221,7 +229,7 @@ export function getContentfnSchema(options: { jsonStorage?: "native" | "json-tex
 export function getSchema(config: { jsonStorage?: "native" | "json-text" } = {}): { version: number; schemas: import("@superfunctions/db").TableSchema[] } {
   const runtime = getContentfnSchema(config);
   return {
-    version: 2,
+    version: 3,
     schemas: ALL_TABLES.map(table => ({
       ...runtime[table.name],
       fields: Object.fromEntries(Object.entries(runtime[table.name].fields).map(([name, field]) => [name,

@@ -1,3 +1,5 @@
+import type { AuditRecord, AuditQuery } from "@contentfn/core";
+export type { AuditRecord, AuditQuery } from "@contentfn/core";
 import { streamContentfnEvents } from "./realtime.js";
 export type { ContentfnRealtimeEvent } from "./realtime.js";
 /**
@@ -61,6 +63,7 @@ export function createContentfnClient(options: ContentfnClientOptions) {
   }
   const query = (input: CfqlQuery) => request<CfqlResultPage>("query", input);
   return {
+    audit: { query: (input: AuditQuery) => request<{ records: AuditRecord[]; nextOffset: number | null }>("audit/query", input) },
     realtime: { subscribe: (input: { dataset: string; docId?: string; query?: import("@contentfn/core").CfqlQuery; signal?: AbortSignal }) => streamContentfnEvents(options, input) },
     datasets: {
       create: (input: { dataset: string }) => request<{ dataset: string }>("datasets/create", input),

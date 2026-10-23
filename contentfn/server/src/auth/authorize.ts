@@ -44,4 +44,5 @@ export const ACTIONS = {
   WEBHOOKS_DELETE: "webhooks.delete",
   REALTIME_SUBSCRIBE: "realtime.subscribe",
   STATUS: "status",
+  AUDIT_QUERY: "audit.query",
 } as const;

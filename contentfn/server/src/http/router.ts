@@ -1,3 +1,4 @@
+import { queryAudit } from "../storage/audit.js";
 import { webhookDeliveries } from "../storage/webhooks.js";
 import { schedulePublish, cancelScheduledPublish } from "../storage/schedules.js";
 import { createRouter as sharedRouter } from "@superfunctions/http/router";
@@ -34,6 +35,7 @@ export interface RouterConfig extends DatasetsEndpointsConfig, SchemaEndpointsCo
 }
 
 export const endpointHandlers = {
+  "/contentfn/audit/query": { action: "audit.query", handle: queryAudit },
   "/contentfn/webhooks/deliveries": { action: "webhooks.deliveries", handle: webhookDeliveries },
   "/contentfn/docs/schedule": { action: "docs.schedule", handle: schedulePublish },
   "/contentfn/docs/cancelSchedule": { action: "docs.cancelSchedule", handle: cancelScheduledPublish },

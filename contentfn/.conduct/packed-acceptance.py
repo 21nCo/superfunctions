@@ -19,7 +19,7 @@ for mode in ['core','admin','node18']:
  with (out/(mode+'-audit.json')).open('w') as log:subprocess.run(['npm','audit','--omit=dev','--json'],cwd=target,stdout=log,check=True)
  if mode=='core':
   shutil.copyfile(fixtures/'packed-runtime.mjs',target/'runtime.mjs')
-  (target/'consumer.mts').write_text("import { createContentfnServer } from '@contentfn/server';\nimport { memoryAdapter } from '@superfunctions/db/adapters/memory';\nconst server = createContentfnServer({ db: memoryAdapter() });\nvoid server.api.webhooks.deliveries({dataset:'prod',webhookId:'one'});\n")
+  (target/'consumer.mts').write_text("import { createContentfnServer } from '@contentfn/server';\nimport { memoryAdapter } from '@superfunctions/db/adapters/memory';\nconst server = createContentfnServer({ db: memoryAdapter() });\nvoid server.api.webhooks.deliveries({dataset:'prod',webhookId:'one'});\nvoid server.api.audit.query({dataset:'prod',limit:10}).then(response => { if (response.ok) { const actor: string | undefined = response.result.records[0]?.actor?.subject; void actor; } });\n")
   (target/'consumer.cts').write_text("import server = require('@contentfn/server');\nimport client = require('@contentfn/client');\nimport core = require('@contentfn/core');\nvoid server.createContentfnServer; void client.createContentfnClient; void core.validateSchema;\n")
   (target/'tsconfig.json').write_text(json.dumps({'compilerOptions':{'module':'NodeNext','moduleResolution':'NodeNext','target':'ES2022','strict':True,'noEmit':True,'skipLibCheck':False},'files':['consumer.mts','consumer.cts']}))
   subprocess.run(['node','node_modules/typescript/bin/tsc','--noEmit'],cwd=target,check=True)

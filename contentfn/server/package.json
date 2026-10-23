@@ -33,7 +33,7 @@
   },
   "superfunctions": {
     "initFunction": "createContentfnServer",
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "namespace": "contentfn"
   },
   "scripts": {

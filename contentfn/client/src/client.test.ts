@@ -19,3 +19,13 @@ it("preserves canonical server errors and contains invalid transport responses",
 it("rejects credential-bearing base URLs", () => {
   expect(() => createContentfnClient({ baseUrl: "https://secret:password@content.example" })).toThrow(/credentials/);
 });
+
+it("queries audit records using the typed dataset and pagination contract", async () => {
+  const result = { records: [{ id: "audit-id", dataset: "prod", action: "docs.create", actor: { subject: "operator" }, targetIds: ["prod", "post"], timestamp: "2026-10-23T00:00:00.000Z" }], nextOffset: 2 };
+  const client = createContentfnClient({ baseUrl: "https://content.example", fetch: async (url, init) => {
+    expect(String(url)).toBe("https://content.example/contentfn/audit/query");
+    expect(JSON.parse(init?.body as string)).toEqual({ dataset: "prod", action: "docs.create", limit: 1, offset: 1 });
+    return Response.json({ ok: true, result });
+  } });
+  expect(await client.audit.query({ dataset: "prod", action: "docs.create", limit: 1, offset: 1 })).toEqual({ ok: true, result });
+});

@@ -1,3 +1,5 @@
+import { appendAudit, type AuditQuery, type queryAudit } from "./storage/audit.js";
+import { atomicMutation } from "./storage/database.js";
 import { randomUUID } from "node:crypto";
 import { validateOptionalInput } from "./http/validateInput.js";
 import { webhookDeliveries } from "./storage/webhooks.js";
@@ -49,6 +51,7 @@ export interface ContentfnServerConfig {
 export interface ContentfnServer {
   /** Programmatic API (datasets + schema + docs). */
   api: {
+    audit: { query: (input: AuditQuery) => ReturnType<typeof queryAudit> };
     datasets: {
       create: (input: { dataset: string }) => ReturnType<typeof datasetCreate>;
       list: (input?: {}) => ReturnType<typeof datasetList>;
@@ -183,10 +186,14 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       const endpoint = Object.values(endpointHandlers).find(endpoint => endpoint.action === action);
       if (!endpoint) return err("VALIDATION_FAILED", "Unknown operation", {});
       const subject = typeof context === "object" && context !== null && "subject" in context && typeof context.subject === "string" ? context.subject : undefined;
-      const call = (database: import("./storage/database.js").ContentfnDatabase) => endpoint.handle({ ...routerConfig, db: database, actor: subject ? { subject } : undefined }, input);
+      const call = async (database: import("./storage/database.js").ContentfnDatabase): Promise<ContentfnEnvelope<unknown>> => {
+        const response = await endpoint.handle({ ...routerConfig, db: database, actor: subject ? { subject } : undefined }, input);
+        if (mutating && response.ok) await appendAudit(database, action, record, response.result, subject);
+        return response;
+      };
       let replayed = false;
       const mutating = /\.(create|delete|import|upsert|patch|publish|unpublish|restore|upload|register|schedule|cancelSchedule)$/.test(action);
-      const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : await call(db);
+      const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : mutating ? await atomicMutation(db, call) : await call(db);
       if (result.ok && !replayed) {
         try {
         if (action === "datasets.delete") realtimeServer.broadcast({ eventId: randomUUID(), dataset: String(record.dataset), type: "dataset.deleted", timestamp: new Date().toISOString() });

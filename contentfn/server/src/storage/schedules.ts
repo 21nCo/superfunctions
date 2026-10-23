@@ -1,3 +1,4 @@
+import { appendAudit } from "./audit.js";
 import type { ContentfnEnvelope } from "@contentfn/core";
 import { err, ok } from "@contentfn/core";
 import type { ContentfnDatabase } from "./database.js";
@@ -45,6 +46,7 @@ export async function processScheduledPublishes(config: { db: ContentfnDatabase;
       if (claim !== 1) return ok(null);
       const publication = await docPublish({ db }, { dataset: String(row.dataset), id: String(row.documentId), ifRev: String(row.ifRev) });
       if (!publication.ok) return publication;
+      await appendAudit(db, "docs.publish", { dataset: row.dataset, id: row.documentId }, publication.result, "system:scheduler");
       await db.deleteMany({ model: SCHEDULES_TABLE, where: [{ field: "id", operator: "eq", value: row.id }] });
       return ok({ dataset: String(row.dataset), document: publication.result });
     });

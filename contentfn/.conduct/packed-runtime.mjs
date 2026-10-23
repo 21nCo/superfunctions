@@ -25,7 +25,12 @@ try {
  assert.equal(snapshot.value.result.eventType,'query.snapshot');
  assert.equal(snapshot.value.result.queryResult.data.length,1);
  await queries.return();
- assert.equal(require('@contentfn/server').getSchema().schemas.length,12);
+ assert.equal(require('@contentfn/server').getSchema().version,3);
+ assert.equal(require('@contentfn/server').getSchema().schemas.length,13);
+ const audit = await client.audit.query({dataset:'packed',action:'docs.create'});
+ assert.equal(audit.ok,true);
+ assert.equal(audit.result.records.length,1);
+ assert.deepEqual(audit.result.records[0].targetIds,['packed','drafts.one']);
  const exported = await client.datasets.export({dataset:'packed'});
  assert.equal(exported.result.dataset,'packed'); assert.equal(typeof exported.result.exportedAt,'string');
  const cli = await promisify(execFile)(process.execPath,['node_modules/@contentfn/cli/dist/index.js','--server',baseUrl,'doc','get','--dataset','packed','--id','one']);

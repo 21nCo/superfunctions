@@ -176,3 +176,32 @@ Webhook workers use expiring database leases to avoid concurrent active deliveri
 A process crash can still cause redelivery after lease expiry, so receivers must keep
 idempotency records. Document deletion and unpublication retain new immutable snapshots
 for restoration; deleting a dataset removes its histories and idempotency records.
+
+### Queryable audit records
+
+Schema version 3 adds `contentfn_audit`. Run `runContentfnMigrations` (or apply
+shared schema CLI discovery from `getSchema()`) before using this server version.
+Successful mutating server operations record action, dataset, actor subject,
+action-specific target IDs and timestamp in the same database transaction as the
+mutation. HTTP idempotent replays do not append another record. Scheduled
+publication records `system:scheduler`; the scheduling request retains its own
+actor. Actor subjects come from trusted `context(request)`/`forContext` values,
+never a request-body actor field. Unauthenticated trusted calls record null.
+
+Use `server.forContext(context).audit.query({ dataset, action?, limit?, offset? })`,
+`client.audit.query(...)`, or `POST /contentfn/audit/query`. The authorization hook
+receives action `audit.query` and the requested dataset; deployments must restrict
+this permission to audit readers, including reads of deleted datasets. As with
+other endpoints, omitting an authorization hook permits access. Responses contain
+`{ records, nextOffset }`. Default page size is 100, maximum 1000, ordered by
+timestamp then record ID. Offset pages are not a snapshot under concurrent writes.
+
+Audit records survive dataset deletion and name reuse; operators must define
+retention and access policies for historical identities. Request bodies, document
+content, webhook secrets and ignored extra fields are not stored. Records describe
+successful operations, including successful no-ops, rather than failed attempts.
+Database changes roll back if audit persistence fails. External asset bytes are
+outside the database transaction and may need backend orphan cleanup after a
+failure. Direct imports of internal storage helpers and external database writes
+are outside this server API audit boundary. No tamper-proof storage or automated
+retention is implied.
