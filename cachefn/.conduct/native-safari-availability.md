@@ -24,3 +24,10 @@ curl --fail-with-body -H 'Content-Type: application/json' \
 ```
 
 If creation succeeds, use only the returned WebDriver-owned session/window, run the existing Cache source contract against a disposable localhost origin, delete that session with `DELETE /session/<returned-session-id>`, and stop the owned driver. The existing `typescript/scripts/browser-acceptance.mjs` is a source for the IndexedDB assertions, but its Playwright WebKit mode is not a native Safari runner; a WebDriver fixture remains required after the host gate is cleared. Do not treat the availability command alone as a storage acceptance test.
+
+2026-10-23 recheck at starting head `4a6cc2b33`: the same session-creation denial
+persists. A reusable native runner now exists at
+`typescript/scripts/safari-acceptance.mjs`; the shared storage contract is verified
+in Chrome but has not executed in native Safari. Current cleanup reports no
+created session and a confirmed owned-driver exit. See
+[`browser-matrix-20261023.md`](browser-matrix-20261023.md) for exact scope and receipts.
