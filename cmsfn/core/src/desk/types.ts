@@ -15,7 +15,7 @@ export type CmsfnDeskNode =
   | { kind: "divider" };
 
 export interface CmsfnStudioConfig {
-  contentfn: { baseUrl: string; /** Optional WebSocket URL for ContentFn realtime (e.g. ws://host/contentfn/realtime). */ realtimeUrl?: string };
+  contentfn: { baseUrl: string; /** Optional authenticated ContentFn HTTP(S) /contentfn/events endpoint or host WebSocket URL. Browser cookies require matching CORS policy; header tokens need a same-origin proxy. */ realtimeUrl?: string };
   /** When set, studio can call POST /cmsfn/publish and /cmsfn/unpublish for gated publish. */
   cmsfn?: { apiUrl: string };
   datasets: Array<{ name: string; label?: string }>;

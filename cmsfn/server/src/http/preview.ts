@@ -7,7 +7,7 @@ import type { CmsfnEnvelope, CmsfnPreviewTokenResult } from "cmsfn";
 import { ok, err } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
-import { mintPreviewToken } from "../preview/tokens.js";
+import { mintPreviewToken, validPreviewConfig } from "../preview/tokens.js";
 
 import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
 import { readJsonObject } from "./jsonBody.js";
@@ -17,6 +17,7 @@ export interface PreviewTokenHandlerConfig extends AuthorizeConfig, CapabilityGa
   previewEnabled?: boolean;
   /** Secret for signing tokens; required when preview enabled. */
   previewSecret?: string;
+  previewOrigin?: string;
   ttlSec?: number;
 }
 
@@ -29,7 +30,7 @@ export async function handlePreviewToken(
   config: PreviewTokenHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<CmsfnPreviewTokenResult>> {
-  if (!config.previewEnabled || !config.previewSecret) {
+  if (!config.previewEnabled || !config.previewSecret || !config.previewOrigin || !validPreviewConfig({ secret: config.previewSecret, audience: config.previewOrigin, ttlSec: config.ttlSec })) {
     return err("PREVIEW_NOT_CONFIGURED", "Preview is not configured", {});
   }
 
@@ -41,14 +42,9 @@ export async function handlePreviewToken(
   }
   const ds = dataset.trim();
 
-  let docIds: string[];
-  if (Array.isArray(body?.docIds) && body.docIds.every((id: unknown) => typeof id === "string")) {
-    docIds = (body.docIds as string[]).map((id) => String(id).trim()).filter(Boolean);
-  } else if (typeof body?.docId === "string" && body.docId.trim().length > 0) {
-    docIds = [body.docId.trim()];
-  } else {
-    docIds = [];
-  }
+  const rawIds: unknown = body.docIds === undefined ? [body.docId] : body.docIds;
+  if (!Array.isArray(rawIds) || rawIds.length < 1 || rawIds.length > 100 || !rawIds.every((id): id is string => typeof id === 'string' && !!id && id !== 'drafts.')) return err('VALIDATION_FAILED', 'One to 100 document IDs are required', { path: 'docIds' });
+  const docIds = rawIds;
 
   if (config.allowedDatasets && !config.allowedDatasets.includes(ds)) return err("PERMISSION_DENIED", "Permission denied");
   let allowed = false;
@@ -63,7 +59,7 @@ export async function handlePreviewToken(
 
   if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs", "content.realtime"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn preview capabilities are unavailable");
   const result = mintPreviewToken(
-    { secret: config.previewSecret, ttlSec: config.ttlSec },
+    { secret: config.previewSecret, audience: config.previewOrigin, ttlSec: config.ttlSec },
     ds,
     docIds
   );

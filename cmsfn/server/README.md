@@ -119,3 +119,43 @@ The latest execution journal remains attached to the release until a subsequent
 explicit manual run replaces a terminal journal. It is not an archival audit log;
 ContentFn retains the authoritative publication audit and idempotency records.
 CmsFn does not automatically expire or delete unresolved run metadata.
+
+### Scoped Studio preview
+
+Configure `preview.enabled`, a trusted HTTP(S) `preview.targetOrigin`, and a server-only
+`previewSecret` containing at least 32 bytes of unpredictable key material. The optional
+host-only `previewTokenTtlSec` is an integer from 1 to 900 (default 900). The token endpoint
+requires `doc.read`, a configured dataset and one to 100 document IDs; the caller cannot
+choose the signed audience. Draft IDs normalize to their base document IDs.
+
+The preview target imports `verifyPreviewToken` from `@cmsfn/server` and supplies its
+own trusted audience plus the dataset and document it is about to read:
+
+```ts
+const claims = verifyPreviewToken(secret, token, {
+  audience: 'https://preview.example.com', dataset, docId,
+});
+if (!claims) return new Response('Denied', { status: 403 });
+```
+
+Do not derive the expected audience from untrusted request headers. Verify before reading
+any draft. Version 2 tokens intentionally invalidate old unaudienced tokens; upgrade the
+CMS issuer and preview target together. Tokens are bearer credentials: the host must
+suppress token-bearing URL logs, avoid third-party resources and redirects from its
+preview route, and return appropriate no-store/referrer headers. Studio rejects resolver
+URLs outside the configured origin or with URL credentials, uses no-referrer iframes,
+renews tokens and removes the frame on expiry, denial, timeout or scope change. It cannot
+police redirects initiated by the trusted preview target.
+
+For live updates, set `contentfn.realtimeUrl` to the actual HTTP(S)
+`/contentfn/events` endpoint. Native EventSource sends browser cookies with credentials;
+the host must authenticate those cookies for `realtime.subscribe`. Cross-origin use
+requires explicit credentialed CORS and compatible cookie policy. Native EventSource
+cannot attach custom bearer headers: use a same-origin authenticated host proxy when the
+producer requires headers. Do not put bearer tokens in the events URL. The client rejects recognized credential
+query names (`token`, `accessToken`, `authorization`, `cmsfnPreviewToken`, `apiKey`,
+`auth`, `bearer`), ignoring case, underscores and hyphens. This is not a general secret
+scanner; the host must exclude credentials under other names too. A host-provided
+WebSocket URL remains supported but is not the built-in ContentFn HTTP route. Events
+must match the active dataset and document before refreshing; closing or changing scope
+cancels queued refreshes.

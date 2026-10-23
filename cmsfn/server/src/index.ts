@@ -55,6 +55,8 @@ export interface CmsfnServerConfig extends CmsfnStudioConfig {
   getRolesForSubject?: (req: IncomingMessage) => Promise<CmsfnRole[]>;
   /** Required for preview token when config.preview?.enabled; used to sign tokens. */
   previewSecret?: string;
+  /** Preview token lifetime: integer seconds from 1 to 900 (default 900). */
+  previewTokenTtlSec?: number;
   /** Host assertion that additive storage migration/backfill completed and old writers drained. */
   releaseExecutionSchemaVersion?: 2;
   /** Trusted service identity for durable manual recovery and host-driven scheduled publication. */
@@ -278,6 +280,8 @@ async function route(
         allowedDatasets: config.datasets.map(dataset => dataset.name),
         previewEnabled: config.preview?.enabled === true,
         previewSecret: config.previewSecret,
+        previewOrigin: config.preview?.targetOrigin,
+        ttlSec: config.previewTokenTtlSec,
       },
       req
     );
@@ -320,3 +324,6 @@ export function createCmsfnServer(config: CmsfnServerConfig) {
     return executeDueReleases({ db: config.db, contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), resolveIdentity: config.resolveReleaseExecutionIdentity, schemaVersion: config.releaseExecutionSchemaVersion }, options);
   } });
 }
+
+export { verifyPreviewToken } from "./preview/tokens.js";
+export type { PreviewTokenScope, PreviewTokenClaims } from "./preview/tokens.js";

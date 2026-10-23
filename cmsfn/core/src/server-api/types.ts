@@ -13,6 +13,8 @@ export interface CmsfnStatusResult {
 }
 
 export interface CmsfnPreviewTokenResult {
+  /** Trusted target origin; required by version-2 preview consumers. */
+  audience?: string;
   token: string;
   expiresAt: string; // ISO 8601
   dataset: string;

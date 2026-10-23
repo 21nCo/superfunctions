@@ -41,7 +41,7 @@ describe("PreviewPane", () => {
       const resolveUrl = vi.fn(() => "https://preview.test/doc/1");
       const envelope = {
         ok: true,
-        result: { token: "t1", expiresAt: new Date(Date.now() + 6e4).toISOString(), dataset: "prod", docIds: ["post-1"] },
+        result: { token: "t1", expiresAt: new Date(Date.now() + 6e4).toISOString(), dataset: "prod", docIds: ["post-1"], audience: "https://preview.test" },
       };
       globalThis.fetch = vi.fn((input: string | URL | Request) => {
         const url = typeof input === "string" ? input : (input as Request).url;

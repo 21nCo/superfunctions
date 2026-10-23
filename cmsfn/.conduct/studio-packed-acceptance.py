@@ -32,7 +32,9 @@ shutil.copy(root/'cmsfn/.conduct/studio-browser-acceptance.mjs',out/'acceptance.
 subprocess.run(['node','acceptance.mjs'],cwd=out,check=True)
 (out / 'consumer.tsx').write_text("""import { App, boot, type CmsfnStudioConfig } from '@cmsfn/studio';
 import * as React from 'react';
-import {createCmsfnServer} from '@cmsfn/server';
+import {createCmsfnServer, verifyPreviewToken, type PreviewTokenClaims} from '@cmsfn/server';
+const claims: PreviewTokenClaims | null = verifyPreviewToken('server-only-secret-material', 'untrusted-token', { audience: 'https://preview.example', dataset: 'prod', docId: 'post' });
+void claims;
 const config: CmsfnStudioConfig = { contentfn: { baseUrl: 'http://localhost' }, datasets: [{ name: 'prod' }], auth: { kind: 'custom' }, desk: { kind: 'divider' } };
 const element: React.ReactElement = <App config={config} />;
 boot(config);

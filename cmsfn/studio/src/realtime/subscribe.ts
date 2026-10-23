@@ -1,133 +1,45 @@
-/**
- * Subscribe to ContentFn realtime events for a doc; on event, call callback (debounced).
- * When realtimeUrl is not configured, returns a no-op unsubscribe (e.g. refresh-on-save only).
- */
-
+/** Scoped realtime transports: native ContentFn SSE or a host-owned WebSocket. */
 const DEFAULT_DEBOUNCE_MS = 500;
-
-export interface SubscribeConfig {
-  /** WebSocket URL for ContentFn realtime (e.g. ws://host/contentfn/realtime). When absent, no subscription. */
-  realtimeUrl?: string;
-  dataset: string;
-  docId: string;
-  /** Called when a doc event is received; debounced. */
-  onUpdate: () => void;
-  debounceMs?: number;
-}
-
-/**
- * Subscribe to draft/doc changes for the given dataset and docId.
- * Returns unsubscribe function.
- */
-export function subscribeToDoc(config: SubscribeConfig): () => void {
-  const { realtimeUrl, dataset, docId, onUpdate, debounceMs = DEFAULT_DEBOUNCE_MS } = config;
-
-  if (!realtimeUrl || typeof WebSocket === "undefined") {
-    return () => {};
-  }
-
-  let ws: WebSocket | null = null;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let closed = false;
-
-  function scheduleUpdate(): void {
-    if (closed) return;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      onUpdate();
-    }, debounceMs);
-  }
-
-  try {
-    ws = new WebSocket(realtimeUrl);
-    ws.onmessage = (event) => {
-      try {
-        const msg = typeof event.data === "string" ? JSON.parse(event.data) : null;
-        const eventDocId = msg?.document?._id;
-        const match = msg?.type === "event" && msg?.dataset === dataset && (!eventDocId || eventDocId === docId || eventDocId === docId.replace(/^drafts\./, "") || docId === `drafts.${eventDocId}`);
-        if (match) {
-          scheduleUpdate();
-        }
-      } catch {
-        // ignore parse errors
-      }
-    };
-    ws.onopen = () => {
-      if (closed || !ws) return;
-      ws.send(JSON.stringify({ type: "subscribe", dataset, docId }));
-    };
-  } catch {
-    return () => {};
-  }
-
-  return () => {
-    closed = true;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    if (ws) {
-      try {
-        ws.send(JSON.stringify({ type: "unsubscribe", dataset, docId }));
-        ws.close();
-      } catch {
-        // ignore
-      }
-      ws = null;
-    }
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+interface Event { type: 'event'; dataset: string; docId?: string }
+function connect(realtimeUrl: string | undefined, dataset: string, docId: string | undefined, receive: (event: Event) => void): () => void {
+  if (!realtimeUrl || !dataset) return () => {};
+  let closed = false; let close = () => {};
+  const message = (raw: unknown) => {
+    if (closed || typeof raw !== 'string' || raw.length > 1_048_576) return;
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (!record(value) || value.type !== 'event' || value.dataset !== dataset) return;
+      const identity = record(value.document) ? value.document._id : value.docId;
+      if (docId && (typeof identity !== 'string' || identity.replace(/^drafts\./, '') !== docId.replace(/^drafts\./, ''))) return;
+      receive({ type: 'event', dataset, ...(typeof identity === 'string' ? { docId: identity } : {}) });
+    } catch { /* Malformed/foreign frames cannot refresh this scope. */ }
   };
-}
-
-export interface SubscribeDatasetConfig {
-  realtimeUrl?: string;
-  dataset: string;
-  /** Called for any doc event in the dataset (patch, publish, etc.). */
-  onEvent: (event: { type: string; dataset?: string; docId?: string }) => void;
-}
-
-/**
- * Subscribe to all doc events in a dataset (for list refresh and remote-changed).
- * Returns unsubscribe function.
- */
-export function subscribeToDataset(config: SubscribeDatasetConfig): () => void {
-  const { realtimeUrl, dataset, onEvent } = config;
-
-  if (!realtimeUrl || typeof WebSocket === "undefined") {
-    return () => {};
-  }
-
-  let ws: WebSocket | null = null;
-  let closed = false;
-
   try {
-    ws = new WebSocket(realtimeUrl);
-    ws.onmessage = (ev) => {
-      try {
-        const msg = typeof ev.data === "string" ? JSON.parse(ev.data) : null;
-        if (msg?.type === "event" && msg?.dataset === dataset) {
-          const docId = msg?.document?._id ?? msg?.docId;
-          onEvent({ type: "event", dataset: msg.dataset, docId });
-        }
-      } catch {
-        // ignore
-      }
-    };
-    ws.onopen = () => {
-      if (closed || !ws) return;
-      ws.send(JSON.stringify({ type: "subscribe", dataset }));
-    };
-  } catch {
-    return () => {};
-  }
-
-  return () => {
-    closed = true;
-    if (ws) {
-      try {
-        ws.send(JSON.stringify({ type: "unsubscribe", dataset }));
-        ws.close();
-      } catch {
-        // ignore
-      }
-      ws = null;
+    const url = new URL(realtimeUrl);
+    if (url.username || url.password || Array.from(url.searchParams.keys()).some(key => ['token', 'accesstoken', 'authorization', 'cmsfnpreviewtoken', 'apikey', 'auth', 'bearer'].includes(key.toLowerCase().replace(/[_-]/g, '')))) return () => {};
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      if (typeof EventSource === 'undefined') return () => {};
+      url.searchParams.set('dataset', dataset);
+      if (docId) url.searchParams.set('docId', docId); else url.searchParams.delete('docId');
+      // Native EventSource uses browser cookies; no header or query bearer token.
+      const source = new EventSource(url.toString(), { withCredentials: true });
+      source.onmessage = event => message(event.data);
+      close = () => source.close();
+    } else if ((url.protocol === 'ws:' || url.protocol === 'wss:') && typeof WebSocket !== 'undefined') {
+      const ws = new WebSocket(url.toString());
+      ws.onmessage = event => message(event.data);
+      ws.onopen = () => { if (!closed) ws.send(JSON.stringify({ type: 'subscribe', dataset, ...(docId ? { docId } : {}) })); };
+      close = () => { try { ws.send(JSON.stringify({ type: 'unsubscribe', dataset, ...(docId ? { docId } : {}) })); } catch { /* Close connecting sockets too. */ } finally { ws.close(); } };
     }
-  };
+  } catch { /* Unsupported transports fail without leaking credentials. */ }
+  return () => { closed = true; try { close(); } catch { /* Cleanup remains idempotent. */ } };
 }
+export interface SubscribeConfig { realtimeUrl?: string; dataset: string; docId: string; onUpdate: () => void; debounceMs?: number }
+export function subscribeToDoc({ realtimeUrl, dataset, docId, onUpdate, debounceMs = DEFAULT_DEBOUNCE_MS }: SubscribeConfig): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stop = connect(realtimeUrl, dataset, docId, () => { clearTimeout(timer); timer = setTimeout(onUpdate, debounceMs); });
+  return () => { clearTimeout(timer); stop(); };
+}
+export interface SubscribeDatasetConfig { realtimeUrl?: string; dataset: string; onEvent: (event: { type: string; dataset?: string; docId?: string }) => void }
+export function subscribeToDataset({ realtimeUrl, dataset, onEvent }: SubscribeDatasetConfig): () => void { return connect(realtimeUrl, dataset, undefined, onEvent); }

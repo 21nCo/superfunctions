@@ -1,147 +1,88 @@
-/**
- * Preview pane: iframe with preview URL + token; updates on draft changes (realtime or refresh callback).
- */
-
-import { useState, useEffect, useRef, useCallback } from "react";
-import { subscribeToDoc } from "../../realtime/subscribe.js";
-
-const PREVIEW_TOKEN_PARAM = "cmsfn_preview_token";
-
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { previewAudience, previewDocumentId } from 'cmsfn';
+import { subscribeToDoc } from '../../realtime/subscribe.js';
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 export interface PreviewPaneProps {
-  /** When false or missing, show deterministic disabled UI. */
   previewEnabled?: boolean;
   targetOrigin: string;
   resolveUrl: (doc: unknown) => string;
-  /** CmsFn server URL for POST /cmsfn/preview/token. */
   cmsfnApiUrl?: string;
   dataset: string;
-  /** Current doc (draft) for resolveUrl and token scope. */
   doc: unknown;
-  /** Optional WebSocket URL for ContentFn realtime; when set, preview refreshes on events. */
+  /** HTTP(S) ContentFn events endpoint or a host-provided WebSocket transport. */
   realtimeUrl?: string;
-  /** When set, preview will refresh when this is called (e.g. after save). */
   refreshTrigger?: number;
 }
-
-async function fetchPreviewToken(
-  cmsfnApiUrl: string,
-  dataset: string,
-  docId: string
-): Promise<{ token: string; expiresAt: string } | null> {
-  const base = cmsfnApiUrl.replace(/\/+$/, "");
-  const res = await fetch(`${base}/cmsfn/preview/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataset, docId }),
-  });
-  const data = await res.json();
-  if (!res.ok || !data?.ok) return null;
-  const r = data.result as { token?: string; expiresAt?: string };
-  return r?.token && r?.expiresAt ? { token: r.token, expiresAt: r.expiresAt } : null;
+async function readTokenResponse(response: Response): Promise<unknown> {
+  if (!response.ok || !response.body) { await response.body?.cancel().catch(() => {}); throw Error(); }
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
+  try {
+    while (true) { const item = await reader.read(); if (item.done) break; bytes += item.value.byteLength; if (bytes > 256 * 1024) throw Error(); chunks.push(item.value); }
+  } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+  finally { reader.releaseLock(); }
+  const all = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { all.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(all));
 }
-
-function buildPreviewUrl(baseUrl: string, token: string): string {
-  const u = new URL(baseUrl);
-  u.searchParams.set(PREVIEW_TOKEN_PARAM, token);
-  return u.toString();
-}
-
-export function PreviewPane({
-  previewEnabled,
-  targetOrigin,
-  resolveUrl,
-  cmsfnApiUrl,
-  dataset,
-  doc,
-  realtimeUrl,
-  refreshTrigger,
-}: PreviewPaneProps) {
-  const [token, setToken] = useState<string | null>(null);
-  const [tokenError, setTokenError] = useState(false);
+export function PreviewPane({ previewEnabled, targetOrigin, resolveUrl, cmsfnApiUrl, dataset, doc, realtimeUrl, refreshTrigger }: PreviewPaneProps) {
+  const eventDocId = record(doc) && typeof doc._id === 'string' ? doc._id : undefined;
+  const docId = previewDocumentId(eventDocId);
+  const audience = previewAudience(targetOrigin);
+  let destination: string | null = null;
+  try {
+    const url = new URL(previewEnabled && docId ? resolveUrl(doc) : "");
+    if (audience && previewAudience(url.toString()) === audience && !url.username && !url.password) destination = url.toString();
+  } catch { /* Invalid resolver output must never receive a token. */ }
+  const scope = JSON.stringify([previewEnabled, cmsfnApiUrl, dataset, docId, eventDocId, audience, destination]);
+  const currentScope = useRef(scope); currentScope.current = scope;
+  const generation = useRef(0);
+  const [state, setState] = useState<{ scope: string; token: string | null; expires: number; error: boolean }>({ scope, token: null, expires: 0, error: false });
+  const [retry, setRetry] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
-  const docId = (doc as { _id?: string })?._id;
-
-  const refresh = useCallback(() => {
-    setRefreshKey((k) => k + 1);
-  }, []);
-
-  // Request token when doc or config changes
+  const refresh = useCallback(() => setRefreshKey(value => value + 1), []);
   useEffect(() => {
-    if (!previewEnabled || !cmsfnApiUrl || !docId) {
-      setToken(null);
-      setTokenError(false);
-      return;
+    if (!previewEnabled || !cmsfnApiUrl || !docId || !dataset || !audience || !destination) return;
+    const scopedDocId = docId;
+    const tokenGeneration = ++generation.current; const controller = new AbortController();
+    let renew: ReturnType<typeof setTimeout> | undefined, expire: ReturnType<typeof setTimeout> | undefined;
+    const current = () => tokenGeneration === generation.current && currentScope.current === scope;
+    const active = () => current() && !controller.signal.aborted;
+    setState({ scope, token: null, expires: 0, error: false });
+    async function requestToken() {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const operation = async () => {
+          const response = await fetch(`${cmsfnApiUrl!.replace(/\/+$/, '')}/cmsfn/preview/token`, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataset, docId }), signal: controller.signal });
+          return readTokenResponse(response);
+        };
+        const value = await Promise.race([operation(), new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(() => { controller.abort(); reject(new Error('Preview request timed out')); }, 10_000);
+        })]);
+        if (!record(value) || value.ok !== true || !record(value.result)) throw Error();
+        const result = value.result, expires = typeof result.expiresAt === 'string' ? Date.parse(result.expiresAt) : NaN;
+        if (typeof result.token !== 'string' || !result.token || result.token.length > 128 * 1024 || result.dataset !== dataset || result.audience !== audience || !Array.isArray(result.docIds) || !result.docIds.every(id => typeof id === 'string') || !result.docIds.includes(scopedDocId) || !Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + 901_000) throw Error();
+        if (!active()) return;
+        clearTimeout(expire); clearTimeout(renew);
+        setState({ scope, token: result.token, expires, error: false });
+        expire = setTimeout(() => { if (current()) setState({ scope, token: null, expires: 0, error: true }); }, expires - Date.now());
+        renew = setTimeout(() => { void requestToken(); }, Math.max(100, (expires - Date.now()) * 0.75));
+      } catch {
+        if (tokenGeneration === generation.current && currentScope.current === scope) setState({ scope, token: null, expires: 0, error: true });
+      } finally { clearTimeout(deadline); }
     }
-    let cancelled = false;
-    fetchPreviewToken(cmsfnApiUrl, dataset, docId).then((t) => {
-      if (!cancelled) {
-        setToken(t?.token ?? null);
-        setTokenError(!t);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [previewEnabled, cmsfnApiUrl, dataset, docId]);
-
-  // Realtime subscription: on event, refresh preview
+    void requestToken();
+    return () => { ++generation.current; controller.abort(); clearTimeout(renew); clearTimeout(expire); };
+  }, [previewEnabled, cmsfnApiUrl, dataset, docId, audience, destination, scope, retry]);
   useEffect(() => {
-    if (!docId || !realtimeUrl) return;
-    const unsub = subscribeToDoc({
-      realtimeUrl,
-      dataset,
-      docId,
-      onUpdate: refresh,
-    });
-    return unsub;
-  }, [realtimeUrl, dataset, docId, refresh]);
-
-  // When parent signals refresh (e.g. after save)
-  const prevTrigger = useRef(refreshTrigger);
-  useEffect(() => {
-    if (refreshTrigger != null && refreshTrigger !== prevTrigger.current) {
-      prevTrigger.current = refreshTrigger;
-      refresh();
-    }
-  }, [refreshTrigger, refresh]);
-
-  if (!previewEnabled) {
-    return (
-      <div data-preview-pane data-preview-disabled="true">
-        <p>Preview is not configured.</p>
-      </div>
-    );
-  }
-
-  if (!cmsfnApiUrl || !docId) {
-    return (
-      <div data-preview-pane data-preview-disabled="true">
-        <p>Preview requires CmsFn server URL and an open document.</p>
-      </div>
-    );
-  }
-
-  if (tokenError || !token) {
-    return (
-      <div data-preview-pane data-preview-error="true">
-        <p>{tokenError ? "Failed to load preview token." : "Loading preview…"}</p>
-      </div>
-    );
-  }
-
-  const baseUrl = resolveUrl(doc);
-  const previewUrl = buildPreviewUrl(baseUrl, token);
-
-  return (
-    <div data-preview-pane data-preview-visible="true">
-      <iframe
-        key={refreshKey}
-        data-preview-iframe
-        title="Preview"
-        src={previewUrl}
-        referrerPolicy="no-referrer"
-        style={{ width: "100%", height: "100%", border: "none" }}
-      />
-    </div>
-  );
+    if (!previewEnabled || !eventDocId || !realtimeUrl || !destination) return;
+    return subscribeToDoc({ realtimeUrl, dataset, docId: eventDocId, onUpdate: refresh });
+  }, [previewEnabled, realtimeUrl, dataset, eventDocId, destination, refresh]);
+  const previousTrigger = useRef(refreshTrigger);
+  useEffect(() => { if (refreshTrigger != null && refreshTrigger !== previousTrigger.current) { previousTrigger.current = refreshTrigger; refresh(); } }, [refreshTrigger, refresh]);
+  if (!previewEnabled) return <div data-preview-pane data-preview-disabled="true"><p>Preview is not configured.</p></div>;
+  if (!cmsfnApiUrl || !docId) return <div data-preview-pane data-preview-disabled="true"><p>Preview requires CmsFn server URL and an open document.</p></div>;
+  if (!audience || !destination) return <div data-preview-pane data-preview-error="true"><p>Preview URL must match the configured HTTP(S) origin and contain no credentials.</p></div>;
+  const visible = state.scope === scope && state.expires > Date.now() ? state.token : null;
+  if (!visible) return <div data-preview-pane data-preview-error="true"><p>{state.scope === scope && state.error ? 'Failed to load a valid preview token.' : 'Loading preview…'}</p>{state.scope === scope && state.error && <button type="button" onClick={() => setRetry(value => value + 1)}>Retry preview</button>}</div>;
+  const url = new URL(destination); url.searchParams.set('cmsfn_preview_token', visible);
+  return <div data-preview-pane data-preview-visible="true"><iframe key={`${scope}:${refreshKey}:${visible}`} data-preview-iframe title="Preview" src={url.toString()} referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', border: 'none' }} /></div>;
 }

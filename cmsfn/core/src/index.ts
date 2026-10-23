@@ -25,3 +25,5 @@ export type {
   CmsfnWebhookDeliveryStatus,
   CmsfnServerAPI,
 } from "./server-api/types.js";
+
+export { previewAudience, previewDocumentId } from "./preview/scope.js";

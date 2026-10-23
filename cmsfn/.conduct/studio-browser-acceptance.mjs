@@ -5,13 +5,15 @@ import { writeFile, readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { createContentfnServer } from '@contentfn/server';
-import { createCmsfnServer } from '@cmsfn/server';
+import { createCmsfnServer, verifyPreviewToken } from '@cmsfn/server';
 import { memoryAdapter } from '@superfunctions/db/adapters';
 const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); return value.result; };
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
+const previewSecret = 'fixture-preview-secret-32-bytes-minimum';
+let allowPreview = true;
 let denySingletonReads = false; let denyHistory = false;
-const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => action === 'realtime.subscribe' ? context instanceof Request && context.headers.get('cookie')?.includes('fixture_session=preview') === true : context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
 const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
@@ -41,6 +43,15 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.url?.startsWith('/contentfn/')) { if (req.url === '/contentfn/docs/publish' && req.headers['idempotency-key']) { scheduledKeys.push(req.headers['idempotency-key']); if (dropScheduledAck) { dropScheduledAck = false; res.end = () => { res.destroy(); return res; }; } } requests.push(req.url); void content.handler(req, res); return; }
+  if (req.url?.startsWith('/preview?')) {
+    const url = new URL(req.url, base); const dataset = url.searchParams.get('dataset'); const docId = url.searchParams.get('docId');
+    if (!dataset || !docId || !verifyPreviewToken(previewSecret, url.searchParams.get('cmsfn_preview_token') ?? '', { audience: base, dataset, docId })) { res.writeHead(403); res.end('Denied'); return; }
+    void content.api.docs.get({ dataset, id: docId, perspective: 'draft' }).then(result => {
+      if (!result.ok) { res.writeHead(404); res.end(); return; }
+      res.setHeader('content-type', 'text/html'); res.setHeader('cache-control', 'no-store'); res.setHeader('referrer-policy', 'no-referrer');
+      res.end('<p data-preview-title>' + String(result.result.title).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') + '</p>');
+    }); return;
+  }
   if (req.url === '/studio-bundle.js') { res.setHeader('content-type', 'text/javascript'); res.end(bundle); return; }
   if (req.url?.startsWith('/studio')) {
     const config = { contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] },
@@ -51,8 +62,12 @@ const server = createServer((req, res) => {
       { kind: 'singleton', title: 'Wrong type home', dataset: 'prod', type: 'page', id: 'editable' },
       { kind: 'singleton', title: 'Unconfigured home', dataset: 'unconfigured', type: 'page', id: 'home' },
     ] } };
+    const previewMode = new URL(req.url, base).searchParams.get('preview');
+    if (previewMode) { config.preview = { enabled: true, targetOrigin: base }; config.contentfn.realtimeUrl = `${base}/contentfn/events`; }
+    const resolver = previewMode ? `window.__CMSFN_CONFIG__.preview.resolveUrl = doc => ${JSON.stringify(previewMode === 'unsafe' ? 'https://example.invalid' : base)} + '/preview?dataset=' + encodeURIComponent(document.querySelector('[data-current-dataset]').getAttribute('data-current-dataset')) + '&docId=' + encodeURIComponent(doc._id);` : '';
+    res.setHeader('set-cookie', 'fixture_session=preview; HttpOnly; SameSite=Strict; Path=/');
     res.setHeader('content-type', 'text/html');
-    res.end(`<!doctype html><html><body><div id="root"></div>${req.url.includes('empty') ? '' : `<script>window.__CMSFN_CONFIG__=${JSON.stringify(config)}</script>`}<script type="module" src="/studio-bundle.js"></script></body></html>`); return;
+    res.end(`<!doctype html><html><body><div id="root"></div>${req.url.includes('empty') ? '' : `<script>window.__CMSFN_CONFIG__=${JSON.stringify(config)};${resolver}</script>`}<script type="module" src="/studio-bundle.js"></script></body></html>`); return;
   }
   res.writeHead(204); res.end();
 });
@@ -60,7 +75,7 @@ let browser;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  cms = createCmsfnServer({ db: cmsDb, releaseExecutionSchemaVersion: 2, resolveReleaseExecutionIdentity: async () => ({ subject: 'scheduler', headers: { authorization: 'Bearer fixture-release-service' }, roles: [{ id: 'service', name: 'Service', rules: [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage', 'doc.publish'] }] }] }), contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
+  cms = createCmsfnServer({ previewSecret, previewTokenTtlSec: 8, preview: { enabled: true, targetOrigin: base, resolveUrl: () => base }, db: cmsDb, releaseExecutionSchemaVersion: 2, resolveReleaseExecutionIdentity: async () => ({ subject: 'scheduler', headers: { authorization: 'Bearer fixture-release-service' }, roles: [{ id: 'service', name: 'Service', rules: [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage', 'doc.publish'] }] }] }), contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPreview ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['doc.read'] }] : []), ...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
   unwrap(await cms.readiness);
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
@@ -307,9 +322,34 @@ try {
     assert.equal((await incompatibleCms.readiness).error.code, 'CONTENTFN_UNAVAILABLE');
   } finally { incompatibleCms.closeAllConnections(); await new Promise(resolve => incompatibleCms.close(resolve)); }
   statusMode = 'normal'; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-download]').waitFor();
+  // Full installed preview target with real cookie-authorized ContentFn SSE.
+  assert.equal((await fetch(`${base}/contentfn/events?dataset=prod&docId=drafts.editable`)).status, 403);
+  await page.goto(`${base}/studio?preview=1`);
+  await page.getByRole('button', { name: 'Posts', exact: true }).click();
+  await page.locator('[data-doc-id="drafts.editable"] [data-doc-open]').click();
+  const frame = page.frameLocator('[data-preview-iframe]');
+  await frame.locator('[data-preview-title]').waitFor();
+  await page.waitForFunction(() => !!document.querySelector('[data-preview-iframe]')?.getAttribute('src'));
+  const tokenBefore = new URL(await page.locator('[data-preview-iframe]').getAttribute('src')).searchParams.get('cmsfn_preview_token');
+  assert.ok(requests.some(path => path.includes('/contentfn/events') && path.includes('docId=drafts.editable')));
+  unwrap(await content.api.docs.patch({ dataset: 'prod', id: 'drafts.editable', ops: [{ op: 'set', path: 'title', value: 'Live SSE preview change' }] }));
+  await frame.getByText('Live SSE preview change', { exact: true }).waitFor({ timeout: 2500 });
+  await page.waitForFunction(previous => new URL(document.querySelector('[data-preview-iframe]').src).searchParams.get('cmsfn_preview_token') !== previous, tokenBefore);
+  assert.equal((await fetch(`${base}/preview?dataset=staging&docId=editable&cmsfn_preview_token=${encodeURIComponent(tokenBefore)}`)).status, 403);
+  assert.equal((await fetch(`${base}/preview?dataset=prod&docId=other&cmsfn_preview_token=${encodeURIComponent(tokenBefore)}`)).status, 403);
+  allowPreview = false;
+  await page.getByText('Failed to load a valid preview token.', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-preview-iframe]').count(), 0);
+  const tokenRequestsBeforeUnsafe = requests.filter(path => path === '/cmsfn/preview/token').length;
+  await page.goto(`${base}/studio?preview=unsafe`);
+  await page.getByRole('button', { name: 'Posts', exact: true }).click();
+  await page.locator('[data-doc-id="drafts.editable"] [data-doc-open]').click();
+  await page.getByText('Preview URL must match the configured HTTP(S) origin and contain no credentials.', { exact: true }).waitFor();
+  assert.equal(requests.filter(path => path === '/cmsfn/preview/token').length, tokenRequestsBeforeUnsafe);
+  assert.equal(await page.locator('[data-preview-iframe]').count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['trusted-audience preview target and exact scope verification', 'real cookie-authorized SSE refresh', 'token renewal and permission revocation', 'unsafe resolver denied before token request', 'no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
     remaining: ['remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();

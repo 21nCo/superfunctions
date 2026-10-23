@@ -44,7 +44,7 @@ describe("PHASE_07: Preview token", () => {
       const server = createCmsfnServer(
         minimalConfig({
           preview: { enabled: true, targetOrigin: "https://preview.test", resolveUrl: () => "" },
-          previewSecret: "test-secret",
+          previewSecret: "test-secret".repeat(4),
           getRolesForSubject: async () => [roleWithRead],
         })
       );
@@ -129,7 +129,7 @@ describe("PHASE_07: Preview token", () => {
       const server = createCmsfnServer(
         minimalConfig({
           preview: { enabled: true, targetOrigin: "https://x.test", resolveUrl: () => "" },
-          previewSecret: "secret",
+          previewSecret: "secret".repeat(6),
           getRolesForSubject: async () => [roleNoRead],
         })
       );
@@ -149,4 +149,25 @@ describe("PHASE_07: Preview token", () => {
       }
     });
   });
+  it('binds HTTP tokens to configured scope and fails closed for invalid scope or unavailable authorization', async () => {
+    let mode: 'allow' | 'throw' | 'deny' = 'allow';
+    const server = createCmsfnServer(minimalConfig({
+      preview: { enabled: true, targetOrigin: 'https://preview.test', resolveUrl: () => '' },
+      previewSecret: 'fixture-secret'.repeat(4),
+      getRolesForSubject: async () => { if (mode === 'throw') throw Error('private identity failure'); return mode === 'deny' ? [] : [{ id: 'reader', name: 'Reader', rules: [{ datasets: '*', types: '*', actions: ['doc.read'] }] }]; },
+    }));
+    const { port, close } = await listen(server);
+    const post = async (body: unknown) => readResponse(await fetch(`http://127.0.0.1:${port}/cmsfn/preview/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+    try {
+      const result = await post({ dataset: 'prod', docId: 'drafts.one', audience: 'https://attacker.test', ttlSec: 86400 });
+      expect(field(result, 'result.audience')).toBe('https://preview.test'); expect(field(result, 'result.docIds')).toEqual(['one']);
+      for (const body of [{ dataset: 'prod' }, { dataset: 'prod', docIds: [] }, { dataset: 'prod', docId: 'drafts.' }, { dataset: 'prod', docIds: Array(101).fill('one') }]) expect(field(await post(body), 'error.code')).toBe('VALIDATION_FAILED');
+      expect(field(await post({ dataset: 'other', docId: 'one' }), 'error.code')).toBe('PERMISSION_DENIED');
+      for (mode of ['throw', 'deny'] as const) {
+        const denied = await post({ dataset: 'prod', docId: 'one' });
+        expect(field(denied, 'error.code')).toBe('PERMISSION_DENIED'); expect(JSON.stringify(denied)).not.toContain('private'); expect(field(denied, 'result')).toBeUndefined();
+      }
+    } finally { close(); }
+  });
+
 });
