@@ -2,19 +2,20 @@
 
 import asyncio
 import re
+from copy import deepcopy
 from datetime import datetime
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..errors import EmailProviderError
-from ..models import Attachment, AwsSesConfig
+from ..models import AwsSesConfig
 from .provider import (
-    EmailProvider,
     EmailProviderCapabilities,
     SendEmailRequest,
     SendEmailResponse,
+    decode_attachment_content,
 )
 
 
@@ -27,8 +28,13 @@ class AwsSesProvider:
         Args:
             config: AWS SES configuration
         """
-        self.config = config
+        self.config = AwsSesConfig.model_validate(config.model_dump()).model_copy(deep=True)
         self._client: Optional[Any] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._pending: set[asyncio.Task[Any]] = set()
+        self._initializing: Optional[asyncio.Task[Any]] = None
+        self._closing = False
+        self._close_task: Optional[asyncio.Task[None]] = None
         self._capabilities = EmailProviderCapabilities(
             supports_templates=False,
             supports_attachments=True,
@@ -48,21 +54,88 @@ class AwsSesProvider:
         """Provider capabilities."""
         return self._capabilities
 
-    async def initialize(self) -> None:
-        """Initialize the AWS SES client."""
-        try:
-            import boto3
-        except ImportError:
+    def _assert_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
             raise EmailProviderError(
-                "boto3 is required for AWS SES. Install with: pip install boto3"
+                "AWS SES provider must remain on its owning event loop", retryable=False
             )
 
-        self._client = boto3.client(
+    @property
+    def pending_operations(self) -> int:
+        """SDK operations still owned, including those whose callers cancelled."""
+        return len(self._pending)
+
+    @staticmethod
+    def _consume_error(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            task.exception()  # Preserve await semantics without detached-error logging.
+
+    def _start_work(self, operation: Callable[..., Any], **kwargs: Any) -> asyncio.Task[Any]:
+        self._assert_loop()
+        if self._closing:
+            raise EmailProviderError("AWS SES provider is closing", retryable=False)
+        task = asyncio.create_task(asyncio.to_thread(operation, **kwargs))
+        self._pending.add(task)
+
+        def completed(result: asyncio.Task[Any]) -> None:
+            self._pending.discard(result)
+            self._consume_error(result)
+
+        task.add_done_callback(completed)
+        return task
+
+    def _create_client(self) -> Any:
+        try:
+            import boto3
+            from botocore.config import Config
+        except ImportError as error:
+            raise EmailProviderError(
+                "boto3 is required for AWS SES. Install with: pip install boto3"
+            ) from error
+        return boto3.client(
             "ses",
             aws_access_key_id=self.config.access_key_id,
             aws_secret_access_key=self.config.secret_access_key,
             region_name=self.config.region,
+            endpoint_url=self.config.endpoint_url,
+            config=Config(
+                connect_timeout=self.config.connect_timeout,
+                read_timeout=self.config.read_timeout,
+                retries={"total_max_attempts": 1, "mode": "standard"},
+            ),
         )
+
+    async def initialize(self) -> None:
+        """Create one tracked client; cancellation does not abandon construction."""
+        self._assert_loop()
+        if self._closing:
+            raise EmailProviderError("AWS SES provider is closing", retryable=False)
+        if self._client is not None:
+            return
+        if (
+            self._initializing is not None
+            and self._initializing.done()
+            and not self._initializing.cancelled()
+            and self._initializing.exception() is not None
+        ):
+            # Only a fully settled construction failure can be retried. Caller
+            # cancellation leaves the shielded construction owned and reusable.
+            self._initializing = None
+        if self._initializing is None:
+            self._initializing = self._start_work(self._create_client)
+        client = await asyncio.shield(self._initializing)
+        if self._closing:
+            raise EmailProviderError("AWS SES provider is closing", retryable=False)
+        self._client = client
+
+    async def _invoke(self, operation: str, **kwargs: Any) -> Any:
+        client = self._client
+        if client is None:
+            raise EmailProviderError("AWS SES provider is not initialized")
+        return await asyncio.shield(self._start_work(getattr(client, operation), **kwargs))
 
     async def send_email(self, request: SendEmailRequest) -> SendEmailResponse:
         """Send a single email via AWS SES.
@@ -73,8 +146,8 @@ class AwsSesProvider:
         Returns:
             Email send response
         """
-        if not self._client:
-            await self.initialize()
+        request = deepcopy(request)
+        await self.initialize()
 
         try:
             # If there are attachments, use raw email
@@ -93,9 +166,7 @@ class AwsSesProvider:
                 },
             )
 
-    async def send_bulk_email(
-        self, requests: list[SendEmailRequest]
-    ) -> list[SendEmailResponse]:
+    async def send_bulk_email(self, requests: list[SendEmailRequest]) -> list[SendEmailResponse]:
         """Send multiple emails via AWS SES.
 
         Args:
@@ -141,14 +212,34 @@ class AwsSesProvider:
 
         try:
             # Try to get send quota as a health check
-            self._client.get_send_quota()
+            await self._invoke("get_send_quota")
             return True
         except Exception:
             return False
 
     async def close(self) -> None:
-        """Close the AWS SES client."""
-        # boto3 client doesn't need explicit closing
+        """Stop admission and drain SDK work before closing the client.
+
+        Cancelling this await does not cancel the drain. Await close again on the
+        owning loop to observe completion. Socket timeouts are not a hard overall
+        deadline: DNS or a trickling peer can extend this wait.
+        """
+        self._assert_loop()
+        if self._close_task is None:
+            self._closing = True
+            self._close_task = asyncio.create_task(self._drain_and_close())
+            self._close_task.add_done_callback(self._consume_error)
+        await asyncio.shield(self._close_task)
+
+    async def _drain_and_close(self) -> None:
+        if self._pending:
+            await asyncio.gather(*tuple(self._pending), return_exceptions=True)
+        client = self._client
+        if client is None and self._initializing is not None:
+            if not self._initializing.cancelled() and self._initializing.exception() is None:
+                client = self._initializing.result()
+        if client is not None:
+            await asyncio.to_thread(client.close)
         self._client = None
 
     async def _send_simple_email(self, request: SendEmailRequest) -> SendEmailResponse:
@@ -159,11 +250,13 @@ class AwsSesProvider:
         if request.bcc:
             destination["BccAddresses"] = request.bcc
 
-        message = {
+        message: dict[str, Any] = {
             "Subject": {"Data": request.subject, "Charset": "UTF-8"},
-            "Body": {"Html": {"Data": request.html, "Charset": "UTF-8"}},
+            "Body": {},
         }
 
+        if request.html:
+            message["Body"]["Html"] = {"Data": request.html, "Charset": "UTF-8"}
         if request.text:
             message["Body"]["Text"] = {"Data": request.text, "Charset": "UTF-8"}
 
@@ -178,8 +271,12 @@ class AwsSesProvider:
 
         if self.config.configuration_set_name:
             kwargs["ConfigurationSetName"] = self.config.configuration_set_name
+        if request.tags:
+            kwargs["Tags"] = [
+                {"Name": name, "Value": value} for name, value in request.tags.items()
+            ]
 
-        response = self._client.send_email(**kwargs)
+        response = await self._invoke("send_email", **kwargs)
 
         return SendEmailResponse(
             success=True,
@@ -199,19 +296,19 @@ class AwsSesProvider:
         if request.reply_to:
             msg["Reply-To"] = request.reply_to
 
-        # Add text and HTML parts
+        # Keep alternative representations together before adding attachments.
+        alternatives = MIMEMultipart("alternative")
         if request.text:
-            msg.attach(MIMEText(request.text, "plain", "utf-8"))
-        msg.attach(MIMEText(request.html, "html", "utf-8"))
+            alternatives.attach(MIMEText(request.text, "plain", "utf-8"))
+        if request.html:
+            alternatives.attach(MIMEText(request.html, "html", "utf-8"))
+        msg.attach(alternatives)
 
         # Add attachments
         if request.attachments:
             for attachment in request.attachments:
-                part = MIMEApplication(
-                    attachment.content
-                    if isinstance(attachment.content, bytes)
-                    else attachment.content.encode("utf-8")
-                )
+                content = decode_attachment_content(attachment.content, attachment.encoding)
+                part = MIMEApplication(content)
                 part.add_header(
                     "Content-Disposition",
                     "attachment",
@@ -236,8 +333,12 @@ class AwsSesProvider:
 
         if self.config.configuration_set_name:
             kwargs["ConfigurationSetName"] = self.config.configuration_set_name
+        if request.tags:
+            kwargs["Tags"] = [
+                {"Name": name, "Value": value} for name, value in request.tags.items()
+            ]
 
-        response = self._client.send_raw_email(**kwargs)
+        response = await self._invoke("send_raw_email", **kwargs)
 
         return SendEmailResponse(
             success=True,
