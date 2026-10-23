@@ -12,7 +12,8 @@ import { publishRelease } from "../releases/publishRelease.js";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 
-export interface ReleasesHandlerConfig extends AuthorizeConfig {
+import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+export interface ReleasesHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
   releasesStorage: ReleasesStorageConfig;
   contentfnBaseUrl: string;
   /** Server-configured dataset names; role grants cannot enable another dataset. */
@@ -136,6 +137,7 @@ export async function handleReleasesPublish(
   if (!releaseId) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "releaseId is required", details: { path: "releaseId" } } };
   }
+  if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn document capability is unavailable");
   return publishRelease(
     {
       getRolesForSubject: async (request) => {

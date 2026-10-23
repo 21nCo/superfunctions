@@ -9,26 +9,15 @@ import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { mintPreviewToken } from "../preview/tokens.js";
 
-export interface PreviewTokenHandlerConfig extends AuthorizeConfig {
+import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+import { readJsonObject } from "./jsonBody.js";
+export interface PreviewTokenHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
+  allowedDatasets?: readonly string[];
   /** When false or unset, return PREVIEW_NOT_CONFIGURED. */
   previewEnabled?: boolean;
   /** Secret for signing tokens; required when preview enabled. */
   previewSecret?: string;
   ttlSec?: number;
-}
-
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
 }
 
 /**
@@ -44,7 +33,8 @@ export async function handlePreviewToken(
     return err("PREVIEW_NOT_CONFIGURED", "Preview is not configured", {});
   }
 
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readJsonObject(req, 64 * 1024); if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = body?.dataset;
   if (typeof dataset !== "string" || dataset.trim().length === 0) {
     return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
@@ -60,15 +50,18 @@ export async function handlePreviewToken(
     docIds = [];
   }
 
-  const allowed = await authorize(config, req, {
+  if (config.allowedDatasets && !config.allowedDatasets.includes(ds)) return err("PERMISSION_DENIED", "Permission denied");
+  let allowed = false;
+  try { allowed = await authorize(config, req, {
     dataset: ds,
     type: "*",
     action: "doc.read",
-  });
+  }); } catch { allowed = false; }
   if (!allowed) {
     return err("PERMISSION_DENIED", "Permission denied", {});
   }
 
+  if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs", "content.realtime"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn preview capabilities are unavailable");
   const result = mintPreviewToken(
     { secret: config.previewSecret, ttlSec: config.ttlSec },
     ds,

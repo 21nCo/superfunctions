@@ -137,6 +137,8 @@ describe("PHASE_01: Status + ContentFn health", () => {
         minimalConfig({ authorizeStatus })
       );
       const { port, close } = await listen(server);
+      await server.readiness;
+      contentfnFetched = false; // Startup is a separate service-level probe.
       try {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/status`);
         const data = await readResponse(res);

@@ -3,6 +3,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
+import { fetchContentfnStatus, resolveStatusHeaders, type ContentfnStatusResult } from "./contentfn/statusClient.js";
+import { err, ok } from "cmsfn";
 import { createServer } from "http";
 import type { CmsfnEnvelope, CmsfnStudioConfig } from "cmsfn";
 import type { Adapter } from "@superfunctions/db";
@@ -39,6 +41,7 @@ export { getCmsfnStorageSchema } from "./storage/schema.js";
 /** Server config: studio config plus optional status auth and roles. */
 export interface CmsfnServerConfig extends CmsfnStudioConfig {
   /** If set, called for GET /cmsfn/status; return true to allow, false to deny. */
+  contentfnStatusHeaders?: () => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
   authorizeStatus?: (req: IncomingMessage) => Promise<boolean>;
   /** Required for role endpoints. When set, POST /cmsfn/roles/* are registered. */
   db?: Adapter;
@@ -66,7 +69,8 @@ function sendJson(res: ServerResponse, statusCode: number, data: unknown): void 
 async function route(
   config: CmsfnServerConfig,
   req: IncomingMessage,
-  res: ServerResponse
+  res: ServerResponse,
+  checkCapabilities: (req: IncomingMessage, required: readonly string[]) => Promise<boolean>
 ): Promise<void> {
   const method = req.method ?? "";
   const path = req.url?.split("?")[0] ?? "";
@@ -78,6 +82,7 @@ async function route(
         datasetNames: config.datasets.map((d) => d.name),
         requireRealtime: config.preview?.enabled === true,
         authorizeStatus: config.authorizeStatus,
+        contentfnStatusHeaders: config.contentfnStatusHeaders,
       },
       req
     );
@@ -110,6 +115,8 @@ async function route(
         {
           getRolesForSubject: config.getRolesForSubject,
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
         },
         req
       );
@@ -121,6 +128,8 @@ async function route(
         {
           getRolesForSubject: config.getRolesForSubject,
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
         },
         req
       );
@@ -131,8 +140,9 @@ async function route(
       const envelope = await handleReleasesCreate(
         {
           releasesStorage: { db: config.db },
-          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
           getRolesForSubject: config.getRolesForSubject,
         },
         req
@@ -144,8 +154,9 @@ async function route(
       const envelope = await handleReleasesList(
         {
           releasesStorage: { db: config.db },
-          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
           getRolesForSubject: config.getRolesForSubject,
         },
         req
@@ -157,8 +168,9 @@ async function route(
       const envelope = await handleReleasesAdd(
         {
           releasesStorage: { db: config.db },
-          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
           getRolesForSubject: config.getRolesForSubject,
         },
         req
@@ -170,8 +182,9 @@ async function route(
       const envelope = await handleReleasesPublish(
         {
           releasesStorage: { db: config.db },
-          allowedDatasets: config.datasets.map((dataset) => dataset.name),
           contentfnBaseUrl: config.contentfn.baseUrl,
+          checkCapabilities,
+          allowedDatasets: config.datasets.map(dataset => dataset.name),
           getRolesForSubject: config.getRolesForSubject,
         },
         req
@@ -185,6 +198,7 @@ async function route(
     const envelope = await handleOpsExport(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        checkCapabilities,
         contentfnOpsHeaders: config.contentfnOpsHeaders,
         authorizeCrossDatasetImport: config.authorizeCrossDatasetImport,
         allowedDatasets: config.datasets.map((d) => d.name),
@@ -199,6 +213,7 @@ async function route(
     const envelope = await handleOpsImport(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        checkCapabilities,
         contentfnOpsHeaders: config.contentfnOpsHeaders,
         authorizeCrossDatasetImport: config.authorizeCrossDatasetImport,
         allowedDatasets: config.datasets.map((d) => d.name),
@@ -213,6 +228,7 @@ async function route(
     const envelope = await handleAuditEvents(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        checkCapabilities,
         contentfnAuditHeaders: config.contentfnAuditHeaders,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
@@ -226,6 +242,7 @@ async function route(
     const envelope = await handleAuditWebhooks(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        checkCapabilities,
         contentfnAuditHeaders: config.contentfnAuditHeaders,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
@@ -240,6 +257,8 @@ async function route(
     const envelope = await handlePreviewToken(
       {
         getRolesForSubject: config.getRolesForSubject,
+        checkCapabilities,
+        allowedDatasets: config.datasets.map(dataset => dataset.name),
         previewEnabled: config.preview?.enabled === true,
         previewSecret: config.previewSecret,
       },
@@ -261,16 +280,22 @@ async function route(
  * Use server.listen() to start listening.
  */
 export function createCmsfnServer(config: CmsfnServerConfig) {
-  return createServer((req, res) => {
-    route(config, req, res).catch(() => {
-      sendJson(res, 500, {
-        ok: false,
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Internal server error",
-          details: {},
-        },
-      });
+  let controller = new AbortController();
+  async function check(required?: readonly string[]): Promise<CmsfnEnvelope<ContentfnStatusResult>> {
+    try {
+      const headers = await resolveStatusHeaders(config.contentfnStatusHeaders, controller.signal);
+      const status = await fetchContentfnStatus(config.contentfn.baseUrl, config.preview?.enabled === true, { headers, required, signal: controller.signal });
+      return status ? ok(status) : err("CONTENTFN_UNAVAILABLE", "ContentFn is unreachable or missing required capabilities.");
+    } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn status identity could not be configured."); }
+  }
+  let resolveReadiness!: (value: CmsfnEnvelope<ContentfnStatusResult>) => void;
+  const readiness = new Promise<CmsfnEnvelope<ContentfnStatusResult>>(resolve => { resolveReadiness = resolve; });
+  const server = createServer((req, res) => {
+    route(config, req, res, async (_request, required) => (await check(required)).ok).catch(() => {
+      sendJson(res, 500, { ok: false, error: { code: "INTERNAL_ERROR", message: "Internal server error", details: {} } });
     });
   });
+  server.on('listening', () => { if (controller.signal.aborted) controller = new AbortController(); void check().then(resolveReadiness); });
+  server.on('close', () => { controller.abort(); resolveReadiness(err("CONTENTFN_UNAVAILABLE", "Server closed before readiness completed.")); });
+  return Object.assign(server, { readiness });
 }

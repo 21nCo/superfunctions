@@ -1,3 +1,4 @@
+import { serveCompatibleStatus } from "./compatibleStatus.js";
 import { describe, expect, it, vi } from "vitest";
 import { Readable } from "node:stream";
 import type { IncomingMessage } from "node:http";
@@ -37,6 +38,7 @@ async function fixture(run: (value: {
   const sql = new Kysely({ dialect: new SqliteDialect({ database }) });
   const upstream: string[] = [];
   const content = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return;
     upstream.push(req.url!);
     req.resume();
     res.setHeader("content-type", "application/json");

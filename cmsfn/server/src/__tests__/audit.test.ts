@@ -1,3 +1,4 @@
+import { compatibleStatus } from "./compatibleStatus.js";
 import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_12: Audit — TV-AUDIT-EVENTS-001, TV-AUDIT-WEBHOOKS-001, TV-AUDIT-DENY-001.
@@ -46,6 +47,7 @@ describe("PHASE_12: Audit", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/audit/query")) {
             return new Response(
               JSON.stringify({
@@ -100,6 +102,7 @@ describe("PHASE_12: Audit", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/audit/webhooks")) {
             expect(new Headers(init?.headers).get("authorization")).toBe("Bearer service");
             return new Response(

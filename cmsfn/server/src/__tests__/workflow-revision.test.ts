@@ -1,3 +1,4 @@
+import { serveCompatibleStatus } from "./compatibleStatus.js";
 import { createServer, type Server } from "node:http";
 import { expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
@@ -20,6 +21,7 @@ async function fixture(run: (context: {
 }) => Promise<void>, revision: unknown = "approved-r1", changed = true) {
   const publications: Array<Record<string, unknown>> = [];
   const upstream = createServer(async (req, res) => {
+    if (serveCompatibleStatus(req, res)) return;
     let raw = "";
     for await (const chunk of req) raw += String(chunk);
     const body = JSON.parse(raw) as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { serveCompatibleStatus } from "./compatibleStatus.js";
 import { createServer, request, type Server } from "node:http";
 import { expect, it } from "vitest";
 import { createCmsfnServer, type CmsfnServerConfig } from "../index.js";
@@ -18,6 +19,7 @@ const records = ["a", "b"].map(id => ({ id, dataset: "prod", action: "docs.publi
 it("enforces role and dataset boundaries, cursor identity and trusted upstream headers over HTTP", async () => {
   const seen: Array<{ body: Record<string, unknown>; authorization?: string; subject?: string }> = [];
   const upstream = createServer(async (req, res) => {
+    if (serveCompatibleStatus(req, res)) return;
     let raw = ""; for await (const chunk of req) raw += String(chunk);
     const body = JSON.parse(raw) as Record<string, unknown>;
     seen.push({ body, authorization: req.headers.authorization, subject: req.headers["x-subject"] as string | undefined });
@@ -64,7 +66,8 @@ it("enforces role and dataset boundaries, cursor identity and trusted upstream h
 
 it("rejects oversized, malformed, non-progressing and denied upstream pages without an empty success", async () => {
   let body: unknown = {}, status = 200, declared = false;
-  const upstream = createServer((req, res) => { req.resume(); const raw = JSON.stringify(body); res.writeHead(status, { "Content-Type": "application/json", ...(declared ? { "Content-Length": Buffer.byteLength(raw) } : {}) }); res.end(raw); });
+  const upstream = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return; req.resume(); const raw = JSON.stringify(body); res.writeHead(status, { "Content-Type": "application/json", ...(declared ? { "Content-Length": Buffer.byteLength(raw) } : {}) }); res.end(raw); });
   const { contentfnAuditEvents } = await import("../audit/events.js");
   try {
     const base = await listen(upstream);
@@ -82,7 +85,8 @@ it("rejects oversized, malformed, non-progressing and denied upstream pages with
 });
 
 it("bounds stalled response bodies for transports configured by audit", async () => {
-  const upstream = createServer((req, res) => { req.resume(); res.writeHead(200, { "Content-Type": "application/json" }); res.write('{"ok":'); });
+  const upstream = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return; req.resume(); res.writeHead(200, { "Content-Type": "application/json" }); res.write('{"ok":'); });
   try {
     const base = await listen(upstream);
     expect(await contentfnRequest(base, "/contentfn/audit/query", {}, () => ({}), { maxResponseBytes: 1024, timeoutMs: 30, redirect: "error" })).toMatchObject({ ok: false, error: { code: "CONTENTFN_UNAVAILABLE" } });
@@ -92,9 +96,11 @@ it("bounds stalled response bodies for transports configured by audit", async ()
 
 it("does not follow audit redirects with trusted credentials", async () => {
   let received = 0;
-  const target = createServer((req, res) => { received++; req.resume(); res.end("{}"); });
+  const target = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return; received++; req.resume(); res.end("{}"); });
   const targetBase = await listen(target);
-  const upstream = createServer((req, res) => { req.resume(); res.writeHead(302, { location: targetBase }); res.end(); });
+  const upstream = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return; req.resume(); res.writeHead(302, { location: targetBase }); res.end(); });
   try {
     const { contentfnAuditEvents } = await import("../audit/events.js");
     expect(await contentfnAuditEvents({ contentfnBaseUrl: await listen(upstream), headers: { "x-private-key": "service" } }, { dataset: "prod" })).toMatchObject({ ok: false });

@@ -30,10 +30,16 @@ for (let n = 0; n < 25; n++) unwrap(await content.api.docs.create({ dataset: 'pr
 await writeFile('studio-entry.mjs', `import React from 'react'; import { createRoot } from 'react-dom/client'; import { App } from '@cmsfn/studio'; createRoot(document.getElementById('root')).render(React.createElement(App));`);
 await build({ entryPoints: ['studio-entry.mjs'], outfile: 'studio-bundle.js', bundle: true, platform: 'browser', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
 const bundle = await readFile('studio-bundle.js');
-let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true; let allowReleases = true; let allowMigration = false;
+let base = ''; let cmsBase = ''; let cms; let statusMode = 'normal'; let allowPublish = true; let allowAudit = true; let allowReleases = true; let allowMigration = false;
 const requests = [];
 const server = createServer((req, res) => {
   if (req.url?.startsWith('/cmsfn/')) { requests.push(req.url); cms.emit('request', req, res); return; }
+  if (req.url === '/contentfn/status' && statusMode !== 'normal') {
+    requests.push(req.url); res.setHeader('content-type', 'application/json');
+    if (statusMode === 'outage') { res.writeHead(503); res.end('{}'); }
+    else res.end(JSON.stringify({ ok: true, result: { serverTime: new Date().toISOString(), capabilities: ['content.docs'] } }));
+    return;
+  }
   if (req.url?.startsWith('/contentfn/')) { requests.push(req.url); void content.handler(req, res); return; }
   if (req.url === '/studio-bundle.js') { res.setHeader('content-type', 'text/javascript'); res.end(bundle); return; }
   if (req.url?.startsWith('/studio')) {
@@ -56,6 +62,7 @@ try {
   base = `http://127.0.0.1:${server.address().port}`;
   cms = createCmsfnServer({ db: cmsDb, contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
+  unwrap(await cms.readiness);
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -234,9 +241,22 @@ try {
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, sourceHome.title);
   assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, sourceHome.title);
   allowAudit = false; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-denied]').waitFor(); assert.equal(await page.locator('[data-ops-download]').count(), 0);
+  allowAudit = true;
+  for (statusMode of ['incompatible', 'outage']) {
+    const beforeCapabilityFailure = requests.length;
+    await Promise.all([page.waitForResponse(response => response.url().endsWith('/cmsfn/ops/export')), page.locator('[data-ops-export-trigger]').click()]); await page.getByText('Operation failed (CONTENTFN_UNAVAILABLE).', { exact: true }).waitFor();
+    assert.deepEqual(requests.slice(beforeCapabilityFailure), ['/cmsfn/ops/export', '/contentfn/status']);
+  }
+  statusMode = 'incompatible';
+  const incompatibleCms = createCmsfnServer({ contentfn: { baseUrl: base }, datasets: [], desk: { kind: 'divider' }, auth: { kind: 'custom' } });
+  try {
+    await new Promise(resolve => incompatibleCms.listen(0, '127.0.0.1', resolve));
+    assert.equal((await incompatibleCms.readiness).error.code, 'CONTENTFN_UNAVAILABLE');
+  } finally { incompatibleCms.closeAllConnections(); await new Promise(resolve => incompatibleCms.close(resolve)); }
+  statusMode = 'normal'; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-download]').waitFor();
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity'], requests: requests.length,
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
     remaining: ['automatic release scheduling and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();

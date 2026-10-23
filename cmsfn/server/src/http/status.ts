@@ -6,7 +6,7 @@
 import type { IncomingMessage } from "http";
 import type { CmsfnEnvelope, CmsfnStatusResult } from "cmsfn";
 import { ok, err } from "cmsfn";
-import { fetchContentfnStatus } from "../contentfn/statusClient.js";
+import { fetchContentfnStatus, resolveStatusHeaders } from "../contentfn/statusClient.js";
 
 /** CmsFn capabilities reported by status. */
 const CMSFN_CAPABILITIES = ["cmsfn.status", "cmsfn.studio"] as const;
@@ -19,6 +19,7 @@ export interface StatusHandlerConfig {
   /** When true, ContentFn must advertise content.realtime. */
   requireRealtime: boolean;
   /** If set, called for GET /cmsfn/status; true = allow, false = deny. */
+  contentfnStatusHeaders?: () => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
   authorizeStatus?: (req: IncomingMessage) => Promise<boolean>;
 }
 
@@ -31,17 +32,12 @@ export async function handleStatus(
   config: StatusHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<CmsfnStatusResult>> {
-  if (config.authorizeStatus) {
-    const allowed = await config.authorizeStatus(req);
-    if (!allowed) {
-      return err("PERMISSION_DENIED", "Status endpoint is protected.", {});
-    }
-  }
-
-  const contentfn = await fetchContentfnStatus(
-    config.contentfnBaseUrl,
-    config.requireRealtime
-  );
+  try {
+    if (config.authorizeStatus && await config.authorizeStatus(req) !== true) return err("PERMISSION_DENIED", "Status endpoint is protected.");
+  } catch { return err("PERMISSION_DENIED", "Status endpoint is protected."); }
+  let contentfn;
+  try { contentfn = await fetchContentfnStatus(config.contentfnBaseUrl, config.requireRealtime, { headers: await resolveStatusHeaders(config.contentfnStatusHeaders) }); }
+  catch { contentfn = null; }
   if (!contentfn) {
     return err(
       "CONTENTFN_UNAVAILABLE",

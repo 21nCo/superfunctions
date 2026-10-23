@@ -32,9 +32,12 @@ shutil.copy(root/'cmsfn/.conduct/studio-browser-acceptance.mjs',out/'acceptance.
 subprocess.run(['node','acceptance.mjs'],cwd=out,check=True)
 (out / 'consumer.tsx').write_text("""import { App, boot, type CmsfnStudioConfig } from '@cmsfn/studio';
 import * as React from 'react';
+import {createCmsfnServer} from '@cmsfn/server';
 const config: CmsfnStudioConfig = { contentfn: { baseUrl: 'http://localhost' }, datasets: [{ name: 'prod' }], auth: { kind: 'custom' }, desk: { kind: 'divider' } };
 const element: React.ReactElement = <App config={config} />;
 boot(config);
+const server = createCmsfnServer(config);
+void server.readiness.then(result => { if (result.ok) result.result.capabilities.map(value => value.toUpperCase()); });
 """)
 (out / 'consumer.cts').write_text("""import { App, boot } from '@cmsfn/studio';
 import { createElement } from 'react';

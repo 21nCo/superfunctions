@@ -25,7 +25,7 @@ export interface ContentfnRequestOptions {
   redirect?: RequestInit["redirect"];
 }
 
-async function responseJson(response: Response, maxBytes?: number): Promise<unknown> {
+export async function responseJson(response: Response, maxBytes?: number): Promise<unknown> {
   if (maxBytes === undefined) return response.json();
   const declared = response.headers.get("content-length");
   if (declared !== null && Number(declared) > maxBytes) {

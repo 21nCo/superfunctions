@@ -1,3 +1,4 @@
+import { serveCompatibleStatus } from "./compatibleStatus.js";
 import { expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createCmsfnServer, type CmsfnServerConfig } from '../index.js';
@@ -5,7 +6,8 @@ const artifact = { formatVersion: 1, dataset: 'prod', exportedAt: '2026-10-23T00
 const listen = async (server: Server) => { await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); if (!address || typeof address === 'string') throw Error('address'); return `http://127.0.0.1:${address.port}`; };
 async function fixture(run: (base: string, config: CmsfnServerConfig, calls: string[]) => Promise<void>) {
   const calls: string[] = [];
-  const upstream = createServer((req, res) => { calls.push(req.url ?? ''); req.resume(); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, result: req.url?.endsWith('/export') ? { artifact } : {} })); });
+  const upstream = createServer((req, res) => {
+    if (serveCompatibleStatus(req, res)) return; calls.push(req.url ?? ''); req.resume(); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, result: req.url?.endsWith('/export') ? { artifact } : {} })); });
   const config: CmsfnServerConfig = { contentfn: { baseUrl: await listen(upstream) }, datasets: [{ name: 'prod' }, { name: 'staging' }], desk: { kind: 'divider' }, auth: { kind: 'custom' } };
   const cms = createCmsfnServer(config);
   try { await run(await listen(cms), config, calls); } finally { for (const server of [cms, upstream]) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } }

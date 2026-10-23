@@ -12,22 +12,11 @@ import type { AuthorizeConfig } from "../auth/authorize.js";
 import { canPublish } from "../publish/gates.js";
 import { getDraftDoc, contentfnPublish, contentfnUnpublish } from "../publish/contentfnClient.js";
 
-export interface PublishHandlerConfig extends AuthorizeConfig {
+import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+import { readJsonObject } from "./jsonBody.js";
+export interface PublishHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
+  allowedDatasets?: readonly string[];
   contentfnBaseUrl: string;
-}
-
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
 }
 
 function getWorkflowState(doc: Record<string, unknown>): CmsfnWorkflowState | undefined {
@@ -43,7 +32,8 @@ export async function handlePublish(
   config: PublishHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<unknown>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readJsonObject(req, 64 * 1024); if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = body?.dataset;
   const id = body?.id;
   if (typeof dataset !== "string" || dataset.trim().length === 0) {
@@ -55,15 +45,18 @@ export async function handlePublish(
   const ds = dataset.trim();
   const docId = id.trim();
 
-  const allowed = await authorize(config, req, {
+  if (config.allowedDatasets && !config.allowedDatasets.includes(ds)) return err("PERMISSION_DENIED", "Permission denied");
+  let allowed = false;
+  try { allowed = await authorize(config, req, {
     dataset: ds,
     type: "*",
     action: "doc.publish",
-  });
+  }); } catch { allowed = false; }
   if (!allowed) {
     return err("PERMISSION_DENIED", "Permission denied", {});
   }
 
+  if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn document capability is unavailable");
   const contentfn = { baseUrl: config.contentfnBaseUrl };
   const draftRes = await getDraftDoc(contentfn, ds, docId);
   if (!draftRes.ok) {
@@ -88,7 +81,8 @@ export async function handleUnpublish(
   config: PublishHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<unknown>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readJsonObject(req, 64 * 1024); if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = body?.dataset;
   const id = body?.id;
   if (typeof dataset !== "string" || dataset.trim().length === 0) {
@@ -100,14 +94,17 @@ export async function handleUnpublish(
   const ds = dataset.trim();
   const docId = id.trim();
 
-  const allowed = await authorize(config, req, {
+  if (config.allowedDatasets && !config.allowedDatasets.includes(ds)) return err("PERMISSION_DENIED", "Permission denied");
+  let allowed = false;
+  try { allowed = await authorize(config, req, {
     dataset: ds,
     type: "*",
     action: "doc.unpublish",
-  });
+  }); } catch { allowed = false; }
   if (!allowed) {
     return err("PERMISSION_DENIED", "Permission denied", {});
   }
 
+  if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn document capability is unavailable");
   return contentfnUnpublish({ baseUrl: config.contentfnBaseUrl }, ds, docId);
 }

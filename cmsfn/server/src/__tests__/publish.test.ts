@@ -1,3 +1,4 @@
+import { compatibleStatus } from "./compatibleStatus.js";
 import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_06: Publish/unpublish gating — TV-WF-PUBLISH-GATE-001, workflow gate, unpublish.
@@ -47,6 +48,7 @@ function installContentfnFetchMock(behavior: (url: string, body?: unknown) => Pr
   const realFetch = globalThis.fetch;
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
     if (url.startsWith(CONTENTFN_BASE)) {
       const body = init?.body ? JSON.parse(typeof init.body === "string" ? init.body : "") : undefined;
       return behavior(url, body);

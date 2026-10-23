@@ -6,7 +6,8 @@ import { contentfnAuditEvents, AUDIT_MAX_LIMIT } from "../audit/events.js";
 import { contentfnAuditWebhooks } from "../audit/webhooks.js";
 import { readJsonObject } from "./jsonBody.js";
 
-export interface AuditHandlerConfig extends AuthorizeConfig {
+import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+export interface AuditHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
   contentfnBaseUrl: string;
   allowedDatasets: string[];
   authorizeAudit?: (req: IncomingMessage) => Promise<boolean>;
@@ -37,6 +38,7 @@ export async function handleAuditEvents(config: AuditHandlerConfig, req: Incomin
   const input = await readAuthorizedInput(config, req);
   if (!input.ok) return input;
   try {
+    if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.audit"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn audit capability is unavailable");
     const headers = await config.contentfnAuditHeaders?.(req);
     return await contentfnAuditEvents({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, input.result);
   } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn audit request could not be configured"); }
@@ -47,6 +49,7 @@ export async function handleAuditWebhooks(config: AuditHandlerConfig, req: Incom
   const input = await readAuthorizedInput(config, req);
   if (!input.ok) return input;
   try {
+    if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.audit", "content.webhooks"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn webhook audit capabilities are unavailable");
     const headers = await config.contentfnAuditHeaders?.(req);
     return await contentfnAuditWebhooks({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, input.result);
   } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn audit request could not be configured"); }

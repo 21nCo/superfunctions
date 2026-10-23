@@ -1,3 +1,4 @@
+import { compatibleStatus } from "./compatibleStatus.js";
 import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_11: Ops import/export — TV-OPS-EXPORT-001, TV-OPS-IMPORT-001, TV-OPS-IMPORT-002.
@@ -60,6 +61,7 @@ describe("PHASE_11: Ops import/export", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/datasets/export")) {
             return new Response(
               JSON.stringify({
@@ -100,6 +102,7 @@ describe("PHASE_11: Ops import/export", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/datasets/import")) {
             return new Response(
               JSON.stringify({ ok: true, result: {} }),
@@ -134,6 +137,7 @@ describe("PHASE_11: Ops import/export", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/datasets/import")) {
             return new Response(
               JSON.stringify({

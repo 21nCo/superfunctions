@@ -1,9 +1,10 @@
+import { compatibleStatus } from "./compatibleStatus.js";
 import { readResponse, field } from "./responseHelpers.js";
 /**
  * PHASE_07: Preview token — TV-PREVIEW-TOKEN-001, TV-PREVIEW-DISABLED-001.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createCmsfnServer } from "../index.js";
 import type { CmsfnServerConfig } from "../index.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
@@ -31,6 +32,8 @@ function listen(server: ReturnType<typeof createCmsfnServer>): Promise<{ port: n
 }
 
 describe("PHASE_07: Preview token", () => {
+  beforeEach(() => { const original = globalThis.fetch; vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => String(input).endsWith('/contentfn/status') ? Promise.resolve(new Response(JSON.stringify(compatibleStatus))) : original(input, init)); });
+  afterEach(() => vi.unstubAllGlobals());
   describe("TV-PREVIEW-TOKEN-001: preview token minted", () => {
     it("POST /cmsfn/preview/token with dataset and docId returns ok, result.token and result.expiresAt (ISO)", async () => {
       const roleWithRead: CmsfnRole = {

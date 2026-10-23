@@ -1,3 +1,4 @@
+import { compatibleStatus } from "./compatibleStatus.js";
 import { readResponse, field, array } from "./responseHelpers.js";
 /**
  * PHASE_10: Releases — TV-REL-CREATE-001, TV-REL-ADD-001, TV-REL-PUBLISH-001, TV-REL-PUBLISH-002.
@@ -101,6 +102,7 @@ describe("PHASE_10: Releases", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE)) {
             if (url.includes("/contentfn/docs/get")) {
               const body = init?.body ? JSON.parse(init.body as string) : {};
@@ -176,6 +178,7 @@ describe("PHASE_10: Releases", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
+          if (url.endsWith("/contentfn/status")) return new Response(JSON.stringify(compatibleStatus));
           if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/docs/get")) {
             return new Response(
               JSON.stringify({

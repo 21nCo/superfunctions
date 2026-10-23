@@ -6,7 +6,8 @@ import { contentfnExport, isExportArtifact } from '../ops/export.js';
 import { contentfnImport } from '../ops/import.js';
 import { readJsonObject } from './jsonBody.js';
 export const OPS_BODY_MAX_BYTES = 25 * 1024 * 1024;
-export interface OpsHandlerConfig extends AuthorizeConfig {
+import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
+export interface OpsHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
   contentfnBaseUrl: string;
   allowedDatasets: string[];
   authorizeOps?: (req: IncomingMessage) => Promise<boolean>;
@@ -27,6 +28,7 @@ async function input(config: OpsHandlerConfig, req: IncomingMessage, maxBytes: n
 export async function handleOpsExport(config: OpsHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<{ artifact: unknown }>> {
   const parsed = await input(config, req, 64 * 1024); if (!parsed.ok) return parsed;
   try {
+    if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.schema", "content.docs", "content.assets"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn import/export capabilities are unavailable");
     const headers = await config.contentfnOpsHeaders?.(req);
     return await contentfnExport({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, String(parsed.result.dataset));
   } catch { return err('CONTENTFN_UNAVAILABLE', 'ContentFn export request could not be configured'); }
@@ -40,6 +42,7 @@ export async function handleOpsImport(config: OpsHandlerConfig, req: IncomingMes
     catch { return err('PERMISSION_DENIED', 'Cross-dataset import denied'); }
   }
   try {
+    if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.schema", "content.docs", "content.assets"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn import/export capabilities are unavailable");
     const headers = await config.contentfnOpsHeaders?.(req);
     return await contentfnImport({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, { dataset, artifact });
   } catch { return err('CONTENTFN_UNAVAILABLE', 'ContentFn import request could not be configured'); }
