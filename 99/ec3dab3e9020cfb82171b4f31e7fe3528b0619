@@ -1,0 +1,25 @@
+cmsfn/.conduct/webhook-audit-http-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_dbc16c90b7bc7a 29-30,34-35,47
+cmsfn/.conduct/webhook-audit-integration.md
+  s_e1c5fc1a65c0cf::t_b678c4913c3dcb 3,25-28,74-80
+cmsfn/server/src/__tests__/webhook-audit.test.ts
+  s_e1c5fc1a65c0cf::t_88afd6e75883b5 39-48
+cmsfn/server/src/audit/webhooks.ts
+  s_e1c5fc1a65c0cf::t_d6f305f7d883e0 5-14,33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99ec3dab3e9020cfb82171b4f31e7fe3528b0619",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
