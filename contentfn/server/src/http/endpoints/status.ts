@@ -6,6 +6,8 @@ import type { ContentfnLimits } from "../../limits/limits.js";
 export interface StatusEndpointsConfig {
   limits: ContentfnLimits;
   realtimeEnabled?: boolean;
+  /** Only the server invoke boundary supplies durable actor-bound publish replay. */
+  publishIdempotency?: boolean;
 }
 
 export interface StatusResult {
@@ -24,6 +26,8 @@ export function handleStatus(
     "content.webhooks",
     "content.audit",
   ];
+
+  if (config.publishIdempotency === true) capabilities.push("content.docs.publish.idempotency.v1");
 
   if (config.realtimeEnabled !== false) {
     capabilities.push("content.realtime");

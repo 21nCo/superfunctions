@@ -188,11 +188,12 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       const denied = await checkAuthorize(config.authorize, context, authorizationAction, record);
       if (denied) return denied;
       if (Buffer.byteLength(JSON.stringify(input), "utf8") > limits.maxPayloadBytes) return err("PAYLOAD_TOO_LARGE", "Input exceeds configured byte limit", {});
-      if (action === "status") return handleStatus({ limits });
+      if (action === "status") return handleStatus({ limits, publishIdempotency: config.context !== undefined });
       if (action === "docs.patch" && Array.isArray(record.ops) && record.ops.length > limits.maxPatchOps) return err("VALIDATION_FAILED", "Patch operation limit exceeded", { path: "ops" });
       const endpoint = Object.values(endpointHandlers).find(endpoint => endpoint.action === action);
       if (!endpoint) return err("VALIDATION_FAILED", "Unknown operation", {});
       const subject = typeof context === "object" && context !== null && "subject" in context && typeof context.subject === "string" ? context.subject : undefined;
+      if (action === "docs.publish" && idempotencyKey !== undefined && config.context && !subject?.trim()) return err("PERMISSION_DENIED", "Actor-bound publish replay requires a verified subject", {});
       const call = async (database: import("./storage/database.js").ContentfnDatabase): Promise<ContentfnEnvelope<unknown>> => {
         const response = await endpoint.handle({ ...routerConfig, db: database, actor: subject ? { subject } : undefined }, input);
         if (mutating && response.ok) await appendAudit(database, action, record, response.result, subject);
@@ -200,7 +201,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       };
       let replayed = false;
       const mutating = /\.(create|fork|delete|import|upsert|patch|publish|unpublish|restore|upload|register|schedule|cancelSchedule)$/.test(action);
-      const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : mutating ? await atomicMutation(db, call) : await call(db);
+      const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }, config.context ? subject : undefined) : mutating ? await atomicMutation(db, call) : await call(db);
       if (result.ok && !replayed) {
         try {
         if (action === "datasets.delete") realtimeServer.broadcast({ eventId: randomUUID(), dataset: String(record.dataset), type: "dataset.deleted", timestamp: new Date().toISOString() });
