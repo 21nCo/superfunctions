@@ -1,3 +1,4 @@
+import { downloadLimits } from '../utils/security-limits.js';
 /** Server-side image transfer. DNS is checked in the socket lookup itself. */
 import { lookup } from 'node:dns';
 import { request as httpRequest } from 'node:http';
@@ -14,7 +15,7 @@ import type { ImageDownloadOptions } from '../core/types.js';
 
 export async function fetchImageBytes(input: string, options: ImageDownloadOptions): Promise<Uint8Array> {
   const deadline = Date.now() + 30_000;
-  const maxBytes = options.maxPayloadBytes ?? 25 * 1024 * 1024;
+  const { maxBytes, maxRedirects } = downloadLimits(options);
   let url = new URL(input);
   for (let redirects = 0; ; redirects++) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw denied();
@@ -45,7 +46,7 @@ export async function fetchImageBytes(input: string, options: ImageDownloadOptio
         try {
           const status = response.statusCode ?? 0;
           if ([301, 302, 303, 307, 308].includes(status)) {
-            if (redirects >= (options.maxRedirects ?? 5)) throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Redirect limit exceeded for image download.' });
+            if (redirects >= maxRedirects) throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Redirect limit exceeded for image download.' });
             if (!response.headers.location) throw new Error('Redirect response did not include a location header.');
             resolve({ location: response.headers.location });
             return;

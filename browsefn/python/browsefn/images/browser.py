@@ -14,6 +14,7 @@ from browsefn.core.types import ImageConfig, ImageDownloadOptions, ImageResult, 
 from browsefn.core.types import DownloadResult
 from browsefn.images._transform import transform_image
 from browsefn.images._selection import ImageSelection
+from browsefn.utils.security_limits import resolve_download_options
 from browsefn.utils.destination_policy import merge_security, normalize_security
 from browsefn.core.types import DestinationSecurity
 from browsefn.images._download_utils import resolve_download_path, fetch_image_bytes, write_image
@@ -57,6 +58,7 @@ class ImageBrowser:
         options = options or ImageDownloadOptions()
         override = options.security if options.security is not None else (DestinationSecurity(allowPrivateHosts=options.allow_private_hosts) if "allow_private_hosts" in options.model_fields_set else None)
         options = options.model_copy(update={"security": merge_security(self.security, override)})
+        options = resolve_download_options(options)
         url, options = self.selection.resolve(url, options)
         validate_url(url)
         validate_download_options(options)
@@ -96,6 +98,7 @@ class ImageBrowser:
         options = options or ImageDownloadOptions()
         override = options.security if options.security is not None else (DestinationSecurity(allowPrivateHosts=options.allow_private_hosts) if "allow_private_hosts" in options.model_fields_set else None)
         options = options.model_copy(update={"security": merge_security(self.security, override)})
+        options = resolve_download_options(options)
         concurrency = max(1, options.concurrency or 5)
         progress_callback = options.on_progress if callable(options.on_progress) else None
         semaphore = asyncio.Semaphore(concurrency)

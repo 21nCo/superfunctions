@@ -26,7 +26,7 @@ it('Firecrawl securely downloads screenshot URL and encodes requested type', asy
   const mock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ success: true, data: { html, screenshot: 'https://images.example.com/shot.png' } })));
   const page = await new FirecrawlProvider({ apiKey: 'key' }).getPage('https://example.com', { screenshot: { fullPage: true, format: 'jpeg', quality: 50 } });
   expect(JSON.parse(mock.mock.calls[0][1]!.body as string).formats).toContain('screenshot@fullPage');
-  expect(fetchImageBytes).toHaveBeenCalledWith('https://images.example.com/shot.png', {});
+  expect(fetchImageBytes).toHaveBeenCalledWith('https://images.example.com/shot.png', { maxPayloadBytes: 25 * 1024 * 1024, maxRedirects: 5 });
   expect((await sharp(page.screenshot).metadata()).format).toBe('jpeg');
 });
 it('rejects failed remote envelopes', async () => {
@@ -56,4 +56,11 @@ it('preserves service and target error status for retries', async () => {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ code:503, success:true, data:{html,metadata:{statusCode:503}} })));
   await expect(new JinaProvider().getPage('https://example.com')).rejects.toMatchObject({details:{statusCode:503}});
   await expect(new FirecrawlProvider({}).getPage('https://example.com')).rejects.toThrow('HTTP 503');
+});
+
+it('propagates image-only security caps to remote screenshot transfer without private exceptions',async()=>{
+  vi.mocked(fetchImageBytes).mockResolvedValue(await sharp({ create: { width: 2, height: 3, channels: 3, background: 'red' } }).png().toBuffer());
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ success: true, data: { html, screenshot: 'https://images.example.com/shot.png' } })));
+  await new FirecrawlProvider({apiKey:'unused'}).getPage('https://example.com',{screenshot:true,security:{allowPrivateHosts:true,maxDownloadBytes:1024}});
+  expect(fetchImageBytes).toHaveBeenLastCalledWith('https://images.example.com/shot.png',{maxPayloadBytes:1024,maxRedirects:5});
 });

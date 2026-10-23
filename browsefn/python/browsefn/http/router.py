@@ -152,7 +152,9 @@ def create_browsefn_router(browse_fn: Any) -> List[Route]:
             body = await request.json()
             if "url" not in body:
                 raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: url")
-            options = ImageDownloadOptions(**{**body.get("options", {}), "allowPrivateHosts": False, "security": {"allowPrivateHosts": False, "allowedHosts": []}})
+            get_limits = getattr(browse_fn, "get_security_limits", None)
+            limits = get_limits() if callable(get_limits) else {"maxDownloadBytes": 25 * 1024 * 1024, "maxRedirects": 5}
+            options = ImageDownloadOptions(**{**body.get("options", {}), "allowPrivateHosts": False, "security": {"allowPrivateHosts": False, "allowedHosts": [], "maxDownloadBytes": limits["maxDownloadBytes"], "maxRedirects": limits["maxRedirects"]}})
             result = await browse_fn.images.download(body["url"], options)
             return Response(status=200, body=create_success_envelope(_serialize_data(result), {"requestId": request_id}))
         except Exception as error:

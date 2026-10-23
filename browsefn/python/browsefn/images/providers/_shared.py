@@ -59,6 +59,8 @@ def build_search_result(
 async def download_image(url: str | ImageResult, options: ImageDownloadOptions) -> DownloadResult:
     try:
         from browsefn.utils.validation import validate_download_options
+        from browsefn.utils.security_limits import resolve_download_options
+        options = resolve_download_options(options)
         validate_download_options(options)
         url, options = ImageSelection().resolve(url, options)
         path = resolve_download_path(url, options, default_name="image.jpg")

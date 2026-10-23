@@ -1,3 +1,4 @@
+import { downloadLimits } from '../../utils/security-limits.js';
 import type { GetPageOptions, PageResult } from '../../core/types.js';
 import { BrowseFnError } from '../../core/errors.js';
 import { applySelectors, extractImages, extractLinks, extractMetadata, htmlToMarkdown, htmlToText } from '../../utils/html-utils.js';
@@ -17,11 +18,13 @@ export function remotePage(provider: string, url: string, source: string, option
   return { url, content, metadata, links: options.includeLinks ? links : undefined, images: options.includeImages ? images : undefined, provider, duration: Date.now() - startedAt };
 }
 
-export async function remoteScreenshot(url: unknown, option: GetPageOptions['screenshot']): Promise<Uint8Array | undefined> {
+export async function remoteScreenshot(url: unknown, option: GetPageOptions['screenshot'], security?: GetPageOptions['security']): Promise<Uint8Array | undefined> {
   if (!option) return undefined;
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new BrowseFnError({ code: 'PROVIDER_ERROR', message: 'Provider did not return a screenshot URL.' });
   const settings = typeof option === 'object' ? option : {};
-  return (await transformImage(await fetchImageBytes(url, {}), { format: settings.format ?? 'png', quality: settings.quality })).bytes;
+  const limits = downloadLimits({ security });
+  const transfer = { maxPayloadBytes: limits.maxBytes, maxRedirects: limits.maxRedirects };
+  return (await transformImage(await fetchImageBytes(url, transfer), { ...transfer, format: settings.format ?? 'png', quality: settings.quality })).bytes;
 }
 
 export function targetCookies(url: string, cookies: NonNullable<GetPageOptions['cookies']>): typeof cookies {

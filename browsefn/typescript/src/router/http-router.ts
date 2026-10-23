@@ -247,9 +247,10 @@ export function createBrowseFnRouter(browseFn: BrowseFn): Router<BrowseFnContext
             const body = await readJsonBody<{ url?: string; options?: Record<string, unknown> }>(
               request
             );
+            const limits = ctx.browseFn.getSecurityLimits?.() ?? { maxDownloadBytes: 25 * 1024 * 1024, maxRedirects: 5 };
             const result = await ctx.browseFn.images.download(
               requireField(body.url, 'url'),
-              { ...body.options, allowPrivateHosts: false, security: { allowPrivateHosts: false, allowedHosts: [] } }
+              { ...body.options, allowPrivateHosts: false, security: { allowPrivateHosts: false, allowedHosts: [], maxDownloadBytes: limits.maxDownloadBytes, maxRedirects: limits.maxRedirects } }
             );
             return respondSuccess(request, result);
           } catch (error) {

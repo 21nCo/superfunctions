@@ -1,3 +1,4 @@
+import { assertPageSize } from '../../utils/security-limits.js';
 /**
  * Cheerio provider for lightweight HTML scraping
  */
@@ -49,6 +50,7 @@ export class CheerioProvider implements WebProvider {
   }
 
   private parsePage(html: string, resolvedUrl: string, options: GetPageOptions, startTime: number): PageResult {
+    assertPageSize(html, options.security);
     // Apply selectors
     if (options.selectors) {
       html = applySelectors(html, options.selectors);
@@ -76,6 +78,7 @@ export class CheerioProvider implements WebProvider {
       content = JSON.stringify(jsonData, null, 2);
     }
 
+    assertPageSize(content, options.security);
     // Extract links and images if needed
     const links = options.includeLinks ? extractLinks(html, resolvedUrl) : undefined;
     const images = options.includeImages ? extractImages(html, resolvedUrl) : undefined;

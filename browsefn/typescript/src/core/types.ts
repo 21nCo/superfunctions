@@ -135,6 +135,12 @@ export interface WebConfig {
 }
 
 export interface DestinationSecurity {
+  /** Maximum page transport and returned UTF-8 content bytes. */
+  maxResponseBytes?: number;
+  /** Maximum image download, transform input and encoded output bytes. */
+  maxDownloadBytes?: number;
+  /** Maximum followed redirects; zero rejects the first redirect. */
+  maxRedirects?: number;
   /** Exact private-host exceptions; does not restrict other public hosts. */
   allowedHosts?: string[];
   /** Exact deny rules; take precedence over every private-host opt-in. */

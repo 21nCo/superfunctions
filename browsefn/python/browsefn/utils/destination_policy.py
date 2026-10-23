@@ -51,6 +51,10 @@ def normalize_security(value: Optional[DestinationSecurity]) -> Optional[Destina
         fields["allowedHosts"] = hosts(value.allowed_hosts)
     if value.blocked_hosts is not None:
         fields["blockedHosts"] = hosts(value.blocked_hosts)
+    for field, alias in (("max_response_bytes", "maxResponseBytes"), ("max_download_bytes", "maxDownloadBytes"), ("max_redirects", "maxRedirects")):
+        limit = getattr(value, field)
+        if limit is not None:
+            fields[alias] = limit
     return DestinationSecurity(**fields)
 
 
@@ -59,7 +63,12 @@ def merge_security(defaults: Optional[DestinationSecurity], override: Optional[D
     if base is None and call is None:
         return None
     private = call.allow_private_hosts if call is not None and "allow_private_hosts" in override.model_fields_set else (base.allow_private_hosts if base else False)
-    return DestinationSecurity(allowPrivateHosts=private,
+    limits = {}
+    for field, alias in (("max_response_bytes", "maxResponseBytes"), ("max_download_bytes", "maxDownloadBytes"), ("max_redirects", "maxRedirects")):
+        values = [getattr(policy, field) for policy in (base, call) if policy is not None and getattr(policy, field) is not None]
+        if values:
+            limits[alias] = min(values)
+    return DestinationSecurity(**limits, allowPrivateHosts=private,
         allowedHosts=call.allowed_hosts if call is not None and "allowed_hosts" in override.model_fields_set else (base.allowed_hosts or [] if base else []),
         blockedHosts=list(dict.fromkeys((base.blocked_hosts or [] if base else []) + (call.blocked_hosts or [] if call else []))))
 
@@ -74,4 +83,4 @@ def permits_private_host(host: str, security: Optional[DestinationSecurity]) -> 
 
 def requires_protected_transport(security: Optional[DestinationSecurity]) -> bool:
     policy = normalize_security(security)
-    return policy is not None and (not policy.allow_private_hosts or bool(policy.blocked_hosts) or bool(policy.allowed_hosts))
+    return policy is not None and (not policy.allow_private_hosts or bool(policy.blocked_hosts) or bool(policy.allowed_hosts) or policy.max_response_bytes is not None or policy.max_redirects is not None)

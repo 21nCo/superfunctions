@@ -1,3 +1,4 @@
+import { assertPageSize } from '../utils/security-limits.js';
 import { mergeSecurity, normalizeSecurity, requiresProtectedTransport } from '../utils/destination-policy.js';
 import type { DestinationSecurity } from '../core/types.js';
 import { PlaywrightProvider } from './providers/playwright.js';
@@ -67,6 +68,7 @@ export class WebScraper {
     if (cacheEnabled && this.cache) {
       const cached = await this.cache.get<PageResult>('getPage', sanitizedUrl, options);
       if (cached) {
+        assertPageSize(cached.content, options.security);
         return { ...cached, cached: true };
       }
     }
@@ -81,6 +83,7 @@ export class WebScraper {
       ? await new RetryMiddleware({ enabled: true, maxAttempts: options.retry.count + 1, delay: options.retry.delay, backoff: 'linear' }).execute(execute)
       : await execute();
 
+    assertPageSize(result.content, options.security);
     if (cacheEnabled && this.cache) {
       await this.cache.set('getPage', sanitizedUrl, result, options);
     }

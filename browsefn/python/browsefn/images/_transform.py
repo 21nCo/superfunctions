@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from browsefn.utils.security_limits import resolve_download_options
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import ImageDownloadOptions, ImageMetadata
 from browsefn.images._download_utils import fetch_image_bytes
@@ -27,6 +28,7 @@ def _open(content: bytes) -> Image.Image:
 
 
 async def transform_image(content: bytes, options: ImageDownloadOptions) -> tuple[bytes, ImageMetadata]:
+    options = resolve_download_options(options)
     try:
         if len(content) > options.max_payload_bytes:
             raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Image payload exceeds the configured maximum size.")

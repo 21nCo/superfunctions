@@ -5,6 +5,7 @@ import json
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
+from browsefn.utils.security_limits import assert_page_size
 import httpx
 
 from browsefn.core.errors import BrowseFnError
@@ -58,6 +59,7 @@ class BeautifulSoupProvider:
                 html_content = response.text
                 resolved_url = str(response.url)
 
+        assert_page_size(html_content, options.security)
         metadata_dict = extract_metadata(html_content)
         metadata = PageMetadata(
             url=resolved_url,
@@ -94,6 +96,7 @@ class BeautifulSoupProvider:
 
         duration = (datetime.now() - start_time).total_seconds() * 1000
 
+        assert_page_size(content, options.security)
         return PageResult(
             url=resolved_url,
             content=content,

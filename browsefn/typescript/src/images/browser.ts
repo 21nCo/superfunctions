@@ -1,3 +1,4 @@
+import { downloadLimits } from '../utils/security-limits.js';
 import { mergeSecurity, normalizeSecurity, requiresProtectedTransport } from '../utils/destination-policy.js';
 import type { DestinationSecurity } from '../core/types.js';
 /**
@@ -102,6 +103,8 @@ export class ImageBrowser {
     options: ImageDownloadOptions = {}
   ): Promise<DownloadResult> {
     options = { ...options, security: mergeSecurity(this.security, options.security ?? (options.allowPrivateHosts === undefined ? undefined : { allowPrivateHosts: options.allowPrivateHosts })) };
+    const limits = downloadLimits(options);
+    options = { ...options, maxPayloadBytes: limits.maxBytes, maxRedirects: limits.maxRedirects };
     validateImageDownloadOptions(options);
     const providerOptions = options;
     const selection = this.selection.resolve(input, options);
@@ -112,7 +115,7 @@ export class ImageBrowser {
       : undefined;
 
     const provider = this.providerManager.getDefault();
-    if (provider?.download && requiresProtectedTransport(options.security)) {
+    if (provider?.download && (requiresProtectedTransport(options.security) || options.security?.maxDownloadBytes !== undefined)) {
       throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Provider cannot enforce the active destination policy.' });
     }
     if (provider?.download) {

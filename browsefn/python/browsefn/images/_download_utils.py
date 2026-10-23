@@ -1,4 +1,5 @@
 from __future__ import annotations
+from browsefn.utils.security_limits import download_limits
 from browsefn.utils.destination_policy import permits_private_host
 from browsefn.core.types import DestinationSecurity
 
@@ -44,8 +45,9 @@ async def _fetch_image_bytes(url: str, options: ImageDownloadOptions) -> bytes:
     import httpx
     from urllib.parse import urljoin
 
+    maximum, max_redirects = download_limits(options)
     async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False, limits=httpx.Limits(max_keepalive_connections=0)) as client:
-        for redirects in range(options.max_redirects + 1):
+        for redirects in range(max_redirects + 1):
             parsed = httpx.URL(url)
             if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not parsed.host:
                 raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Target URL is not allowed by the active security policy.")
@@ -61,7 +63,7 @@ async def _fetch_image_bytes(url: str, options: ImageDownloadOptions) -> bytes:
             async with client.stream("GET", target, headers={"Host": parsed.netloc.decode(), "Accept-Encoding": "identity"},
                                      extensions={"sni_hostname": parsed.host}) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
-                    if redirects >= options.max_redirects:
+                    if redirects >= max_redirects:
                         raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Redirect limit exceeded for image download.")
                     location = response.headers.get("location")
                     if not location:
@@ -72,11 +74,11 @@ async def _fetch_image_bytes(url: str, options: ImageDownloadOptions) -> bytes:
                 if response.headers.get("content-encoding", "identity").lower() != "identity":
                     raise BrowseFnError("PROVIDER_ERROR", "Encoded image responses are not supported.")
                 length = response.headers.get("content-length", "")
-                if length.isdigit() and int(length) > options.max_payload_bytes:
+                if length.isdigit() and int(length) > maximum:
                     raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Image payload exceeds the configured maximum size.")
                 content = bytearray()
                 async for chunk in response.aiter_raw():
-                    if len(content) + len(chunk) > options.max_payload_bytes:
+                    if len(content) + len(chunk) > maximum:
                         raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Image payload exceeds the configured maximum size.")
                     content.extend(chunk)
                 return bytes(content)

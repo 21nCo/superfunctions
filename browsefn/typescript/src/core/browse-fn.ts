@@ -1,3 +1,6 @@
+import { normalizeSecurity } from '../utils/destination-policy.js';
+import { DEFAULT_PAGE_BYTES, DEFAULT_DOWNLOAD_BYTES, DEFAULT_REDIRECTS } from '../utils/security-limits.js';
+import type { DestinationSecurity } from './types.js';
 /**
  * Main BrowseFn class.
  */
@@ -76,6 +79,7 @@ interface OperationContext {
 }
 
 export class BrowseFn {
+  private readonly security?: DestinationSecurity;
   private cacheManager?: CacheManager;
   private rateLimiter?: RateLimiter;
   private retryMiddleware?: RetryMiddleware;
@@ -89,6 +93,7 @@ export class BrowseFn {
   public cache?: CacheManager;
 
   constructor(config: BrowseFnConfig = {}) {
+    this.security = normalizeSecurity(config.security);
     if (config.cache?.enabled) {
       this.cacheManager = new CacheManager(config.cache);
       this.cache = this.cacheManager;
@@ -145,7 +150,7 @@ export class BrowseFn {
       operationHooks,
       config.web?.fallbackOnErrors,
       config.web?.userAgents,
-      config.security
+      this.security
     );
 
     if (config.web?.providers) {
@@ -176,7 +181,7 @@ export class BrowseFn {
       config.images?.defaultProvider,
       [],
       operationHooks,
-      config.security
+      this.security
     );
 
     if (config.images?.providers) {
@@ -228,6 +233,13 @@ export class BrowseFn {
     }
 
     this.instrumentServices();
+  }
+
+  /** Trusted constructor limits; routers use these as ceilings for request-body limits. */
+  getSecurityLimits(): { maxResponseBytes: number; maxDownloadBytes: number; maxRedirects: number } {
+    return { maxResponseBytes: this.security?.maxResponseBytes ?? DEFAULT_PAGE_BYTES,
+      maxDownloadBytes: this.security?.maxDownloadBytes ?? DEFAULT_DOWNLOAD_BYTES,
+      maxRedirects: this.security?.maxRedirects ?? DEFAULT_REDIRECTS };
   }
 
   on(event: BrowseFnEvent, handler: EventHandler): void {

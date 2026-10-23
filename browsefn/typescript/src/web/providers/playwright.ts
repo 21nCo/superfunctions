@@ -1,3 +1,4 @@
+import { rejectUnsupportedPageLimits } from '../../utils/security-limits.js';
 import { browserDeadline } from '../isolation/lifecycle.js';
 import { assertBrowserDestination } from '../isolation/egress-proxy.js';
 import { launchIsolatedBrowser, type BrowserIsolation } from '../isolation/docker-browser.js';
@@ -78,6 +79,7 @@ export class PlaywrightProvider extends BrowserProviderBase<PlaywrightPage> impl
     const playwright = await this.loadPlaywright();
     const startedAt = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
+    rejectUnsupportedPageLimits(this.name, options.security);
 
     const browserType = this.config.browser || 'chromium';
     const proxy = parseBrowserProxy(options.proxy);

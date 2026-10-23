@@ -169,6 +169,9 @@ class Cookie(BaseModel):
     domain: Optional[str] = None
 
 class DestinationSecurity(BaseModel):
+    max_response_bytes: Optional[int] = Field(None, alias="maxResponseBytes", gt=0, le=9007199254740991, strict=True)
+    max_download_bytes: Optional[int] = Field(None, alias="maxDownloadBytes", gt=0, le=9007199254740991, strict=True)
+    max_redirects: Optional[int] = Field(None, alias="maxRedirects", ge=0, le=9007199254740991, strict=True)
     @model_validator(mode="before")
     @classmethod
     def validate_host_arrays(cls, value):

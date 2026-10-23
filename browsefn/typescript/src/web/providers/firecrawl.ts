@@ -1,3 +1,4 @@
+import { rejectUnsupportedPageLimits } from '../../utils/security-limits.js';
 /** Firecrawl v1 scrape protocol. Browser lifecycle options require a local browser provider. */
 import type { GetPageOptions, PageResult, ProviderConfig, ProviderCapabilities, WebProvider } from '../../core/types.js';
 import { BrowseFnError } from '../../core/errors.js';
@@ -10,6 +11,7 @@ export class FirecrawlProvider implements WebProvider {
   constructor(private config: ProviderConfig) {}
 
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
+    rejectUnsupportedPageLimits(this.name, options.security);
     const startedAt = Date.now(), target = sanitizeUrl(url);
     if (options.waitFor) unsupported(this.name, 'Firecrawl uses a numeric wait delay, not browser lifecycle events; use Puppeteer or Playwright for waitFor. Configure waitForMs for a Firecrawl delay.');
     if (options.javascript === false) unsupported(this.name, 'Firecrawl does not expose a JavaScript-disable switch; use Cheerio for static HTML.');
@@ -36,7 +38,7 @@ export class FirecrawlProvider implements WebProvider {
     if (typeof status === 'number' && status >= 400) throw new Error(`HTTP ${status}: Firecrawl target request failed`);
     const resolved = typeof payload.data.metadata?.sourceURL === 'string' ? sanitizeUrl(payload.data.metadata.sourceURL) : target;
     const page = remotePage(this.name, resolved, payload.data.html, options, startedAt, payload.data.metadata, payload.data.markdown);
-    page.screenshot = await remoteScreenshot(payload.data.screenshot, options.screenshot);
+    page.screenshot = await remoteScreenshot(payload.data.screenshot, options.screenshot, options.security);
     page.duration = Date.now() - startedAt;
     return page;
   }

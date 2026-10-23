@@ -67,6 +67,12 @@ describe.skipIf(!image)('Docker browser network isolation', () => {
       expect(privateRequests).toEqual([]);
     },120_000);
   }
+  it('image-only global caps retain isolated browser page functionality',async()=>{
+    for(const provider of [new PlaywrightProvider({isolation:{dockerImage:image!}}),new PuppeteerProvider({isolation:{dockerImage:image!}})]) {
+      const page=await provider.getPage(allowed+'/page',{security:{maxDownloadBytes:16},timeout:30_000});
+      expect(page.metadata.title).toBe('JavaScript and subresource ran');
+    }
+  },90_000);
   it('Puppeteer: preserves page scripting, cookies, headers and screenshots',async()=>{
     const provider=new PuppeteerProvider({isolation:{dockerImage:image!}});
     const page=await provider.getPage(allowed+'/page',{security:{},screenshot:true,headers:{'x-owned':'fixture'},cookies:[{name:'owned',value:'yes',domain:'127.0.0.1'}],timeout:30_000});

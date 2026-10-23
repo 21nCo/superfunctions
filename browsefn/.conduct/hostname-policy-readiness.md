@@ -104,3 +104,9 @@ site was probed and no live provider credentials were used.
 
 These are local implementation checkpoints, not full SEC-001 or production
 completion. No push, deployment, merge or release was performed for this slice.
+
+
+The later [configurable-limits checkpoint](./configurable-limits-readiness.md)
+implements static/image global limits and records the remaining browser limit
+contract. Earlier statements that all global limits were unimplemented describe
+this hostname checkpoint only.

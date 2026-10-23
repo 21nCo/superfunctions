@@ -249,7 +249,7 @@ caller-selected cache keys from crossing the policy boundary.
 
 Protected static page requests resolve all DNS answers, reject any non-public
 answer, connect to a checked address, and repeat validation on every redirect.
-They allow at most five redirects and 10 MiB of response bytes. Requests ask for
+They default to at most five redirects and 10 MiB of response bytes; trusted global security limits can change these ceilings. Requests ask for
 identity encoding; servers returning encoded bodies are rejected. The whole
 request deadline includes DNS, redirects and body transfer. Proxies are rejected
 because an untrusted proxy can resolve the destination differently. Python
@@ -324,11 +324,56 @@ acceptance before those rules can be enabled. The existing isolated browser path
 without hostname rules remains available. Unsupported protected providers remain
 denied.
 
-This implements the hostname portion of the original security configuration.
-Configurable global `maxResponseBytes`, `maxDownloadBytes` and `maxRedirects`
-remain unimplemented; existing transport limits still apply. See
-[hostname policy evidence](./.conduct/hostname-policy-readiness.md) for hostname validation. Fixed output limits and their allocation boundaries are
-documented in [payload-cap evidence](./.conduct/payload-cap-readiness.md).
+### Configurable transfer limits
+
+Both SDKs accept `security.maxResponseBytes` (default 10 MiB),
+`security.maxDownloadBytes` (default 25 MiB) and `security.maxRedirects`
+(default 5). Bytes must be positive safe integers; redirects must be a
+nonnegative safe integer. Zero redirects rejects the first redirect before
+contacting its target. Python uses snake_case attributes and accepts camelCase
+constructor aliases; `None` means omitted there.
+
+```ts
+const browse = browseFn({
+  security: { maxResponseBytes: 2 * 1024 * 1024,
+    maxDownloadBytes: 8 * 1024 * 1024, maxRedirects: 2 }
+});
+```
+
+A per-call limit can tighten an explicitly configured global limit, but cannot
+raise it. When neither is configured, the default applies; an explicitly
+configured value may exceed the default. Legacy image `maxPayloadBytes` and
+`maxRedirects` also tighten the effective image ceiling. Routers inherit trusted
+global limits and discard body-supplied destination policy. Their image body
+limits can only tighten these trusted ceilings. The separate 10 MiB encoded
+router screenshot ceiling remains unchanged.
+
+Static page/metadata transports enforce these limits while receiving each hop,
+before retaining bytes beyond the cap. Each final decoded HTML and formatted
+page content is also bounded in UTF-8 bytes before cache insertion or return.
+Cache identity includes policy and cached page content is rechecked. These are
+body/content bounds, not a cap on the full JSON envelope or peak process memory.
+Compressed protected static responses remain unsupported. Images enforce their
+cap on transfer, transform input, watermarks and encoded transformed output
+before file publication; pixel decompression and encoder intermediate allocations
+are not bounded by the encoded-byte limit.
+
+Explicit page `maxResponseBytes` or `maxRedirects` is currently unsupported for
+Playwright, Puppeteer, Firecrawl and Jina: calls fail before browser launch or
+vendor requests. The isolated browser path without these explicit page limits
+remains available, including when only `maxDownloadBytes` is configured. Its
+existing fixed broker/output bounds do not establish a configurable browser
+response/redirect contract. Python implements the static provider; protected
+custom providers remain denied. The full browser/global-limit contract remains
+open. Legacy direct static calls without any protected page policy still allocate
+the fetch response before checking decoded output; use global security limits
+for bounded transport. Arbitrary caller-managed cache key generators must preserve
+policy identity to retain original transfer/redirect provenance; the returned
+content cap is checked even on colliding keys.
+
+See [configurable-limit evidence](./.conduct/configurable-limits-readiness.md),
+[hostname policy evidence](./.conduct/hostname-policy-readiness.md) and
+[payload-cap evidence](./.conduct/payload-cap-readiness.md).
 
 Browser-rendered HTML and formatted content are each limited to 10 MiB of UTF-8
 bytes. HTML is checked before parsing, formatting and screenshot capture, but

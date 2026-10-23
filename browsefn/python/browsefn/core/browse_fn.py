@@ -5,6 +5,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, Set, Type, TypeVar
 
+from browsefn.utils.security_limits import assert_page_size, DEFAULT_PAGE_BYTES, DEFAULT_DOWNLOAD_BYTES, DEFAULT_REDIRECTS
 from browsefn.utils.destination_policy import normalize_security
 from browsefn.core.cache_manager import CacheManager
 from browsefn.core.errors import BrowseFnError
@@ -94,6 +95,7 @@ class _WebProxy(_ServiceProxy):
             cache_url=url,
             cache_options={**options_model.model_dump(), "provider": provider},
             fn=lambda: self._get_service().get_page(url, options_model),
+            validate_result=lambda result: assert_page_size(result.content, options_model.security),
         )
 
     async def get_multiple_metadata(self, urls: list[str], options: Optional[Any] = None) -> Any:
@@ -336,6 +338,7 @@ class BrowseFn:
         cache_url: str,
         cache_options: Optional[Dict[str, Any]],
         fn: Callable[[], Awaitable[T]],
+        validate_result: Optional[Callable[[Any], None]] = None,
     ) -> T:
         timestamp = perf_counter() * 1000
         release_secrets = self.logger.register_secrets(cache_options)
@@ -346,6 +349,8 @@ class BrowseFn:
             if cache_enabled and self.cache_manager:
                 cached = await self.cache_manager.get(cache_method, cache_url, cache_options)
                 if cached is not None:
+                    if validate_result:
+                        validate_result(cached)
                     self.logger.info("cache.hit", {"operation": operation, "provider": provider, "url": cache_url})
                     self.emit("cache.hit", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
                     self.metrics_collector.record_request(provider, 0.0, True)
@@ -383,6 +388,8 @@ class BrowseFn:
                 raise
 
             duration = (perf_counter() - start) * 1000
+            if validate_result:
+                validate_result(result)
             if cache_enabled and self.cache_manager:
                 await self.cache_manager.set(cache_method, cache_url, result, cache_options)
 
@@ -403,6 +410,13 @@ class BrowseFn:
             return result
         finally:
             release_secrets()
+
+    def get_security_limits(self) -> Dict[str, int]:
+        """Trusted constructor limits used by routers as request-body ceilings."""
+        policy = self.config.security
+        return {"maxResponseBytes": policy.max_response_bytes if policy and policy.max_response_bytes is not None else DEFAULT_PAGE_BYTES,
+                "maxDownloadBytes": policy.max_download_bytes if policy and policy.max_download_bytes is not None else DEFAULT_DOWNLOAD_BYTES,
+                "maxRedirects": policy.max_redirects if policy and policy.max_redirects is not None else DEFAULT_REDIRECTS}
 
     def on(self, event: BrowseFnEvent, handler: Callable[[Any], None]) -> None:
         if event not in self.event_handlers:

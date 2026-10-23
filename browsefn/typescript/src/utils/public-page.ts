@@ -1,3 +1,4 @@
+import { pageLimits } from './security-limits.js';
 import { lookup } from 'node:dns';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -8,7 +9,7 @@ import { isPublicAddress, denied, permitsPrivateHost } from './destination-polic
 
 export async function fetchPublicPage(input: string, options: GetPageOptions): Promise<{ bytes: Uint8Array; url: string }> {
   const deadline = Date.now() + (options.timeout ?? 30_000);
-  const maxBytes = 10 * 1024 * 1024;
+  const { maxBytes, maxRedirects } = pageLimits(options.security);
   let url = new URL(input);
   let headers = { ...options.headers };
   if (options.proxy) throw denied();
@@ -41,7 +42,7 @@ export async function fetchPublicPage(input: string, options: GetPageOptions): P
         try {
           const status = response.statusCode ?? 0;
           if ([301, 302, 303, 307, 308].includes(status)) {
-            if (redirects >= 5) throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Redirect limit exceeded for page request.' });
+            if (redirects >= maxRedirects) throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Redirect limit exceeded for page request.' });
             if (!response.headers.location) throw new Error('Redirect response did not include a location header.');
             resolve({ location: response.headers.location });
             return;

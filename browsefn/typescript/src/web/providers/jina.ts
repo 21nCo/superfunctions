@@ -1,3 +1,4 @@
+import { rejectUnsupportedPageLimits } from '../../utils/security-limits.js';
 /** Jina Reader POST JSON protocol; target credentials stay separate from API credentials. */
 import type { GetPageOptions, PageResult, ProviderConfig, ProviderCapabilities, WebProvider } from '../../core/types.js';
 import { BrowseFnError } from '../../core/errors.js';
@@ -10,6 +11,7 @@ export class JinaProvider implements WebProvider {
   constructor(private config: ProviderConfig = {}) {}
 
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
+    rejectUnsupportedPageLimits(this.name, options.security);
     const startedAt = Date.now(), target = sanitizeUrl(url);
     if (options.waitFor && options.waitFor !== 'networkidle') unsupported(this.name, 'Jina exposes network-idle timing, not load or domcontentloaded; use Puppeteer or Playwright for those events.');
     const timeout = options.timeout ?? this.config.timeout ?? 30000;
@@ -31,7 +33,7 @@ export class JinaProvider implements WebProvider {
     if (options.screenshot) {
       const full = typeof options.screenshot === 'object' && options.screenshot.fullPage;
       const screenshot = await request(full ? 'pageshot' : 'screenshot');
-      page.screenshot = await remoteScreenshot(screenshot[full ? 'pageshotUrl' : 'screenshotUrl'], options.screenshot);
+      page.screenshot = await remoteScreenshot(screenshot[full ? 'pageshotUrl' : 'screenshotUrl'], options.screenshot, options.security);
     }
     page.duration = Date.now() - startedAt;
     return page;

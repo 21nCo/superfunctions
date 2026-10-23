@@ -49,12 +49,20 @@ export function normalizeSecurity(value?: DestinationSecurity): DestinationSecur
     if (!Array.isArray(rules) || rules.some(rule => typeof rule !== 'string')) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Security host rules must be arrays of exact hostnames.' });
     return [...new Set(rules.map(normalizePolicyHost))];
   };
-  return { allowPrivateHosts: value.allowPrivateHosts, allowedHosts: hosts(value.allowedHosts), blockedHosts: hosts(value.blockedHosts) };
+  const integer = (limit: unknown, minimum: number): number | undefined => {
+    if (limit === undefined) return undefined;
+    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < minimum) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Security limits must be safe integers within their allowed range.' });
+    return limit;
+  };
+  return { maxResponseBytes: integer(value.maxResponseBytes, 1), maxDownloadBytes: integer(value.maxDownloadBytes, 1), maxRedirects: integer(value.maxRedirects, 0), allowPrivateHosts: value.allowPrivateHosts, allowedHosts: hosts(value.allowedHosts), blockedHosts: hosts(value.blockedHosts) };
 }
 export function mergeSecurity(defaults?: DestinationSecurity, override?: DestinationSecurity): DestinationSecurity | undefined {
   const base = normalizeSecurity(defaults), call = normalizeSecurity(override);
   if (!base && !call) return undefined;
-  return { allowPrivateHosts: call?.allowPrivateHosts ?? base?.allowPrivateHosts ?? false,
+  const ceiling = (a?: number, b?: number) => a === undefined ? b : b === undefined ? a : Math.min(a, b);
+  return { maxResponseBytes: ceiling(base?.maxResponseBytes, call?.maxResponseBytes),
+    maxDownloadBytes: ceiling(base?.maxDownloadBytes, call?.maxDownloadBytes),
+    maxRedirects: ceiling(base?.maxRedirects, call?.maxRedirects), allowPrivateHosts: call?.allowPrivateHosts ?? base?.allowPrivateHosts ?? false,
     allowedHosts: call?.allowedHosts ?? base?.allowedHosts ?? [],
     blockedHosts: [...new Set([...(base?.blockedHosts ?? []), ...(call?.blockedHosts ?? [])])] };
 }
@@ -67,7 +75,7 @@ export function permitsPrivateHost(host: string, security?: DestinationSecurity)
 }
 export function requiresProtectedTransport(security?: DestinationSecurity): boolean {
   const policy = normalizeSecurity(security);
-  return !!policy && (!policy.allowPrivateHosts || !!policy.blockedHosts?.length || !!policy.allowedHosts?.length);
+  return !!policy && (!policy.allowPrivateHosts || !!policy.blockedHosts?.length || !!policy.allowedHosts?.length || policy.maxResponseBytes !== undefined || policy.maxRedirects !== undefined);
 }
 
 export function hasHostnameRules(security?: DestinationSecurity): boolean {

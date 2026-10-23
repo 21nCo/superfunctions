@@ -98,7 +98,7 @@ python3 -m pytest browsefn/python/tests/test_web.py browsefn/python/tests/test_i
 The router forces public destinations for page, metadata and image download
 requests; body options cannot opt into private hosts. Page/metadata requests use
 no cache. Static HTML uses checked DNS answers pinned to each connection and
-revalidates every redirect (five maximum), with a 10 MiB body limit and an overall
+revalidates every redirect (five by default), with a default 10 MiB body limit and an overall
 timeout. Encoded responses, proxies and cookies are rejected on protected static
 requests. Non-static/custom providers fail closed pending enforced egress
 isolation; this does not complete browser-provider security or SEC-001.
@@ -108,3 +108,21 @@ cache=False)` selects protected static transport. Set `allowPrivateHosts` to
 `True` only for an explicitly trusted private destination. Omitting `security`
 keeps legacy direct-library behavior and provides no untrusted-URL boundary.
 See the root BrowseFn README for the migration limits and remaining work.
+
+
+Global `BrowseFnConfig(security={"maxResponseBytes": 2097152,
+"maxDownloadBytes": 8388608, "maxRedirects": 2})` configures static page/metadata
+and image transfers. Defaults are 10 MiB, 25 MiB and five redirects. A per-call
+limit can tighten an explicit global limit; explicitly configured limits may
+exceed defaults. Zero redirects prohibits following the first redirect. Positive
+safe-integer byte limits and nonnegative safe-integer redirect limits are
+validated before requests. Python `None` means omitted. Legacy image
+`maxPayloadBytes`/`maxRedirects` tighten any configured ceiling. Routers inherit
+trusted global limits while prohibiting private-destination overrides.
+
+Decoded HTML, formatted UTF-8 content and cached page content are also checked.
+Image input, watermark and encoded output are checked before publication, but
+encoded caps do not bound pixel/encoder intermediate memory. Protected custom
+providers remain unsupported; the full browser/global-limit contract is open.
+See the root README's configurable transfer limits for cache identity and legacy
+transport boundaries.

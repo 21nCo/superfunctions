@@ -1,3 +1,4 @@
+import { rejectUnsupportedPageLimits } from '../../utils/security-limits.js';
 import { browserDeadline } from '../isolation/lifecycle.js';
 import { assertBrowserDestination } from '../isolation/egress-proxy.js';
 import { launchIsolatedBrowser, type BrowserIsolation } from '../isolation/docker-browser.js';
@@ -76,6 +77,7 @@ export class PuppeteerProvider extends BrowserProviderBase<PuppeteerPage> implem
     const puppeteer = await this.loadPuppeteer();
     const startedAt = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
+    rejectUnsupportedPageLimits(this.name, options.security);
 
     const proxy = parseBrowserProxy(options.proxy);
     const protectedRequest = requiresProtectedTransport(options.security);

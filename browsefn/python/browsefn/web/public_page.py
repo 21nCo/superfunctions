@@ -6,6 +6,7 @@ from typing import Tuple
 
 import httpx
 
+from browsefn.utils.security_limits import page_limits
 from browsefn.utils.destination_policy import permits_private_host
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import GetPageOptions
@@ -27,9 +28,10 @@ async def fetch_public_page(url: str, options: GetPageOptions) -> Tuple[str, str
 
 async def _fetch(url: str, options: GetPageOptions) -> Tuple[str, str]:
     headers = dict(options.headers or {})
+    maximum, max_redirects = page_limits(options.security)
     async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
                                  limits=httpx.Limits(max_keepalive_connections=0)) as client:
-        for redirects in range(6):
+        for redirects in range(max_redirects + 1):
             parsed = httpx.URL(url)
             if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not parsed.host:
                 raise denied()
@@ -43,7 +45,7 @@ async def _fetch(url: str, options: GetPageOptions) -> Tuple[str, str]:
             safe_headers.update({"Host": parsed.netloc.decode(), "Accept-Encoding": "identity"})
             async with client.stream("GET", target, headers=safe_headers, extensions={"sni_hostname": parsed.host}) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
-                    if redirects == 5 or not response.headers.get("location"):
+                    if redirects == max_redirects or not response.headers.get("location"):
                         raise denied()
                     next_url = httpx.URL(urljoin(url, response.headers["location"]))
                     if (next_url.scheme, next_url.host, next_url.port) != (parsed.scheme, parsed.host, parsed.port):
@@ -54,7 +56,6 @@ async def _fetch(url: str, options: GetPageOptions) -> Tuple[str, str]:
                 if response.headers.get("content-encoding", "identity").lower() != "identity":
                     raise BrowseFnError("PROVIDER_ERROR", "Encoded page responses are not supported.")
                 content = bytearray()
-                maximum = 10 * 1024 * 1024
                 length = response.headers.get("content-length", "")
                 if length.isdigit() and int(length) > maximum:
                     raise BrowseFnError("DOWNLOAD_TOO_LARGE", "Page payload exceeds the configured maximum size.")

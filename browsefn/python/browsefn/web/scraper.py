@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from browsefn.utils.security_limits import assert_page_size
 from browsefn.utils.destination_policy import merge_security, normalize_security, requires_protected_transport
 from browsefn.core.types import DestinationSecurity
 from browsefn.core.errors import BrowseFnError
@@ -112,6 +113,7 @@ class WebScraper:
         async def executor(provider: WebProvider, provider_name: str) -> PageResult:
             self._assert_provider_capabilities(provider_name, provider, options)
             result = await provider.get_page(url, options)
+            assert_page_size(result.content, options.security)
             result.provider = provider_name
             return result
 
