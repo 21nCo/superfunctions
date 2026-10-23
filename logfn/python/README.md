@@ -52,7 +52,8 @@ ingestion handler. Synchronous logging enqueues; with a running event loop,
 `batch_size` and `flush_interval_ms` trigger background delivery. Without a running
 loop, explicitly run `await sink.flush()` before shutdown.
 
-`flush()` waits for any active delivery and rejects on failure, retaining unsent
+`flush()` joins an active interval-triggered delivery without cancelling or
+restarting its request; `close()` uses the same drain behavior. It rejects on failure, retaining unsent
 events for retry. `Logger.flush()` propagates sink failures. The sink retries
 network/timeouts and HTTP 408/429/5xx with bounded backoff; other unsuccessful
 statuses fail immediately. `max_queue` bounds waiting events by discarding oldest

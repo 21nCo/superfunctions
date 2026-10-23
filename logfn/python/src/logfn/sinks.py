@@ -143,7 +143,12 @@ class SinkHttp:
     async def _interval_flush(self) -> None:
         try:
             await asyncio.sleep(self.flush_interval_ms / 1000)
-            await self._background_flush()
+            # Only a sleeping timer is cancellable by an explicit drain. Once
+            # sending starts, transfer ownership so flush/close join via the lock.
+            self._timer = None
+            if self._delivery is None or self._delivery.done():
+                self._delivery = asyncio.create_task(self._background_flush())
+                self._delivery.add_done_callback(self._delivery_finished)
         finally:
             if self._timer is asyncio.current_task():
                 self._timer = None

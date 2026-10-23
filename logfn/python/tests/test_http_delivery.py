@@ -219,3 +219,37 @@ async def test_real_http_delivery_retries_and_preserves_envelope() -> None:
         await server.wait_closed()
         if handlers:
             await asyncio.gather(*handlers)
+
+
+@pytest.mark.parametrize("operation", ["flush", "close"])
+async def test_explicit_drain_joins_interval_request_without_cancelling(operation: str) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+    cancelled = False
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, cancelled
+        calls += 1
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        return httpx.Response(202)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sink = SinkHttp("https://example.test", client=client, batch_size=10, flush_interval_ms=1)
+        sink([event("accepted")])
+        await asyncio.wait_for(entered.wait(), 1)
+        drain = asyncio.create_task(getattr(sink, operation)())
+        try:
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not drain.done()
+            assert not cancelled
+            assert calls == 1
+        finally:
+            release.set()
+            await drain
+            await sink.close()
+        assert calls == 1
+        assert not sink.buffer
