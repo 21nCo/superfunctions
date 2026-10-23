@@ -165,6 +165,10 @@ class DatabaseStorage:
             return [value[2] for value in events]
         return await self.db.transaction(scan)
 
+    def run_operation(self, operation):
+        """Admit an owned async operation; stop drains it along with database work."""
+        return self._submit(operation).result()
+
     def run_transaction(self, callback):
         """Admit a Watch-owned shared-adapter transaction on the existing owner loop."""
         return self._submit(self.db.transaction, callback).result()

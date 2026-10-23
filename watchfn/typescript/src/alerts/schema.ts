@@ -1,8 +1,12 @@
 import type { TableSchema } from '@superfunctions/db';
 export const ALERTS = 'watchfn_alerts';
 export const ALERT_OUTBOX = 'watchfn_alert_outbox';
+export const ALERT_RUNTIME = 'watchfn_alert_runtime';
 export function getAlertSchema(): Record<string, TableSchema> {
   return {
+    [ALERT_RUNTIME]: { modelName: ALERT_RUNTIME, fields: {
+      id: { type: 'string', required: true, unique: true }, protocol: { type: 'string', required: true },
+    } },
     [ALERTS]: { modelName: ALERTS, fields: {
       id: { type: 'string', required: true, unique: true }, namespace: { type: 'string', required: true },
       state: { type: 'string', required: true }, revision: { type: 'number', required: true }, payload: { type: 'json', jsonStorageType: 'json-text', required: true },

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { wrapWithSchema, type Adapter, type TransactionAdapter, type WhereClause } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { ConditionEvaluator, validateAlertCondition, alertWindowMs, type AlertCondition, type AlertMetricPoint } from './conditions';
-import { ALERTS, ALERT_OUTBOX, getAlertSchema } from './schema';
+import { ALERTS, ALERT_OUTBOX, ALERT_RUNTIME, getAlertSchema } from './schema';
 import type { AlertConfig, AlertChannel, AlertRecord, PublicAlert, AlertRuntimeConfig, AlertNotification } from './types';
 export type { AlertConfig, AlertChannel } from './types';
 interface Row { id: string; namespace: string; revision: number; payload: AlertRecord }
@@ -197,9 +197,21 @@ export class AlertManager {
     const limit = this.limit(options.limit);
     return this.host.admit(async () => (await this.db.findMany<Job>({ model: ALERT_OUTBOX, where: [...this.where(), ...(options.after ? [{ field: 'id', operator: 'gt' as const, value: options.after }] : [])], orderBy: [{ field: 'id', direction: 'asc' }], limit })).map(job => ({ id: job.id, alertId: job.alertId, state: job.state, attempts: job.attempts, availableAt: job.availableAt, event: job.payload.notification.event })));
   }
+  private async assertDispatchProtocol(): Promise<void> {
+    const read = () => this.db.findOne<{ id: string; protocol: string }>({ model: ALERT_RUNTIME, where: [{ field: 'id', operator: 'eq', value: this.namespace }] });
+    let row = await read();
+    if (!row) {
+      // Unique namespace ID is the atomic ownership claim. Separate reads avoid
+      // SQLite deferred-transaction upgrades when independent workers race.
+      try { await this.db.create({ model: ALERT_RUNTIME, data: { id: this.namespace, protocol: 'ts-v1' } }); }
+      catch (error) { row = await read(); if (!row) throw error; }
+      row = row ?? await read();
+    }
+    if (row?.protocol !== 'ts-v1') throw new Error('Alert namespace belongs to an incompatible dispatch protocol');
+  }
   dismissNotification(id: string) {
     if (!text(id, 128)) throw new TypeError('Invalid notification id');
-    return this.host.admit(() => this.finish(id));
+    return this.host.admit(async () => { await this.assertDispatchProtocol(); return this.finish(id); });
   }
   private async finish(id: string, token?: string): Promise<boolean> {
     return this.db.transaction(async tx => {
@@ -216,6 +228,7 @@ export class AlertManager {
   processNotifications(options: { limit?: number } = {}) {
     const limit = this.limit(options.limit);
     return this.host.admit(async () => {
+      await this.assertDispatchProtocol();
       const now = Date.now();
       const rows = await this.db.findMany<Job>({ model: ALERT_OUTBOX, where: [...this.where(), { field: 'state', operator: 'ne', value: 'dead' }, { field: 'availableAt', operator: 'lte', value: now }], orderBy: [{ field: 'availableAt', direction: 'asc' }, { field: 'id', direction: 'asc' }], limit });
       let processed = 0;

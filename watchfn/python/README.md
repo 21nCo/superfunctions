@@ -287,8 +287,8 @@ inspection, not credential round-tripping. Identical re-registration means the
 original full definition, not a public metadata projection. IDs are unique across the table;
 reusing one caller-owned ID under another namespace fails. Legacy array evaluation
 rejects on the durable manager; use actual stored observations. Removal is
-explicitly unavailable until notification reconciliation is implemented; disable
-an alert instead.
+explicitly unavailable until a receipt-retention/deletion policy is implemented;
+disable an alert instead.
 
 Every lifecycle transition compares the persisted revision and enqueues its
 pending channel obligations in the same transaction. Failed outbox creation rolls
@@ -312,18 +312,58 @@ characters each, and total stored payload at512KiB. Default pending capacity is
 state. These per-record bounds do not limit total historical definitions/outbox
 storage across all alerts.
 
-**No Python delivery yet:** channel configurations are saved as pending obligations
-for `triggered`, `acknowledged` and `resolved` events. `notifications` reports
-pending metadata, never credentials; `process_notifications` raises explicitly.
-Public channels report `configured: false` because no dispatcher/sender is
-configured. No HTTP/provider requests are made. Pending jobs are not silently
-marked sent or discarded. Credentials and notification snapshots remain plaintext
-at rest; protect the database and backups. Shared adapter error text is sanitized
-because it may contain SQL parameters. Custom adapters must honor the shared
-error contract and must not log secrets themselves.
+### Explicit durable notification dispatch
 
-Lease-based dispatch, retries/dead-letter reconciliation, configured email/Slack/
-PagerDuty/webhook sends, transition callbacks, calculated-value notification
-context and complete TS lifecycle parity remain required follow-up work. Existing
-HTTP auth/ingestion/query routes are unchanged; no public alert-management route
-is introduced. The methods above are trusted host APIs.
+Install `watchfn[dispatch]` and migrate **all** tables from `get_alert_schema()`,
+including `watchfn_alert_runtime`. Stop older dispatchers before migration: older
+releases cannot honor the new namespace ownership marker. The first dispatch or
+reconciliation claims the Watch name for `python-v1` (or `ts-v1` in TypeScript).
+Current runtimes reject another protocol before sending or dismissing jobs. Do
+not change/delete that marker to transfer work with outstanding obligations.
+
+The trusted host explicitly calls `watch.alerts.process_notifications(limit=50,
+after=None, timeout_ms=10000, lease_ms=30000, max_attempts=5)`. It returns
+`processed` and `nextCursor`. Traverse every returned cursor, then start another
+cycle from the beginning when due; otherwise pending channels without a sender
+can occupy the first page indefinitely. Limits are 1–100 jobs, timeout 1–60000ms,
+lease at least timeout+100ms and at most300000ms, attempts1–100. No background
+scheduler is installed. The operation runs on Watch's existing database owner
+loop, serializing that instance's storage operations while it runs. Stop prevents
+later sends and drains the current bounded HTTP call; custom blocking database
+adapters can still delay shutdown.
+
+Webhook and Slack incoming-webhook jobs use the stored trusted URL, verified TLS,
+no redirects or environment proxy, and a stable `Idempotency-Key` header. That
+header does **not** imply provider deduplication. Slack uses its configured channel
+and requires HTTP200 with `ok`; webhook success means HTTP2xx. Safe pre-send
+connection failures and Slack429 with valid `Retry-After` may retry with bounded
+attempts/backoff; Slack retry timing respects the header. Other ambiguous outcomes,
+including timeouts, disconnects, unexpected responses, or expired claims, are
+parked as `state=dead, outcome=unknown` without replay. Definite rejection or
+retry exhaustion is parked with `outcome=rejected`. Both retain pending capacity.
+Email/PagerDuty have no configured dispatcher here and remain pending with zero
+attempts. Public HTTP channels report `configured:true` when the optional HTTP client is
+installed; email/PagerDuty report false. Configuration does not imply a running
+dispatch scheduler or successful provider connectivity.
+
+`notifications()` exposes metadata/outcome, never routing credentials or raw
+provider errors. A successful receipt atomically releases pending capacity and
+removes routing credentials from its retained row. After verifying a parked
+outcome externally, the host can call
+`reconcile_notification(id, outcome='delivered'|'dismissed', actor='operator',
+reason='receipt verified or delivery cancelled')`. This releases capacity once;
+repeated reconciliation returns false. It never resends. Interrupted claims retain
+their obligation and become unknown after expiry. Terminal rows are retained for
+reconciliation/idempotency; **historical receipt storage is currently unbounded**
+and requires a future retention policy. Page notifications to inspect history.
+
+Credentials and notification snapshots remain plaintext at rest before settlement;
+protect the database and backups. Receipt snapshots can still contain event/alert
+context. Adapter failures and provider responses are sanitized; custom adapters
+must honor shared error contracts and avoid logging secrets themselves.
+
+Configured email/PagerDuty delivery, transition callbacks, calculated-value
+notification context, terminal retention and complete TS lifecycle parity remain
+required follow-up work. Standalone legacy channel helpers are not this durable
+dispatch protocol. HTTP auth/ingestion/query routes are unchanged; no public
+alert-management route is introduced. These methods are trusted host APIs.

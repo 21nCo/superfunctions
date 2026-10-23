@@ -39,7 +39,7 @@ def test_lifecycle_outbox_reopen_and_no_channel_secrets(tmp_path):
     migrate(engine); tables = migrate_alerts(engine)
     try:
         record = watch.alerts.create(definition())
-        assert record['channels'] == [{'type': 'webhook', 'configured': False}]
+        assert record['channels'] == [{'type': 'webhook', 'configured': True}]
         identifier = record['id']
         watch.track('api', {'latency': 20})
         assert watch.alerts.evaluate_stored()[0].matched is True
@@ -48,7 +48,6 @@ def test_lifecycle_outbox_reopen_and_no_channel_secrets(tmp_path):
         assert len(watch.alerts.notifications()) == 2
         assert 'private-token' not in json.dumps(watch.alerts.list())
         assert 'private-token' not in json.dumps(watch.alerts.notifications())
-        with pytest.raises(NotImplementedError, match='not implemented'): watch.alerts.process_notifications()
     finally: watch.stop(); engine.dispose()
     engine, watch = open_watch(path)
     try:

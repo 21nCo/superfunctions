@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix="watchfn-http-wheel-") as temporary:
     environment = directory / "venv"
     subprocess.run(["uv", "venv", str(environment)], check=True)
     python = environment / "bin/python"
-    subprocess.run(["uv", "pip", "install", "--python", str(python), *map(str, wheels.glob("*.whl")), "pytest", "pytest-asyncio", "httpx"], check=True)
+    subprocess.run(["uv", "pip", "install", "--python", str(python), *[str(wheel) + ("[dispatch]" if wheel.name.startswith("watchfn-") else "") for wheel in wheels.glob("*.whl")], "pytest", "pytest-asyncio"], check=True)
     shutil.copytree(root / "watchfn/python/tests", directory / "tests")
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)

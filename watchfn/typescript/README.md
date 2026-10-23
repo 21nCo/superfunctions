@@ -180,3 +180,15 @@ out-of-window exact event no longer suppresses dotted-property fallback in memor
 this corrects a discrepancy with projected database reads. In-window exact events
 still suppress fallback even when their value is invalid. Scalar aggregate's
 unfiltered global exact-name precedence is unchanged.
+
+### Alert dispatcher ownership migration
+
+Migrate all tables returned by `getAlertSchema()`, including
+`watchfn_alert_runtime`, before calling alert dispatch or dismissal. Stop older
+workers first: pre-marker releases cannot enforce ownership. The first current
+runtime atomically claims the Watch namespace as `ts-v1` or `python-v1`; a different
+protocol fails before sending or dismissing an obligation. Multiple workers of the
+same protocol are supported. Do not delete/change the marker while jobs or receipts
+remain. Python's parked unknown-outcome receipts use a different reconciliation
+contract and must not be processed by the TypeScript dispatcher. This boundary is
+not tenant authorization and does not change TypeScript provider retry semantics.

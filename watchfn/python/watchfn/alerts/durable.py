@@ -1,7 +1,7 @@
 """Durable definitions, lifecycle and pending notification obligations.
 
-All operations use the existing Watch DB owner loop and shared adapter. Delivery
-is intentionally unavailable until a dispatcher implements lease/retry semantics.
+All operations use the existing Watch DB owner loop and shared adapter.
+Explicit dispatch and reconciliation are implemented by the owned dispatcher.
 """
 from copy import deepcopy
 import json
@@ -30,11 +30,12 @@ def encode(value, maximum=524288):
 
 
 class DurableAlertManager:
-    def __init__(self, storage, snapshot, namespace, max_pending=100):
+    def __init__(self, storage, snapshot, namespace, max_pending=100, active=lambda: True):
         if not text(namespace, 128): raise ValueError('Invalid alert namespace')
         if type(max_pending) is not int or not 1 <= max_pending <= 1000: raise ValueError('Invalid notification capacity')
         self.storage, self.snapshot, self.namespace = storage, snapshot, namespace
         self.max_pending = max_pending
+        self.active = active
 
     def _where(self, identifier=None):
         return [WhereClause(field='namespace', value=self.namespace)] + ([WhereClause(field='id', value=identifier)] if identifier else [])
@@ -121,7 +122,9 @@ class DurableAlertManager:
 
     def _public(self, record):
         value = deepcopy(record)
-        value['channels'] = [{'type': item['type'], 'configured': False} for item in value['channels']]
+        from importlib.util import find_spec
+        http_available = find_spec('httpx') is not None
+        value['channels'] = [{'type': item['type'], 'configured': http_available and item['type'] in ('webhook', 'slack')} for item in value['channels']]
         return value
 
     def _legacy(self, record):
@@ -296,11 +299,16 @@ class DurableAlertManager:
         if after is not None and not text(after, 128): raise ValueError('Invalid notification cursor')
         async def action(tx):
             rows = await tx.find_many(FindManyParams(model=OUTBOX, where=self._where() + ([WhereClause(field='id', operator='gt', value=after)] if after else []), order_by=[OrderBy(field='id')], limit=limit))
-            return [{key: row[key] for key in ('id', 'alertId', 'state', 'attempts', 'availableAt')} for row in rows]
+            return [dict({key: row[key] for key in ('id', 'alertId', 'state', 'attempts', 'availableAt')}, outcome=json.loads(row['payload']).get('delivery', {}).get('outcome', 'pending')) for row in rows]
         return self._run(action)
 
     def process_notifications(self, **kwargs):
-        raise NotImplementedError('Python notification dispatch is not implemented; pending obligations remain durable')
+        from .dispatch import Dispatcher
+        return Dispatcher(self, **kwargs).process()
+
+    def reconcile_notification(self, identifier, *, outcome, actor, reason):
+        from .dispatch import Dispatcher
+        return Dispatcher(self).reconcile(identifier, outcome, actor, reason)
 
     def evaluate(self, *args, **kwargs):
         raise ValueError('Use evaluate_stored for durable alerts; caller arrays cannot update persisted lifecycle')

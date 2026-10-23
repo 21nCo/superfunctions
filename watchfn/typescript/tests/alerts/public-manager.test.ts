@@ -31,7 +31,7 @@ async function setup(extra: any = {}) {
     await migration.execute();
   }
   const create = () => { const watch = new WatchFn({ name: 'test', storage: 'database', database: connect(filename).adapter, infra: { enabled: false }, alerts: extra }); watches.push(watch); watch.start(); return watch; };
-  return { watch: create(), create };
+  return { watch: create(), create, sql: connection.sql };
 }
 const rule = { metric: 'latency', operator: 'gt' as const, threshold: 5, window: '5m' };
 async function observe(watch: WatchFn, value: number, timestamp = Date.now()) { await watch.ingest([{ type: 'metric', name: 'latency', value, timestamp }]); }
@@ -283,4 +283,24 @@ it.each(['memory', 'database'])('selects same-metric precedence separately for e
   expect((await watch.alerts.evaluate({ now })).results[0].matched).toBe(fixture.expected);
   await watch.ingest([fixture.invalidExact]);
   expect((await watch.alerts.evaluate({ now })).results[0].matched).toBe(fixture.expectedAfterInvalid);
+});
+
+it('rejects foreign dispatch ownership before sending or dismissing obligations', async () => {
+  const { watch, sql } = await setup(); const target = await endpoint();
+  const alert = await watch.alerts.create({ name: 'owned', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
+  await watch.alerts.trigger(alert.id);
+  await sql.insertInto('watchfn_alert_runtime').values({ id: 'test', protocol: 'python-v1' }).execute();
+  const jobs = await watch.alerts.notifications();
+  await expect(watch.alerts.processNotifications()).rejects.toThrow('incompatible dispatch protocol');
+  await expect(watch.alerts.dismissNotification(jobs[0].id)).rejects.toThrow('incompatible dispatch protocol');
+  expect(target.received).toHaveLength(0);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(1);
+  expect((await watch.alerts.notifications())[0].attempts).toBe(0);
+});
+
+it('converges independent first-owner claims on the same immutable protocol', async () => {
+  const { watch, create, sql } = await setup();
+  const second = create();
+  await Promise.all([watch.alerts.processNotifications(), second.alerts.processNotifications()]);
+  expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toEqual([{ id: 'test', protocol: 'ts-v1' }]);
 });

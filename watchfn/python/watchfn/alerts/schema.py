@@ -3,6 +3,7 @@ from superfunctions.db import FieldSchema, TableSchema
 
 ALERTS = 'watchfn_alerts'
 OUTBOX = 'watchfn_alert_outbox'
+RUNTIME = 'watchfn_alert_runtime'
 
 
 def get_alert_schema():
@@ -14,6 +15,7 @@ def get_alert_schema():
             FieldSchema(name='payload', type='text'),
         ])
     return {
+        RUNTIME: TableSchema(name=RUNTIME, fields=[FieldSchema(name='id', type='string', primary_key=True, unique=True), FieldSchema(name='protocol', type='string')]),
         ALERTS: table(ALERTS, ['namespace', 'state'], ['revision']),
         OUTBOX: table(OUTBOX, ['namespace', 'alertId', 'state', 'leaseToken'], ['revision', 'availableAt', 'attempts']),
     }
