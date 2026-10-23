@@ -10,7 +10,7 @@ import {
   primaryKey,
   index,
 } from "drizzle-orm/pg-core";
-/** Current adapter tables. Legacy tables require PostgresAdapter.migrateLegacySchema(). */
+/** Current adapter tables. Legacy tables require migrateLegacySchema(); intermediate queues require migrateQueueOrderingSchema(). */
 export function getPostgresSchema(namespace?: string) {
   const table: PgTableFn<string | undefined> = namespace ? pgSchema(namespace).table : pgTable;
   const jobs = table(
@@ -22,6 +22,7 @@ export function getPostgresSchema(namespace?: string) {
       state: text("state").notNull(),
       priority: doublePrecision("priority").notNull().default(0),
       availableAt: bigint("available_at", { mode: "number" }).notNull(),
+      enqueueOrder: bigserial("enqueue_order", { mode: "bigint" }).notNull().unique(),
       timestamp: bigint("timestamp", { mode: "number" }).notNull(),
       finishedOn: bigint("finished_on", { mode: "number" }),
       data: jsonb("data").notNull(),

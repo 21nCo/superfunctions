@@ -135,5 +135,30 @@ The TypeScript memory queue orders equal-priority jobs by insertion, not wall-cl
 timestamps: LIFO jobs precede FIFO jobs; LIFO selects the newest insertion and FIFO
 selects the oldest. Explicit enqueue/retry creates a new insertion position, while
 saving progress or renewing a lease preserves it. Delays still use the adapter clock.
-This matches Redis mixed FIFO/LIFO grouping; it does not establish PostgreSQL
-same-timestamp ordering or add a Python LIFO option.
+This matches Redis mixed FIFO/LIFO grouping. PostgreSQL uses a durable SQL bigint
+`enqueue_order` for the same semantics; it never converts that value to a JavaScript
+number. Independent producers receive sequence allocation order, with gaps allowed;
+this is not a claim of commit-order serialization. Only committed, eligible rows can
+be claimed. Priority still wins before mode and insertion order, and delayed/dependency
+eligibility is unchanged. Duplicate create and save/renew preserve a job's position;
+explicit enqueue/retry allocates a new position. No Python LIFO option is added.
+
+#### PostgreSQL ordering schema upgrade
+
+Fresh `initialize()` creates the ordering column and owned sequence. Existing tables
+without `enqueue_order` fail initialization; startup never guesses an upgrade. Stop
+**all** producers, queue workers, schedulers and subscribers using this schema, including
+old binaries, then call `await adapter.migrateQueueOrderingSchema()` and initialize the
+new version before restarting. The existing `migrateLegacySchema()` entry point also
+upgrades the intermediate schema; original v0 tables retain their backup behavior.
+
+The migration takes a schema-specific advisory lock and an exclusive jobs-table lock.
+Column population, sequence state, default, ownership and uniqueness are transactional;
+concurrent migration calls are idempotent. Existing job JSON, states and leases remain
+unchanged. Historical jobs receive deterministic timestamp/queue/ID ordering (text IDs
+use PostgreSQL C collation). Their original equal-timestamp insertion order was never
+stored and cannot be reconstructed. Future enqueues use the new database sequence.
+This upgrade can scan and lock the whole jobs table; schedule a maintenance window for
+its size. Quiescing old writers is an operator prerequisite, not a distributed fence:
+old enqueue-upsert code does not refresh the new ordering column on an existing job.
+Do not run mixed old/new writers or drop the column to roll back while new writers run.

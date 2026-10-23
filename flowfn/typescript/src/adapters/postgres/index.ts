@@ -57,9 +57,11 @@ export class PostgresAdapter implements FlowAdapter {
       throw new Error(
         "Legacy FlowFn PostgreSQL schema: stop workers and call migrateLegacySchema() before initialization",
       );
+    if (columns.length && !columns.some(row => row.column_name === "enqueue_order"))
+      throw new Error("FlowFn PostgreSQL queue ordering migration required: stop all writers and call migrateQueueOrderingSchema() before initialization");
     await this.db.execute(
       sql.raw(`CREATE SCHEMA IF NOT EXISTS "${this.schema}";
-CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_jobs (queue text NOT NULL,id text NOT NULL,name text NOT NULL,state text NOT NULL,priority double precision NOT NULL DEFAULT 0,available_at bigint NOT NULL,timestamp bigint NOT NULL,finished_on bigint,data jsonb NOT NULL,PRIMARY KEY(queue,id));
+CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_jobs (queue text NOT NULL,id text NOT NULL,name text NOT NULL,state text NOT NULL,priority double precision NOT NULL DEFAULT 0,available_at bigint NOT NULL,timestamp bigint NOT NULL,finished_on bigint,data jsonb NOT NULL,enqueue_order bigserial UNIQUE NOT NULL,PRIMARY KEY(queue,id));
 CREATE INDEX IF NOT EXISTS flowfn_jobs_ready ON "${this.schema}".flowfn_jobs(queue,state,available_at);
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_messages (id text PRIMARY KEY,stream text NOT NULL,position bigserial UNIQUE,timestamp bigint NOT NULL,data jsonb NOT NULL);
 CREATE INDEX IF NOT EXISTS flowfn_messages_stream_offset ON "${this.schema}".flowfn_messages(stream,position);
@@ -67,6 +69,29 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_consumer_groups (id text PRIM
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_deliveries (stream text NOT NULL,group_id text NOT NULL,message_id text NOT NULL REFERENCES "${this.schema}".flowfn_messages(id) ON DELETE CASCADE,consumer_id text NOT NULL,receipt text NOT NULL,state text NOT NULL,delivered_at bigint NOT NULL,PRIMARY KEY(stream,group_id,message_id));
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text PRIMARY KEY,workflow_id text NOT NULL,state jsonb NOT NULL);`),
     );
+  }
+  /** Explicit quiesced upgrade. Historical timestamp ties receive deterministic IDs, not reconstructed insertion order. */
+  async migrateQueueOrderingSchema(): Promise<void> {
+    if (this.subscriptions.size) throw new Error("Stop subscriptions before migration");
+    await this.db.transaction(async (tx: any) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([this.schema, "queue-order-migration"])}, 0))`);
+      let columns = await this.rows(sql`SELECT column_name FROM information_schema.columns WHERE table_schema=${this.schema} AND table_name='flowfn_jobs'`, tx);
+      if (!columns.length) {
+        await new PostgresAdapter({ db: tx, schema: this.schema, pollInterval: this.interval }).initialize();
+        return;
+      }
+      await tx.execute(sql`LOCK TABLE ${this.table("flowfn_jobs")} IN ACCESS EXCLUSIVE MODE`);
+      columns = await this.rows(sql`SELECT column_name FROM information_schema.columns WHERE table_schema=${this.schema} AND table_name='flowfn_jobs'`, tx);
+      if (!columns.some(row => row.column_name === "available_at")) throw new Error("Legacy FlowFn PostgreSQL schema requires migrateLegacySchema()");
+      if (columns.some(row => row.column_name === "enqueue_order")) return;
+      await tx.execute(sql.raw(`CREATE SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq AS bigint;
+ALTER TABLE "${this.schema}".flowfn_jobs ADD COLUMN enqueue_order bigint;
+WITH ranked AS (SELECT queue,id,row_number() OVER (ORDER BY timestamp,queue COLLATE "C",id COLLATE "C") AS position FROM "${this.schema}".flowfn_jobs)
+UPDATE "${this.schema}".flowfn_jobs j SET enqueue_order=ranked.position FROM ranked WHERE j.queue=ranked.queue AND j.id=ranked.id;
+SELECT setval('"${this.schema}".flowfn_jobs_enqueue_order_seq'::regclass,COALESCE(MAX(enqueue_order),1),COUNT(*)>0) FROM "${this.schema}".flowfn_jobs;
+ALTER TABLE "${this.schema}".flowfn_jobs ALTER COLUMN enqueue_order SET DEFAULT nextval('"${this.schema}".flowfn_jobs_enqueue_order_seq'::regclass), ALTER COLUMN enqueue_order SET NOT NULL, ADD UNIQUE(enqueue_order);
+ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.schema}".flowfn_jobs.enqueue_order;`));
+    });
   }
   /** Explicit transactional upgrade retaining the old tables as *_legacy_v0 backups. Stop all workers first. */
   async migrateLegacySchema(): Promise<void> {
@@ -79,6 +104,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       !columns.length ||
       columns.some((row) => row.column_name === "available_at")
     ) {
+      await this.migrateQueueOrderingSchema();
       await this.initialize();
       return;
     }
@@ -97,7 +123,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         );
         if (exists.length) {
           snapshots[name] = await this.rows(
-            sql`SELECT * FROM ${this.table(name)}`,
+            sql`SELECT * FROM ${this.table(name)} ${name === "flowfn_jobs" ? sql`ORDER BY timestamp,queue COLLATE "C",id COLLATE "C"` : sql``}`,
             tx,
           );
           await tx.execute(
@@ -207,7 +233,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       if (matches.length) throw new Error("Active job already owns deduplication key");
     }
     await tx.execute(
-      sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) SELECT ${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},clock.now + ${value.delay},clock.now,NULL,${JSON.stringify(value)}::jsonb || jsonb_build_object('timestamp',clock.now) FROM clock ON CONFLICT(queue,id) DO UPDATE SET name=EXCLUDED.name,state=EXCLUDED.state,priority=EXCLUDED.priority,available_at=EXCLUDED.available_at,timestamp=EXCLUDED.timestamp,finished_on=NULL,data=EXCLUDED.data`,
+      sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) SELECT ${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},clock.now + ${value.delay},clock.now,NULL,${JSON.stringify(value)}::jsonb || jsonb_build_object('timestamp',clock.now) FROM clock ON CONFLICT(queue,id) DO UPDATE SET name=EXCLUDED.name,state=EXCLUDED.state,priority=EXCLUDED.priority,available_at=EXCLUDED.available_at,timestamp=EXCLUDED.timestamp,enqueue_order=EXCLUDED.enqueue_order,finished_on=NULL,data=EXCLUDED.data`,
     );
     }, true);
     return job.id;
@@ -224,7 +250,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
           ${name ? sql`AND j.name=${name}` : sql``}
           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(j.data->'opts'->'waitFor','[]'::jsonb)) dependency
             WHERE NOT EXISTS (SELECT 1 FROM ${jobs} d WHERE d.queue=j.queue AND d.id=dependency AND d.state='completed'))
-        ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN -j.timestamp ELSE j.timestamp END ASC
+        ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN 0 ELSE 1 END ASC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN j.enqueue_order END DESC, j.enqueue_order ASC
         FOR UPDATE OF j SKIP LOCKED LIMIT 1
       ), claim AS MATERIALIZED (
         SELECT candidate.id,floor(extract(epoch from clock_timestamp())*1000)::bigint AS now FROM candidate

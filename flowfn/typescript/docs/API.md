@@ -838,7 +838,10 @@ absolute npm CLI JavaScript path. To use existing test services instead, set
 `FLOWFN_REDIS_URL` and `FLOWFN_POSTGRES_URL` when running the core test suite.
 Without these variables the native provider suites are explicitly skipped.
 
-PostgreSQL applications must call `adapter.initialize()` before use. Existing
+PostgreSQL applications must call `adapter.initialize()` before use. Intermediate
+queue tables missing `enqueue_order` require `adapter.migrateQueueOrderingSchema()`
+with all old/new writers stopped; see the queue ownership migration guide for
+transactional locking and unrecoverable historical tie-order limits. Existing
 legacy tables are rejected instead of silently discarding fields. Stop all
 workers and call `adapter.migrateLegacySchema()` to migrate; the migration keeps
 original tables with `_legacy_v0` suffixes. Legacy consumer groups replay retained

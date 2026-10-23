@@ -18,7 +18,9 @@ await flow.close();
 Both CommonJS and ESM entry points include declarations. Adapter entry points are
 `@flowfn/core/adapters/memory`, `/adapters/redis` and `/adapters/postgres`.
 The PostgreSQL adapter accepts an initialized Drizzle database and owns its
-namespaced tables; call its `initialize()` before use. Memory state is not durable.
+namespaced tables; call its `initialize()` before use. Existing queue tables without
+`enqueue_order` require the explicit quiesced ordering migration documented below.
+Memory state is not durable.
 
 See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic
 deduplication and at-least-once delivery; [retry strategies](docs/retry-strategies.md)

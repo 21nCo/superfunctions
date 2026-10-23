@@ -56,6 +56,68 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await pool.end();
     });
+    it.each([false, true])('preserves durable queue insertion order despite tied timestamps and heap updates (lifo=%s)', async lifo => {
+      for (const id of ['a', 'b', 'c']) await adapter.enqueue('ordered', new JobImpl('work', {}, { jobId: id, lifo }));
+      await pool.query(`UPDATE "${schema}".flowfn_jobs SET timestamp=1000,available_at=0`);
+      const first = (await adapter.getJob('ordered', 'a'))!;
+      first.progress = 25; await adapter.saveJob('ordered', first);
+      const reopenedPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const reopened = new PostgresAdapter({ db: drizzle(reopenedPool), schema });
+      await reopened.initialize();
+      try {
+        const ids = [];
+        for (let i = 0; i < 3; i++) ids.push((await reopened.dequeue('ordered'))!.id);
+        expect(ids).toEqual(lifo ? ['c', 'b', 'a'] : ['a', 'b', 'c']);
+      } finally { await reopened.cleanup(); await reopenedPool.end(); }
+    });
+    it('keeps SQL bigint ordering across priority, mixed modes, duplicate creation and reenqueue', async () => {
+      await pool.query(`SELECT setval('"${schema}".flowfn_jobs_enqueue_order_seq'::regclass,9007199254740992,true)`);
+      const peer = new PostgresAdapter({ db: drizzle(pool), schema });
+      const add = async (id: string, opts: { lifo?: boolean; priority?: number } = {}) => peer.createJob('mixed-order', new JobImpl('work', {}, { jobId: id, ...opts }));
+      try {
+        await add('fifo-first'); await add('lifo-first', { lifo: true }); await add('fifo-last');
+        await add('lifo-last', { lifo: true }); await add('priority', { priority: 10 });
+        const first = (await adapter.getJob('mixed-order', 'fifo-first'))!;
+        await adapter.saveJob('mixed-order', first);
+        await add('fifo-first');
+        await pool.query(`UPDATE "${schema}".flowfn_jobs SET timestamp=1000,available_at=0`);
+        const values = (await pool.query(`SELECT enqueue_order::text AS value FROM "${schema}".flowfn_jobs ORDER BY enqueue_order`)).rows.map(row => row.value);
+        expect(values).toEqual(['9007199254740993','9007199254740994','9007199254740995','9007199254740996','9007199254740997']);
+        const ids = [];
+        for (let i = 0; i < 5; i++) ids.push((await adapter.dequeue('mixed-order'))!.id);
+        expect(ids).toEqual(['priority','lifo-last','lifo-first','fifo-first','fifo-last']);
+        await adapter.enqueue('mixed-order', (await adapter.getJob('mixed-order', 'fifo-last'))!);
+        await peer.enqueue('mixed-order', (await adapter.getJob('mixed-order', 'fifo-first'))!);
+        expect((await peer.dequeue('mixed-order'))!.id).toBe('fifo-last');
+        expect((await peer.dequeue('mixed-order'))!.id).toBe('fifo-first');
+      } finally { await peer.cleanup(); }
+    });
+    it('requires explicit atomic ordering migration and preserves idempotence after rollback/reopen', async () => {
+      for (const id of ['z','a','m']) await adapter.enqueue('historical', new JobImpl('work', { id }, { jobId: id }));
+      await pool.query(`ALTER TABLE "${schema}".flowfn_jobs DROP COLUMN enqueue_order CASCADE; UPDATE "${schema}".flowfn_jobs SET timestamp=1000,available_at=0`);
+      const before = (await pool.query(`SELECT queue,id,data FROM "${schema}".flowfn_jobs ORDER BY id`)).rows;
+      await expect(adapter.initialize()).rejects.toThrow('migration required');
+      const db = drizzle(pool);
+      const failing = new PostgresAdapter({ schema, db: { execute: db.execute.bind(db), transaction: (callback: (tx: unknown) => Promise<void>) => db.transaction(async tx => { await callback(tx); throw new Error('forced migration rollback'); }) } });
+      await expect(failing.migrateQueueOrderingSchema()).rejects.toThrow('forced migration rollback');
+      await failing.cleanup();
+      expect((await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='flowfn_jobs' AND column_name='enqueue_order'`, [schema])).rows).toHaveLength(0);
+      expect((await pool.query(`SELECT queue,id,data FROM "${schema}".flowfn_jobs ORDER BY id`)).rows).toEqual(before);
+      const peer = new PostgresAdapter({ db: drizzle(pool), schema });
+      try {
+        await Promise.all([adapter.migrateQueueOrderingSchema(), peer.migrateQueueOrderingSchema()]);
+        await peer.initialize();
+        const order = (await pool.query(`SELECT id,enqueue_order::text FROM "${schema}".flowfn_jobs ORDER BY enqueue_order`)).rows;
+        expect(order.map(row => row.id)).toEqual(['a','m','z']);
+        await peer.migrateLegacySchema();
+        expect((await pool.query(`SELECT id,enqueue_order::text FROM "${schema}".flowfn_jobs ORDER BY enqueue_order`)).rows).toEqual(order);
+        expect((await pool.query(`SELECT queue,id,data FROM "${schema}".flowfn_jobs ORDER BY id`)).rows).toEqual(before);
+        await peer.enqueue('historical', new JobImpl('work', {}, { jobId: 'new' }));
+        const ids = [];
+        for (let i = 0; i < 4; i++) ids.push((await peer.dequeue('historical'))!.id);
+        expect(ids).toEqual(['a','m','z','new']);
+      } finally { await peer.cleanup(); }
+    });
     it("waits for an in-flight consumer transaction before cleanup returns", async () => {
       const db = drizzle(pool);
       let release!: () => void, began!: () => void;
