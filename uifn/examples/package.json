@@ -9,5 +9,11 @@
     "dev:solid": "npm run dev --workspace @uifn/example-solid-workbench",
     "build": "npm run build --workspace @uifn/examples-shared && npm run build --workspace @uifn/example-react-workbench && npm run build --workspace @uifn/example-svelte-workbench && npm run build --workspace @uifn/example-solid-workbench",
     "verify": "node ../../scripts/verify-uifn-examples.mjs"
+  },
+  "devDependencies": {
+    "@uifn/examples-shared": "*",
+    "@uifn/example-react-workbench": "*",
+    "@uifn/example-svelte-workbench": "*",
+    "@uifn/example-solid-workbench": "*"
   }
 }
