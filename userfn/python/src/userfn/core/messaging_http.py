@@ -1,4 +1,5 @@
 """Durable admission journal. Host owns the private state path and verified session."""
+import time
 import json
 import os
 import tempfile
@@ -78,9 +79,10 @@ class HttpMessaging:
             raise MessagingDeliveryError('Message request did not acknowledge admission') from error
         if not isinstance(value, dict) or value.get('campaignId') != campaign_id or type(value.get('allowed')) is not bool or type(value.get('shown')) is not bool:
             raise MessagingDeliveryError('Invalid messaging receipt')
+        if 'expiresAt' in value and (type(value['expiresAt']) is not int or not 0 <= value['expiresAt'] <= 8640000000000000): raise MessagingDeliveryError('Invalid reservation expiry')
         return value
 
-    def admit(self, campaign_id, user, allowed):
+    def admit(self, campaign_id, user, allowed, require_expiry=False):
         """Return admitted, denied, or handled; only explicit denial permits another candidate."""
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', campaign_id) or not user or len(user) > 200:
             raise MessagingDeliveryError('Invalid campaign identity')
@@ -97,10 +99,12 @@ class HttpMessaging:
         receipt = self.send(campaign_id, entry['key'], 'reserve')
         if not receipt['allowed'] or receipt['shown']:
             del journal[campaign_id]; self.save(journal); return 'handled' if receipt['allowed'] else 'denied'
-        if not allowed(): return 'handled'
+        if require_expiry and 'expiresAt' not in receipt: raise MessagingDeliveryError('Temporal campaigns require reservation expiry')
+        def current(): return allowed() and ('expiresAt' not in receipt or int(time.time() * 1000) < receipt['expiresAt'])
+        if not current(): return 'handled'
         entry['phase'] = 'presenting'; self.save(journal)
         # File persistence can release the GIL; identity/consent may change while saving.
-        return 'admitted' if allowed() else 'handled'
+        return 'admitted' if current() else 'handled'
 
     def confirm(self, campaign_id):
         with self.exclusive():

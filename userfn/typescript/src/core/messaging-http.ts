@@ -50,9 +50,11 @@ export class HttpMessaging {
     try { for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > 8192) throw new MessagingDeliveryError('Oversized messaging receipt'); text += decoder.decode(part.value, { stream: true }); } } finally { await reader.cancel().catch(() => {}); }
     const value: unknown = JSON.parse(text + decoder.decode());
     if (!value || typeof value !== 'object' || !('campaignId' in value) || value.campaignId !== id || !('allowed' in value) || typeof value.allowed !== 'boolean' || !('shown' in value) || typeof value.shown !== 'boolean') throw new MessagingDeliveryError('Invalid messaging receipt');
-    return { allowed: value.allowed, shown: value.shown };
+    const expiresAt = 'expiresAt' in value ? value.expiresAt : undefined;
+    if (expiresAt !== undefined && (typeof expiresAt !== 'number' || !Number.isSafeInteger(expiresAt) || expiresAt < 0 || expiresAt > 8640000000000000)) throw new MessagingDeliveryError('Invalid reservation expiry');
+    return { allowed: value.allowed, shown: value.shown, expiresAt: expiresAt as number | undefined };
   }
-  async present(id: string, user: string, allowed: () => boolean, render: () => boolean): Promise<'denied' | void> {
+  async present(id: string, user: string, allowed: () => boolean, render: () => boolean, requireExpiry = false): Promise<'denied' | void> {
     if (!/^[A-Za-z0-9_-]{1,100}$/.test(id) || !user || user.length > 200) throw new MessagingDeliveryError('Invalid campaign identity');
     const journal = this.read(); let entry = journal[id];
     if (entry && entry.user !== user) throw new MessagingDeliveryError('Messaging journal belongs to another user; use a distinct storageKey');
@@ -63,9 +65,11 @@ export class HttpMessaging {
     entry ??= { key: crypto.randomUUID(), phase: 'pending', user }; journal[id] = entry; this.save(journal);
     const receipt = await this.send(id, entry.key, 'reserve');
     if (!receipt.allowed || receipt.shown) { delete journal[id]; this.save(journal); return receipt.allowed ? undefined : 'denied'; }
-    if (!allowed()) return;
+    if (requireExpiry && receipt.expiresAt === undefined) throw new MessagingDeliveryError('Temporal campaigns require reservation expiry');
+    const current = () => allowed() && (receipt.expiresAt === undefined || Date.now() < receipt.expiresAt);
+    if (!current()) return;
     entry.phase = 'presenting'; this.save(journal); // Durable fence precedes the UI side effect.
-    if (!allowed() || !render()) return;
+    if (!current() || !render()) return;
     entry.phase = 'shown'; this.save(journal);
     await this.send(id, entry.key, 'shown'); delete journal[id]; this.save(journal);
   }

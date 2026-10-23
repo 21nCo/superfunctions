@@ -464,3 +464,14 @@ across reloads. See [the migration contract](../.conduct/durable-campaign-caps-r
 
 
 Messaging bearer requests require HTTPS by default. For an owned local HTTP test only, set `messaging.allowInsecureHttp: true`; never enable this for production credentials.
+
+Campaign metadata now accepts `schedule: { startAt?, endAt? }` in UTC epoch
+milliseconds and `cooldownMs`. Start is inclusive and end exclusive. Temporal
+campaigns require durable messaging; matching client metadata does not replace
+the service's trusted policy. Cooldown counts reservations per verified user and
+campaign across sessions, so lost acknowledgements or failed rendering never
+refund it. SDK receipt expiry is checked after the HTTP response and again after
+writing the presentation fence. A delayed `shown` acknowledgement still reconciles
+without redisplay. Keep client/server clocks synchronized: schedule enforcement
+covers admission and UI handoff, not cancellation of a visible message. Apply the
+new timing tables described in the service README before upgrading the service.

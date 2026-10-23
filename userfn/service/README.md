@@ -160,3 +160,44 @@ idempotency keys. Uncertain display consumes its reservation.
 
 See [the migration and delivery contract](../.conduct/durable-campaign-caps-readiness.md)
 for SDK configuration, persisted pending/shown states and operational limits.
+
+### Campaign schedules and cooldowns
+
+The trusted messaging policy additionally accepts
+`{ schedule: { startAt?, endAt? }, cooldownMs? }`. Schedule timestamps are UTC
+Unix epoch milliseconds, consistent with SDK delivery timestamps. Start is
+inclusive; end is exclusive. Omitted bounds are open. Values must be nonnegative
+integers within the JavaScript Date range, start must precede end, and zero
+cooldown is permitted. For example:
+
+```ts
+resolvePolicy: () => ({
+  enabled: true, perUser: 10, perSession: 2,
+  schedule: { startAt: Date.UTC(2026, 10, 1), endAt: Date.UTC(2026, 11, 1) },
+  cooldownMs: 24 * 60 * 60 * 1000,
+})
+```
+
+Cooldown is per verified tenant/user/campaign across sessions. It begins when a
+reservation commits, including reservations that never render or never confirm.
+Confirmation does not restart it, and failure/withdrawal does not refund it.
+Time comes from the service wall clock; all instances need synchronized trusted
+clocks. Backward time relative to the last reservation fails closed.
+
+Apply the added `userfn_message_timing` and `userfn_message_receipt_timing` tables
+from `getUserFnSchema()` before using this version, even when temporal policies
+are omitted. Every admitted reservation records timing to support later policy
+changes. Existing lifetime counters and receipts remain intact. Where historical
+counters lack timing, enabling cooldown starts a conservative full interval on
+the first request and denies that request. A legacy receipt without timing cannot
+re-authorize a temporal campaign. Do not delete timing state to reset quotas.
+
+Admission responses include `expiresAt`. Replay preserves the original end bound
+and checks the current schedule; extending a campaign cannot revive an expired
+reservation. Disabled or expired schedules deny render re-admission, while
+`shown` still reconciles a prior side effect after campaign end or retirement.
+A denied idempotency key remains denied: a later trigger uses a fresh key.
+SDKs check expiry immediately before presentation/handoff. Their clocks must be
+synchronized too; this is an admission and handoff policy, not remote cancellation
+of already displayed UI. Offline delivery, dismissal policy, campaign CRUD,
+bootstrap and survey per-time-window caps remain separate unfinished scope.

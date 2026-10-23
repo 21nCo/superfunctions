@@ -180,6 +180,8 @@ export interface CampaignTrigger {
   pattern?: string; // glob or regex for url, event name for event
 }
 
+/** UTC epoch milliseconds; start is inclusive and end is exclusive. */
+export interface CampaignSchedule { startAt?: number; endAt?: number; }
 export interface Campaign {
   id: string;
   kind: MessageKind;
@@ -187,6 +189,9 @@ export interface Campaign {
   segmentId?: string; // Audience
   triggers: CampaignTrigger[];
   priority?: number;
+  schedule?: CampaignSchedule;
+  /** Minimum milliseconds between durable user/campaign reservations. */
+  cooldownMs?: number;
   caps?: {
     global?: number; // Maximum shown count in this engine; zero blocks, omission is uncapped
     session?: number; // Max times per verified session

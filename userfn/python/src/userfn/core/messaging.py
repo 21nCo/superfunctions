@@ -18,6 +18,12 @@ class MessagingEngine:
         self.segments = segment_evaluator
 
     def set_campaigns(self, campaigns: List[Campaign]):
+        def valid(value): return type(value) is int and 0 <= value <= 8640000000000000
+        for campaign in campaigns:
+            if campaign.cooldown_ms is not None and not valid(campaign.cooldown_ms): raise ValueError('Invalid campaign cooldown')
+            if campaign.schedule is not None:
+                schedule = campaign.schedule
+                if ((schedule.start_at is not None and not valid(schedule.start_at)) or (schedule.end_at is not None and not valid(schedule.end_at)) or (schedule.start_at or 0) >= (schedule.end_at if schedule.end_at is not None else 8640000000000000)): raise ValueError('Invalid campaign schedule')
         self.campaigns = {c.id: c for c in campaigns}
 
     def get_eligible_messages(
@@ -34,6 +40,9 @@ class MessagingEngine:
         for campaign in self.campaigns.values():
             if not campaign.enabled:
                 continue
+            if not authoritative and campaign.schedule:
+                now = int(time.time() * 1000)
+                if now < (campaign.schedule.start_at or 0) or now >= (campaign.schedule.end_at if campaign.schedule.end_at is not None else 8640000000000000): continue
 
             # 1. Check Triggers
             matches_trigger = False

@@ -11,6 +11,12 @@ export class MessagingEngine {
   }
 
   setCampaigns(campaigns: Campaign[]) {
+    for (const campaign of campaigns) {
+      const time = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 8640000000000000;
+      const schedule = campaign.schedule;
+      if (schedule !== undefined && (!schedule || typeof schedule !== 'object' || Array.isArray(schedule) || Object.keys(schedule).some(key => !['startAt', 'endAt'].includes(key)) || (schedule.startAt !== undefined && !time(schedule.startAt)) || (schedule.endAt !== undefined && !time(schedule.endAt)) || (schedule.startAt ?? 0) >= (schedule.endAt ?? 8640000000000000))) throw new TypeError('Invalid campaign schedule');
+      if (campaign.cooldownMs !== undefined && !time(campaign.cooldownMs)) throw new TypeError('Invalid campaign cooldown');
+    }
     this.campaigns.clear();
     campaigns.forEach(c => this.campaigns.set(c.id, c));
   }
@@ -28,6 +34,7 @@ export class MessagingEngine {
 
     for (const campaign of this.campaigns.values()) {
       if (!campaign.enabled) continue;
+      if (!authoritative && campaign.schedule && (Date.now() < (campaign.schedule.startAt ?? 0) || Date.now() >= (campaign.schedule.endAt ?? 8640000000000000))) continue;
 
       // 1. Check Triggers
       const matchesTrigger = campaign.triggers.some(t => {

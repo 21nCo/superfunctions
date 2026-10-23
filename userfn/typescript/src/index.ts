@@ -105,7 +105,7 @@ export class UserFnClient {
     const campaigns = this.messaging.getEligibleMessages(type, context, user, !!this.durableMessaging);
     for (const topCampaign of campaigns) {
       if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
-      if (!this.durableMessaging && topCampaign.caps && Object.values(topCampaign.caps).some(cap => cap !== undefined)) throw new MessagingDeliveryError('Capped campaigns require durable messaging configuration');
+      if (!this.durableMessaging && (topCampaign.schedule !== undefined || topCampaign.cooldownMs !== undefined || (topCampaign.caps && Object.values(topCampaign.caps).some(cap => cap !== undefined)))) throw new MessagingDeliveryError('Capped campaigns require durable messaging configuration');
       const render = () => {
         this.renderer?.render(
           topCampaign,
@@ -123,7 +123,7 @@ export class UserFnClient {
       };
       if (this.durableMessaging) {
         const identity = user!.id;
-        const outcome = await this.durableMessaging.present(topCampaign.id, identity, () => this.syncConsent().messaging && this.identity.getUser()?.id === identity && epoch === this.messagingEpoch, render);
+        const outcome = await this.durableMessaging.present(topCampaign.id, identity, () => this.syncConsent().messaging && this.identity.getUser()?.id === identity && epoch === this.messagingEpoch, render, topCampaign.schedule !== undefined || topCampaign.cooldownMs !== undefined);
         if (outcome === 'denied') continue;
       } else render();
       return; // Prioritize messaging over surveys? Or show both? prioritizing for now.

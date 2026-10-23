@@ -85,7 +85,7 @@ class UserFnClient:
         campaigns = self.messaging.get_eligible_messages(trigger_type, context, user, bool(self.durable_messaging))
         if not campaigns: return []
         if not self.durable_messaging:
-            if any(c.caps and any(value is not None for value in vars(c.caps).values()) for c in campaigns):
+            if any(c.schedule is not None or c.cooldown_ms is not None or (c.caps and any(value is not None for value in vars(c.caps).values())) for c in campaigns):
                 raise MessagingDeliveryError('Capped campaigns require durable messaging configuration')
             return campaigns
         if user is None: return []
@@ -95,7 +95,7 @@ class UserFnClient:
             allowed = lambda: self.consent.state()['messaging'] and self._messaging_epoch == epoch and self.identity.get_user() == user
             for campaign in campaigns:
                 if not allowed(): return []
-                outcome = self.durable_messaging.admit(campaign.id, user.id, allowed)
+                outcome = self.durable_messaging.admit(campaign.id, user.id, allowed, campaign.schedule is not None or campaign.cooldown_ms is not None)
                 if outcome == 'admitted': return [campaign]
                 if outcome != 'denied': return []
             return []

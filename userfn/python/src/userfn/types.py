@@ -176,6 +176,12 @@ class CampaignCaps:
     per_user: Optional[int] = None
 
 @dataclass
+class CampaignSchedule:
+    """UTC epoch milliseconds; inclusive start, exclusive end."""
+    start_at: Optional[int] = None
+    end_at: Optional[int] = None
+
+@dataclass
 class Campaign:
     id: str
     kind: MessageKind
@@ -185,6 +191,8 @@ class Campaign:
     segment_id: Optional[str] = None
     priority: Optional[int] = None
     caps: Optional[CampaignCaps] = None
+    schedule: Optional[CampaignSchedule] = None
+    cooldown_ms: Optional[int] = None
 
 QuestionType = Literal['nps', 'csat', 'text', 'choice']
 

@@ -107,3 +107,9 @@ and19.3.1 plus compiled Svelte, strict declarations, identity changes and signed
 refresh. Existing sparse node_modules remain distinct from the new root React19
 lock graph; the fresh consumer matrix supplies runtime compatibility evidence.
 Receipts: `/tmp/user-merge-*.log`. Original feature/deployment gaps remain open.
+
+
+The later [campaign timing checkpoint](./campaign-timing-readiness.md) adds
+authoritative campaign start/end schedules and reservation-based cooldowns.
+The earlier time-policy exclusion describes the original cap checkpoint; survey
+per-time-window caps remain a separate original requirement.

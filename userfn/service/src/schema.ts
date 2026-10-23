@@ -16,6 +16,17 @@ export function getUserFnSchema(): TableSchemaMap {
       shown: { type: 'boolean', required: true },
       reason: { type: 'string', required: true, maxLength: 16 },
     },
+  }, userfn_message_timing: {
+    modelName: 'userfn_message_timing', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      lastReservedAt: { type: 'number', required: true },
+    },
+  }, userfn_message_receipt_timing: {
+    modelName: 'userfn_message_receipt_timing', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      reservedAt: { type: 'number', required: true },
+      expiresAt: { type: 'number', required: true },
+    },
   }, userfn_flag_config: {
     modelName: 'userfn_flag_config',
     fields: {

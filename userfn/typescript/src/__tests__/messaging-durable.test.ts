@@ -89,3 +89,26 @@ it('requires HTTPS unless messaging explicitly opts into insecure local HTTP', (
   expect(() => new HttpMessaging({ ...options, endpoint: 'https://user.example' })).not.toThrow();
   expect(send).not.toHaveBeenCalled();
 });
+it('requires durable service for temporal campaigns and validates temporal metadata',async()=>{
+  const local=new UserFnClient({apiKey:'unused'});local.identify('local');
+  const campaign={id:'campaign',kind:'modal' as const,enabled:true,content:{body:'temporal'},triggers:[{type:'event' as const}],cooldownMs:100};
+  local.setCampaigns([campaign]);await expect(local.trigger('event','show')).rejects.toThrow('durable messaging');
+  for(const cooldownMs of [-1,NaN,1.5])expect(()=>local.setCampaigns([{...campaign,cooldownMs}])).toThrow('cooldown');
+  expect(()=>local.setCampaigns([{...campaign,schedule:{startAt:10,endAt:10}}])).toThrow('schedule');
+});
+it('fences expired admission both after response and after the presentation journal write',async()=>{
+  for(const duringSave of [false,true]){
+    const shared=storage();let expired=!duringSave;
+    const options={apiKey:'verified',endpoint:'https://user.example',messaging:{storageKey:'session',storage:{getItem:shared.getItem,setItem:(key:string,value:string)=>{shared.setItem(key,value);if(value.includes('presenting'))expired=true;}}}};
+    const clock=vi.spyOn(Date,'now').mockImplementation(()=>expired?2000:1000);
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({campaignId:'campaign',allowed:true,shown:false,expiresAt:2000}))));
+    const render=vi.fn(()=>true);
+    try{await new HttpMessaging(options).present('campaign','local',()=>true,render,true);expect(render).not.toHaveBeenCalled();}finally{clock.mockRestore();}
+  }
+});
+it('requires expiry for temporal campaigns while leaving pending receipt recoverable',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>receipt()));
+  const client=new HttpMessaging({apiKey:'verified',endpoint:'https://user.example',messaging:{storageKey:'session',storage:storage()}});
+  await expect(client.present('campaign','local',()=>true,()=>true,true)).rejects.toThrow('reservation expiry');
+  expect(client.status()).toEqual({campaign:'pending'});
+});

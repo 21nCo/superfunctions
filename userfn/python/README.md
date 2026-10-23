@@ -395,3 +395,15 @@ Service-owned `perUser`/`perSession` policy is authoritative; SDK metadata uses
 
 
 Messaging bearer requests require HTTPS by default. For an owned local HTTP test only, set `messaging_allow_insecure_http=True`; never enable this for production credentials.
+
+Campaigns accept `CampaignSchedule(start_at=..., end_at=...)` from `userfn.types`
+and `cooldown_ms`. Timestamps are UTC epoch milliseconds; start is inclusive and
+end exclusive. Temporal campaigns require `messaging_state_path` and an
+appropriately configured service policy. The service consumes cooldown at durable
+reservation, not at `confirm_message_shown`; failed or unknown presentation does
+not refund it. The SDK checks receipt expiry before handing a campaign to the
+host, including after its journal fsync. Keep clocks synchronized and present the
+returned campaign promptly: the SDK cannot cancel arbitrary delayed host UI.
+Late confirmation reconciles an existing presentation without consuming cooldown
+again. The service README documents the two required timing tables and the
+conservative migration for older counters without timestamps.

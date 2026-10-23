@@ -23,10 +23,11 @@ try {
     for (const [name, field] of Object.entries(table.fields)) migration = migration.addColumn(name, ['number','boolean'].includes(field.type) ? 'integer' : 'text', column => name === 'id' ? column.primaryKey() : column.notNull());
     await migration.execute();
   }
+  const campaignEnd = Date.now() + 120000;
   const service = createUserFnService({ database: adapter, auth: { async authenticate(request) {
     const actorId = request.headers.get('authorization')?.replace('Bearer ', '');
     return actorId ? { id: actorId, type: 'session', subject: { actorType: 'user', actorId, tenantId: 'tenant' }, scopes: ['userfn:messages:write'] } : null;
-  } }, messaging: { resolvePolicy: () => ({ enabled: true, perUser: 1, perSession: 1 }), resolveSession: () => 'verified-app-session' } });
+  } }, messaging: { resolvePolicy: (_session, campaignId) => campaignId === 'temporal' ? ({enabled:true,cooldownMs:60000,schedule:{endAt:campaignEnd}}) : ({ enabled: true, perUser: 1, perSession: 1 }), resolveSession: () => 'verified-app-session' } });
   execFileSync(join(root, 'node_modules/.bin/esbuild'), [join(root, 'userfn/typescript/dist/index.js'), '--bundle', '--format=esm', '--platform=browser', '--outfile=' + join(directory, 'sdk.js')], { stdio: 'pipe' });
   const bundle = await readFile(join(directory, 'sdk.js'));
   let dropped = false;
@@ -49,11 +50,11 @@ try {
   const origin = 'http://127.0.0.1:' + server.address().port;
   browser = await chromium.launch({ headless: true, executablePath: process.env.USERFN_CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
   const page = await browser.newPage(); await page.goto(origin);
-  const setup = () => page.evaluate(async () => {
+  const setup = (campaignId = 'campaign') => page.evaluate(async campaignId => {
     const { UserFnClient } = await import('/sdk.js');
     globalThis.client = new UserFnClient({ apiKey: 'browser', endpoint: location.origin, messaging: { storageKey: 'verified-browser-session', allowInsecureHttp: true } });
-    client.identify('local-browser'); client.setCampaigns([{ id: 'campaign', kind: 'modal', enabled: true, content: { title: 'Once', body: 'Persisted admission' }, triggers: [{ type: 'event', pattern: 'show' }], caps: { perUser: 1, session: 1 } }]);
-  });
+    client.identify('local-browser'); client.setCampaigns([{ id: campaignId, kind: 'modal', enabled: true, content: { title: 'Once', body: 'Persisted admission' }, triggers: [{ type: 'event', pattern: 'show' }], ...(campaignId === 'temporal' ? {cooldownMs:60000} : {caps: { perUser: 1, session: 1 }}) }]);
+  }, campaignId);
   await setup();
   assert.equal(await page.evaluate(async () => { try { await client.trigger('event', 'show'); return 'unexpected'; } catch { return client.getMessageDeliveryStatus().campaign; } }), 'pending');
   assert.equal(await page.locator('.userfn-modal').count(), 0);
@@ -62,10 +63,14 @@ try {
   assert.equal(reserveKeys[0], reserveKeys[1], 'Reload replays the persisted reservation key');
   await page.reload(); await setup(); await page.evaluate(() => client.trigger('event', 'show'));
   assert.equal(await page.locator('.userfn-modal').count(), 0, 'New instance remains capped');
-  const python = `from userfn.client import UserFnClient\nfrom userfn.types import UserFnOptions, Campaign, CampaignTrigger, MessageContent, CampaignCaps\nimport sys\no=UserFnOptions('python',endpoint=sys.argv[1],messaging_state_path=sys.argv[2],messaging_allow_insecure_http=True)\ndef make():\n c=UserFnClient(o); c.identify('local-python'); c.set_campaigns([Campaign(id='campaign',kind='modal',content=MessageContent(body='once'),triggers=[CampaignTrigger(type='event',pattern='show')],enabled=True,caps=CampaignCaps(per_user=1,session_cap=1))]); return c\nc=make(); assert len(c.trigger('event','show'))==1\nassert make().trigger('event','show')==[]\nc.confirm_message_shown('campaign')\nassert make().trigger('event','show')==[]\nprint('Python persisted admission passed')\n`;
+  await setup('temporal'); await page.evaluate(() => client.trigger('event','show'));
+  assert.equal(await page.locator('.userfn-modal').count(),1);
+  await page.reload(); await setup('temporal'); await page.evaluate(() => client.trigger('event','show'));
+  assert.equal(await page.locator('.userfn-modal').count(),0,'Cooldown survives reload after shown confirmation');
+  const python = `from userfn.client import UserFnClient\nfrom userfn.types import UserFnOptions, Campaign, CampaignTrigger, MessageContent, CampaignCaps\nimport sys\no=UserFnOptions('python',endpoint=sys.argv[1],messaging_state_path=sys.argv[2],messaging_allow_insecure_http=True)\ndef make():\n c=UserFnClient(o); c.identify('local-python'); c.set_campaigns([Campaign(id='campaign',kind='modal',content=MessageContent(body='once'),triggers=[CampaignTrigger(type='event',pattern='show')],enabled=True,caps=CampaignCaps(per_user=1,session_cap=1))]); return c\nc=make(); assert len(c.trigger('event','show'))==1\nassert make().trigger('event','show')==[]\nc.confirm_message_shown('campaign')\nassert make().trigger('event','show')==[]\nc=make(); c.set_campaigns([Campaign(id='temporal',kind='modal',content=MessageContent(body='timed'),triggers=[CampaignTrigger(type='event')],enabled=True,cooldown_ms=60000)]); assert len(c.trigger('event','show'))==1; c.confirm_message_shown('temporal'); c=make(); c.set_campaigns([Campaign(id='temporal',kind='modal',content=MessageContent(body='timed'),triggers=[CampaignTrigger(type='event')],enabled=True,cooldown_ms=60000)]); assert c.trigger('event','show')==[]\nprint('Python persisted admission passed')\n`;
   const result = await promisify(execFile)('uv', ['run', '--isolated', '--no-project', '--python', '3.10', 'python', '-c', python, origin, join(directory,'python','journal.json')], { env: { ...process.env, PYTHONPATH: join(root,'userfn/python/src') }, timeout: 20000 });
   assert.ok(result.stdout.includes('Python persisted admission passed'));
-  console.log(JSON.stringify({ passed: true, browserReloadStableReplay: true, nativeSQLite: true, pythonRestartReconciliation: true }));
+  console.log(JSON.stringify({ passed: true, browserReloadStableReplay: true, nativeSQLite: true, pythonRestartReconciliation: true, browserAndPythonCooldownAfterConfirmation: true }));
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
