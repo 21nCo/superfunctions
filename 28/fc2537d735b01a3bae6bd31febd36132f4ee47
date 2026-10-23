@@ -1,0 +1,37 @@
+cifn/.conduct/live-log-readiness.md
+  s_e1c5fc1a65c0cf::t_3c87cc6cfabaac 1-22
+cifn/.conduct/remote-log-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_06bb32ed9855b8 11,19
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_fd41929a644f53 169-191
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_941438f3e01679 6,95-122,131
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_c5bd47dd599b1d 10,20-27,65-67,87-88,90-94,96
+cifn/typescript/runner/src/executor/run-step.ts
+  s_e1c5fc1a65c0cf::t_8aecfd39d75a66 9-10
+cifn/typescript/runner/src/log-spool.test.ts
+  s_e1c5fc1a65c0cf::t_666be30a9f072c 2,78-130
+cifn/typescript/runner/src/log-spool.ts
+  s_e1c5fc1a65c0cf::t_8ada8dafe34f17 66,85
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_880fa4afc883e9 14,26,131-140,142-153
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_b5714fd8aed879 26,530,532,578,589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28fc2537d735b01a3bae6bd31febd36132f4ee47",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
