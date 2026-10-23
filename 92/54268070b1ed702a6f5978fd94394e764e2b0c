@@ -1,0 +1,35 @@
+cachefn/.conduct/python-ci-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_20184e32b71cd9 1-70
+cachefn/python/cachefn/memoization/memoize.py
+  s_e1c5fc1a65c0cf::t_a7c352a51b6972 9,16-17,133,138,162,166,218,252,271
+cachefn/python/examples/basic_usage.py
+  s_e1c5fc1a65c0cf::t_1c7d298a7600e7 6
+cachefn/python/examples/memoization.py
+  s_e1c5fc1a65c0cf::t_08d203572f2b15 7,92-93
+cachefn/python/examples/patterns.py
+  s_e1c5fc1a65c0cf::t_011b864bb17151 7,17,24,30,37,60,85,91,113,119,141,188,194
+cachefn/python/tests/test_cache.py
+  s_e1c5fc1a65c0cf::t_e218a286121ac6 158
+cachefn/python/tests/test_eager_tasks.py
+  s_e1c5fc1a65c0cf::t_3d78b483e4775c 9,11-12,14,17,31,33,36,40,51,53,56
+cachefn/python/tests/test_memoize_sync_expiry.py
+  s_e1c5fc1a65c0cf::t_628c16fff1a6c7 6-7,17,24,29-30,34-39,42,46,58,60,71,75,91,95,108,125,129,144,148,162,164
+cachefn/python/tests/test_readiness.py
+  s_e1c5fc1a65c0cf::t_b6ba0c7f9b05c7 6,10,22,33,44,49,71,75,96,99,107,116,137,147,151,164,174,180,186,198,200,204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9254268070b1ed702a6f5978fd94394e764e2b0c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
