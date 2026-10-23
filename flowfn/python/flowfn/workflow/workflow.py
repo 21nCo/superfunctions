@@ -171,13 +171,14 @@ class Workflow:
 
     async def _renew(self, execution: WorkflowExecution) -> None:
         duration = self.lease_ms / 1000
-        delay = duration / 3
         deadline = self._lease_deadlines[execution.id]
+        # Claim reply latency already consumed part of the renewal interval.
+        renew_at = deadline - 2 * duration / 3
         while execution.status == ExecutionStatus.RUNNING:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            await asyncio.sleep(min(delay,remaining))
+            await asyncio.sleep(max(0, min(renew_at - time.monotonic(), remaining)))
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -186,13 +187,13 @@ class Workflow:
                 renewed = await asyncio.wait_for(self._adapter.transition_workflow_state(
                     execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms}),remaining)
             except Exception:
-                delay = min(.05,duration / 6)
+                renew_at = time.monotonic() + min(.05, duration / 6)
                 continue
-            if renewed is None:
+            if renewed is None or time.monotonic() >= deadline:
                 break
             deadline = requested + duration
             self._lease_deadlines[execution.id] = deadline
-            delay = duration / 3
+            renew_at = requested + duration / 3
         if execution.status == ExecutionStatus.RUNNING:
             self._lease_lost.add(execution.id)
             task = self._tasks.get(execution.id)

@@ -193,6 +193,10 @@ class DurableQueues(ABC):
                     started = time.monotonic()
                     try:
                         await asyncio.wait_for(self._transition('_renew_job',queue,job),remaining)
+                        # wait_for can return late if its awaitable suppresses cancellation.
+                        if time.monotonic() >= deadline:
+                            lost.set()
+                            return
                         # Starting the bound before the request is conservative:
                         # its server-side lease cannot begin before this instant.
                         deadline = started+self.reclaim_after_ms/1000

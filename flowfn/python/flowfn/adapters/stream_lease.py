@@ -13,12 +13,13 @@ async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[]
 
     async def monitor() -> None:
         deadline = started + duration
-        delay = duration / 3
+        # Claim reply latency already consumed part of the renewal interval.
+        renew_at = started + duration / 3
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError('Stream delivery lease expired')
-            await asyncio.sleep(min(delay, remaining))
+            await asyncio.sleep(max(0, min(renew_at - time.monotonic(), remaining)))
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError('Stream delivery lease expired')
@@ -26,12 +27,14 @@ async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[]
             try:
                 owned = await asyncio.wait_for(renew(), remaining)
             except Exception:
-                delay = min(.05, duration / 6)
+                renew_at = time.monotonic() + min(.05, duration / 6)
                 continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Stream delivery lease expired')
             if not owned:
                 raise RuntimeError('Stream delivery ownership changed')
             deadline = requested + duration
-            delay = duration / 3
+            renew_at = requested + duration / 3
 
     async def execute() -> None:
         await work()

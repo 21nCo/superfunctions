@@ -34,7 +34,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private dlq?: MemoryDLQManager;
   private limiter?: RateLimiter;
   private cache = new Map<string, { value: any; expires: number }>();
-  private leases = new Map<string, { token: string; timer: ReturnType<typeof setInterval>; lost: boolean; controller?: AbortController }>();
+  private leases = new Map<string, { token: string; timer: ReturnType<typeof setTimeout> | undefined; lost: boolean; controller?: AbortController }>();
   private recoveredAt = 0;
   constructor(
     public name: string,
@@ -78,32 +78,59 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   }
   private releaseLease(job: Job) {
     const guard = this.leases.get(job.id);
-    if (guard && guard.token === job.lease?.token) { clearInterval(guard.timer); this.leases.delete(job.id); }
+    if (guard && guard.token === job.lease?.token) { clearTimeout(guard.timer); this.leases.delete(job.id); }
   }
   private guardLease(job: Job, claimedAt: number) {
     if (!job.lease || !this.adapter.renewJobLease) throw new Error("Adapter must support job leases");
     const duration = this.options.leaseDuration ?? 30_000;
+    const interval = this.options.leaseRenewInterval ?? Math.max(1, Math.floor(duration / 3));
     let pending = false;
     let validUntil = claimedAt + duration;
-    const guard = { token: job.lease.token, lost: performance.now() >= validUntil, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
-      if (guard.lost) return;
-      if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); return; }
-      if (pending) return;
-      pending = true;
+    let renewAt = claimedAt + interval;
+    const guard = { token: job.lease.token, lost: performance.now() >= validUntil,
+      controller: undefined as AbortController | undefined,
+      timer: undefined as ReturnType<typeof setTimeout> | undefined };
+    const current = () => this.leases.get(job.id) === guard;
+    const lose = () => { guard.lost = true; guard.controller?.abort(); clearTimeout(guard.timer); };
+    const schedule = (at: number) => {
+      if (guard.lost || !current()) return;
+      clearTimeout(guard.timer);
+      guard.timer = setTimeout(tick, Math.min(2147483647, Math.max(0, at - performance.now())));
+    };
+    const renew = async () => {
       const started = performance.now();
       try {
-        if (!await this.adapter.renewJobLease!(this.name, job.id, job.lease!.token, duration)) {
-          guard.lost = true; guard.controller?.abort();
-        } else validUntil = started + duration;
+        const owned = await this.adapter.renewJobLease!(this.name, job.id, guard.token, duration);
+        if (!current()) return;
+        // A successful late reply cannot revive ownership lost while it was pending.
+        if (guard.lost || performance.now() >= validUntil || !owned) { lose(); return; }
+        validUntil = started + duration;
+        renewAt = started + interval;
       } catch {
-        if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); }
+        if (!current()) return;
+        if (performance.now() >= validUntil) lose();
+        else renewAt = started + interval;
+      } finally {
+        pending = false;
+        schedule(Math.min(renewAt, validUntil));
       }
-      finally { pending = false; }
-    }, Math.min(2147483647, this.options.leaseRenewInterval ?? Math.max(1, Math.floor(duration / 3)))) };
+    };
+    const tick = () => {
+      if (guard.lost || !current()) return;
+      if (performance.now() >= validUntil) { lose(); return; }
+      if (pending) { schedule(validUntil); return; }
+      if (performance.now() < renewAt) { schedule(Math.min(renewAt, validUntil)); return; }
+      pending = true;
+      // Keep expiry observable even if the provider never settles its request.
+      schedule(validUntil);
+      void renew();
+    };
     const previous = this.leases.get(job.id);
-    if (previous) { previous.lost = true; previous.controller?.abort(); clearInterval(previous.timer); }
+    if (previous) { previous.lost = true; previous.controller?.abort(); clearTimeout(previous.timer); }
     this.leases.set(job.id, guard);
+    schedule(Math.min(renewAt, validUntil));
   }
+
   private open() {
     if (this.closed) throw new Error("Queue is closed");
   }
@@ -586,7 +613,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     for (const controller of this.controllers) controller.abort();
     this.wake();
     const abandon = () => {
-      for (const guard of this.leases.values()) { guard.lost = true; guard.controller?.abort(); clearInterval(guard.timer); }
+      for (const guard of this.leases.values()) { guard.lost = true; guard.controller?.abort(); clearTimeout(guard.timer); }
       this.leases.clear();
       this.workers.clear();
       this.cache.clear();

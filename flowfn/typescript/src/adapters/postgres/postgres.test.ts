@@ -1,3 +1,4 @@
+import { queueReplyLeaseContract, queueExpiredReplyContract, queueReleasedReplyContract } from '../../storage/queue-reply-lease-contract.js';
 import { queueClockContract } from '../../storage/queue-clock-contract.js';
 import { workflowCancelContract } from '../../storage/workflow-cancel-contract.js';
 import { streamFilterContract } from '../../storage/stream-filter-contract.js';
@@ -121,6 +122,9 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       expect((await adapter.getJob("leases", stale.id))!.returnvalue).toBe("current");
       await expect(adapter.saveJob("leases", stale)).rejects.toThrow("lease lost");
     });
+    it('does not restart native renewal after completed jobs release their lease', async () => { await queueReleasedReplyContract(adapter); });
+    it('fences expired native renewal replies without reviving handlers', async () => { await queueExpiredReplyContract(adapter); });
+    it('retains ownership across delayed native claim and renewal replies', async () => { await queueReplyLeaseContract(adapter); });
     it("renews running jobs and terminally fails repeated stalled claims", async () => {
       const queue = new QueueImpl("renewed", adapter, { leaseDuration: 1000, stalledInterval: 20 });
       try {

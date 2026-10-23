@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Callable, cast
 
 import pytest
@@ -133,16 +134,25 @@ async def test_delayed_native_replies_renew_from_request_start(
     assert a.reclaim_after_ms == b.reclaim_after_ms == 1000
     original = a._transition
     renewals = 0
+    origin = time.monotonic()
+    timings: list[tuple[str, str, float]] = []
 
     async def delayed(method: str, *args: Any) -> Any:
         nonlocal renewals
-        result = await original(method, *args)
-        if method in ('dequeue', '_renew_job'):
-            # Real storage transitions; delay only delivery of their replies.
-            await asyncio.sleep(.45)
-            if method == '_renew_job':
-                renewals += 1
-        return result
+        timings.append((method, 'request', (time.monotonic() - origin) * 1000))
+        try:
+            result = await original(method, *args)
+            timings.append((method, 'storage_reply', (time.monotonic() - origin) * 1000))
+            if method in ('dequeue', '_renew_job'):
+                # Real storage transitions; delay only delivery of their replies.
+                await asyncio.sleep(.45)
+                if method == '_renew_job':
+                    renewals += 1
+            timings.append((method, 'delivered', (time.monotonic() - origin) * 1000))
+            return result
+        except BaseException as error:
+            timings.append((method, type(error).__name__, (time.monotonic() - origin) * 1000))
+            raise
 
     monkeypatch.setattr(a, '_transition', delayed)
     await a.enqueue('reply-delay', Job(id='held', name='held', data={}, timestamp=0))
@@ -151,8 +161,8 @@ async def test_delayed_native_replies_renew_from_request_start(
     lost = a.lease_loss_event('reply-delay', claimed)
     assert lost is not None
     await asyncio.sleep(1.6)
-    assert not lost.is_set()
-    assert renewals >= 2
+    assert not lost.is_set(), json.dumps(timings)
+    assert renewals >= 2, json.dumps(timings)
     assert await b.dequeue('reply-delay') is None
     claimed.state = JobStatus.COMPLETED
     await a.update_job('reply-delay', claimed)
