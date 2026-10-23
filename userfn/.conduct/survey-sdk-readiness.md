@@ -51,3 +51,23 @@ Receipts: /tmp/user-survey-sdk-{tests,native,types-final,build}.log,
 fixtures clean up in finally. Owned /tmp/user-surveys-python and
 /tmp/user-surveys-wheel environments remain for dependency followup validation.
 No push, base merge, deployment, release or external provider send in this slice.
+
+## Final dependency validation
+
+The UUID dependency is now11.1.1-compatible, preserving its explicit browser and
+Node ESM/CJS exports. This removes the installed advisory without claiming that
+the prior v4 usage exercised its affected buffer APIs. Normal npm11 workspace
+install and scoped lock regeneration pass. SDK229tests, types and build pass; a
+new test hook initially returned VitestUtils instead ofvoid and was corrected.
+Fresh7-tarball ESM/CJS/Python-wheel HTTP acceptance repeats successfully and its
+production audit is now zero. The earlier three entries are superseded.
+
+Actual installed Chrome154 runs the built browser SDK through real signed config
+and WatchFn HTTP/SQLite exposure persistence, retries, queue bounds and database
+reopen successfully (21persisted events). Explicit existing Playwright and WatchFn
+built-module paths were supplied from their readiness worktrees; an initial
+defaultpath invocation failed before work because local WatchFn dist was absent.
+This validates the UUID browser path, not automatic survey-renderer transport.
+Receipts /tmp/user-uuid-{install,tests,types-final,build,packed,browser-final}.log.
+Python3.11 is the newly verified SDK/wheel version; the broader supported Python
+version matrix remains a readiness gate. No release/deployment occurred.

@@ -3,7 +3,7 @@ import { UserFnClient, SurveyDeliveryError } from '../index';
 const receipt = { id: 'a'.repeat(64), surveyId: 's', submittedAt: 123, accepted: true };
 const answers = [{ questionId: 'q', value: 5 }];
 const make = (extra = {}) => new UserFnClient({ apiKey: 'credential', endpoint: 'https://service.example', surveyMaxAttempts: 1, ...extra });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); });
 it('retries the serialized payload/key and never forwards local identity or timestamp', async () => {
   const calls: RequestInit[] = [];
   vi.stubGlobal('fetch', vi.fn(async (_url, init) => { calls.push(init); if (calls.length === 1) throw new TypeError('lost response'); return new Response(JSON.stringify(receipt)); }));
