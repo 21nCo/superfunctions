@@ -1,0 +1,29 @@
+flowfn/.conduct/postgres-claim-index-measurements-20261023.json
+  s_e1c5fc1a65c0cf::t_40e786a126b47d 1-2543
+flowfn/.conduct/postgres-claim-index-readiness.md
+  s_e1c5fc1a65c0cf::t_5f250d4be47691 1-120
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_eb4a41b3b19837 23-31
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_1377ca1a12ee49 66
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_38bf54c5703ecb 12-13,61-78
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_884f67e4daba7c 1,33-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c779dbd2561208a254e6fa57c5c545b8fcc10652",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
