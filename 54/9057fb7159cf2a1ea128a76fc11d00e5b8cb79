@@ -1,0 +1,27 @@
+cifn/.conduct/dependency-readiness.md
+  s_e1c5fc1a65c0cf::t_ca1a65c03d2f7e 80-113
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_a46a2e27a4f2d3 210-217
+cifn/typescript/control-plane/scripts/verify-dependency-consumer.mjs
+  s_e1c5fc1a65c0cf::t_27b97db8b54efb 45-64,70
+cifn/typescript/runner/src/steps/testfn-run.ts
+  s_e1c5fc1a65c0cf::t_6f3a3f3e5ed1fe 2,47,55,61,64-65,67-68,70-73,75,77-83,85-86
+cifn/typescript/runner/src/testfn-integration.test.ts
+  s_e1c5fc1a65c0cf::t_6c0c6188714274 2,26-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "549057fb7159cf2a1ea128a76fc11d00e5b8cb79",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
