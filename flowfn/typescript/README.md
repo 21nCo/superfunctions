@@ -20,6 +20,15 @@ Both CommonJS and ESM entry points include declarations. Adapter entry points ar
 The PostgreSQL adapter accepts an initialized Drizzle database and owns its
 namespaced tables; call its `initialize()` before use. Existing queue tables without
 `enqueue_order` require the explicit quiesced ordering migration documented below.
+For existing current-schema installations, initialization also installs the
+claim-order index with ordinary `CREATE INDEX`, which blocks writes while the
+index is built. Schedule a maintenance window for populated queues; this is not
+a zero-downtime migration. The index adds storage and write maintenance;
+benefits vary with delayed jobs, dependency filters and queue shape. An operator can instead prebuild the exact index
+concurrently outside a transaction, then verify its definition and `indisvalid`
+before starting workers. A failed concurrent build can leave an invalid named
+index that `IF NOT EXISTS` will not repair. Existing legacy/ordering migrations
+still require their documented stopped-writer procedure.
 Memory state is not durable.
 
 See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic

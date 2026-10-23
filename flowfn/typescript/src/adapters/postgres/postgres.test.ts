@@ -9,6 +9,8 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { getTableConfig } from "drizzle-orm/pg-core";
+import { getPostgresSchema } from "./schema.js";
 import { PostgresAdapter } from "./index.js";
 import { JobImpl } from "../../queue/job.js";
 import { QueueImpl } from "../../queue/queue.js";
@@ -55,6 +57,24 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await adapter.cleanup();
       await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await pool.end();
+    });
+    it('installs the matching claim index on an existing schema without rewriting queued jobs', async () => {
+      await adapter.enqueue('index-upgrade', new JobImpl('work', { retained: true }, { jobId: 'retained', lifo: true, priority: 4 }));
+      const before = (await pool.query(`SELECT * FROM "${schema}".flowfn_jobs`)).rows;
+      await pool.query(`DROP INDEX "${schema}".flowfn_jobs_claim_order`);
+      await adapter.initialize();
+      await adapter.initialize();
+      const definition = (await pool.query(`SELECT i.indisvalid,pg_get_indexdef(i.indexrelid,2,true) AS priority,(i.indoption[1] & 3) AS priority_flags,pg_get_expr(i.indpred,i.indrelid) AS predicate FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='flowfn_jobs_claim_order'`, [schema])).rows;
+      expect(definition).toHaveLength(1);
+      expect(definition[0].indisvalid).toBe(true);
+      expect(definition[0].priority).toBe('priority');
+      expect(definition[0].priority_flags).toBe(3); // DESC and NULLS FIRST, matching dequeue.
+      expect(definition[0].predicate).toContain("'waiting'::text");
+      expect(definition[0].predicate).toContain("'delayed'::text");
+      expect((await pool.query(`SELECT * FROM "${schema}".flowfn_jobs`)).rows).toEqual(before);
+      const metadata = getTableConfig(getPostgresSchema(schema).jobs).indexes.find(index => index.config.name === 'flowfn_jobs_claim_order');
+      expect(metadata?.config.columns[1]).toMatchObject({ indexConfig: { order: 'desc', nulls: 'first' } });
+      expect((await adapter.dequeue('index-upgrade'))?.id).toBe('retained');
     });
     it.each([false, true])('preserves durable queue insertion order despite tied timestamps and heap updates (lifo=%s)', async lifo => {
       for (const id of ['a', 'b', 'c']) await adapter.enqueue('ordered', new JobImpl('work', {}, { jobId: id, lifo }));

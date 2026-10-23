@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   type PgTableFn,
@@ -29,6 +30,13 @@ export function getPostgresSchema(namespace?: string) {
     },
     (value) => ({
       pk: primaryKey({ columns: [value.queue, value.id] }),
+      claimOrder: index("flowfn_jobs_claim_order").on(
+        value.queue,
+        value.priority.desc().nullsFirst(),
+        sql`(CASE WHEN COALESCE((${value.data}->'opts'->>'lifo')::boolean,false) THEN 0 ELSE 1 END)`,
+        sql`(CASE WHEN COALESCE((${value.data}->'opts'->>'lifo')::boolean,false) THEN ${value.enqueueOrder} END) DESC`,
+        value.enqueueOrder.asc(),
+      ).where(sql`${value.state} IN ('waiting','delayed')`),
       ready: index("flowfn_jobs_ready").on(
         value.queue,
         value.state,

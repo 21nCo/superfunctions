@@ -63,6 +63,7 @@ export class PostgresAdapter implements FlowAdapter {
       sql.raw(`CREATE SCHEMA IF NOT EXISTS "${this.schema}";
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_jobs (queue text NOT NULL,id text NOT NULL,name text NOT NULL,state text NOT NULL,priority double precision NOT NULL DEFAULT 0,available_at bigint NOT NULL,timestamp bigint NOT NULL,finished_on bigint,data jsonb NOT NULL,enqueue_order bigserial UNIQUE NOT NULL,PRIMARY KEY(queue,id));
 CREATE INDEX IF NOT EXISTS flowfn_jobs_ready ON "${this.schema}".flowfn_jobs(queue,state,available_at);
+CREATE INDEX IF NOT EXISTS flowfn_jobs_claim_order ON "${this.schema}".flowfn_jobs(queue,priority DESC,(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN 0 ELSE 1 END),(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN enqueue_order END) DESC,enqueue_order ASC) WHERE state IN ('waiting','delayed');
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_messages (id text PRIMARY KEY,stream text NOT NULL,position bigserial UNIQUE,timestamp bigint NOT NULL,data jsonb NOT NULL);
 CREATE INDEX IF NOT EXISTS flowfn_messages_stream_offset ON "${this.schema}".flowfn_messages(stream,position);
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_consumer_groups (id text PRIMARY KEY,stream text NOT NULL,group_id text NOT NULL,last_offset bigint NOT NULL);
