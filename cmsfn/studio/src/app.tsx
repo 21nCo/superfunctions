@@ -32,6 +32,8 @@ export function App({ config: configProp }: AppProps = {}) {
   );
   const [selectedList, setSelectedList] = useState<DocumentListNode | null>(null);
   const [perspective, setPerspective] = useState<"draft" | "published">("draft");
+  const [expectedType, setExpectedType] = useState<string | undefined>();
+  const [navigationError, setNavigationError] = useState<string | null>(null);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [listRefreshTrigger, setListRefreshTrigger] = useState(0);
   const [remoteChanged, setRemoteChanged] = useState(false);
@@ -71,12 +73,12 @@ export function App({ config: configProp }: AppProps = {}) {
         <DatasetSelector
           config={config}
           value={dataset}
-          onDatasetChange={(next) => { setDataset(next); setSelectedDocId(null); setRemoteChanged(false); }}
+          onDatasetChange={(next) => { setDataset(next); setSelectedDocId(null); setExpectedType(undefined); setNavigationError(null); setRemoteChanged(false); }}
         />
         <label>Document perspective
           <select aria-label="Document perspective" value={perspective} onChange={(event) => {
             setPerspective(event.target.value === "published" ? "published" : "draft");
-            setSelectedDocId(null); setRemoteChanged(false);
+            setSelectedDocId(null); setNavigationError(null); setRemoteChanged(false);
           }}>
             <option value="draft">Drafts</option><option value="published">Published</option>
           </select>
@@ -85,18 +87,29 @@ export function App({ config: configProp }: AppProps = {}) {
       <aside data-studio-desk>
         <DeskTree
           root={config.desk}
-          onSelectDocumentList={(list) => { setSelectedList(list); setSelectedDocId(null); setRemoteChanged(false); }}
+          onSelectDocumentList={(list) => { setSelectedList(list); setSelectedDocId(null); setExpectedType(undefined); setNavigationError(null); setRemoteChanged(false); }}
+          onSelectSingleton={(node) => {
+            setSelectedList(null); setSelectedDocId(null); setRemoteChanged(false);
+            if (!node.id.replace(/^drafts\./, "") || !node.type || !config.datasets.some(item => item.name === node.dataset)) {
+              setNavigationError("This singleton is not available in the configured datasets");
+              return;
+            }
+            setNavigationError(null); setDataset(node.dataset); setExpectedType(node.type);
+            setSelectedDocId(node.id.replace(/^drafts\./, ""));
+          }}
         />
       </aside>
       <main data-studio-pane>
+        {navigationError && <p role="alert" data-desk-error>{navigationError}</p>}
         {selectedDocId ? (
           <>
             <button type="button" data-editor-back onClick={() => setSelectedDocId(null)}>
-              Back to list
+              {selectedList ? "Back to list" : "Back to desk"}
             </button>
             <DocumentEditorPane
               key={`${dataset}:${perspective}:${selectedDocId}`}
               perspective={perspective}
+              expectedType={expectedType}
               onOpenDraft={(id) => { setPerspective("draft"); setSelectedDocId(id); }}
               onUnpublished={() => { setSelectedDocId(null); setListRefreshTrigger((value) => value + 1); }}
               baseUrl={config.contentfn.baseUrl}

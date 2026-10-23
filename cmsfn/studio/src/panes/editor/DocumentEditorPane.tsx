@@ -22,6 +22,8 @@ export interface DocumentEditorPaneProps {
   dataset: string;
   docId: string;
   perspective?: "draft" | "published";
+  /** Desk singleton type; mismatches must not expose editor controls. */
+  expectedType?: string;
   onOpenDraft?: (id: string) => void;
   onUnpublished?: () => void;
   /** When set, Publish/Unpublish are shown and call CmsFn server. */
@@ -40,9 +42,9 @@ export interface DocumentEditorPaneProps {
   onClearRemoteChanged?: () => void;
 }
 
-export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
+export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", expectedType, onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
   const generation = useRef(0);
-  const scope = JSON.stringify([baseUrl, dataset, docId, perspective]);
+  const scope = JSON.stringify([baseUrl, dataset, docId, perspective, expectedType]);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [published, setPublished] = useState<boolean | null>(isPublished ?? null);
   const [publicationError, setPublicationError] = useState<string | null>(null);
@@ -84,6 +86,10 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
       setServerError({ code: docRes.error.code, message: docRes.error.message, path: (docRes.error.details as { path?: string })?.path });
       return;
     }
+    if (expectedType !== undefined && docRes.result._type !== expectedType) {
+      setServerError({ code: "VALIDATION_FAILED", message: "Document type does not match this desk singleton" });
+      return;
+    }
     if (perspective === "published") setPublished(true);
     else if (publishedRes?.ok) setPublished(true);
     else if (publishedRes && publishedRes.error.code === "DOCUMENT_NOT_FOUND") setPublished(false);
@@ -94,7 +100,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
     const doc = docRes.result as Record<string, unknown>;
     const userFields = Object.fromEntries(Object.entries(doc).filter(([k]) => !k.startsWith("_")));
     setFormState(userFields);
-  }, [baseUrl, dataset, docId, perspective, cmsfnApiUrl, scope]);
+  }, [baseUrl, dataset, docId, perspective, expectedType, cmsfnApiUrl, scope]);
 
   useEffect(() => {
     void load();

@@ -6,7 +6,7 @@ import type { CmsfnStudioConfig } from "cmsfn";
 
 export { App } from "./app.js";
 export { DeskTree } from "./desk/DeskTree.js";
-export type { DocumentListNode } from "./desk/DeskTree.js";
+export type { DocumentListNode, SingletonNode } from "./desk/DeskTree.js";
 export { DatasetSelector, getInitialDataset } from "./datasets/DatasetSelector.js";
 export { loadConfig } from "./config/loadConfig.js";
 export { DocumentListPane } from "./panes/list/DocumentListPane.js";

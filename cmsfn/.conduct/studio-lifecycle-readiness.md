@@ -35,3 +35,5 @@ The helper installs full packages and runs `studio-browser-acceptance.mjs`, not 
 ## Remaining original acceptance work
 
 This is not whole-Studio completion. Singleton navigation, integration of all audit/release/operational panes into the shell, and broader product acceptance remain open. Native Safari, live identity providers, deployments and production authentication/CORS configuration were not exercised. The host must configure server-side authorization; browser config carries no service credentials. ContentFn external PostgreSQL/MySQL service gates remain separately open; the producer prerequisite proves native SQLite CAS/rollback and this browser checkpoint proves owned HTTP with actual package APIs.
+
+The singleton navigation gap recorded above is addressed by the subsequent [singleton checkpoint](studio-singleton-readiness.md); the earlier test counts remain historical evidence for this lifecycle checkpoint.

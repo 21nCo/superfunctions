@@ -8,12 +8,15 @@ import { deskNodeKeys } from "cmsfn";
 
 export type DocumentListNode = Extract<CmsfnDeskNode, { kind: "documentList" }>;
 
+export type SingletonNode = Extract<CmsfnDeskNode, { kind: "singleton" }>;
+
 export interface DeskTreeProps {
   root: CmsfnDeskNode;
   onSelectDocumentList?: (node: DocumentListNode) => void;
+  onSelectSingleton?: (node: SingletonNode) => void;
 }
 
-function DeskNode({ node, nodeKey, onSelectDocumentList }: { node: CmsfnDeskNode; nodeKey: string; onSelectDocumentList?: (node: DocumentListNode) => void }) {
+function DeskNode({ node, nodeKey, onSelectDocumentList, onSelectSingleton }: { node: CmsfnDeskNode; nodeKey: string; onSelectDocumentList?: (node: DocumentListNode) => void; onSelectSingleton?: (node: SingletonNode) => void }) {
   if (node.kind === "divider") {
     return <li key={nodeKey} data-desk-kind="divider" aria-hidden="true" />;
   }
@@ -25,7 +28,7 @@ function DeskNode({ node, nodeKey, onSelectDocumentList }: { node: CmsfnDeskNode
           <ul role="group" aria-label={node.title}>
             {node.children.map((child, i) => {
               const key = nodeKey === "0" ? `0-${i}` : `${nodeKey}-${i}`;
-              return <DeskNode key={key} node={child} nodeKey={key} onSelectDocumentList={onSelectDocumentList} />;
+              return <DeskNode key={key} node={child} nodeKey={key} onSelectDocumentList={onSelectDocumentList} onSelectSingleton={onSelectSingleton} />;
             })}
           </ul>
         )}
@@ -44,7 +47,9 @@ function DeskNode({ node, nodeKey, onSelectDocumentList }: { node: CmsfnDeskNode
   if (node.kind === "singleton") {
     return (
       <li key={nodeKey} data-desk-kind="singleton" data-desk-key={nodeKey} data-desk-dataset={node.dataset} data-desk-type={node.type} data-desk-id={node.id}>
-        <span data-desk-title>{node.title}</span>
+        <button type="button" data-desk-singleton-trigger onClick={() => onSelectSingleton?.(node)}>
+          <span data-desk-title>{node.title}</span>
+        </button>
       </li>
     );
   }
@@ -54,7 +59,7 @@ function DeskNode({ node, nodeKey, onSelectDocumentList }: { node: CmsfnDeskNode
 /**
  * Renders the desk tree with deterministic keys (depth-first, config order).
  */
-export function DeskTree({ root, onSelectDocumentList }: DeskTreeProps) {
+export function DeskTree({ root, onSelectDocumentList, onSelectSingleton }: DeskTreeProps) {
   const entries = deskNodeKeys(root);
   if (entries.length === 0) return null;
   const rootEntry = entries[0];
@@ -64,7 +69,7 @@ export function DeskTree({ root, onSelectDocumentList }: DeskTreeProps) {
   return (
     <nav data-desk-root aria-label="Desk">
       <ul role="tree">
-        <DeskNode node={rootEntry.node} nodeKey={rootEntry.key} onSelectDocumentList={onSelectDocumentList} />
+        <DeskNode node={rootEntry.node} nodeKey={rootEntry.key} onSelectDocumentList={onSelectDocumentList} onSelectSingleton={onSelectSingleton} />
       </ul>
     </nav>
   );

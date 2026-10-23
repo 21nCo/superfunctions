@@ -10,12 +10,15 @@ import { memoryAdapter } from '@superfunctions/db/adapters';
 const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); return value.result; };
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
-const content = createContentfnServer({ db });
-const schema = { version: 1, documentTypes: [{ name: 'post', fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] }] };
+let denySingletonReads = false;
+const content = createContentfnServer({ db, authorize: (context, action, input) => !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
   unwrap(await content.api.schema.upsert({ dataset, schema }));
+  for (const asDraft of [false, true]) unwrap(await content.api.docs.create({ dataset, id: 'home', type: 'page', doc: { title: `${dataset} home` }, asDraft }));
 }
+unwrap(await content.api.docs.create({ dataset: 'prod', id: 'private-home', type: 'page', doc: { title: 'Confidential singleton body' }, asDraft: true }));
 // Paired draft/published document exercises the current supported editor path.
 for (const asDraft of [false, true]) unwrap(await content.api.docs.create({ dataset: 'prod', id: 'editable', type: 'post', doc: { title: 'Original title' }, asDraft }));
 unwrap(await content.api.docs.create({ dataset: 'prod', id: 'published-only', type: 'post', doc: { title: 'Published only' } }));
@@ -31,7 +34,14 @@ const server = createServer((req, res) => {
   if (req.url?.startsWith('/contentfn/')) { requests.push(req.url); void content.handler(req, res); return; }
   if (req.url === '/studio-bundle.js') { res.setHeader('content-type', 'text/javascript'); res.end(bundle); return; }
   if (req.url?.startsWith('/studio')) {
-    const config = { contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] }] } };
+    const config = { contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] },
+      { kind: 'singleton', title: 'Production home', dataset: 'prod', type: 'page', id: 'home' },
+      { kind: 'singleton', title: 'Staging home', dataset: 'staging', type: 'page', id: 'home' },
+      { kind: 'singleton', title: 'Private home', dataset: 'prod', type: 'page', id: 'private-home' },
+      { kind: 'singleton', title: 'Missing home', dataset: 'prod', type: 'page', id: 'missing-home' },
+      { kind: 'singleton', title: 'Wrong type home', dataset: 'prod', type: 'page', id: 'editable' },
+      { kind: 'singleton', title: 'Unconfigured home', dataset: 'unconfigured', type: 'page', id: 'home' },
+    ] } };
     res.setHeader('content-type', 'text/html');
     res.end(`<!doctype html><html><body><div id="root"></div>${req.url.includes('empty') ? '' : `<script>window.__CMSFN_CONFIG__=${JSON.stringify(config)}</script>`}<script type="module" src="/studio-bundle.js"></script></body></html>`); return;
   }
@@ -116,10 +126,44 @@ try {
   await page.getByRole('combobox', { name: 'Document perspective' }).selectOption('published');
   await page.locator('[data-doc-id="staging-post"]').waitFor();
   assert.equal(await page.locator('[data-doc-id="editable"]').count(), 0);
+  await page.getByRole('button', { name: 'Production home', exact: true }).click();
+  await page.getByRole('heading', { name: 'Published document' }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: 'Select dataset' }).inputValue(), 'prod');
+  await page.getByText('prod home', { exact: true }).waitFor();
+  await page.locator('[data-create-draft]').click();
+  await page.waitForFunction(() => document.querySelector('input[data-field-path="title"]')?.value === 'prod home');
+  await title.fill('Production home edit');
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, 'Production home edit');
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, 'staging home');
+  await page.getByRole('button', { name: 'Staging home', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('input[data-field-path="title"]')?.value === 'staging home');
+  assert.equal(await page.getByRole('combobox', { name: 'Select dataset' }).inputValue(), 'staging');
+  await title.fill('Staging home edit');
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, 'Staging home edit');
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, 'Production home edit');
+  denySingletonReads = true;
+  await page.getByRole('button', { name: 'Private home', exact: true }).click();
+  await page.locator('[data-editor-pane][data-error-code="PERMISSION_DENIED"]').waitFor();
+  assert.equal(await page.locator('[data-editor-save]').count(), 0);
+  assert.equal((await page.textContent('body')).includes('Confidential singleton body'), false);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'private-home', perspective: 'draft' })).title, 'Confidential singleton body');
+  const beforeMissing = requests.length;
+  await page.getByRole('button', { name: 'Missing home', exact: true }).click();
+  await page.locator('[data-editor-pane][data-error-code="DOCUMENT_NOT_FOUND"]').waitFor();
+  assert.equal(requests.slice(beforeMissing).some(path => /\/(fork|create|patch)$/.test(path)), false);
+  await page.getByRole('button', { name: 'Wrong type home', exact: true }).click();
+  await page.getByText('Document type does not match this desk singleton', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-editor-save]').count(), 0);
+  const beforeUnavailable = requests.length;
+  await page.getByRole('button', { name: 'Unconfigured home', exact: true }).click();
+  await page.locator('[data-desk-error]').waitFor();
+  assert.equal(requests.length, beforeUnavailable);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope'], requests: requests.length,
-    remaining: ['singleton navigation', 'full audit/release/operational shell integration', 'native Safari and deployment acceptance'] }));
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request'], requests: requests.length,
+    remaining: ['full audit/release/operational shell integration', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();
 }
