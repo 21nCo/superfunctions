@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Any, Callable, Optional
 
 from flowfn.adapters.memory import MemoryAdapter
+from flowfn.core.lease_expiry import LeaseExpiry
 from flowfn.queue.dlq import DLQJob
 from flowfn.queue.types import BackoffType, Job, JobLeaseError, JobOptions, JobStatus, QueueStats
 
@@ -18,6 +19,8 @@ class DurableQueues(ABC):
         self.reclaim_after_ms = reclaim_after_ms
         self._closed = False
         self._job_events: dict[tuple[str, str, Optional[str]], asyncio.Event] = {}
+        self._pending_job_heartbeats: set[asyncio.Task[None]] = set()
+        self._job_expiries: dict[tuple[str, str, Optional[str]], LeaseExpiry] = {}
         self._job_heartbeats: dict[tuple[str, str, Optional[str]], asyncio.Task[None]] = {}
 
     @abstractmethod
@@ -30,9 +33,13 @@ class DurableQueues(ABC):
         self._closed = True
         for event in self._job_events.values():
             event.set()
-        for task in self._job_heartbeats.values():
+        for expiry in self._job_expiries.values():
+            expiry.close()
+        self._job_expiries.clear()
+        pending = list(self._pending_job_heartbeats)
+        for task in pending:
             task.cancel()
-        await asyncio.gather(*self._job_heartbeats.values(), return_exceptions=True)
+        await asyncio.gather(*pending, return_exceptions=True)
         self._job_heartbeats.clear()
         self._job_events.clear()
 
@@ -128,6 +135,9 @@ class DurableQueues(ABC):
 
     async def release_job_lease(self, queue: str, job: Job) -> None:
         key = (queue,job.id,job.lease_token)
+        expiry = self._job_expiries.pop(key, None)
+        if expiry is not None:
+            expiry.close()
         task = self._job_heartbeats.pop(key,None)
         if task is not None:
             task.cancel()
@@ -147,6 +157,9 @@ class DurableQueues(ABC):
             raise
         finally:
             if job.state != JobStatus.ACTIVE:
+                expiry = self._job_expiries.pop(key, None)
+                if expiry is not None:
+                    expiry.close()
                 heartbeat = self._job_heartbeats.pop(key,None)
                 if heartbeat is not None:
                     heartbeat.cancel()
@@ -167,13 +180,18 @@ class DurableQueues(ABC):
             self._job_events[key] = event
             task = asyncio.create_task(self._renew_job(queue,result.model_copy(deep=True),event,started+self.reclaim_after_ms/1000))
             self._job_heartbeats[key] = task
+            self._pending_job_heartbeats.add(task)
             def finished(done: asyncio.Task[None]) -> None:
+                self._pending_job_heartbeats.discard(done)
                 if self._job_heartbeats.get(key) is done:
                     self._job_heartbeats.pop(key,None)
             task.add_done_callback(finished)
         return result
 
     async def _renew_job(self, queue: str, job: Job, lost: asyncio.Event, deadline: float) -> None:
+        key = (queue, job.id, job.lease_token)
+        expiry = LeaseExpiry(deadline, lost.set)
+        self._job_expiries[key] = expiry
         try:
             while not self._closed:
                 remaining = deadline-time.monotonic()
@@ -194,7 +212,7 @@ class DurableQueues(ABC):
                     try:
                         await asyncio.wait_for(self._transition('_renew_job',queue,job),remaining)
                         # wait_for can return late if its awaitable suppresses cancellation.
-                        if time.monotonic() >= deadline:
+                        if not expiry.renew(started+self.reclaim_after_ms/1000):
                             lost.set()
                             return
                         # Starting the bound before the request is conservative:
@@ -208,6 +226,9 @@ class DurableQueues(ABC):
                         await asyncio.sleep(min(retry_delay,max(0,deadline-time.monotonic())))
                         retry_delay = min(retry_delay*2,max(.05,self.reclaim_after_ms/3000))
         finally:
+            expiry.close()
+            if self._job_expiries.get(key) is expiry:
+                self._job_expiries.pop(key, None)
             if self._closed:
                 lost.set()
 

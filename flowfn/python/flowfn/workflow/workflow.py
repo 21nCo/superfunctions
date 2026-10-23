@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.workflow_state import WorkflowLeaseError
+from flowfn.core.lease_expiry import LeaseExpiry
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.telemetry import OperationObserver
 from flowfn.monitoring.health import EventTracker
@@ -58,6 +59,8 @@ class Workflow:
         self._lease_lost: set[str] = set()
         self._lease_deadlines: dict[str, float] = {}
         self._state_locks: dict[str, asyncio.Lock] = {}
+        self._lease_expiries: dict[str, LeaseExpiry] = {}
+        self._pending_heartbeats: set[asyncio.Task[None]] = set()
         self._heartbeats: dict[str, asyncio.Task[None]] = {}
         self._sagas: dict[str, dict[str, Any]] = {}
 
@@ -156,11 +159,21 @@ class Workflow:
         self._tasks[execution_id] = task
         heartbeat = asyncio.create_task(self._renew(execution))
         self._heartbeats[execution_id] = heartbeat
+        self._pending_heartbeats.add(heartbeat)
+
+        def heartbeat_finished(done: asyncio.Task[None]) -> None:
+            self._pending_heartbeats.discard(done)
+            if self._heartbeats.get(execution_id) is done:
+                self._heartbeats.pop(execution_id, None)
+        heartbeat.add_done_callback(heartbeat_finished)
 
         def finished(done: asyncio.Task[None]) -> None:
+            if self._tasks.get(execution_id) is done:
+                expiry = self._lease_expiries.pop(execution_id, None)
+                if expiry is not None:
+                    expiry.close()
             heartbeat.cancel()
             if self._tasks.get(execution_id) is done:
-                self._heartbeats.pop(execution_id, None)
                 self._tasks.pop(execution_id, None)
                 self._saga_stacks.pop(execution_id, None)
                 self._lease_deadlines.pop(execution_id, None)
@@ -174,31 +187,40 @@ class Workflow:
         deadline = self._lease_deadlines[execution.id]
         # Claim reply latency already consumed part of the renewal interval.
         renew_at = deadline - 2 * duration / 3
-        while execution.status == ExecutionStatus.RUNNING:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(max(0, min(renew_at - time.monotonic(), remaining)))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            requested = time.monotonic()
-            try:
-                renewed = await asyncio.wait_for(self._adapter.transition_workflow_state(
-                    execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms}),remaining)
-            except Exception:
-                renew_at = time.monotonic() + min(.05, duration / 6)
-                continue
-            if renewed is None or time.monotonic() >= deadline:
-                break
-            deadline = requested + duration
-            self._lease_deadlines[execution.id] = deadline
-            renew_at = requested + duration / 3
-        if execution.status == ExecutionStatus.RUNNING:
-            self._lease_lost.add(execution.id)
-            task = self._tasks.get(execution.id)
-            if task is not None:
-                task.cancel()
+        owner = self._tasks.get(execution.id)
+        def expire() -> None:
+            if self._tasks.get(execution.id) is owner and execution.status == ExecutionStatus.RUNNING:
+                self._lease_lost.add(execution.id)
+                if owner is not None:
+                    owner.cancel()
+        expiry = LeaseExpiry(deadline, expire)
+        self._lease_expiries[execution.id] = expiry
+        try:
+            while execution.status == ExecutionStatus.RUNNING:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(max(0, min(renew_at - time.monotonic(), remaining)))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                requested = time.monotonic()
+                try:
+                    renewed = await asyncio.wait_for(self._adapter.transition_workflow_state(
+                        execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms}),remaining)
+                except Exception:
+                    renew_at = time.monotonic() + min(.05, duration / 6)
+                    continue
+                if renewed is None or not expiry.renew(requested + duration):
+                    break
+                deadline = requested + duration
+                self._lease_deadlines[execution.id] = deadline
+                renew_at = requested + duration / 3
+            expire()
+        finally:
+            expiry.close()
+            if self._lease_expiries.get(execution.id) is expiry:
+                self._lease_expiries.pop(execution.id, None)
 
     async def _persist(self, execution: WorkflowExecution) -> None:
         async with self._state_locks.setdefault(execution.id, asyncio.Lock()):
@@ -474,7 +496,7 @@ class Workflow:
         self._closed = True
         await self._admissions.drain()
         tasks = list(self._tasks.values())
-        heartbeats = list(self._heartbeats.values())
+        heartbeats = list(self._pending_heartbeats)
         results = await asyncio.gather(*(self._cancel_owned(identity) for identity in list(self._tasks)),return_exceptions=True)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

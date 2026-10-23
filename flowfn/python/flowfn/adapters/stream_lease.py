@@ -4,6 +4,8 @@ import time
 from collections.abc import Awaitable
 from typing import Callable
 
+from flowfn.core.lease_expiry import LeaseExpiry
+
 
 async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[], Awaitable[bool]],
                          lease_ms: int, started: float) -> None:
@@ -29,7 +31,7 @@ async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[]
             except Exception:
                 renew_at = time.monotonic() + min(.05, duration / 6)
                 continue
-            if time.monotonic() >= deadline:
+            if not expiry.renew(requested + duration):
                 raise RuntimeError('Stream delivery lease expired')
             if not owned:
                 raise RuntimeError('Stream delivery ownership changed')
@@ -40,14 +42,20 @@ async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[]
         await work()
 
     processing = asyncio.create_task(execute())
+    def expire() -> None:
+        processing.cancel()
+    expiry = LeaseExpiry(started + duration, expire)
     heartbeat = asyncio.create_task(monitor())
     try:
         done, _ = await asyncio.wait((processing, heartbeat), return_when=asyncio.FIRST_COMPLETED)
+        if expiry.expired:
+            raise RuntimeError('Stream delivery lease expired')
         if processing in done:
             await processing
         else:
             await heartbeat
     finally:
+        expiry.close()
         processing.cancel()
         heartbeat.cancel()
         await asyncio.gather(processing, heartbeat, return_exceptions=True)
