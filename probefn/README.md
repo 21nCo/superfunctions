@@ -185,3 +185,10 @@ verification command. A compatible cached Playwright engine is required. Set
 version within the package's supported range; this does not download a browser.
 The fixture spawns and stops its own loopback app, exercises MCP browser actions
 and checkpoints, and verifies the resulting artifacts and installed CLI report.
+
+`ArtifactStore` also accepts `caps.maxAccountingDatabaseBytes` (default16MiB,
+minimum64KiB) for its shared SQLite accounting database. The persisted minimum
+cannot be raised by a later writer, and SQLite refuses page growth beyond it.
+This is separate from the per-run artifact byte cap; it excludes active rollback
+journal overhead and browser scratch, so it is not an aggregate physical disk
+quota. See `.conduct/accounting-database-budget.md` for migration and limits.

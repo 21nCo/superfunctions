@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createProbefnError } from '@probefn/contracts/errors';
 import { assertArtifactIdentifier, assertRepositoryRelativePath } from './manifest-writer.js';
 import type { AppendEventResult } from './event-sink.js';
-import type { EventCapPolicy } from './caps.js';
+import { DEFAULT_ACCOUNTING_DATABASE_BYTES, type EventCapPolicy } from './caps.js';
 
 const queues = new Map<string, Promise<void>>();
 const failed = (message: string, cause?: unknown) => createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message, retryable: false, ...(cause ? { cause } : {}) });
@@ -13,7 +13,10 @@ const busy = (error: unknown) => error instanceof Error && /database is (locked|
 
 /** All cooperating writers use a SQLite OS lock; connections never escape one queued operation. */
 export class RunQuota {
-  public constructor(private readonly repoRoot: string, private readonly artifactRoot: string, private readonly configuredCap: number) {}
+  public constructor(private readonly repoRoot: string, private readonly artifactRoot: string, private readonly configuredCap: number,
+    private readonly accountingLimit = DEFAULT_ACCOUNTING_DATABASE_BYTES) {
+    if (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
+  }
 
   public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false): Promise<T> {
     assertArtifactIdentifier(runId, 'Run id');
@@ -23,9 +26,15 @@ export class RunQuota {
       await safeDirectory(this.repoRoot, this.artifactRoot);
       for (const suffix of ['', '-journal', '-wal', '-shm']) await safeFile(databasePath + suffix);
       const database = new DatabaseSync(databasePath);
+      let effectiveAccountingLimit = this.accountingLimit;
       try {
         await retryBusy(() => database.exec('PRAGMA busy_timeout=0; PRAGMA synchronous=FULL;'));
+        await retryBusy(() => {
+          const mode = database.prepare('PRAGMA journal_mode=DELETE').get()!.journal_mode;
+          if (mode !== 'delete') throw failed('Accounting database requires DELETE journal mode.');
+        });
         await begin(database);
+        effectiveAccountingLimit = this.applyAccountingLimit(database);
         database.exec('CREATE TABLE IF NOT EXISTS run_caps (run_id TEXT PRIMARY KEY, cap INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS external_paths (path TEXT PRIMARY KEY, run_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sink_counts (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime REAL NOT NULL, count INTEGER NOT NULL, inode TEXT NOT NULL);');
         if (!database.prepare('PRAGMA table_info(sink_counts)').all().some(row => row.name === 'inode')) database.exec("ALTER TABLE sink_counts ADD COLUMN inode TEXT NOT NULL DEFAULT ''");
         const priorCap = database.prepare('SELECT cap FROM run_caps WHERE run_id=?').get(runId);
@@ -39,6 +48,7 @@ export class RunQuota {
         // Persist the cap/ownership before file IO: a crash must not reset a first-write cap.
         await retryBusy(() => database.exec('COMMIT'));
         await begin(database);
+        effectiveAccountingLimit = this.applyAccountingLimit(database);
         const cap = Number(database.prepare('SELECT cap FROM run_caps WHERE run_id=?').get(runId)!.cap);
         const runRoot = path.posix.join(this.artifactRoot, 'runs', runId);
         await safeDirectory(this.repoRoot, runRoot);
@@ -55,6 +65,7 @@ export class RunQuota {
         return result;
       } catch (error) {
         try { database.exec('ROLLBACK'); } catch { /* No transaction may be active. */ }
+        if (isSqliteFull(error)) throw accountingCapError(effectiveAccountingLimit, 'SQLite refused accounting database growth.', error);
         if (error && typeof error === 'object' && 'code' in error && String(error.code).startsWith('E_')) throw error;
         throw failed('Run artifact accounting failed.', error);
       } finally { database.close(); }
@@ -64,6 +75,31 @@ export class RunQuota {
     void settled.then(() => { if (queues.get(databasePath) === settled) queues.delete(databasePath); });
     return task;
   }
+
+  private applyAccountingLimit(database: DatabaseSync): number {
+    // BEGIN IMMEDIATE excludes every cooperating writer before reading the minimum.
+    const exists = database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='accounting_limits'").get();
+    const stored = exists ? database.prepare('SELECT max_bytes FROM accounting_limits WHERE id=1').get() : undefined;
+    const limit = Math.min(this.accountingLimit, stored ? Number(stored.max_bytes) : this.accountingLimit);
+    const pageSize = Number(database.prepare('PRAGMA page_size').get()!.page_size);
+    const pages = Math.floor(limit / pageSize);
+    const actual = Number(database.prepare(`PRAGMA max_page_count=${pages}`).get()!.max_page_count);
+    if (actual > pages) throw accountingCapError(limit, 'Existing accounting database exceeds the configured page limit.');
+    database.exec('CREATE TABLE IF NOT EXISTS accounting_limits (id INTEGER PRIMARY KEY CHECK(id=1), max_bytes INTEGER NOT NULL)');
+    database.prepare('INSERT INTO accounting_limits VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET max_bytes=min(max_bytes,excluded.max_bytes)').run(limit);
+    return limit;
+  }
+
+}
+
+function accountingCapError(limit: number, message: string, cause?: unknown) {
+  return createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message, retryable: false,
+    details: { budget: 'accounting-database', maxAccountingDatabaseBytes: limit }, ...(cause ? { cause } : {}) });
+}
+function isSqliteFull(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ('errcode' in error && typeof error.errcode === 'number' && (error.errcode & 255) === 13) return true;
+  return 'cause' in error && error.cause !== error && isSqliteFull(error.cause);
 }
 
 async function begin(database: DatabaseSync): Promise<void> {

@@ -3,6 +3,8 @@ import { createProbefnError } from '@probefn/contracts/errors';
 export interface StorageCaps {
   maxArtifactBytes: number;
   maxEventsPerSink: number;
+  /** Shared accounting database file limit; excludes journals and browser scratch. */
+  maxAccountingDatabaseBytes?: number;
 }
 
 export interface EventCapPolicy {
@@ -10,8 +12,11 @@ export interface EventCapPolicy {
   strategy: 'rollover' | 'error';
 }
 
+export const DEFAULT_ACCOUNTING_DATABASE_BYTES = 16 * 1024 * 1024;
+
 export const DEFAULT_STORAGE_CAPS: StorageCaps = {
   maxArtifactBytes: 2 * 1024 * 1024 * 1024,
+  maxAccountingDatabaseBytes: DEFAULT_ACCOUNTING_DATABASE_BYTES,
   maxEventsPerSink: 50_000,
 };
 

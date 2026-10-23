@@ -53,7 +53,7 @@ export class ArtifactStore {
     this.artifactRoot = assertRepositoryRelativePath(options.artifactRoot ?? '.artifacts');
     this.maxEventsPerSink = options.caps?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
     if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
-    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes);
+    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes, options.caps?.maxAccountingDatabaseBytes);
     this.capTracker = new ArtifactCapTracker(
       options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes,
     );
