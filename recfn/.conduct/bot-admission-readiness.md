@@ -67,12 +67,17 @@ generic upsert capability does not prove a native first-write operation; some
 Prisma/backend combinations may read before updating. Required Prisma/backend
 compatibility remains open rather than being inferred from a host opt-in flag.
 
+PostgreSQL follow-up removes the redundant namespace UNIQUE constraint: the
+upsert's deterministic ID is the sole uniqueness arbiter. Existing installations
+must apply the explicit [constraint migration](postgres-store-readiness.md);
+editing schema metadata alone does not remove an installed constraint.
+
 ## Required migration and configuration changes
 
 Stop new API/calendar submissions and worker dequeuing, drain or explicitly
 reconcile existing operations, then stop every old-code writer before migration.
 Old writers do not acquire the new guard and must not overlap new admitted writers. Apply the
-new `botAdmission` model from `getRecFnSchema()` with primary/unique `id`, unique
+new `botAdmission` model from `getRecFnSchema()` with primary/unique `id`, required
 `namespace`, numeric `maximum`, and string `nonce`. Existing bot rows and indexes
 remain unchanged. Seed each existing namespace with its explicitly chosen policy:
 `id` is lowercase SHA-256 of UTF-8 namespace, `maximum` is the configured positive

@@ -1,3 +1,4 @@
+import { getRecFnSchema } from '../src/store/schema.js';
 import { expect, it, vi } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/adapters';
 import { validateBotConfig } from '@recfn/core';
@@ -94,4 +95,14 @@ it('samples the environment at construction and gives explicit policy precedence
     await expect(explicit.createBot(input)).rejects.toMatchObject({ code: 'RATE_LIMIT_EXCEEDED' });
     expect(createMemoryStore().capabilities.botAdmission?.maximum).toBe(3);
   } finally { vi.unstubAllEnvs(); }
+});
+
+it('uses one admission uniqueness arbiter and rejects policy identity tampering', async () => {
+  const schema = getRecFnSchema();
+  expect(schema.botAdmission.fields.id.unique).toBe(true);
+  expect(schema.botAdmission.fields.namespace.unique).not.toBe(true);
+  const adapter = memoryAdapter(); const store = createDbStore({ adapter, maxConcurrentBots: 1 });
+  const bot = await store.createBot(input); await store.updateBot(bot.id, 'ns', { status: 'done' });
+  await adapter.updateMany({ model: 'botAdmission', where: [{ field: 'namespace', operator: 'eq', value: 'ns' }], data: { namespace: 'tampered' } });
+  await expect(store.createBot(input)).rejects.toThrow('persisted namespace policy');
 });

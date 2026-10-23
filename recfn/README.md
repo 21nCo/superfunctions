@@ -59,8 +59,13 @@ policies before restarting writers. Policy changes require stopped writers and a
 matching database/configuration update; lowering below occupancy permits draining.
 Supported paths are shared memory and transactional native-upsert Kysely/Drizzle;
 Prisma, unknown adapters, and Drizzle SQLite remain unsupported for this admission
-contract. Native acceptance covers Kysely SQLite, not every database deployment.
+contract. Native acceptance covers Kysely SQLite and PostgreSQL 16 at read committed
+isolation with the declared TEXT storage, not every database deployment.
 See [admission and migration details](.conduct/bot-admission-readiness.md).
+PostgreSQL installations must also remove the redundant namespace-only UNIQUE
+constraint using the [explicit constraint migration](.conduct/postgres-store-readiness.md);
+retain the deterministic ID primary key. Schema metadata changes do not migrate
+existing databases.
 
 An ambiguous queue-enqueue failure retains its creating bot and capacity. It does
 not prove that no worker will run. Reconcile the existing operation before retrying

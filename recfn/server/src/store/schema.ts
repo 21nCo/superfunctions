@@ -15,7 +15,7 @@ export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
     modelName: 'botAdmission',
     fields: {
       id: { type: 'string', required: true, unique: true },
-      namespace: { type: 'string', required: true, unique: true },
+      namespace: { type: 'string', required: true },
       maximum: { type: 'number', required: true },
       nonce: { type: 'string', required: true },
     },

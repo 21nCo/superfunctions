@@ -167,3 +167,12 @@ Remaining broader gates include real provider credentials/media acceptance,
 storage encryption attestation, supported SQL dialect acceptance, operational
 reconciliation procedures and deployment readiness. Process-local encrypted
 scratch keys still cannot recover a killed worker's capture.
+
+## PostgreSQL follow-up
+
+[Native PostgreSQL acceptance](postgres-store-readiness.md) additionally exercises
+independent-process claims, held capacity, rollback, killed-owner fencing and
+reopen with Kysely/PostgreSQL 16 at read committed isolation. Existing PostgreSQL
+installations require the documented stopped-writer removal of the redundant
+namespace-only unique constraint. This supplements the SQLite receipt above;
+it does not establish other adapters or live provider termination.
