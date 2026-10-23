@@ -1,0 +1,45 @@
+probefn/.conduct/managed-writer-ownership.md
+  s_e1c5fc1a65c0cf::t_f47135706461be 1-41
+probefn/.conduct/resident-session-readiness.md
+  s_e1c5fc1a65c0cf::t_80635c302775fe 49-52
+probefn/.conduct/session-ownership-readiness.md
+  s_e1c5fc1a65c0cf::t_2475cc302cb752 25-26
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_ec46988a70a2c3 236-254
+probefn/packages/core/src/auth-profiles.ts
+  s_e1c5fc1a65c0cf::t_9fdef2054235d3 116,130
+probefn/packages/core/test/auth-storage-ownership.test.ts
+  s_e1c5fc1a65c0cf::t_e6b18895bf9024 1-37
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_aa2f3298d0c8e8 253,290,293,384
+probefn/packages/mcp-server/test/resident-session.test.ts
+  s_e1c5fc1a65c0cf::t_fcf8bfc8df8ab0 9-10,197-219
+probefn/packages/mcp-server/test/sdk-writer-ownership.test.ts
+  s_e1c5fc1a65c0cf::t_7d558926928bfc 1-51
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_f257d348ae40ed 3-4,56,161-162,242-247,309-313
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_65b830077e22f7 2-3,13,21-22,27,29-37,40,42-48,88,97
+probefn/packages/storage/src/session-ownership.ts
+  s_e1c5fc1a65c0cf::t_c2f5d8b90f552d 2,11,23,25,29,38,83,97-125
+probefn/packages/storage/test/writer-ownership.test.ts
+  s_e1c5fc1a65c0cf::t_a63215814cdf08 1-76
+probefn/scripts/installed-browser-consumer.mjs
+  s_e1c5fc1a65c0cf::t_7ef7567eea5f84 49-52,84,107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13afcae144efd45aa6d928ad394bc9f3c9d20663",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
