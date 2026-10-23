@@ -1,112 +1,50 @@
-/**
- * POST /cmsfn/audit/events and POST /cmsfn/audit/webhooks.
- * Permission: audit.read. Dataset isolation via allowedDatasets.
- */
-
+/** Authorized, bounded audit routes. Browser credentials are never forwarded implicitly. */
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "cmsfn";
-import { authorize } from "../auth/authorize.js";
-import type { AuthorizeConfig } from "../auth/authorize.js";
-import { contentfnAuditEvents } from "../audit/events.js";
+import { err, type CmsfnEnvelope } from "cmsfn";
+import { authorize, type AuthorizeConfig } from "../auth/authorize.js";
+import { contentfnAuditEvents, AUDIT_MAX_LIMIT } from "../audit/events.js";
 import { contentfnAuditWebhooks } from "../audit/webhooks.js";
+import { readJsonObject } from "./jsonBody.js";
 
 export interface AuditHandlerConfig extends AuthorizeConfig {
   contentfnBaseUrl: string;
   allowedDatasets: string[];
   authorizeAudit?: (req: IncomingMessage) => Promise<boolean>;
+  /** Server-owned upstream identity/credentials; receives the authorized request. */
+  contentfnAuditHeaders?: (req: IncomingMessage) => NonNullable<RequestInit["headers"]> | Promise<NonNullable<RequestInit["headers"]>>;
 }
+export const AUDIT_BODY_MAX_BYTES = 64 * 1024;
+type AuditInput = { dataset: string; limit?: number; cursor?: string | null };
 
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
+async function readAuthorizedInput(config: AuditHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<AuditInput>> {
   try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+    if (!config.getRolesForSubject || (config.authorizeAudit && await config.authorizeAudit(req) !== true)) return err("PERMISSION_DENIED", "Permission denied");
+  } catch { return err("PERMISSION_DENIED", "Permission denied"); }
+  const parsed = await readJsonObject(req, AUDIT_BODY_MAX_BYTES);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
+  const dataset = typeof body.dataset === "string" ? body.dataset.trim() : "";
+  if (!dataset) return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
+  try {
+    if (!config.allowedDatasets.includes(dataset) || !await authorize(config, req, { dataset, type: "*", action: "audit.read" })) return err("PERMISSION_DENIED", "Permission denied");
+  } catch { return err("PERMISSION_DENIED", "Permission denied"); }
+  if (body.limit !== undefined && (typeof body.limit !== "number" || !Number.isSafeInteger(body.limit) || body.limit < 1 || body.limit > AUDIT_MAX_LIMIT)) return err("VALIDATION_FAILED", "Invalid audit limit", { path: "limit" });
+  if (body.cursor !== undefined && body.cursor !== null && (typeof body.cursor !== "string" || body.cursor.length > 2048)) return err("VALIDATION_FAILED", "Invalid audit cursor", { path: "cursor" });
+  return { ok: true, result: { dataset, ...(body.limit === undefined ? {} : { limit: body.limit as number }), ...(body.cursor === undefined ? {} : { cursor: body.cursor as string | null }) } };
 }
 
-function allowedDataset(dataset: string, allowed: string[]): boolean {
-  const set = new Set(allowed.map((d) => d.trim()));
-  return typeof dataset === "string" && dataset.trim().length > 0 && set.has(dataset.trim());
+export async function handleAuditEvents(config: AuditHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<{ events: import("cmsfn").CmsfnAuditEvent[]; nextCursor: string | null }>> {
+  const input = await readAuthorizedInput(config, req);
+  if (!input.ok) return input;
+  try {
+    const headers = await config.contentfnAuditHeaders?.(req);
+    return await contentfnAuditEvents({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, input.result);
+  } catch { return err("CONTENTFN_UNAVAILABLE", "ContentFn audit request could not be configured"); }
 }
 
-async function requireAuditRead(
-  config: AuditHandlerConfig,
-  req: IncomingMessage,
-  dataset: string
-): Promise<CmsfnEnvelope<never> | null> {
-  if (config.authorizeAudit) {
-    const allowed = await config.authorizeAudit(req);
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-  }
-  if (config.getRolesForSubject && dataset) {
-    const allowed = await authorize(config, req, { dataset, type: "*", action: "audit.read" });
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-  }
-  return null;
-}
-
-/**
- * POST /cmsfn/audit/events — body: { dataset, limit?, cursor? }.
- */
-export async function handleAuditEvents(
-  config: AuditHandlerConfig,
-  req: IncomingMessage
-): Promise<CmsfnEnvelope<{ events: import("cmsfn").CmsfnAuditEvent[]; nextCursor: string | null }>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
-  const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
-  const limit = typeof body?.limit === "number" ? body.limit : undefined;
-  const cursor = body?.cursor !== undefined && body?.cursor !== null ? String(body.cursor) : null;
-  if (!dataset) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
-  }
-  if (!allowedDataset(dataset, config.allowedDatasets)) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "Dataset not allowed", details: { path: "dataset" } } };
-  }
-  const deny = await requireAuditRead(config, req, dataset);
-  if (deny) return deny;
-  const result = await contentfnAuditEvents(
-    { contentfnBaseUrl: config.contentfnBaseUrl },
-    { dataset, limit, cursor }
-  );
-  if (result.ok) return { ok: true, result: result.result };
-  return {
-    ok: false,
-    error: { code: result.error.code, message: result.error.message, details: result.error.details },
-  };
-}
-
-/**
- * POST /cmsfn/audit/webhooks — body: { dataset, limit?, cursor? }.
- */
-export async function handleAuditWebhooks(
-  config: AuditHandlerConfig,
-  req: IncomingMessage
-): Promise<CmsfnEnvelope<{ deliveries: import("cmsfn").CmsfnWebhookDeliveryStatus[]; nextCursor: string | null }>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
-  const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
-  const limit = typeof body?.limit === "number" ? body.limit : undefined;
-  const cursor = body?.cursor !== undefined && body?.cursor !== null ? String(body.cursor) : null;
-  if (!dataset) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
-  }
-  if (!allowedDataset(dataset, config.allowedDatasets)) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "Dataset not allowed", details: { path: "dataset" } } };
-  }
-  const deny = await requireAuditRead(config, req, dataset);
-  if (deny) return deny;
-  const result = await contentfnAuditWebhooks(
-    { contentfnBaseUrl: config.contentfnBaseUrl },
-    { dataset, limit, cursor }
-  );
-  if (result.ok) return { ok: true, result: result.result };
-  return {
-    ok: false,
-    error: { code: result.error.code, message: result.error.message, details: result.error.details },
-  };
+/** The dataset-wide webhook producer route remains unsupported by current ContentFn. */
+export async function handleAuditWebhooks(config: AuditHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<{ deliveries: import("cmsfn").CmsfnWebhookDeliveryStatus[]; nextCursor: string | null }>> {
+  const input = await readAuthorizedInput(config, req);
+  if (!input.ok) return input;
+  return contentfnAuditWebhooks({ contentfnBaseUrl: config.contentfnBaseUrl }, input.result);
 }

@@ -76,6 +76,7 @@ export function EventsPane({ cmsfnApiUrl, dataset, hasAuditRead = true }: Events
             <span data-audit-event-type>{evt.type}</span>
             <span data-audit-event-time>{evt.timestamp}</span>
             {evt.document && <span data-audit-event-doc-id>{evt.document._id}</span>}
+            {evt.targetIds && <span data-audit-event-targets>{evt.targetIds.join(", ")}</span>}
           </li>
         ))}
       </ul>

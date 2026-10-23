@@ -53,6 +53,15 @@ describe("PHASE_12: Audit panes", () => {
     });
   });
 
+  it("renders authoritative audit targets without inventing document fields", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, result: {
+      events: [{ eventId: "audit-1", dataset: "prod", type: "docs.publish", timestamp: "2026-10-23T00:00:00Z", targetIds: ["prod", "article-1"] }], nextCursor: null,
+    } }))));
+    render(<EventsPane cmsfnApiUrl={API_URL} dataset="prod" />);
+    await waitFor(() => expect(screen.getByText("prod, article-1")).toBeDefined());
+    expect(document.querySelector("[data-audit-event-doc-id]")).toBeNull();
+  });
+
   describe("TV-DESK-PANES-002 negative: no audit.read shows no access", () => {
     it("EventsPane with hasAuditRead=false shows deterministic no access", () => {
       render(<EventsPane cmsfnApiUrl={API_URL} dataset="prod" hasAuditRead={false} />);

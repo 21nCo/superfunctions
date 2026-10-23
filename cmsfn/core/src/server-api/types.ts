@@ -25,6 +25,8 @@ export interface CmsfnAuditEvent {
   type: string;
   timestamp: string; // ISO 8601
   actor?: { subject?: string };
+  /** Authoritative audit targets; no document body or inferred type. */
+  targetIds?: string[];
   document?: { _id: string; _type: string; _rev?: string };
   diff?: { changedPaths?: string[] };
 }

@@ -1,3 +1,4 @@
+import { AUDIT_RESPONSE_MAX_BYTES, AUDIT_TIMEOUT_MS, safeAuditResponse } from "./events.js";
 import type { CmsfnWebhookDeliveryStatus } from "cmsfn";
 import { contentfnRequest, isRecord } from "../contentfn/response.js";
 export interface AuditWebhooksConfig { contentfnBaseUrl: string }
@@ -22,5 +23,5 @@ export function contentfnAuditWebhooks(config: AuditWebhooksConfig, input: { dat
       deliveries.push(delivery);
     }
     return { deliveries, nextCursor: value.nextCursor };
-  });
+  }, { maxResponseBytes: AUDIT_RESPONSE_MAX_BYTES, timeoutMs: AUDIT_TIMEOUT_MS, redirect: "error" }).then(safeAuditResponse);
 }

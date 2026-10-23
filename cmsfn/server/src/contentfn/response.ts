@@ -18,18 +18,53 @@ function mappedCode(code: string): CmsfnErrorCode {
   }
 }
 
+export interface ContentfnRequestOptions {
+  headers?: NonNullable<RequestInit["headers"]>;
+  maxResponseBytes?: number;
+  timeoutMs?: number;
+  redirect?: RequestInit["redirect"];
+}
+
+async function responseJson(response: Response, maxBytes?: number): Promise<unknown> {
+  if (maxBytes === undefined) return response.json();
+  const declared = response.headers.get("content-length");
+  if (declared !== null && Number(declared) > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("Upstream response too large");
+  }
+  if (!response.body) throw new Error("Missing response body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > maxBytes) throw new Error("Upstream response too large");
+      chunks.push(chunk.value);
+    }
+    return JSON.parse(Buffer.concat(chunks, size).toString("utf8"));
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+}
+
 /** Validate the transport envelope before projecting the endpoint's result. */
 export async function contentfnRequest<T>(
   baseUrl: string, path: string, body: Record<string, unknown>,
   parseResult: (value: unknown) => T | null,
+  options: ContentfnRequestOptions = {},
 ): Promise<CmsfnEnvelope<T>> {
   let response: Response;
   let data: unknown;
   try {
+    const headers = new Headers(options.headers);
+    headers.set("Content-Type", "application/json");
     response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      method: "POST", headers, body: JSON.stringify(body),
+      ...(options.timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(options.timeoutMs) }),
+      ...(options.redirect === undefined ? {} : { redirect: options.redirect }),
     });
-    data = await response.json();
+    data = await responseJson(response, options.maxResponseBytes);
   } catch {
     return err("CONTENTFN_UNAVAILABLE", "ContentFn request failed");
   }

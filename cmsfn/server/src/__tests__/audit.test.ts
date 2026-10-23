@@ -45,21 +45,21 @@ describe("PHASE_12: Audit", () => {
         "fetch",
         vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
           const url = typeof input === "string" ? input : (input as Request).url;
-          if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/audit/events")) {
+          if (url.startsWith(CONTENTFN_BASE) && url.includes("/contentfn/audit/query")) {
             return new Response(
               JSON.stringify({
                 ok: true,
                 result: {
-                  events: [
+                  records: [
                     {
-                      eventId: "evt-1",
+                      id: "evt-1",
                       dataset: "prod",
-                      type: "doc.published",
+                      action: "docs.publish",
                       timestamp: "2026-02-11T12:00:00Z",
-                      document: { _id: "post-1", _type: "post", _rev: "r2" },
+                      targetIds: ["prod", "post-1"], actor: null,
                     },
                   ],
-                  nextCursor: null,
+                  nextOffset: null,
                 },
               }),
               { status: 200, headers: { "Content-Type": "application/json" } }
@@ -83,8 +83,9 @@ describe("PHASE_12: Audit", () => {
         expect(Array.isArray(field(data, "result.events"))).toBe(true);
         expect(field(data, "result.events.length")).toBe(1);
         expect(field(data, "result.events.0.eventId")).toBe("evt-1");
-        expect(field(data, "result.events.0.type")).toBe("doc.published");
-        expect(field(data, "result.events.0.document")).toEqual({ _id: "post-1", _type: "post", _rev: "r2" });
+        expect(field(data, "result.events.0.type")).toBe("docs.publish");
+        expect(field(data, "result.events.0.targetIds")).toEqual(["prod", "post-1"]);
+        expect(field(data, "result.events.0.document")).toBeUndefined();
       } finally {
         close();
       }

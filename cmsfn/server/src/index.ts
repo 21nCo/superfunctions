@@ -48,6 +48,10 @@ export interface CmsfnServerConfig extends CmsfnStudioConfig {
   getRolesForSubject?: (req: IncomingMessage) => Promise<CmsfnRole[]>;
   /** Required for preview token when config.preview?.enabled; used to sign tokens. */
   previewSecret?: string;
+  /** Trusted headers for ContentFn audit requests, resolved after local audit.read authorization.
+   * Use a server service credential or explicitly derived upstream subject; browser headers are not copied.
+   */
+  contentfnAuditHeaders?: (req: IncomingMessage) => NonNullable<RequestInit["headers"]> | Promise<NonNullable<RequestInit["headers"]>>;
 }
 
 function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
@@ -201,6 +205,7 @@ async function route(
     const envelope = await handleAuditEvents(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        contentfnAuditHeaders: config.contentfnAuditHeaders,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
       },
