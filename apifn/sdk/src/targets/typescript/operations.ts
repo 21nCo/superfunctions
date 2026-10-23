@@ -202,8 +202,13 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
     merge(success, shape);
   }
 
-  // A HEAD response never has a body, whatever its documented content.
-  if (operation.method === "head" && success) success = { kinds: ["none"], contents: [{ kind: "none", schema: null }] };
+  // A HEAD response never has a body, whatever its documented content, so every documented status
+  // (success, error, range or `default`) is matched, and typed, as no content.
+  if (operation.method === "head") {
+    const none = (): ResponseShape => ({ kinds: ["none"], contents: [{ kind: "none", schema: null }] });
+    if (success) success = none();
+    for (const error of errors) error.shape = none();
+  }
 
   const unsupportedSchemes = new Set<string>();
   const security: SecurityTerm[][] = [];

@@ -2,11 +2,12 @@
 // by the shared cross-language vectors in fixtures/vectors.
 
 import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildFixtureSdk, cleanupTemp, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
+import { buildFixtureSdk, cleanupTemp, compile, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
 
 const catalog = fixtureCatalog();
 const server = new FixtureServer();
@@ -568,6 +569,57 @@ describe("failure observation", () => {
     } finally {
       process.off("unhandledRejection", record);
     }
+  });
+});
+
+describe("HEAD operations", () => {
+  /** HEAD clones of tasks.delete: one documents 404 and a 5XX range, the other only `default`, all with bodies. */
+  function headCatalog() {
+    const catalog = fixtureCatalog();
+    const del = catalog.operations.find((operation: any) => operation.id === "tasks.delete");
+    const problem = del.responses.find((response: any) => response.status === "404").contents;
+    const clone = (id: string, name: string, responses: unknown[]) => ({ ...structuredClone(del), id, name, openapiOperationId: name, method: "head", deprecation: { deprecated: false, message: null, replacement: null, since: null }, responses });
+    catalog.operations.push(
+      clone("tasks.exists", "taskExists", [del.responses[0], { status: "404", kind: "error", description: "Problem", contents: problem }, { status: "5XX", kind: "error", description: "Problem", contents: problem }]),
+      clone("tasks.probe", "probeTask", [del.responses[0], { status: "default", kind: "default", description: "Problem", contents: problem }])
+    );
+    catalog.operations.sort((a: any, b: any) => (a.id < b.id ? -1 : 1));
+    return catalog;
+  }
+
+  it("declares every documented error status, which never has a body", async () => {
+    const { dir, sdk: head } = await buildFixtureSdk(fixtureConfig(), headCatalog());
+    const target = new head.TasksClient({ baseUrl: server.baseUrl, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
+    const failure = async (call: () => Promise<unknown>, status: number) => {
+      server.reset([{ status, headers: { "content-type": "application/problem+json" }, body: '{"title":"x"}' }]);
+      const error: any = await call().catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(head.ApiHttpError);
+      expect(server.requests.map((request) => request.method)).toEqual(["HEAD"]);
+      return { status: error.status, declared: error.declared, body: error.body };
+    };
+    const exists = () => target.taskExists({ projectId: "p", taskId: "t" });
+    expect(await failure(exists, 404)).toEqual({ status: 404, declared: true, body: undefined });
+    expect(await failure(exists, 503)).toEqual({ status: 503, declared: true, body: undefined });
+    expect(await failure(exists, 409)).toEqual({ status: 409, declared: false, body: undefined });
+    expect(await failure(() => target.probeTask({ projectId: "p", taskId: "t" }), 409)).toEqual({ status: 409, declared: true, body: undefined });
+
+    writeFileSync(
+      path.join(dir, "src/custom/head-types.ts"),
+      `import { isOperationError } from "../index.js";
+export function bodies(error: unknown): undefined {
+  if (isOperationError(error, "tasks.exists") && error.declared) {
+    const body: undefined = error.body;
+    return body;
+  }
+  if (isOperationError(error, "tasks.probe") && error.declared) {
+    // @ts-expect-error a HEAD error never has a body to read
+    return error.body.title;
+  }
+  return undefined;
+}
+`
+    );
+    expect(compile(dir)).toEqual([]);
   });
 });
 

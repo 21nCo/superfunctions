@@ -278,6 +278,89 @@ describe("the output directory lock", () => {
       expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
     });
 
+    // The ownership manifest is observed first, then again among the generated files (after README.md);
+    // the plan relies on that first observation, so a later one must not replace it.
+    const readme = (dir: string) => path.join(dir, "README.md");
+
+    it("keeps the manifest it planned from when a write completes after reading it", async () => {
+      const dir = tempDir();
+      const a = generate();
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      // B completes after A's manifest is read for ownership, before the manifest is examined again.
+      pause.onStat.set(readme(dir), async () => expect((await writeSdk(dir, generationB())).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onStat.size).toBe(0);
+      // Against A's digests, B's README, client and models would look hand-edited.
+      expect(result.diagnostics).toEqual([]);
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+      expect(sorted(result.written)).toEqual(sorted([SDK_ARTIFACT_MANIFEST_FILE, "README.md", "src/client.ts", "src/models.ts"]));
+    });
+
+    it("keeps a missing manifest it planned from when a write creates the directory after that", async () => {
+      const dir = path.join(tempDir(), "out");
+      const a = generate();
+      pause.onStat.set(readme(dir), async () => expect((await writeSdk(dir, generationB())).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onStat.size).toBe(0);
+      // With no previous generation, B's files would look unowned.
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+      expect(result.ok).toBe(true);
+      expect(sorted(result.written)).toEqual(sorted([SDK_ARTIFACT_MANIFEST_FILE, "README.md", "src/client.ts", "src/models.ts"]));
+    });
+
+    const listed = (files: string[]): SdkGenerationResult => {
+      const target = {
+        id: "list",
+        version: "1.0.0",
+        customCodeRoot: "custom/",
+        resolveOptions: (input: unknown) => ({ options: input as { package: { name: string; version: string } }, diagnostics: [] }),
+        packageOf: (options: { package: { name: string; version: string } }) => options.package,
+        unsupportedReasons: () => [],
+        emit: () => ({ files: files.map((file) => ({ path: file, contents: `${file}\n`, ownership: "generated" as const })), diagnostics: [] }),
+      };
+      return generateSdk({ catalog: fixtureCatalog(), config: { target: "list", options: { package: { name: "list-sdk", version: "1.0.0" } } }, targets: [target] });
+    };
+
+    it("plans the deletions of the generation on disk, not of one it read before", async () => {
+      const dir = tempDir();
+      const a = listed(["a.txt"]);
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      pause.onStat.set(path.join(dir, "a.txt"), async () => expect((await writeSdk(dir, listed(["a.txt", "b.txt"]))).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onStat.size).toBe(0);
+      expect(result.deleted).toEqual(["b.txt"]);
+      expect(result).toEqual(await writeSdk(dir, a, { dryRun: true }));
+    });
+
+    it("plans again when a write removes a file between examining and reading it", async () => {
+      const dir = tempDir();
+      expect((await writeSdk(dir, listed(["a.txt", "b.txt"]))).ok).toBe(true);
+      const a = listed(["a.txt"]);
+      // The stale b.txt is examined, then A's write deletes it before it is read.
+      pause.onRead.set(path.join(dir, "b.txt"), async () => expect((await writeSdk(dir, a)).ok).toBe(true));
+      const result = await writeSdk(dir, a, { dryRun: true });
+      expect(pause.onRead.size).toBe(0);
+      expect(result).toEqual({ ok: true, written: [], unchanged: expect.any(Array), deleted: [], seeded: [], diagnostics: [] });
+    });
+
+    it("reports a conflict when each plan sees a file change between two observations of it", async () => {
+      const dir = tempDir();
+      const a = generate();
+      expect((await writeSdk(dir, a)).ok).toBe(true);
+      let writes = 0;
+      const flip = async () => {
+        expect((await writeSdk(dir, writes++ % 2 === 0 ? generationB() : a)).ok).toBe(true);
+        pause.onStat.set(readme(dir), flip);
+      };
+      pause.onStat.set(readme(dir), flip);
+      const result = await writeSdk(dir, a, { dryRun: true });
+      pause.onStat.clear();
+      expect(writes).toBe(3);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SDK_OUTPUT_CONFLICT", pointer: SDK_ARTIFACT_MANIFEST_FILE, message: expect.stringContaining("3 times") })]);
+      expectConsistent(dir);
+    });
+
     it("reports a conflict when the directory keeps changing, and changes nothing itself", async () => {
       const dir = tempDir();
       const a = generate();

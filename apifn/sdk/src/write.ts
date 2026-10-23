@@ -69,24 +69,33 @@ const direct: Reader = { stat: (file) => stat(file), read: (file) => readFile(fi
  * A reader that records what each read saw, so a dry run can tell whether anything it read changed before
  * it finished. A file's identity includes its inode and change time: every write replaces a file by renaming
  * a new one over it and always replaces the manifest, so even a write that restores the same contents shows.
+ * The first observation of a path is what the plan relied on: a later one that differs is itself a change.
  */
 class RecordingReader implements Reader {
   private readonly seen = new Map<string, { file: string; read: boolean; value: string }>();
+  private differed: string | null = null;
 
   async stat(file: string): Promise<Entry | null> {
     const info = await stat(file, { bigint: true });
-    this.seen.set(`stat:${file}`, { file, read: false, value: identity(info) });
+    this.observe(`stat:${file}`, { file, read: false, value: identity(info) });
     return info;
   }
 
   async read(file: string): Promise<string> {
     const contents = await readFile(file, "utf8");
-    this.seen.set(`read:${file}`, { file, read: true, value: sha256Hex(contents) });
+    this.observe(`read:${file}`, { file, read: true, value: sha256Hex(contents) });
     return contents;
   }
 
-  /** The first file that no longer looks as it did when read, or null when none changed. */
+  private observe(key: string, observation: { file: string; read: boolean; value: string }): void {
+    const first = this.seen.get(key);
+    if (!first) this.seen.set(key, observation);
+    else if (first.value !== observation.value) this.differed ??= observation.file;
+  }
+
+  /** The first file that no longer looks as it did when first read, or null when none changed. */
   async changed(): Promise<string | null> {
+    if (this.differed !== null) return this.differed;
     for (const { file, read, value } of this.seen.values()) {
       // A read that now fails (say, a directory on the path became a file) is a change too.
       const now = read ? await readFile(file, "utf8").then(sha256Hex, () => null) : await stat(file, { bigint: true }).then(identity, () => null);
@@ -263,7 +272,14 @@ async function dryRun(root: string, result: Generated): Promise<WriteSdkResult> 
     const before = await heldLock(root);
     if (before !== null) return failed(before, SDK_OUTPUT_LOCK_FILE);
     const reader = new RecordingReader();
-    const outcome = await transaction(root, result, { dryRun: true }, { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] }, reader);
+    let outcome: WriteSdkResult;
+    try {
+      outcome = await transaction(root, result, { dryRun: true }, { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] }, reader);
+    } catch (error) {
+      // A read can fail because another run replaced or removed what an earlier read saw; plan again then.
+      if ((await reader.changed()) === null && (await heldLock(root)) === null) throw error;
+      outcome = { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] };
+    }
     const changed = await reader.changed();
     const held = await heldLock(root);
     if (held !== null) return failed(held, SDK_OUTPUT_LOCK_FILE);
