@@ -28,6 +28,8 @@ import { uploadRecording } from '../recording/storage.js';
 export type PlatformAdapterFactory = () => PlatformAdapter;
 
 export interface BotWorkerConfig {
+  /** Production workers require managed scratch with verifiable host ownership. */
+  environment?: 'production' | 'development' | 'test';
   store: RecFnStore;
   queue: QueueAdapter;
   logger: Logger;
@@ -60,6 +62,13 @@ interface ActiveBotSession {
 }
 
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
+  const assertScratch = () => {
+    if ((config.environment ?? process.env.NODE_ENV) === 'production' &&
+      (!config.captureOptions?.scratch?.supportsCleanup || config.captureOptions.temporaryDirectory)) {
+      throw new Error('Production recording workers require managed, cleanup-capable recording scratch.');
+    }
+  };
+  assertScratch();
   const {
     store,
     queue,
@@ -145,6 +154,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
   }
 
   async function startCaptureSession(bot: Bot, adapter: PlatformAdapter, signal: AbortSignal): Promise<CaptureResult | CaptureArtifact> {
+    assertScratch();
     const videoStream = (bot.config.recordingFormat ?? 'mp4') === 'mp4' ? adapter.getVideoStream?.() : undefined;
     let recordingStream;
     try { recordingStream = adapter.getAudioStream(); }

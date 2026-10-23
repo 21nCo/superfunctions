@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Writable } from 'node:stream';
+import type { RecordingScratch } from './scratch.js';
 import { EncryptedMediaFile } from './encrypted-media-file.js';
 
 export interface CaptureResult {
@@ -32,6 +33,9 @@ export interface CaptureOptions {
   signal?: AbortSignal;
   /** Maximum capture lifetime, including a stalled producer. Default four hours. */
   maxCaptureMs?: number;
+  /** Managed dedicated scratch with bounded dead-owner cleanup. */
+  scratch?: RecordingScratch;
+  /** Unmanaged development compatibility path; unsuitable for production workers. */
   temporaryDirectory?: string;
   ffmpegPath?: string;
   ffprobePath?: string;
@@ -122,6 +126,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
   const captureMs = options.maxCaptureMs ?? 4 * 60 * 60 * 1000;
   let directory: string | undefined;
   let encrypted: EncryptedMediaFile | undefined;
+  let disposeDirectory: (() => Promise<void>) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let total = 0;
   let keepArtifact = false;
@@ -147,7 +152,14 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     if (options.recordingFormat !== 'audio_only' && options.recordingFormat !== 'mp4') throw failure('Unsupported recording format.');
     if (options.recordingFormat === 'mp4' && !video) throw failure('MP4 recording requires an explicit video stream.');
     if (options.recordingFormat === 'audio_only' && video) throw failure('Audio-only capture cannot discard a supplied video stream.');
-    directory = await mkdtemp(join(options.temporaryDirectory ?? tmpdir(), 'recfn-media-'));
+    if (options.scratch && options.temporaryDirectory) throw failure('Managed scratch and temporaryDirectory cannot both be configured.');
+    if (options.scratch) {
+      const allocated = await options.scratch.allocate();
+      directory = allocated.directory; disposeDirectory = allocated.dispose;
+    } else {
+      directory = await mkdtemp(join(options.temporaryDirectory ?? tmpdir(), 'recfn-media-'));
+      const owned = directory; disposeDirectory = () => rm(owned, { recursive: true, force: true });
+    }
     timer = setTimeout(() => stop(failure('Capture duration limit exceeded.')), captureMs);
     const validateAudio = (value: AudioChunk) => {
         if (!(value.data instanceof Uint8Array) || !value.data.length || !Number.isFinite(value.timestamp)) throw failure('Invalid audio frame.');
@@ -269,7 +281,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     await run(options.ffmpegPath ?? 'ffmpeg', ['-nostdin', '-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-'], () => file.openStream(), options.signal);
     if (options.signal?.aborted) throw failure('Capture was canceled.');
     keepArtifact = true;
-    const ownedDirectory = directory;
+    const removeDirectory = disposeDirectory;
     let disposed = false;
     let disposing: Promise<void> | undefined;
     return {
@@ -283,7 +295,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
           disposed = true;
           disposing = (async () => {
             await file.dispose();
-            await rm(ownedDirectory!, { recursive: true, force: true });
+            await removeDirectory!();
           })();
         }
         return disposing;
@@ -296,7 +308,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     audio.releaseLock();
     video?.releaseLock();
     if (!keepArtifact) {
-      try { await encrypted?.dispose(); } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+      try { await encrypted?.dispose(); } finally { await disposeDirectory?.(); }
     }
   }
 }

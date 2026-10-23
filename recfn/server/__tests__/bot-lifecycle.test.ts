@@ -1,10 +1,12 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AudioChunk, PlatformAdapter, Participant } from '@recfn/core';
 import {
   createMemoryStore,
+  createRecordingScratch,
+  type RecordingScratch,
   createBotWorker,
   MemoryQueueAdapter,
   MemoryLogger,
@@ -116,6 +118,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   let logger: MemoryLogger;
   let temporaryDirectory: string;
   const workers: ReturnType<typeof createBotWorker>[] = [];
+  const scratchManagers: RecordingScratch[] = [];
   const trackedWorker = (config: Parameters<typeof createBotWorker>[0]) => { const worker = createBotWorker(config); workers.push(worker); return worker; };
 
   beforeEach(async () => {
@@ -128,6 +131,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   afterEach(async () => {
     vi.useRealTimers();
     await Promise.all(workers.splice(0).map(worker => worker.cancelCaptures()));
+    for (const scratch of scratchManagers.splice(0)) { await scratch.close(); await rm(scratch.directory, { recursive: true, force: true }); }
     await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
     await rm(temporaryDirectory, { recursive: true, force: true });
   });
@@ -183,7 +187,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     expect(statusChanges[2].data.to).toBe('recording');
   });
 
-  it('finalizes and uploads a recording automatically after leave (TV-BOT-001)', async () => {
+  it.each([false, true])('finalizes and uploads a recording after leave with managed production scratch=%s (TV-BOT-001)', async managed => {
     const storage = new MemoryStorageAdapter();
     const bot = await store.createBot({
       meetingUrl: 'https://zoom.us/j/123',
@@ -208,8 +212,11 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       createdAt: new Date().toISOString(),
     });
 
+    const scratch = managed ? await createRecordingScratch({ directory: join(await realpath(temporaryDirectory), 'owned') }) : undefined;
+    if (scratch) scratchManagers.push(scratch);
     const worker = trackedWorker({
-      captureOptions: { temporaryDirectory },
+      environment: managed ? 'production' : 'test',
+      captureOptions: scratch ? { scratch } : { temporaryDirectory },
       store,
       queue,
       logger,
@@ -238,6 +245,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     expect(transitions).toContain('leaving→finalizing');
     expect(transitions).toContain('finalizing→done');
     expect(logger.findByEvent('recording.finalization.complete')).toHaveLength(1);
+    if (scratch) expect(await readdir(scratch.directory)).toEqual(['.recfn-scratch.json']);
   });
 
   it('leaves a join-only bot without requiring a recording upload', async () => {

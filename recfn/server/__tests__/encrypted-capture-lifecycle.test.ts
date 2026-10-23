@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { captureToFile } from '../src/recording/capture.js';
-import { mkdtemp, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { createRecordingScratch } from '../src/recording/scratch.js';
+import { mkdtemp, readdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -24,15 +25,17 @@ it('keeps native FFmpeg output encrypted on disk while exposing valid bounded up
 });
 
 it('leaves only ciphertext after a real worker SIGKILL and closes its encoder pipes', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'recfn-encrypted-crash-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'recfn-encrypted-crash-')));
   const wrapper = join(root, 'ffmpeg-owned');
   // The wrapper records its own PID before exec, so cleanup never guesses another process.
   await writeFile(wrapper, `#!/bin/sh\necho $$ > '${join(root, 'encoder.pid')}'\nexec ffmpeg "$@"\n`, { mode: 0o700 });
   const source = `import {captureToFile} from ${JSON.stringify(resolve('dist/recording/capture.js'))};
 import {readdir,stat} from 'node:fs/promises'; import {join} from 'node:path';
 const root=${JSON.stringify(root)};
-void captureToFile(new ReadableStream({start(c){c.enqueue({data:new Uint8Array(2*1024*1024).fill(42),timestamp:0,encoding:'pcm_s16le',sampleRate:16000,channels:1});}}),{recordingFormat:'audio_only',temporaryDirectory:root,ffmpegPath:${JSON.stringify(wrapper)}}).catch(error=>{console.error(error);process.exitCode=1;});
-let sent=false;const timer=setInterval(async()=>{if(sent)return;const directory=(await readdir(root)).find(name=>name.startsWith('recfn-media-'));if(directory){const filename=join(root,directory,'recording.enc');const info=await stat(filename).catch(()=>null);if(info&&info.size>=65564&&!sent){sent=true;clearInterval(timer);console.log(JSON.stringify({filename}));}}},20);`;
+const {createRecordingScratch}=await import(${JSON.stringify(resolve('dist/recording/scratch.js'))});
+const scratch=await createRecordingScratch({directory:join(root,'scratch')});
+void captureToFile(new ReadableStream({start(c){c.enqueue({data:new Uint8Array(2*1024*1024).fill(42),timestamp:0,encoding:'pcm_s16le',sampleRate:16000,channels:1});}}),{recordingFormat:'audio_only',scratch,ffmpegPath:${JSON.stringify(wrapper)}}).catch(error=>{console.error(error);process.exitCode=1;});
+let sent=false;const timer=setInterval(async()=>{if(sent)return;const directory=(await readdir(join(root,'scratch'))).find(name=>name.startsWith('capture-'));if(directory){const filename=join(root,'scratch',directory,'recording.enc');const info=await stat(filename).catch(()=>null);if(info&&info.size>=65564&&!sent){sent=true;clearInterval(timer);console.log(JSON.stringify({filename}));}}},20);`;
   const child = spawn(process.execPath, ['--input-type=module', '-e', source], { stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit'); let stdout = '', stderr = ''; let encoder: number | undefined;
   child.stdout.on('data', chunk => { stdout += String(chunk); }); child.stderr.on('data', chunk => { stderr += String(chunk); });
@@ -46,9 +49,13 @@ let sent=false;const timer=setInterval(async()=>{if(sent)return;const directory=
     const encrypted = await readFile(filename);
     expect(encrypted.length).toBeGreaterThanOrEqual(65564);
     expect(encrypted.includes(Buffer.alloc(128, 42))).toBe(false);
-    expect(await readdir(join(filename, '..'))).toEqual(['recording.enc']);
+    expect((await readdir(join(filename, '..'))).sort()).toEqual(['owner.json', 'recording.enc']);
     // No key sidecar exists; crash remnants require operator cleanup, not automatic replay.
-    expect((await readdir(root)).sort()).toEqual(['encoder.pid', 'ffmpeg-owned', filename.split('/').at(-2)].sort());
+    expect((await readdir(root)).sort()).toEqual(['encoder.pid', 'ffmpeg-owned', 'scratch']);
+    const recovered = await createRecordingScratch({ directory: join(root, 'scratch') });
+    expect(recovered.lastCleanup.removed).toBe(1);
+    expect(await readdir(join(root, 'scratch'))).toEqual(['.recfn-scratch.json']);
+    await recovered.close();
   } finally {
     if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
     encoder ??= Number(await readFile(join(root, 'encoder.pid'), 'utf8').catch(() => '0'));

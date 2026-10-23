@@ -239,6 +239,8 @@ export {
   assertProductionStorage,
 } from './integrations/storage.js';
 export type { StorageAdapter, UploadOptions } from './integrations/storage.js';
+export { createRecordingScratch, RecordingScratch } from './recording/scratch.js';
+export type { RecordingScratchOptions, ScratchCleanupOptions, ScratchCleanupReport } from './recording/scratch.js';
 export { captureFromStream, captureToFile } from './recording/capture.js';
 export type { CaptureResult, CaptureOptions, CaptureArtifact } from './recording/capture.js';
 export { uploadRecording } from './recording/storage.js';

@@ -2,6 +2,10 @@
 
 Date: 2026-10-23. Baseline: `65c612d56a72d2f62b9357d94e06cea443bbef6d`.
 
+The managed crash-cleanup successor is documented in
+`recording-scratch-cleanup-readiness.md`; the evidence below describes the encrypted
+capture checkpoint before that optional managed-root capability.
+
 ## Requirement and boundary
 
 Original REC-004 prohibits raw recordings on plaintext disk (apart from an explicit

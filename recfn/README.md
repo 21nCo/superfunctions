@@ -138,6 +138,37 @@ instead of publishing truncated media. Encoder draining after input EOF, probing
 and full decoder validation each have a 60-second deadline. Stop dequeuing jobs,
 then call `worker.cancelCaptures()` to abort active capture and release artifacts.
 
+Server scratch is encrypted in authenticated 64 KiB chunks with process-only keys;
+each chunk adds 28 bytes beyond the encoded-output allowance. Media validation and
+upload receive authenticated plaintext through streams, without a plaintext disk
+fallback. External storage encryption still requires adapter/deployment attestation.
+
+Production workers (`environment: 'production'` or `NODE_ENV=production`) now
+require a managed, cleanup-capable scratch root. Configure it before constructing
+the worker; an unmanaged `temporaryDirectory` is a development compatibility path.
+
+```ts
+import { createRecordingScratch, createBotWorker } from '@recfn/server';
+const scratch = await createRecordingScratch({
+  directory: '/var/lib/recfn/recording-scratch',
+});
+const worker = createBotWorker({ ...workerConfig, environment: 'production',
+  captureOptions: { scratch } });
+// Inspect scratch.lastCleanup; continue bounded sweeps with await scratch.cleanup().
+// Stop dequeuing and await worker.cancelCaptures() before await scratch.close().
+```
+
+Use a dedicated canonical path on a host-local filesystem, with an existing parent.
+The root is created privately or reopened with its own marker; unmarked existing
+directories are refused. Linux/macOS host/boot/PID identity supports conservative
+dead-owner cleanup. Unsupported identity retains files and fails the production
+worker guard. Live or reused PIDs, foreign identities, unknown entries and unsafe
+permissions are never reclaimed by age. Scan reports expose skipped/incomplete
+work and resume across calls on the same manager; close it at shutdown. Cleanup
+budgets do not bound stalled filesystem calls. Crashed recordings are unrecoverable
+because their keys were process-only. Global admission/disk capacity and offline
+repair remain deployment responsibilities. See [scratch lifecycle details](.conduct/recording-scratch-cleanup-readiness.md).
+
 Zoom queues copy SDK buffers and cap each stream at 32 MiB. Browser capture caps
 queued blob bytes and its Node stream queue at 8 MiB each. A coordinated bounded
 audio split applies backpressure to both recording and real-time ASR consumers.
