@@ -142,13 +142,14 @@ it("retains an idle notification that arrives while drain awaits stale statistic
   let finish!: () => void;
   const handler = new Promise<void>(resolve => { finish = resolve; });
   queue.process(async () => { await handler; });
-  await vi.advanceTimersByTimeAsync(0);
+  // Start drain before the asynchronous claim settles, then hold its waiting
+  // snapshot while the worker enters and completes the job.
   let releaseStats!: () => void;
   const holdStats = new Promise<void>(resolve => { releaseStats = resolve; });
   const read = adapter.getQueueStats.bind(adapter);
   vi.spyOn(adapter, "getQueueStats").mockImplementationOnce(async name => {
     const stale = await read(name);
-    expect(stale.active).toBe(1);
+    expect(stale.waiting).toBe(1);
     await holdStats;
     return stale;
   });
@@ -162,4 +163,31 @@ it("retains an idle notification that arrives while drain awaits stale statistic
   await vi.advanceTimersByTimeAsync(0);
   expect(drained).toBe(true);
   await drain;
+});
+
+it("defers history reads during local work but still waits for a remote owner", async () => {
+  const adapter = new MemoryAdapter();
+  const flow = createFlow({ adapter }); flows.push(flow);
+  const queue = flow.queue("drain-local-remote");
+  await queue.add("remote", 1);
+  const remote = (await adapter.dequeue(queue.name, "remote"))!;
+  await queue.add("local", 2);
+  let finish!: () => void;
+  const hold = new Promise<void>(resolve => { finish = resolve; });
+  queue.process("local", async () => { await hold; });
+  await vi.advanceTimersByTimeAsync(0);
+  const stats = vi.spyOn(adapter, "getQueueStats");
+  let drained = false;
+  const draining = queue.drain().then(() => { drained = true; });
+  await vi.advanceTimersByTimeAsync(60);
+  expect(stats).not.toHaveBeenCalled();
+  expect(drained).toBe(false);
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(stats).toHaveBeenCalled();
+  expect(drained).toBe(false);
+  await adapter.ack(queue.name, remote.id, remote.lease!.token);
+  await vi.advanceTimersByTimeAsync(20);
+  expect(drained).toBe(true);
+  await draining;
 });

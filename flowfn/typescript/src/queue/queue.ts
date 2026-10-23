@@ -578,6 +578,15 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     for (;;) {
       if (this.workerErrors.length) throw this.workerErrors[0];
       const epoch = this.drainEpoch;
+      // Local work already proves the queue is not drained. Avoid repeatedly
+      // materializing remote job history until that work has settled; storage
+      // remains authoritative before returning, including remote workers.
+      if (this.inFlight) {
+        if (this.closed || this.paused || !this.workers.size)
+          throw new Error("Cannot drain pending jobs without running workers");
+        await this.sleep(20, this.drainWakes);
+        continue;
+      }
       const stats = await this.adapter.getQueueStats(this.name);
       if (!this.inFlight && !stats.waiting && !stats.active && !stats.delayed)
         return;
