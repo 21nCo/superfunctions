@@ -1,0 +1,39 @@
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 350
+userfn/typescript/src/__tests__/survey-questions.test.ts
+  s_e1c5fc1a65c0cf::t_2e221a00aba3aa 1-27
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 211,222-223
+userfn/service/src/surveys.ts
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 6,34,36,39-41,55-56,60-63
+userfn/typescript/src/ui/renderer.ts
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 4,75,191,224-225
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 199-204,221
+userfn/typescript/src/core/survey-questions.ts
+  s_e1c5fc1a65c0cf::t_aff94591588d5f 1-24
+userfn/.conduct/survey-branching-readiness.md
+  s_e1c5fc1a65c0cf::t_80e0ffe2e05e4e 1-27
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_ae6dd67d04f4e6 445-451
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_eec07da19098f5 553-574
+userfn/typescript/scripts/verify-survey-renderer.mjs
+  s_e1c5fc1a65c0cf::t_84a56f5764fd6d 30-35,39,205-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c09c5f2a2fd64d8878944e6d20b336c3df1050b0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
