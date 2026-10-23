@@ -18,3 +18,23 @@ Base `logfn` remains Python>=3.9 and does not import optional HTTP code. `logfn[
 - Coverage includes native framework200/503 responses; sampled-out application logging; inherited cookies/headers and unchanged body; typed400 and sanitized500 adapter errors; nested/concurrent context, cancellation; W3C vectors; identity privacy and validation. No public server/provider/deployment or browser settings were used.
 
 The wheel acceptance runner uses bounded subprocess timeouts and a TemporaryDirectory, removed on completion. The source-only owned environment `/tmp/logfn-http-python-20261023` was removed after validation. No test processes or services remain. Shared package source, root metadata and ignore rules are unchanged.
+
+## Authoritative installed-import verification
+
+The acceptance helper now removes inherited `PYTHON*`, `PYTEST_*`, `MYPYPATH`,
+`VIRTUAL_ENV` and `UV_PROJECT_ENVIRONMENT` overrides from child processes. All
+Python verification commands use isolated `-I` mode. Tests and their configuration
+are copied into the owned temporary directory outside the source checkout.
+Before each environment's tests, the helper asserts that `sys.prefix` equals the
+expected fresh environment, and that canonical module file paths are under that
+environment's `site-packages`. The HTTP environment checks LogFn, `logfn.http`,
+shared core/HTTP, FastAPI adapter and Flask adapter; the base environment checks
+LogFn and separately verifies shared core is absent.
+
+The final run used `python3 -I logfn/scripts/python-http-acceptance.py` with
+`PYTHONPATH` deliberately pointed at the source SDK and `PYTHONHOME`/`MYPYPATH`
+set to nonexistent poison paths. `/tmp/log-python-http-isolated-final.log` records
+all canonical imported-wheel paths,77Python3.11 tests, the strict installed API
+consumer,48Python3.9 tests/2expected skips, and the expected3.9 HTTP-extra resolver
+rejection. All passed. Both fresh environments and copied tests were removed
+by TemporaryDirectory cleanup; no runtime package implementation changed.
