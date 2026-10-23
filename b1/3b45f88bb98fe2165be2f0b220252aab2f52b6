@@ -1,0 +1,35 @@
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_3f0d850a27140e 2,45-49
+  s_e1c5fc1a65c0cf::t_e6171e7844c6b1 16,34,178-185
+  s_e1c5fc1a65c0cf::t_a913afafb7e78d 186
+userfn/python/src/userfn/core/surveys.py
+  s_e1c5fc1a65c0cf::t_3f0d850a27140e 3,15,46-52
+  s_e1c5fc1a65c0cf::t_e6171e7844c6b1 1,4-14,16-37,40-45,53-54
+  s_e1c5fc1a65c0cf::t_847623f73ac4af 2,38-39
+userfn/python/tests/test_surveys.py
+  s_e1c5fc1a65c0cf::t_3f0d850a27140e 1,10,68-98
+  s_e1c5fc1a65c0cf::t_847623f73ac4af 2-9,11-67,102,104,108
+  s_e1c5fc1a65c0cf::t_cd23213c6ef9d7 99-101,103,105-107,109
+userfn/service/tests/surveys-http.test.ts
+  s_e1c5fc1a65c0cf::t_36905627a23fe2 100,103-104,109,111-113
+userfn/.conduct/python-survey-eligibility-readiness.md
+  s_e1c5fc1a65c0cf::t_9f55fc483f84f0 1-9
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_6916138cc73e60 433-444
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b13b45f88bb98fe2165be2f0b220252aab2f52b6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
