@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 
 import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
@@ -23,6 +23,8 @@ export interface CheckpointCaptureSource {
   layoutSnapshot(): Promise<unknown>;
   stylesSnapshot?(): Promise<unknown>;
   videoCapture?(): Promise<Uint8Array>;
+  /** Preferred bounded-file path; the consumer must be invoked exactly once. */
+  videoCaptureStream?(consume: (video: { byteLength: number; chunks: AsyncIterable<Uint8Array> }) => Promise<void>): Promise<void>;
 }
 
 export interface CreateCheckpointOptions {
@@ -113,11 +115,48 @@ export async function createCheckpoint(
     }
 
     if (options.includeVideo) {
-      if (!options.source.videoCapture) throw new Error('Requested video capture is unavailable');
-      const video = await options.source.videoCapture();
-      if (!video.byteLength) throw new Error('Requested video capture is empty');
-      await writeArtifact(checkpointPaths.videoPath, video);
-      writtenPaths.push(checkpointPaths.videoPath);
+      if (options.source.videoCaptureStream) {
+        let accepting = true;
+        let pending: Promise<void> | undefined;
+        let protocolError: Error | undefined;
+        const consume: Parameters<NonNullable<CheckpointCaptureSource['videoCaptureStream']>>[0] = video => {
+          if (!accepting || pending || !Number.isSafeInteger(video.byteLength) || video.byteLength <= 0) {
+            protocolError = new Error('Requested video stream is invalid, duplicate, or late');
+            const rejected = Promise.reject<void>(protocolError);
+            void rejected.catch(() => undefined);
+            return rejected;
+          }
+          pending = (async () => {
+            const reservation = budget?.reserve(video.byteLength, checkpointPaths.videoPath);
+            try {
+              await options.artifactStore.writeArtifactStream(checkpointPaths.videoPath, async (write, assertCanWrite) => {
+                assertCanWrite(video.byteLength);
+                let bytes = 0;
+                for await (const chunk of video.chunks) {
+                  if (!(chunk instanceof Uint8Array) || bytes + chunk.byteLength > video.byteLength) throw new Error('Video changed during capture');
+                  await write(chunk); bytes += chunk.byteLength;
+                }
+                if (bytes !== video.byteLength) throw new Error('Video changed during capture');
+              });
+              writtenPaths.push(checkpointPaths.videoPath);
+              reservation?.commit();
+            } catch (error) { reservation?.release(); throw error; }
+          })();
+          // Retain ownership even if a producer ignores the returned promise.
+          void pending.catch(() => undefined);
+          return pending;
+        };
+        try { await options.source.videoCaptureStream(consume); }
+        finally { accepting = false; await pending; }
+        if (protocolError) throw protocolError;
+        if (!pending) throw new Error('Requested video stream was not provided');
+      } else {
+        if (!options.source.videoCapture) throw new Error('Requested video capture is unavailable');
+        const video = await options.source.videoCapture();
+        if (!video.byteLength) throw new Error('Requested video capture is empty');
+        await writeArtifact(checkpointPaths.videoPath, video);
+        writtenPaths.push(checkpointPaths.videoPath);
+      }
     }
 
     const artifacts: CheckpointArtifact[] = [
@@ -195,11 +234,13 @@ async function buildArtifactRecord(
   kind: CheckpointArtifact['kind'],
   contents?: Uint8Array,
 ): Promise<CheckpointArtifact> {
-  const payload = contents ?? await readFile(path.resolve(repoRoot, relativePath));
+  const hash = createHash('sha256');
+  if (contents) hash.update(contents);
+  else for await (const chunk of createReadStream(path.resolve(repoRoot, relativePath))) hash.update(chunk as Buffer);
   return {
     kind,
     path: relativePath,
-    sha256: createHash('sha256').update(payload).digest('hex'),
+    sha256: hash.digest('hex'),
   };
 }
 

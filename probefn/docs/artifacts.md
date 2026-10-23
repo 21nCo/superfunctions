@@ -129,3 +129,28 @@ also goes through store admission. A killed browser/host process can leave opaqu
 browser scratch behind; OS-enforced scratch quotas and crash reclamation remain
 required before claiming a total-run physical disk bound. No post-hoc file-size
 check is presented as such a bound.
+
+
+### Video streaming and cleanup retries
+
+Ephemeral CLI checkpoint video waits for Playwright finalization into the browser's
+owned scratch directory, then checks its known size against the checkpoint and
+remaining durable run budgets before reading the first chunk. It copies bounded
+64 KiB chunks through `ArtifactStore.writeArtifactStream`; each write still checks
+the quota. Hashing existing video/trace artifacts is incremental. Short, growing,
+or failed streams never commit a checkpoint manifest. The existing
+`videoCapture(): Promise<Uint8Array>` callback remains supported for SDK callers;
+those callers own its allocation. Prefer `videoCaptureStream` for bounded reads.
+
+A failed video scratch removal retains the browser session and runtime ownership,
+even after Chromium disconnects. The structured error includes `cleanupPending`
+and `scratchDirectory`; retry `session.stop` on the same live runtime (or
+`BrowserRunner.stopSession` on the same runner). New playback and independent
+managed writers remain blocked until cleanup succeeds. A stopped browser is not
+reopened during cleanup retry. Finalized trace receipts survive scratch removal
+failures and session-state persistence failures, and are recorded on retry. Host shutdown must report cleanup failures rather
+than silently discarding the runtime. If that host exits or is killed, retained
+in-memory cleanup ownership cannot reclaim files: offline operator cleanup and
+crash reclamation remain separate requirements. The finalized disk copy and
+Playwright encoder scratch remain outside admitted payload accounting; streaming
+does not establish a physical disk quota.

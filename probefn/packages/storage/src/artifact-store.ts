@@ -146,10 +146,10 @@ export class ArtifactStore {
     return assertRepositoryRelativePath(relativePath);
   }
 
-  /** Atomically publish incrementally prepared bytes. Callers own content redaction. */
+  /** Atomically publish incrementally prepared bytes. Preflight known sizes before reading; each write still enforces the cap. Callers own content redaction. */
   public async writeArtifactStream(
     relativePath: string,
-    produce: (write: (chunk: string | Uint8Array) => Promise<void>) => Promise<void>,
+    produce: (write: (chunk: string | Uint8Array) => Promise<void>, assertCanWrite: (bytes: number) => void) => Promise<void>,
     scope?: { runId: string },
   ): Promise<string> {
     const normalizedPath = this.validateDestination(relativePath);
@@ -166,7 +166,7 @@ export class ArtifactStore {
           const reservation = this.capTracker.reserve(typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength, normalizedPath);
           try { await handle.writeFile(chunk); }
           finally { reservation.commit(); }
-        });
+        }, bytes => this.capTracker.assertCanWrite(bytes, normalizedPath));
         await handle.sync();
         await handle.close();
         await rename(temporary, absolute);
@@ -259,7 +259,7 @@ export class ArtifactStore {
   }
 
   private async writeManaged(relative: string, runId: string,
-    produce: (write: (chunk: string | Uint8Array) => Promise<void>) => Promise<void>, external = false): Promise<string> {
+    produce: (write: (chunk: string | Uint8Array) => Promise<void>, assertCanWrite: (bytes: number) => void) => Promise<void>, external = false): Promise<string> {
     await this.runQuota.transaction(runId, relative, async quota => {
       const absolute = await quota.prepare(relative);
       const temporary = await quota.prepare(path.posix.join(this.getRunPaths(runId).runRoot, '.probefn-staging', `${randomUUID()}.probefn-tmp-${randomUUID()}`));
@@ -279,7 +279,7 @@ export class ArtifactStore {
         return operation;
       };
       try {
-        try { await produce(write); } finally { closed = true; await writes; }
+        try { await produce(write, bytes => quota.assertCanWrite(bytes, relative)); } finally { closed = true; await writes; }
         if (writeError) throw writeError;
         await handle.sync(); await handle.close();
         await rename(temporary, absolute);

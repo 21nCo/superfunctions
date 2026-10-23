@@ -55,6 +55,7 @@ export interface ClosedBrowserSession {
 
 interface ManagedBrowserSession {
   relativeTracePath?: string;
+  finalizedTracePath?: string;
   videoDirectory?: string;
   browser?: Browser;
   context?: BrowserContext;
@@ -78,6 +79,9 @@ export class BrowserRunner {
     this.artifactStore = options.artifactStore;
     this.now = options.now ?? (() => new Date().toISOString());
   }
+
+  /** Includes disconnected sessions whose owned scratch cleanup is still pending. */
+  public hasSession(sessionId: string): boolean { return this.sessions.has(sessionId); }
 
   public async startSession(options: LaunchBrowserSessionOptions): Promise<StartedBrowserSession> {
     assertArtifactIdentifier(options.sessionId, 'Session id');
@@ -193,13 +197,14 @@ export class BrowserRunner {
       };
     } catch (error) {
       const cleanup = await this.cleanupSession(session, false);
-      if (!session.browser?.isConnected() && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
+      if (!session.browser?.isConnected() && !session.videoDirectory && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
       throw createProbefnError({
         code: 'E_BROWSER_LAUNCH_FAILED',
         message: `Could not launch ${options.browser} browser session.`,
         retryable: true,
         details: {
           browser: options.browser,
+          ...(session.videoDirectory ? { cleanupPending: true, scratchDirectory: session.videoDirectory } : {}),
         },
         cause: cleanup.errors.length ? new AggregateError([error, ...cleanup.errors], 'Browser startup and cleanup failed') : error,
       });
@@ -232,7 +237,7 @@ export class BrowserRunner {
     const stopping = (async () => {
       await activeSession.startDone;
       const result = await this.cleanupSession(activeSession, options.saveTrace ?? true);
-      if (!activeSession.browser?.isConnected() && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
+      if (!activeSession.browser?.isConnected() && !activeSession.videoDirectory && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
       if (result.errors.length === 1 && !activeSession.browser?.isConnected() &&
           isProbefnError(result.errors[0]) && result.errors[0].code === 'E_STORAGE_CAP_EXCEEDED') {
         throw result.errors[0];
@@ -240,7 +245,7 @@ export class BrowserRunner {
       if (result.errors.length || !activeSession.sinkPaths) {
         throw createProbefnError({ code: 'E_BROWSER_LAUNCH_FAILED',
           message: `Could not close browser session ${sessionId} cleanly.`, retryable: true,
-          details: { sessionId }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
+          details: { sessionId, ...(activeSession.videoDirectory ? { cleanupPending: true, scratchDirectory: activeSession.videoDirectory } : {}) }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
       }
       return { tracePath: result.tracePath, sinkPaths: activeSession.sinkPaths };
     })();
@@ -252,17 +257,19 @@ export class BrowserRunner {
   /** Detach collection first; every cleanup stage runs even after a preceding failure. */
   private async cleanupSession(session: ManagedBrowserSession, saveTrace: boolean): Promise<{ tracePath: string | null; errors: unknown[] }> {
     const errors: unknown[] = [];
-    let tracePath: string | null = null;
+    let tracePath: string | null = session.finalizedTracePath ?? null;
     try { session.eventCapture?.dispose(); } catch (error) { errors.push(error); }
     try { await session.eventCapture?.flush(); } catch (error) { errors.push(error); }
     if (saveTrace && session.context && session.traceEnabled) {
       try {
         tracePath = await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
           runId: session.runId, enabled: true, ...(session.relativeTracePath ? { relativeTracePath: session.relativeTracePath } : {}) });
+        if (tracePath) session.finalizedTracePath = tracePath;
         session.traceEnabled = false;
       } catch (error) { errors.push(error); }
     }
     try { await session.browser?.close(); } catch (error) { errors.push(error); }
+    if (!session.browser?.isConnected()) session.traceEnabled = false;
     if (!session.browser?.isConnected() && session.videoDirectory) {
       try { await rm(session.videoDirectory, { recursive: true, force: true }); delete session.videoDirectory; }
       catch (error) { errors.push(error); }

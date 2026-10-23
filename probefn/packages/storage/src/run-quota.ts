@@ -144,9 +144,12 @@ async function retryBusy(operation: () => void): Promise<void> {
 
 export class QuotaTransaction {
   public constructor(private readonly repoRoot: string, private readonly database: DatabaseSync, private readonly cap: number, private used: number, private readonly maxEventsPerSink = DEFAULT_STORAGE_CAPS.maxEventsPerSink) {}
-  public reserve(bytes: number, targetPath: string): void {
+  public assertCanWrite(bytes: number, targetPath: string): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw failed('Invalid artifact byte count.');
     if (this.used + bytes > this.cap) throw createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message: `Artifact cap exceeded before ${targetPath} could be committed.`, retryable: false, details: { targetPath, maxArtifactBytes: this.cap, attemptedTotalBytes: this.used + bytes } });
+  }
+  public reserve(bytes: number, targetPath: string): void {
+    this.assertCanWrite(bytes, targetPath);
     this.used += bytes;
   }
   public async prepare(relative: string): Promise<string> {

@@ -6,11 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ArtifactStore } from '@probefn/storage';
 import { createCheckpoint } from '@probefn/core';
 import { BrowserRunner } from '../src/browser-runner.js';
-import { finalizePageVideo } from '../src/video.js';
+import { finalizePageVideo, streamPageVideo } from '../src/video.js';
 const deterministic = { enabled: true, viewport: { width: 800, height: 600 }, locale: 'en-US', timezone: 'UTC', colorScheme: 'light' as const, reducedMotion: 'reduce' as const, animationPolicy: 'freeze' as const, networkIdleMs: 0 };
 
 describe('requested checkpoint video', () => {
-  it.each([false, true])('finalizes real Chromium video before manifest commit (injected failure: %s)', async fail => {
+  it.each([{ fail: false, stream: false }, { fail: true, stream: false }, { fail: false, stream: true }, { fail: true, stream: true }])('finalizes real Chromium video before manifest commit (%j)', async ({ fail, stream }) => {
     const root = await mkdtemp(path.join(tmpdir(), 'probefn-checkpoint-video-'));
     const store = new ArtifactStore({ repoRoot: root });
     const runner = new BrowserRunner({ repoRoot: root, artifactStore: store });
@@ -25,6 +25,7 @@ describe('requested checkpoint video', () => {
         delta: { newConsoleErrors: 0, newPageErrors: 0, newNetworkFailures: 0 },
         source: { url: () => session.page.url(), viewportSize: () => session.page.viewportSize()!, screenshot: () => session.page.screenshot(),
           domSnapshot: () => session.page.content(), accessibilitySnapshot: () => session.page.locator('body').ariaSnapshot(), layoutSnapshot: async () => ({ width: 800 }),
+          ...(stream ? { videoCaptureStream: (consume: Parameters<typeof streamPageVideo>[1]) => streamPageVideo(session.page, async video => { await consume(video); if (fail) throw new Error('Injected finalization failure'); }) } : {}),
           videoCapture: async () => { const bytes = await finalizePageVideo(session.page); if (fail) throw new Error('Injected finalization failure'); return bytes; },
         },
       });

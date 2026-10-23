@@ -1,4 +1,4 @@
-import { finalizePageVideo } from '@probefn/browser-runner';
+import { streamPageVideo } from '@probefn/browser-runner';
 import { readEventSinkFamily, readEventSinkPage, type EventPageOptions, assertArtifactIdentifier } from '@probefn/storage';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -174,6 +174,7 @@ interface RuntimeSessionOwner {
     runner: BrowserRunner;
     id: string;
     started: ReturnType<BrowserRunner['startSession']>;
+    closed?: Awaited<ReturnType<BrowserRunner['stopSession']>>;
     closing?: Promise<void>;
   };
 }
@@ -254,7 +255,7 @@ export class ProbefnRuntime {
     } finally {
       parent?.removeEventListener('abort', abort);
       delete owner.operation;
-      if (!owner.persistent) { owner.lease.release(); this.sessionOwners.delete(sessionId); }
+      if (!owner.persistent && !owner.browser) { owner.lease.release(); this.sessionOwners.delete(sessionId); }
       finish();
     }
   }
@@ -345,20 +346,20 @@ export class ProbefnRuntime {
     const browser = owner.browser;
     browser.closing ??= (async () => {
       try {
-        const closed = await browser.runner.stopSession(browser.id, { saveTrace });
-        if (closed.tracePath) await this.recordTrace(sessionId, closed.tracePath);
+        browser.closed ??= await browser.runner.stopSession(browser.id, { saveTrace });
+        if (browser.closed.tracePath) await this.recordTrace(sessionId, browser.closed.tracePath);
         delete owner.browser;
       } catch (error) {
-        const started = await browser.started.catch(() => undefined);
-        if (started && !started.page.context().browser()?.isConnected()) delete owner.browser;
-        if (!started && error && typeof error === 'object' && 'code' in error && error.code === 'E_SESSION_NOT_FOUND') {
+        if (!browser.runner.hasSession(browser.id) && !browser.closed) delete owner.browser;
+        if (!browser.runner.hasSession(browser.id) && !browser.closed && error && typeof error === 'object' && 'code' in error && error.code === 'E_SESSION_NOT_FOUND') {
           delete owner.browser;
           return;
         }
         throw error;
       }
     })();
-    await browser.closing;
+    try { await browser.closing; }
+    finally { delete browser.closing; }
   }
 
   private async withResidentPlayback<T>(session: SessionState, execute: (input: {
@@ -694,6 +695,8 @@ export class ProbefnRuntime {
     const playbackSessionId = `${session.sessionId}__mcp__${randomUUID()}`;
     options = { ...options, ...(options.signal ?? this.requestSignal.getStore() ? { signal: options.signal ?? this.requestSignal.getStore()! } : {}) };
     options.signal?.throwIfAborted();
+    const playbackOwner = this.operationScope.getStore();
+    if (playbackOwner?.browser) throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'Browser cleanup is pending; retry session.stop before another playback.', retryable: true });
     const startingBrowser = browserRunner.startSession({
       sessionId: playbackSessionId,
       runId: session.runId,
@@ -708,8 +711,15 @@ export class ProbefnRuntime {
       },
     });
 
-    let closing: ReturnType<BrowserRunner['stopSession']> | undefined;
-    const close = () => closing ??= browserRunner.stopSession(playbackSessionId);
+    if (playbackOwner) playbackOwner.browser = { runner: browserRunner, id: playbackSessionId, started: startingBrowser };
+    let closing: Promise<void> | undefined;
+    const close = () => closing ??= (async () => {
+      if (playbackOwner) await playbackOwner.lease.run(() => this.operationScope.run(playbackOwner, () => this.closeSessionBrowser(session.sessionId)));
+      else {
+        const closed = await browserRunner.stopSession(playbackSessionId);
+        if (closed.tracePath) await this.recordTrace(session.sessionId, closed.tracePath);
+      }
+    })();
     const abort = () => { void close().catch(() => undefined); };
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) abort();
@@ -738,9 +748,11 @@ export class ProbefnRuntime {
       throw error;
     } finally {
       try {
-        // Failed startup owns its cleanup; an explicit cancellation may already own close().
-        const closed = await (closing ?? startingBrowser.then(close, () => null));
-        if (closed?.tracePath) await this.recordTrace(session.sessionId, closed.tracePath);
+        // Join startup, including failures that retained scratch ownership, before releasing the native owner.
+        await (closing ?? startingBrowser.then(close, async () => {
+          if (browserRunner.hasSession(playbackSessionId)) await close();
+          else if (playbackOwner) delete playbackOwner.browser;
+        }));
       }
       catch (cleanupError) {
         const active = this.activeFlows.get(session.sessionId);
@@ -1281,7 +1293,7 @@ export async function createCheckpointFromSession(
         await captureEventDeltaBaseline(runtime.getRepoRoot(), sinkPaths),
       ),
       source: {
-        ...(input.includeVideo ? { videoCapture: () => finalizePageVideo(page) } : {}),
+        ...(input.includeVideo ? { videoCaptureStream: (consume) => streamPageVideo(page, consume) } : {}),
         url: () => page.url(),
         viewportSize: () => page.viewportSize() ?? { width: 0, height: 0 },
         screenshot: async () => page.screenshot({ fullPage: true }),

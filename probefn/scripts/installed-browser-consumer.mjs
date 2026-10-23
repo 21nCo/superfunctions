@@ -82,6 +82,15 @@ try {
   assert.notEqual(cliFlowReport.tracePath,flowReport.tracePath);
   assert.deepEqual(await readFile(join(project,flowReport.tracePath)),traceBytes);
   console.log(JSON.stringify({installedLiveFlow:true,installedCliFlow:true,installedResidentCalls:true,liveOwnerFencesCli:true,liveOwnerFencesRawSdk:true,tracePath:flowReport.tracePath,traceBytes:traceBytes.length,traceContainsActions:true}));
+  const cliVideo=JSON.parse(execFileSync(bin,['checkpoint','create','--session',cliSessionId,'--name','streamed-video','--include-video','--json'],{cwd:project,encoding:'utf8',timeout:15000}));
+  assert.equal(cliVideo.ok,true);
+  const videoManifest=JSON.parse(await readFile(join(project,`.artifacts/runs/${cliRunId}/checkpoints/streamed-video/checkpoint.json`),'utf8'));
+  const videoArtifact=videoManifest.artifacts.find(artifact=>artifact.kind==='video');
+  assert(videoArtifact);
+  const videoBytes=await readFile(join(project,videoArtifact.path));
+  assert(videoBytes.length>100);
+  assert.equal(videoArtifact.sha256,createHash('sha256').update(videoBytes).digest('hex'));
+  console.log(JSON.stringify({installedStreamedVideo:true,videoBytes:videoBytes.length,videoHash:videoArtifact.sha256}));
   const denied=await client.callTool({name:'probefn_checkpoint_create',arguments:{sessionId,name:'oversized',artifactCapBytes:1}});
   assert.equal(denied.isError,true);assert.equal(denied.structuredContent.error.code,'E_STORAGE_CAP_EXCEEDED');
   await assert.rejects(readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/oversized/checkpoint.json')),{code:'ENOENT'});
