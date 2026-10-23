@@ -16,7 +16,9 @@
     "@uifn/patterns": "*",
     "@uifn/sf": "*",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "@uifn/react": "0.0.2",
+    "@uifn/components-react": "0.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
