@@ -44,9 +44,7 @@ export async function executeCli(
     io?: CliIo;
   } = {},
 ): Promise<number> {
-  const repoRoot =
-    options.repoRoot ??
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+  const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
   const io = options.io ?? {
     stdout: process.stdout,
     stderr: process.stderr,
@@ -56,7 +54,7 @@ export async function executeCli(
 
   try {
     if (args[0] === 'mcp') {
-      await runMcpCli(args.slice(1));
+      await runMcpCli(args.slice(1), { repoRoot });
       return 0;
     }
 

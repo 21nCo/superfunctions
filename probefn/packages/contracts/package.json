@@ -4,14 +4,45 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./config": "./src/config.ts",
-    "./envelopes": "./src/envelopes.ts",
-    "./errors": "./src/errors.ts",
-    "./manifests": "./src/manifests.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./envelopes": {
+      "types": "./dist/envelopes.d.ts",
+      "import": "./dist/envelopes.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
+    },
+    "./manifests": {
+      "types": "./dist/manifests.d.ts",
+      "import": "./dist/manifests.js"
+    }
   },
   "dependencies": {
     "jiti": "^2.4.2",
     "zod": "^3.24.4"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\""
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.14.0"
   }
 }

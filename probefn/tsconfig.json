@@ -2,7 +2,42 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "paths": {
+      "@probefn/cli": [
+        "./apps/cli/src/index.ts"
+      ],
+      "@probefn/analyzers": [
+        "./packages/analyzers/src/index.ts"
+      ],
+      "@probefn/browser-runner": [
+        "./packages/browser-runner/src/index.ts"
+      ],
+      "@probefn/contracts": [
+        "./packages/contracts/src/index.ts"
+      ],
+      "@probefn/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@probefn/dev-server": [
+        "./packages/dev-server/src/index.ts"
+      ],
+      "@probefn/mcp-server": [
+        "./packages/mcp-server/src/index.ts"
+      ],
+      "@probefn/session-reporter": [
+        "./packages/session-reporter/src/index.ts"
+      ],
+      "@probefn/storage": [
+        "./packages/storage/src/index.ts"
+      ],
+      "@probefn/visual-baselines": [
+        "./packages/visual-baselines/src/index.ts"
+      ],
+      "@probefn/contracts/*": [
+        "./packages/contracts/src/*.ts"
+      ]
+    }
   },
   "include": [
     "packages/**/*.ts",

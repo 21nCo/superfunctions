@@ -9,10 +9,4 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   external: ["jiti"],
-  noExternal: [
-    "@probefn/contracts",
-    "@probefn/core",
-    "@probefn/storage",
-    "@probefn/session-reporter",
-  ],
 });

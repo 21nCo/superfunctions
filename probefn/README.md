@@ -43,8 +43,9 @@ private runtime packages keep an acyclic production dependency graph. Run
 The MCP dependency must be built first (`npm run build --workspace=@mcpfn/core`)
 when invoking tests directly instead of through Turbo. Install the matching
 browser using `npm exec --workspace=@probefn/workspace -- playwright install chromium`.
-Private runtime packages still expose TypeScript source; this is not a published
-npm package build or full browser support guarantee.
+Private runtime packages expose compiled ESM and declarations from `dist`. They
+remain private; local distribution does not imply public npm publication or full
+browser support. Build the closure before running commands directly.
 
 ## Quick Start
 
@@ -145,3 +146,35 @@ Probe requires **Node.js 22.13.0 or newer**. Its artifact quota coordinator uses
 built-in `node:sqlite`; this replaces the previous 22.0 minimum without adding a
 native package dependency. Use the same supported Node runtime on the PATH of
 CLI/MCP subprocesses. Node 22 emits an experimental SQLite warning on stderr.
+
+## Private installed distribution
+
+Build the CLI and administration closure from the root monorepo on Node >=22.13:
+
+```sh
+npx turbo run build --filter=@probefn/cli --filter=@probefn/admin
+node probefn/scripts/verify-distribution.mjs
+```
+
+The acceptance script packs the complete runtime workspace closure, installs its
+13 tarballs in an isolated consumer with normal npm resolution, and exercises the
+installed executable, MCP stdio, TypeScript declarations and scoped admin service.
+Set `PROBEFN_NPM_CLI` to an npm CLI JavaScript entry point when selecting a
+particular installed npm version. It removes its owned consumer after completion;
+it neither publishes packages nor installs browser binaries. Production audit
+results are checked separately and must report zero vulnerabilities.
+
+An internal distributor must provide all ten `@probefn` runtime packages plus
+`@probefn/admin`, `@superfunctions/admin`, and `@mcpfn/core` together. Each package's
+`npm pack` contains compiled JavaScript and declarations, excluding source/tests.
+Private ProbeFn runtime dependencies are pinned to their matching local versions;
+installing only a CLI tarball cannot fetch unpublished private dependencies.
+Consumers installing the tarball closure can run `./node_modules/.bin/probefn`
+from their project directory; `probefn mcp serve --stdio` starts the same MCP tools.
+Config and artifact paths default to that working directory, never the package
+installation directory. Programmatic CLI/MCP callers may explicitly set `repoRoot`.
+
+The installed fixture initializes a real scoped session and exports its persisted
+report through CLI, MCP and admin. It does not launch a browser or certify every
+operator workflow. Browser matrices, full original vector coverage and total
+physical disk accounting (including SQLite/opaque scratch) remain separate gates.

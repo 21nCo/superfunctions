@@ -31,9 +31,9 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
-    "@probefn/contracts": "*",
-    "@probefn/core": "*",
-    "@probefn/storage": "*",
+    "@probefn/contracts": "0.0.0",
+    "@probefn/core": "0.0.0",
+    "@probefn/storage": "0.0.0",
     "@superfunctions/admin": "0.1.5"
   },
   "devDependencies": {
@@ -41,5 +41,8 @@
     "tsup": "^8.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

@@ -4,11 +4,30 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "dependencies": {
-    "@probefn/analyzers": "*",
-    "@probefn/contracts": "*",
-    "@probefn/storage": "*"
+    "@probefn/analyzers": "0.0.0",
+    "@probefn/contracts": "0.0.0",
+    "@probefn/storage": "0.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\""
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.14.0"
   }
 }

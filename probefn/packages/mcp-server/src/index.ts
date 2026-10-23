@@ -9,13 +9,14 @@ export * from './server.js';
 
 export async function runMcpCli(
   args: string[] = process.argv.slice(2),
-  options: Omit<ServeMcpServerOptions, 'repoRoot' | 'transport'> = {},
+  options: Omit<ServeMcpServerOptions, 'repoRoot' | 'transport'> & { repoRoot?: string } = {},
 ): Promise<void> {
   if (args[0] !== 'serve') {
     throw new Error('Supported MCP command is "serve".');
   }
 
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+  const { repoRoot: configuredRoot, ...serverOptions } = options;
+  const repoRoot = path.resolve(configuredRoot ?? process.cwd());
   const tcpIndex = args.indexOf('--tcp');
   const tcpPort =
     tcpIndex >= 0
@@ -27,7 +28,7 @@ export async function runMcpCli(
     repoRoot,
     transport: useTcp ? 'tcp' : 'stdio',
     ...(useTcp ? { tcpPort: tcpPort! } : {}),
-    ...options,
+    ...serverOptions,
   });
 }
 

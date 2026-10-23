@@ -4,7 +4,9 @@ Private, self-hosted ProbeFn administration capability for Super Console.
 
 This workspace package depends on ProbeFn's private local runtime packages
 (`@probefn/core`, `@probefn/contracts`, and `@probefn/storage`) and is not a
-standalone npm publication. A self-hosted Super Console mounts it in-process and
+standalone npm publication. The private distribution closure now ships compiled
+ESM/declarations for these dependencies; build and install the complete closure
+as documented in the ProbeFn README. A self-hosted Super Console mounts it in-process and
 provides exact environment bindings with an absolute repository root, a
 repository-relative artifact root, and an already-authorized checkpoint source.
 

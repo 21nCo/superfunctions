@@ -4,15 +4,35 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "dependencies": {
-    "@probefn/contracts": "*",
-    "@probefn/dev-server": "*",
-    "@probefn/mcp-server": "*",
+    "@probefn/contracts": "0.0.0",
+    "@probefn/dev-server": "0.0.0",
+    "@probefn/mcp-server": "0.0.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "vitest": "^3.1.4"
+    "vitest": "^3.1.4",
+    "typescript": "^5.8.0",
+    "@types/node": "^22.14.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\""
+  },
+  "bin": {
+    "probefn": "./dist/bin.js"
   }
 }
