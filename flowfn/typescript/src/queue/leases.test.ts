@@ -6,6 +6,31 @@ import { createFlow } from '../core/flow-fn.js';
 import { createWorker } from './worker.js';
 
 describe('queue ownership', () => {
+  it.each(['save', 'ack', 'nack', 'enqueue', 'recover'] as const)('omits cleared leases from public snapshots after %s and rejects the old token', async transition => {
+    const adapter = new MemoryAdapter();
+    const original = new JobImpl('job', { nested: { value: 1 } });
+    await adapter.createJob('lease-snapshots', original);
+    const owned = (await adapter.dequeue('lease-snapshots', undefined, transition === 'recover' ? 1 : 30_000))!;
+    const token = owned.lease!.token;
+    if (transition === 'save') {
+      owned.state = 'completed';
+      await adapter.saveJob('lease-snapshots', owned);
+    } else if (transition === 'ack') await adapter.ack('lease-snapshots', owned.id, token);
+    else if (transition === 'nack') await adapter.nack('lease-snapshots', owned.id, true, token);
+    else if (transition === 'enqueue') await adapter.enqueue('lease-snapshots', owned);
+    else {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const recovered = await adapter.recoverStalledJobs('lease-snapshots', 1);
+      expect(recovered).toHaveLength(1);
+      expect(Object.hasOwn(recovered[0]!, 'lease')).toBe(false);
+    }
+    const current = (await adapter.getJob('lease-snapshots', owned.id))!;
+    expect(Object.hasOwn(current, 'lease')).toBe(false);
+    expect((await adapter.getAllJobs('lease-snapshots')).every(job => !Object.hasOwn(job, 'lease'))).toBe(true);
+    current.data.nested.value = 9;
+    expect((await adapter.getJob('lease-snapshots', owned.id))!.data.nested.value).toBe(1);
+    await expect(adapter.ack('lease-snapshots', owned.id, token)).rejects.toThrow('lease lost');
+  });
   it('atomically deduplicates queue instances and keeps namespaces separate', async () => {
     const adapter = new MemoryAdapter();
     const a = createFlow({ adapter, namespace: 'a' });

@@ -2,6 +2,27 @@ import { describe, it, expect, vi } from "vitest";
 import { createFlow } from "./flow-fn.js";
 import { createWorker } from "../queue/worker.js";
 describe("live metrics", () => {
+  it("isolates repeated series tags from inputs, sibling points and later reads", async () => {
+    const flow = createFlow({ adapter: "memory" });
+    try {
+      const tags = { queue: "jobs", service: "worker" };
+      flow.metrics.record("duration", 1, tags);
+      tags.queue = "mutated";
+      flow.metrics.record("duration", 2, { service: "worker", queue: "jobs" });
+      const options = { tags: { queue: "jobs", service: "worker" } };
+      const series = flow.metrics.getTimeSeries("duration", options)!;
+      expect(series.count).toBe(2);
+      series.dataPoints[0].tags!.queue = "changed";
+      expect(series.dataPoints[1].tags!.queue).toBe("jobs");
+      expect(flow.metrics.getTimeSeries("duration", options)!.dataPoints.map(point => point.tags!.queue)).toEqual(["jobs", "jobs"]);
+      expect(flow.metrics.getTimeSeries("duration", { tags })).toBeNull();
+      flow.metrics.record("untagged", 1);
+      flow.metrics.record("untagged", 2, {});
+      const untagged = flow.metrics.getTimeSeries("untagged")!;
+      expect(untagged.dataPoints[0].tags).toBeUndefined();
+      expect(untagged.dataPoints[1].tags).toEqual({});
+    } finally { await flow.close(); }
+  });
   it("tracks actual queue execution, active workers, registered resources and workflow outcomes", async () => {
     const flow = createFlow({ adapter: "memory", namespace: "metrics" });
     const completedEvent = vi.fn();

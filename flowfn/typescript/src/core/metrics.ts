@@ -58,7 +58,9 @@ export class MetricsManager {
     dataPoints.push({
       timestamp: Date.now(),
       value,
-      tags: tags ? { ...tags } : undefined,
+      // A series key includes every tag/value, so its private tag snapshot can
+      // be shared. Public snapshots below still own independent tag objects.
+      tags: tags ? (dataPoints[0]?.tags ?? { ...tags }) : undefined,
     });
 
     // Trim if exceeds max
@@ -106,7 +108,10 @@ export class MetricsManager {
     const count = values.length;
 
     return {
-      dataPoints: structuredClone(dataPoints),
+      dataPoints: dataPoints.map(point => ({
+        ...point,
+        tags: point.tags ? { ...point.tags } : undefined,
+      })),
       min: values[0],
       max: values[count - 1],
       avg: sum / count,

@@ -43,7 +43,8 @@ export class MemoryAdapter implements FlowAdapter {
     if (job.deduplicationId !== undefined && [...this.queue(queue).values()].some(other => other.id !== job.id && other.deduplicationId === job.deduplicationId && !["completed", "failed"].includes(other.state)))
       throw new Error("Active job already owns deduplication key");
     const value = snapshotJob(job);
-    delete value.lease;
+    // Keep the internal object shape compact; public snapshots omit undefined leases.
+    value.lease = undefined;
     value.state = (value.opts.delay ?? 0) > 0 ? "delayed" : "waiting";
     value.delay = value.opts.delay ?? 0;
     value.timestamp = Date.now();
@@ -78,7 +79,7 @@ export class MemoryAdapter implements FlowAdapter {
     this.assertLease(this.queue(queue).get(job.id), job.lease?.token);
     if (!this.queue(queue).has(job.id)) throw new Error("Job not found");
     const value = snapshotJob(job);
-    if (["completed", "failed"].includes(value.state)) delete value.lease;
+    if (["completed", "failed"].includes(value.state)) value.lease = undefined;
     else if (value.lease) value.lease = structuredClone(this.queue(queue).get(job.id)!.lease);
     this.queue(queue).set(job.id, value);
   }
@@ -97,7 +98,7 @@ export class MemoryAdapter implements FlowAdapter {
     const recovered: Job[] = [];
     for (const job of this.queue(queue).values()) {
       if (job.state !== "active" || !job.lease || job.lease.expiresAt > Date.now()) continue;
-      delete job.lease;
+      job.lease = undefined;
       job.stalledCount = (job.stalledCount ?? 0) + 1;
       job.state = job.stalledCount > maxStalledCount ? "failed" : "waiting";
       if (job.state === "failed") { job.failedReason = "Job exceeded maximum stalled count"; job.finishedOn = Date.now(); }
@@ -113,7 +114,7 @@ export class MemoryAdapter implements FlowAdapter {
     this.assertLease(job, token);
     if (job && job.state !== "failed") {
       job.state = "completed";
-      delete job.lease;
+      job.lease = undefined;
       job.finishedOn ??= Date.now();
     }
   }
@@ -121,7 +122,7 @@ export class MemoryAdapter implements FlowAdapter {
     const job = this.queue(queue).get(id);
     this.assertLease(job, token);
     if (job) {
-      delete job.lease;
+      job.lease = undefined;
       job.state = requeue ? "waiting" : "failed";
       if (!requeue) job.finishedOn ??= Date.now();
     }
