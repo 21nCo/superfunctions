@@ -1,5 +1,5 @@
 """Normal isolated production install and actual HTTP publish replay acceptance."""
-import json, pathlib, subprocess, tempfile, shutil
+import json, pathlib, subprocess, tempfile, shutil, sys
 root = pathlib.Path(__file__).resolve().parents[2]
 out = pathlib.Path(tempfile.mkdtemp(prefix='contentfn-publish-packed-'))
 print(out, flush=True)
@@ -12,5 +12,6 @@ for path in ['packages/db','packages/http','packages/storage','mdfn/core','mdfn/
 subprocess.run(['npx','--yes','npm@11','install'],cwd=out,check=True)
 with (out/'production-audit.json').open('w') as f:
     subprocess.run(['npx','--yes','npm@11','audit','--omit=dev','--json'],cwd=out,stdout=f,check=True)
-shutil.copyfile(root/'contentfn/.conduct/publish-idempotency-packed.mjs',out/'acceptance.mjs')
+consumer = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root/'contentfn/.conduct/publish-idempotency-packed.mjs'
+shutil.copyfile(consumer,out/'acceptance.mjs')
 subprocess.run(['node','acceptance.mjs'],cwd=out,check=True)

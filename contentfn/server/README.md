@@ -54,3 +54,24 @@ contract. Reconcile those operations explicitly rather than changing keys to
 retry an unknown outcome. Keep replay records for the lifetime of pending
 operations. Dataset deletion removes replay records; delete/recreate, database
 rollback, or independent writes by older servers are outside this guarantee.
+
+### Document history pagination
+
+`docs.history` returns immutable full snapshots for both draft and published
+versions of the requested document. Pages sort by recorded timestamp descending,
+revision ascending, then storage identity ascending. Queries are scoped to the
+dataset and base document identity and return at most `limit` snapshots (1–1000).
+Versioned opaque cursors bind that scope; `drafts.id` and `id` address the same
+history. Old timestamp/revision-only cursors now fail validation: restart from the
+first page after upgrading. The existing `docs.history` authorization action is
+checked before storage access. Snapshots may contain private draft content, so
+hosts must grant this action only to authorized history readers. New revisions
+inserted ahead of an existing cursor appear after refreshing the first page.
+
+Each page materializes at most `3 * (limit + 1)` candidate rows using disjoint
+keyset ranges. This bounds application memory, not database scan/sort work:
+existing tables have only the revision identity index. Large histories need a
+nonunique index beginning `(dataset, docId, timestamp DESC, rev, id)`, followed by
+adapter-specific query-plan validation for the two-document-ID predicate. Adding
+and validating that index on supported databases remains a performance readiness
+gate; the example is not evidence that an existing deployment has migrated.

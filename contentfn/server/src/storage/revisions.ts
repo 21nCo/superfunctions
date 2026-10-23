@@ -9,6 +9,7 @@ import { atomicMutation } from "./database.js";
  * For PHASE_03–05, we store full document snapshots; future phases may optimize with deltas.
  */
 
+import type { WhereClause } from "@superfunctions/db";
 import type { ContentfnDatabase as Adapter } from "./database.js";
 import type { ContentfnDocument, ContentfnEnvelope } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
@@ -57,7 +58,7 @@ export async function appendRevision(
 
 /**
  * List revision history for a document in reverse chronological order.
- * Returns revisions ordered by timestamp DESC, then rev ASC as tie-breaker.
+ * Returns revisions ordered by timestamp DESC, then rev ASC and storage identity ASC as tie-breakers.
  * Supports cursor-based pagination.
  *
  * TV-HIST-LIST-001
@@ -76,61 +77,46 @@ export async function listHistory(
     nextCursor: string | null;
   }>
 > {
-  if (!await datasetExists(config, input.dataset)) return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
   const limit = input.limit ?? 10;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) return err("VALIDATION_FAILED", "History limit must be an integer from 1 to 1000", { path: "limit" });
-  const docId = input.id.startsWith("drafts.") ? input.id.substring(7) : input.id;
-
-  const where = [
-    { field: "dataset", operator: "eq" as const, value: input.dataset },
-  ];
-
-  const revisions = await config.db.findMany({
-    model: CONTENTFN_TABLE_NAMES.revisions,
-    where,
-  });
-
-  const filtered = revisions.filter(
-    (r: any) => r.docId === docId || r.docId === `drafts.${docId}`
-  );
-
-  filtered.sort((a: any, b: any) => {
-    const tsCompare = b.timestamp.localeCompare(a.timestamp);
-    if (tsCompare !== 0) return tsCompare;
-    return a.rev < b.rev ? -1 : a.rev > b.rev ? 1 : 0;
-  });
-
-  let startIdx = 0;
-  if (input.cursor) {
+  if (typeof input.dataset !== "string" || !input.dataset || typeof input.id !== "string" || !input.id || input.id === "drafts.") return err("VALIDATION_FAILED", "Dataset and document identity are required", {});
+  const docId = input.id.replace(/^drafts\./, "");
+  let cursor: { timestamp: string; rev: string; rowId: string } | undefined;
+  if (input.cursor !== undefined && input.cursor !== null) {
     try {
-      const parsed = JSON.parse(Buffer.from(input.cursor, "base64").toString("utf8"));
-      if (typeof parsed.timestamp !== "string" || typeof parsed.rev !== "string") throw new Error("Invalid cursor");
-      const lastTimestamp = parsed.timestamp;
-      const lastRev = parsed.rev;
-      startIdx =
-        filtered.findIndex(
-          (r: any) => r.timestamp === lastTimestamp && r.rev === lastRev
-        ) + 1;
-      if (startIdx === 0) return err("VALIDATION_FAILED", "Cursor does not belong to this document history", { path: "cursor" });
-    } catch {
-      return err("VALIDATION_FAILED", "Invalid cursor", { path: "cursor" });
-    }
+      if (typeof input.cursor !== "string" || !input.cursor || input.cursor.length > 16384) throw Error();
+      const value: unknown = JSON.parse(Buffer.from(input.cursor, "base64").toString("utf8"));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw Error();
+      const c = value as Record<string, unknown>;
+      if (c.version !== 1 || c.dataset !== input.dataset || c.docId !== docId || typeof c.timestamp !== "string" || !c.timestamp || typeof c.rev !== "string" || !c.rev || typeof c.rowId !== "string" || !c.rowId) throw Error();
+      cursor = { timestamp: c.timestamp, rev: c.rev, rowId: c.rowId };
+    } catch { return err("VALIDATION_FAILED", "Invalid history cursor; restart pagination", { path: "cursor" }); }
   }
-
-  const page = filtered.slice(startIdx, startIdx + limit);
-  const nextCursor =
-    page.length === limit && startIdx + limit < filtered.length
-      ? Buffer.from(
-          JSON.stringify({
-            timestamp: (page[page.length - 1] as any).timestamp,
-            rev: (page[page.length - 1] as any).rev,
-          })
-        ).toString("base64")
-      : null;
-
-  const results = page.map((r: any) => r.docJson as ContentfnDocument);
-
-  return ok({ revisions: results, nextCursor });
+  if (!await datasetExists(config, input.dataset)) return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
+  const scope: WhereClause[] = [
+    { field: "dataset", operator: "eq", value: input.dataset },
+    { field: "docId", operator: "in", value: [docId, `drafts.${docId}`] },
+  ];
+  // The shared adapter expresses flat predicates. Three disjoint bounded ranges
+  // implement lexicographic keyset pagination without nested adapter-specific SQL.
+  const ranges: WhereClause[][] = cursor ? [
+    [{ field: "timestamp", operator: "lt", value: cursor.timestamp }],
+    [{ field: "timestamp", operator: "eq", value: cursor.timestamp }, { field: "rev", operator: "gt", value: cursor.rev }],
+    [{ field: "timestamp", operator: "eq", value: cursor.timestamp }, { field: "rev", operator: "eq", value: cursor.rev }, { field: "id", operator: "gt", value: cursor.rowId }],
+  ] : [[]];
+  type Row = { id: string; timestamp: string; rev: string; docJson: ContentfnDocument };
+  const rows: Row[] = [];
+  for (const range of ranges) rows.push(...await config.db.findMany<Row>({
+    model: CONTENTFN_TABLE_NAMES.revisions, where: [...scope, ...range],
+    orderBy: [{ field: "timestamp", direction: "desc" }, { field: "rev", direction: "asc" }, { field: "id", direction: "asc" }],
+    select: ["id", "timestamp", "rev", "docJson"], limit: limit + 1,
+  }));
+  const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+  rows.sort((a, b) => compare(b.timestamp, a.timestamp) || compare(a.rev, b.rev) || compare(a.id, b.id));
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const nextCursor = rows.length > limit && last ? Buffer.from(JSON.stringify({ version: 1, dataset: input.dataset, docId, timestamp: last.timestamp, rev: last.rev, rowId: last.id })).toString("base64") : null;
+  return ok({ revisions: page.map(row => structuredClone(row.docJson)), nextCursor });
 }
 
 /**
