@@ -29,8 +29,11 @@ A provider takes precedence over any legacy `apiKey`; there is no fallback.
 Legacy `auth={"apiKey": "server-secret"}` grants both operations and must stay
 server-side. `api_key` is also accepted. Empty keys, unknown auth fields,
 malformed providers, configured credentials with `enabled=False`, and
-`enabled=True` without credentials reject construction. Omitting auth retains
-unauthenticated compatibility. GET `/health` remains public.
+`enabled=True` without credentials reject construction. Omitting auth or passing
+`auth={}` now denies HTTP ingestion and queries before reading request bodies or
+accessing storage. Hosts intentionally serving anonymous HTTP must migrate to
+`auth={"enabled": False}`. Trusted programmatic APIs are unchanged, and GET
+`/health` remains public.
 
 These scopes do not filter tenant/app data or enforce session `resource_ids`.
 A query-scoped principal can read all retained events in this WatchFn instance.

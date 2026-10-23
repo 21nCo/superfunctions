@@ -1,0 +1,9 @@
+# Python HTTP authentication defaults
+
+Python ingest and query now require an auth provider or nonempty static key unless the host explicitly configures `auth={"enabled": False}`. Missing auth and empty auth return401 before body reads or storage access. Health remains public, and trusted programmatic ingestion/query remain available. Provider precedence, operation scopes, expiry validation and existing hmac credential comparison are unchanged. The README documents this intentional host configuration migration.
+
+New handler regressions reproduced two failures against the old default. The first fresh-wheel run also contained a test-fixture mistake: programmatic query returns Event objects, not dictionaries. That assertion was corrected without changing the runtime query contract. The original body/output-bound test now explicitly opts into anonymous access while preserving its bounds assertions.
+
+Validation on2026-10-23: the existing six-wheel acceptance built shared core/FastAPI/Flask/SQLAlchemy, SendFn and WatchFn, installed them into a fresh isolated Python3.12 environment, verified imports came from site-packages, and ran all copied tests:196 passed in26.67seconds. Coverage includes both real FastAPI and Flask default/empty/explicit-anonymous policies, pre-body/pre-storage denial, public health, trusted APIs, existing scoped providers and nativeSQLite/SES lifecycle tests. The run reported103 existing deprecation warnings; no warning-free claim. No live provider send or deployed authorization claim.
+
+Receipts: /tmp/watch-python-auth-baseline.log (187passed, two real default-policy failures plus one fixture error) and /tmp/watch-python-auth-final.log (196passed). Both temporary consumer roots were removed and absence checked. Only Python runtime/tests/docs and this receipt belong to this commit; concurrent TypeScript email changes are excluded.

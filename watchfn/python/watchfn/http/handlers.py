@@ -22,8 +22,8 @@ class HttpHandlers:
 
     async def authorize(self, request, scope):
         config = self.watch.config.auth
-        if config is None or (config.provider is None and config.api_key is None):
-            return None
+        if config is None:
+            return reply(401, {"error": "Unauthorized"})
         if config.provider is not None:
             try:
                 session = await cast(AuthProvider, config.provider).authenticate(request)
@@ -44,6 +44,10 @@ class HttpHandlers:
             except Exception:
                 return reply(401, {"error": "Unauthorized"})
             return None
+        if config.enabled is False:
+            return None
+        if not config.api_key:
+            return reply(401, {"error": "Unauthorized"})
         headers = {key.lower(): value for key, value in request.headers.items()}
         expected = config.api_key.encode("utf-8")
         if any(hmac.compare_digest(value.encode("utf-8"), target) for value, target in [

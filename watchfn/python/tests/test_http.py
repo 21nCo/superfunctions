@@ -160,7 +160,7 @@ def test_no_acknowledgement_before_storage_returns(http):
 
 @pytest.mark.asyncio
 async def test_actual_body_bytes_and_query_output_bounds():
-    watch = WatchFn("test")
+    watch = WatchFn("test", auth={"enabled": False})
     handler = HttpHandlers(watch)
     context = RouteContext(url="http://local", method="POST")
     class Request:
@@ -189,3 +189,76 @@ def test_memory_retention_snapshot():
     assert [item.name for item in storage.query()] == ["1", "2"]
     with pytest.raises(ValueError):
         MemoryStorage(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth", [None, {}])
+async def test_default_http_denies_before_body_and_storage(auth):
+    watch = WatchFn("default", auth=auth)
+    handler = HttpHandlers(watch)
+    context = RouteContext(url="http://local", method="POST")
+    class UnreadRequest:
+        headers = {"authorization": "Bearer invented", "x-api-key": "invented"}
+        async def body(self):
+            raise AssertionError("Unauthorized body read")
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unauthorized storage access")
+    watch.query = forbidden
+    watch.storage.add_batch = forbidden
+    for operation in (handler.ingest, handler.query):
+        response = await operation(UnreadRequest(), context)
+        assert response.status == 401
+        assert response.headers["Cache-Control"] == "no-store"
+    assert (await handler.health(UnreadRequest(), context)).status == 200
+
+
+@pytest.mark.asyncio
+async def test_explicit_anonymous_policy_and_trusted_programmatic_apis():
+    watch = WatchFn("anonymous", auth={"enabled": False})
+    watch.system_metrics.start = lambda: None
+    watch.process_metrics.start = lambda: None
+    watch.start()
+    context = RouteContext(url="http://local", method="POST")
+    class Body:
+        headers = {}
+        async def body(self):
+            return b'{"name":"anonymous"}'
+    try:
+        assert (await HttpHandlers(watch).ingest(Body(), context)).status == 202
+        assert [item.name for item in watch.query()] == ["anonymous"]
+    finally:
+        watch.stop()
+    trusted = WatchFn("trusted")
+    trusted.system_metrics.start = lambda: None
+    trusted.process_metrics.start = lambda: None
+    trusted.start()
+    try:
+        trusted.track("local")
+        assert [item.name for item in trusted.query()] == ["local"]
+    finally:
+        trusted.stop()
+
+
+@pytest.mark.parametrize("adapter", ["fastapi", "flask"])
+@pytest.mark.parametrize("auth,status", [(None, 401), ({}, 401), ({"enabled": False}, 400)])
+def test_real_adapters_require_explicit_anonymous_policy(adapter, auth, status):
+    watch = WatchFn("policy", auth=auth)
+    if adapter == "fastapi":
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from watchfn.adapters.fastapi import create_fastapi_router
+        app = FastAPI()
+        app.include_router(create_fastapi_router(watch))
+        with TestClient(app) as client:
+            for route in ("ingest", "query"):
+                assert client.post("/watch/" + route, content=b"invalid").status_code == status
+            assert client.get("/watch/health").status_code == 200
+    else:
+        from flask import Flask
+        from watchfn.adapters.flask import create_flask_blueprint
+        app = Flask(__name__)
+        app.register_blueprint(create_flask_blueprint(watch))
+        with app.test_client() as client:
+            for route in ("ingest", "query"):
+                assert client.post("/watch/" + route, data=b"invalid").status_code == status
+            assert client.get("/watch/health").status_code == 200
