@@ -1,3 +1,4 @@
+import type { AuthProvider } from "@superfunctions/auth";
 import type { RetentionPageOptions, RetentionPageResult } from "../storage/event-retention";
 import type { WatchFnDatabase } from "../storage/database";
 import type { BotFnIssueConfig } from "../integrations/botfn/types";
@@ -62,6 +63,7 @@ export const WatchFnConfigSchema = z.object({
   auth: z.object({
       enabled: z.boolean().optional(),
       apiKey: z.string().optional(),
+      provider: z.custom<AuthProvider>(value => !!value && typeof (value as AuthProvider).authenticate === "function", "Invalid auth provider").optional(),
       allowedOrigins: z.array(z.string()).optional(),
   }).optional(),
 });

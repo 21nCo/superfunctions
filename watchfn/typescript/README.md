@@ -133,3 +133,34 @@ during its observation scan and must be retried with fresh observations. Missing
 database or unsupported hybrid alert storage fails explicitly. Sender completion
 after its deadline or lease expiry does not acknowledge delivery; providers should
 deduplicate by notification ID because retry outcomes can remain uncertain.
+
+### Separate HTTP credentials by operation
+
+The TypeScript server accepts an `auth.provider` implementing the shared
+`@superfunctions/auth` `AuthProvider` contract. The provider authenticates each
+request and returns a valid `AuthSession` with explicit scopes:
+
+- `watchfn:ingest` permits `/ingest`.
+- `watchfn:query` permits `/query`.
+- `watchfn:issues:status` permits `/issues/status`.
+
+Use your server-side AuthFn/provider integration to issue ingestion-only browser
+credentials; add issue-status scope only when the reporter needs issue links.
+Operator credentials can separately receive query scope. Provider authentication
+runs before body parsing. Missing/malformed/expired sessions return401, missing
+scope returns403, and provider failures return a sanitized503. Wildcard scopes
+are not implicitly granted. A configured provider takes precedence over the
+legacy `apiKey`, with no fallback, and cannot be combined with `enabled:false`.
+The synchronous `authorizeIngest` compatibility method returnsfalse when a
+provider is configured; HTTP routes use asynchronous `authorizeHttp` instead.
+
+Without a provider, existing API-key/no-auth configuration retains its behavior.
+Keep the legacy full-access key server-side. Provider lifecycle, key rotation,
+revocation, authentication deadlines and origin/rate policy are host-owned.
+These scopes are operation-level authority within one trusted deployment, not
+per-app or tenant filtering: a query-scoped session can query all retained data,
+and status scope can look up configured apps' report IDs. Session resource IDs
+and tenant metadata do not automatically restrict those reads. Use separate
+trusted storage/deployments for mutually untrusted tenants until tenant-aware
+query enforcement is implemented. Programmatic methods are trusted host APIs;
+health remains public. Python HTTP routes do not yet implement this contract.

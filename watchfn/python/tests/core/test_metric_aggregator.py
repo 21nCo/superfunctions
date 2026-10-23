@@ -17,7 +17,7 @@ class TestMetricAggregator:
     def test_add_metric_point(self, aggregator):
         """Test adding a metric point."""
         point = MetricPoint(
-            timestamp=time.time() * 1000,
+            timestamp=120000.0,
             value=100.0
         )
         
@@ -34,7 +34,7 @@ class TestMetricAggregator:
     
     def test_multiple_data_points(self, aggregator):
         """Test handling multiple data points."""
-        now = time.time() * 1000
+        now = 120000.0
         
         for i in range(10):
             aggregator.add("test.metric", MetricPoint(
@@ -53,7 +53,7 @@ class TestMetricAggregator:
     
     def test_aggregation_functions(self, aggregator):
         """Test different aggregation functions."""
-        now = time.time() * 1000
+        now = 120000.0
         values = [10.0, 20.0, 30.0, 40.0, 50.0]
         
         for i, value in enumerate(values):
@@ -76,7 +76,7 @@ class TestMetricAggregator:
     
     def test_percentile_calculation(self, aggregator):
         """Test percentile calculation."""
-        now = time.time() * 1000
+        now = 120000.0
         
         # Add 100 values
         for i in range(1, 101):
@@ -118,3 +118,23 @@ class TestMetricAggregator:
         )
         
         assert len(results) == 0
+
+
+def test_all_functions_coexist_and_partial_range_overlaps_bucket():
+    aggregator = MetricAggregator(intervals=['1m'], functions=['count', 'sum', 'avg', 'min', 'max'])
+    aggregator.add('metric', MetricPoint(timestamp=61000, value=10))
+    aggregator.add('metric', MetricPoint(timestamp=62000, value=20))
+    results = aggregator.get('metric', '1m', 61500, 62500)
+    assert {point.function: point.value for point in results} == {
+        'count': 2, 'sum': 30, 'avg': 15, 'min': 10, 'max': 20,
+    }
+    assert aggregator.get('metric', '1m', 120000, 120001) == []
+
+
+def test_reversed_range_does_not_return_an_overlapping_bucket():
+    aggregator = MetricAggregator(intervals=['1m'], functions=['count', 'sum'])
+    aggregator.add('metric', MetricPoint(timestamp=62000, value=10))
+    assert aggregator.get('metric', '1m', 62500, 61500) == []
+    assert {point.function: point.value for point in aggregator.get('metric', '1m', 62000, 62000)} == {
+        'count': 1, 'sum': 10,
+    }

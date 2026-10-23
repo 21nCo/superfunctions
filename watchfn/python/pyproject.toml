@@ -7,7 +7,7 @@ authors = [
     { name = "21n" }
 ]
 dependencies = [
-    "superfunctions>=0.1.0",
+    "superfunctions-core>=0.1.1,<0.2.0",
     "pydantic>=2.6",
 ]
 
