@@ -662,3 +662,40 @@ const shown = await client.openSurvey('checkout-score');
 Opening does not imply service acceptance: the dialog reports local recording or
 verified service storage only after submission. This API uses the modal renderer;
 an inline mounting API remains separate work. Python has no browser renderer.
+
+### Embeddable feedback board
+
+```ts
+const board = client.mountFeedbackBoard(document.querySelector('#feedback')!, {
+  title: 'Product feedback', limit: 20, status: 'open',
+});
+// Reload the selected filters after a host-side change.
+await board.refresh();
+// Remove only this board, preserving the container's other content.
+board.dispose();
+```
+
+The board lists feedback through the configured service with status, tag and
+product-area filters, explicit pagination, and upvote/downvote/remove-vote
+controls. Text is rendered as text, including titles and bodies. Labels, live
+status, pressed vote state and focus restoration use native accessible elements.
+The board updates votes only after a matching receipt. After an uncertain vote,
+voting stays disabled until a successful refresh reads authoritative state.
+Refresh is available after load errors; it resets pagination. At most1,000 items
+are displayed; narrow filters beyond that bound. Cursor pages are live views,
+not a snapshot or a ranked/sorted export.
+
+`identify` and `reset` dispose all boards owned by that client and ignore late
+responses. They do not change the API credential: recreate the client when the
+verified server identity changes. Explicit disposal also ignores late results;
+existing requests can finish within the HTTP transport's configured timeout.
+Dispose the handle when its host component unmounts. Each board appends its own
+section without replacing other container children. Avoid mounting multiple
+boards in the same region unless you deliberately want independent views.
+
+This is an explicitly mounted read/vote UI; it does not emit analytics or start
+messaging automatically. Service authorization and tenant isolation remain
+mandatory. Feedback creation is available through the separate widget/API;
+moderation, ranked sorting, external-source ingestion and merge tools remain
+separate requirements. Python uses the same existing listing/voting endpoints
+and has no browser renderer.

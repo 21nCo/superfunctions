@@ -23,6 +23,8 @@ import { SurveyEngine } from './core/surveys';
 import { FeedbackEngine } from './core/feedback';
 import { HttpFeedbackService } from './core/feedback-http';
 import { VanillaRenderer } from './ui/renderer';
+import { mountFeedbackBoard, type FeedbackBoardHandle, type FeedbackBoardViewOptions } from './ui/feedback-board';
+export type { FeedbackBoardHandle, FeedbackBoardViewOptions } from './ui/feedback-board';
 import { UserFnOptions, FlagValue, FlagConfig, Segment, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey, SurveyResponse, SurveyReceipt } from './types';
 
 export class UserFnClient {
@@ -39,6 +41,7 @@ export class UserFnClient {
   private readonly surveyAttempts = new Map<string, { key: string; response: SurveyResponse; pending?: Promise<SurveyReceipt>; receipt?: SurveyReceipt }>();
   private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
+  private readonly feedbackBoards = new Set<FeedbackBoardHandle>();
   private options: UserFnOptions;
   private configService?: HttpConfigService;
   private exposures?: FlagExposures;
@@ -101,6 +104,13 @@ export class UserFnClient {
   }
 
   getFeedbackBoard(options?: FeedbackBoardOptions) { return this.feedback.getFeedbackBoard(options); }
+  /** Mount a scoped board; identity changes dispose it to prevent stale actor results. */
+  mountFeedbackBoard(container: HTMLElement, options?: FeedbackBoardViewOptions): FeedbackBoardHandle {
+    let handle: FeedbackBoardHandle;
+    handle = mountFeedbackBoard(container, { list: value => this.feedback.getFeedbackBoard(value), vote: (id, direction) => this.feedback.voteFeedback(id, direction) }, options, () => this.feedbackBoards.delete(handle));
+    this.feedbackBoards.add(handle);
+    return handle;
+  }
   voteFeedback(id: string, direction: -1 | 0 | 1) { return this.feedback.voteFeedback(id, direction); }
   setFeedbackMetadata(id: string, patch: FeedbackMetadataPatch) { return this.feedback.setFeedbackMetadata(id, patch); }
   setFeedbackStatus(id: string, status: FeedbackStatus) { return this.feedback.setFeedbackStatus(id, status); }
@@ -288,6 +298,7 @@ export class UserFnClient {
 
 
   identify(id: string, traits: UserTraits = {}) {
+    for (const board of this.feedbackBoards) board.dispose();
     this.surveyPresentation = undefined;
     this.renderer?.dismissSurveys?.();
     this.renderer?.dismissFeedback?.();
@@ -298,6 +309,7 @@ export class UserFnClient {
   }
 
   reset() {
+    for (const board of this.feedbackBoards) board.dispose();
     this.surveyPresentation = undefined;
     this.renderer?.dismissSurveys?.();
     this.renderer?.dismissFeedback?.();

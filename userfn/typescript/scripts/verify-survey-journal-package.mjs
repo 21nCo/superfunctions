@@ -23,5 +23,8 @@ try {
   await writeFile(join(directory, 'runtime.mjs'), `import {UserFnClient} from 'userfn'; import {createRequire} from 'node:module'; for(const Client of [UserFnClient,createRequire(import.meta.url)('userfn').UserFnClient]) new Client({apiKey:'key',endpoint:'https://example.test',surveyJournal:{storageKey:'owned',storage:{getItem:()=>null,setItem:()=>{}}}});`);
   run(process.execPath, ['runtime.mjs']);
   process.stdout.write(run(process.execPath, [join(root, 'userfn/typescript/scripts/verify-survey-renderer.mjs')], root, { ...process.env, USERFN_SDK_ENTRY: join(directory, 'node_modules/userfn/dist/index.js') }));
+  await writeFile(join(directory, 'board.mts'), `import {UserFnClient,type FeedbackBoardHandle} from 'userfn'; function mount(host:HTMLElement):FeedbackBoardHandle{return new UserFnClient({apiKey:'key'}).mountFeedbackBoard(host,{limit:10,status:'open'});} void mount;`);
+  run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'board.mts']);
+  process.stdout.write(run(process.execPath, [join(root, 'userfn/typescript/scripts/verify-feedback-board.mjs')], root, { ...process.env, USERFN_SDK_ENTRY: join(directory, 'node_modules/userfn/dist/index.js') }));
   console.log(JSON.stringify({ installedPackages: tarballs.length, esmCjsTypesAndConstruction: true, installedBrowserJournal: true }));
 } finally { await rm(directory, { recursive: true, force: true }); }
