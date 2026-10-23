@@ -76,7 +76,8 @@
   "dependencies": {
     "@superfunctions/db": "0.4.0",
     "@superfunctions/http": "0.3.1",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "@superfunctions/auth": "0.1.2"
   },
   "devDependencies": {
     "@superfunctions/http-express": "0.1.3",
