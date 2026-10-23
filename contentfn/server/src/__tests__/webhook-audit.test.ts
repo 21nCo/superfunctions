@@ -11,7 +11,7 @@ import { processWebhookQueue } from "../webhooks/deliver.js";
 import { failUnavailableDelivery, markDelivered } from "../storage/webhookQueue.js";
 import { getContentfnSchema, ALL_TABLES } from "../storage/schema.js";
 import { upgradeWebhookAuditSchema } from "../storage/migrate.js";
-import { backfillWebhookAudit, auditDestinationUrl } from "../storage/webhookAudit.js";
+import { backfillWebhookAudit, auditDestinationUrl, auditDeliveryError } from "../storage/webhookAudit.js";
 
 it("upgrades schema3 idempotently, rolls back a failed page, resumes after reopen, and preserves unknown history", async () => {
   const directory = await mkdtemp(join(tmpdir(), "content-webhook-audit-"));
@@ -56,11 +56,18 @@ it("upgrades schema3 idempotently, rolls back a failed page, resumes after reope
     for (const input of [{ dataset: "prod", limit: 0 }, { dataset: "prod", limit: 1001 }, { dataset: "prod", offset: -1 }]) {
       expect(await server().api.audit.webhooks(input)).toMatchObject({ ok: false, error: { code: "VALIDATION_FAILED" } });
     }
+    fixture.sqlite.prepare("UPDATE contentfn_webhook_queue SET lastError = ? WHERE id = 'q000'").run("provider body private-document https://example.test/?token=legacy-secret");
+    const response = await server().router.handle(new Request("http://local/contentfn/audit/webhooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataset: "prod", limit: 100 }) }));
+    const text = await response.text();
+    expect(text).not.toMatch(/private-document|legacy-secret/);
+    expect(text).toContain("Webhook delivery failed");
     const page = await server().api.audit.webhooks({ dataset: "prod", limit: 100 });
     expect(page).toMatchObject({ ok: true, result: { nextOffset: 100 } });
     if (!page.ok) throw new Error("Expected page");
     expect(page.result.records).toHaveLength(100);
     expect(page.result.records.slice(0, 2)).toMatchObject([{ id: "q050", timestampKnown: true, updatedAt: transition.updatedAt }, { id: "q000", updatedAt: null, timestampKnown: false }]);
+    expect(page.result.records[1].lastError).toBe("Webhook delivery failed");
+    expect(page.result.records[2].lastError).toBe("HTTP 500");
     expect(page.result.records.every(r => r.url === "https://example.test/hook")).toBe(true);
     expect(JSON.stringify(page)).not.toMatch(/secret|pass|2099/);
     const tail = await server().api.audit.webhooks({ dataset: "prod", offset: 100, limit: 100 });
@@ -113,4 +120,11 @@ it.each(["configuration", "event"] as const)("reports missing %s as terminal fai
     expect(sends).toBe(0);
     expect(await server.api.audit.webhooks({ dataset: "prod" })).toMatchObject({ ok: true, result: { records: [{ status: "failed", timestampKnown: true, lastError: `Webhook ${resource} is unavailable; delivery was not attempted` }] } });
   } finally { await raw.close(); }
+});
+
+
+it("projects only exact known failure metadata", () => {
+  expect(auditDeliveryError(null)).toBeNull();
+  for (const message of ["HTTP 100", "HTTP 599", "Webhook request failed"]) expect(auditDeliveryError(message)).toBe(message);
+  for (const message of ["HTTP 503\n", "HTTP 600", "HTTP 503 body secret", "private-document", { token: "secret" }]) expect(auditDeliveryError(message)).toBe("Webhook delivery failed");
 });

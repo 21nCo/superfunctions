@@ -26,7 +26,12 @@ known delivery history; dataset deletion removes it. A worker finding a missing
 hook/event still stops retrying, but now records terminal `failed` with an explicit
 “delivery was not attempted” reason and increments the failed summary count. It
 never labels a no-send path `delivered`; the transition retains the lease guard. No raw document body or
-webhook signing secret is included.
+webhook signing secret is included. Legacy/custom-worker `lastError` strings are
+projected through an exact allowlist: HTTP100–599 codes and the known generic
+request/exhausted/missing-resource reasons. Any other text becomes
+“Webhook delivery failed”; stored provider bodies and URL tokens are not exposed.
+The native SQLite migration test injects a private legacy error and checks the
+actual HTTP route never includes it while retaining the safe HTTP500 reason.
 
 ## Upgrade existing schema3 databases
 
@@ -93,3 +98,9 @@ and `/tmp/cms-webhook-{packed-install,packed-http,production-audit}.log` (audit 
 `.json`). SQLite fixture directories and owned packed installs are removed after
 validation; logs remain. This checkpoint does not certify external SQL services,
 live deployment migration, or concurrent offset pages as a snapshot.
+
+Privacy follow-up: six focused native webhook tests and server types/build pass.
+The packed HTTP acceptance also injects a legacy private provider error into the
+queue and verifies it is absent from both ContentFn and CMS responses. Logs:
+`/tmp/content-webhook-privacy-{tests,types,build}.log` and
+`/tmp/cms-webhook-privacy-packed-{http,install}.log`.
