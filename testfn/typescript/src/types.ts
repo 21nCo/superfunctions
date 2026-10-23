@@ -6,6 +6,8 @@ export type BrowserType = "chromium" | "firefox" | "webkit";
 export type ArtifactType = "screenshot" | "video" | "trace" | "log";
 
 export interface TestFnConfig {
+  /** Framework workspace; resolved once when run() starts. Never changes host cwd. */
+  cwd?: string;
   signal?: AbortSignal;
   configFile?: string;
   framework: FrameworkType;
@@ -185,12 +187,17 @@ export interface BrowserInfo {
 
 export interface TestFrameworkAdapter {
   name: string;
-  discover(pattern: string[]): Promise<TestCase[]>;
+  discover(
+    pattern: string[],
+    options?: Pick<RunOptions, "cwd">,
+  ): Promise<TestCase[]>;
   run(tests: TestCase[], options: RunOptions): Promise<TestResult[]>;
   supports(framework: string): boolean;
 }
 
 export interface RunOptions {
+  /** Absolute framework workspace supplied by TestRunner. */
+  cwd?: string;
   onTestStart?: (test: TestCase) => void | Promise<void>;
   onTestComplete?: (result: TestResult) => void | Promise<void>;
   signal?: AbortSignal;

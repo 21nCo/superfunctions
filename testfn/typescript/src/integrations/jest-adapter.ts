@@ -5,7 +5,7 @@ export class JestAdapter extends JsonFrameworkAdapter {
   name = "jest";
   protected arguments(file: string, options: RunOptions): string[] {
     return [
-      frameworkCli("jest"),
+      frameworkCli("jest", "jest", options.cwd),
       "--runInBand",
       "--runTestsByPath",
       file,

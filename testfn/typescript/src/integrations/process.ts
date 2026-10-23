@@ -11,8 +11,12 @@ export interface ProcessResult {
   timedOut: boolean;
   aborted: boolean;
 }
-export function frameworkCli(name: string, binName = name): string {
-  const require = createRequire(join(process.cwd(), "package.json"));
+export function frameworkCli(
+  name: string,
+  binName = name,
+  cwd = process.cwd(),
+): string {
+  const require = createRequire(join(cwd, "package.json"));
   const manifestPath = require.resolve(`${name}/package.json`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const bin =
@@ -34,6 +38,7 @@ export function executeNode(
     }
     const child = spawn(process.execPath, args, {
       shell: false,
+      cwd: options.cwd,
       env: { ...process.env, ...options.env },
       detached: process.platform !== "win32",
     });

@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { availableParallelism } from "node:os";
 import { TestStorage, getArtifactId } from "../storage/test-storage.js";
@@ -43,6 +45,7 @@ export class TestRunner {
   }
   async run(): Promise<TestResults> {
     if (this.controller) throw new Error("Runner is already running");
+    const cwd = realpathSync(resolve(this.config.cwd ?? process.cwd()));
     const controller = new AbortController();
     this.controller = controller;
     const abort = () => controller.abort();
@@ -62,7 +65,7 @@ export class TestRunner {
             this.config.testPattern ??
               "./tests/**/*.{test,spec}.{ts,js,mjs,cjs}",
           ];
-      const tests = await this.adapter.discover(patterns);
+      const tests = await this.adapter.discover(patterns, { cwd });
       if (!tests.length) throw new Error("No tests discovered");
       const start = Date.now();
       for (const reporter of this.reporters) await reporter.onRunStart?.();
@@ -71,6 +74,7 @@ export class TestRunner {
           typeof browser === "string" ? { name: browser } : browser,
       );
       const results = await pool.executeTests(tests, this.adapter, {
+        cwd,
         parallel,
         timeout: this.config.timeout,
         retries: this.config.retries,

@@ -8,7 +8,10 @@ import type {
 export abstract class BaseAdapter implements TestFrameworkAdapter {
   abstract name: string;
 
-  abstract discover(pattern: string[]): Promise<TestCase[]>;
+  abstract discover(
+    pattern: string[],
+    options?: Pick<RunOptions, "cwd">,
+  ): Promise<TestCase[]>;
 
   abstract run(tests: TestCase[], options: RunOptions): Promise<TestResult[]>;
 

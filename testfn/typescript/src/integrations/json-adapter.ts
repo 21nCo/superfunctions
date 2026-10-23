@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { glob } from "tinyglobby";
 import { resolve } from "node:path";
 import { BaseAdapter } from "./base-adapter.js";
@@ -40,8 +41,11 @@ export abstract class JsonFrameworkAdapter extends BaseAdapter {
       }
     return results;
   }
-  async discover(pattern: string[]): Promise<TestCase[]> {
-    return (await glob(pattern, { onlyFiles: true })).sort().map((file) => ({
+  async discover(
+    pattern: string[],
+    options: Pick<RunOptions, "cwd"> = {},
+  ): Promise<TestCase[]> {
+    return (await glob(pattern, { onlyFiles: true, cwd: options.cwd })).sort().map((file) => ({
       id: this.generateTestId(file, this.name),
       file,
       name: file,
@@ -56,7 +60,7 @@ export abstract class JsonFrameworkAdapter extends BaseAdapter {
     let processResult: ProcessResult;
     try {
       processResult = await executeNode(
-        this.arguments(resolve(test.file), options),
+        this.arguments(resolve(options.cwd ?? process.cwd(), test.file), options),
         options,
       );
     } catch (error) {
@@ -81,6 +85,10 @@ export abstract class JsonFrameworkAdapter extends BaseAdapter {
     if (processResult.aborted) return fail("Test run aborted");
     try {
       const results = this.parse(processResult.stdout, test);
+      for (const result of results)
+        for (const artifact of result.artifacts ?? [])
+          if (!artifact.buffer)
+            artifact.path = resolve(options.cwd ?? process.cwd(), artifact.path);
       if (!results.length)
         return fail(
           `Framework produced no test results (exit ${processResult.code}): ${processResult.stderr || processResult.stdout}`,
@@ -114,6 +122,10 @@ export abstract class JsonFrameworkAdapter extends BaseAdapter {
     }
   }
   async run(tests: TestCase[], options: RunOptions): Promise<TestResult[]> {
+    options = {
+      ...options,
+      cwd: realpathSync(resolve(options.cwd ?? process.cwd())),
+    };
     const results: TestResult[] = [];
     for (const [index, test] of tests.entries()) {
       results.push(...(await this.execute(test, options)));
