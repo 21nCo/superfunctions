@@ -19,6 +19,7 @@
     "authfn/examples/*/*",
     "apifn/*",
     "docsfn/*",
+    "docsfn/examples/sveltekit-docs-site",
     "extfn/*",
     "extfn/examples/*",
     "datafn/client",
@@ -157,7 +158,7 @@
     "verify:mdfn": "node scripts/verify-mdfn.mjs",
     "deploy:uifn-catalogs:preview": "node scripts/deploy-uifn-catalogs.mjs preview",
     "deploy:uifn-catalogs:production": "node scripts/deploy-uifn-catalogs.mjs production",
-    "test:ui": "npm exec --yes --package=npm@11.21.0 -- npm exec --yes --package=vitest@4.1.12 --package=@vitest/ui@4.1.12 -- vitest --ui --watch"
+    "test:ui": "node scripts/run-vitest-ui.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.7",
