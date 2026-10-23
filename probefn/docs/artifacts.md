@@ -154,3 +154,10 @@ in-memory cleanup ownership cannot reclaim files: offline operator cleanup and
 crash reclamation remain separate requirements. The finalized disk copy and
 Playwright encoder scratch remain outside admitted payload accounting; streaming
 does not establish a physical disk quota.
+
+A reported event-flush failure also retains cleanup ownership and any finalized
+trace receipt until stop is retried. This preserves the trace and lets a transient
+flush operation finish; it does not replay failed event writes. The original
+persistence error remains evidence of missing event data even if later cleanup
+succeeds. Irrecoverable trace-finalization errors likewise cannot be repaired by
+closing an already disconnected browser.

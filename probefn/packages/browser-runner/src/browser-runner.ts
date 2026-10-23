@@ -56,6 +56,7 @@ export interface ClosedBrowserSession {
 interface ManagedBrowserSession {
   relativeTracePath?: string;
   finalizedTracePath?: string;
+  pendingEventFlush?: boolean;
   videoDirectory?: string;
   browser?: Browser;
   context?: BrowserContext;
@@ -80,7 +81,7 @@ export class BrowserRunner {
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
-  /** Includes disconnected sessions whose owned scratch cleanup is still pending. */
+  /** Includes disconnected sessions whose scratch removal or event flush is still pending. */
   public hasSession(sessionId: string): boolean { return this.sessions.has(sessionId); }
 
   public async startSession(options: LaunchBrowserSessionOptions): Promise<StartedBrowserSession> {
@@ -197,14 +198,15 @@ export class BrowserRunner {
       };
     } catch (error) {
       const cleanup = await this.cleanupSession(session, false);
-      if (!session.browser?.isConnected() && !session.videoDirectory && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
+      if (!session.browser?.isConnected() && !session.videoDirectory && !session.pendingEventFlush && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
       throw createProbefnError({
         code: 'E_BROWSER_LAUNCH_FAILED',
         message: `Could not launch ${options.browser} browser session.`,
         retryable: true,
         details: {
           browser: options.browser,
-          ...(session.videoDirectory ? { cleanupPending: true, scratchDirectory: session.videoDirectory } : {}),
+          ...((session.videoDirectory || session.pendingEventFlush) ? { cleanupPending: true } : {}),
+          ...(session.videoDirectory ? { scratchDirectory: session.videoDirectory } : {}),
         },
         cause: cleanup.errors.length ? new AggregateError([error, ...cleanup.errors], 'Browser startup and cleanup failed') : error,
       });
@@ -237,7 +239,7 @@ export class BrowserRunner {
     const stopping = (async () => {
       await activeSession.startDone;
       const result = await this.cleanupSession(activeSession, options.saveTrace ?? true);
-      if (!activeSession.browser?.isConnected() && !activeSession.videoDirectory && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
+      if (!activeSession.browser?.isConnected() && !activeSession.videoDirectory && !activeSession.pendingEventFlush && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
       if (result.errors.length === 1 && !activeSession.browser?.isConnected() &&
           isProbefnError(result.errors[0]) && result.errors[0].code === 'E_STORAGE_CAP_EXCEEDED') {
         throw result.errors[0];
@@ -245,7 +247,7 @@ export class BrowserRunner {
       if (result.errors.length || !activeSession.sinkPaths) {
         throw createProbefnError({ code: 'E_BROWSER_LAUNCH_FAILED',
           message: `Could not close browser session ${sessionId} cleanly.`, retryable: true,
-          details: { sessionId, ...(activeSession.videoDirectory ? { cleanupPending: true, scratchDirectory: activeSession.videoDirectory } : {}) }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
+          details: { sessionId, ...((activeSession.videoDirectory || activeSession.pendingEventFlush) ? { cleanupPending: true } : {}), ...(activeSession.videoDirectory ? { scratchDirectory: activeSession.videoDirectory } : {}) }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
       }
       return { tracePath: result.tracePath, sinkPaths: activeSession.sinkPaths };
     })();
@@ -259,7 +261,8 @@ export class BrowserRunner {
     const errors: unknown[] = [];
     let tracePath: string | null = session.finalizedTracePath ?? null;
     try { session.eventCapture?.dispose(); } catch (error) { errors.push(error); }
-    try { await session.eventCapture?.flush(); } catch (error) { errors.push(error); }
+    try { await session.eventCapture?.flush(); session.pendingEventFlush = false; }
+    catch (error) { session.pendingEventFlush = true; errors.push(error); }
     if (saveTrace && session.context && session.traceEnabled) {
       try {
         tracePath = await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,

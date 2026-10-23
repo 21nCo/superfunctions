@@ -83,3 +83,22 @@ it('keeps the public runtime owner after video cleanup failure and allows an exp
     app.closeAllConnections(); await new Promise<void>(resolve => app.close(() => resolve()));
   }
 }, 20000);
+
+it('retains finalized trace and event flush ownership until a failed sink flush can retry', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'probe-scratch-owner-')); roots.push(root);
+  const runner = new BrowserRunner({ repoRoot: root, artifactStore: new ArtifactStore({ repoRoot: root }) });
+  const options = { sessionId: 'flush', runId: 'flush', browser: 'chromium' as const, deterministic: { enabled: false, viewport: { width: 800, height: 600 }, locale: 'en-US', timezone: 'UTC', colorScheme: 'light' as const, reducedMotion: 'reduce' as const, animationPolicy: 'freeze' as const, networkIdleMs: 0 }, trace: { enabled: true } };
+  try {
+    const started = await runner.startSession(options);
+    await started.page.setContent('<body>Retained trace</body>');
+    vi.spyOn(started.eventCapture, 'flush').mockRejectedValueOnce(new Error('Injected sink flush failure'));
+    await expect(runner.stopSession('flush')).rejects.toMatchObject({ code: 'E_BROWSER_LAUNCH_FAILED', details: { cleanupPending: true } });
+    expect(started.page.context().browser()!.isConnected()).toBe(false);
+    expect(runner.hasSession('flush')).toBe(true);
+    await expect(runner.startSession(options)).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
+    const closed = await runner.stopSession('flush');
+    expect(closed.tracePath).toBeTruthy();
+    expect((await readFile(path.join(root, closed.tracePath!))).length).toBeGreaterThan(0);
+    expect(runner.hasSession('flush')).toBe(false);
+  } finally { await runner.stopSession('flush').catch(() => undefined); }
+}, 20000);

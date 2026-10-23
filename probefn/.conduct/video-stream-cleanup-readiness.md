@@ -66,3 +66,28 @@ required readiness work. Cleanup ownership survives only while its host remains
 alive; a killed host can leave scratch files. The legacy byte-array callback owns
 its allocation; the CLI uses the new stream path. No claim is made for native
 Firefox/WebKit, remote providers, deployment, or an unimplemented Python runtime.
+
+## Event flush follow-up
+
+A disconnected session also remains owned when its event flush reports an error,
+so a finalized trace is not discarded before retry. This is cleanup and trace
+receipt preservation, not recovery of lost event data: the existing capture flush
+reports and drains failed write records rather than replaying them. Applications
+must retain the original persistence error even when later cleanup succeeds.
+
+The final follow-up passed ten native cleanup/live-flow cases (including the new
+flush-failure/trace-retention case) and strict workspace types:
+`/tmp/probe-event-flush-focused.log`, `/tmp/probe-event-flush-types.log`.
+The 230+4 full suite above precedes this narrow follow-up; it was not rerun.
+
+Final build used the same installed Turbo 2.11.10 as the preceding full run,
+invoked directly from its npm cache because `npm exec` stalled resolving the
+absent local Turbo binary. The owned stalled npm process was stopped without
+changing repository dependencies. The direct CLI/admin build closure passed all
+13 tasks in 21 seconds (`/tmp/probe-event-flush-build-final.log`).
+
+Fresh package acceptance after the event-flush follow-up passed the same full
+13-tarball CLI/MCP/admin/browser matrix and strict installed declarations. Its
+installed CLI video was 6,560 bytes with verified SHA-256; production audit remained
+zero. `/tmp/probe-event-flush-packed.log`. The consumer reported its owned app
+stopped and directory removed; subsequent process/directory readback was empty.
