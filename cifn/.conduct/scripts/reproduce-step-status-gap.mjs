@@ -18,6 +18,22 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const command = script => `${quote(process.execPath)} -e ${quote(script)}`;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let control, exited, execution, port, output = '';
+async function bounded(promise, milliseconds, label) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + ' deadline exceeded')), milliseconds); })]); }
+  finally { clearTimeout(timer); }
+}
+async function stopControl() {
+  if (!control || !exited) return;
+  if (control.exitCode !== null || control.signalCode !== null) { await bounded(exited, 1000, 'Control exit observation'); return; }
+  control.kill('SIGTERM');
+  try { await bounded(exited, 2000, 'Control TERM'); }
+  catch {
+    // Only the ChildProcess created above is eligible for forced cleanup.
+    if (control.exitCode === null && control.signalCode === null) control.kill('SIGKILL');
+    await bounded(exited, 2000, 'Control KILL');
+  }
+}
 async function api(path, body) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(5000) });
   assert.ok(response.ok, `HTTP ${response.status}`); const envelope = await response.json(); assert.equal(envelope.ok, true); return envelope.data;
@@ -46,16 +62,17 @@ try {
   const before = await api(`/api/v1/runs/${runId}`);
   assert.equal(before.status, 'running'); assert.equal(before.jobs[0].status, 'running');
   assert.deepEqual(before.jobs[0].steps.map(step => step.status), ['pending', 'pending'], 'baseline gap: first completed and second active are not persisted');
-  await writeFile(gate, 'release'); await execution;
+  await writeFile(gate, 'release'); await bounded(execution, 60000, 'Runner completion');
   const after = await api(`/api/v1/runs/${runId}`);
   assert.equal(after.status, 'success'); assert.deepEqual(after.jobs[0].steps.map(step => step.status), ['success', 'success']);
   console.log(JSON.stringify({ baselineGapReproduced: true, whileSecondShellActive: { run: before.status, job: before.jobs[0].status, steps: before.jobs[0].steps.map(step => step.status) }, actualWitnesses: ['first finished', 'second running'], afterRelease: { run: after.status, steps: after.jobs[0].steps.map(step => step.status) }, node: process.version }));
 } finally {
   const errors = [];
   try { await writeFile(gate, 'release'); } catch (error) { errors.push(error); }
-  try { await execution; } catch (error) { errors.push(error); }
-  if (control && control.exitCode === null && control.signalCode === null) control.kill('SIGTERM');
-  try { if (exited) await exited; } catch (error) { errors.push(error); }
+  // Allow the shell's ten-second safety exit and existing ten-second HTTP requests.
+  // A deadline is uncertainty, not proof that a shell stopped: retain its state.
+  try { await bounded(execution, 60000, 'Runner cleanup'); } catch (error) { errors.push(error); }
+  try { await stopControl(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError(errors, 'Diagnostic cleanup or execution failed; directory retained');
   await rm(directory, { recursive: true, force: true });
 }
