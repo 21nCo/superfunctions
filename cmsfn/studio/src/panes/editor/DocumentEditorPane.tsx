@@ -103,7 +103,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
     const ops = buildPatchOps(originalDoc as Record<string, unknown>, fullCurrent);
     const res = await patchDoc(
       { baseUrl },
-      { dataset, id: docId, ifRev: originalDoc._rev, ops }
+      { dataset, id: originalDoc._id, ifRev: originalDoc._rev, ops }
     );
     setSaveLoading(false);
     if (res.ok) {
@@ -142,7 +142,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, cmsfnApiUrl, isPub
     const ops = buildPatchOps(docRes.result as Record<string, unknown>, fullCurrent);
     const res = await patchDoc(
       { baseUrl },
-      { dataset, id: docId, ifRev: docRes.result._rev, ops }
+      { dataset, id: docRes.result._id, ifRev: docRes.result._rev, ops }
     );
     setSaveLoading(false);
     if (res.ok) {

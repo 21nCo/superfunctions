@@ -63,7 +63,8 @@
     "filefn/examples/full-demo/*",
     "filefn/examples/production/*",
     "cmsfn/core",
-    "cmsfn/server"
+    "cmsfn/server",
+    "cmsfn/studio"
   ],
   "scripts": {
     "build": "turbo run build",

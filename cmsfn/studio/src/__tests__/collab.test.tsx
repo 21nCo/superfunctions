@@ -50,24 +50,22 @@ describe("TV-COLLAB-002: editor shows remote-changed banner", () => {
 });
 
 describe("TV-COLLAB-001: list refresh trigger", () => {
-  it("DocumentListPane accepts refreshTrigger prop", () => {
-    const { rerender } = render(
-      <DocumentListPane
-        baseUrl="http://cf.test"
-        dataset="prod"
-        node={{ kind: "documentList", title: "Posts", dataset: "prod", types: ["post"] }}
-        refreshTrigger={0}
-      />
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("queries again when refreshTrigger changes", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      ok: true, result: { data: [docRes.result], nextCursor: null },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const node = { kind: "documentList" as const, title: "Posts", dataset: "prod", types: ["post"] };
+    const { rerender, unmount } = render(
+      <DocumentListPane baseUrl={BASE_URL} dataset="prod" node={node} refreshTrigger={0} />
     );
-    expect(document.querySelector("[data-document-list-pane]")).toBeTruthy();
-    rerender(
-      <DocumentListPane
-        baseUrl="http://cf.test"
-        dataset="prod"
-        node={{ kind: "documentList", title: "Posts", dataset: "prod", types: ["post"] }}
-        refreshTrigger={1}
-      />
-    );
-    expect(document.querySelector("[data-document-list-pane]")).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-doc-id="post-1"]')).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    rerender(<DocumentListPane baseUrl={BASE_URL} dataset="prod" node={node} refreshTrigger={1} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(document.querySelector('[data-list-loading]')).toBeNull());
+    unmount();
   });
 });

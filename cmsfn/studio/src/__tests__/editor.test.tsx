@@ -43,7 +43,7 @@ const schemaWithTypes = {
 const docPost = {
   ok: true,
   result: {
-    _id: "post-1",
+    _id: "drafts.post-1",
     _type: "post",
     _rev: "rev1",
     _createdAt: "2025-01-01T00:00:00Z",
@@ -169,6 +169,7 @@ describe("PHASE_05: Schema-driven editor", () => {
 
       await waitFor(() => expect(patchBody).not.toBeNull());
       expect((patchBody as { ifRev?: string }).ifRev).toBe("rev1");
+      expect((patchBody as { id?: string }).id).toBe("drafts.post-1");
       expect(Array.isArray((patchBody as { ops?: unknown[] }).ops)).toBe(true);
     });
   });
@@ -179,7 +180,8 @@ describe("PHASE_05: Schema-driven editor", () => {
       handlers.set("/contentfn/schema/get", async () => ({ status: 200, body: schemaWithTypes }));
       handlers.set("/contentfn/docs/get", async () => ({ status: 200, body: docPost }));
       let patchCallCount = 0;
-      handlers.set("/contentfn/docs/patch", async () => {
+      handlers.set("/contentfn/docs/patch", async (body) => {
+        expect(body).toMatchObject({ id: "drafts.post-1", ifRev: "rev1" });
         patchCallCount++;
         if (patchCallCount === 1) {
           return {
@@ -198,6 +200,8 @@ describe("PHASE_05: Schema-driven editor", () => {
       await waitFor(() => expect(document.querySelector("[data-conflict-banner]")).toBeDefined());
       expect(document.querySelector("[data-conflict-refresh]")).toBeDefined();
       expect(document.querySelector("[data-conflict-reapply]")).toBeDefined();
+      fireEvent.click(document.querySelector("[data-conflict-reapply]")!);
+      await waitFor(() => expect(patchCallCount).toBe(2));
     });
   });
 });
