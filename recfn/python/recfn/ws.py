@@ -4,30 +4,45 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Tuple
-
-try:
-    import websockets
-except ModuleNotFoundError:  # pragma: no cover - exercised in environments without optional deps
-    class _MissingWebsocketsModule:
-        def connect(self, *_args: Any, **_kwargs: Any) -> Any:
-            raise ModuleNotFoundError(
-                "websockets is required for transcript streaming. Install the recfn "
-                "Python package with its runtime dependencies."
-            )
-
-    websockets = _MissingWebsocketsModule()
+from typing import Any, AsyncContextManager, AsyncIterator, NoReturn, Protocol, Tuple
 
 from .client import RecFnHttpClient
-from .types import Participant, Segment, _parse_participant, _parse_segment
+from .types import _parse_participant, _parse_segment
+
+
+class _TranscriptSocket(Protocol):
+    def __aiter__(self) -> AsyncIterator[str | bytes]: ...
+
+    async def send(self, message: str) -> None: ...
+
+
+class _WebsocketsModule(Protocol):
+    def connect(self, uri: str) -> AsyncContextManager[_TranscriptSocket]: ...
+
+
+class _MissingWebsocketsModule:
+    def connect(self, uri: str) -> NoReturn:
+        raise ModuleNotFoundError(
+            "websockets is required for transcript streaming. Install the recfn "
+            "Python package with its runtime dependencies."
+        )
+
+
+websockets: _WebsocketsModule
+try:
+    import websockets as _websockets
+except ModuleNotFoundError:  # pragma: no cover - missing dependency fallback
+    websockets = _MissingWebsocketsModule()
+else:
+    websockets = _websockets
 
 STATUS_REQUIRED_KEYS = ("botStatus",)
 
 
-def _parse_transcript_frame(raw: str) -> Tuple[str, Any] | None:
+def _parse_transcript_frame(raw: str | bytes) -> Tuple[str, Any] | None:
     try:
         msg = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return None
 
     if not isinstance(msg, dict):
@@ -81,7 +96,7 @@ async def transcript_stream(
     url = client.get_ws_url(f"/ws/transcripts/{bot_id}")
     ping_interval = 30.0
 
-    async def send_ping(ws: Any) -> None:
+    async def send_ping(ws: _TranscriptSocket) -> None:
         while True:
             await asyncio.sleep(ping_interval)
             try:

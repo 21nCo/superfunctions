@@ -62,3 +62,23 @@ asyncio.run(main())
 - **metadata** — get
 
 All methods return `{ok: True, data: ...}` or `{ok: False, error: {code, message, details}}`.
+
+## Typed resources and streaming
+
+The installed wheel includes `py.typed`. Resource properties such as `bots`,
+`recordings`, and `transcripts` expose their concrete method signatures to type
+checkers. Their factories still accept a `RecFnHttpClient`; each resource retains
+that client's configuration. Response envelopes remain dynamic dictionaries and
+stream event payloads retain their existing event-specific runtime shapes.
+
+Collection defaults on aggregate entities and API errors are independently
+allocated. Existing normalization for explicit `None` supplied by untyped callers
+is retained. Transcript streams accept both text and binary JSON frames; malformed
+UTF-8 or JSON frames are ignored, as are unsupported frame types and invalid
+status/error shapes. This is not a general validation guarantee for arbitrary
+entity payloads. Closing the stream retains the existing ping-task cleanup.
+
+Run the configured checks with `python -m ruff check .`, `python -m mypy .`, and
+`python -m pytest .`. The cross-language stream-schema test needs the repository's
+built `@recfn/core`; installed-wheel tests may set `RECFN_CONTRACT_ROOT` to that
+checkout. The strict consumer fixture is `tests/typing_consumer.py`.

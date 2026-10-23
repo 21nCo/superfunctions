@@ -1,9 +1,10 @@
 """Tests for RecFn WebSocket transcript stream."""
 
 import json
+import os
 import subprocess
-from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -117,7 +118,7 @@ async def test_transcript_stream_uses_canonical_status_frames() -> None:
 
 
 def test_ws_schema_matches_shared_core_contract() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(os.environ["RECFN_CONTRACT_ROOT"]) if "RECFN_CONTRACT_ROOT" in os.environ else Path(__file__).resolve().parents[3]
     result = subprocess.run(
         [
             "node",
@@ -139,3 +140,25 @@ def test_ws_schema_matches_shared_core_contract() -> None:
     assert schema["participant_left"]["requiredKeys"] == ["participantId"]
     assert schema["error"]["requiredKeys"] == ["code", "message"]
     assert list(STATUS_REQUIRED_KEYS) == ["botStatus"]
+
+
+@pytest.mark.asyncio
+async def test_real_socket_preserves_valid_frames_after_malformed_binary_data() -> None:
+    from websockets.legacy.server import WebSocketServerProtocol, serve
+
+    async def handle(socket: WebSocketServerProtocol) -> None:
+        await socket.send(b'\xff')
+        await socket.send('{broken')
+        await socket.send(json.dumps({"type": "status", "data": {"status": "wrong-shape"}}))
+        await socket.send(json.dumps({"type": "status", "data": {"botStatus": "joined"}}).encode())
+        await socket.send(json.dumps({"type": "participant_left", "data": {"participantId": "p1"}}))
+        await socket.close()
+
+    async with serve(handle, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        client = RecFnHttpClient(f"http://127.0.0.1:{port}", "local-fixture")
+        events = [event async for event in transcript_stream(client, "bot")]
+    assert events == [
+        ("status", {"bot_status": "joined"}),
+        ("participant_left", {"participant_id": "p1"}),
+    ]

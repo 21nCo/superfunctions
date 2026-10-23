@@ -1,10 +1,11 @@
 """Tests for RecFn HTTP client and resources."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from recfn import RecFn
-from recfn.types import AggregateBotDetail, Bot, Segment, _parse_bot, _parse_segment
+from recfn.types import AggregateBotDetail, _parse_bot, _parse_segment
 
 
 def test_parse_bot() -> None:

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
-
 
 # Enums / type aliases
 Platform = Literal["zoom", "meet", "teams"]
@@ -53,10 +52,10 @@ class Bot:
 class AggregateBotDetail(Bot):
     """Aggregate bot detail including nested related resources."""
 
-    participants: List["Participant"] = None
-    recordings: List["Recording"] = None
+    participants: List["Participant"] = field(default_factory=list)
+    recordings: List["Recording"] = field(default_factory=list)
     metadata: Optional["MeetingMetadata"] = None
-    chat_messages: List["ChatMessage"] = None
+    chat_messages: List["ChatMessage"] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.participants is None:
@@ -137,7 +136,7 @@ class MeetingMetadata:
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     platform: str = ""
-    chat_messages: List[ChatMessage] = None
+    chat_messages: List[ChatMessage] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.chat_messages is None:
@@ -206,7 +205,7 @@ class ApiError:
 
     code: str
     message: str
-    details: Dict[str, Any] = None
+    details: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.details is None:

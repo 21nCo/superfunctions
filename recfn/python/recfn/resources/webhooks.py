@@ -7,29 +7,32 @@ from typing import Optional
 from ..client import RecFnHttpClient
 
 
-def create_webhooks_resource(client: RecFnHttpClient) -> object:
+class WebhooksResource:
+    def __init__(self, client: RecFnHttpClient) -> None:
+        self._client = client
+
+    async def create(
+        self,
+        url: str,
+        events: list[str],
+        *,
+        secret: Optional[str] = None,
+    ) -> dict:
+        body: dict = {"url": url, "events": events}
+        if secret is not None:
+            body["secret"] = secret
+        return await self._client.request("POST", "/api/v1/webhooks", body=body)
+
+    async def list(self) -> dict:
+        return await self._client.request("GET", "/api/v1/webhooks")
+
+    async def delete(self, webhook_id: str) -> dict:
+        return await self._client.request(
+            "DELETE",
+            f"/api/v1/webhooks/{webhook_id}",
+        )
+
+
+def create_webhooks_resource(client: RecFnHttpClient) -> WebhooksResource:
     """Create webhooks resource."""
-
-    class WebhooksResource:
-        async def create(
-            self,
-            url: str,
-            events: list[str],
-            *,
-            secret: Optional[str] = None,
-        ) -> dict:
-            body: dict = {"url": url, "events": events}
-            if secret is not None:
-                body["secret"] = secret
-            return await client.request("POST", "/api/v1/webhooks", body=body)
-
-        async def list(self) -> dict:
-            return await client.request("GET", "/api/v1/webhooks")
-
-        async def delete(self, webhook_id: str) -> dict:
-            return await client.request(
-                "DELETE",
-                f"/api/v1/webhooks/{webhook_id}",
-            )
-
-    return WebhooksResource()
+    return WebhooksResource(client)
