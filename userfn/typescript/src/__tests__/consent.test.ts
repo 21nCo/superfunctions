@@ -59,3 +59,21 @@ it('honors the legacy window DNT signal even when an application clears its forw
   browser.doNotTrack = '0'; expect(c.getConsent()).toEqual({ analytics: true, messaging: true, doNotTrack: false });
   expect(() => make({ doNotTrack: 'false' })).toThrow('booleans');
 });
+
+
+it('fences survey submissions across identity and consent epochs and accepts each presentation once', async () => {
+  const c = make(); const callbacks: Array<(value: any) => void> = [];
+  (c as any).renderer = { renderSurvey: (_survey: unknown, submit: (value: any) => void) => callbacks.push(submit), dismissMessages: () => {} };
+  const record = vi.spyOn((c as any).surveys, 'trackResponse');
+  c.setSurveys([{ id: 'survey', enabled: true, questions: [], triggers: [{ type: 'event', pattern: 'open' }], caps: { global: 2 } }]);
+  c.identify('alice'); await c.trigger('event', 'open');
+  c.identify('bob'); callbacks[0]({ surveyId: 'survey', answers: [], submittedAt: Date.now() });
+  expect(record).not.toHaveBeenCalled();
+  await c.trigger('event', 'open'); c.setConsent({ messaging: false }); c.setConsent({ messaging: true });
+  callbacks[1]({ surveyId: 'survey', answers: [], submittedAt: Date.now() }); expect(record).not.toHaveBeenCalled();
+  await c.trigger('event', 'open');
+  callbacks[2]({ surveyId: 'other', answers: [], submittedAt: Date.now() }); expect(record).not.toHaveBeenCalled();
+  callbacks[2]({ surveyId: 'survey', answers: [], submittedAt: Date.now() });
+  callbacks[2]({ surveyId: 'survey', answers: [], submittedAt: Date.now() });
+  expect(record).toHaveBeenCalledTimes(1); expect(record.mock.calls[0][1]).toMatchObject({ id: 'bob' });
+});

@@ -227,6 +227,7 @@ export interface Survey {
   triggers: CampaignTrigger[];
   enabled: boolean;
   caps?: {
+    /** Local response limit per user/survey in this client. Defaults to one; zero denies. Not a server-wide quota. */
     global?: number;
   };
 }

@@ -3,7 +3,7 @@ import { SegmentEvaluator } from './segments';
 
 export class SurveyEngine {
   private surveys: Map<string, Survey> = new Map();
-  private responses: Map<string, SurveyResponse[]> = new Map(); // surveyId -> responses
+  private responses = new Map<string, Map<string, SurveyResponse[]>>(); // userId -> surveyId -> responses
   private segments: SegmentEvaluator;
 
   constructor(segments: SegmentEvaluator) {
@@ -46,15 +46,10 @@ export class SurveyEngine {
       }
 
       // 3. Frequency Caps (already responded?)
-      const previousResponses = this.responses.get(survey.id) || [];
-      if (survey.caps?.global && previousResponses.length >= survey.caps.global) {
-        continue;
-      }
-      
-      // Default: don't show if already responded once, unless cap > 1
-      if (!survey.caps?.global && previousResponses.length > 0) {
-        continue; 
-      }
+      const previousResponses = this.responses.get(user.id)?.get(survey.id) ?? [];
+      const cap = survey.caps?.global ?? 1;
+      // Zero denies delivery; malformed runtime policy must not become uncapped.
+      if (survey.caps?.global === null || !Number.isSafeInteger(cap) || cap < 0 || previousResponses.length >= cap) continue;
 
       eligible.push(survey);
     }
@@ -62,9 +57,11 @@ export class SurveyEngine {
     return eligible;
   }
 
-  trackResponse(response: SurveyResponse) {
-    const list = this.responses.get(response.surveyId) || [];
+  trackResponse(response: SurveyResponse, user: UserIdentity) {
+    let surveys = this.responses.get(user.id);
+    if (!surveys) { surveys = new Map(); this.responses.set(user.id, surveys); }
+    const list = surveys.get(response.surveyId) ?? [];
     list.push(response);
-    this.responses.set(response.surveyId, list);
+    surveys.set(response.surveyId, list);
   }
 }

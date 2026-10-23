@@ -475,3 +475,18 @@ writing the presentation fence. A delayed `shown` acknowledgement still reconcil
 without redisplay. Keep client/server clocks synchronized: schedule enforcement
 covers admission and UI handoff, not cancellation of a visible message. Apply the
 new timing tables described in the service README before upgrading the service.
+
+
+### Local survey response boundaries
+
+Survey response counts are isolated by user ID and survey ID for this client
+instance. The legacy `caps.global` name controls that local per-user response
+limit: omission defaults to one, zero prevents eligibility, and malformed limits
+fail closed. Returning to an earlier identity retains its local count. An
+identity change or messaging-consent withdrawal invalidates existing survey
+submission callbacks; each presentation accepts at most one matching response.
+
+These counts are process-local. They do not survive reloads or coordinate other
+clients. Durable survey admission, server-side response persistence, rolling
+window caps and analytics delivery are still unfinished; local acceptance is not
+a server persistence receipt.

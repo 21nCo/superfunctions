@@ -135,11 +135,13 @@ export class UserFnClient {
     const surveys = this.surveys.getEligibleSurveys(type, context, user);
     if (surveys.length > 0) {
       const survey = surveys[0];
+      let submitted = false;
       this.renderer?.renderSurvey(
         survey,
         (response) => {
-          if (!this.syncConsent().messaging) return;
-          this.surveys.trackResponse(response);
+          if (submitted || !user || !this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user || response.surveyId !== survey.id) return;
+          submitted = true;
+          this.surveys.trackResponse(response, user);
           // TODO: emit to watchfn
         },
         () => {
