@@ -97,8 +97,14 @@ export function deletionMethods(adapter: Adapter) {
         if (!producer) throw blocked();
         await lockBot(tx, producer.botId, namespace);
         const deletion = await tx.findOne<BotDeletion>({ model: 'botDeletions', where: where(producer.botId, namespace) });
-        if (!deletion || deletion.state !== 'pending') throw blocked();
-        await tx.update({ model: 'botProducers', where: where(id, namespace), data: { state: 'settled', reconciliationReason: proof.reason } });
+        if (deletion && deletion.state !== 'pending') throw blocked();
+        const persisted = await tx.findOne<Recording>({ model: 'recordings', where: where(producer.recordingId, namespace) });
+        const recorded = persisted?.botId === producer.botId && (!producer.storageRef || persisted.storageRef === producer.storageRef);
+        // With no deletion, a matching recording retains ownership of the object.
+        // Unlinked resources must keep their intent for eventual deletion, even
+        // after the operator proves that the original producer has stopped.
+        if (!deletion && recorded) await tx.delete({ model: 'botProducers', where: where(id, namespace) });
+        else await tx.update({ model: 'botProducers', where: where(id, namespace), data: { state: 'settled', reconciliationReason: proof.reason } });
       });
     },
     async completeBotDeletion(id: string, namespace: string): Promise<void> {

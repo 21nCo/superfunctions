@@ -213,3 +213,35 @@ it('retains cleanup ownership when a successful write does not match the persist
     await expect(access(join(f.root, 'objects', ticket.storageRef!))).rejects.toThrow();
   } finally { await f.close(); }
 });
+
+it('recovers live producer slots only after stopped proof and matching durable resource ownership', async () => {
+  const f = await fixture();
+  try {
+    const a = await bot(f);
+    await f.store.updateBot(a.id, 'a', { status: 'recording' });
+    const r = await record(f, a.id);
+    const linked = await f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: r.id, storageRef: r.storageRef });
+    const orphan = await f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: r.id, storageRef: 'a/unlinked.wav' });
+    await uploadObject(f.storage, 'a/unlinked.wav', new Uint8Array([7]));
+    for (let i = 0; i < 62; i++) await f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: `unresolved-${i}` });
+    await f.reopen();
+    await expect(f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: 'overflow' })).rejects.toMatchObject({ code: 'BOT_STILL_ACTIVE' });
+    await expect(f.store.reconcileBotProducer(linked.id, 'a', { operationStopped: true, reason: '' })).rejects.toMatchObject({ code: 'BOT_STILL_ACTIVE' });
+    await expect(f.store.reconcileBotProducer(linked.id, 'wrong', { operationStopped: true, reason: 'Stopped fixture' })).rejects.toMatchObject({ code: 'BOT_STILL_ACTIVE' });
+    expect(await f.store.getBotDeletion(a.id, 'a')).toBeNull();
+    expect((await f.store.getBot(a.id, 'a'))?.status).toBe('recording');
+    await f.store.reconcileBotProducer(orphan.id, 'a', { operationStopped: true, reason: 'Original local producer stopped, but object is unlinked' });
+    await expect(f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: 'still-full' })).rejects.toMatchObject({ code: 'BOT_STILL_ACTIVE' });
+    await f.store.reconcileBotProducer(linked.id, 'a', { operationStopped: true, reason: 'Original local producer stopped; recording owns its object' });
+    await f.reopen();
+    const intents = await f.store.listBotProducers(a.id, 'a');
+    expect(intents).toHaveLength(63);
+    expect(intents.find(p => p.id === orphan.id)).toMatchObject({ state: 'settled', storageRef: 'a/unlinked.wav' });
+    expect(intents.filter(p => p.state === 'active')).toHaveLength(62);
+    expect(await f.store.getRecordings(a.id, 'a')).toEqual([{ ...r, downloadUrl: null }]);
+    await access(join(f.root, 'objects', r.storageRef));
+    await access(join(f.root, 'objects', 'a/unlinked.wav'));
+    await f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: 'recovered-slot' });
+    await expect(f.store.beginBotProducer({ botId: a.id, namespace: 'a', recordingId: 'full-again' })).rejects.toMatchObject({ code: 'BOT_STILL_ACTIVE' });
+  } finally { await f.close(); }
+});

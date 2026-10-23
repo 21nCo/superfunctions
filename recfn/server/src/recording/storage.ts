@@ -159,7 +159,18 @@ async function uploadRecordingInner(
       },
     );
   } finally {
-    await store.finishBotProducer(producer.id, namespace, externalSettled);
+    try {
+      await store.finishBotProducer(producer.id, namespace, externalSettled);
+    } catch (error) {
+      // The durable intent remains recoverable. Cleanup must not turn a committed
+      // recording into an upload failure or replace the original upload error.
+      try {
+        logger.error('recording.producer.finish_failed', {
+          botId, recordingId, namespace, producerId: producer.id, externalSettled,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch { /* A diagnostic sink must not replace the operation's outcome. */ }
+    }
   }
 }
 

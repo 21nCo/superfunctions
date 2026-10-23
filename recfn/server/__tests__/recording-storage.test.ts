@@ -280,3 +280,38 @@ describe('uploadRecording', () => {
     expect(failures[0].data.code).toBe('RECORDING_FINALIZATION_FAILED');
   });
 });
+
+describe('producer finalization failure', () => {
+  for (const uploadFails of [false, true]) for (const diagnosticFails of [false, true]) {
+    it(`preserves ${uploadFails ? 'upload failure' : 'committed recording'} when producer finalization fails (diagnostic failure: ${diagnosticFails})`, async () => {
+      const store = createMemoryStore();
+      const { validateBotConfig } = await import('@recfn/core');
+      const bot = await store.createBot({ namespace: 'cleanup', platform: 'zoom', meetingUrl: 'https://zoom.us/j/123', config: validateBotConfig({}) });
+      const storage = new MemoryStorageAdapter();
+      const logger = new MemoryLogger();
+      const logError = logger.error.bind(logger);
+      if (diagnosticFails) logger.error = (event, data) => {
+        if (event === 'recording.producer.finish_failed') throw new Error('diagnostic unavailable');
+        logError(event, data);
+      };
+      const originalFinish = store.finishBotProducer.bind(store);
+      store.finishBotProducer = async () => { throw new Error('producer database unavailable'); };
+      if (uploadFails) storage.openUploadStream = async () => { throw new Error('upload unavailable'); };
+      const operation = uploadRecording({ botId: bot.id, namespace: 'cleanup', capture: { data: new Uint8Array([1]), size: 1, duration: 1, format: 'wav' } }, { store, storage, logger });
+      if (uploadFails) {
+        await expect(operation).rejects.toMatchObject({ code: 'RECORDING_FINALIZATION_FAILED', message: `Recording upload failed for ${bot.id}.` });
+        expect(await store.getRecordings(bot.id, 'cleanup')).toEqual([]);
+      }
+      else {
+        const result = await operation;
+        expect(await store.getRecordings(bot.id, 'cleanup')).toEqual([result.recording]);
+        expect(storage.has(result.recording.storageRef)).toBe(true);
+      }
+      const intents = await store.listBotProducers(bot.id, 'cleanup');
+      expect(intents).toHaveLength(1);
+      expect(intents[0].state).toBe('active');
+      expect(logger.findByEvent('recording.producer.finish_failed')).toHaveLength(diagnosticFails ? 0 : 1);
+      store.finishBotProducer = originalFinish;
+    });
+  }
+});

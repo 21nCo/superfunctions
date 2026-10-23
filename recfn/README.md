@@ -140,8 +140,16 @@ After independently verifying that an operation and any remote write have stoppe
 a trusted operator can call
 `store.reconcileBotProducer(id, namespace, { operationStopped: true, reason })`,
 then retry deletion. This method is intentionally not exposed as an HTTP route.
-It requires a pending deletion and a nonempty reason; it is not a lease expiry or
-a cancellation mechanism. There is no automatic cleanup scheduler in this slice.
+It requires explicit stopped-operation proof and a nonempty reason; it is not a
+lease expiry or cancellation mechanism. Without a pending deletion, reconciliation
+releases a producer slot only when a persisted recording in the same namespace
+owns the exact bot/recording/storage identity. Otherwise it retains a settled
+intent, including its resource key, for eventual deletion; that intent still
+counts toward the 64-slot bound. Uncertain slots are never ignored to admit more
+work. Failed producer-finalization writes are logged as
+`recording.producer.finish_failed` with the producer ID and preserve the already
+committed recording result or original upload error. Operators must resolve the
+retained intent after proving that its external operation stopped. There is no automatic cleanup scheduler in this slice.
 Custom upload/index producers must use the same admission/completion protocol;
 direct storage/search writes bypass it. External delete adapters must be
 idempotent and acknowledge completed removal, including deletion of absent keys.
