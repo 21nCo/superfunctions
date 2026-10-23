@@ -442,3 +442,10 @@ restart. Local identity and caps do not replace server authorization or durable
 caps; receipts must come from the configured service. Browser rendering, persistent
 submission queues, complete survey scheduling/branching and automatic WatchFn
 analytics remain unfinished.
+
+
+Survey question metadata also supports `ces` and `scale`, and
+`QuestionCondition(question_id='earlier', equals=False)` through `Question.when`.
+These describe the same server/browser policy: primitive exact equality against an
+earlier question. The Python SDK does not render forms or authorize hidden answers;
+the configured service validates each submitted response.

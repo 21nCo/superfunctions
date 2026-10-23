@@ -1,6 +1,7 @@
 import { resolveCampaignUrl } from './campaign-url';
 import { Campaign, Survey, SurveyResponse, FeedbackSubmission, FeedbackCategory } from '../types';
 import { injectStyles } from './styles';
+import { surveyQuestionVisible, surveyScaleBounds, validateSurveyBranches } from '../core/survey-questions';
 
 type SurveySubmit = (response: SurveyResponse) => void | false | 'local' | 'stored' | Promise<void | false | 'local' | 'stored'>;
 
@@ -71,6 +72,7 @@ export class VanillaRenderer {
 
   renderSurvey(survey: Survey, onSubmit: SurveySubmit, onDismiss: () => void, pending?: SurveyResponse) {
     if (!this.messagingAllowed()) return;
+    validateSurveyBranches(survey.questions);
     // Start with first question
     this.renderQuestion(survey, pending ? survey.questions.length : 0, pending?.answers ?? [], onSubmit, onDismiss, pending);
   }
@@ -186,6 +188,7 @@ export class VanillaRenderer {
     pending?: SurveyResponse,
   ) {
     if (!this.messagingAllowed()) return;
+    while (!pending && index < survey.questions.length && !surveyQuestionVisible(survey.questions[index], answers)) index++;
     const question = survey.questions[index];
     const overlay = document.createElement('div');
     overlay.className = 'userfn-overlay';
@@ -218,9 +221,8 @@ export class VanillaRenderer {
         summary.appendChild(item);
       }
       inputs.appendChild(summary);
-    } else if (question?.type === 'nps' || question?.type === 'csat') {
-      const min = question.min ?? (question.type === 'csat' ? 1 : 0);
-      const max = question.max ?? (question.type === 'csat' ? 5 : 10);
+    } else if (question && ['nps', 'csat', 'ces', 'scale'].includes(question.type)) {
+      const { min, max } = surveyScaleBounds(question);
       let selected: number | null = null;
       const buttons: HTMLButtonElement[] = [];
       if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max || max - min > 100) unsupported = true;

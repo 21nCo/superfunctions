@@ -3,6 +3,7 @@ import type { AuthSession } from '@superfunctions/auth';
 import type { Adapter } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
 import type { Question } from 'userfn';
+import { surveyQuestionVisible, surveyScaleBounds, validateSurveyBranches } from 'userfn';
 import { canonical, object } from './validation.js';
 
 export interface SurveyPolicy {
@@ -30,13 +31,14 @@ function validatePolicy(policy: SurveyPolicy) {
   if (typeof policy.enabled !== 'boolean' || (policy.perUser !== undefined && !integer(policy.perUser, 1000000)) || !Array.isArray(policy.questions) || policy.questions.length > 100) throw new Error('Invalid survey policy');
   if (policy.window !== undefined && (!object(policy.window) || Object.keys(policy.window).some(key => !['limit', 'durationMs'].includes(key)) || !integer(policy.window.limit, 1000) || !integer(policy.window.durationMs, 8640000000000000) || policy.window.durationMs === 0)) throw new Error('Invalid survey window');
   const ids = new Set<string>();
+  validateSurveyBranches(policy.questions);
   for (const question of policy.questions) {
-    if (!object(question) || !validId(question.id) || ids.has(question.id) || !['nps', 'csat', 'text', 'choice'].includes(question.type) || (question.required !== undefined && typeof question.required !== 'boolean')) throw new Error('Invalid survey question');
+    if (!object(question) || !validId(question.id) || ids.has(question.id) || !['nps', 'csat', 'ces', 'scale', 'text', 'choice'].includes(question.type) || (question.required !== undefined && typeof question.required !== 'boolean')) throw new Error('Invalid survey question');
     ids.add(question.id);
     if (question.type === 'choice' && (!Array.isArray(question.choices) || question.choices.length === 0 || question.choices.length > 100 || question.choices.some(choice => !object(choice) || !['string', 'number', 'boolean'].includes(typeof choice.value) || (typeof choice.value === 'number' && !Number.isFinite(choice.value))))) throw new Error('Invalid survey choices');
-    if (question.type === 'nps' || question.type === 'csat') {
-      const min = question.min ?? (question.type === 'nps' ? 0 : 1), max = question.max ?? (question.type === 'nps' ? 10 : 5);
-      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max) throw new Error('Invalid survey scale');
+    if (['nps', 'csat', 'ces', 'scale'].includes(question.type)) {
+      const { min, max } = surveyScaleBounds(question);
+      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max || max - min > 100) throw new Error('Invalid survey scale');
     }
   }
 }
@@ -50,12 +52,15 @@ function validAnswers(answers: unknown[], policy: SurveyPolicy): boolean {
     const value = answer.value;
     if (question.type === 'text' && (typeof value !== 'string' || value.length > 10000 || (question.required && !value.trim()))) return false;
     if (question.type === 'choice' && !question.choices!.some(choice => choice.value === value)) return false;
-    if (question.type === 'nps' || question.type === 'csat') {
-      const min = question.min ?? (question.type === 'nps' ? 0 : 1), max = question.max ?? (question.type === 'nps' ? 10 : 5);
+    if (['nps', 'csat', 'ces', 'scale'].includes(question.type)) {
+      const { min, max } = surveyScaleBounds(question);
       if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) return false;
     }
   }
-  return policy.questions.every(question => !question.required || seen.has(question.id));
+  const typed = answers as { questionId: string; value: unknown }[];
+  return policy.questions.every(question => surveyQuestionVisible(question, typed)
+    ? !question.required || seen.has(question.id)
+    : !seen.has(question.id));
 }
 
 export function surveyRoutes(database: Adapter, authorize: (request: Request, scope: string) => Promise<AuthSession | Response>, options?: SurveyOptions): Route[] {

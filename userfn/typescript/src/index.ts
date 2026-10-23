@@ -347,6 +347,7 @@ export class UserFnClient {
 }
 
 export * from './types';
+export { validateSurveyBranches, surveyQuestionVisible, surveyScaleBounds } from './core/survey-questions';
 export * from './operator';
 
 export { FeedbackDeliveryError } from './core/feedback';

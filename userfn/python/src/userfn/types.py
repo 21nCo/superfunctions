@@ -196,7 +196,12 @@ class Campaign:
     schedule: Optional[CampaignSchedule] = None
     cooldown_ms: Optional[int] = None
 
-QuestionType = Literal['nps', 'csat', 'text', 'choice']
+QuestionType = Literal['nps', 'csat', 'ces', 'scale', 'text', 'choice']
+
+@dataclass
+class QuestionCondition:
+    question_id: str
+    equals: Union[str, int, float, bool]
 
 @dataclass
 class QuestionChoice:
@@ -213,6 +218,7 @@ class Question:
     min: Optional[int] = None
     max: Optional[int] = None
     required: Optional[bool] = None
+    when: Optional[QuestionCondition] = None
 
 @dataclass
 class SurveyCaps:

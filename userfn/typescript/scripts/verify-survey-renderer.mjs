@@ -27,10 +27,16 @@ try {
     await migration.execute();
   }
   const questions = [{ id: 'score', type: 'csat', title: 'Score', required: true }, { id: 'choice', type: 'choice', title: 'Choice', required: true, choices: [{ label: 'Yes', value: true }, { label: 'No', value: false }] }, { id: 'text', type: 'text', title: 'Details' }];
+  const branchQuestions = [
+    { id: 'path', type: 'choice', title: 'Choose path', required: true, choices: [{ label: 'Details', value: true }, { label: 'Effort', value: false }] },
+    { id: 'details', type: 'text', title: 'Branch details', required: true, when: { questionId: 'path', equals: true } },
+    { id: 'effort', type: 'ces', title: 'Effort score', required: true, when: { questionId: 'path', equals: false } },
+    { id: 'custom', type: 'scale', title: 'Custom score', min: -2, max: 2, required: true },
+  ];
   const service = createUserFnService({ database: adapter, auth: { async authenticate(request) {
     const actorId = request.headers.get('authorization')?.replace('Bearer ', '');
     return actorId ? { id: actorId, type: 'session', subject: { actorType: 'user', actorId, tenantId: 'owned' }, scopes: ['userfn:surveys:write', 'userfn:feedback:write'] } : null;
-  } }, surveys: { resolvePolicy: () => ({ enabled: true, questions, perUser: 1 }) } });
+  } }, surveys: { resolvePolicy: (_session, id) => ({ enabled: true, questions: id === 'branch' ? branchQuestions : questions, perUser: 1 }) } });
   execFileSync(join(root, 'node_modules/.bin/esbuild'), [join(root, 'userfn/typescript/dist/index.js'), '--bundle', '--format=esm', '--platform=browser', '--outfile=' + join(directory, 'sdk.js')], { stdio: 'pipe' });
   const bundle = await readFile(join(directory, 'sdk.js'));
   server = createServer(async (incoming, outgoing) => {
@@ -196,7 +202,49 @@ try {
   assert.equal(await page.getByRole('dialog').count(),0);
   await page.locator('#outside').focus();
   assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true);
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: false }));
+  for (const details of [true, false]) {
+    await page.evaluate(async ({ branchQuestions, details }) => {
+      const { UserFnClient } = await import('/sdk.js');
+      client = new UserFnClient({ apiKey: 'branch-' + details, endpoint: location.origin });
+      client.identify('branch'); client.setSurveys([{ id: 'branch', enabled: true, questions: branchQuestions, triggers: [{ type: 'event' }] }]);
+      await client.trigger('event', 'show');
+    }, { branchQuestions, details });
+    await page.getByRole('combobox').selectOption(details ? '0' : '1');
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    if (details) {
+      await page.getByRole('textbox', { name: 'Branch details' }).fill('conditional answer');
+    } else {
+      assert.equal(await page.getByRole('textbox', { name: 'Branch details' }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '0', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '8', exact: true }).count(), 0);
+      await page.getByRole('button', { name: '7', exact: true }).click();
+    }
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: '-2', exact: true }).click();
+    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response saved.');
+    const answers = JSON.parse(requests.at(-1).body).answers;
+    assert.deepEqual(answers.map(answer => answer.questionId), ['path', details ? 'details' : 'effort', 'custom']);
+    await page.keyboard.press('Escape');
+  }
+  const forged = await page.request.post('http://127.0.0.1:' + server.address().port + '/surveys/branch/responses', {
+    headers: { authorization: 'Bearer forged-branch', 'idempotency-key': 'forged' },
+    data: { answers: [{ questionId: 'path', value: false }, { questionId: 'details', value: 'hidden injected' }, { questionId: 'effort', value: 7 }, { questionId: 'custom', value: 0 }] },
+  });
+  assert.equal(forged.status(), 400, 'Service rejects answers to hidden questions');
+  for (const answers of [
+    [{ questionId: 'path', value: false }, { questionId: 'custom', value: 0 }],
+    [{ questionId: 'path', value: false }, { questionId: 'effort', value: 8 }, { questionId: 'custom', value: 0 }],
+    [{ questionId: 'path', value: true }, { questionId: 'details', value: 'ok' }, { questionId: 'custom', value: -3 }],
+  ]) {
+    const invalid = await page.request.post('http://127.0.0.1:' + server.address().port + '/surveys/branch/responses', {
+      headers: { authorization: 'Bearer invalid-branch', 'idempotency-key': 'invalid' }, data: { answers },
+    });
+    assert.equal(invalid.status(), 400, 'Service enforces active required questions and scale bounds');
+  }
+
+  assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 4);
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 4, conditionalBranches: true, cesAndCustomScale: true, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: false }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

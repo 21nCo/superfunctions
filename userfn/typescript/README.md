@@ -550,3 +550,25 @@ says **Response recorded locally** and does not imply server acceptance. Empty
 surveys require an explicit Submit click. Optional unanswered questions are omitted,
 CSAT defaults are1–5 (NPS0–10), and choice inputs retain their configured scalar
 values. Branching, richer templates and automatic analytics forwarding remain open.
+
+
+## Conditional surveys and scales
+
+Question types include `nps` (default0–10), `csat` (1–5), `ces` (1–7),
+`scale` (1–5), `text` and `choice`. Numeric scales accept integer `min`/`max`
+overrides with a span of at most100. The service rejects invalid policy scales;
+existing policies with a larger span must be narrowed before using this version.
+
+A question can declare `when: { questionId: 'earlier-question', equals: false }`.
+The reference must point to an earlier question; equality preserves primitive
+string/number/boolean types without coercion. Missing answers hide the dependent
+question. Hidden required questions are skipped; the service rejects submitted
+answers to hidden questions and requires all visible required answers. Forward,
+self and unknown references, duplicate IDs and nonprimitive conditions are invalid.
+The renderer and service share this contract. Skipping the remaining questions
+still requires an explicit submission confirmation. Pending retries retain their
+original answers and idempotency key.
+
+This is basic forward conditional visibility, not arbitrary expression evaluation
+or a looping form graph. Durable client journals and full survey analytics remain
+open.

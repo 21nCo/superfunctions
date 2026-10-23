@@ -208,7 +208,7 @@ export interface MessageDelivery {
   timestamp: number;
 }
 
-export type QuestionType = 'nps' | 'csat' | 'text' | 'choice';
+export type QuestionType = 'nps' | 'csat' | 'ces' | 'scale' | 'text' | 'choice';
 
 export interface Question {
   id: string;
@@ -219,6 +219,8 @@ export interface Question {
   min?: number; // For NPS/CSAT (e.g. 0 or 1)
   max?: number; // For NPS/CSAT (e.g. 10 or 5)
   required?: boolean;
+  /** Show only when an earlier question has this exact primitive answer. */
+  when?: { questionId: string; equals: string | number | boolean };
 }
 
 export interface Survey {
