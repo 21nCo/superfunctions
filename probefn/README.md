@@ -205,3 +205,14 @@ This adds a per-checkpoint limit without changing the run policy. A failed cap
 returns `E_STORAGE_CAP_EXCEEDED` and does not commit a partial checkpoint manifest.
 See `.conduct/configured-cap-readiness.md` for the original requirement and the
 separate operational limits on physical disk usage.
+
+`run flow` and `probefn_run_flow` keep one live browser page throughout their steps.
+Transient form values and DOM state survive between actions and checkpoints. Each
+flow finalizes a unique Playwright trace under its run directory before exporting
+reports or returning success; `includeTrace` checkpoint entries link that real ZIP.
+Flow report steps produce final run summaries after trace finalization. The trace
+uses the persisted run artifact allowance and fails explicitly if it cannot fit.
+A standalone checkpoint requesting a trace without an existing finalized trace
+fails explicitly. Separate page calls still relaunch playback; resident cross-call
+continuity and standalone-operation trace coverage remain open. See
+[flow and trace evidence](.conduct/live-flow-trace-readiness.md).

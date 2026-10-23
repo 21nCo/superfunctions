@@ -57,6 +57,9 @@ export interface CreatedCheckpoint {
 export async function createCheckpoint(
   options: CreateCheckpointOptions,
 ): Promise<CreatedCheckpoint> {
+  if (options.includeTrace && !options.tracePath) {
+    throw createProbefnError({ code: 'E_CHECKPOINT_CAPTURE_FAILED', message: 'A requested trace must be finalized before creating the checkpoint.', retryable: false });
+  }
   const now = options.now ?? (() => new Date().toISOString());
   const checkpointId = `chk_${sanitizeCheckpointName(options.name)}`;
   const checkpointPaths = options.artifactStore.getCheckpointPaths(options.runId, options.name);

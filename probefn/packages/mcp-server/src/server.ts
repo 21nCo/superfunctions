@@ -4,7 +4,10 @@ import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { z, type ZodType } from 'zod';
 import YAML from 'yaml';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -36,6 +39,7 @@ import {
   loadConfig,
   toErrorEnvelope,
   type RunManifest,
+  type CheckpointManifest,
   type BrowserEngine,
   type DeterministicSettings,
   type ErrorEnvelope,
@@ -149,7 +153,55 @@ interface FlowDocument {
   steps: FlowStep[];
 }
 
+interface FlowPlayback {
+  sessionId: string;
+  browser: Awaited<ReturnType<BrowserRunner['startSession']>>;
+}
+
 export class ProbefnRuntime {
+  private readonly playbackOwners = new Set<string>();
+  private readonly flowPlayback = new AsyncLocalStorage<FlowPlayback>();
+  private readonly requestSignal = new AsyncLocalStorage<AbortSignal>();
+  private readonly activeFlows = new Map<string, { controller: AbortController; done: Promise<void>; cleanupError?: unknown }>();
+
+  public async cancelFlow(sessionId: string): Promise<void> {
+    const active = this.activeFlows.get(sessionId);
+    if (active) {
+      active.controller.abort(new Error('Flow cancelled by session stop.'));
+      await active.done;
+      if (active.cleanupError) throw active.cleanupError;
+    }
+  }
+
+  public isInFlow(sessionId: string): boolean {
+    return this.flowPlayback.getStore()?.sessionId === sessionId;
+  }
+
+  public async withFlow<T>(session: SessionState, execute: () => Promise<T>, finalize: () => Promise<void>): Promise<T> {
+    if (this.activeFlows.has(session.sessionId)) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'A flow already owns this session.', retryable: true });
+    }
+    const controller = new AbortController();
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    const parent = this.requestSignal.getStore();
+    const abort = () => controller.abort(parent?.reason);
+    parent?.addEventListener('abort', abort, { once: true });
+    if (parent?.aborted) abort();
+    this.activeFlows.set(session.sessionId, { controller, done });
+    try {
+      controller.signal.throwIfAborted();
+      const result = await this.withPlaybackSession(session, execute, { flow: true, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      await finalize();
+      controller.signal.throwIfAborted();
+      return result.value;
+    } finally {
+      parent?.removeEventListener('abort', abort);
+      this.activeFlows.delete(session.sessionId);
+      finish();
+    }
+  }
   private readonly repoRoot: string;
   private readonly now: () => string;
   private readonly devServerManagers = new Map<string, DevServerManager>();
@@ -172,7 +224,8 @@ export class ProbefnRuntime {
     ];
   }
 
-  public async callTool(name: string, args: unknown): Promise<McpToolResponse> {
+  public async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<McpToolResponse> {
+    if (signal) return this.requestSignal.run(signal, () => this.callTool(name, args));
     const tool = this.listTools().find((candidate) => candidate.name === name);
     if (!tool) {
       return this.toToolResult(
@@ -323,7 +376,25 @@ export class ProbefnRuntime {
       sinkPaths: Awaited<ReturnType<BrowserRunner['startSession']>>['sinkPaths'];
       flushEvents: () => Promise<void>;
     }) => Promise<TValue>,
-    options: { video?: boolean } = {},
+    options: { video?: boolean; flow?: boolean; signal?: AbortSignal } = {},
+  ): Promise<PlaybackSessionResult<TValue>> {
+    if (this.isInFlow(session.sessionId)) return this.executePlaybackSession(session, execute, options);
+    if (this.playbackOwners.has(session.sessionId)) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'A playback operation already owns this session.', retryable: true });
+    }
+    this.playbackOwners.add(session.sessionId);
+    try { return await this.executePlaybackSession(session, execute, options); }
+    finally { this.playbackOwners.delete(session.sessionId); }
+  }
+
+  private async executePlaybackSession<TValue>(
+    session: SessionState,
+    execute: (input: {
+      page: Awaited<ReturnType<BrowserRunner['startSession']>>['page'];
+      sinkPaths: Awaited<ReturnType<BrowserRunner['startSession']>>['sinkPaths'];
+      flushEvents: () => Promise<void>;
+    }) => Promise<TValue>,
+    options: { video?: boolean; flow?: boolean; signal?: AbortSignal } = {},
   ): Promise<PlaybackSessionResult<TValue>> {
     if (!session.resolvedUrl) {
       throw createProbefnError({
@@ -345,13 +416,25 @@ export class ProbefnRuntime {
       await authProfileStore.hasStorageStatePath(session.artifacts.storageStatePath)
         ? session.artifacts.storageStatePath
         : undefined;
+    const currentFlow = this.flowPlayback.getStore();
+    if (currentFlow?.sessionId === session.sessionId) {
+      const browser = currentFlow.browser;
+      const value = await execute({ page: browser.page, sinkPaths: browser.sinkPaths, flushEvents: () => browser.eventCapture.flush() });
+      return { value, sinkPaths: browser.sinkPaths, storageStatePath: await authProfileStore.writeSessionStorageState({
+        runId: session.runId, storageState: await browser.page.context().storageState(),
+      }) };
+    }
+    if (this.activeFlows.has(session.sessionId) && !options.flow) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'A flow owns this session.', retryable: true });
+    }
     const browserRunner = new BrowserRunner({
       repoRoot: this.repoRoot,
       artifactStore: scope.artifactStore,
       now: this.now,
     });
-    const playbackSessionId = `${session.sessionId}__mcp__${Date.now()}`;
-    const startedBrowser = await browserRunner.startSession({
+    const playbackSessionId = `${session.sessionId}__mcp__${randomUUID()}`;
+    options.signal?.throwIfAborted();
+    const startingBrowser = browserRunner.startSession({
       sessionId: playbackSessionId,
       runId: session.runId,
       browser: session.browser,
@@ -360,17 +443,28 @@ export class ProbefnRuntime {
       initialUrl: session.resolvedUrl,
       ...(options.video ? { video: { enabled: true } } : {}),
       trace: {
-        enabled: false,
+        enabled: options.flow ?? false,
+        ...(options.flow ? { relativeTracePath: path.posix.join(path.posix.dirname(scope.artifactStore.getRunPaths(session.runId).tracePath), `browser-${randomUUID()}.trace.zip`) } : {}),
       },
     });
 
+    let closing: ReturnType<BrowserRunner['stopSession']> | undefined;
+    const close = () => closing ??= browserRunner.stopSession(playbackSessionId);
+    const abort = () => { void close().catch(() => undefined); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
     let executionError: unknown;
     try {
-      const value = await execute({
+      const startedBrowser = await startingBrowser;
+      options.signal?.throwIfAborted();
+      const invoke = () => execute({
         page: startedBrowser.page,
         sinkPaths: startedBrowser.sinkPaths,
         flushEvents: () => startedBrowser.eventCapture.flush(),
       });
+      const value = await (options.flow
+        ? this.flowPlayback.run({ sessionId: session.sessionId, browser: startedBrowser }, invoke)
+        : invoke());
       return {
         value,
         sinkPaths: startedBrowser.sinkPaths,
@@ -383,11 +477,17 @@ export class ProbefnRuntime {
       executionError = error;
       throw error;
     } finally {
-      try { await browserRunner.stopSession(playbackSessionId); }
+      try {
+        // Failed startup owns its cleanup; an explicit cancellation may already own close().
+        const closed = await (closing ?? startingBrowser.then(close, () => null));
+        if (closed?.tracePath) await scope.sessionManager.markRunning(session.sessionId, { artifacts: { tracePath: closed.tracePath } });
+      }
       catch (cleanupError) {
+        const active = this.activeFlows.get(session.sessionId);
+        if (active && options.flow) active.cleanupError = cleanupError;
         if (executionError) throw new AggregateError([executionError, cleanupError], 'Playback and browser cleanup failed');
         throw cleanupError;
-      }
+      } finally { options.signal?.removeEventListener('abort', abort); }
     }
   }
 
@@ -461,8 +561,8 @@ export class ProbefnMcpServer {
         inputSchema: tool.inputSchema as unknown as McpFnObjectSchema,
         annotations: { openWorldHint: false },
         metadata: { 'mcpfn/source': 'probefn' },
-        handler: async (args) =>
-          await this.runtime.callTool(tool.name, args) as unknown as CallToolResult,
+        handler: async (args, _context, extra) =>
+          await this.runtime.callTool(tool.name, args, extra.signal) as unknown as CallToolResult,
         handleInvalidArguments: async (args) =>
           await this.runtime.callTool(tool.name, args) as unknown as CallToolResult,
       });
@@ -702,6 +802,7 @@ export async function stopSession(
   runtime: ProbefnRuntime,
   sessionId: string,
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  await runtime.cancelFlow(sessionId);
   const { scope, session } = await runtime.resolveSessionContext(sessionId);
   try {
     await scope.devServerManager.stopSession(sessionId);
@@ -860,7 +961,7 @@ export async function createCheckpointFromSession(
       name: input.name,
       ...(input.artifactCapBytes !== undefined ? { artifactCapBytes: input.artifactCapBytes } : {}),
       ...(input.includeVideo ? { includeVideo: true } : {}),
-      ...(input.includeTrace !== undefined ? { includeTrace: input.includeTrace } : {}),
+      ...(input.includeTrace !== undefined ? { includeTrace: input.includeTrace && !runtime.isInFlow(session.sessionId) } : {}),
       ...(input.includeStyles !== undefined ? { includeStyles: input.includeStyles } : {}),
       tracePath: session.artifacts.tracePath ?? null,
       delta: diffEventDeltaSummary(
@@ -1181,86 +1282,101 @@ export async function runFlow(
   let lastReportPath: string | null = null;
   let redactedValues = 0;
 
-  for (const step of flow.steps) {
-    switch (step.command) {
-      case 'page.open':
-        if (!step.url) {
+  const initial = await runtime.resolveSessionContext(input.sessionId);
+  await runtime.withFlow(initial.session, async () => {
+    for (const step of flow.steps) {
+      switch (step.command) {
+        case 'page.open':
+          if (!step.url) {
+            throw createProbefnError({
+              code: 'E_CONFIG_INVALID',
+              message: 'Flow step page.open requires a url.',
+              retryable: false,
+            });
+          }
+          await openPage(runtime, {
+            sessionId: input.sessionId,
+            url: step.url,
+          });
+          executedSteps.push(step.command);
+          break;
+        case 'page.act': {
+          if (!step.action || (!step.query && !step.selector)) {
+            throw createProbefnError({
+              code: 'E_CONFIG_INVALID',
+              message: 'Flow step page.act requires action and query or selector.',
+              retryable: false,
+            });
+          }
+          await actOnPage(runtime, {
+            sessionId: input.sessionId,
+            action: step.action,
+            ...(step.query ? { query: step.query } : {}),
+            ...(step.selector ? { selector: step.selector } : {}),
+            ...(step.value !== undefined ? { value: step.value } : {}),
+            ...(step.key !== undefined ? { key: step.key } : {}),
+          });
+          executedSteps.push(step.command);
+          break;
+        }
+        case 'checkpoint.create': {
+          if (!step.name) {
+            throw createProbefnError({
+              code: 'E_CONFIG_INVALID',
+              message: 'Flow step checkpoint.create requires a name.',
+              retryable: false,
+            });
+          }
+          const checkpointEnvelope = await createCheckpointFromSession(runtime, {
+            sessionId: input.sessionId,
+            name: step.name,
+            ...(step.includeTrace ? { includeTrace: true } : {}),
+            ...(step.includeStyles ? { includeStyles: true } : {}),
+          });
+          const checkpointData = expectSuccess(checkpointEnvelope).data as {
+            checkpointId: string;
+          };
+          lastCheckpointId = checkpointData.checkpointId;
+          executedSteps.push(step.command);
+          break;
+        }
+        case 'report.export': {
+          // Export after browser close so the report references its finalized trace.
+          executedSteps.push(step.command);
+          break;
+        }
+        default:
           throw createProbefnError({
             code: 'E_CONFIG_INVALID',
-            message: 'Flow step page.open requires a url.',
+            message: `Unsupported flow step ${(step as { command?: string }).command ?? '<none>'}.`,
             retryable: false,
           });
-        }
-        await openPage(runtime, {
-          sessionId: input.sessionId,
-          url: step.url,
-        });
-        executedSteps.push(step.command);
-        break;
-      case 'page.act': {
-        if (!step.action || (!step.query && !step.selector)) {
-          throw createProbefnError({
-            code: 'E_CONFIG_INVALID',
-            message: 'Flow step page.act requires action and query or selector.',
-            retryable: false,
-          });
-        }
-        await actOnPage(runtime, {
-          sessionId: input.sessionId,
-          action: step.action,
-          ...(step.query ? { query: step.query } : {}),
-          ...(step.selector ? { selector: step.selector } : {}),
-          ...(step.value !== undefined ? { value: step.value } : {}),
-          ...(step.key !== undefined ? { key: step.key } : {}),
-        });
-        executedSteps.push(step.command);
-        break;
       }
-      case 'checkpoint.create': {
-        if (!step.name) {
-          throw createProbefnError({
-            code: 'E_CONFIG_INVALID',
-            message: 'Flow step checkpoint.create requires a name.',
-            retryable: false,
-          });
-        }
-        const checkpointEnvelope = await createCheckpointFromSession(runtime, {
-          sessionId: input.sessionId,
-          name: step.name,
-          ...(step.includeTrace ? { includeTrace: true } : {}),
-          ...(step.includeStyles ? { includeStyles: true } : {}),
-        });
-        const checkpointData = expectSuccess(checkpointEnvelope).data as {
-          checkpointId: string;
-        };
-        lastCheckpointId = checkpointData.checkpointId;
-        executedSteps.push(step.command);
-        break;
-      }
-      case 'report.export': {
-        const reportEnvelope = await exportSessionReport(runtime, {
-          sessionId: input.sessionId,
-          format: step.format ?? 'json',
-        });
-        const reportData = expectSuccess(reportEnvelope).data as {
-          reportPath: string;
-        };
-        lastReportPath = reportData.reportPath;
-        redactedValues = countRedactedPlaceholders(
-          await readFile(path.resolve(runtime.getRepoRoot(), reportData.reportPath), 'utf8'),
-        );
-        executedSteps.push(step.command);
-        break;
-      }
-      default:
-        throw createProbefnError({
-          code: 'E_CONFIG_INVALID',
-          message: `Unsupported flow step ${(step as { command?: string }).command ?? '<none>'}.`,
-          retryable: false,
-        });
     }
-  }
 
+  }, async () => {
+    const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
+    const tracePath = session.artifacts.tracePath;
+    if (!tracePath) throw createProbefnError({ code: 'E_CHECKPOINT_CAPTURE_FAILED', message: 'Flow trace was not finalized.', retryable: true });
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(path.resolve(runtime.getRepoRoot(), tracePath))) hash.update(chunk);
+    const traceHash = hash.digest('hex');
+    for (const step of flow.steps) {
+      if (step.command === 'checkpoint.create' && step.includeTrace && step.name) {
+        const manifestPath = scope.artifactStore.getCheckpointPaths(session.runId, step.name).manifestPath;
+        const manifest = JSON.parse(await readFile(path.resolve(runtime.getRepoRoot(), manifestPath), 'utf8')) as CheckpointManifest;
+        manifest.artifacts = [...manifest.artifacts.filter(artifact => artifact.kind !== 'trace'), { kind: 'trace', path: tracePath, sha256: traceHash }];
+        await scope.artifactStore.writeCheckpointManifest(session.runId, step.name, manifest);
+      }
+    }
+    // Reports are run summaries: finalize them only after the replay artifact exists.
+    for (const step of flow.steps.filter(step => step.command === 'report.export')) {
+      const format = step.format ?? 'json';
+      const report = expectSuccess(await exportSessionReport(runtime, { sessionId: input.sessionId, format })).data as { reportPath: string };
+      lastReportPath = report.reportPath;
+      redactedValues = countRedactedPlaceholders(await readFile(path.resolve(runtime.getRepoRoot(), report.reportPath), 'utf8'));
+    }
+  });
   const { session } = await runtime.resolveSessionContext(input.sessionId);
   return createSuccessEnvelope({
     file: input.file,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 
 import type { BrowserContext } from 'playwright';
 
+import { createProbefnError } from '@probefn/contracts/errors';
 import type { ArtifactStore } from '@probefn/storage';
 
 export interface TraceLifecycleOptions {
@@ -11,6 +12,7 @@ export interface TraceLifecycleOptions {
   artifactStore: ArtifactStore;
   runId: string;
   enabled: boolean;
+  relativeTracePath?: string;
 }
 
 export async function startTracing(
@@ -37,7 +39,11 @@ export async function stopTracing(
     return null;
   }
 
-  const relativeTracePath = options.artifactStore.getRunPaths(options.runId).tracePath;
+  const relativeTracePath = options.relativeTracePath ?? options.artifactStore.getRunPaths(options.runId).tracePath;
+  const runDirectory = path.posix.dirname(options.artifactStore.getRunPaths(options.runId).tracePath);
+  if (path.posix.normalize(relativeTracePath) !== relativeTracePath || !relativeTracePath.startsWith(`${runDirectory}/`)) {
+    throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'Trace path must remain inside its owning run.', retryable: false });
+  }
   const scratch = await mkdtemp(path.join(tmpdir(), 'probefn-trace-'));
   try {
     const filename = path.join(scratch, 'trace.zip');

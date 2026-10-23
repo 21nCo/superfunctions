@@ -6,7 +6,7 @@ import type { Browser, BrowserContext, Page } from 'playwright';
 import { chromium, firefox, webkit } from 'playwright';
 
 import type { BrowserEngine, DeterministicSettings } from '@probefn/contracts/config';
-import { createProbefnError } from '@probefn/contracts/errors';
+import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
 import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
 
 import { attachBrowserEventCapture, type BrowserEventCapture } from './event-capture.js';
@@ -22,6 +22,7 @@ export interface LaunchBrowserSessionOptions {
   video?: { enabled: boolean };
   trace?: {
     enabled: boolean;
+    relativeTracePath?: string;
   };
 }
 
@@ -53,6 +54,7 @@ export interface ClosedBrowserSession {
 }
 
 interface ManagedBrowserSession {
+  relativeTracePath?: string;
   videoDirectory?: string;
   browser?: Browser;
   context?: BrowserContext;
@@ -85,7 +87,7 @@ export class BrowserRunner {
       throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: `Session ${options.sessionId} already has an active browser.`, retryable: false });
     }
     let finishStart!: () => void;
-    const session: ManagedBrowserSession = { runId: options.runId, traceEnabled: false, cancelled: false,
+    const session: ManagedBrowserSession = { ...(options.trace?.relativeTracePath ? { relativeTracePath: options.trace.relativeTracePath } : {}), runId: options.runId, traceEnabled: false, cancelled: false,
       startDone: new Promise<void>(resolve => { finishStart = resolve; }) };
     this.sessions.set(options.sessionId, session);
     const checkCancelled = () => { if (session.cancelled) throw new Error('Browser startup was cancelled'); };
@@ -223,6 +225,10 @@ export class BrowserRunner {
       await activeSession.startDone;
       const result = await this.cleanupSession(activeSession, true);
       if (!activeSession.browser?.isConnected() && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
+      if (result.errors.length === 1 && !activeSession.browser?.isConnected() &&
+          isProbefnError(result.errors[0]) && result.errors[0].code === 'E_STORAGE_CAP_EXCEEDED') {
+        throw result.errors[0];
+      }
       if (result.errors.length || !activeSession.sinkPaths) {
         throw createProbefnError({ code: 'E_BROWSER_LAUNCH_FAILED',
           message: `Could not close browser session ${sessionId} cleanly.`, retryable: true,
@@ -244,7 +250,7 @@ export class BrowserRunner {
     if (saveTrace && session.context && session.traceEnabled) {
       try {
         tracePath = await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
-          runId: session.runId, enabled: true });
+          runId: session.runId, enabled: true, ...(session.relativeTracePath ? { relativeTracePath: session.relativeTracePath } : {}) });
         session.traceEnabled = false;
       } catch (error) { errors.push(error); }
     }

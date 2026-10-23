@@ -1,5 +1,6 @@
 /** Copied into the fresh tarball consumer by verify-distribution.mjs --browser. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -17,7 +18,7 @@ await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
 const port = reservation.address().port;
 await new Promise(resolve => reservation.close(resolve));
 const url = `http://127.0.0.1:${port}`;
-const html = `<!doctype html><html><body><h1>Installed browser fixture</h1><button id="change" onclick="localStorage.setItem('result','Action completed');document.querySelector('#result').textContent=localStorage.getItem('result')">Change</button><p id="result">Waiting</p><script>document.querySelector('#result').textContent=localStorage.getItem('result')||'Waiting'</script></body></html>`;
+const html = `<!doctype html><html><body><h1>Installed browser fixture</h1><input id="transient"><button id="submit-transient" onclick="document.querySelector('#transient-result').textContent=document.querySelector('#transient').value+':'+(++window.transientCount)">Submit</button><p id="transient-result">Waiting</p><script>window.transientCount=0</script><button id="change" onclick="localStorage.setItem('result','Action completed');document.querySelector('#result').textContent=localStorage.getItem('result')">Change</button><p id="result">Waiting</p><script>document.querySelector('#result').textContent=localStorage.getItem('result')||'Waiting'</script></body></html>`;
 await writeFile(join(project, 'app.mjs'), `import {createServer} from 'node:http'; import {writeFileSync} from 'node:fs'; writeFileSync('app.pid',String(process.pid)); createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(${JSON.stringify(html)});}).listen(${port},'127.0.0.1',()=>console.log('Ready ${url}'));`);
 await writeFile(join(project, 'probefn.config.mjs'), `export default ${JSON.stringify({projectName:'installed-browser',storageCaps:{maxArtifactBytes:2097152,maxEventsPerSink:3},devServers:{web:{mode:'spawn',name:'web',command:`'${process.execPath}' app.mjs`,cwd:'.',url,readyPattern:'Ready (https?://[^\\s]+)',timeoutMs:10000}},deterministicDefaults:{networkIdleMs:100}})};`);
 const executable = chromium.executablePath();
@@ -36,6 +37,34 @@ try {
   await call('probefn_page_act',{sessionId,action:'click',selector:'#change'});
   const checkpoint=await call('probefn_checkpoint_create',{sessionId,name:'after-action',includeStyles:true});
   console.log(JSON.stringify({checkpoint}));
+  await writeFile(join(project,'live-flow.json'),JSON.stringify({version:1,steps:[
+    {command:'page.open',url},
+    {command:'page.act',action:'fill',selector:'#transient',value:'Installed Ada'},
+    {command:'page.act',action:'click',selector:'#submit-transient'},
+    {command:'checkpoint.create',name:'transient-flow',includeTrace:true},
+    {command:'report.export',format:'json'},
+  ]}));
+  await call('probefn_run_flow',{sessionId,file:'live-flow.json'});
+  const flowDom=JSON.parse(await readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/transient-flow/dom.json'),'utf8'));
+  assert(flowDom.html.includes('<p id="transient-result">Installed Ada:1</p>'));
+  const flowReport=JSON.parse(await readFile(join(project,'.artifacts/runs/installed_browser_run/report.json'),'utf8'));
+  assert.equal(typeof flowReport.tracePath,'string');
+  const traceBytes=await readFile(join(project,flowReport.tracePath));
+  const flowManifest=JSON.parse(await readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/transient-flow/checkpoint.json'),'utf8'));
+  assert.deepEqual(flowManifest.artifacts.find(artifact=>artifact.kind==='trace'),{kind:'trace',path:flowReport.tracePath,sha256:createHash('sha256').update(traceBytes).digest('hex')});
+  const traceEvents=execFileSync('unzip',['-p',join(project,flowReport.tracePath),'trace.trace'],{encoding:'utf8'});
+  assert(traceEvents.includes('Installed Ada'));assert(traceEvents.includes('#submit-transient'));
+  const cliFlowDocument=JSON.parse(await readFile(join(project,'live-flow.json'),'utf8'));
+  cliFlowDocument.steps.find(step=>step.command==='checkpoint.create').name='transient-cli-flow';
+  await writeFile(join(project,'live-cli-flow.json'),JSON.stringify(cliFlowDocument));
+  const cliFlow=JSON.parse(execFileSync(bin,['run','flow','--session',sessionId,'--file','live-cli-flow.json','--json'],{cwd:project,encoding:'utf8',timeout:15000}));
+  assert.equal(cliFlow.ok,true);
+  const cliFlowDom=JSON.parse(await readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/transient-cli-flow/dom.json'),'utf8'));
+  assert(cliFlowDom.html.includes('<p id="transient-result">Installed Ada:1</p>'));
+  const cliFlowReport=JSON.parse(await readFile(join(project,'.artifacts/runs/installed_browser_run/report.json'),'utf8'));
+  assert.notEqual(cliFlowReport.tracePath,flowReport.tracePath);
+  assert.deepEqual(await readFile(join(project,flowReport.tracePath)),traceBytes);
+  console.log(JSON.stringify({installedLiveFlow:true,installedCliFlow:true,tracePath:flowReport.tracePath,traceBytes:traceBytes.length,traceContainsActions:true}));
   const denied=await client.callTool({name:'probefn_checkpoint_create',arguments:{sessionId,name:'oversized',artifactCapBytes:1}});
   assert.equal(denied.isError,true);assert.equal(denied.structuredContent.error.code,'E_STORAGE_CAP_EXCEEDED');
   await assert.rejects(readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/oversized/checkpoint.json')),{code:'ENOENT'});
