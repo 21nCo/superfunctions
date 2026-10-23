@@ -1,9 +1,29 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+
+class HttpAuthConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, arbitrary_types_allowed=True)
+    enabled: Optional[bool] = Field(None, strict=True)
+    api_key: Optional[str] = Field(None, alias="apiKey", strict=True)
+    provider: Any = None
+
+    @model_validator(mode="after")
+    def validate_configuration(self):
+        if self.provider is not None and not callable(getattr(self.provider, "authenticate", None)):
+            raise ValueError("Invalid auth provider")
+        if self.api_key is not None and not self.api_key.strip():
+            raise ValueError("API key must not be empty")
+        if self.enabled is False and (self.provider is not None or self.api_key is not None):
+            raise ValueError("Configured authentication cannot be disabled")
+        if self.enabled is True and self.provider is None and self.api_key is None:
+            raise ValueError("Enabled authentication requires credentials")
+        return self
+
 
 class WatchFnConfig(BaseModel):
     name: str
+    auth: Optional[HttpAuthConfig] = None
     project_id: Optional[str] = None
     storage: str = "memory"
     apm_enabled: bool = True

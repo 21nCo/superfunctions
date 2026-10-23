@@ -11,7 +11,7 @@ import time
 def create_flask_blueprint(watch_fn: WatchFn, prefix: str = "/watch", name: str = "watchfn"):
     """Create Flask blueprint for WatchFn."""
     routes = create_routes(watch_fn)
-    return create_blueprint(routes, prefix=prefix, name=name)
+    return create_blueprint(routes, url_prefix=prefix, name=name)
 
 
 def create_flask_middleware(watch_fn: WatchFn):

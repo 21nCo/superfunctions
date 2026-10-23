@@ -1,26 +1,130 @@
+"""Operation-scoped HTTP support for the implemented in-memory event store."""
+import asyncio
+import hmac
 import json
+from datetime import datetime, timezone
+from typing import cast
+from superfunctions.auth import AuthProvider, AuthSession, validate_auth_session
 from superfunctions.http import Request, Response, RouteContext
+from ..models import Event
+from ..storage.memory_storage import MemoryStorage
+
+
+def reply(status, body):
+    return Response(status=status, body=body, headers={"Cache-Control": "no-store"})
+
 
 class HttpHandlers:
     def __init__(self, watch):
         self.watch = watch
 
+    async def authorize(self, request, scope):
+        config = self.watch.config.auth
+        if config is None or (config.provider is None and config.api_key is None):
+            return None
+        if config.provider is not None:
+            try:
+                session = await cast(AuthProvider, config.provider).authenticate(request)
+            except Exception:
+                return reply(503, {"error": "Authentication unavailable"})
+            try:
+                if not isinstance(session, AuthSession):
+                    return reply(401, {"error": "Unauthorized"})
+                session = validate_auth_session(session.model_dump(by_alias=True))
+                if not session.id or not session.subject.actor_id:
+                    return reply(401, {"error": "Unauthorized"})
+                expiry = session.expires_at
+                # Naive expiry has no unambiguous instant: fail closed.
+                if expiry is not None and (expiry.tzinfo is None or expiry <= datetime.now(timezone.utc)):
+                    return reply(401, {"error": "Unauthorized"})
+                if scope not in (session.scopes or []):
+                    return reply(403, {"error": "Forbidden"})
+            except Exception:
+                return reply(401, {"error": "Unauthorized"})
+            return None
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        expected = config.api_key.encode("utf-8")
+        if any(hmac.compare_digest(value.encode("utf-8"), target) for value, target in [
+            (headers.get("authorization", ""), b"Bearer " + expected),
+            (headers.get("x-api-key", ""), expected),
+        ]):
+            return None
+        return reply(401, {"error": "Unauthorized"})
+
+    async def read_json(self, request, limit):
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        declared = headers.get("content-length")
+        if declared is not None:
+            if not declared.isdecimal():
+                raise ValueError("Invalid content length")
+            if int(declared) > limit:
+                raise OverflowError()
+        raw = await request.body()
+        if len(raw) > limit:
+            raise OverflowError()
+        def invalid_constant(_):
+            raise ValueError("Invalid JSON constant")
+        return json.loads(raw, parse_constant=invalid_constant)
+
     async def health(self, request: Request, context: RouteContext) -> Response:
-        return Response(status=200, body={"status": "ok", "version": "0.1.0"})
+        return reply(200, {"status": "ok", "version": "0.1.0"})
 
     async def ingest(self, request: Request, context: RouteContext) -> Response:
+        denied = await self.authorize(request, "watchfn:ingest")
+        if denied is not None:
+            return denied
         try:
-            body = await request.json()
-            if isinstance(body, list):
-                for event in body:
-                    self.watch.track(event.get("name"), event.get("properties"))
-            else:
-                self.watch.track(body.get("name"), body.get("properties"))
-            
-            return Response(status=200, body={"success": True})
-        except Exception as e:
-            return Response(status=400, body={"error": str(e)})
+            body = await self.read_json(request, 8 * 1024 * 1024)
+            values = body if isinstance(body, list) else body.get("events") if isinstance(body, dict) and "events" in body else [body]
+            if not isinstance(values, list) or not 1 <= len(values) <= 500:
+                raise ValueError()
+            events = []
+            for value in values:
+                if not isinstance(value, dict) or set(value) - {"name", "properties", "context", "type"}:
+                    raise ValueError()
+                if value.get("type", "track") != "track" or not isinstance(value.get("name"), str) or not value["name"].strip():
+                    raise ValueError()
+                if len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 65536:
+                    raise OverflowError()
+                if not isinstance(value.get("properties", {}), dict) or not isinstance(value.get("context", {}), dict):
+                    raise ValueError()
+                events.append(Event(**{**value, "type": "track"}))
+        except OverflowError:
+            return reply(413, {"error": "Request or event too large"})
+        except Exception:
+            return reply(400, {"error": "Invalid event batch"})
+        if not self.watch.is_started or self.watch.config.storage != "memory" or not isinstance(self.watch.storage, MemoryStorage):
+            return reply(503, {"error": "Storage unavailable"})
+        try:
+            self.watch.storage.add_batch(events)
+        except Exception:
+            return reply(503, {"error": "Storage unavailable"})
+        return reply(202, {"accepted": len(events)})
 
     async def query(self, request: Request, context: RouteContext) -> Response:
-        # Placeholder for query
-        return Response(status=200, body={"results": []})
+        denied = await self.authorize(request, "watchfn:query")
+        if denied is not None:
+            return denied
+        try:
+            body = await self.read_json(request, 65536)
+            if not isinstance(body, dict) or set(body) - {"metric", "limit"}:
+                raise ValueError()
+            metric, limit = body.get("metric"), body.get("limit", 1000)
+            if metric is not None and (not isinstance(metric, str) or not metric.strip() or len(metric) > 1024):
+                raise ValueError()
+            if type(limit) is not int or not 1 <= limit <= 1000:
+                raise ValueError()
+        except OverflowError:
+            return reply(413, {"error": "Request body too large"})
+        except Exception:
+            return reply(400, {"error": "Invalid query"})
+        if self.watch.config.storage != "memory" or not isinstance(self.watch.storage, MemoryStorage):
+            return reply(503, {"error": "Query unavailable"})
+        try:
+            events = await asyncio.to_thread(self.watch.query, metric)
+            results = [event.model_dump(mode="json") for event in events[-limit:]]
+            if len(json.dumps({"results": results}, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 8 * 1024 * 1024:
+                raise ValueError()
+            return reply(200, {"results": results})
+        except Exception:
+            return reply(503, {"error": "Query unavailable"})

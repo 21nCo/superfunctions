@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "httpx", "build", "superfunctions-fastapi>=0.1.0", "superfunctions-flask>=0.1.0", "flask[async]"]
 fastapi = ["superfunctions-fastapi>=0.1.0", "fastapi", "uvicorn"]
 flask = ["superfunctions-flask>=0.1.0", "flask"]
 
