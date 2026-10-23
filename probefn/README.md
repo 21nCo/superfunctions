@@ -178,3 +178,10 @@ The installed fixture initializes a real scoped session and exports its persiste
 report through CLI, MCP and admin. It does not launch a browser or certify every
 operator workflow. Browser matrices, full original vector coverage and total
 physical disk accounting (including SQLite/opaque scratch) remain separate gates.
+
+For an installed local browser workflow, add `--browser` to the distribution
+verification command. A compatible cached Playwright engine is required. Set
+`PROBEFN_PLAYWRIGHT_VERSION` to explicitly select an installed-consumer Playwright
+version within the package's supported range; this does not download a browser.
+The fixture spawns and stops its own loopback app, exercises MCP browser actions
+and checkpoints, and verifies the resulting artifacts and installed CLI report.

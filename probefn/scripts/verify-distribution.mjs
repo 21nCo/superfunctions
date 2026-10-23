@@ -36,7 +36,7 @@ try {
     }
     tarballs.push(join(directory, packed.filename));
   }
-  await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module', devDependencies: { typescript: '^5.8.0', '@types/node': '^22.14.0' } }));
+  await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module', devDependencies: { typescript: '^5.8.0', '@types/node': '^22.14.0', ...(process.env.PROBEFN_PLAYWRIGHT_VERSION ? { playwright: process.env.PROBEFN_PLAYWRIGHT_VERSION } : {}) } }));
   npm(['install', '--no-fund', ...tarballs]);
   const fixture = `
 import assert from 'node:assert/strict';
@@ -80,6 +80,10 @@ console.log('Installed CLI bin, MCP stdio, config loader and scoped admin persis
 `;
   await writeFile(join(directory, 'consumer.mjs'), fixture);
   process.stdout.write(run(process.execPath, ['consumer.mjs']));
+  if (process.argv.includes('--browser')) {
+    await writeFile(join(directory, 'browser-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-browser-consumer.mjs')));
+    process.stdout.write(run(process.execPath, ['browser-consumer.mjs']));
+  }
   await writeFile(join(directory, 'consumer.mts'), `import {executeCli} from '@probefn/cli'; import {runMcpCli} from '@probefn/mcp-server'; import {createProbeFnAdminAdapter} from '@probefn/admin'; import {loadConfig} from '@probefn/contracts/config'; void [executeCli,runMcpCli,createProbeFnAdminAdapter,loadConfig];`);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc','--strict','--noEmit','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','consumer.mts']));
   let audit;
