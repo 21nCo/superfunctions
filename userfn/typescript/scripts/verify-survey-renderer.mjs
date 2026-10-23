@@ -35,7 +35,7 @@ try {
   const bundle = await readFile(join(directory, 'sdk.js'));
   server = createServer(async (incoming, outgoing) => {
     if (incoming.url === '/sdk.js') { outgoing.setHeader('content-type', 'text/javascript'); outgoing.end(bundle); return; }
-    if (incoming.method === 'GET') { outgoing.setHeader('content-type', 'text/html'); outgoing.end('<!doctype html><title>Owned survey renderer acceptance</title>'); return; }
+    if (incoming.method === 'GET') { outgoing.setHeader('content-type', 'text/html'); outgoing.end('<!doctype html><title>Owned survey renderer acceptance</title><button id="outside">Open survey</button>'); return; }
     try {
       const chunks = []; for await (const chunk of incoming) chunks.push(chunk);
       const body = Buffer.concat(chunks); const headers = new Headers();
@@ -67,7 +67,21 @@ try {
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByRole('textbox').fill(text);
   };
-  await setup('browser'); await fill('original answers');
+  await page.locator('#outside').focus();
+  await setup('browser');
+  assert.equal(await page.getByRole('dialog').getAttribute('aria-modal'),'true');
+  assert.equal(await page.getByRole('button',{name:'Close survey'}).evaluate(node=>node===document.activeElement),true);
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await page.getByRole('button',{name:'Next',exact:true}).evaluate(node=>node===document.activeElement),true);
+  await page.keyboard.press('Tab');
+  assert.equal(await page.getByRole('button',{name:'Close survey'}).evaluate(node=>node===document.activeElement),true);
+  await page.locator('#outside').evaluate(node=>node.focus());
+  assert.equal(await page.getByRole('button',{name:'Close survey'}).evaluate(node=>node===document.activeElement),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog').count(),0);
+  assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true);
+  await page.evaluate(()=>client.trigger('event','show'));
+  await fill('original answers');
   await page.getByRole('button', { name: 'Submit', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent?.includes('not confirmed'));
   assert.equal(requests.length, 1, 'No automatic renderer retries');
@@ -110,6 +124,26 @@ try {
   await page.getByRole('button', { name: 'Submit', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response recorded locally.');
   assert.equal(requests.length, beforeLocal, 'Local mode does not claim or attempt server storage');
+  await page.keyboard.press('Escape');
+  await page.locator('#outside').focus();
+  await page.evaluate(async()=>{
+    client.setCampaigns([{id:'accessible',kind:'modal',enabled:true,content:{title:'Announcement',body:'Content',ctaText:'Done'},triggers:[{type:'event'}]}]);
+    await client.trigger('event','modal');
+  });
+  assert.equal(await page.getByRole('dialog',{name:'Announcement'}).getAttribute('aria-modal'),'true');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await page.getByRole('button',{name:'Done',exact:true}).evaluate(node=>node===document.activeElement),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.evaluate(async()=>{
+    client.setCampaigns([{id:'toast',kind:'inbox-item',enabled:true,content:{body:'Toast'},triggers:[{type:'event'}]}]);
+    await client.trigger('event','toast');
+  });
+  assert.equal(await page.locator('.userfn-toast').evaluate(node=>getComputedStyle(node).animationName),'none');
+  await page.evaluate(()=>client.setConsent({messaging:false}));
+  await page.locator('#outside').focus();
+  assert.equal(await page.locator('#outside').evaluate(node=>node===document.activeElement),true,'dismissed dialog listeners must be removed');
   const campaignKeys = [];
   await page.route('**/messages/campaign/reserve', async route => {
     campaignKeys.push(route.request().headers()['idempotency-key']);
@@ -125,7 +159,7 @@ try {
   });
   assert.equal(campaignKeys.length, 1);
   assert.match(campaignKeys[0], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, reloadJournal: false }));
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, reducedMotion: true, reloadJournal: false }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

@@ -5,6 +5,7 @@ import { injectStyles } from './styles';
 type SurveySubmit = (response: SurveyResponse) => void | false | 'local' | 'stored' | Promise<void | false | 'local' | 'stored'>;
 
 export class VanillaRenderer {
+  private readonly dialogs = new Map<HTMLElement, () => void>();
   private readonly surveyNodes = new Set<HTMLElement>();
   private readonly messages = new Set<HTMLElement>();
   private readonly messageTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
@@ -17,11 +18,44 @@ export class VanillaRenderer {
   dismissSurveys(): void { for (const node of [...this.surveyNodes]) this.removeMessage(node); }
   dismissMessages(): void { for (const node of [...this.messages]) this.removeMessage(node); }
   private removeMessage(node: HTMLElement): void {
-    node.remove(); this.messages.delete(node); this.surveyNodes.delete(node);
+    const cleanup = this.dialogs.get(node); this.dialogs.delete(node);
+    node.remove();
+    cleanup?.(); this.messages.delete(node); this.surveyNodes.delete(node);
     const timer = this.messageTimers.get(node); if (timer !== undefined) clearTimeout(timer);
     this.messageTimers.delete(node);
   }
   private active(node: HTMLElement): boolean { return this.messagingAllowed() && this.messages.has(node); }
+
+  private manageDialog(overlay: HTMLElement, modal: HTMLElement, close: HTMLButtonElement, label: string): void {
+    const previous = document.activeElement;
+    modal.tabIndex = -1;
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', label);
+    const top = () => [...this.dialogs.keys()].pop() === overlay;
+    const controls = () => [...modal.querySelectorAll<HTMLElement>('button,input,textarea,select,a[href],[tabindex]')]
+      .filter(node => node.tabIndex >= 0 && !(node as HTMLInputElement).disabled && node.getClientRects().length > 0);
+    const focus = () => (controls()[0] ?? modal).focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (!top()) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close.click(); }
+      if (event.key !== 'Tab') return;
+      const items = controls(); const first = items[0]; const last = items[items.length - 1];
+      if (!first) { event.preventDefault(); modal.focus(); }
+      else if (!modal.contains(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last) || document.activeElement === modal) {
+        event.preventDefault(); (event.shiftKey ? last : first).focus();
+      }
+    };
+    const focusin = () => { if (top() && !modal.contains(document.activeElement)) focus(); };
+    this.dialogs.set(overlay, () => {
+      document.removeEventListener('keydown', keydown, true);
+      document.removeEventListener('focusin', focusin);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    });
+    document.addEventListener('keydown', keydown, true);
+    document.addEventListener('focusin', focusin);
+    focus();
+  }
 
   render(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
     if (!this.messagingAllowed()) return;
@@ -241,10 +275,12 @@ export class VanillaRenderer {
     };
     modal.appendChild(next); overlay.appendChild(modal);
     this.messages.add(overlay); this.surveyNodes.add(overlay); document.body.appendChild(overlay);
+    this.manageDialog(overlay, modal, closeBtn, survey.title ?? 'Survey');
   }
 
   private renderToast(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
     const toast = document.createElement('div');
+    toast.className = 'userfn-toast';
     toast.style.cssText = `
       position: fixed; bottom: 20px; right: 20px;
       background: white; padding: 16px; border-radius: 8px;
@@ -313,6 +349,7 @@ export class VanillaRenderer {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'userfn-close';
     closeBtn.innerHTML = '&times;';
+    closeBtn.setAttribute('aria-label', 'Close message');
     closeBtn.onclick = () => {
       if (!this.active(overlay)) return;
       this.removeMessage(overlay);
@@ -352,7 +389,6 @@ export class VanillaRenderer {
     this.messages.add(overlay);
     document.body.appendChild(overlay);
 
-    // Basic focus trap (very naive)
-    modal.focus();
+    this.manageDialog(overlay, modal, closeBtn, campaign.content.title ?? 'Message');
   }
 }

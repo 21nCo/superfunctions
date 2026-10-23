@@ -38,6 +38,9 @@ export const STYLES = `
   .userfn-cta:hover {
     background: #1d4ed8;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .userfn-toast { animation: none !important; transition: none !important; }
+  }
   .userfn-close {
     float: right;
     background: none;
