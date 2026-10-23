@@ -21,10 +21,16 @@ export async function runCheckpointCommand(
 
   const sessionId = requireFlag(args, '--session', 'Missing required --session flag.');
   const name = requireFlag(args, '--name', 'Missing required --name flag.');
+  const cap = getFlagValue(args, '--artifact-cap-bytes');
+  const artifactCapBytes = cap === undefined ? undefined : Number(cap);
+  if (args.includes('--artifact-cap-bytes') && (artifactCapBytes === undefined || !Number.isSafeInteger(artifactCapBytes) || artifactCapBytes < 0)) {
+    throw createProbefnError({ code: 'E_CONFIG_INVALID', message: '--artifact-cap-bytes requires a non-negative safe integer.', retryable: false });
+  }
   const includeVideo = args.includes('--include-video');
   const envelope = await createCheckpointFromSession(context.runtime, {
     sessionId,
     name,
+    ...(artifactCapBytes !== undefined ? { artifactCapBytes } : {}),
     ...(includeVideo ? { includeVideo: true } : {}),    ...(args.includes('--include-trace') ? { includeTrace: true } : {}),
     ...(args.includes('--include-styles') ? { includeStyles: true } : {}),
   });

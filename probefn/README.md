@@ -186,9 +186,22 @@ version within the package's supported range; this does not download a browser.
 The fixture spawns and stops its own loopback app, exercises MCP browser actions
 and checkpoints, and verifies the resulting artifacts and installed CLI report.
 
-`ArtifactStore` also accepts `caps.maxAccountingDatabaseBytes` (default16MiB,
-minimum64KiB) for its shared SQLite accounting database. The persisted minimum
+`ArtifactStore` also accepts `caps.maxAccountingDatabaseBytes` (default 16 MiB,
+minimum 64 KiB) for its shared SQLite accounting database. The persisted minimum
 cannot be raised by a later writer, and SQLite refuses page growth beyond it.
 This is separate from the per-run artifact byte cap; it excludes active rollback
 journal overhead and browser scratch, so it is not an aggregate physical disk
 quota. See `.conduct/accounting-database-budget.md` for migration and limits.
+
+Config files can set `storageCaps.maxArtifactBytes`, `maxEventsPerSink`, and
+`maxAccountingDatabaseBytes`. Artifact and event limits persist per run across
+CLI/MCP processes; later explicit limits can tighten but cannot raise them.
+Defaults apply to new policies, so previously configured values above defaults
+remain effective. The accounting limit is shared by the artifact root.
+
+For a stricter checkpoint allowance, use MCP/core `artifactCapBytes` or CLI
+`checkpoint create --session ID --name NAME --artifact-cap-bytes 1 --json`.
+This adds a per-checkpoint limit without changing the run policy. A failed cap
+returns `E_STORAGE_CAP_EXCEEDED` and does not commit a partial checkpoint manifest.
+See `.conduct/configured-cap-readiness.md` for the original requirement and the
+separate operational limits on physical disk usage.

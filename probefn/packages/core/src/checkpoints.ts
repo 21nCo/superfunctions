@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { createProbefnError } from '@probefn/contracts/errors';
+import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
 import type { CheckpointArtifact, CheckpointManifest } from '@probefn/contracts/manifests';
 import { createSuccessEnvelope } from '@probefn/contracts/envelopes';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, ArtifactCapTracker } from '@probefn/storage';
 
 import type { EventDeltaSummary } from './deltas.js';
 
@@ -34,6 +34,8 @@ export interface CreateCheckpointOptions {
   name: string;
   source: CheckpointCaptureSource;
   delta: EventDeltaSummary;
+  /** Additional per-checkpoint byte allowance; cannot increase the persisted run cap. */
+  artifactCapBytes?: number;
   includeStyles?: boolean;
   includeVideo?: boolean;
   includeTrace?: boolean;
@@ -59,6 +61,15 @@ export async function createCheckpoint(
   const checkpointId = `chk_${sanitizeCheckpointName(options.name)}`;
   const checkpointPaths = options.artifactStore.getCheckpointPaths(options.runId, options.name);
   const writtenPaths: string[] = [];
+  if (options.artifactCapBytes !== undefined && (!Number.isSafeInteger(options.artifactCapBytes) || options.artifactCapBytes < 0)) {
+    throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'Checkpoint artifactCapBytes must be a non-negative safe integer.', retryable: false });
+  }
+  const budget = options.artifactCapBytes === undefined ? undefined : new ArtifactCapTracker(options.artifactCapBytes);
+  const writeArtifact = async (relative: string, contents: string | Uint8Array) => {
+    const reservation = budget?.reserve(typeof contents === 'string' ? Buffer.byteLength(contents) : contents.byteLength, relative);
+    try { const result = await options.artifactStore.writeArtifact(relative, contents); reservation?.commit(); return result; }
+    catch (error) { reservation?.release(); throw error; }
+  };
 
   try {
     const url = options.source.url();
@@ -72,26 +83,26 @@ export async function createCheckpoint(
         ? await options.source.stylesSnapshot()
         : undefined;
 
-    await options.artifactStore.writeArtifact(checkpointPaths.screenshotPath, screenshot);
+    await writeArtifact(checkpointPaths.screenshotPath, screenshot);
     writtenPaths.push(checkpointPaths.screenshotPath);
-    await options.artifactStore.writeArtifact(
+    await writeArtifact(
       checkpointPaths.domPath,
       `${JSON.stringify(domSnapshot, null, 2)}\n`,
     );
     writtenPaths.push(checkpointPaths.domPath);
-    await options.artifactStore.writeArtifact(
+    await writeArtifact(
       checkpointPaths.axPath,
       `${JSON.stringify(accessibilitySnapshot, null, 2)}\n`,
     );
     writtenPaths.push(checkpointPaths.axPath);
-    await options.artifactStore.writeArtifact(
+    await writeArtifact(
       checkpointPaths.layoutPath,
       `${JSON.stringify(layoutSnapshot, null, 2)}\n`,
     );
     writtenPaths.push(checkpointPaths.layoutPath);
 
     if (stylesSnapshot !== undefined) {
-      await options.artifactStore.writeArtifact(
+      await writeArtifact(
         checkpointPaths.stylesPath,
         `${JSON.stringify(stylesSnapshot, null, 2)}\n`,
       );
@@ -102,7 +113,7 @@ export async function createCheckpoint(
       if (!options.source.videoCapture) throw new Error('Requested video capture is unavailable');
       const video = await options.source.videoCapture();
       if (!video.byteLength) throw new Error('Requested video capture is empty');
-      await options.artifactStore.writeArtifact(checkpointPaths.videoPath, video);
+      await writeArtifact(checkpointPaths.videoPath, video);
       writtenPaths.push(checkpointPaths.videoPath);
     }
 
@@ -136,6 +147,7 @@ export async function createCheckpoint(
       artifacts,
       createdAt: now(),
     };
+    budget?.assertCanWrite(Buffer.byteLength(`${JSON.stringify(manifest, null, 2)}\n`), checkpointPaths.manifestPath);
     const manifestPath = await options.artifactStore.writeCheckpointManifest(
       options.runId,
       options.name,
@@ -153,6 +165,7 @@ export async function createCheckpoint(
     };
   } catch (error) {
     await cleanupArtifacts(options.artifactStore, writtenPaths);
+    if (isProbefnError(error) && error.code === 'E_STORAGE_CAP_EXCEEDED') throw error;
     throw createProbefnError({
       code: 'E_CHECKPOINT_CAPTURE_FAILED',
       message: 'Required checkpoint artifacts could not be captured.',

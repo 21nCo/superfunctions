@@ -4,11 +4,12 @@ Original STORAGE-002 and SPEC limits require configurable per-run artifact caps
 (default2GiB), explicit failure/rollover and no silent truncation. The existing
 run scan accounts payload lengths and staged writes, but excludes the shared
 SQLite accounting database and opaque browser scratch. This checkpoint bounds
-one previously unbounded component; it does not redefine or complete the original
-aggregate physical disk requirement.
+one previously unbounded component. The exact original requirement is per-run
+artifact volume, not aggregate OS disk allocation. The stronger whole-runtime
+physical bound remains a separate operational limitation.
 
 `ArtifactStoreOptions.caps.maxAccountingDatabaseBytes` is an optional, additive
-shared-artifact-root budget, default16MiB. It limits the main `.quota.sqlite` file,
+shared-artifact-root budget, default 16 MiB. It limits the main `.quota.sqlite` file,
 not each run. Values must be safe integer bytes at least64KiB. The byte budget is
 rounded down to whole SQLite pages. Every cooperating connection sets and checks
 `PRAGMA max_page_count` inside its exclusive writer transaction. The minimum

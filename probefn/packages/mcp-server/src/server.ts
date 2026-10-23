@@ -55,7 +55,7 @@ import {
   type SessionState,
 } from '@probefn/core';
 import { DevServerManager } from '@probefn/dev-server';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, type StorageCaps } from '@probefn/storage';
 import { compareBaseline, DEFAULT_BASELINE_ROOT, recordBaseline } from '@probefn/visual-baselines';
 
 import { getBaselineTools } from './tools/baseline.js';
@@ -211,11 +211,12 @@ export class ProbefnRuntime {
     });
   }
 
-  public createScope(artifactRoot = FALLBACK_ARTIFACT_ROOT): SessionScope {
+  public createScope(artifactRoot = FALLBACK_ARTIFACT_ROOT, caps?: Partial<StorageCaps>): SessionScope {
     const normalizedArtifactRoot = artifactRoot || FALLBACK_ARTIFACT_ROOT;
     const artifactStore = new ArtifactStore({
       repoRoot: this.repoRoot,
       artifactRoot: normalizedArtifactRoot,
+      ...(caps ? { caps } : {}),
     });
     const sessionManager = new SessionManager({
       repoRoot: this.repoRoot,
@@ -226,7 +227,7 @@ export class ProbefnRuntime {
     if (!devServerManager) {
       devServerManager = new DevServerManager({
         repoRoot: this.repoRoot,
-        artifactStore,
+        artifactStore: new ArtifactStore({ repoRoot: this.repoRoot, artifactRoot: normalizedArtifactRoot }),
         now: this.now,
       });
       this.devServerManagers.set(normalizedArtifactRoot, devServerManager);
@@ -602,7 +603,12 @@ export async function startSessionFromConfig(
   const runId = input.runId ?? (derivedSuffix ? `run_${derivedSuffix}` : `run_${Date.now()}`);
   assertArtifactIdentifier(sessionId, 'Session id');
   assertArtifactIdentifier(runId, 'Run id');
-  const scope = runtime.createScope(artifactRoot);
+  const storageCaps: Partial<StorageCaps> = {
+    ...(config.storageCaps?.maxArtifactBytes !== undefined ? { maxArtifactBytes: config.storageCaps.maxArtifactBytes } : {}),
+    ...(config.storageCaps?.maxEventsPerSink !== undefined ? { maxEventsPerSink: config.storageCaps.maxEventsPerSink } : {}),
+    ...(config.storageCaps?.maxAccountingDatabaseBytes !== undefined ? { maxAccountingDatabaseBytes: config.storageCaps.maxAccountingDatabaseBytes } : {}),
+  };
+  const scope = runtime.createScope(artifactRoot, storageCaps);
   const mode = input.mode ?? config.defaultMode;
   const browser = input.browser ?? config.defaultBrowser;
   const authProfileStore = new AuthProfileStore({
@@ -646,6 +652,7 @@ export async function startSessionFromConfig(
     browser,
     deterministic: config.deterministicDefaults,
     devServer: selectedDevServer,
+    storageCaps,
   });
   await scope.sessionManager.initialize({
     sessionId,
@@ -835,6 +842,7 @@ export async function createCheckpointFromSession(
   input: {
     sessionId: string;
     name: string;
+    artifactCapBytes?: number;
     includeTrace?: boolean;
     includeStyles?: boolean;
     includeVideo?: boolean;
@@ -850,6 +858,7 @@ export async function createCheckpointFromSession(
       runId: session.runId,
       browser: session.browser,
       name: input.name,
+      ...(input.artifactCapBytes !== undefined ? { artifactCapBytes: input.artifactCapBytes } : {}),
       ...(input.includeVideo ? { includeVideo: true } : {}),
       ...(input.includeTrace !== undefined ? { includeTrace: input.includeTrace } : {}),
       ...(input.includeStyles !== undefined ? { includeStyles: input.includeStyles } : {}),

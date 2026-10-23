@@ -90,6 +90,20 @@ describe('checkpoints', () => {
     expect(manifestContents.browser).toBe('chromium');
   });
 
+  it.each([1, 4])('preserves cap errors and removes partial artifacts for a %i-byte checkpoint allowance', async artifactCapBytes => {
+    const artifactStore=await createArtifactStore();
+    await expect(createCheckpoint({
+      repoRoot:projectRoot,artifactStore,sessionId:'limited',runId:'limited',browser:'chromium',name:'limited',artifactCapBytes,
+      delta:{newConsoleErrors:0,newPageErrors:0,newNetworkFailures:0},
+      source:{url:()=> 'http://127.0.0.1/',viewportSize:()=>({width:10,height:10}),screenshot:async()=>Buffer.from('png'),domSnapshot:async()=>({html:'large payload'}),accessibilitySnapshot:async()=>({}),layoutSnapshot:async()=>({})},
+    })).rejects.toMatchObject({code:'E_STORAGE_CAP_EXCEEDED'});
+    const paths=artifactStore.getCheckpointPaths('limited','limited');
+    await expect(readFile(path.resolve(projectRoot,paths.manifestPath))).rejects.toMatchObject({code:'ENOENT'});
+    await expect(readFile(path.resolve(projectRoot,paths.screenshotPath))).rejects.toMatchObject({code:'ENOENT'});
+    // A command-level allowance does not lower the persisted run cap or strand cleanup.
+    await artifactStore.writeArtifact(`${artifactStore.getArtifactRoot()}/runs/limited/after.txt`,'still writable');
+  });
+
   it('fails atomically when a required artifact cannot be captured', async () => {
     const artifactStore = await createArtifactStore();
 

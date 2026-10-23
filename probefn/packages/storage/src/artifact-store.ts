@@ -53,10 +53,20 @@ export class ArtifactStore {
     this.artifactRoot = assertRepositoryRelativePath(options.artifactRoot ?? '.artifacts');
     this.maxEventsPerSink = options.caps?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
     if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
-    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes, options.caps?.maxAccountingDatabaseBytes);
+    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes, options.caps?.maxAccountingDatabaseBytes, options.caps?.maxEventsPerSink);
     this.capTracker = new ArtifactCapTracker(
       options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes,
     );
+  }
+
+  /** Persist run limits before producers start; later default-configured writers cannot raise them. */
+  public async initializeRunPolicy(runId: string, caps?: Partial<StorageCaps>): Promise<void> {
+    if (caps) {
+      const configured = new ArtifactStore({ repoRoot: this.repoRoot, artifactRoot: this.artifactRoot, caps });
+      await configured.initializeRunPolicy(runId);
+      return;
+    }
+    await this.runQuota.transaction(runId, this.getRunPaths(runId).runRoot, async () => undefined);
   }
 
   public getArtifactRoot(): string {
@@ -196,7 +206,7 @@ export class ArtifactStore {
       baseName,
       capTracker: this.capTracker,
       appendPersisted: (payload, policy) => this.runQuota.transaction(runId, relativeDirectory,
-        quota => quota.append(relativeDirectory, baseName, payload, policy)),
+        quota => quota.append(relativeDirectory, baseName, payload, policy, options?.policy?.maxEventsPerSink !== undefined)),
       policy: { maxEventsPerSink: this.maxEventsPerSink, ...options?.policy },
     });
   }

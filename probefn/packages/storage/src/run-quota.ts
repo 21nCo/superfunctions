@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createProbefnError } from '@probefn/contracts/errors';
 import { assertArtifactIdentifier, assertRepositoryRelativePath } from './manifest-writer.js';
 import type { AppendEventResult } from './event-sink.js';
-import { DEFAULT_ACCOUNTING_DATABASE_BYTES, type EventCapPolicy } from './caps.js';
+import { DEFAULT_ACCOUNTING_DATABASE_BYTES, DEFAULT_STORAGE_CAPS, type EventCapPolicy } from './caps.js';
 
 const queues = new Map<string, Promise<void>>();
 const failed = (message: string, cause?: unknown) => createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message, retryable: false, ...(cause ? { cause } : {}) });
@@ -13,9 +13,10 @@ const busy = (error: unknown) => error instanceof Error && /database is (locked|
 
 /** All cooperating writers use a SQLite OS lock; connections never escape one queued operation. */
 export class RunQuota {
-  public constructor(private readonly repoRoot: string, private readonly artifactRoot: string, private readonly configuredCap: number,
-    private readonly accountingLimit = DEFAULT_ACCOUNTING_DATABASE_BYTES) {
-    if (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
+  public constructor(private readonly repoRoot: string, private readonly artifactRoot: string, private readonly configuredCap?: number,
+    private readonly accountingLimit?: number,
+    private readonly configuredEventCap?: number) {
+    if (accountingLimit !== undefined && (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536)) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
   }
 
   public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false): Promise<T> {
@@ -26,7 +27,7 @@ export class RunQuota {
       await safeDirectory(this.repoRoot, this.artifactRoot);
       for (const suffix of ['', '-journal', '-wal', '-shm']) await safeFile(databasePath + suffix);
       const database = new DatabaseSync(databasePath);
-      let effectiveAccountingLimit = this.accountingLimit;
+      let effectiveAccountingLimit = this.accountingLimit ?? DEFAULT_ACCOUNTING_DATABASE_BYTES;
       try {
         await retryBusy(() => database.exec('PRAGMA busy_timeout=0; PRAGMA synchronous=FULL;'));
         await retryBusy(() => {
@@ -37,9 +38,11 @@ export class RunQuota {
         effectiveAccountingLimit = this.applyAccountingLimit(database);
         database.exec('CREATE TABLE IF NOT EXISTS run_caps (run_id TEXT PRIMARY KEY, cap INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS external_paths (path TEXT PRIMARY KEY, run_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sink_counts (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime REAL NOT NULL, count INTEGER NOT NULL, inode TEXT NOT NULL);');
         if (!database.prepare('PRAGMA table_info(sink_counts)').all().some(row => row.name === 'inode')) database.exec("ALTER TABLE sink_counts ADD COLUMN inode TEXT NOT NULL DEFAULT ''");
+        if (!database.prepare('PRAGMA table_info(run_caps)').all().some(row => row.name === 'max_events')) database.exec('ALTER TABLE run_caps ADD COLUMN max_events INTEGER NOT NULL DEFAULT 50000');
         const priorCap = database.prepare('SELECT cap FROM run_caps WHERE run_id=?').get(runId);
-        if (!priorCap) database.prepare('INSERT INTO run_caps VALUES (?, ?)').run(runId, this.configuredCap);
-        else if (this.configuredCap < Number(priorCap.cap)) database.prepare('UPDATE run_caps SET cap=? WHERE run_id=?').run(this.configuredCap, runId);
+        if (!priorCap) database.prepare('INSERT INTO run_caps (run_id,cap,max_events) VALUES (?, ?, ?)').run(runId, this.configuredCap ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes, this.configuredEventCap ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink);
+        else if (this.configuredCap !== undefined && this.configuredCap < Number(priorCap.cap)) database.prepare('UPDATE run_caps SET cap=? WHERE run_id=?').run(this.configuredCap, runId);
+        if (this.configuredEventCap !== undefined) database.prepare('UPDATE run_caps SET max_events=min(max_events,?) WHERE run_id=?').run(this.configuredEventCap, runId);
         if (external) {
           const owner = database.prepare('SELECT run_id FROM external_paths WHERE path=?').get(target);
           if (owner && owner.run_id !== runId) throw failed('Session-state artifact already belongs to another run; use a new session id.');
@@ -59,7 +62,8 @@ export class RunQuota {
           const item = await safeFile(path.resolve(this.repoRoot, relative));
           used += item?.size ?? 0;
         }
-        const quota = new QuotaTransaction(this.repoRoot, database, cap, used);
+        const eventCap = Number(database.prepare('SELECT max_events FROM run_caps WHERE run_id=?').get(runId)!.max_events);
+        const quota = new QuotaTransaction(this.repoRoot, database, cap, used, eventCap);
         const result = await operation(quota);
         await retryBusy(() => database.exec('COMMIT'));
         return result;
@@ -80,7 +84,8 @@ export class RunQuota {
     // BEGIN IMMEDIATE excludes every cooperating writer before reading the minimum.
     const exists = database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='accounting_limits'").get();
     const stored = exists ? database.prepare('SELECT max_bytes FROM accounting_limits WHERE id=1').get() : undefined;
-    const limit = Math.min(this.accountingLimit, stored ? Number(stored.max_bytes) : this.accountingLimit);
+    const requested = this.accountingLimit ?? (stored ? Number(stored.max_bytes) : DEFAULT_ACCOUNTING_DATABASE_BYTES);
+    const limit = Math.min(requested, stored ? Number(stored.max_bytes) : requested);
     const pageSize = Number(database.prepare('PRAGMA page_size').get()!.page_size);
     const pages = Math.floor(limit / pageSize);
     const actual = Number(database.prepare(`PRAGMA max_page_count=${pages}`).get()!.max_page_count);
@@ -117,7 +122,7 @@ async function retryBusy(operation: () => void): Promise<void> {
 }
 
 export class QuotaTransaction {
-  public constructor(private readonly repoRoot: string, private readonly database: DatabaseSync, private readonly cap: number, private used: number) {}
+  public constructor(private readonly repoRoot: string, private readonly database: DatabaseSync, private readonly cap: number, private used: number, private readonly maxEventsPerSink = DEFAULT_STORAGE_CAPS.maxEventsPerSink) {}
   public reserve(bytes: number, targetPath: string): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw failed('Invalid artifact byte count.');
     if (this.used + bytes > this.cap) throw createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message: `Artifact cap exceeded before ${targetPath} could be committed.`, retryable: false, details: { targetPath, maxArtifactBytes: this.cap, attemptedTotalBytes: this.used + bytes } });
@@ -129,7 +134,7 @@ export class QuotaTransaction {
     await safeFile(path.resolve(this.repoRoot, normalized));
     return path.resolve(this.repoRoot, normalized);
   }
-  public async append(relativeDirectory: string, baseName: string, payload: string, policy: EventCapPolicy): Promise<AppendEventResult> {
+  public async append(relativeDirectory: string, baseName: string, payload: string, policy: EventCapPolicy, explicitPolicyCap = true): Promise<AppendEventResult> {
     await safeDirectory(this.repoRoot, relativeDirectory);
     const names = await readdir(path.resolve(this.repoRoot, relativeDirectory));
     let index = 1;
@@ -144,7 +149,7 @@ export class QuotaTransaction {
     let relativePath = path.posix.join(relativeDirectory, filename(index));
     let absolute = await this.prepare(relativePath);
     let count = await this.eventCount(absolute, relativePath);
-    const rollover = count >= policy.maxEventsPerSink;
+    const rollover = count >= (explicitPolicyCap ? Math.min(policy.maxEventsPerSink, this.maxEventsPerSink) : this.maxEventsPerSink);
     if (rollover) {
       if (policy.strategy === 'error') throw createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message: `Event cap exceeded for ${relativePath}.`, retryable: false });
       index += 1; count = 0;

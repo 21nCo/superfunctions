@@ -75,6 +75,14 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership',
       expect(JSON.parse(await readFile(path.join(root,'.artifacts/runs/run/session.json'),'utf8')).status).toBe('failed');
     });
   });
+  it('retains structured cap failure when even the initial and failed manifests do not fit', async()=>{
+    await fixture("setInterval(()=>{},1000);",async(manager,options,root)=>{
+      await new ArtifactStore({repoRoot:root,caps:{maxArtifactBytes:1}}).initializeRunPolicy('run');
+      await expect(manager.startSession(options)).rejects.toMatchObject({code:'E_STORAGE_CAP_EXCEEDED',details:{manifestFinalized:false,processCleanupComplete:true}});
+      await expect(readFile(path.join(root,'pid'))).rejects.toMatchObject({code:'ENOENT'});
+      await expect(readFile(path.join(root,'.artifacts/runs/run/session.json'))).rejects.toMatchObject({code:'ENOENT'});
+    });
+  });
   it('rejects invalid readiness expressions before spawning a process', async () => {
     await fixture("setInterval(() => {}, 1000);", async (manager, options, root) => {
       await expect(manager.startSession({ ...options, devServer: { ...options.devServer, readyPattern: '[' } })).rejects.toMatchObject({ code: 'E_CONFIG_INVALID' });
@@ -217,7 +225,7 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
   it('rejects concurrent duplicate starts before the first manifest write finishes', async () => {
     await fixture("const http = await import('node:http'); const server = http.createServer((_req,res) => res.end('ready')); server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:'+server.address().port)); setInterval(() => {}, 1000);", async (manager, options) => {
       const starting = manager.startSession(options);
-      await expect(manager.startSession(options)).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
+      await expect(manager.startSession({ ...options, storageCaps: { maxArtifactBytes: 1 } })).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
       await starting;
       await manager.stopSession('session');
     });

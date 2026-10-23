@@ -13,6 +13,7 @@ import {
 const checkpointSchema = strictObjectSchema({
   sessionId: z.string().trim().min(1),
   name: z.string().trim().min(1),
+  artifactCapBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   includeTrace: z.boolean().optional(),
   includeStyles: z.boolean().optional(),
   includeVideo: z.boolean().optional(),
@@ -28,6 +29,7 @@ export function getCheckpointTools(): ToolDefinition[] {
         properties: {
           sessionId: { type: 'string' },
           name: { type: 'string' },
+          artifactCapBytes: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           includeTrace: { type: 'boolean' },
           includeStyles: { type: 'boolean' },
           includeVideo: { type: 'boolean' },
@@ -38,6 +40,7 @@ export function getCheckpointTools(): ToolDefinition[] {
         return createCheckpointFromSession(context.runtime, {
           sessionId: String(args.sessionId),
           name: String(args.name),
+          ...(typeof args.artifactCapBytes === 'number' ? { artifactCapBytes: args.artifactCapBytes } : {}),
           ...(typeof args.includeVideo === 'boolean' ? { includeVideo: args.includeVideo } : {}),
           ...(typeof args.includeTrace === 'boolean'
             ? { includeTrace: args.includeTrace }

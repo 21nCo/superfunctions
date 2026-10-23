@@ -1,3 +1,5 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +26,18 @@ describe('loadConfig', () => {
     expect(config.devServers.web?.timeoutMs).toBe(120000);
     expect(config.deterministicDefaults.viewport.width).toBe(1440);
     expect(config.deterministicDefaults.viewport.height).toBe(900);
+  });
+
+  it('loads storage caps and rejects invalid cap values instead of dropping them', async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'probefn-config-caps-'));
+    try {
+      for(const [index,storageCaps] of [{maxArtifactBytes:2048,maxEventsPerSink:3,maxAccountingDatabaseBytes:65536},{maxArtifactBytes:-1},{maxEventsPerSink:0},{maxAccountingDatabaseBytes:1},{maxArtifactBytes:1.5},{typo:3}].entries()) {
+        const filename=`config-${index}.mjs`;
+        await writeFile(path.join(root,filename),`export default ${JSON.stringify({storageCaps})}`);
+        if(index===0)expect((await loadConfig(filename,{cwd:root})).storageCaps).toEqual(storageCaps);
+        else await expect(loadConfig(filename,{cwd:root})).rejects.toMatchObject({code:'E_CONFIG_INVALID'});
+      }
+    } finally {await rm(root,{recursive:true,force:true});}
   });
 
   it('rejects an invalid browser engine', async () => {

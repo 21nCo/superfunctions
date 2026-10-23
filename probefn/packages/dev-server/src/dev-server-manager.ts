@@ -9,9 +9,9 @@ import type {
   DevServerSpec,
   SessionMode,
 } from '@probefn/contracts/config';
-import { createProbefnError } from '@probefn/contracts/errors';
+import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
 import { createRunManifest, type RunManifest } from '@probefn/contracts/manifests';
-import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
+import { ArtifactStore, assertArtifactIdentifier, type StorageCaps } from '@probefn/storage';
 
 import {
   createLineProcessor,
@@ -28,6 +28,7 @@ export interface StartSessionOptions {
   browser: BrowserEngine;
   deterministic: DeterministicSettings;
   devServer: DevServerSpec;
+  storageCaps?: Partial<StorageCaps>;
 }
 
 export interface StartedSession {
@@ -133,6 +134,7 @@ export class DevServerManager {
     this.sessions.set(options.sessionId, session);
 
     try {
+      if (options.storageCaps) await this.artifactStore.initializeRunPolicy(options.runId, options.storageCaps);
       await this.persistManifest(session);
       session.startupAbort.signal.throwIfAborted();
       const resolvedUrl =
@@ -161,6 +163,13 @@ export class DevServerManager {
         await this.failSession(session);
       } catch (cleanupError) {
         session.cleanupFailure = cleanupError;
+        if (isProbefnError(error) && error.code === 'E_STORAGE_CAP_EXCEEDED'
+          && isProbefnError(cleanupError) && cleanupError.code === 'E_STORAGE_CAP_EXCEEDED'
+          && this.sessions.get(session.sessionId) !== session) {
+          throw createProbefnError({ code: error.code, message: error.message, retryable: false,
+            details: { ...error.details, manifestFinalized: false, processCleanupComplete: true, cleanupError: cleanupError.message },
+            cause: new AggregateError([error, cleanupError], 'Run cap prevented startup and failed-manifest persistence') });
+        }
         throw new AggregateError([error, cleanupError], 'Session startup and cleanup failed');
       }
       throw error;
