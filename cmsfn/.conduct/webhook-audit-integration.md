@@ -1,6 +1,6 @@
 # Dataset-wide webhook audit integration
 
-Producer prerequisite: ContentFn `177e17f30774e8358608d7465deb986f0c58370b`.
+Producer prerequisite: ContentFn `92e2c826054aa1061f62ea84fa6988b7f096e7b4`.
 
 CMS `/cmsfn/audit/webhooks` now consumes the real ContentFn schema 4
 `/contentfn/audit/webhooks` result `{ records, nextOffset }`. It requests one
@@ -22,7 +22,10 @@ safe code/status plus the enumerated `WEBHOOK_AUDIT_NOT_READY` reason.
 history; status includes `processing`, and responses include `timestampKnown`.
 Studio renders “Timestamp unknown” rather than guessing from a retry deadline.
 Destination projection strips credentials, query and fragment again at the CMS
-boundary. ContentFn retains deleted-hook history using queue provenance; a worker that
+boundary. Delivery errors use an exact allowlist of known generic reasons and
+HTTP100–599 status codes; arbitrary legacy/provider messages become
+“Webhook delivery failed” even when returned by an older/custom producer.
+ContentFn retains deleted-hook history using queue provenance; a worker that
 finds a missing hook/event records terminal failed/not-attempted instead of a
 fabricated delivered status; deleting
 the dataset deletes that history. Delivery entries describe latest status and
@@ -68,3 +71,10 @@ queue transitions; legacy history with neither hook nor event provenance needs
 explicit host reconciliation and conservatively blocks dataset queries; host
 writer acknowledgement is not a distributed fence. Existing overall CMS gaps
 such as full Studio lifecycle/build verification are unchanged.
+
+Privacy follow-up: CMS99 server tests, strict types/build, and fresh packed HTTP
+acceptance pass with a private legacy provider error injected into queue storage.
+Neither producer nor CMS response exposes that string. The production-only normal
+install audit remains zero; owned fixture removed. Logs:
+`/tmp/cms-webhook-privacy-{tests,types,build}.log`,
+`/tmp/cms-webhook-privacy-packed-{install,http}.log` and `audit.json`.

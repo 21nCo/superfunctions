@@ -36,6 +36,16 @@ it("validates webhook pages, binds cursor kind/dataset, retains unknown history,
       reply = { ok: true, result };
       expect(await contentfnAuditWebhooks(config, { dataset: "prod", limit: 1 })).toMatchObject({ ok: false, error: { code: "CONTENTFN_UNAVAILABLE" } });
     }
+    for (const [lastError, expected] of [
+      ["HTTP 503", "HTTP 503"], ["Webhook request failed", "Webhook request failed"],
+      ["provider private-document https://example.test/?token=legacy-secret", "Webhook delivery failed"],
+      ["HTTP 503\nprivate-document", "Webhook delivery failed"], ["HTTP 503\n", "Webhook delivery failed"],
+    ]) {
+      reply = { ok: true, result: { records: [{ ...record, lastError }], nextOffset: null } };
+      const result = await contentfnAuditWebhooks(config, { dataset: "prod", limit: 1 });
+      expect(result).toMatchObject({ ok: true, result: { deliveries: [{ lastError: expected }] } });
+      expect(JSON.stringify(result)).not.toMatch(/private-document|legacy-secret/);
+    }
     reply = { ok: false, error: { code: "STORAGE_ERROR", message: "private migration state", details: { secret: "private", reason: "WEBHOOK_AUDIT_NOT_READY" } } };
     const failure = await contentfnAuditWebhooks(config, { dataset: "prod" });
     expect(failure).toMatchObject({ ok: false, error: { details: { reason: "WEBHOOK_AUDIT_NOT_READY" } } }); expect(JSON.stringify(failure)).not.toContain("private");

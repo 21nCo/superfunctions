@@ -26,9 +26,13 @@ try {
   unwrap(await content.api.schema.upsert({ dataset: 'prod', schema: { version: 1, documentTypes: [{ name: 'post', fields: [{ name: 'title', type: { kind: 'primitive', type: 'string' } }] }] } }));
   const hook = unwrap(await content.api.webhooks.register({ dataset: 'prod', url: destination, events: ['doc.created'], secret: 'signing-secret' }));
   for (let n = 0; n < 105; n++) unwrap(await content.api.docs.create({ dataset: 'prod', id: `post-${n}`, type: 'post', doc: { title: 'private document body' } }));
+  const queued = await db.findMany({ model: 'contentfn_webhook_queue', where: [], limit: 1 });
+  await db.updateMany({ model: 'contentfn_webhook_queue', where: [{ field: 'id', operator: 'eq', value: queued[0].id }], data: { lastError: 'provider private-document https://example.test/?token=legacy-secret' } });
   const client = createContentfnClient({ baseUrl: config.contentfn.baseUrl, headers: config.contentfnAuditHeaders() });
   const expected = unwrap(await client.audit.webhooks({ dataset: 'prod', limit: 1000 })).records;
   assert.equal(expected.length, 105);
+  assert.doesNotMatch(JSON.stringify(expected), /private-document|legacy-secret/);
+  assert.ok(expected.some(row => row.lastError === "Webhook delivery failed"));
   const base = await listen(cms);
   const post = async body => (await fetch(`${base}/cmsfn/audit/webhooks`, { method: 'POST', headers: { authorization: 'Bearer browser' }, body: JSON.stringify(body) })).json();
   const deliveries = []; let cursor = null; let pages = 0;
@@ -40,7 +44,7 @@ try {
   assert.equal(pages, 3); assert.equal(deliveries.length, 105);
   assert.deepEqual(deliveries.map(row => row.eventId), expected.map(row => row.eventId));
   assert.ok(deliveries.every(row => row.status === 'pending' && row.attempt === 0 && row.timestampKnown && row.updatedAt && row.url === destination.split('?')[0]));
-  assert.doesNotMatch(JSON.stringify(deliveries), /private document body|delivery-only|signing-secret/);
+  assert.doesNotMatch(JSON.stringify(deliveries), /private document body|delivery-only|signing-secret|private-document|legacy-secret/);
   assert.deepEqual(await content.processWebhookQueue(), { delivered: 105, failed: 0 });
   assert.equal(received.length, 105); assert.ok(received.every(row => row.url === '/hook?token=delivery-only'));
   assert.ok(received.every(row => !row.body.includes('private document body')));

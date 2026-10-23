@@ -2,6 +2,16 @@ import { AUDIT_RESPONSE_MAX_BYTES, AUDIT_TIMEOUT_MS, AUDIT_MAX_LIMIT, AUDIT_MAX_
 import { err, type CmsfnWebhookDeliveryStatus } from "cmsfn";
 import { contentfnRequest, isRecord } from "../contentfn/response.js";
 export interface AuditWebhooksConfig { contentfnBaseUrl: string; headers?: NonNullable<RequestInit["headers"]> }
+/** Defense at the upstream boundary also covers older/custom ContentFn producers. */
+function safeDeliveryError(value: string): string {
+  const safe = [
+    "Webhook request failed",
+    "Attempt limit reached; the last delivery outcome may be unknown",
+    "Webhook configuration is unavailable; delivery was not attempted",
+    "Webhook event is unavailable; delivery was not attempted",
+  ];
+  return (value.length === 8 && /^HTTP [1-5][0-9]{2}$/.test(value)) || safe.includes(value) ? value : "Webhook delivery failed";
+}
 function toDelivery(value: unknown): CmsfnWebhookDeliveryStatus | null {
   if (!isRecord(value) || typeof value.id !== "string" || !value.id || typeof value.webhookId !== "string" || typeof value.dataset !== "string" ||
     (value.url !== null && typeof value.url !== "string") || typeof value.eventId !== "string" || typeof value.timestampKnown !== "boolean" ||
@@ -20,7 +30,7 @@ function toDelivery(value: unknown): CmsfnWebhookDeliveryStatus | null {
   }
   return { webhookId: value.webhookId, dataset: value.dataset, url, eventId: value.eventId,
     updatedAt: value.updatedAt as string | null, timestampKnown: value.timestampKnown, attempt: value.attempt, status: value.status,
-    ...(value.lastError === null ? {} : { lastError: value.lastError }) };
+    ...(value.lastError === null ? {} : { lastError: safeDeliveryError(value.lastError) }) };
 }
 export function contentfnAuditWebhooks(config: AuditWebhooksConfig, input: { dataset: string; limit?: number; cursor?: string | null }) {
   const offset = auditOffset(input.dataset, input.cursor, "webhooks"), limit = input.limit ?? 100;
