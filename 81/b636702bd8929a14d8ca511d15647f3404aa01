@@ -1,0 +1,43 @@
+cmsfn/.conduct/audit-http-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_899dd6fc81a4ef 55-56
+cmsfn/.conduct/webhook-audit-http-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_9c6341e41cddea 1-68
+cmsfn/.conduct/webhook-audit-integration.md
+  s_e1c5fc1a65c0cf::t_39b97807c86eae 1-70
+cmsfn/core/src/server-api/types.ts
+  s_e1c5fc1a65c0cf::t_b13912f9c49a0b 37,40,42-43
+cmsfn/server/src/__tests__/audit.test.ts
+  s_e1c5fc1a65c0cf::t_33bccc55448cba 19,104,109,111,121
+cmsfn/server/src/__tests__/contentfn-response.test.ts
+  s_e1c5fc1a65c0cf::t_c4c5f581866f20 19,34
+cmsfn/server/src/__tests__/webhook-audit.test.ts
+  s_e1c5fc1a65c0cf::t_1b37086a872a56 1-43
+cmsfn/server/src/audit/events.ts
+  s_e1c5fc1a65c0cf::t_02b0f8fda76e40 13,17,21,26,30-31
+cmsfn/server/src/audit/webhooks.ts
+  s_e1c5fc1a65c0cf::t_c2d17d9f4c7238 1-2,4,6-8,10-23,26-30,32,37-38
+cmsfn/server/src/http/audit.ts
+  s_e1c5fc1a65c0cf::t_402947bbeedbf7 45,49-52
+cmsfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_5355b6d35d9852 221
+cmsfn/studio/src/__tests__/auditPanes.test.tsx
+  s_e1c5fc1a65c0cf::t_f44c4cddc9fa81 56-64
+cmsfn/studio/src/panes/audit/WebhooksPane.tsx
+  s_e1c5fc1a65c0cf::t_499aada792e6d5 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81b636702bd8929a14d8ca511d15647f3404aa01",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
