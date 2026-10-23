@@ -46,6 +46,10 @@ try {
   try { execFileSync(bin,['report','export','--session',sessionId,'--format','json','--json'],{cwd:project,encoding:'utf8',timeout:10000}); assert.fail('Live MCP owner must fence CLI mutation'); }
   catch(error){assert.equal(error.status,1);const start=String(error.stderr).indexOf('{\n  "ok"');assert(start>=0);fenced=JSON.parse(String(error.stderr).slice(start));}
   assert.equal(fenced.error.code,'E_SESSION_ALREADY_RUNNING');
+  const directWriter = name => JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',`import {ArtifactStore} from '@probefn/storage'; const store=new ArtifactStore({repoRoot:process.cwd()}); try { await store.writeArtifact('.artifacts/runs/installed_browser_run/'+${JSON.stringify(name)}+'.txt','raw SDK'); console.log(JSON.stringify({ok:true})); } catch(error) {console.log(JSON.stringify({ok:false,code:error.code}));}`],{cwd:project,encoding:'utf8',timeout:5000}));
+  assert.deepEqual(directWriter('denied-raw'),{ok:false,code:'E_SESSION_ALREADY_RUNNING'});
+  await assert.rejects(readFile(join(project,'.artifacts/runs/installed_browser_run/denied-raw.txt')),{code:'ENOENT'});
+
   console.log(JSON.stringify({checkpoint}));
   await writeFile(join(project,'live-flow.json'),JSON.stringify({version:1,steps:[
     {command:'page.open',url},
@@ -77,7 +81,7 @@ try {
   const cliFlowReport=JSON.parse(await readFile(join(project,`.artifacts/runs/${cliRunId}/report.json`),'utf8'));
   assert.notEqual(cliFlowReport.tracePath,flowReport.tracePath);
   assert.deepEqual(await readFile(join(project,flowReport.tracePath)),traceBytes);
-  console.log(JSON.stringify({installedLiveFlow:true,installedCliFlow:true,installedResidentCalls:true,liveOwnerFencesCli:true,tracePath:flowReport.tracePath,traceBytes:traceBytes.length,traceContainsActions:true}));
+  console.log(JSON.stringify({installedLiveFlow:true,installedCliFlow:true,installedResidentCalls:true,liveOwnerFencesCli:true,liveOwnerFencesRawSdk:true,tracePath:flowReport.tracePath,traceBytes:traceBytes.length,traceContainsActions:true}));
   const denied=await client.callTool({name:'probefn_checkpoint_create',arguments:{sessionId,name:'oversized',artifactCapBytes:1}});
   assert.equal(denied.isError,true);assert.equal(denied.structuredContent.error.code,'E_STORAGE_CAP_EXCEEDED');
   await assert.rejects(readFile(join(project,'.artifacts/runs/installed_browser_run/checkpoints/oversized/checkpoint.json')),{code:'ENOENT'});
@@ -100,6 +104,7 @@ try {
   for(const kind of ['ax.json','layout.json','styles.json'])assert(files.some(path=>path.endsWith('/'+kind)),kind);
   await call('probefn_session_stop',{sessionId});started=false;
   execFileSync(bin,['session','stop','--session',cliSessionId,'--json'],{cwd:project,encoding:'utf8',timeout:10000});cliSessionId=undefined;
+  assert.deepEqual(directWriter('after-stop-raw'),{ok:true});
   const reopened=new ArtifactStore({repoRoot:project});
   const sink=reopened.createEventSink('installed_browser_run','cap-proof','events');
   const appends=[];for(let i=0;i<7;i++)appends.push(await sink.append({sequence:i}));

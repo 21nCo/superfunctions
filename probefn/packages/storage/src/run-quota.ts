@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { SessionOwnership } from './session-ownership.js';
 import { createReadStream, constants } from 'node:fs';
 import { lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +10,7 @@ import type { AppendEventResult } from './event-sink.js';
 import { DEFAULT_ACCOUNTING_DATABASE_BYTES, DEFAULT_STORAGE_CAPS, type EventCapPolicy } from './caps.js';
 
 const queues = new Map<string, Promise<void>>();
+const activeTransaction = new AsyncLocalStorage<boolean>();
 const failed = (message: string, cause?: unknown) => createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message, retryable: false, ...(cause ? { cause } : {}) });
 const busy = (error: unknown) => error instanceof Error && /database is (locked|busy)/i.test(error.message);
 
@@ -15,16 +18,34 @@ const busy = (error: unknown) => error instanceof Error && /database is (locked|
 export class RunQuota {
   public constructor(private readonly repoRoot: string, private readonly artifactRoot: string, private readonly configuredCap?: number,
     private readonly accountingLimit?: number,
-    private readonly configuredEventCap?: number) {
+    private readonly configuredEventCap?: number,
+    private readonly maxOwnershipSlots?: number) {
     if (accountingLimit !== undefined && (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536)) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
   }
 
   public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false): Promise<T> {
+    if (activeTransaction.getStore()) throw failed('Nested managed storage transactions are unsupported; finish the producer before starting another write.');
     assertArtifactIdentifier(runId, 'Run id');
+    let sessionId: string | undefined;
+    if (external) {
+      const prefix = path.posix.join(this.artifactRoot, 'session-state') + '/';
+      const normalized = assertRepositoryRelativePath(target);
+      if (!normalized.startsWith(prefix) || !normalized.endsWith('.json')) throw failed('External run accounting requires a session-state JSON path.');
+      sessionId = normalized.slice(prefix.length, -5);
+      assertArtifactIdentifier(sessionId, 'Session id');
+    }
+
     const databasePath = path.resolve(this.repoRoot, this.artifactRoot, '.quota.sqlite');
     const prior = queues.get(databasePath) ?? Promise.resolve();
-    const task = prior.then(async () => {
+    const task = prior.then(() => SessionOwnership.withRun({ repoRoot: this.repoRoot, artifactRoot: this.artifactRoot, runId, ...(sessionId === undefined ? {} : { sessionId }), ...(this.maxOwnershipSlots === undefined ? {} : { maxOwnershipSlots: this.maxOwnershipSlots }) }, async identity => {
       await safeDirectory(this.repoRoot, this.artifactRoot);
+      if (identity.caseInsensitive) {
+        for (const [directory, name] of [[path.posix.join(this.artifactRoot, 'runs'), runId], ...(sessionId === undefined ? [] : [[path.posix.join(this.artifactRoot, 'session-state'), sessionId + '.json']])] as [string, string][]) {
+          await safeDirectory(this.repoRoot, directory);
+          const existing = (await readdir(path.resolve(this.repoRoot, directory))).find(item => item.toLowerCase() === name.toLowerCase());
+          if (existing !== undefined && existing !== name) throw failed('Run/session path casing must match its persisted identity.');
+        }
+      }
       for (const suffix of ['', '-journal', '-wal', '-shm']) await safeFile(databasePath + suffix);
       const database = new DatabaseSync(databasePath);
       let effectiveAccountingLimit = this.accountingLimit ?? DEFAULT_ACCOUNTING_DATABASE_BYTES;
@@ -64,7 +85,7 @@ export class RunQuota {
         }
         const eventCap = Number(database.prepare('SELECT max_events FROM run_caps WHERE run_id=?').get(runId)!.max_events);
         const quota = new QuotaTransaction(this.repoRoot, database, cap, used, eventCap);
-        const result = await operation(quota);
+        const result = await activeTransaction.run(true, () => operation(quota));
         await retryBusy(() => database.exec('COMMIT'));
         return result;
       } catch (error) {
@@ -73,7 +94,7 @@ export class RunQuota {
         if (error && typeof error === 'object' && 'code' in error && String(error.code).startsWith('E_')) throw error;
         throw failed('Run artifact accounting failed.', error);
       } finally { database.close(); }
-    });
+    }));
     const settled = task.then(() => undefined, () => undefined);
     queues.set(databasePath, settled);
     void settled.then(() => { if (queues.get(databasePath) === settled) queues.delete(databasePath); });

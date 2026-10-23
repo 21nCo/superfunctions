@@ -250,7 +250,7 @@ export class ProbefnRuntime {
     owner.operation = { controller, done };
     try {
       controller.signal.throwIfAborted();
-      return await this.operationScope.run(owner, () => this.requestSignal.run(controller.signal, execute));
+      return await owner.lease.run(() => this.operationScope.run(owner, () => this.requestSignal.run(controller.signal, execute)));
     } finally {
       parent?.removeEventListener('abort', abort);
       delete owner.operation;
@@ -287,10 +287,10 @@ export class ProbefnRuntime {
         const results = await Promise.allSettled(owners.map(async owner => {
           await owner.operation?.done;
           if (this.sessionOwners.get(owner.sessionId) !== owner) return;
-          try { await this.operationScope.run(owner, () => stopSession(this, owner.sessionId)); }
+          try { await owner.lease.run(() => this.operationScope.run(owner, () => stopSession(this, owner.sessionId))); }
           catch (error) {
             if (toErrorEnvelope(error).error.code !== 'E_SESSION_NOT_FOUND') throw error;
-            await this.createScope(owner.artifactRoot).devServerManager.stopSession(owner.sessionId).catch(error => {
+            await owner.lease.run(() => this.createScope(owner.artifactRoot).devServerManager.stopSession(owner.sessionId)).catch(error => {
               if (toErrorEnvelope(error).error.code !== 'E_SESSION_NOT_FOUND') throw error;
             });
             owner.lease.release(); this.sessionOwners.delete(owner.sessionId);
@@ -381,7 +381,7 @@ export class ProbefnRuntime {
       owner.browser = { runner, id, started };
     }
     const browser = owner.browser;
-    const abort = () => { void this.operationScope.run(owner, () => this.closeSessionBrowser(session.sessionId)).catch(() => undefined); };
+    const abort = () => { void owner.lease.run(() => this.operationScope.run(owner, () => this.closeSessionBrowser(session.sessionId))).catch(() => undefined); };
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     let executionError: unknown;

@@ -113,7 +113,7 @@ export class AuthProfileStore {
   ): Promise<SavedAuthProfile> {
     const storageStatePath = this.getSessionStorageStatePath(input.runId);
     const loaded = await this.loadProfile(input.profileId);
-    await this.copyRepoRelativeFile(loaded.storageStatePath, storageStatePath);
+    await this.artifactStore.importArtifactFile(storageStatePath, path.resolve(this.repoRoot, loaded.storageStatePath));
     return {
       profileId: input.profileId,
       storageStatePath,
@@ -127,7 +127,7 @@ export class AuthProfileStore {
     },
   ): Promise<string> {
     const storageStatePath = this.getSessionStorageStatePath(input.runId);
-    await this.writeJson(storageStatePath, input.storageState);
+    await this.artifactStore.writeArtifact(storageStatePath, `${JSON.stringify(input.storageState, null, 2)}\n`);
     return storageStatePath;
   }
 

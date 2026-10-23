@@ -6,6 +6,8 @@ import { expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { BrowserRunner } from '@probefn/browser-runner';
+import { SessionManager } from '@probefn/core';
+import { ArtifactStore } from '@probefn/storage';
 import { ProbefnRuntime, ProbefnMcpServer, exportSessionReport, startSessionFromConfig, openPage } from '../src/server.js';
 
 it('keeps a transport-owned live page across separate MCP calls and fences another runtime', async () => {
@@ -191,4 +193,27 @@ it('keeps closed transport state local and fences operations resumed after closu
     resume();
     await expect(late).rejects.toThrow('closing');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+it('cleans the dev-server owner after session-state initialization fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'probe-start-state-failure-'));
+  const app = createServer((_req, res) => res.end('ready'));
+  await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(app.address() as { port: number }).port}`;
+  await writeFile(path.join(root, 'config.mjs'), `export default ${JSON.stringify({ devServers: { app: { mode: 'attach', name: 'app', url } } })}`);
+  const runtime = new ProbefnRuntime(root);
+  const transport = { closed: false };
+  const failure = vi.spyOn(SessionManager.prototype, 'initialize').mockRejectedValueOnce(new Error('state storage failed'));
+  try {
+    await expect(runtime.withTransport(transport, () => startSessionFromConfig(runtime, { configPath: 'config.mjs', sessionId: 'live', runId: 'live' }))).rejects.toThrow('state storage failed');
+    failure.mockRestore();
+    await runtime.closeTransport(transport);
+    await expect(readFile(path.join(root, '.artifacts/session-state/live.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await new ArtifactStore({ repoRoot: root }).writeArtifact('.artifacts/runs/live/after-cleanup.txt', 'released');
+  } finally {
+    failure.mockRestore(); await runtime.closeTransport(transport);
+    app.closeAllConnections(); await new Promise<void>(resolve => app.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
 });

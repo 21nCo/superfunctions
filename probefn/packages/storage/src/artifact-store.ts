@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
-import { RunQuota } from './run-quota.js';
-import { mkdir, open, rename, rm } from 'node:fs/promises';
+import { RunQuota, safeDirectory, safeFile } from './run-quota.js';
+import { open, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
 import { createProbefnError } from '@probefn/contracts/errors';
@@ -53,7 +53,7 @@ export class ArtifactStore {
     this.artifactRoot = assertRepositoryRelativePath(options.artifactRoot ?? '.artifacts');
     this.maxEventsPerSink = options.caps?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
     if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
-    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes, options.caps?.maxAccountingDatabaseBytes, options.caps?.maxEventsPerSink);
+    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes, options.caps?.maxAccountingDatabaseBytes, options.caps?.maxEventsPerSink, options.caps?.maxOwnershipSlots);
     this.capTracker = new ArtifactCapTracker(
       options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes,
     );
@@ -158,7 +158,8 @@ export class ArtifactStore {
     const absolute = path.resolve(this.repoRoot, normalizedPath);
     const temporary = `${absolute}.tmp-${randomUUID()}`;
     const operation = this.writeQueue.then(async () => {
-      await mkdir(path.dirname(absolute), { recursive: true });
+      await safeDirectory(this.repoRoot, path.posix.dirname(normalizedPath));
+      await safeFile(absolute);
       const handle = await open(temporary, 'wx');
       try {
         await produce(async chunk => {
@@ -238,7 +239,12 @@ export class ArtifactStore {
 
   private validateDestination(relative: string): string {
     const normalized = assertRepositoryRelativePath(relative);
-    if (normalized.startsWith(path.posix.join(this.artifactRoot, '.quota.sqlite')) || normalized.split('/').includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses reserved accounting storage.', retryable: false });
+    const folded = normalized.toLowerCase();
+    for (const directory of ['runs', 'session-state']) {
+      const prefix = path.posix.join(this.artifactRoot, directory) + '/';
+      if (folded.startsWith(prefix.toLowerCase()) && !normalized.startsWith(prefix)) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Managed artifact paths must use configured directory casing.', retryable: false });
+    }
+    if (folded.split('/').some(segment => segment === '.ownership' || segment === '.probefn-staging' || segment.startsWith('.quota.sqlite'))) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses reserved storage metadata.', retryable: false });
     return normalized;
   }
 
@@ -300,7 +306,11 @@ export class ArtifactStore {
     // Also serialize replacements: atomic writer temp names are time based, and two
     // simultaneous writes to one destination must not share a temporary file.
     const operation = this.writeQueue.then(async () => {
-      try { await writeAtomicFile(this.repoRoot, normalizedPath, snapshot); }
+      try {
+        await safeDirectory(this.repoRoot, path.posix.dirname(normalizedPath));
+        await safeFile(path.resolve(this.repoRoot, normalizedPath));
+        await writeAtomicFile(this.repoRoot, normalizedPath, snapshot);
+      }
       finally {
         // A failed atomic writer may have created a partial temporary file or renamed
         // before failing its stat. Conservatively charge the attempt, including overwrites.

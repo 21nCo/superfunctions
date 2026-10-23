@@ -46,3 +46,7 @@ node probefn/scripts/verify-distribution.mjs --browser
 `/tmp/probe-resident-installed-final.log` records actual npm-bin execution, MCP stdio, scoped admin imports/persistence, consumer declaration checking and production audit with zero vulnerabilities. Separate installed MCP calls preserved transient `MCP Ada:1`; an independent CLI report mutation was rejected while MCP owned the session. A separate CLI session completed its own transient flow. Independent ZIP inspection and SHA-256 verified the 159152-byte full-flow trace. Before stop the fixture observed 42 artifact files and three valid PNGs. Both CLI/MCP cap-1 checkpoints failed before manifest commit; the persisted 2 MiB run allowance and three-record event segments preserved all seven events across two rollovers. Raw storage cap checks ran only after session owners stopped.
 
 The owned app PID 65555 exited, loopback port 61913 rejected connections, both sessions stopped, MCP client/transport closed, and the temporary installed consumer was removed. No browser download, registry publication or external service was used. Artifact count is explicitly before stop/final trace and the later cap-proof writes, not a final physical-storage total.
+
+## Managed writer follow-up
+
+The subsequent `managed-writer-ownership.md` checkpoint closes the raw ArtifactStore/RunQuota boundary described above and routes auth-session producers through it. Generic arbitrary-filesystem helpers remain explicitly unscoped; consult that evidence for the exact current boundary.

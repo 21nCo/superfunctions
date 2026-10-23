@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { realpath, readdir } from 'node:fs/promises';
@@ -7,6 +8,7 @@ import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
 import { assertArtifactIdentifier } from './manifest-writer.js';
 import { safeDirectory, safeFile } from './run-quota.js';
 
+const ownedContext = new AsyncLocalStorage<SessionOwnership>();
 const DEFAULT_MAX_SLOTS = 256;
 const REGISTRY_BYTES = 32 * 1024 * 1024;
 const SLOT_BYTES = 8192;
@@ -18,13 +20,13 @@ interface HeldSlot { database: DatabaseSync; filename: string; dev: number; ino:
 /** Native SQLite write locks have no expiry and are released by process death. */
 export class SessionOwnership {
   private released = false;
-  private constructor(private readonly slots: HeldSlot[]) {}
+  private constructor(private readonly slots: HeldSlot[], private readonly directory: string, private readonly runKey: string, private readonly fold: boolean, private readonly sessionKey?: string) {}
 
-  public static async acquire(input: { repoRoot: string; artifactRoot: string; sessionId: string; runId: string; maxOwnershipSlots?: number }): Promise<SessionOwnership> {
+  public static async acquire(input: { repoRoot: string; artifactRoot: string; sessionId?: string; runId: string; maxOwnershipSlots?: number }): Promise<SessionOwnership> {
     if (input.maxOwnershipSlots !== undefined && (!Number.isSafeInteger(input.maxOwnershipSlots) || input.maxOwnershipSlots < 2 || input.maxOwnershipSlots > 65536)) {
       throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'maxOwnershipSlots must be an integer from 2 through 65536.', retryable: false });
     }
-    assertArtifactIdentifier(input.sessionId, 'Session id');
+    if (input.sessionId !== undefined) assertArtifactIdentifier(input.sessionId, 'Session id');
     assertArtifactIdentifier(input.runId, 'Run id');
     const root = await realpath(input.repoRoot);
     const relative = path.posix.join(input.artifactRoot, '.ownership');
@@ -33,7 +35,7 @@ export class SessionOwnership {
     // Let the actual volume determine case aliases; do not assume Darwin or Windows means insensitive.
     const alternate = await realpath(path.join(path.dirname(directory), '.OWNERSHIP')).catch(() => undefined);
     const fold = alternate === directory;
-    const keys = [`session:${input.sessionId}`, `run:${input.runId}`].map(key => fold ? key.toLowerCase() : key).sort();
+    const keys = [...(input.sessionId === undefined ? [] : [`session:${input.sessionId}`]), `run:${input.runId}`].map(key => fold ? key.toLowerCase() : key).sort();
     const registryPath = path.join(directory, 'registry.sqlite');
     for (const suffix of ['', '-journal', '-wal', '-shm']) await safeFile(registryPath + suffix);
     const registryInfo = await safeFile(registryPath);
@@ -78,7 +80,7 @@ export class SessionOwnership {
         } catch (error) { database.close(); throw error; }
       }
       registry.exec('COMMIT'); transaction = false;
-      const ownership = new SessionOwnership(slots);
+      const ownership = new SessionOwnership(slots, directory, fold ? input.runId.toLowerCase() : input.runId, fold, input.sessionId === undefined ? undefined : fold ? input.sessionId.toLowerCase() : input.sessionId);
       ownership.assertOwned();
       return ownership;
     } catch (error) {
@@ -90,6 +92,35 @@ export class SessionOwnership {
       }
       throw ownershipFailure('Could not establish session ownership.', error);
     } finally { registry.close(); }
+  }
+
+  /** Explicitly propagate this authority into asynchronous producers and their nested writes. */
+  public run<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertOwned();
+    return ownedContext.run(this, operation);
+  }
+
+  public static async withRun<T>(input: { repoRoot: string; artifactRoot: string; runId: string; sessionId?: string; maxOwnershipSlots?: number }, operation: (identity: { caseInsensitive: boolean }) => Promise<T>): Promise<T> {
+    const active = ownedContext.getStore();
+    if (active) {
+      active.assertOwned();
+      const directory = await realpath(path.resolve(input.repoRoot, input.artifactRoot, '.ownership'));
+      const runKey = active.fold ? input.runId.toLowerCase() : input.runId;
+      const sessionKey = input.sessionId === undefined ? undefined : active.fold ? input.sessionId.toLowerCase() : input.sessionId;
+      if (directory !== active.directory || runKey !== active.runKey || (sessionKey !== undefined && sessionKey !== active.sessionKey)) throw ownershipFailure('Explicit ownership context does not cover this run.');
+      return operation({ caseInsensitive: active.fold });
+    }
+    // Admission only: never retry producer effects, and never steal or expire an existing owner.
+    const deadline = performance.now() + 1000;
+    let lease: SessionOwnership;
+    for (;;) {
+      try { lease = await SessionOwnership.acquire(input); break; }
+      catch (error) {
+        if (!isProbefnError(error) || error.code !== 'E_SESSION_ALREADY_RUNNING' || performance.now() >= deadline) throw error;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    try { return await lease.run(() => operation({ caseInsensitive: lease.fold })); } finally { lease.release(); }
   }
 
   public assertOwned(): void {

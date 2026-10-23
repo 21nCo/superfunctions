@@ -233,12 +233,25 @@ capacity permits growth. Never unlink live ownership databases. Offline maintena
 requires all writers stopped; preserve the registry and registered slot identities.
 See [ownership limits](.conduct/session-ownership-readiness.md).
 
-**Lower-level writer limitation:** `ArtifactStore` is an artifact/storage API, not a
-session ownership boundary. Direct store writes and callers bypassing the guarded
-CLI/MCP operation APIs do not automatically acquire these session locks. Applications
-must coordinate those writers themselves; do not write a run while CLI/MCP owns it.
-Comprehensive fencing of raw storage/SDK writers remains required follow-up. These
-locks also do not defend arbitrary external replacement of the authority directory.
+Run-scoped `ArtifactStore` mutations now acquire the same native ownership as
+CLI/MCP, including writes/imports/deletes, policies, manifests, session-state and
+persisted event appends. Independent SDK writers are rejected while MCP owns the
+run and may proceed after stop or process death. Explicit `SessionOwnership.run`
+contexts let matching owned producers reuse their authority; cross-run/session or
+released contexts fail. Session-state mutation locks both session and run identities.
+Queued SDK admission retries for at most one second before reporting busy; this
+is an admission bound, not a deadline for caller-supplied stream producers. Existing
+quota transactions retain their separate bounded database admission. A producer
+awaiting a nested managed write fails explicitly instead of waiting on itself.
+
+**Unscoped API boundary:** generic `writeAtomicFile`, `writeJsonManifestAtomic` and
+standalone `NdjsonEventSink` accept arbitrary filesystem paths and have no run/root
+contract. Like direct filesystem writes, they do not automatically infer managed
+ownership. Use `ArtifactStore` for managed run/session destinations. Runtime event
+sinks use its persisted hook, and auth-session imports/writes use its managed paths.
+Non-run auth profiles and baseline registry files remain separately scoped; this
+is not whole-filesystem isolation against arbitrary external writes or replacement
+of the authority directory. See [managed-writer evidence](.conduct/managed-writer-ownership.md).
 
 See [resident session evidence](.conduct/resident-session-readiness.md) and the
 preceding [flow and trace evidence](.conduct/live-flow-trace-readiness.md).

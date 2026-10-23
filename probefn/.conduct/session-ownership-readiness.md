@@ -22,3 +22,5 @@ This is a prerequisite API checkpoint. Runtime command/transport fencing and res
 ## Runtime follow-up
 
 The resident-session checkpoint wires this prerequisite into guarded CLI/MCP operations and transport-owned browser lifetime; see `resident-session-readiness.md`. This does not automatically fence raw `ArtifactStore` writers or lower-level callers bypassing the guarded operation APIs. Those callers must coordinate separately; comprehensive SDK writer fencing remains follow-up.
+
+Managed ArtifactStore/RunQuota SDK mutations are now covered by the subsequent `managed-writer-ownership.md` checkpoint. Generic arbitrary-filesystem helpers remain unscoped; no implicit artifact-root inference is introduced.
