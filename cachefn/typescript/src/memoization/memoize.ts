@@ -98,10 +98,16 @@ export function memoizeSync<T extends (...args: any[]) => any>(
   const stats = new StatsTracker();
   const keyGenerator = options?.keyGenerator ??
     ((...args: Parameters<T>) => generateKey(fn.name || "fn", args));
+  // A conservative lower bound: deleting an entry may leave an earlier hint,
+  // causing one extra scan, but can never postpone reclamation of a live entry.
+  let nextExpiration = Infinity;
   const prune = () => {
     const now = Date.now();
+    if (now < nextExpiration) return;
+    nextExpiration = Infinity;
     for (const [key, entry] of cache) {
       if (entry.expiresAt !== undefined && now >= entry.expiresAt) cache.delete(key);
+      else if (entry.expiresAt !== undefined && entry.expiresAt < nextExpiration) nextExpiration = entry.expiresAt;
     }
   };
   const memoized = function (this: ThisParameterType<T>, ...args: Parameters<T>): ReturnType<T> {
@@ -129,12 +135,14 @@ export function memoizeSync<T extends (...args: any[]) => any>(
         cache.delete(cache.keys().next().value!);
         stats.recordEviction();
       }
-      cache.set(key, { value, expiresAt: calculateExpiration(options?.ttl) });
+      const expiresAt = calculateExpiration(options?.ttl);
+      cache.set(key, { value, expiresAt });
+      if (expiresAt !== undefined && expiresAt < nextExpiration) nextExpiration = expiresAt;
       stats.recordSet();
     }
     return value;
   };
-  memoized.clear = async () => { cache.clear(); stats.reset(); };
+  memoized.clear = async () => { cache.clear(); nextExpiration = Infinity; stats.reset(); };
   memoized.delete = async (...args: Parameters<T>) => {
     if (cache.delete(keyGenerator(...args))) stats.recordDelete();
   };

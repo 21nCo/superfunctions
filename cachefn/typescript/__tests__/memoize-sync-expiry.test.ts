@@ -64,6 +64,31 @@ describe("populated synchronous memoization expiry and capacity", () => {
     await cached.clear(); expect(await cached.stats()).toMatchObject({ hits: 0, misses: 0, size: 0 });
   });
 
+  it("recomputes expiry after deleting the earliest entry and after clear", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const original = vi.fn((key: string) => key);
+    const cached = memoizeSync(original, { maxSize: 2, ttl: 100, keyGenerator: key => key });
+    cached("deleted"); vi.setSystemTime(50); cached("retained");
+    await cached.delete("deleted");
+    vi.setSystemTime(100); expect(await cached.stats()).toMatchObject({ size: 1 });
+    vi.setSystemTime(150); expect(await cached.stats()).toMatchObject({ size: 0 });
+    await cached.clear();
+    vi.setSystemTime(-1000); cached("new-era");
+    vi.setSystemTime(-900); expect(await cached.stats()).toMatchObject({ size: 0 });
+  });
+
+  it("retains exact capacity and LRU replacements before future expirations", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const original = vi.fn((key: number) => key);
+    const cached = memoizeSync(original, { maxSize: 100, ttl: 1000, keyGenerator: key => String(key) });
+    for (let i = 0; i < 300; i++) expect(cached(i)).toBe(i);
+    for (let i = 200; i < 300; i++) expect(cached(i)).toBe(i);
+    expect(original).toHaveBeenCalledTimes(300);
+    expect(await cached.stats()).toMatchObject({ size: 100, hits: 100, evictions: 200 });
+    vi.setSystemTime(1000);
+    expect(await cached.stats()).toMatchObject({ size: 0, evictions: 200 });
+  });
+
   it.each([0, -1])("never serves a value after immediate expiry ttl=%s", async ttl => {
     const original = vi.fn(() => 1); const cached = memoizeSync(original, { ttl, maxSize: 1 });
     cached(); cached();
