@@ -11,7 +11,7 @@ const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); r
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
 let denySingletonReads = false;
-const content = createContentfnServer({ db, webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const content = createContentfnServer({ db, webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
 const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
@@ -30,7 +30,7 @@ for (let n = 0; n < 25; n++) unwrap(await content.api.docs.create({ dataset: 'pr
 await writeFile('studio-entry.mjs', `import React from 'react'; import { createRoot } from 'react-dom/client'; import { App } from '@cmsfn/studio'; createRoot(document.getElementById('root')).render(React.createElement(App));`);
 await build({ entryPoints: ['studio-entry.mjs'], outfile: 'studio-bundle.js', bundle: true, platform: 'browser', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
 const bundle = await readFile('studio-bundle.js');
-let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true; let allowReleases = true;
+let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true; let allowReleases = true; let allowMigration = false;
 const requests = [];
 const server = createServer((req, res) => {
   if (req.url?.startsWith('/cmsfn/')) { requests.push(req.url); cms.emit('request', req, res); return; }
@@ -54,7 +54,7 @@ let browser;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  cms = createCmsfnServer({ db: cmsDb, contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
+  cms = createCmsfnServer({ db: cmsDb, contentfnOpsHeaders: () => ({ authorization: 'Bearer fixture-ops-service' }), authorizeCrossDatasetImport: async (_req, input) => allowMigration && input.sourceDataset === 'prod' && input.targetDataset === 'staging', contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
   browser = await chromium.launch({ headless: true });
@@ -213,9 +213,30 @@ try {
   await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('prod'); await page.getByRole('heading', { name: 'Browser batch' }).waitFor();
   allowReleases = false; await page.locator('[data-releases-refresh]').click(); await page.locator('[data-releases-denied]').waitFor();
   assert.equal(await page.locator('[data-releases-item]').count(), 0); assert.equal(await page.locator('[data-releases-create-submit]').count(), 0);
+  allowAudit = true;
+  await page.getByRole('button', { name: 'Import / export', exact: true }).click(); await page.locator('[data-ops-pane]').waitFor();
+  await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-download]').waitFor();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('[data-ops-download]').click()]);
+  const archiveText = await readFile(await download.path(), 'utf8'); const archive = JSON.parse(archiveText);
+  assert.equal(archive.dataset, 'prod'); assert.ok(archiveText.length > 500); assert.deepEqual(JSON.parse(await page.locator('[data-ops-export-result]').inputValue()), archive);
+  const sourceHome = unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' }));
+  unwrap(await content.api.docs.patch({ dataset: 'prod', id: sourceHome._id, ifRev: sourceHome._rev, ops: [{ op: 'set', path: 'title', value: 'Changed after export' }] }));
+  await page.getByLabel('Artifact JSON').fill(archiveText); await page.locator('[data-ops-import-trigger]').click(); await page.locator('[data-ops-import-success]').waitFor();
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, sourceHome.title);
+  const malformed = { ...archive, draftDocs: [archive.draftDocs[0], archive.draftDocs[0]] };
+  await page.getByLabel('Artifact JSON').fill(JSON.stringify(malformed)); await page.locator('[data-ops-import-trigger]').click(); await page.getByText('Operation failed (VALIDATION_FAILED).', { exact: true }).waitFor();
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, sourceHome.title);
+  await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('staging'); assert.equal(await page.locator('[data-ops-download]').count(), 0);
+  const targetBefore = unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' }));
+  await page.getByLabel('Artifact JSON').fill(archiveText); await page.locator('[data-ops-import-trigger]').click(); await page.getByText('Operation failed (PERMISSION_DENIED).', { exact: true }).waitFor();
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, targetBefore.title);
+  allowMigration = true; await page.locator('[data-ops-import-trigger]').click(); await page.getByText('Import completed for staging.', { exact: true }).waitFor();
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).title, sourceHome.title);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'home', perspective: 'draft' })).title, sourceHome.title);
+  allowAudit = false; await page.locator('[data-ops-export-trigger]').click(); await page.locator('[data-ops-denied]').waitFor(); assert.equal(await page.locator('[data-ops-download]').count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial'], requests: requests.length,
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity'], requests: requests.length,
     remaining: ['automatic release scheduling and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();

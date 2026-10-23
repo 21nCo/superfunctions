@@ -116,7 +116,7 @@ describe("PHASE_11: Ops import/export", () => {
         const res = await fetch(`http://127.0.0.1:${port}/cmsfn/ops/import`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataset: "prod2", artifact: validArtifact }),
+          body: JSON.stringify({ dataset: "prod", artifact: validArtifact }),
         });
         const data = await readResponse(res);
         expect(res.status).toBe(200);

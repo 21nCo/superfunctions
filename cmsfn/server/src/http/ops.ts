@@ -1,124 +1,46 @@
-/**
- * POST /cmsfn/ops/export and POST /cmsfn/ops/import.
- * Dataset isolation: only allow datasets in allowedDatasets.
- * Permission: audit.read (documented).
- */
-
-import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "cmsfn";
-import { authorize } from "../auth/authorize.js";
-import type { AuthorizeConfig } from "../auth/authorize.js";
-import { contentfnExport } from "../ops/export.js";
-import { contentfnImport } from "../ops/import.js";
-
+/** Authorized synchronous import/export. Cross-dataset migration requires explicit server policy. */
+import type { IncomingMessage } from 'http';
+import { err, type CmsfnEnvelope } from 'cmsfn';
+import { authorize, type AuthorizeConfig } from '../auth/authorize.js';
+import { contentfnExport, isExportArtifact } from '../ops/export.js';
+import { contentfnImport } from '../ops/import.js';
+import { readJsonObject } from './jsonBody.js';
+export const OPS_BODY_MAX_BYTES = 25 * 1024 * 1024;
 export interface OpsHandlerConfig extends AuthorizeConfig {
   contentfnBaseUrl: string;
-  /** Allowed dataset names (from config.datasets). Import/export only for these. */
   allowedDatasets: string[];
-  /** Optional: if provided and returns false, respond PERMISSION_DENIED. */
   authorizeOps?: (req: IncomingMessage) => Promise<boolean>;
+  contentfnOpsHeaders?: (req: IncomingMessage) => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
+  authorizeCrossDatasetImport?: (req: IncomingMessage, input: { sourceDataset: string; targetDataset: string }) => Promise<boolean>;
 }
-
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
+async function input(config: OpsHandlerConfig, req: IncomingMessage, maxBytes: number): Promise<CmsfnEnvelope<Record<string, unknown>>> {
   try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+    if (!config.getRolesForSubject || config.authorizeOps && await config.authorizeOps(req) !== true) return err('PERMISSION_DENIED', 'Permission denied');
+  } catch { return err('PERMISSION_DENIED', 'Permission denied'); }
+  const parsed = await readJsonObject(req, maxBytes); if (!parsed.ok) return parsed;
+  const dataset = typeof parsed.result.dataset === 'string' ? parsed.result.dataset.trim() : '';
+  if (!dataset || !config.allowedDatasets.includes(dataset)) return err('VALIDATION_FAILED', 'Dataset not allowed', { path: 'dataset' });
+  try { if (!await authorize(config, req, { dataset, type: '*', action: 'audit.read' })) return err('PERMISSION_DENIED', 'Permission denied'); }
+  catch { return err('PERMISSION_DENIED', 'Permission denied'); }
+  return { ok: true, result: { ...parsed.result, dataset } };
 }
-
-function allowedDataset(dataset: string, allowed: string[]): boolean {
-  const set = new Set(allowed.map((d) => d.trim()));
-  return typeof dataset === "string" && dataset.trim().length > 0 && set.has(dataset.trim());
+export async function handleOpsExport(config: OpsHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<{ artifact: unknown }>> {
+  const parsed = await input(config, req, 64 * 1024); if (!parsed.ok) return parsed;
+  try {
+    const headers = await config.contentfnOpsHeaders?.(req);
+    return await contentfnExport({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, String(parsed.result.dataset));
+  } catch { return err('CONTENTFN_UNAVAILABLE', 'ContentFn export request could not be configured'); }
 }
-
-async function requireAuditRead(
-  config: OpsHandlerConfig,
-  req: IncomingMessage,
-  dataset: string
-): Promise<CmsfnEnvelope<never> | null> {
-  if (config.authorizeOps) {
-    const allowed = await config.authorizeOps(req);
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
+export async function handleOpsImport(config: OpsHandlerConfig, req: IncomingMessage): Promise<CmsfnEnvelope<Record<string, never>>> {
+  const parsed = await input(config, req, OPS_BODY_MAX_BYTES); if (!parsed.ok) return parsed;
+  const dataset = String(parsed.result.dataset), artifact = parsed.result.artifact;
+  if (!isExportArtifact(artifact)) return err('VALIDATION_FAILED', 'Malformed import artifact', { path: 'artifact' });
+  if (artifact.dataset !== dataset) {
+    try { if (!config.authorizeCrossDatasetImport || await config.authorizeCrossDatasetImport(req, { sourceDataset: artifact.dataset, targetDataset: dataset }) !== true) return err('PERMISSION_DENIED', 'Cross-dataset import denied'); }
+    catch { return err('PERMISSION_DENIED', 'Cross-dataset import denied'); }
   }
-  if (config.getRolesForSubject && dataset) {
-    const allowed = await authorize(config, req, { dataset, type: "*", action: "audit.read" });
-    if (!allowed) return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-  }
-  return null;
-}
-
-/**
- * POST /cmsfn/ops/export — body: { dataset }.
- */
-export async function handleOpsExport(
-  config: OpsHandlerConfig,
-  req: IncomingMessage
-): Promise<CmsfnEnvelope<{ artifact: unknown }>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
-  const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
-  if (!dataset) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
-  }
-  if (!allowedDataset(dataset, config.allowedDatasets)) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "Dataset not allowed", details: { path: "dataset" } } };
-  }
-  const deny = await requireAuditRead(config, req, dataset);
-  if (deny) return deny;
-  const result = await contentfnExport({ contentfnBaseUrl: config.contentfnBaseUrl }, dataset);
-  if (result.ok) {
-    return { ok: true, result: { artifact: result.result.artifact } };
-  }
-  return {
-    ok: false,
-    error: {
-      code: result.error.code,
-      message: result.error.message,
-      details: result.error.details,
-    },
-  };
-}
-
-/**
- * POST /cmsfn/ops/import — body: { dataset, artifact }.
- */
-export async function handleOpsImport(
-  config: OpsHandlerConfig,
-  req: IncomingMessage
-): Promise<CmsfnEnvelope<Record<string, never>>> {
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
-  const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
-  const artifact = body?.artifact;
-  if (!dataset) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
-  }
-  if (artifact === undefined || artifact === null) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "artifact is required", details: { path: "artifact" } } };
-  }
-  if (!allowedDataset(dataset, config.allowedDatasets)) {
-    return { ok: false, error: { code: "VALIDATION_FAILED", message: "Dataset not allowed", details: { path: "dataset" } } };
-  }
-  const deny = await requireAuditRead(config, req, dataset);
-  if (deny) return deny;
-  const result = await contentfnImport(
-    { contentfnBaseUrl: config.contentfnBaseUrl },
-    { dataset, artifact }
-  );
-  if (result.ok) {
-    return { ok: true, result: {} };
-  }
-  return {
-    ok: false,
-    error: {
-      code: result.error.code,
-      message: result.error.message,
-      details: result.error.details,
-    },
-  };
+  try {
+    const headers = await config.contentfnOpsHeaders?.(req);
+    return await contentfnImport({ contentfnBaseUrl: config.contentfnBaseUrl, headers }, { dataset, artifact });
+  } catch { return err('CONTENTFN_UNAVAILABLE', 'ContentFn import request could not be configured'); }
 }

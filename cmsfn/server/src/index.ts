@@ -52,6 +52,10 @@ export interface CmsfnServerConfig extends CmsfnStudioConfig {
    * Use a server service credential or explicitly derived upstream subject; browser headers are not copied.
    */
   contentfnAuditHeaders?: (req: IncomingMessage) => NonNullable<RequestInit["headers"]> | Promise<NonNullable<RequestInit["headers"]>>;
+  /** Trusted upstream identity, resolved only after target ops authorization. */
+  contentfnOpsHeaders?: (req: IncomingMessage) => NonNullable<RequestInit["headers"]> | Promise<NonNullable<RequestInit["headers"]>>;
+  /** Explicit migration policy; omitted/false/throwing denies differing artifact and target datasets. */
+  authorizeCrossDatasetImport?: (req: IncomingMessage, input: { sourceDataset: string; targetDataset: string }) => Promise<boolean>;
 }
 
 function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
@@ -181,6 +185,8 @@ async function route(
     const envelope = await handleOpsExport(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        contentfnOpsHeaders: config.contentfnOpsHeaders,
+        authorizeCrossDatasetImport: config.authorizeCrossDatasetImport,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
       },
@@ -193,6 +199,8 @@ async function route(
     const envelope = await handleOpsImport(
       {
         contentfnBaseUrl: config.contentfn.baseUrl,
+        contentfnOpsHeaders: config.contentfnOpsHeaders,
+        authorizeCrossDatasetImport: config.authorizeCrossDatasetImport,
         allowedDatasets: config.datasets.map((d) => d.name),
         getRolesForSubject: config.getRolesForSubject,
       },
