@@ -31,11 +31,11 @@ from testfn import test_fn
 async def main():
     # Initialize runner
     runner = test_fn(framework="pytest")
-    
+
     # Run tests matching a pattern
     run = await runner.run(["tests/**/*.py"])
-    
-    print(f"Pass rate: {run.summary.passed / run.summary.total * 100}%")
+
+    print(f"Passed {run.summary.passed} of {run.summary.total} tests")
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -49,15 +49,15 @@ from testfn import Storage, AnalyticsEngine
 async def analyze():
     storage = Storage()
     analytics = AnalyticsEngine(storage)
-    
+
     # Detect flaky tests
     flaky = await analytics.detect_flaky("tests/test_ui.py::test_login")
     print(f"Flaky Score: {flaky.flaky_score}")
     print(f"Recommendation: {flaky.recommendation}")
-    
+
     # Find performance regressions
     regressions = await analytics.find_regressions(
-        baseline_run_id="run-1", 
+        baseline_run_id="run-1",
         current_run_id="run-2"
     )
     for reg in regressions:
@@ -99,3 +99,48 @@ pytest
 ## License
 
 MIT
+
+## Execution contract
+
+Pytest runs with the current Python interpreter; pytest >=9.0.3 is a runtime
+dependency. Pillow >=12.3.0 is required for patched image processing.
+Discovery accepts paths, node IDs, and recursive glob patterns. Invalid collection
+or a missing/malformed subprocess report raises an error rather than returning a
+successful empty run. An unmatched glob returns zero discovered tests. Exact
+pytest node IDs preserve class and parameter identities. Discovery records the pytest project root, so execution from a parent directory uses absolute file selectors while preserving those IDs. A single default session requires tests discovered under the same project root. Setup and teardown
+failures count as failures.
+
+`RunOptions(env={...}, parallel=1, retries=0, timeout=None)` controls execution.
+Environment overrides also apply during collection. `timeout` is seconds per
+isolated test attempt, including interpreter startup; `retries` counts additional
+attempts after a failure or timeout. Parallel execution uses at most `parallel`
+subprocesses. Explicit parallelism, retries, or timeouts isolate each test attempt,
+so session/module fixtures run separately in those modes. The default options run
+the full selection in one pytest session and preserve normal fixture scope.
+Collection has a 60-second limit. Run duration is wall time; isolated result
+duration includes startup and retries. `metadata.attempts` records attempts.
+
+Cancellation kills and waits for the active pytest process. On POSIX it also kills
+its process group; on Windows child-created grandchildren are not guaranteed to
+be terminated. No run is persisted after cancellation or a subprocess protocol
+error. Timeout results count as failures in summaries and analytics. Reporters
+receive each final result once. Default suite execution streams completion after
+each test teardown; isolated retry execution reports after the final attempt. Pytest `addopts` and inherited
+`PYTEST_ADDOPTS` are disabled so flags cannot override the selected execution.
+
+## Persistence and visual comparison
+
+Artifacts are associated with both run ID and test ID, so repeated test IDs cannot
+share artifacts across runs. New schemas use a composite foreign key. Existing
+SQLite databases retain the old nullable `artifact_id` column until an explicit
+schema migration; reads and writes use `run_id` plus `result_id`. Back up deployed
+databases before migrating constraints. `Storage.close()` releases engine resources.
+Runs are saved transactionally; duplicate run IDs raise rather than overwrite.
+
+Visual comparison automatically creates a missing baseline. Existing baselines
+are never silently updated. Names are simple filename stems, and symlink output
+files are rejected. PNG writes use atomic replacement. Scores preserve mean RGB
+difference and additionally detect alpha changes; the larger of RGB and alpha
+differences is compared to a finite threshold from 0 to 1. Different image sizes
+fail. Baselines and screenshots are trusted local files; this API does not fetch
+URLs. The package includes `py.typed` for typed consumers.

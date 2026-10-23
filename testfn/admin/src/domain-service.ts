@@ -1,5 +1,6 @@
 import {
   AnalyticsEngine,
+  getArtifactId,
   type TestResult,
   type TestResults,
   type TestRun,
@@ -17,9 +18,20 @@ const claimedScopes = new WeakMap<object, string>();
 const storageQueues = new WeakMap<TestStorage, Promise<unknown>>();
 
 function scopeKey(context: AdminOperationContext): string {
-  const { installationId, organizationId, workspaceId, projectId, environmentId, namespace, region } = context.scope;
+  const {
+    installationId,
+    organizationId,
+    workspaceId,
+    projectId,
+    environmentId,
+    namespace,
+    region,
+  } = context.scope;
   if (!projectId) {
-    throw new AdminError("invalid_argument", "TestFn administration requires a project scope.");
+    throw new AdminError(
+      "invalid_argument",
+      "TestFn administration requires a project scope.",
+    );
   }
   return JSON.stringify([
     installationId ?? organizationId ?? "",
@@ -32,7 +44,11 @@ function scopeKey(context: AdminOperationContext): string {
 }
 
 function claim(binding: TestFnDomainAdminBinding, key: string): void {
-  for (const domainObject of [binding.runner, binding.storage, binding.visual]) {
+  for (const domainObject of [
+    binding.runner,
+    binding.storage,
+    binding.visual,
+  ]) {
     const claimed = claimedScopes.get(domainObject);
     if (claimed && claimed !== key) {
       throw new AdminError(
@@ -46,7 +62,10 @@ function claim(binding: TestFnDomainAdminBinding, key: string): void {
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0) {
-    throw new AdminError("invalid_argument", `${name} must be a non-empty string.`);
+    throw new AdminError(
+      "invalid_argument",
+      `${name} must be a non-empty string.`,
+    );
   }
   return value;
 }
@@ -58,8 +77,15 @@ function integer(
   maximum: number,
 ): number {
   if (value === undefined) return fallback;
-  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > maximum) {
-    throw new AdminError("invalid_argument", `${name} must be an integer between 1 and ${maximum}.`);
+  if (
+    !Number.isInteger(value) ||
+    (value as number) < 1 ||
+    (value as number) > maximum
+  ) {
+    throw new AdminError(
+      "invalid_argument",
+      `${name} must be an integer between 1 and ${maximum}.`,
+    );
   }
   return value as number;
 }
@@ -67,13 +93,19 @@ function integer(
 function screenshot(value: unknown): Buffer {
   const encoded = requiredString(value, "screenshotBase64");
   if (encoded.length > 28_000_000) {
-    throw new AdminError("invalid_argument", "screenshotBase64 exceeds the 28 MB encoded limit.");
+    throw new AdminError(
+      "invalid_argument",
+      "screenshotBase64 exceeds the 28 MB encoded limit.",
+    );
   }
   const decoded = Buffer.from(encoded, "base64");
   const canonicalInput = encoded.replace(/=+$/u, "");
   const canonicalOutput = decoded.toString("base64").replace(/=+$/u, "");
   if (decoded.length === 0 || canonicalInput !== canonicalOutput) {
-    throw new AdminError("invalid_argument", "screenshotBase64 must contain canonical base64 image bytes.");
+    throw new AdminError(
+      "invalid_argument",
+      "screenshotBase64 must contain canonical base64 image bytes.",
+    );
   }
   return decoded;
 }
@@ -81,7 +113,10 @@ function screenshot(value: unknown): Buffer {
 function visualId(value: unknown): string {
   const id = requiredString(value, "id");
   if (id.length > 255 || !/^[A-Za-z0-9._-]+$/u.test(id)) {
-    throw new AdminError("invalid_argument", "Visual target id must be a safe file identifier.");
+    throw new AdminError(
+      "invalid_argument",
+      "Visual target id must be a safe file identifier.",
+    );
   }
   return id;
 }
@@ -90,12 +125,15 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function mapResult(result: TestResult) {
+function mapResult(result: TestResult, runId: string) {
   return {
     id: result.id,
     status: result.status,
     duration: result.duration,
     hasError: Boolean(result.error),
+    artifactIds: (result.artifacts ?? []).map((artifact, index) =>
+      getArtifactId(runId, result.id, artifact.type, index),
+    ),
     artifactTypes: (result.artifacts ?? []).map((artifact) => artifact.type),
   };
 }
@@ -105,14 +143,17 @@ function mapRun(run: TestRun): TestFnAdminRun {
     id: run.id,
     timestamp: run.timestamp,
     summary: run.summary,
-    results: run.results.map(mapResult),
+    results: run.results.map((result) => mapResult(result, run.id)),
     environment: run.environment,
     ...(run.branch ? { branch: run.branch } : {}),
     ...(run.commit ? { commit: run.commit } : {}),
   };
 }
 
-function persistedRun(results: TestResults, binding: TestFnDomainAdminBinding): TestRun {
+function persistedRun(
+  results: TestResults,
+  binding: TestFnDomainAdminBinding,
+): TestRun {
   return {
     id: results.id,
     timestamp: results.timestamp,
@@ -122,8 +163,12 @@ function persistedRun(results: TestResults, binding: TestFnDomainAdminBinding): 
   };
 }
 
-async function withStorage<T>(storage: TestStorage, operation: () => Promise<T>): Promise<T> {
-  const previous = storageQueues.get(storage)?.catch(() => undefined) ?? Promise.resolve();
+async function withStorage<T>(
+  storage: TestStorage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous =
+    storageQueues.get(storage)?.catch(() => undefined) ?? Promise.resolve();
   const current = previous.then(async () => {
     await storage.open();
     try {
@@ -144,11 +189,21 @@ async function withStorage<T>(storage: TestStorage, operation: () => Promise<T>)
 export function createTestFnDomainAdminService(
   options: TestFnDomainAdminServiceOptions,
 ): TestFnAdminService {
-  async function binding(context: AdminOperationContext): Promise<TestFnDomainAdminBinding> {
+  async function binding(
+    context: AdminOperationContext,
+  ): Promise<TestFnDomainAdminBinding> {
     const key = scopeKey(context);
     const resolved = await options.resolve(context);
-    if (!resolved?.runner || !resolved.storage || !resolved.visual || !resolved.environment) {
-      throw new AdminError("dependency_unavailable", "The active scope has no complete TestFn admin binding.");
+    if (
+      !resolved?.runner ||
+      !resolved.storage ||
+      !resolved.visual ||
+      !resolved.environment
+    ) {
+      throw new AdminError(
+        "dependency_unavailable",
+        "The active scope has no complete TestFn admin binding.",
+      );
     }
     claim(resolved, key);
     return resolved;
@@ -158,14 +213,22 @@ export function createTestFnDomainAdminService(
     async listRuns(input, context) {
       const resolved = await binding(context);
       const limit = integer(input.limit, "limit", 50, 200);
-      const runs = await withStorage(resolved.storage, () => resolved.storage.getRecentRuns(limit));
+      const runs = await withStorage(resolved.storage, () =>
+        resolved.storage.getRecentRuns(limit),
+      );
       return { items: runs.map(mapRun), nextCursor: null };
     },
 
     async getRun(input, context) {
       const resolved = await binding(context);
-      const run = await withStorage(resolved.storage, () => resolved.storage.getRun(requiredString(input.id, "id")));
-      if (!run) throw new AdminError("not_found", "The TestFn run was not found in the active scope.");
+      const run = await withStorage(resolved.storage, () =>
+        resolved.storage.getRun(requiredString(input.id, "id")),
+      );
+      if (!run)
+        throw new AdminError(
+          "not_found",
+          "The TestFn run was not found in the active scope.",
+        );
       return { item: mapRun(run) };
     },
 
@@ -179,7 +242,10 @@ export function createTestFnDomainAdminService(
 
     async cleanupRuns(input, context) {
       if (input.id !== "expired") {
-        throw new AdminError("invalid_argument", "Cleanup target id must be expired.");
+        throw new AdminError(
+          "invalid_argument",
+          "Cleanup target id must be expired.",
+        );
       }
       requiredString(input.reason, "reason");
       const resolved = await binding(context);
@@ -190,15 +256,23 @@ export function createTestFnDomainAdminService(
     async getArtifact(input, context) {
       const resolved = await binding(context);
       const id = requiredString(input.id, "id");
-      const artifact = await withStorage(resolved.storage, () => resolved.storage.getArtifact(id));
-      if (!artifact) throw new AdminError("not_found", "The TestFn artifact was not found in the active scope.");
+      const artifact = await withStorage(resolved.storage, () =>
+        resolved.storage.getArtifactInfo(id),
+      );
+      if (!artifact)
+        throw new AdminError(
+          "not_found",
+          "The TestFn artifact was not found in the active scope.",
+        );
       return { item: { id, type: artifact.type, available: true } };
     },
 
     async getMetrics(input, context) {
       const resolved = await binding(context);
       const id = requiredString(input.id, "id");
-      const metrics = await withStorage(resolved.storage, () => new AnalyticsEngine(resolved.storage).computeMetrics(id));
+      const metrics = await withStorage(resolved.storage, () =>
+        new AnalyticsEngine(resolved.storage).computeMetrics(id),
+      );
       return {
         item: {
           id,
@@ -216,7 +290,10 @@ export function createTestFnDomainAdminService(
       const resolved = await binding(context);
       const id = requiredString(input.id, "id");
       const analysis = await withStorage(resolved.storage, () =>
-        new AnalyticsEngine(resolved.storage).detectFlaky(id, integer(input.windowSize, "windowSize", 10, 100)),
+        new AnalyticsEngine(resolved.storage).detectFlaky(
+          id,
+          integer(input.windowSize, "windowSize", 10, 100),
+        ),
       );
       return { item: { id, ...analysis } };
     },
@@ -225,17 +302,26 @@ export function createTestFnDomainAdminService(
       const resolved = await binding(context);
       const id = requiredString(input.id, "id");
       const trends = await withStorage(resolved.storage, () =>
-        new AnalyticsEngine(resolved.storage).getTrends(id, integer(input.days, "days", 30, 365)),
+        new AnalyticsEngine(resolved.storage).getTrends(
+          id,
+          integer(input.days, "days", 30, 365),
+        ),
       );
       return { item: { id, ...trends } };
     },
 
     async getRegressions(input, context) {
       const resolved = await binding(context);
-      const baselineRunId = requiredString(input.baselineRunId, "baselineRunId");
+      const baselineRunId = requiredString(
+        input.baselineRunId,
+        "baselineRunId",
+      );
       const currentRunId = requiredString(input.currentRunId, "currentRunId");
       const items = await withStorage(resolved.storage, () =>
-        new AnalyticsEngine(resolved.storage).findRegressions(baselineRunId, currentRunId),
+        new AnalyticsEngine(resolved.storage).findRegressions(
+          baselineRunId,
+          currentRunId,
+        ),
       );
       return {
         items: items.map((regression) => ({
@@ -251,14 +337,26 @@ export function createTestFnDomainAdminService(
       const resolved = await binding(context);
       const id = visualId(input.id);
       const diff = await resolved.visual.getDiff(id);
-      return { item: { id, available: diff !== null, sizeBytes: diff?.byteLength ?? 0 } };
+      return {
+        item: {
+          id,
+          available: diff !== null,
+          sizeBytes: diff?.byteLength ?? 0,
+        },
+      };
     },
 
     async compareScreenshot(input, context) {
       const resolved = await binding(context);
       const id = visualId(input.id);
-      const captured = await resolved.visual.captureScreenshot(id, screenshot(input.screenshotBase64));
-      const { diffImage: _diffImage, ...comparison } = await resolved.visual.compareScreenshot(captured, id);
+      const captured = await resolved.visual.captureScreenshot(
+        id,
+        screenshot(input.screenshotBase64),
+      );
+      const { diffImage: _diffImage, ...comparison } =
+        await resolved.visual.compareScreenshot(captured, id, {
+          updateBaselines: false,
+        });
       return { item: { id, ...comparison } };
     },
 
@@ -266,7 +364,10 @@ export function createTestFnDomainAdminService(
       requiredString(input.reason, "reason");
       const resolved = await binding(context);
       const id = visualId(input.id);
-      const captured = await resolved.visual.captureScreenshot(id, screenshot(input.screenshotBase64));
+      const captured = await resolved.visual.captureScreenshot(
+        id,
+        screenshot(input.screenshotBase64),
+      );
       await resolved.visual.updateBaseline(id, captured);
       return { accepted: true };
     },

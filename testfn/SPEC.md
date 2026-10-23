@@ -6,8 +6,8 @@
 
 TestFn is a developer-first testing solution that combines test execution, analytics, and visual testing into a single self-hosted platform. It builds on the super-functions ecosystem, reusing proven patterns from searchfn and @superfunctions/db.
 
-**Version**: 0.1.0  
-**Target Release**: Q1 2026  
+**Version**: 0.1.0
+**Target Release**: Q1 2026
 **Status**: Specification
 
 ## Core Philosophy
@@ -221,7 +221,7 @@ class TestStorage {
 // Store names
 const STORES = {
   runs: 'testfn_runs',
-  results: 'testfn_results', 
+  results: 'testfn_results',
   artifacts: 'testfn_artifacts',
   metadata: 'testfn_metadata'
 };
@@ -314,18 +314,18 @@ function detectFlaky(results: TestResult[]): FlakyAnalysis {
   const windowSize = 10;
   const recentResults = results.slice(-windowSize).map(r => r.status === 'passed');
   const passRate = recentResults.filter(Boolean).length / recentResults.length;
-  
+
   // Score based on pass rate and volatility
   let flakyScore = 0;
   if (passRate > 0.2 && passRate < 0.8) {
     flakyScore = 1 - Math.abs(passRate - 0.5) * 2;
   }
-  
+
   let recommendation: 'investigate' | 'quarantine' | 'stable';
   if (flakyScore > 0.7) recommendation = 'quarantine';
   else if (flakyScore > 0.4) recommendation = 'investigate';
   else recommendation = 'stable';
-  
+
   return { testId, flakyScore, passRate, recentResults, recommendation };
 }
 ```
@@ -333,17 +333,17 @@ function detectFlaky(results: TestResult[]): FlakyAnalysis {
 **Performance Regression Detection**:
 ```typescript
 function detectRegression(
-  baseline: TestResult[], 
+  baseline: TestResult[],
   current: TestResult[]
 ): Regression[] {
   const regressions: Regression[] = [];
-  
+
   for (const test of current) {
     const baselineTest = baseline.find(t => t.id === test.id);
     if (!baselineTest) continue;
-    
+
     const change = (test.duration - baselineTest.duration) / baselineTest.duration;
-    
+
     // Flag if >20% slower and >100ms absolute increase
     if (change > 0.2 && (test.duration - baselineTest.duration) > 100) {
       regressions.push({
@@ -356,7 +356,7 @@ function detectRegression(
       });
     }
   }
-  
+
   return regressions;
 }
 ```
@@ -393,18 +393,18 @@ interface VisualTestConfig {
 
 class VisualTester {
   async captureScreenshot(
-    page: Page, 
-    name: string, 
+    page: Page,
+    name: string,
     options?: CaptureOptions
   ): Promise<Screenshot>;
-  
+
   async compareScreenshot(
-    current: Screenshot, 
+    current: Screenshot,
     baseline: Screenshot
   ): Promise<ComparisonResult>;
-  
+
   async updateBaseline(name: string, screenshot: Screenshot): Promise<void>;
-  
+
   async getDiff(name: string): Promise<DiffImage | null>;
 }
 
@@ -445,7 +445,7 @@ function pixelDiff(img1: Buffer, img2: Buffer): number {
     const dr = Math.abs(img1[i] - img2[i]);
     const dg = Math.abs(img1[i+1] - img2[i+1]);
     const db = Math.abs(img1[i+2] - img2[i+2]);
-    
+
     if (dr > threshold || dg > threshold || db > threshold) {
       diffPixels++;
     }

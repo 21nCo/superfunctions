@@ -1,27 +1,31 @@
-import pytest
 import os
-import shutil
-from testfn.runner import Runner
-from testfn.types import ResultStatus
-from testfn.storage import Storage
+from pathlib import Path
+
+import pytest
+
 from testfn.analytics import AnalyticsEngine
+from testfn.runner import Runner
+from testfn.storage import Storage
+from testfn.types import ResultStatus
 
 
 @pytest.mark.asyncio
-async def test_runner_execution():
+async def test_runner_execution(tmp_path: Path) -> None:
     # Use a temporary DB for testing
-    db_path = "test_testfn.db"
+    db_path = str(tmp_path / "test_testfn.db")
     if os.path.exists(db_path):
         os.remove(db_path)
-    
+
     storage = Storage(database_url=f"sqlite:///{db_path}")
     runner = Runner(storage=storage)
 
     # Path to fixture
-    fixture_path = "tests/fixtures/dummy.py"
+    fixture_path = str(Path(__file__).parent / "fixtures" / "dummy.py")
 
     # Ensure fixture exists
-    assert os.path.exists(fixture_path), f"Fixture not found at {os.path.abspath(fixture_path)}"
+    assert os.path.exists(
+        fixture_path
+    ), f"Fixture not found at {os.path.abspath(fixture_path)}"
 
     run_result = await runner.run([fixture_path])
 
@@ -46,43 +50,53 @@ async def test_runner_execution():
     metrics = await analytics.compute_metrics(run_result.id)
     assert metrics.total == 3
     assert metrics.passed == 1
-    assert metrics.success_rate == (1/3) * 100
+    assert metrics.success_rate == (1 / 3) * 100
 
+    storage.close()
     # Cleanup
     if os.path.exists(db_path):
         os.remove(db_path)
 
+
 @pytest.mark.asyncio
-async def test_flaky_detection():
-    db_path = "test_flaky.db"
+async def test_flaky_detection(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "test_flaky.db")
     if os.path.exists(db_path):
         os.remove(db_path)
-    
+
     storage = Storage(database_url=f"sqlite:///{db_path}")
     analytics = AnalyticsEngine(storage)
-    
+
     # Manually save some runs to simulate history
-    from testfn.types import TestRun, TestRunSummary, EnvironmentInfo, TestResult
     import time
     import uuid
 
+    from testfn.types import EnvironmentInfo, TestResult, TestRun, TestRunSummary
+
     test_id = "test_flaky_id"
-    
+
     for i in range(10):
         status = ResultStatus.PASSED if i % 2 == 0 else ResultStatus.FAILED
         run = TestRun(
             id=str(uuid.uuid4()),
             timestamp=time.time(),
             environment=EnvironmentInfo(platform="test"),
-            summary=TestRunSummary(total=1, passed=1 if status == ResultStatus.PASSED else 0, failed=1 if status == ResultStatus.FAILED else 0, skipped=0, duration=100),
-            results=[TestResult(id=test_id, status=status, duration=100)]
+            summary=TestRunSummary(
+                total=1,
+                passed=1 if status == ResultStatus.PASSED else 0,
+                failed=1 if status == ResultStatus.FAILED else 0,
+                skipped=0,
+                duration=100,
+            ),
+            results=[TestResult(id=test_id, status=status, duration=100)],
         )
         storage.save_run(run)
-    
+
     flaky = await analytics.detect_flaky(test_id)
     assert flaky.flaky_score > 0.5
     assert flaky.recommendation in ["investigate", "quarantine"]
 
+    storage.close()
     # Cleanup
     if os.path.exists(db_path):
         os.remove(db_path)

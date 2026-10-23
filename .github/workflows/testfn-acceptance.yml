@@ -1,0 +1,59 @@
+name: TestFn acceptance
+on:
+  pull_request:
+    paths:
+      - 'testfn/**'
+      - 'packages/db/**'
+      - 'packages/admin/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/testfn-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  frameworks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund -w @testfn/core -w @testfn/admin -w @superfunctions/db -w @superfunctions/admin -w @superfunctions/observability -w @mcpfn/core
+      - run: npm rebuild better-sqlite3
+      # The full monorepo graph contains unrelated ProbeFn cycles; run this dependency closure explicitly.
+      - run: npm run build -w @superfunctions/observability -w @superfunctions/db -w @mcpfn/core -w @superfunctions/admin -w @testfn/core -w @testfn/admin
+      - run: npm test -w @testfn/core -w @testfn/admin -w @superfunctions/db -w @superfunctions/admin -w @superfunctions/observability -w @mcpfn/core -- --run
+      - run: npm run typecheck -w @testfn/core -w @testfn/admin -w @superfunctions/db -w @superfunctions/admin -w @superfunctions/observability -w @mcpfn/core
+      - run: npm run test:coverage -w @testfn/core
+      - run: node testfn/scripts/storage-performance-acceptance.mjs
+      - run: npm exec -w @testfn/core -- playwright install --with-deps chromium firefox webkit
+      - name: Use installed Chromium for Puppeteer and browser acceptance
+        working-directory: testfn/typescript
+        run: echo "BROWSER_EXECUTABLE_PATH=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - run: node testfn/scripts/framework-acceptance.mjs
+      - run: node testfn/scripts/indexeddb-browser-acceptance.mjs
+      - run: TESTFN_BROWSER_ENGINE=webkit node testfn/scripts/indexeddb-browser-acceptance.mjs
+      - run: node testfn/scripts/dashboard-profiles-acceptance.mjs
+      - run: node testfn/scripts/sqlite-acceptance.mjs
+      - run: node testfn/scripts/packed-consumer.mjs
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install './testfn/python[dev]' build
+      - run: python -m pytest testfn/python/tests -q
+      - run: python -m mypy testfn/python/testfn --strict
+      - run: python -m ruff check testfn/python/testfn
+      - run: python -m build --outdir /tmp/testfn-dist testfn/python
+      - run: python -m pip install --force-reinstall /tmp/testfn-dist/*.whl
+      - run: python testfn/python/scripts/packed_consumer.py

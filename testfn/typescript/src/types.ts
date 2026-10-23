@@ -1,13 +1,16 @@
-export type TestStatus = 'passed' | 'failed' | 'skipped' | 'timeout';
-export type FrameworkType = 'vitest' | 'playwright' | 'jest' | 'puppeteer';
-export type StorageType = 'indexeddb' | 'file' | 'db';
-export type BrowserType = 'chromium' | 'firefox' | 'webkit';
-export type ArtifactType = 'screenshot' | 'video' | 'trace' | 'log';
+import type { Adapter } from "@superfunctions/db";
+export type TestStatus = "passed" | "failed" | "skipped" | "timeout";
+export type FrameworkType = "vitest" | "playwright" | "jest" | "puppeteer";
+export type StorageType = "indexeddb" | "file" | "db";
+export type BrowserType = "chromium" | "firefox" | "webkit";
+export type ArtifactType = "screenshot" | "video" | "trace" | "log";
 
 export interface TestFnConfig {
+  signal?: AbortSignal;
+  configFile?: string;
   framework: FrameworkType;
   testPattern?: string | string[];
-  parallel?: number | 'auto';
+  parallel?: number | "auto";
   timeout?: number;
   retries?: number;
   env?: Record<string, string>;
@@ -20,13 +23,31 @@ export interface TestFnConfig {
 }
 
 export interface StorageConfig {
+  /** Run-write count triggering automatic retention cleanup; zero disables it. */
+  cleanupThreshold?: number;
   type: StorageType;
   dbName?: string;
-  adapter?: unknown;
+  adapter?: Adapter;
   retentionDays?: number;
 }
 
+export interface NetworkProfile {
+  name: string;
+  downloadThroughput: number;
+  uploadThroughput: number;
+  latency: number;
+}
+export interface DeviceProfile {
+  name: string;
+  userAgent: string;
+  viewport: { width: number; height: number };
+  deviceScaleFactor: number;
+  isMobile: boolean;
+  hasTouch: boolean;
+}
 export interface BrowserConfig {
+  isMobile?: boolean;
+  hasTouch?: boolean;
   name: BrowserType;
   headless?: boolean;
   viewport?: { width: number; height: number };
@@ -38,9 +59,31 @@ export interface BrowserConfig {
   geolocation?: { latitude: number; longitude: number };
 }
 
+export interface VisualEnvironment {
+  name?: string;
+  browser?: string;
+  viewport?: { width: number; height: number };
+}
+
+export interface CaptureOptions {
+  fullPage?: boolean;
+  environment?: VisualEnvironment;
+}
+
+export interface PageLike {
+  screenshot(options?: {
+    fullPage?: boolean;
+    type?: "png";
+  }): Promise<Buffer | Uint8Array>;
+}
+
 export interface VisualTestConfig {
   baselineDir: string;
-  diffDir: string;
+  diffDir?: string;
+  algorithm?: "pixel" | "ssim";
+  ssimThreshold?: number;
+  environment?: VisualEnvironment;
+  approvalRequired?: boolean;
   threshold?: number;
   updateBaselines?: boolean;
   fullPage?: boolean;
@@ -116,6 +159,7 @@ export interface ArtifactReference {
 }
 
 export interface TestRun {
+  artifacts?: ArtifactReference[];
   id: string;
   timestamp: number;
   branch?: string;
@@ -147,6 +191,10 @@ export interface TestFrameworkAdapter {
 }
 
 export interface RunOptions {
+  onTestStart?: (test: TestCase) => void | Promise<void>;
+  onTestComplete?: (result: TestResult) => void | Promise<void>;
+  signal?: AbortSignal;
+  configFile?: string;
   parallel?: number;
   timeout?: number;
   retries?: number;
@@ -156,9 +204,10 @@ export interface RunOptions {
 }
 
 export interface Reporter {
-  onTestStart?(test: TestCase): void;
-  onTestComplete?(result: TestResult): void;
-  onRunComplete?(summary: TestRunSummary): void;
+  onRunStart?(): void | Promise<void>;
+  onTestStart?(test: TestCase): void | Promise<void>;
+  onTestComplete?(result: TestResult): void | Promise<void>;
+  onRunComplete?(summary: TestRunSummary): void | Promise<void>;
 }
 
 export interface RunMetrics {
@@ -175,12 +224,12 @@ export interface FlakyAnalysis {
   flakyScore: number;
   passRate: number;
   recentResults: boolean[];
-  recommendation: 'investigate' | 'quarantine' | 'stable';
+  recommendation: "investigate" | "quarantine" | "stable";
 }
 
 export interface Regression {
   testId: string;
-  metric: 'duration' | 'memory' | 'coverage';
+  metric: "duration" | "memory" | "coverage";
   baseline: number;
   current: number;
   change: number;
@@ -208,6 +257,7 @@ export interface Screenshot {
 export interface ComparisonResult {
   passed: boolean;
   similarity: number;
+  ssim?: number;
   pixelDiffCount: number;
   diffPercentage: number;
   diffImage?: Buffer;
@@ -219,7 +269,7 @@ export interface DiffRegion {
   y: number;
   width: number;
   height: number;
-  severity: 'minor' | 'major';
+  severity: "minor" | "major";
 }
 
 export interface JsonReport {

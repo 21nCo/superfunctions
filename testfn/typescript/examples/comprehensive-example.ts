@@ -40,7 +40,7 @@ async function runWithAnalytics() {
     type: 'indexeddb',
     dbName: 'testfn-comprehensive'
   });
-  
+
   await storage.open();
 
   const analytics = new AnalyticsEngine(storage);
@@ -50,7 +50,7 @@ async function runWithAnalytics() {
   console.log('='.repeat(60));
 
   const metrics = await analytics.computeMetrics(results.id);
-  
+
   console.log('\n📊 Performance Metrics:');
   console.log(`   Success Rate: ${(metrics.successRate * 100).toFixed(2)}%`);
   console.log(`   Avg Duration: ${metrics.avgDuration.toFixed(0)}ms`);
@@ -65,34 +65,34 @@ async function runWithAnalytics() {
 
   console.log('\n🔍 Flaky Test Analysis:');
   let flakyCount = 0;
-  
+
   for (const result of results.results) {
     const flaky = await analytics.detectFlaky(result.id, 10);
-    
+
     if (flaky.flakyScore > 0.3) {
       flakyCount++;
-      const emoji = flaky.recommendation === 'quarantine' ? '🚨' : 
+      const emoji = flaky.recommendation === 'quarantine' ? '🚨' :
                     flaky.recommendation === 'investigate' ? '⚠️' : '✅';
-      
+
       console.log(`   ${emoji} ${result.id}`);
       console.log(`      Score: ${flaky.flakyScore.toFixed(2)} | Pass Rate: ${(flaky.passRate * 100).toFixed(0)}%`);
       console.log(`      Action: ${flaky.recommendation}`);
     }
   }
-  
+
   if (flakyCount === 0) {
     console.log('   ✅ No flaky tests detected');
   }
 
   const recentRuns = await storage.getRecentRuns(5);
-  
+
   if (recentRuns.length >= 2) {
     console.log('\n📈 Performance Regression Analysis:');
     const regressions = await analytics.findRegressions(
       recentRuns[1].id,
       recentRuns[0].id
     );
-    
+
     if (regressions.length > 0) {
       for (const reg of regressions) {
         const changeEmoji = reg.significant ? '🔴' : '🟡';

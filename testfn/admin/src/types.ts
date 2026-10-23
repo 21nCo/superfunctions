@@ -117,18 +117,54 @@ export interface TestFnAcceptedOutput {
 }
 
 export interface TestFnAdminService {
-  listRuns(input: TestFnListRunsInput, context: AdminOperationContext): Promise<TestFnListRunsOutput>;
-  getRun(input: TestFnIdInput, context: AdminOperationContext): Promise<TestFnRunOutput>;
-  startRun(input: TestFnStartRunInput, context: AdminOperationContext): Promise<TestFnRunOutput>;
-  cleanupRuns(input: TestFnCleanupRunsInput, context: AdminOperationContext): Promise<TestFnAcceptedOutput>;
-  getArtifact(input: TestFnIdInput, context: AdminOperationContext): Promise<TestFnArtifactOutput>;
-  getMetrics(input: TestFnIdInput, context: AdminOperationContext): Promise<TestFnMetricsOutput>;
-  getFlakiness(input: TestFnFlakinessInput, context: AdminOperationContext): Promise<TestFnFlakinessOutput>;
-  getTrends(input: TestFnTrendsInput, context: AdminOperationContext): Promise<TestFnTrendsOutput>;
-  getRegressions(input: TestFnRegressionsInput, context: AdminOperationContext): Promise<TestFnRegressionsOutput>;
-  getVisualDiff(input: TestFnIdInput, context: AdminOperationContext): Promise<TestFnVisualDiffOutput>;
-  compareScreenshot(input: TestFnScreenshotInput, context: AdminOperationContext): Promise<TestFnComparisonOutput>;
-  updateBaseline(input: TestFnUpdateBaselineInput, context: AdminOperationContext): Promise<TestFnAcceptedOutput>;
+  listRuns(
+    input: TestFnListRunsInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnListRunsOutput>;
+  getRun(
+    input: TestFnIdInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnRunOutput>;
+  startRun(
+    input: TestFnStartRunInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnRunOutput>;
+  cleanupRuns(
+    input: TestFnCleanupRunsInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnAcceptedOutput>;
+  getArtifact(
+    input: TestFnIdInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnArtifactOutput>;
+  getMetrics(
+    input: TestFnIdInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnMetricsOutput>;
+  getFlakiness(
+    input: TestFnFlakinessInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnFlakinessOutput>;
+  getTrends(
+    input: TestFnTrendsInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnTrendsOutput>;
+  getRegressions(
+    input: TestFnRegressionsInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnRegressionsOutput>;
+  getVisualDiff(
+    input: TestFnIdInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnVisualDiffOutput>;
+  compareScreenshot(
+    input: TestFnScreenshotInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnComparisonOutput>;
+  updateBaseline(
+    input: TestFnUpdateBaselineInput,
+    context: AdminOperationContext,
+  ): Promise<TestFnAcceptedOutput>;
 }
 
 /** One coherent set of TestFn objects, already isolated to exactly one admin scope. */
@@ -141,5 +177,7 @@ export interface TestFnDomainAdminBinding {
 
 export interface TestFnDomainAdminServiceOptions {
   /** Resolve configured domain objects for the complete active scope. Objects cannot be reused across scopes. */
-  resolve(context: AdminOperationContext): TestFnDomainAdminBinding | Promise<TestFnDomainAdminBinding>;
+  resolve(
+    context: AdminOperationContext,
+  ): TestFnDomainAdminBinding | Promise<TestFnDomainAdminBinding>;
 }

@@ -1,10 +1,15 @@
-import type { TestFrameworkAdapter, TestCase, TestResult, RunOptions } from '../types.js';
+import type {
+  TestFrameworkAdapter,
+  TestCase,
+  TestResult,
+  RunOptions,
+} from "../types.js";
 
 export abstract class BaseAdapter implements TestFrameworkAdapter {
   abstract name: string;
 
   abstract discover(pattern: string[]): Promise<TestCase[]>;
-  
+
   abstract run(tests: TestCase[], options: RunOptions): Promise<TestResult[]>;
 
   supports(framework: string): boolean {
@@ -15,18 +20,26 @@ export abstract class BaseAdapter implements TestFrameworkAdapter {
     const parts = [file];
     if (suite) parts.push(suite);
     parts.push(name);
-    return parts.join(' > ');
+    return parts.join(" > ");
   }
 
   protected async executeWithTimeout<T>(
     promise: Promise<T>,
-    timeout: number = 30000
+    timeout: number = 30000,
   ): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error('Test execution timeout')), timeout)
-      )
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Test execution timeout")),
+            timeout,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

@@ -1,145 +1,137 @@
-import { spawn } from 'child_process';
-import fg from 'fast-glob';
-import { BaseAdapter } from './base-adapter.js';
-import type { TestCase, TestResult, RunOptions, BrowserConfig, BrowserType } from '../types.js';
+import { existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { JsonFrameworkAdapter } from "./json-adapter.js";
+import { frameworkCli } from "./process.js";
+import type { RunOptions, TestCase, TestResult } from "../types.js";
 
-export class PlaywrightAdapter extends BaseAdapter {
-  name = 'playwright';
-
-  async discover(pattern: string[]): Promise<TestCase[]> {
-    const files = await fg(pattern, {
-      absolute: false,
-      onlyFiles: true
-    });
-
-    const tests: TestCase[] = [];
-    
-    for (const file of files) {
-      const testId = this.generateTestId(file, 'playwright-test');
-      tests.push({
-        id: testId,
-        file,
-        name: file,
-        suite: 'playwright'
-      });
-    }
-
-    return tests;
+export class PlaywrightAdapter extends JsonFrameworkAdapter {
+  name = "playwright";
+  protected arguments(_file: string, options: RunOptions): string[] {
+    return [
+      frameworkCli("@playwright/test", "playwright"),
+      "test",
+      "--config",
+      options.configFile!,
+      "--reporter=json",
+      "--workers=1",
+      ...(options.timeout ? [`--timeout=${options.timeout}`] : []),
+    ];
   }
-
-  async run(tests: TestCase[], options: RunOptions): Promise<TestResult[]> {
-    const browsers = this.getBrowsers(options.browsers);
-    const results: TestResult[] = [];
-
-    for (const test of tests) {
-      for (const browser of browsers) {
-        const startTime = Date.now();
-        const testId = `${test.id} (${browser.name})`;
-        
-        try {
-          const result = await this.runPlaywrightTest(test.file, browser, options);
-          const duration = Date.now() - startTime;
-
-          results.push({
-            id: testId,
-            status: result.passed ? 'passed' : 'failed',
-            duration,
-            error: result.error ? {
-              message: result.error.message,
-              stack: result.error.stack
-            } : undefined,
-            artifacts: result.artifacts,
-            metadata: {
-              browser: browser.name,
-              headless: browser.headless
-            }
-          });
-
-          if (options.onProgress) {
-            options.onProgress({
-              completed: results.length,
-              total: tests.length * browsers.length,
-              current: test
-            });
-          }
-        } catch (error) {
-          const duration = Date.now() - startTime;
-          results.push({
-            id: testId,
-            status: 'failed',
-            duration,
-            error: {
-              message: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined
-            },
-            metadata: {
-              browser: browser.name
-            }
-          });
-        }
-      }
-    }
-
-    return results;
-  }
-
-  private getBrowsers(browserConfigs?: BrowserConfig[]): Array<{ name: BrowserType; headless: boolean }> {
-    if (!browserConfigs || browserConfigs.length === 0) {
-      return [{ name: 'chromium', headless: true }];
-    }
-
-    return browserConfigs.map(config => ({
-      name: config.name,
-      headless: config.headless ?? true
+  protected async execute(
+    test: TestCase,
+    options: RunOptions,
+  ): Promise<TestResult[]> {
+    const token = randomUUID();
+    const configFile = resolve(`.testfn-${token}.config.ts`);
+    const original =
+      options.configFile ??
+      ["ts", "js", "mts", "mjs", "cts", "cjs"]
+        .map((ext) => resolve(`playwright.config.${ext}`))
+        .find(existsSync);
+    const browsers = options.browsers?.length
+      ? options.browsers
+      : [{ name: "chromium" as const, headless: true }];
+    const projects = browsers.map((browser) => ({
+      name: browser.name,
+      use: {
+        ...browser,
+        browserName: browser.name,
+        timezoneId: browser.timezone,
+        name: undefined,
+        timezone: undefined,
+      },
     }));
+    const literalPath = resolve(test.file).replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&",
+    );
+    const content = `${original ? `import original from ${JSON.stringify(resolve(original))};` : "const original = {};"}
+export default {...original, testDir:${JSON.stringify(process.cwd())}, testMatch:new RegExp(${JSON.stringify("^" + literalPath + "$")}), outputDir:${JSON.stringify(join(process.cwd(), "test-results", `testfn-${token}`))}, projects:${JSON.stringify(projects)}.map(project=>({...project,use:{...original.use,...original.projects?.find(p=>p.name===project.name)?.use,...project.use}}))};`;
+    writeFileSync(configFile, content);
+    try {
+      return await super.execute(test, { ...options, configFile });
+    } finally {
+      unlinkSync(configFile);
+    }
   }
-
-  private async runPlaywrightTest(
-    file: string,
-    browser: { name: BrowserType; headless: boolean },
-    options: RunOptions
-  ): Promise<{ passed: boolean; error?: Error; artifacts?: Array<{ type: 'screenshot' | 'video' | 'trace'; path: string }> }> {
-    return new Promise((resolve) => {
-      const args = ['test', file, `--project=${browser.name}`, '--reporter=json'];
-      
-      if (browser.headless) {
-        args.push('--headed=false');
-      }
-
-      if (options.timeout) {
-        args.push(`--timeout=${options.timeout}`);
-      }
-
-      const child = spawn('npx', ['playwright', ...args], {
-        env: { ...process.env, ...options.env },
-        shell: true
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve({ passed: true });
-        } else {
-          resolve({
-            passed: false,
-            error: new Error(stderr || stdout || `Test failed with code ${code}`)
+  protected parse(output: string, test: TestCase): TestResult[] {
+    const report = JSON.parse(output);
+    const results: TestResult[] = [];
+    const visit = (suite: any, titles: string[]) => {
+      for (const spec of suite.specs ?? [])
+        for (const project of spec.tests ?? []) {
+          const result = project.results?.at(-1);
+          if (!result) continue;
+          const status =
+            result.status === "skipped"
+              ? "skipped"
+              : project.status === "expected" || project.status === "flaky"
+                ? "passed"
+                : result.status === "timedOut"
+                  ? "timeout"
+                  : "failed";
+          const name = [...titles, spec.title].filter(Boolean).join(" > ");
+          const logs = ["stdout", "stderr"].flatMap((stream) => {
+            const text = (result[stream] ?? [])
+              .map(
+                (entry: any) =>
+                  entry.text ??
+                  (entry.buffer
+                    ? Buffer.from(entry.buffer, "base64").toString("utf8")
+                    : ""),
+              )
+              .join("");
+            return text
+              ? [
+                  {
+                    type: "log" as const,
+                    path: `${test.file}.${project.projectName}.${stream}.log`,
+                    buffer: Buffer.from(text),
+                    metadata: { stream },
+                  },
+                ]
+              : [];
+          });
+          results.push({
+            id: this.generateTestId(
+              test.file,
+              `${name} (${project.projectName})`,
+            ),
+            status,
+            duration: result.duration ?? 0,
+            ...(status === "failed" || status === "timeout"
+              ? {
+                  error: {
+                    message:
+                      result.error?.message ??
+                      result.errors?.map((e: any) => e.message).join("\n") ??
+                      "Playwright test failed",
+                  },
+                }
+              : {}),
+            artifacts: [
+              ...logs,
+              ...(result.attachments ?? [])
+                .filter((a: any) => a.path)
+                .map((a: any) => ({
+                  type: a.contentType?.startsWith("image/")
+                    ? "screenshot"
+                    : a.contentType?.startsWith("video/")
+                      ? "video"
+                      : a.name === "trace"
+                        ? "trace"
+                        : "log",
+                  path: a.path,
+                })),
+            ],
+            metadata: { browser: project.projectName, file: test.file, name },
           });
         }
-      });
-
-      child.on('error', (error) => {
-        resolve({ passed: false, error });
-      });
-    });
+      for (const child of suite.suites ?? [])
+        visit(child, [...titles, child.title]);
+    };
+    for (const suite of report.suites ?? []) visit(suite, []);
+    return results;
   }
 }

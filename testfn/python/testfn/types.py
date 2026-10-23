@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -30,6 +31,7 @@ class TestCase(BaseModel):
     name: str
     suite: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    rootdir: Optional[str] = None
 
 
 class TestResult(BaseModel):

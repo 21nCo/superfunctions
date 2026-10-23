@@ -11,7 +11,8 @@ function bind<TInput, TOutput>(
   service: TestFnAdminService,
   handler: (input: TInput, context: AdminOperationContext) => Promise<TOutput>,
 ) {
-  return ({ input, context }: AdminOperationRequest) => handler.call(service, input as TInput, context);
+  return ({ input, context }: AdminOperationRequest) =>
+    handler.call(service, input as TInput, context);
 }
 
 /** Maps every manifest operation to one explicit typed TestFn domain method. */

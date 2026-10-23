@@ -1,50 +1,90 @@
-import json
-import time
-from typing import List, Optional, Any
-from sqlalchemy import create_engine, Column, String, Float, Integer, Text, JSON, ForeignKey, select
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from .types import TestRun, TestResult, Artifact, TestRunSummary, EnvironmentInfo, ResultStatus, TestError
+from typing import Any, List, Optional
 
-Base = declarative_base()
+from sqlalchemy import (
+    JSON,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    create_engine,
+    select,
+)
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
+
+from .types import (
+    Artifact,
+    EnvironmentInfo,
+    ResultStatus,
+    TestError,
+    TestResult,
+    TestRun,
+    TestRunSummary,
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 class TestRunModel(Base):
     __tablename__ = "testfn_runs"
-    id = Column(String, primary_key=True)
-    timestamp = Column(Float, nullable=False)
-    branch = Column(String)
-    commit = Column(String)
-    author = Column(String)
-    environment = Column(JSON)
-    summary = Column(JSON)
-    results = relationship("TestResultModel", back_populates="run", cascade="all, delete-orphan")
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    timestamp: Mapped[float] = mapped_column(Float)
+    branch: Mapped[Optional[str]] = mapped_column(String)
+    commit: Mapped[Optional[str]] = mapped_column(String)
+    author: Mapped[Optional[str]] = mapped_column(String)
+    environment: Mapped[dict[str, Any]] = mapped_column(JSON)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON)
+    results: Mapped[List["TestResultModel"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
 
 class TestResultModel(Base):
     __tablename__ = "testfn_results"
-    id = Column(String, primary_key=True)
-    run_id = Column(String, ForeignKey("testfn_runs.id"), primary_key=True)
-    status = Column(String, nullable=False)
-    duration = Column(Float, nullable=False)
-    error = Column(JSON)
-    metadata_json = Column("metadata", JSON)
-    run = relationship("TestRunModel", back_populates="results")
-    artifacts = relationship("ArtifactModel", back_populates="result", cascade="all, delete-orphan")
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("testfn_runs.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String)
+    duration: Mapped[float] = mapped_column(Float)
+    error: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON)
+    run: Mapped[TestRunModel] = relationship(back_populates="results")
+    artifacts: Mapped[List["ArtifactModel"]] = relationship(
+        back_populates="result", cascade="all, delete-orphan"
+    )
+
 
 class ArtifactModel(Base):
     __tablename__ = "testfn_artifacts"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(String)
-    result_id = Column(String)
-    artifact_id = Column(String, ForeignKey("testfn_results.id")) # result_id
-    type = Column(String, nullable=False)
-    path = Column(String, nullable=False)
-    metadata_json = Column("metadata", JSON)
-    result = relationship("TestResultModel", back_populates="artifacts")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String)
+    result_id: Mapped[str] = mapped_column(String)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["result_id", "run_id"], ["testfn_results.id", "testfn_results.run_id"]
+        ),
+    )
+    type: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON)
+    result: Mapped[TestResultModel] = relationship(back_populates="artifacts")
+
 
 class Storage:
     def __init__(self, database_url: str = "sqlite:///testfn.db"):
         self.engine = create_engine(database_url)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
+
+    def close(self) -> None:
+        self.engine.dispose()
 
     def save_run(self, run: TestRun) -> None:
         with self.Session() as session:
@@ -79,7 +119,7 @@ class Storage:
                         metadata_json=artifact.metadata,
                     )
                     result_model.artifacts.append(artifact_model)
-            
+
             session.commit()
 
     def get_run(self, run_id: str) -> Optional[TestRun]:
@@ -88,7 +128,7 @@ class Storage:
             run_model = session.execute(stmt).scalar_one_or_none()
             if not run_model:
                 return None
-            
+
             results = []
             for r in run_model.results:
                 artifacts = [
@@ -118,12 +158,20 @@ class Storage:
             )
 
     def get_recent_runs(self, limit: int = 10) -> List[TestRun]:
+        if not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a nonnegative integer")
         with self.Session() as session:
-            stmt = select(TestRunModel).order_by(TestRunModel.timestamp.desc()).limit(limit)
+            stmt = (
+                select(TestRunModel)
+                .order_by(TestRunModel.timestamp.desc())
+                .limit(limit)
+            )
             run_models = session.execute(stmt).scalars().all()
-            return [self.get_run(m.id) for m in run_models] # type: ignore
+            return [run for m in run_models if (run := self.get_run(m.id)) is not None]
 
     def get_test_history(self, test_id: str, limit: int = 10) -> List[TestResult]:
+        if not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a nonnegative integer")
         with self.Session() as session:
             stmt = (
                 select(TestResultModel)
@@ -133,7 +181,7 @@ class Storage:
                 .limit(limit)
             )
             result_models = session.execute(stmt).scalars().all()
-            
+
             results = []
             for r in result_models:
                 artifacts = [
