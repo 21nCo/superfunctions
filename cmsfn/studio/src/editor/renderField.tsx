@@ -28,6 +28,9 @@ export interface RenderFieldOptions {
   fieldSegments?: readonly string[];
   /** Required for reference picker (ReferenceField). */
   baseUrl?: string;
+  cmsfnApiUrl?: string;
+  allowContentfnReferenceAuthorization?: boolean;
+  referenceOwnerScope?: string;
   dataset?: string;
   /** When false, reference picker shows "no access" (TV-REF-PICKER-002). */
   hasDocReadForReference?: boolean;
@@ -144,7 +147,7 @@ export function renderField(
                 {renderField(f, subPath, subVal, (v) => {
                   const next = typeof value === "object" && value !== null ? { ...(value as object), [f.name]: v } : { [f.name]: v };
                   onChange(next);
-                }, errorPath, { onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
+                }, errorPath, { baseUrl: options?.baseUrl, dataset: options?.dataset, cmsfnApiUrl: options?.cmsfnApiUrl, allowContentfnReferenceAuthorization: options?.allowContentfnReferenceAuthorization, referenceOwnerScope: options?.referenceOwnerScope, hasDocReadForReference: options?.hasDocReadForReference, onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
               </label>
             );
           })}
@@ -206,6 +209,9 @@ export function renderField(
             required={required}
             disabled={false}
             baseUrl={options.baseUrl}
+            cmsfnApiUrl={options.cmsfnApiUrl}
+            allowContentfnAuthorization={options.allowContentfnReferenceAuthorization}
+            ownerScope={options.referenceOwnerScope}
             dataset={options.dataset}
             allowedTypes={allowedTypes}
             hasDocRead={options.hasDocReadForReference ?? true}

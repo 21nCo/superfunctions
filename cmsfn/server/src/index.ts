@@ -1,3 +1,4 @@
+import { handleReferenceQuery } from './http/references.js';
 /**
  * @cmsfn/server — CmsFn HTTP server (status, roles, preview, releases, etc.).
  */
@@ -44,6 +45,8 @@ export { getCmsfnStorageSchema } from "./storage/schema.js";
 
 /** Server config: studio config plus optional status auth and roles. */
 export interface CmsfnServerConfig extends CmsfnStudioConfig {
+  /** Trusted upstream identity, resolved after doc.read checks for every candidate type. */
+  contentfnReferenceHeaders?: (req: IncomingMessage) => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
   /** If set, called for GET /cmsfn/status; return true to allow, false to deny. */
   contentfnStatusHeaders?: () => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
   authorizeStatus?: (req: IncomingMessage) => Promise<boolean>;
@@ -269,6 +272,11 @@ async function route(
       req
     );
     sendJson(res, 200, envelope);
+    return;
+  }
+
+  if (method === "POST" && path === "/cmsfn/references/query") {
+    sendJson(res, 200, await handleReferenceQuery({ contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), getRolesForSubject: config.getRolesForSubject, contentfnReferenceHeaders: config.contentfnReferenceHeaders, checkCapabilities }, req));
     return;
   }
 

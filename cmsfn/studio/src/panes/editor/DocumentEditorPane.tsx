@@ -37,13 +37,14 @@ export interface DocumentEditorPaneProps {
   realtimeUrl?: string;
   /** Max upload bytes for media library (client pre-check). */
   maxUploadBytes?: number;
+  allowContentfnReferenceAuthorization?: boolean;
   /** When true, show "remote changed" banner (TV-COLLAB-002). */
   remoteChanged?: boolean;
   /** Callback when user dismisses/refreshes after remote change. */
   onClearRemoteChanged?: () => void;
 }
 
-export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", expectedType, onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
+export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", expectedType, onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, allowContentfnReferenceAuthorization, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
   const generation = useRef(0);
   const scope = JSON.stringify([baseUrl, dataset, docId, perspective, expectedType]);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
@@ -328,6 +329,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
               {
                 onOpenMediaPicker: (_name, segments) => setMediaPickerField({ scope, path: segments }),
                 baseUrl,
+                cmsfnApiUrl, allowContentfnReferenceAuthorization, referenceOwnerScope: scope,
                 dataset,
                 docTypeName: docType.name,
               }

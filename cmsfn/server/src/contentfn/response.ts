@@ -23,14 +23,18 @@ export interface ContentfnRequestOptions {
   maxResponseBytes?: number;
   timeoutMs?: number;
   redirect?: RequestInit["redirect"];
+  /** Treat proxy denial status as authoritative without parsing an HTML/error body. */
+  denyOnHttpAuthStatus?: boolean;
 }
+
+class ResponseTooLargeError extends Error {}
 
 export async function responseJson(response: Response, maxBytes?: number): Promise<unknown> {
   if (maxBytes === undefined) return response.json();
   const declared = response.headers.get("content-length");
   if (declared !== null && Number(declared) > maxBytes) {
     await response.body?.cancel();
-    throw new Error("Upstream response too large");
+    throw new ResponseTooLargeError("Upstream response too large");
   }
   if (!response.body) throw new Error("Missing response body");
   const reader = response.body.getReader();
@@ -41,7 +45,7 @@ export async function responseJson(response: Response, maxBytes?: number): Promi
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > maxBytes) throw new Error("Upstream response too large");
+      if (size > maxBytes) throw new ResponseTooLargeError("Upstream response too large");
       chunks.push(chunk.value);
     }
     return JSON.parse(Buffer.concat(chunks, size).toString("utf8"));
@@ -64,9 +68,13 @@ export async function contentfnRequest<T>(
       ...(options.timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(options.timeoutMs) }),
       ...(options.redirect === undefined ? {} : { redirect: options.redirect }),
     });
+    if (options.denyOnHttpAuthStatus && (response.status === 401 || response.status === 403)) {
+      void response.body?.cancel().catch(() => undefined);
+      return err(response.status === 401 ? "AUTH_REQUIRED" : "PERMISSION_DENIED", "ContentFn request denied", { upstreamStatus: response.status });
+    }
     data = await responseJson(response, options.maxResponseBytes);
-  } catch {
-    return err("CONTENTFN_UNAVAILABLE", "ContentFn request failed");
+  } catch (error) {
+    return err("CONTENTFN_UNAVAILABLE", "ContentFn request failed", error instanceof ResponseTooLargeError ? { failureKind: "response-too-large" } : {});
   }
   if (!isRecord(data)) return err("CONTENTFN_UNAVAILABLE", "Invalid ContentFn response", { upstreamStatus: response.status });
   if (data.ok === false) {

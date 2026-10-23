@@ -32,6 +32,11 @@ shutil.copy(root/'cmsfn/.conduct/studio-browser-acceptance.mjs',out/'acceptance.
 subprocess.run(['node','acceptance.mjs'],cwd=out,check=True)
 (out / 'consumer.tsx').write_text("""import { App, boot, type CmsfnStudioConfig } from '@cmsfn/studio';
 import * as React from 'react';
+import { parseReferenceInput, type CmsfnReferenceInput, type CmsfnReferencePage } from 'cmsfn';
+const referenceInput: CmsfnReferenceInput = { dataset: 'prod', types: ['author'], limit: 20 };
+const parsed = parseReferenceInput(referenceInput);
+const emptyReferences: CmsfnReferencePage = { dataset: 'prod', data: [], nextCursor: null };
+void parsed; void emptyReferences;
 import {createCmsfnServer, verifyPreviewToken, type PreviewTokenClaims} from '@cmsfn/server';
 const claims: PreviewTokenClaims | null = verifyPreviewToken('server-only-secret-material', 'untrusted-token', { audience: 'https://preview.example', dataset: 'prod', docId: 'post' });
 void claims;

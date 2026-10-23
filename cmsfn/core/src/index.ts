@@ -27,3 +27,5 @@ export type {
 } from "./server-api/types.js";
 
 export { previewAudience, previewDocumentId } from "./preview/scope.js";
+export { parseReferenceInput, parseReferencePage, projectReferencePage, referenceQuery } from './references/types.js';
+export type { CmsfnReferenceInput, CmsfnReferenceCandidate, CmsfnReferencePage } from './references/types.js';

@@ -130,6 +130,7 @@ export function App({ config: configProp }: AppProps = {}) {
               previewConfig={config.preview}
               realtimeUrl={config.contentfn.realtimeUrl}
               maxUploadBytes={config.limits?.maxUploadBytes}
+              allowContentfnReferenceAuthorization={config.references?.authorization === "contentfn"}
               remoteChanged={remoteChanged}
               onClearRemoteChanged={() => setRemoteChanged(false)}
             />

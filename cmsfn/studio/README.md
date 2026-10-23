@@ -97,3 +97,20 @@ Access denial removes prior rows. Dataset, endpoint and document changes cancel 
 work and prevent stale selections. Nested object asset fields use literal schema keys,
 preserve siblings and reject prototype keys or array traversal. Array-item media editing
 is not added by this object-field integration.
+
+Reference fields, including fields nested inside objects, use the configured CmsFn API
+for candidate discovery. The host must grant `doc.read` for the selected dataset and
+every allowed target type. The picker offers a type selector, case-sensitive ID/title/name
+filter, refresh and deterministic `_id`-ascending pages of at most 20 published documents.
+Each new page replaces the previous page. Selection writes the canonical
+`{ _type: 'reference', _ref: id }`; ContentFn remains authoritative when saving, including
+when a selected target has since been deleted. Changing document, dataset, type or filter
+clears the old candidate scope. Labels are text, truncated to 160 characters.
+
+For a standalone Studio without `cmsfn.apiUrl`, the host may explicitly configure
+`references: { authorization: 'contentfn' }`. This delegates candidate authorization to
+its ContentFn `query` policy, which must enforce the authenticated subject's dataset and
+type access. Without either configuration, candidate discovery denies access. When a
+CmsFn URL is present it always takes precedence; UI read flags cannot bypass the server.
+Use same-origin authenticated routes or a host proxy; service credentials belong only in
+server configuration. Array-item reference editing remains separate editor work.

@@ -12,7 +12,7 @@ import type {
   ContentfnPatchInput,
 } from "@contentfn/core";
 
-import { mediaRequest, isRecord, boundedText } from '../media/transport.js';
+import { boundedRequest, isRecord, boundedText } from './boundedRequest.js';
 
 export interface ContentfnClientConfig {
   baseUrl: string;
@@ -127,7 +127,7 @@ export async function uploadAsset(
   }
 ): Promise<ContentfnEnvelope<{ assetId: string; url: string }>> {
   const base = normalizeBaseUrl(config.baseUrl);
-  return mediaRequest(base, "/contentfn/assets/upload", input, (value): value is { assetId: string; url: string } => isRecord(value) && boundedText(value.assetId, 512) && boundedText(value.url, 8192), config.signal);
+  return boundedRequest(base, "/contentfn/assets/upload", input, (value): value is { assetId: string; url: string } => isRecord(value) && boundedText(value.assetId, 512) && boundedText(value.url, 8192), config.signal);
 }
 
 /**
@@ -138,5 +138,5 @@ export async function listAssets(
   input: { dataset: string; limit?: number; offset?: number }
 ): Promise<ContentfnEnvelope<{ assets: AssetListItem[] }>> {
   const base = normalizeBaseUrl(config.baseUrl);
-  return mediaRequest(base, "/contentfn/assets/list", input, (value): value is { assets: AssetListItem[] } => isRecord(value) && Array.isArray(value.assets) && value.assets.length <= (input.limit ?? 50) && value.assets.every(asset => isRecord(asset) && boundedText(asset.assetId, 512) && boundedText(asset.url, 8192) && boundedText(asset.filename, 1024) && boundedText(asset.contentType, 255) && typeof asset.size === 'number' && Number.isSafeInteger(asset.size) && asset.size >= 0 && boundedText(asset.createdAt, 64) && Number.isFinite(Date.parse(asset.createdAt))), config.signal);
+  return boundedRequest(base, "/contentfn/assets/list", input, (value): value is { assets: AssetListItem[] } => isRecord(value) && Array.isArray(value.assets) && value.assets.length <= (input.limit ?? 50) && value.assets.every(asset => isRecord(asset) && boundedText(asset.assetId, 512) && boundedText(asset.url, 8192) && boundedText(asset.filename, 1024) && boundedText(asset.contentType, 255) && typeof asset.size === 'number' && Number.isSafeInteger(asset.size) && asset.size >= 0 && boundedText(asset.createdAt, 64) && Number.isFinite(Date.parse(asset.createdAt))), config.signal);
 }

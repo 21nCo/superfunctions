@@ -10,7 +10,7 @@ import { evaluatePermissions } from "cmsfn";
 export interface AuthorizeConfig {
   /**
    * Return roles for the current request (deployment-defined).
-   * If not provided, permission check is skipped (caller may treat as allow or deny).
+   * If not provided, protected paths deny access.
    */
   getRolesForSubject?: (req: IncomingMessage) => Promise<CmsfnRole[]>;
 }

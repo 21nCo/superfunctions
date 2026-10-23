@@ -159,3 +159,28 @@ scanner; the host must exclude credentials under other names too. A host-provide
 WebSocket URL remains supported but is not the built-in ContentFn HTTP route. Events
 must match the active dataset and document before refreshing; closing or changing scope
 cancels queued refreshes.
+
+### Reference candidates
+
+`POST /cmsfn/references/query` accepts `{ dataset, types, search?, cursor?, limit? }`.
+The configured dataset and every requested type require `doc.read`. Roles are resolved
+once per request; missing, denied or throwing role resolution fails closed before any
+upstream query or capability check. `contentfnReferenceHeaders(request)` optionally
+supplies trusted ContentFn credentials after authorization; browser headers are not
+forwarded automatically. The producer must enforce the configured dataset query contract.
+
+Queries use the published perspective, `_id` ascending and only `_id`, `_type`, `title`
+and `name` projection. The response is `{ dataset, data: [{ _id, _type, label }],
+nextCursor }`. No document body or arbitrary upstream error detail is returned. Requests
+are bounded to 96 KiB, 50 target types, 128-character dataset/type/filter values, 65,536
+characters of cursor and 20 candidates. Returned IDs are bounded to 32,768 characters,
+labels to 160, and upstream responses to 2 MiB. Oversized pages retry the same cursor
+with smaller limits down to one within a ten-second query deadline; an oversized single
+candidate fails explicitly. Host identity, credential and capability callbacks retain
+their existing host lifecycle contract.
+
+ContentFn owns keyset cursor validation and dataset isolation. Filter/type/dataset changes
+must start a new traversal; this is deterministic pagination, not a snapshot under
+concurrent writes. The producer does not include dataset on individual query rows: the
+CMS response binds it to the authorized query and rejects a conflicting dataset if one
+is supplied by the upstream. HTML/empty HTTP 401/403 responses are treated as denial.

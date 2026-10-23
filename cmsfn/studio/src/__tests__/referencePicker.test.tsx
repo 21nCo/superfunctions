@@ -43,6 +43,7 @@ describe("PHASE_09: Reference picker", () => {
 
       render(
         <ReferenceField
+          allowContentfnAuthorization
           value={undefined}
           onChange={(v) => {
             onChangeValue = v;
@@ -68,6 +69,7 @@ describe("PHASE_09: Reference picker", () => {
     it("when hasDocRead is false, picker shows no access state", async () => {
       render(
         <ReferenceField
+          allowContentfnAuthorization
           value={undefined}
           onChange={() => {}}
           baseUrl={BASE_URL}

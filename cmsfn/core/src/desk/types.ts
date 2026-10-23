@@ -15,6 +15,8 @@ export type CmsfnDeskNode =
   | { kind: "divider" };
 
 export interface CmsfnStudioConfig {
+  /** Explicit standalone trust: ContentFn query authorization enforces dataset/type reads. CMS URL always takes precedence. */
+  references?: { authorization: "contentfn" };
   contentfn: { baseUrl: string; /** Optional authenticated ContentFn HTTP(S) /contentfn/events endpoint or host WebSocket URL. Browser cookies require matching CORS policy; header tokens need a same-origin proxy. */ realtimeUrl?: string };
   /** When set, studio can call POST /cmsfn/publish and /cmsfn/unpublish for gated publish. */
   cmsfn?: { apiUrl: string };

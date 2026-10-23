@@ -46,6 +46,7 @@ export interface CmsfnWebhookDeliveryStatus {
 }
 
 export interface CmsfnServerAPI {
+  references: { query: (input: import("../references/types.js").CmsfnReferenceInput) => Promise<CmsfnEnvelope<import("../references/types.js").CmsfnReferencePage>> };
   status: () => Promise<CmsfnEnvelope<CmsfnStatusResult>>;
   roles: {
     list: (input: { dataset: string }) => Promise<CmsfnEnvelope<{ roles: CmsfnRole[] }>>;
