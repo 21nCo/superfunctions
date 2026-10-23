@@ -15,7 +15,12 @@ function documentResult(value: unknown, expectedId: string): ContentfnDocument |
 }
 export function getDraftDoc(config: ContentfnClientConfig, dataset: string, id: string) {
   const draftId = id.startsWith("drafts.") ? id : `drafts.${id}`;
-  return contentfnRequest(config.baseUrl, "/contentfn/docs/get", { dataset, id: draftId, perspective: "draft" }, value => documentResult(value, draftId));
+  return contentfnRequest(config.baseUrl, "/contentfn/docs/get", { dataset, id: draftId, perspective: "draft" }, value => {
+    const document = documentResult(value, draftId);
+    // Publishing must compare the exact revision whose workflow and type were checked.
+    if (!document || typeof document._rev !== "string" || !document._rev.trim()) return null;
+    return { ...document, _rev: document._rev };
+  });
 }
 export function contentfnPublish(config: ContentfnClientConfig, dataset: string, id: string, ifRev?: string) {
   return contentfnRequest(config.baseUrl, "/contentfn/docs/publish", { dataset, id, ...(ifRev ? { ifRev } : {}) }, value => documentResult(value, id.startsWith("drafts.") ? id.substring(7) : id));

@@ -40,7 +40,7 @@ async function fixture(run: (value: {
     upstream.push(req.url!);
     req.resume();
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ ok: true, result: { _id: req.url === "/contentfn/docs/publish" ? "article" : "drafts.article", _type: "article", _cms: { state: "approved" } } }));
+    res.end(JSON.stringify({ ok: true, result: { _id: req.url === "/contentfn/docs/publish" ? "article" : "drafts.article", _type: "article", _rev: "r1", _cms: { state: "approved" } } }));
   });
   const config: CmsfnServerConfig = {
     contentfn: { baseUrl: await listen(content) }, datasets: [{ name: "prod" }, { name: "staging" }],

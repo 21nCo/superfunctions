@@ -80,7 +80,7 @@ export async function publishRelease(
       continue;
     }
 
-    const pubRes = await contentfnPublish(contentfn, dataset, docId);
+    const pubRes = await contentfnPublish(contentfn, dataset, docId, draftRes.result._rev);
     if (pubRes.ok) {
       published.push(docId);
     } else {

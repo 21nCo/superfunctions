@@ -77,7 +77,7 @@ export async function handlePublish(
     });
   }
 
-  return contentfnPublish(contentfn, ds, docId);
+  return contentfnPublish(contentfn, ds, docId, draftRes.result._rev);
 }
 
 /**
