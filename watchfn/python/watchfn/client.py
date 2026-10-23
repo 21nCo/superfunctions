@@ -43,8 +43,8 @@ class WatchFn:
             raise RuntimeError("WatchFn storage is unavailable")
         self.batcher.flush()
         events = self.storage.query()
-        return {metric: observations(events, metric, start, now, maximum)
-                for metric, start in requested.items()}
+        return {key: observations(events, key[0], start, now, maximum)
+                for key, start in requested.items()}
 
     def _flush_events(self, events: List[Event]):
         if hasattr(self.storage, 'add_batch'):

@@ -125,3 +125,25 @@ def test_shared_alert_vectors():
     from pathlib import Path
     for case in json.loads((Path(__file__).parent / 'fixtures/alert-golden.json').read_text()):
         assert evaluate(case['condition'], case['data'], case['now']) is case['expected'], case['name']
+
+
+@pytest.mark.parametrize('database', [False, True])
+def test_same_metric_children_select_presence_in_each_window(tmp_path, database):
+    engine = create_engine('sqlite:///' + str(tmp_path / 'windows.sqlite')) if database else None
+    if engine is not None: migrate(engine)
+    watch = start(create_adapter(engine)) if engine is not None else memory()
+    try:
+        import json
+        from pathlib import Path
+        case = json.loads((Path(__file__).parent / 'fixtures/alert-window-golden.json').read_text())
+        now = case['now']
+        watch.storage.add_batch([event(row['name'], row['properties'], row['timestamp']) for row in case['events']])
+        watch.alerts.register(alert(case['condition']))
+        assert watch.alerts.evaluate_stored(now=now)[0].matched is case['expected']
+        # An invalid narrow-window exact sample suppresses only its own fallback.
+        row = case['invalidExact']
+        watch.storage.add_batch([event(row['name'], row['properties'], row['timestamp'])])
+        assert watch.alerts.evaluate_stored(now=now)[0].matched is case['expectedAfterInvalid']
+    finally:
+        watch.stop()
+        if engine is not None: engine.dispose()

@@ -1,0 +1,14 @@
+{
+  "now": 4000000,
+  "condition": {"type":"composite","operator":"and","conditions":[
+    {"metric":"api.latency","operator":"gt","threshold":10,"window":"1m"},
+    {"metric":"api.latency","operator":"gt","threshold":10,"window":"1h"}
+  ]},
+  "events": [
+    {"type":"track","name":"api","timestamp":4000000,"properties":{"latency":20}},
+    {"type":"track","name":"api.latency","timestamp":2200000,"properties":{"value":30}}
+  ],
+  "expected": true,
+  "invalidExact": {"type":"track","name":"api.latency","timestamp":4000000,"properties":{"value":null}},
+  "expectedAfterInvalid": null
+}

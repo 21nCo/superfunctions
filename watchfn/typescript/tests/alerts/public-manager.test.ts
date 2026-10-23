@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AlertHost } from '../../src/alerts/alert-manager';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -270,4 +270,17 @@ it('retains lifecycle and retry attempts after all SQLite connections close and 
   expect(await reopened.alerts.notifications()).toMatchObject([{ id: pending.id, state: 'dead', attempts: 2 }]);
   expect(target.received).toHaveLength(2);
   expect(target.received[0].headers['idempotency-key']).toBe(target.received[1].headers['idempotency-key']);
+});
+
+
+it.each(['memory', 'database'])('selects same-metric precedence separately for each child window (%s)', async storage => {
+  const watch = storage === 'database' ? (await setup()).watch : new WatchFn({ name: 'window', storage: 'memory', infra: { enabled: false } });
+  if (storage === 'memory') { watches.push(watch); watch.start(); }
+  const fixture = JSON.parse(await readFile(new URL('../../../python/tests/fixtures/alert-window-golden.json', import.meta.url), 'utf8'));
+  const now = fixture.now;
+  await watch.ingest(fixture.events);
+  await watch.alerts.create({ name: 'windows', channels: [], condition: fixture.condition });
+  expect((await watch.alerts.evaluate({ now })).results[0].matched).toBe(fixture.expected);
+  await watch.ingest([fixture.invalidExact]);
+  expect((await watch.alerts.evaluate({ now })).results[0].matched).toBe(fixture.expectedAfterInvalid);
 });

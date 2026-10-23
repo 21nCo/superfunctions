@@ -81,7 +81,7 @@ def evaluate(condition, data, now):
             decisive = False if rule["operator"] == "and" else True
             return decisive if any(value is decisive for value in matches) else None if None in matches else not decisive
         cutoff = -math.inf if kind == "anomaly" else now - window_ms(rule["window"])
-        points = [point for point in data.get(rule["metric"], []) if number(point.get("value")) and number(point.get("timestamp")) and cutoff <= point["timestamp"] <= now]
+        points = [point for point in data.get((rule["metric"], None if kind == "anomaly" else cutoff), data.get(rule["metric"], [])) if number(point.get("value")) and number(point.get("timestamp")) and cutoff <= point["timestamp"] <= now]
         if not points: return None
         values = [point["value"] for point in points]
         if kind == "anomaly":
@@ -116,6 +116,4 @@ def ranges(condition, now, result):
         return
     metric = condition["metric"]
     start = None if condition.get("type") == "anomaly" else now - window_ms(condition["window"])
-    if metric not in result: result[metric] = start
-    elif start is None or result[metric] is None: result[metric] = None
-    else: result[metric] = min(start, result[metric])
+    result[(metric, start)] = start

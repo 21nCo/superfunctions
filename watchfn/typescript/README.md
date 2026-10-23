@@ -175,8 +175,7 @@ at128 rows, but an absent exact metric can require an additional full scan; this
 is a memory bound, not a total-row or latency bound. The probe and candidate scan
 are live and do not provide a transactional snapshot across concurrent changes.
 
-Alert observation exact-name precedence is scoped to the requested loaded window
-(the union of windows when one alert references a metric more than once). An
+Alert observation exact-name precedence is scoped to each condition's requested window. An
 out-of-window exact event no longer suppresses dotted-property fallback in memory;
 this corrects a discrepancy with projected database reads. In-window exact events
 still suppress fallback even when their value is invalid. Scalar aggregate's

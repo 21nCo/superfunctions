@@ -215,7 +215,7 @@ Database reads keep the existing 10,000-row/16-MiB scan bounds; memory retains
 its configured recent-event limit. The per-metric observation cap defaults to
 10,000 (`maximum=...`, 1..1,000,000); overflow or a storage failure raises before
 any alert state changes. `now` is optional epoch milliseconds. Composite children
-use their own metrics and windows; shared metrics load the union of those windows.
+use their own metrics and windows; each distinct metric/window is selected independently from the same snapshot.
 Anomalies use all retained observations through `now`, ordered by timestamp.
 An exact metric name/type within that loaded window selects its finite numeric
 `value`; otherwise `api.latency` reads `latency` from `api` events. Even an exact

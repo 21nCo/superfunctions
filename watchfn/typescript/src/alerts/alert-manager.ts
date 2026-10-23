@@ -140,25 +140,25 @@ export class AlertManager {
       const results: { alert: PublicAlert; observed: boolean; matched: boolean | null }[] = [];
       for (const row of rows) {
         if (!row.payload.enabled) continue;
-        const ranges = new Map<string, number | undefined>();
+        const ranges = new Map<string, { metric: string; from: number | undefined }>();
         const collect = (condition: AlertCondition): void => {
           if (condition.type === 'composite') { condition.conditions.forEach(collect); return; }
           const from = condition.type === 'anomaly' ? undefined : now - alertWindowMs(condition.window);
-          ranges.set(condition.metric, ranges.has(condition.metric) ? from === undefined || ranges.get(condition.metric) === undefined ? undefined : Math.min(from, ranges.get(condition.metric)!) : from);
+          ranges.set(JSON.stringify([condition.metric, from ?? null]), { metric: condition.metric, from });
         };
         collect(row.payload.condition); if (row.payload.autoResolve?.enabled) collect(row.payload.autoResolve.condition);
         const observations = new Map<string, AlertMetricPoint[]>();
-        for (const [metric, from] of ranges) observations.set(metric, await this.host.observations(metric, from, now, this.config.maxObservations));
+        for (const [key, { metric, from }] of ranges) observations.set(key, await this.host.observations(metric, from, now, this.config.maxObservations));
         let matched: boolean | null = null;
         const alert = await this.mutate(row.id, record => {
           // Definition edits race safely: re-read observations on a later evaluation.
           if (JSON.stringify(record.condition) !== JSON.stringify(row.payload.condition) || JSON.stringify(record.autoResolve) !== JSON.stringify(row.payload.autoResolve)) throw new Conflict('Alert definition changed during evaluation');
           if (!record.enabled || (record.lastEvaluated ?? -Infinity) > now) return;
-          const result = this.evaluator.evaluateResult(record.condition, observations, now); matched = result.matched;
+          const result = this.evaluator.evaluateResult(record.condition, new Map(), now, observations); matched = result.matched;
           record.lastEvaluated = now;
           if (result.matched === true && !active(record)) { this.triggerState(record, now); return { event: 'triggered' as const, value: result.value }; }
           if (active(record) && record.autoResolve?.enabled) {
-            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, observations, now);
+            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations);
             if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value }; }
           }
         }, now, row.revision);

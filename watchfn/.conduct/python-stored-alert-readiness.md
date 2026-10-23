@@ -7,7 +7,7 @@ but the standalone array alert manager was disconnected from that storage.
 `WatchFn.alerts.evaluate_stored()` now flushes admitted producers, reads one
 completed storage snapshot, extracts bounded numeric observations, and evaluates
 registered conditions. Every composite child uses its own metric and threshold
-window. Shared metrics load their combined range; anomalies use retained history
+window. Shared metrics retain independent ranges per condition; anomalies use retained history
 through the evaluation instant. Exact name/type samples within the loaded range
 select `value`; otherwise a dotted metric reads its final property from the base
 event. Invalid exact values suppress fallback. Missing observations and numeric
@@ -55,3 +55,21 @@ Logs: `/tmp/watch-alert-{ci,wheel,ts-tests,native,types,build}.log`.
 Owned temporary wheel environments and SQLite fixtures clean up automatically;
 source verification venv removed after acceptance. No hosted service, external
 notification channel, deployment or publication was used.
+
+### Independent windows for a repeated metric
+
+A follow-up fixture exposed that merging the observation range for a repeated
+metric could let an exact sample 30 minutes ago suppress a one-minute child's
+base-property observation. Both managers now load/cache each distinct
+metric/cutoff separately. Python derives all those selections from the same
+single completed storage snapshot. TS retains its documented per-query live
+reads; this change does not add a cross-query database snapshot guarantee.
+
+The shared `alert-window-golden.json` fixture runs through each public manager
+with both memory and native SQLite storage: the one-minute child reads the
+recent base property, the one-hour child reads the older exact value; an invalid
+exact value in the narrow window subsequently makes that child unknown.
+Public caller-supplied metric maps remain compatible. Normal Python CI and fresh
+five-wheel acceptance each pass 124 tests; the full TS suite passes 237 tests,
+including both native SQLite public-manager cases. Typecheck/build and the eight
+shared condition vectors pass. Logs: `/tmp/watch-alert-window-*.log`.

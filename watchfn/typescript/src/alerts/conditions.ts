@@ -46,7 +46,7 @@ export class ConditionEvaluator {
   evaluate(condition: AlertCondition, data: AlertMetricData, now = Date.now()): boolean {
     return this.evaluateResult(condition, data, now).matched === true;
   }
-  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now()): ConditionResult {
+  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now(), windows?: ReadonlyMap<string, readonly AlertMetricPoint[]>): ConditionResult {
     validateAlertCondition(condition);
     if (!Number.isFinite(now)) throw new TypeError('Evaluation time must be finite');
     const unlabelledMetric = condition.type === 'composite' ? undefined : condition.metric;
@@ -59,8 +59,10 @@ export class ConditionEvaluator {
           : matches.includes(true) ? true : matches.includes(null) ? null : false;
         return { matched, dataPoints: results.reduce((count, result) => count + result.dataPoints, 0) };
       }
-      const raw: readonly AlertMetricPoint[] = Array.isArray(data) ? data : (data as ReadonlyMap<string, readonly AlertMetricPoint[]>).get(rule.metric) ?? [];
       const cutoff = rule.type === 'anomaly' ? -Infinity : now - alertWindowMs(rule.window);
+      const raw: readonly AlertMetricPoint[] = windows
+        ? windows.get(JSON.stringify([rule.metric, rule.type === 'anomaly' ? null : cutoff])) ?? []
+        : Array.isArray(data) ? data : (data as ReadonlyMap<string, readonly AlertMetricPoint[]>).get(rule.metric) ?? [];
       const points = raw.filter(point => point && Number.isFinite(point.value) && Number.isFinite(point.timestamp) && point.timestamp >= cutoff && point.timestamp <= now &&
         (Array.isArray(data) ? (point.metric ?? unlabelledMetric) === rule.metric : point.metric === undefined || point.metric === rule.metric));
       if (!points.length) return { matched: null, dataPoints: 0 };
