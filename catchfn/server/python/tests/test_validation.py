@@ -1,6 +1,7 @@
 import pytest
-from catchfn.types import BugReportEvent
 from pydantic import ValidationError
+
+from catchfn.types import BugReportEvent
 
 
 def test_attachment_and_app_validation():
