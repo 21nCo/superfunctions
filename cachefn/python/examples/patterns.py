@@ -3,9 +3,8 @@ Common caching patterns with CacheFn.
 """
 
 import asyncio
-import random
-from cachefn import cache_fn
 
+from cachefn import cache_fn
 
 # Simulated database
 fake_db = {
@@ -15,26 +14,27 @@ fake_db = {
 }
 
 
-async def fetch_from_database(key: str):
+async def fetch_from_database(key: str) -> dict[str, str] | None:
     """Simulate database fetch with latency."""
     print(f"  Fetching {key} from database...")
     await asyncio.sleep(0.5)  # Simulate DB latency
     return fake_db.get(key)
 
 
-async def cache_aside_pattern():
+async def cache_aside_pattern() -> None:
     """Demonstrate cache-aside (lazy loading) pattern."""
     print("=== Cache-Aside Pattern ===")
 
     cache = cache_fn(name="cache-aside", max_size=100)
 
-    async def get_user(user_id: str):
+    async def get_user(user_id: str) -> dict[str, str] | None:
         """Get user with cache-aside pattern."""
         key = f"user:{user_id}"
 
         # Try cache first
         cached = await cache.get(key)
         if cached:
+            assert isinstance(cached, dict)
             print(f"✓ Cache hit: {key}")
             return cached
 
@@ -57,7 +57,7 @@ async def cache_aside_pattern():
     print(f"  Result: {user}\n")
 
 
-async def read_through_pattern():
+async def read_through_pattern() -> None:
     """Demonstrate read-through pattern."""
     print("=== Read-Through Pattern (using get_or_fetch) ===")
 
@@ -82,13 +82,13 @@ async def read_through_pattern():
     print(f"✓ Second fetch (cached): {user}\n")
 
 
-async def write_through_pattern():
+async def write_through_pattern() -> None:
     """Demonstrate write-through pattern."""
     print("=== Write-Through Pattern ===")
 
     cache = cache_fn(name="write-through", max_size=100)
 
-    async def save_user(user_id: str, user_data: dict):
+    async def save_user(user_id: str, user_data: dict[str, str]) -> None:
         """Save user to database and cache simultaneously."""
         key = f"user:{user_id}"
 
@@ -110,13 +110,13 @@ async def write_through_pattern():
     print(f"✓ Read from cache: {cached_user}\n")
 
 
-async def cache_warming_pattern():
+async def cache_warming_pattern() -> None:
     """Demonstrate cache warming pattern."""
     print("=== Cache Warming Pattern ===")
 
     cache = cache_fn(name="cache-warming", max_size=100)
 
-    async def warm_cache(user_ids: list[str]):
+    async def warm_cache(user_ids: list[str]) -> None:
         """Pre-load cache with user data."""
         print(f"Warming cache with {len(user_ids)} users...")
 
@@ -138,7 +138,7 @@ async def cache_warming_pattern():
     print(f"✓ Fast read after warming: {user}\n")
 
 
-async def tiered_invalidation_pattern():
+async def tiered_invalidation_pattern() -> None:
     """Demonstrate tiered invalidation with tags."""
     print("=== Tiered Invalidation Pattern ===")
 
@@ -185,13 +185,13 @@ async def tiered_invalidation_pattern():
     print(f"  user:2:profile after invalidation: {profile2}\n")
 
 
-async def rate_limiting_pattern():
+async def rate_limiting_pattern() -> None:
     """Demonstrate rate limiting with cache."""
     print("=== Rate Limiting Pattern ===")
 
     cache = cache_fn(name="rate-limiting", max_size=1000)
 
-    async def check_rate_limit(user_id: str, max_requests: int = 5, window_ms: int = 10000):
+    async def check_rate_limit(user_id: str, max_requests: int = 5, window_ms: int = 10000) -> bool:
         """Check if user is within rate limit."""
         key = f"ratelimit:{user_id}"
 

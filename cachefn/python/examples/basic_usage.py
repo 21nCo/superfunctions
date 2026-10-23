@@ -3,6 +3,7 @@ Basic usage examples for CacheFn.
 """
 
 import asyncio
+
 from cachefn import cache_fn
 
 

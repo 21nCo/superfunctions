@@ -155,7 +155,7 @@ async def test_get_or_fetch(cache: CacheFn) -> None:
     """Test get_or_fetch pattern."""
     fetch_count = 0
 
-    async def fetcher():
+    async def fetcher() -> str:
         nonlocal fetch_count
         fetch_count += 1
         return "fetched_value"

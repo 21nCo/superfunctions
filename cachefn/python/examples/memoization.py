@@ -4,6 +4,7 @@ Function memoization examples.
 
 import asyncio
 import time
+
 from cachefn import memoize, memoize_sync
 
 
@@ -88,8 +89,8 @@ async def main() -> None:
     print(f"  Duration: {duration:.6f}s")
 
     # Get cache stats
-    stats = fibonacci.stats()
-    print(f"\nFibonacci cache: {stats['size']} entries")
+    sync_stats = fibonacci.stats()
+    print(f"\nFibonacci cache: {sync_stats['size']} entries")
 
     print("\n=== Sync Memoization - Factorial ===")
 

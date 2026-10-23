@@ -6,13 +6,15 @@ import functools
 import inspect
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Generic, Optional, ParamSpec, TypeVar
 
 from ..core.cache import CacheFn, cache_fn
 from ..core.types import CacheStats
 from ..utils.hash import generate_key
 
 F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class MemoizedFunction:
@@ -128,12 +130,12 @@ def memoize(
     return decorator
 
 
-class MemoizedSyncFunction:
+class MemoizedSyncFunction(Generic[P, R]):
     """Wrapper for synchronous memoized functions."""
 
     def __init__(
         self,
-        func: Callable[..., Any],
+        func: Callable[P, R],
         key_generator: Callable[..., str],
         max_size: int = 1000,
         ttl: Optional[int] = None,
@@ -157,11 +159,11 @@ class MemoizedSyncFunction:
         self._max_size = max_size
         self._ttl = ttl
         self._hits = self._misses = self._evictions = 0
-        self._cache: OrderedDict[str, tuple[Any, Optional[float]]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[R, Optional[float]]] = OrderedDict()
         self._next_expiration = float("inf")
         functools.update_wrapper(self, func)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """
         Call the memoized function.
 
@@ -213,7 +215,7 @@ class MemoizedSyncFunction:
         self._next_expiration = float("inf")
         self._hits = self._misses = self._evictions = 0
 
-    def delete(self, *args: Any, **kwargs: Any) -> None:
+    def delete(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """
         Delete a specific cached result.
 
@@ -247,7 +249,7 @@ def memoize_sync(
     max_size: int = 1000,
     key_generator: Optional[Callable[..., str]] = None,
     ttl: Optional[int] = None,
-) -> Callable[[F], MemoizedSyncFunction]:
+) -> Callable[[Callable[P, R]], MemoizedSyncFunction[P, R]]:
     """
     Decorator to memoize a synchronous function (non-async).
 
@@ -266,7 +268,7 @@ def memoize_sync(
         ...     return fibonacci(n - 1) + fibonacci(n - 2)
     """
 
-    def decorator(func: F) -> MemoizedSyncFunction:
+    def decorator(func: Callable[P, R]) -> MemoizedSyncFunction[P, R]:
         # Default key generator
         def default_key_gen(*args: Any, **kwargs: Any) -> str:
             return generate_key(func.__name__, *args, **kwargs)

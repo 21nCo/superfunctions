@@ -3,6 +3,8 @@
 from collections import OrderedDict
 from importlib import import_module
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -12,39 +14,36 @@ module = import_module("cachefn.memoization.memoize")
 
 
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     value = [100.0]
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: value[0]))
     return value
 
 
 @pytest.mark.parametrize("ttl", [None, 1000])
-def test_populated_hits_do_not_iterate_unexpired_entries(clock, ttl):
+def test_populated_hits_do_not_iterate_unexpired_entries(clock: list[float], ttl: int | None) -> None:
     cached = memoize_sync(max_size=10000, ttl=ttl, key_generator=str)(lambda value: value)
     for key in range(10000):
         cached(key)
 
-    class CountedEntries(OrderedDict):
-        scans = 0
-
-        def items(self):
-            self.scans += 1
-            return super().items()
+    class CountedEntries(OrderedDict[str, tuple[Any, float | None]]):
+        pass
 
     entries = CountedEntries(cached._cache)
     cached._cache = entries
-    for key in range(100):
-        assert cached(key) == key
-    assert entries.scans == 0
-    assert cached.stats()["size"] == 10000
-    assert entries.scans == 0
+    with patch.object(entries, "items", wraps=entries.items) as scans:
+        for key in range(100):
+            assert cached(key) == key
+        scans.assert_not_called()
+        assert cached.stats()["size"] == 10000
+        scans.assert_not_called()
 
 
-def test_expiration_boundary_is_not_extended_by_hits(clock):
+def test_expiration_boundary_is_not_extended_by_hits(clock: list[float]) -> None:
     calls = []
 
     @memoize_sync(ttl=1000)
-    def cached(value):
+    def cached(value: str) -> int:
         calls.append(value)
         return len(calls)
 
@@ -56,9 +55,9 @@ def test_expiration_boundary_is_not_extended_by_hits(clock):
     assert cached.stats()["size"] == 1
 
 
-def test_ttl_starts_when_computation_finishes(clock):
+def test_ttl_starts_when_computation_finishes(clock: list[float]) -> None:
     @memoize_sync(ttl=1000)
-    def cached():
+    def cached() -> float:
         clock[0] += 10
         return clock[0]
 
@@ -69,11 +68,11 @@ def test_ttl_starts_when_computation_finishes(clock):
     assert cached() == 121
 
 
-def test_expired_entries_are_removed_before_capacity_eviction(clock):
+def test_expired_entries_are_removed_before_capacity_eviction(clock: list[float]) -> None:
     calls = []
 
     @memoize_sync(max_size=2, ttl=1000)
-    def cached(key):
+    def cached(key: str) -> str:
         calls.append(key)
         return key
 
@@ -89,11 +88,11 @@ def test_expired_entries_are_removed_before_capacity_eviction(clock):
     assert cached.stats()["size"] == 2
 
 
-def test_lru_eviction_still_tracks_recent_hits(clock):
+def test_lru_eviction_still_tracks_recent_hits(clock: list[float]) -> None:
     calls = []
 
     @memoize_sync(max_size=2, ttl=1000)
-    def cached(key):
+    def cached(key: str) -> str:
         calls.append(key)
         return key
 
@@ -106,7 +105,7 @@ def test_lru_eviction_still_tracks_recent_hits(clock):
     assert cached.stats()["evictions"] == 2
 
 
-def test_delete_and_clear_do_not_keep_expired_values_or_stale_sizes(clock):
+def test_delete_and_clear_do_not_keep_expired_values_or_stale_sizes(clock: list[float]) -> None:
     cached = memoize_sync(ttl=1000)(lambda key: key)
     cached("old")
     clock[0] = 100.5
@@ -123,11 +122,11 @@ def test_delete_and_clear_do_not_keep_expired_values_or_stale_sizes(clock):
     assert cached("new") == "new"
 
 
-def test_zero_ttl_and_falsy_results(clock):
+def test_zero_ttl_and_falsy_results(clock: list[float]) -> None:
     calls = []
 
     @memoize_sync(ttl=0)
-    def immediate():
+    def immediate() -> None:
         calls.append(1)
         return None
 
@@ -142,11 +141,11 @@ def test_zero_ttl_and_falsy_results(clock):
     assert permanent.stats()["hits"] == 1
 
 
-def test_exception_is_not_cached_and_does_not_evict_live_results(clock):
+def test_exception_is_not_cached_and_does_not_evict_live_results(clock: list[float]) -> None:
     fail = [True]
 
     @memoize_sync(max_size=1, ttl=1000)
-    def cached(key):
+    def cached(key: str) -> str:
         if key == "bad" and fail[0]:
             raise ValueError("retry")
         return key
@@ -160,9 +159,9 @@ def test_exception_is_not_cached_and_does_not_evict_live_results(clock):
     assert cached("bad") == "bad"
 
 
-def test_reentrant_computation_preserves_completion_ttl_and_capacity(clock):
+def test_reentrant_computation_preserves_completion_ttl_and_capacity(clock: list[float]) -> None:
     @memoize_sync(max_size=1, ttl=1000)
-    def cached(key):
+    def cached(key: str) -> str:
         if key == "outer":
             assert cached("inner") == "inner"
             clock[0] += 0.5

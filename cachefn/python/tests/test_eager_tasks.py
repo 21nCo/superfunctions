@@ -6,13 +6,15 @@ import pytest
 
 from cachefn import cache_fn
 
+eager_task_factory = getattr(asyncio, "eager_task_factory", None)
 
-@pytest.mark.skipif(not hasattr(asyncio, "eager_task_factory"), reason="Requires Python 3.12")
+
+@pytest.mark.skipif(eager_task_factory is None, reason="Requires Python 3.12")
 @pytest.mark.asyncio
-async def test_eager_factory_stores_results_and_expires_them():
+async def test_eager_factory_stores_results_and_expires_them() -> None:
     loop = asyncio.get_running_loop()
     previous = loop.get_task_factory()
-    loop.set_task_factory(asyncio.eager_task_factory)
+    loop.set_task_factory(eager_task_factory)
     try:
         cache = cache_fn("eager")
         assert await cache.get_or_fetch("key", lambda: "first") == "first"
@@ -26,16 +28,16 @@ async def test_eager_factory_stores_results_and_expires_them():
         loop.set_task_factory(previous)
 
 
-@pytest.mark.skipif(not hasattr(asyncio, "eager_task_factory"), reason="Requires Python 3.12")
+@pytest.mark.skipif(eager_task_factory is None, reason="Requires Python 3.12")
 @pytest.mark.asyncio
-async def test_eager_factory_does_not_retain_failures():
+async def test_eager_factory_does_not_retain_failures() -> None:
     loop = asyncio.get_running_loop()
     previous = loop.get_task_factory()
-    loop.set_task_factory(asyncio.eager_task_factory)
+    loop.set_task_factory(eager_task_factory)
     try:
         cache = cache_fn("eager-failure")
 
-        async def fail():
+        async def fail() -> None:
             raise ValueError("failure")
 
         with pytest.raises(ValueError, match="failure"):
@@ -46,12 +48,12 @@ async def test_eager_factory_does_not_retain_failures():
         loop.set_task_factory(previous)
 
 
-@pytest.mark.skipif(not hasattr(asyncio, "eager_task_factory"), reason="Requires Python 3.12")
+@pytest.mark.skipif(eager_task_factory is None, reason="Requires Python 3.12")
 @pytest.mark.asyncio
-async def test_eager_factory_invalidation_supersedes_pending_fill():
+async def test_eager_factory_invalidation_supersedes_pending_fill() -> None:
     loop = asyncio.get_running_loop()
     previous = loop.get_task_factory()
-    loop.set_task_factory(asyncio.eager_task_factory)
+    loop.set_task_factory(eager_task_factory)
     try:
         cache = cache_fn("eager-invalidation")
         task = asyncio.create_task(cache.get_or_fetch("key", lambda: "old", tags=["tag"]))

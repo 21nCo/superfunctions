@@ -3,10 +3,11 @@ import asyncio
 import pytest
 
 from cachefn import cache_fn, memoize, memoize_sync
+from cachefn.core.types import CacheEvent, EvictionEvent
 
 
 @pytest.mark.asyncio
-async def test_none_is_a_cached_hit_and_enumerated():
+async def test_none_is_a_cached_hit_and_enumerated() -> None:
     cache = cache_fn("none")
     await cache.set("key", None)
     assert await cache.get_or_fetch("key", lambda: pytest.fail("must not fetch")) is None
@@ -18,7 +19,7 @@ async def test_none_is_a_cached_hit_and_enumerated():
 
 
 @pytest.mark.asyncio
-async def test_overwrite_removes_old_tags():
+async def test_overwrite_removes_old_tags() -> None:
     cache = cache_fn("tags")
     await cache.set("key", 1, tags=["old"])
     await cache.set("key", 2, tags=["new"])
@@ -29,7 +30,7 @@ async def test_overwrite_removes_old_tags():
 
 
 @pytest.mark.asyncio
-async def test_expired_entries_do_not_evict_live_values_or_appear_in_size():
+async def test_expired_entries_do_not_evict_live_values_or_appear_in_size() -> None:
     cache = cache_fn("expiration", max_size=2)
     await cache.set("live", 1)
     await cache.set("expired", 2, ttl=0)
@@ -40,12 +41,12 @@ async def test_expired_entries_do_not_evict_live_values_or_appear_in_size():
 
 
 @pytest.mark.asyncio
-async def test_single_flight_survives_cancelled_waiter_and_caches_none():
+async def test_single_flight_survives_cancelled_waiter_and_caches_none() -> None:
     started, release = asyncio.Event(), asyncio.Event()
     calls = 0
 
     @memoize()
-    async def compute():
+    async def compute() -> None:
         nonlocal calls
         calls += 1
         started.set()
@@ -67,11 +68,11 @@ async def test_single_flight_survives_cancelled_waiter_and_caches_none():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["delete", "clear", "write", "pattern"])
-async def test_pending_fill_cannot_undo_invalidation(operation):
+async def test_pending_fill_cannot_undo_invalidation(operation: str) -> None:
     cache = cache_fn("invalidation")
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def fetch():
+    async def fetch() -> str:
         started.set()
         await release.wait()
         return "old"
@@ -92,10 +93,10 @@ async def test_pending_fill_cannot_undo_invalidation(operation):
 
 
 @pytest.mark.asyncio
-async def test_failed_fill_retries_and_accepts_sync_fetcher():
+async def test_failed_fill_retries_and_accepts_sync_fetcher() -> None:
     cache = cache_fn("retry")
 
-    def fail():
+    def fail() -> None:
         raise ValueError("failure")
 
     with pytest.raises(ValueError, match="failure"):
@@ -103,7 +104,7 @@ async def test_failed_fill_retries_and_accepts_sync_fetcher():
     assert await cache.get_or_fetch("key", lambda: 42) == 42
 
 
-def test_sync_lru_expiration_and_statistics(monkeypatch):
+def test_sync_lru_expiration_and_statistics(monkeypatch: pytest.MonkeyPatch) -> None:
     from importlib import import_module
 
     module = import_module("cachefn.memoization.memoize")
@@ -112,7 +113,7 @@ def test_sync_lru_expiration_and_statistics(monkeypatch):
     calls = []
 
     @memoize_sync(max_size=2, ttl=1000)
-    def compute(key):
+    def compute(key: str) -> None:
         calls.append(key)
         return None
 
@@ -133,7 +134,7 @@ def test_sync_lru_expiration_and_statistics(monkeypatch):
 
 
 @pytest.mark.parametrize("size", [0, -1])
-def test_invalid_capacities(size):
+def test_invalid_capacities(size: int) -> None:
     with pytest.raises(ValueError):
         cache_fn("bad", max_size=size)
     with pytest.raises(ValueError):
@@ -143,11 +144,11 @@ def test_invalid_capacities(size):
 
 
 @pytest.mark.asyncio
-async def test_tag_invalidation_supersedes_pending_fill():
+async def test_tag_invalidation_supersedes_pending_fill() -> None:
     cache = cache_fn("tag-fill")
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def fetch():
+    async def fetch() -> int:
         started.set()
         await release.wait()
         return 1
@@ -160,7 +161,7 @@ async def test_tag_invalidation_supersedes_pending_fill():
     assert not await cache.has("key")
 
 
-def test_memoization_keys_preserve_types_and_fail_on_unsupported_values():
+def test_memoization_keys_preserve_types_and_fail_on_unsupported_values() -> None:
     from cachefn import hash_value
 
     assert hash_value([1]) != hash_value((1,))
@@ -170,19 +171,19 @@ def test_memoization_keys_preserve_types_and_fail_on_unsupported_values():
     assert hash_value(b"a") != hash_value("a")
     with pytest.raises(TypeError, match="key_generator"):
         hash_value(object())
-    circular = []
+    circular: list[object] = []
     circular.append(circular)
     with pytest.raises(ValueError, match="Circular"):
         hash_value(circular)
 
 
-def test_event_removal_during_emit_does_not_skip_other_handlers():
+def test_event_removal_during_emit_does_not_skip_other_handlers() -> None:
     from cachefn.core.events import EventEmitter
 
     events = EventEmitter()
     received = []
 
-    def first(value):
+    def first(value: int) -> None:
         events.off("hit", first)
         received.append(("first", value))
 
@@ -194,11 +195,12 @@ def test_event_removal_during_emit_does_not_skip_other_handlers():
 
 
 @pytest.mark.asyncio
-async def test_eviction_event_identifies_the_removed_key():
+async def test_eviction_event_identifies_the_removed_key() -> None:
     cache = cache_fn("eviction", max_size=1, namespace="scope")
-    evicted = []
+    evicted: list[CacheEvent] = []
     cache.on("eviction", evicted.append)
     await cache.set("first", 1)
     await cache.set("second", 2)
+    assert isinstance(evicted[0], EvictionEvent)
     assert evicted[0].key == "scope:first"
     assert evicted[0].reason == "lru"
