@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,7 +20,7 @@ const root = resolve(new URL('../../..', import.meta.url).pathname);
 const temporary = await mkdtemp(join(tmpdir(), 'catchfn-botfn-'));
 const originalFetch = globalThis.fetch;
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const requests = []; const issues = []; const catchers = [];
+const requests = []; const issues = []; const catchers = []; const uploads = [];
 let sql, watch, api, provider, browser, endpoint, bundle;
 let dropAfterStorage = true;
 let statusMode = "normal"; let statusReads = 0;
@@ -71,9 +71,21 @@ try {
   }
   api = createServer(async (req, res) => {
     try {
+      if (req.url === '/upload' && req.method === 'POST') {
+        assert.equal(req.headers.authorization, 'Bearer upload-only');
+        const content = await bytes(req); assert.ok(content.length > 1 && content.length < 2000000);
+        const path = join(temporary, `screenshot-${uploads.length}.png`);
+        await writeFile(path, content, { mode: 0o600 }); uploads.push({ path, content });
+        json(res, { url: new URL(endpoint).origin + '/files/' + (uploads.length - 1) }); return;
+      }
+      if (req.method === 'GET' && req.url.startsWith('/files/')) {
+        const item = uploads[Number(req.url.slice('/files/'.length))];
+        if (!item) { res.writeHead(404); res.end(); return; }
+        res.setHeader('content-type', 'image/png'); res.end(await readFile(item.path)); return;
+      }
       if (req.method === 'GET') {
         res.setHeader('content-type', req.url === '/app.js' ? 'application/javascript' : 'text/html');
-        res.end(req.url === '/app.js' ? await readFile(bundle) : '<!doctype html><html><body><script src="/app.js"></script></body></html>'); return;
+        res.end(req.url === '/app.js' ? await readFile(bundle) : '<!doctype html><html><body><div data-catchfn-mask style="position:fixed;left:10px;top:10px;width:100px;height:40px;background:white;color:red">PRIVATE VALUE</div><script src="/app.js"></script></body></html>'); return;
       }
       const body = await bytes(req); if (req.url === '/watch/ingest') requests.push(JSON.parse(body));
       if (req.url === '/watch/issues/status') {
@@ -83,7 +95,7 @@ try {
         if (statusMode === 'unsafe') { const ref = JSON.parse(body); json(res, { ...ref, target: 'github', state: 'linked', issueId: '7', issueUrl: 'javascript:alert(1)' }); return; }
       }
       const response = await watch.httpRouter.handle(new Request('http://local' + req.url.replace(/^\/watch/, ''), { method: req.method, headers: req.headers, body }));
-      if (req.url === '/watch/ingest' && response.ok && dropAfterStorage) { dropAfterStorage = false; res.destroy(); return; }
+      if (req.url === '/watch/ingest' && response.ok && dropAfterStorage) { const unavailable = dropAfterStorage === 'unavailable'; dropAfterStorage = false; if(unavailable) json(res,{error:'Acknowledgement unavailable'},503); else res.destroy(); return; }
       res.writeHead(response.status, Object.fromEntries(response.headers)); res.end(Buffer.from(await response.arrayBuffer()));
     } catch { res.writeHead(500); res.end(); }
   });
@@ -112,9 +124,9 @@ try {
   assert.deepEqual(linked.context, requests[0][0].context);
   // Submit through a real browser and built browser-compatible CatchFn source.
   bundle = join(temporary, 'browser.js');
-  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/src/index.ts'; window.catcher=catchFn({name:'shop',reporter:{screenshot:false,floatingButton:true},issueStatus:{enabled:true,intervalMs:100,maxAttempts:30,timeoutMs:5000},integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'full-watch-fixture-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
+  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/dist/index.js'; window.catcher=catchFn({name:'shop',reporter:{screenshot:true,floatingButton:true,maxInlineBytes:1},uploadAttachment:async blob=>{const response=await fetch('/upload',{method:'POST',headers:{authorization:'Bearer upload-only'},body:blob});if(!response.ok)throw new Error('Upload failed');return response.json();},issueStatus:{enabled:true,intervalMs:100,maxAttempts:30,timeoutMs:5000},integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'full-watch-fixture-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
-  const page = await browser.newPage(); await page.goto(origin);
+  const page = await browser.newPage({viewport:{width:800,height:600}}); await page.goto(origin);
   const browserReport = await page.evaluate(() => window.catcher.captureBug({ title: 'Browser issue', severity: 'high' }));
   assert.equal(browserReport.delivery, 'sent'); assert.equal(browserReport.integration.issueId, undefined);
   await watch.processBugIssues(); assert.equal(issues.length, 2);
@@ -130,7 +142,40 @@ try {
     for (let count = 0; count < 100 && statusReads <= previous; count++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.ok(statusReads > previous, 'browser must read the default mounted status route');
   };
-  await openReporter('Widget delayed issue'); await waitForStatusRead(0);
+  await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
+  await page.locator('input[name=title]').fill('Widget delayed issue');
+  const canvas = page.getByLabel('Screenshot annotation canvas');
+  await canvas.waitFor();
+  await page.getByRole('button', {name:'Box',exact:true}).click();
+  await canvas.scrollIntoViewIfNeeded();
+  const bounds = await canvas.boundingBox(); assert.ok(bounds);
+  await page.mouse.move(bounds.x+120,bounds.y+80); await page.mouse.down();
+  await page.mouse.move(bounds.x+180,bounds.y+120,{steps:4}); await page.mouse.up();
+  dropAfterStorage = 'unavailable';
+  const requestCount = requests.length;
+  await page.getByRole('button', {name:'Submit report',exact:true}).click();
+  await page.getByRole('button', {name:'Retry same report',exact:true}).waitFor({timeout:10000}).catch(async error=>{console.error({status:await page.getByRole('status').allTextContents(),uploads:uploads.length,requests:requests.length});throw error;});
+  assert.equal(uploads.length,1);
+  await page.getByRole('button', {name:'Retry same report',exact:true}).click();
+  await waitForStatusRead(0);
+  assert.equal(uploads.length,1,'lost intake acknowledgement must not reupload screenshot');
+  assert.equal(requests.length,requestCount+2);
+  assert.deepEqual(requests[requestCount],requests[requestCount+1]);
+  const screenshotReport = requests[requestCount][0];
+  const screenshot = screenshotReport.attachments[0];
+  assert.equal(screenshot.dataUrl,undefined);
+  assert.ok(screenshot.annotationScene.elements.some(element=>element.type==='rectangle'));
+  assert.ok(screenshot.annotationScene.elements.every(element=>element.type!=='image'));
+  const pixels = await page.evaluate(async ({url,rectangle})=>{
+    const image=new Image(); image.src=url; await image.decode();
+    const canvas=document.createElement('canvas'); canvas.width=image.width; canvas.height=image.height;
+    const context=canvas.getContext('2d'); context.drawImage(image,0,0);
+    return {masked:[...context.getImageData(16,16,1,1).data],border:[...context.getImageData(Math.round(rectangle.x+rectangle.w/2),Math.round(rectangle.y),1,1).data]};
+  },{url:screenshot.url,rectangle:screenshot.annotationScene.elements.find(element=>element.type==='rectangle')});
+  assert.ok(pixels.border.slice(0,3).some(channel=>channel<200),'annotation must be painted into uploaded pixels');
+  assert.ok(pixels.masked.slice(0,3).every(channel=>channel<40),'uploaded screenshot must mask private element');
+  assert.deepEqual(Buffer.from(await(await originalFetch(screenshot.url)).arrayBuffer()),uploads[0].content);
+  assert.deepEqual((await query({where:{id:screenshotReport.id}}))[0].attachments,screenshotReport.attachments);
   assert.equal(await page.getByRole('link', { name: 'View issue' }).count(), 0);
   await watch.processBugIssues();
   const issueLink = page.getByRole('link', { name: 'View issue' }); await issueLink.waitFor();
@@ -153,6 +198,8 @@ try {
   await page.evaluate(() => window.catcher.stop()); await browser.close(); browser = undefined;
   await watch.stop(); await sql.destroy(); sql = undefined; connect();
   assert.equal((await query({ metric: 'bug_report' })).length, 6);
+  assert.deepEqual((await query({where:{id:screenshotReport.id}}))[0].attachments,screenshotReport.attachments);
+  assert.deepEqual(await readFile(uploads[0].path),uploads[0].content);
   assert.equal((await watch.getBugIssueStatus({ app: 'shop', reportId: browserReport.id })).issueUrl, 'https://github.com/acme/bugs/issues/2');
   await watch.processBugIssues(); assert.equal(issues.length, 6);
   // Cleanup is explicitly host-scheduled. Expiration preserves durable receipt
@@ -171,7 +218,7 @@ try {
   assert.equal(retainedStatus.state, 'linked'); assert.equal(retainedStatus.issueUrl, 'https://github.com/acme/bugs/issues/1');
   assert.deepEqual(await query({ metric: 'bug_report' }), []);
   assert.equal((await sql.selectFrom('watchfn_bug_issues').selectAll().execute()).length, 6);
-  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, verified widget links, bounded payload expiration and durable replay/status receipts');
+  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, masked annotated screenshot upload with same-report retry, verified widget links, bounded payload expiration and durable replay/status receipts');
 } finally {
   globalThis.fetch = originalFetch;
   for (const catcher of catchers) catcher.stop();
