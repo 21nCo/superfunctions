@@ -38,6 +38,14 @@ it("runs transactional CRUD, revisions, publication and rollback with native SQL
     const restarted = createContentfnServer({ db });
     expect(await (await restarted.router.handle(request())).json()).toEqual(first);
     expect(await server.api.docs.query({ dataset: "prod" })).toMatchObject({ ok: true, result: { data: expect.arrayContaining([expect.objectContaining({ title: "Once" })]) } });
+    const publishedSource = await server.api.docs.create({ dataset: "prod", id: "fork-source", type: "post", doc: { title: "Published source" } });
+    if (!publishedSource.ok) throw new Error(JSON.stringify(publishedSource));
+    const fork = await server.api.docs.fork({ dataset: "prod", id: "fork-source", ifRev: publishedSource.result._rev });
+    expect(fork).toMatchObject({ ok: true, result: { _id: "drafts.fork-source", title: "Published source" } });
+    if (!fork.ok) throw new Error(JSON.stringify(fork));
+    expect(fork.result._publishedAt).toBeUndefined();
+    expect(await server.api.docs.get({ dataset: "prod", id: "fork-source" })).toEqual(publishedSource);
+    expect(await server.api.docs.fork({ dataset: "prod", id: "fork-source", ifRev: publishedSource.result._rev })).toMatchObject({ ok: false, error: { code: "DOCUMENT_ALREADY_EXISTS" } });
     const longId = '文'.repeat(1000);
     expect(await server.api.docs.create({ dataset: "prod", id: longId, type: "post", doc: { title: "Long public ID" } })).toMatchObject({ ok: true });
     expect(await server.api.docs.get({ dataset: "prod", id: longId })).toMatchObject({ ok: true, result: { _id: longId } });

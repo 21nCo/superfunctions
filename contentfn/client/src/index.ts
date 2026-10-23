@@ -77,6 +77,7 @@ export function createContentfnClient(options: ContentfnClientOptions) {
       upsert: (input: { dataset: string; schema: ContentfnSchema; migration?: { description: string } }) => request<{ schemaHash: string }>("schema/upsert", input),
     },
     docs: {
+      fork: (input: { dataset: string; id: string; ifRev: string }) => request<ContentfnDocument>("docs/fork", input),
       schedule: (input: { dataset: string; id: string; publishAt: string; ifRev?: string }) => request<{ scheduleId: string; publishAt: string }>("docs/schedule", input),
       cancelSchedule: (input: { dataset: string; id: string }) => request<Record<string, never>>("docs/cancelSchedule", input),
       query, list: query,

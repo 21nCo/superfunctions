@@ -146,6 +146,9 @@ export function validateCfql(
   if (typeof q.dataset !== "string" || !q.dataset) {
     return err("QUERY_INVALID", "dataset must be non-empty string", { path: "dataset" });
   }
+  if (q.perspective !== undefined && q.perspective !== "published" && q.perspective !== "draft") {
+    return err("QUERY_INVALID", "perspective must be published or draft", { path: "perspective" });
+  }
   if (q.types !== undefined) {
     if (!Array.isArray(q.types)) {
       return err("QUERY_INVALID", "types must be an array", { path: "types" });

@@ -149,6 +149,29 @@ export async function docCreate(
   return ok(fullDoc);
 }
 
+/** Create a new draft from the exact published revision; never replace an existing draft. */
+export async function docFork(
+  config: DocsStorageConfig,
+  input: { dataset: string; id: string; ifRev: string },
+): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docFork({ ...config, db }, input));
+  const id = input.id.replace(/^drafts\./, "");
+  const source = await docGet(config, { dataset: input.dataset, id, perspective: "published" });
+  if (!source.ok) return source;
+  if (source.result._rev !== input.ifRev) return err("REV_CONFLICT", "Published document changed before draft creation", { expectedRev: input.ifRev, actualRev: source.result._rev });
+  // Conditional write acquires the source row lock until the surrounding insertion commits.
+  // Preserve the published revision and content: taking a draft copy is not a published edit.
+  const locked = await config.db.updateMany({ model: CONTENTFN_TABLE_NAMES.docsPublished, where: [
+    { field: "dataset", operator: "eq", value: input.dataset },
+    { field: "id", operator: "eq", value: documentStorageId(input.dataset, id) },
+    { field: "rev", operator: "eq", value: input.ifRev },
+  ], data: { rev: input.ifRev } });
+  if (locked !== 1) return err("REV_CONFLICT", "Published document changed during draft creation", { expectedRev: input.ifRev });
+  const systemFields = new Set(["_id", "_type", "_rev", "_createdAt", "_updatedAt", "_publishedAt"]);
+  const doc = Object.fromEntries(Object.entries(source.result).filter(([key]) => !systemFields.has(key)));
+  return docCreate(config, { dataset: input.dataset, id, type: source.result._type, doc, asDraft: true });
+}
+
 /**
  * Get a document.
  * - perspective="published" returns only published docs

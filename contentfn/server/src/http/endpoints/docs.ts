@@ -4,7 +4,7 @@
 
 import type { ContentfnEnvelope, ContentfnDocument } from "@contentfn/core";
 import { err, validatePatch } from "@contentfn/core";
-import { docCreate, docGet, docDelete, docPatch } from "../../storage/docs.js";
+import { docCreate, docGet, docDelete, docPatch, docFork } from "../../storage/docs.js";
 import type { DocsStorageConfig } from "../../storage/docs.js";
 
 export interface DocsEndpointsConfig extends DocsStorageConfig {}
@@ -32,6 +32,13 @@ export async function handleDocsCreate(
     doc: b.doc as Record<string, unknown>,
     asDraft: typeof b.asDraft === "boolean" ? b.asDraft : undefined,
   });
+}
+
+export async function handleDocsFork(config: DocsEndpointsConfig, body: unknown): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return err("VALIDATION_FAILED", "Request body must be an object", { path: "body" });
+  const value = body as Record<string, unknown>;
+  if (typeof value.dataset !== "string" || !value.dataset || typeof value.id !== "string" || !value.id || typeof value.ifRev !== "string" || !value.ifRev) return err("VALIDATION_FAILED", "dataset, id, and ifRev are required", {});
+  return docFork(config, { dataset: value.dataset, id: value.id, ifRev: value.ifRev });
 }
 
 export async function handleDocsGet(
