@@ -34,8 +34,8 @@ Log: `/tmp/probe-installed-browser-final.log`.
 
 The initial malformed app fixture exposed a separate runtime gap: a syntax-error
 source line containing the configured readiness pattern can be accepted before
-HTTP availability is verified. That failure remains a follow-up, not passing
-server-readiness evidence. The successful fixture proves the actual page content
+HTTP availability is verified. The subsequent HTTP-readiness fix and sink-failure regression are recorded in
+`devserver-http-readiness.md`; the initial failure was not passing readiness evidence. The successful fixture proves the actual page content
 and action result, independently of the readiness message.
 
 This covers compiled installed browser runtime imports and local persisted assets.

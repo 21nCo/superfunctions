@@ -39,3 +39,18 @@ five checkpoint artifact kinds, CLI/MCP reports, strict consumer declarations an
 production audit0. Twelve artifacts/one PNG were checked; owned PID78820 was absent
 and the loopback port refused requests after stop. The script removed its temporary
 installation. Log: `/tmp/probe-readiness-installed.log`.
+
+A subsequent native regression reproduced log persistence failure after the
+banner while the HTTP probe was receiving503, followed by an eventual200. The
+previous banner promise had already resolved and could not deliver the sink
+failure, so startup incorrectly succeeded. Startup now races an independent
+output-failure promise throughout HTTP verification and checks recorded sink
+failure again immediately before marking the session ready. The regression
+asserts failure, failed manifest and owned-process disappearance; baseline failed
+in `/tmp/probe-output-readiness-baseline.log`. Final normal checks passed182
+integration tests (including26 lifecycle cases), four admin tests, strict types
+and all17 build/check tasks in `/tmp/probe-output-readiness-full.log`.
+The fresh installed browser rerun also passed after this correction:13 packages,
+all runtime/declaration assertions and audit0; serverPID32019 absent after stop.
+Log `/tmp/probe-output-readiness-installed.log`. Owned consumer removed; no
+remaining test/MCP processes found at checkpoint.

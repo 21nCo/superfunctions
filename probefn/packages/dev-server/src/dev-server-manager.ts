@@ -143,6 +143,7 @@ export class DevServerManager {
       session.startupAbort.signal.throwIfAborted();
       await this.persistManifest(session);
       session.startupAbort.signal.throwIfAborted();
+      if (session.outputFailure) throw session.outputFailure;
       session.ready = true;
 
       return {
@@ -307,7 +308,9 @@ export class DevServerManager {
     const readinessPromise = new Promise<string>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     const cancelReadiness = () => rejectReady(session.startupAbort.signal.reason);
     session.startupAbort.signal.addEventListener('abort', cancelReadiness, { once: true });
-    const recordOutputFailure = (error: unknown) => { session.outputFailure ??= error; rejectReady(error); };
+    let rejectOutputFailure!: (error: unknown) => void;
+    const outputFailurePromise = new Promise<never>((_resolve, reject) => { rejectOutputFailure = reject; });
+    const recordOutputFailure = (error: unknown) => { session.outputFailure ??= error; rejectOutputFailure(error); };
 
 
     const onLine = async (line: string, stream: 'stdout' | 'stderr'): Promise<void> => {
@@ -417,6 +420,7 @@ export class DevServerManager {
 
     try {
       const readyUrl = await Promise.race([
+        outputFailurePromise,
         readinessPromise.then(url => { healthCheck = verifyReadiness(url); return healthCheck; }),
         exitPromise,
         new Promise<never>((_resolve, reject) => {

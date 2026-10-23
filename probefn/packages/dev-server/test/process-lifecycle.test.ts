@@ -60,6 +60,21 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership',
       expect(gone(Number(await readFile(path.join(root,'pid'),'utf8')))).toBe(true);
     });
   });
+  it('rejects sink failure after the banner while HTTP readiness is pending', async () => {
+    await fixture("import { createServer } from 'node:http'; let ready=false; const server=createServer((_req,res)=>{res.statusCode=ready?200:503;res.end('status');}); server.listen(0,'127.0.0.1',()=>{console.log('Local: http://127.0.0.1:'+server.address().port);setTimeout(()=>console.log('unpersisted'),50);setTimeout(()=>{ready=true;},200);});", async (manager, options, root, store) => {
+      const original=store.createEventSink.bind(store);
+      vi.spyOn(store,'createEventSink').mockImplementation((...args)=>{
+        const sink=original(...args);const append=sink.append.bind(sink);
+        vi.spyOn(sink,'append').mockImplementation(async event=>{
+          if((event as {line?:string}).line==='unpersisted')throw new Error('disk unavailable during readiness');
+          return append(event);
+        });return sink;
+      });
+      await expect(manager.startSession({...options,devServer:{...options.devServer,timeoutMs:2000}})).rejects.toThrow('disk unavailable during readiness');
+      expect(gone(Number(await readFile(path.join(root,'pid'),'utf8')))).toBe(true);
+      expect(JSON.parse(await readFile(path.join(root,'.artifacts/runs/run/session.json'),'utf8')).status).toBe('failed');
+    });
+  });
   it('rejects invalid readiness expressions before spawning a process', async () => {
     await fixture("setInterval(() => {}, 1000);", async (manager, options, root) => {
       await expect(manager.startSession({ ...options, devServer: { ...options.devServer, readyPattern: '[' } })).rejects.toMatchObject({ code: 'E_CONFIG_INVALID' });
