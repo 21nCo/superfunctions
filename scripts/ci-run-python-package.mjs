@@ -30,6 +30,13 @@ if (!manifestsByDir.has(normalizedTargetDir)) {
 }
 
 const targetManifest = manifestsByDir.get(normalizedTargetDir);
+// The target is installed with [dev], so its local development dependencies
+// must also resolve to this checkout. Dependencies themselves are installed
+// without extras; do not recursively pull in their development environments.
+manifestsByName.set(targetManifest.name, {
+  ...targetManifest,
+  dependencies: [...targetManifest.dependencies, ...targetManifest.devDependencies],
+});
 const installOrder = topologicalLocalDependencies(targetManifest.name, manifestsByName);
 const dependencyInstalls = installOrder.filter((manifest) => manifest.dir !== targetManifest.dir);
 

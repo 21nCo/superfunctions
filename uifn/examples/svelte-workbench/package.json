@@ -15,7 +15,9 @@
     "@uifn/examples-shared": "*",
     "@uifn/patterns": "*",
     "@uifn/sf": "*",
-    "svelte": "^5.46.1"
+    "svelte": "^5.46.1",
+    "@uifn/svelte": "0.0.2",
+    "@uifn/components-svelte": "0.0.1"
   },
   "devDependencies": {
     "@uifn/vite-plugin-svelte": "npm:@sveltejs/vite-plugin-svelte@4.0.4",
