@@ -1,3 +1,4 @@
+import { insertAssetAtPath } from '../../media/insertAssetAtPath.js';
 /**
  * Schema-driven document editor: load schema + doc, render widgets, save via patch with ifRev.
  * Handles VALIDATION_FAILED (field path) and REV_CONFLICT (ConflictBanner).
@@ -57,10 +58,12 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
   const [serverError, setServerError] = useState<{ code: string; message: string; path?: string } | null>(null);
   const [conflict, setConflict] = useState(false);
   const [previewRefreshTrigger, setPreviewRefreshTrigger] = useState(0);
-  const [mediaPickerField, setMediaPickerField] = useState<string | null>(null);
+  const [mediaPickerField, setMediaPickerField] = useState<{ scope: string; path: readonly string[] } | null>(null);
+  const currentEditorScope = useRef(scope); currentEditorScope.current = scope;
 
   const load = useCallback(async () => {
     if (!dataset || !docId) return;
+    setMediaPickerField(null);
     const requestGeneration = ++generation.current;
     setLoading(true);
     setSaveLoading(false);
@@ -275,14 +278,20 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
           disabled={saveLoading}
         />
       )}
-      {mediaPickerField !== null && (
+      {mediaPickerField !== null && mediaPickerField.scope === scope && loadedScope === scope && (
         <MediaLibraryPane
+          onClose={() => setMediaPickerField(null)}
           baseUrl={baseUrl}
           dataset={dataset}
           maxUploadBytes={maxUploadBytes}
           onSelectAsset={(ref: CanonicalAssetRef) => {
-            setFormState((prev) => ({ ...prev, [mediaPickerField]: ref }));
-            setMediaPickerField(null);
+            if (currentEditorScope.current !== scope || mediaPickerField.scope !== scope || loadedScope !== scope) return;
+            try {
+              insertAssetAtPath(formState, mediaPickerField.path, ref);
+              setFormState(previous => { try { return insertAssetAtPath(previous, mediaPickerField.path, ref); } catch { return previous; } });
+              setMediaPickerField(null);
+            }
+            catch { setValidationError('Asset field could not be updated.'); }
           }}
         />
       )}
@@ -317,7 +326,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
               (v) => setFormState((prev) => ({ ...prev, [field.name]: v })),
               errorPath,
               {
-                onOpenMediaPicker: (name) => setMediaPickerField(name),
+                onOpenMediaPicker: (_name, segments) => setMediaPickerField({ scope, path: segments }),
                 baseUrl,
                 dataset,
                 docTypeName: docType.name,

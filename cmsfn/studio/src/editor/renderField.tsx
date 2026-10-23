@@ -23,7 +23,9 @@ import {
 type ReactNode = import("react").ReactNode;
 
 export interface RenderFieldOptions {
-  onOpenMediaPicker?: (fieldName: string) => void;
+  onOpenMediaPicker?: (fieldName: string, segments: readonly string[]) => void;
+  /** Literal schema keys for nested object assets; never split display paths. */
+  fieldSegments?: readonly string[];
   /** Required for reference picker (ReferenceField). */
   baseUrl?: string;
   dataset?: string;
@@ -142,7 +144,7 @@ export function renderField(
                 {renderField(f, subPath, subVal, (v) => {
                   const next = typeof value === "object" && value !== null ? { ...(value as object), [f.name]: v } : { [f.name]: v };
                   onChange(next);
-                }, errorPath)}
+                }, errorPath, { onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
               </label>
             );
           })}
@@ -228,7 +230,7 @@ export function renderField(
           onChange={(v) => onChange(v)}
           required={required}
           disabled={false}
-          onOpenMediaPicker={options?.onOpenMediaPicker ? () => options!.onOpenMediaPicker!(path) : undefined}
+          onOpenMediaPicker={options?.onOpenMediaPicker ? () => options!.onOpenMediaPicker!(path, options?.fieldSegments ?? [field.name]) : undefined}
         />
       );
     default:

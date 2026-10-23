@@ -5,6 +5,9 @@
 import { uploadAsset } from "../contentfn/client.js";
 import type { ContentfnClientConfig } from "../contentfn/client.js";
 
+export const DEFAULT_MAX_UPLOAD_BYTES = 1_048_576;
+export function uploadLimit(value?: number): number | null { return value === undefined ? DEFAULT_MAX_UPLOAD_BYTES : Number.isSafeInteger(value) && value > 0 ? value : null; }
+
 export interface UploadAssetConfig extends ContentfnClientConfig {
   /** Max size in bytes; when exceeded, reject without calling ContentFn (PAYLOAD_TOO_LARGE). */
   maxUploadBytes?: number;
@@ -29,10 +32,12 @@ export async function uploadAssetWithLimit(
   config: UploadAssetConfig,
   input: UploadAssetInput
 ): Promise<UploadAssetResult> {
-  const bytesLength = typeof input.bytesBase64 === "string"
-    ? Math.floor((input.bytesBase64.length * 3) / 4)
-    : 0;
-  const limit = config.maxUploadBytes;
+  const limit = uploadLimit(config.maxUploadBytes);
+  if (limit === null || !input.filename || input.filename.length > 1024 || !input.contentType || input.contentType.length > 255 || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(input.contentType)) return { ok: false, code: 'VALIDATION_FAILED', message: 'Invalid upload configuration or file metadata.' };
+  const encoded = input.bytesBase64;
+  if (typeof encoded !== 'string' || !encoded.length || encoded.length > Math.ceil(limit / 3) * 4) return { ok: false, code: 'PAYLOAD_TOO_LARGE', message: 'File exceeds the upload limit.', details: { limit } };
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return { ok: false, code: 'VALIDATION_FAILED', message: 'Invalid file encoding.' };
+  const bytesLength = encoded.length / 4 * 3 - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0);
   if (limit != null && bytesLength > limit) {
     return {
       ok: false,

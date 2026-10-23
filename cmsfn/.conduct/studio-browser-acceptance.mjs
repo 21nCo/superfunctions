@@ -4,17 +4,18 @@ import { createServer } from 'node:http';
 import { writeFile, readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
-import { createContentfnServer } from '@contentfn/server';
+import { createContentfnServer, InMemoryStorageBackend } from '@contentfn/server';
 import { createCmsfnServer, verifyPreviewToken } from '@cmsfn/server';
 import { memoryAdapter } from '@superfunctions/db/adapters';
 const unwrap = value => { assert.equal(value.ok, true, JSON.stringify(value)); return value.result; };
 const db = memoryAdapter();
 const cmsDb = memoryAdapter();
+const assetStorage = new InMemoryStorageBackend();
 const previewSecret = 'fixture-preview-secret-32-bytes-minimum';
-let allowPreview = true;
+let allowPreview = true; let deniedMediaDataset = '';
 let denySingletonReads = false; let denyHistory = false;
-const content = createContentfnServer({ db, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => action === 'realtime.subscribe' ? context instanceof Request && context.headers.get('cookie')?.includes('fixture_session=preview') === true : context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
-const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }] })) };
+const content = createContentfnServer({ db, storage: assetStorage, maxPayloadBytes: 16, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && action.startsWith('assets.') && input.dataset === deniedMediaDataset ? false : action === 'realtime.subscribe' ? context instanceof Request && context.headers.get('cookie')?.includes('fixture_session=preview') === true : context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
+const schema = { version: 1, documentTypes: ['post', 'page'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }, ...(name === 'post' ? [{ name: 'media', type: { kind: 'object', fields: [{ name: 'caption', type: { kind: 'primitive', type: 'string' } }, { name: 'attachment', type: { kind: 'asset', assetType: 'file' } }] } }] : [])] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
   unwrap(await content.api.schema.upsert({ dataset, schema }));
@@ -54,7 +55,7 @@ const server = createServer((req, res) => {
   }
   if (req.url === '/studio-bundle.js') { res.setHeader('content-type', 'text/javascript'); res.end(bundle); return; }
   if (req.url?.startsWith('/studio')) {
-    const config = { contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] },
+    const config = { limits: { maxUploadBytes: 16 }, contentfn: { baseUrl: base }, cmsfn: { apiUrl: cmsBase }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'group', title: 'Content', children: [{ kind: 'documentList', title: 'Posts', dataset: 'prod', types: ['post'] },
       { kind: 'singleton', title: 'Production home', dataset: 'prod', type: 'page', id: 'home' },
       { kind: 'singleton', title: 'Staging home', dataset: 'staging', type: 'page', id: 'home' },
       { kind: 'singleton', title: 'Private home', dataset: 'prod', type: 'page', id: 'private-home' },
@@ -347,9 +348,47 @@ try {
   await page.getByText('Preview URL must match the configured HTTP(S) origin and contain no credentials.', { exact: true }).waitFor();
   assert.equal(requests.filter(path => path === '/cmsfn/preview/token').length, tokenRequestsBeforeUnsafe);
   assert.equal(await page.locator('[data-preview-iframe]').count(), 0);
+  // Entire installed media workflow: producer byte limits, bounded pages and nested persistence.
+  const mediaInput = { dataset: 'prod', filename: 'exact.txt', contentType: 'text/plain', bytesBase64: Buffer.from('a').toString('base64') };
+  unwrap(await content.api.assets.upload(mediaInput));
+  unwrap(await content.api.assets.upload({ ...mediaInput, bytesBase64: Buffer.alloc(16).toString('base64') }));
+  assert.equal((await content.api.assets.upload({ ...mediaInput, bytesBase64: Buffer.alloc(17).toString('base64') })).error.code, 'PAYLOAD_TOO_LARGE');
+  for (let index = 0; index < 51; index++) unwrap(await content.api.assets.upload({ ...mediaInput, filename: `page-${index}.txt` }));
+  const firstAssetPage = unwrap(await content.api.assets.list({ dataset: 'prod', limit: 50, offset: 0 }));
+  await page.goto(`${base}/studio`); await page.getByRole('button', { name: 'Posts', exact: true }).click();
+  await page.locator('[data-doc-id="drafts.editable"] [data-doc-open]').click();
+  await page.locator('[data-field-path="media.attachment"] [data-asset-open-media]').click();
+  await page.locator('[data-media-item]').first().waitFor();
+  assert.deepEqual(await page.locator('[data-media-item]').evaluateAll(rows => rows.map(row => row.getAttribute('data-asset-id'))), firstAssetPage.assets.map(asset => asset.assetId));
+  await page.getByRole('button', { name: 'Next media page' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-media-item]').length === 3);
+  const nextAssetPage = unwrap(await content.api.assets.list({ dataset: 'prod', limit: 50, offset: 50 }));
+  assert.deepEqual(await page.locator('[data-media-item]').evaluateAll(rows => rows.map(row => row.getAttribute('data-asset-id'))), nextAssetPage.assets.map(asset => asset.assetId));
+  const uploadRequestsBefore = requests.filter(path => path === '/contentfn/assets/upload').length;
+  await page.getByLabel('Upload file').setInputFiles({ name: 'oversized.txt', mimeType: 'text/plain', buffer: Buffer.alloc(17) });
+  await page.locator('[data-media-upload-error]').waitFor();
+  assert.equal(requests.filter(path => path === '/contentfn/assets/upload').length, uploadRequestsBefore);
+  // Editing a sibling while the picker is open must survive insertion.
+  await page.locator('input[data-field-path="media.caption"]').fill('Keep this sibling');
+  const [uploadResponse] = await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/assets/upload')), page.getByLabel('Upload file').setInputFiles({ name: '<script>safe-name.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') })]);
+  const uploaded = unwrap(await uploadResponse.json());
+  assert.equal(assetStorage.getAsset(uploaded.url.replace('memory://', '')).bytes.toString(), 'hello');
+  await page.locator(`[data-asset-id="${uploaded.assetId}"] [data-media-select]`).click();
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
+  assert.deepEqual(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' })).media, { caption: 'Keep this sibling', attachment: { _type: 'asset', _ref: uploaded.assetId, assetType: 'file' } });
+  await page.locator('[data-field-path="media.attachment"] [data-asset-open-media]').click(); await page.locator('[data-media-item]').first().waitFor();
+  deniedMediaDataset = 'prod'; await page.getByRole('button', { name: 'Refresh media' }).click();
+  await page.locator('[data-media-denied]').waitFor(); assert.equal(await page.locator('[data-media-item]').count(), 0);
+  assert.equal((await fetch(`${base}/contentfn/assets/upload`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mediaInput) }).then(response => response.json())).error.code, 'PERMISSION_DENIED');
+  deniedMediaDataset = '';
+  // Navigation cannot retain the previous document's field path or picker.
+  await page.getByRole('button', { name: 'Staging home', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-current-dataset]')?.getAttribute('data-current-dataset') === 'staging' && !document.querySelector('[data-editor-pane][data-loading]'));
+  assert.equal(await page.locator('[data-media-library-pane]').count(), 0);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'staging', id: 'home', perspective: 'draft' })).media, undefined);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['trusted-audience preview target and exact scope verification', 'real cookie-authorized SSE refresh', 'token renewal and permission revocation', 'unsafe resolver denied before token request', 'no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['media exact server byte limits and browser preflight', 'deterministic bounded media pages', 'nested canonical asset insertion and persisted sibling preservation', 'media permission revocation and document scope cleanup', 'trusted-audience preview target and exact scope verification', 'real cookie-authorized SSE refresh', 'token renewal and permission revocation', 'unsafe resolver denied before token request', 'no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
     remaining: ['remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();

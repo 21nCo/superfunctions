@@ -76,3 +76,24 @@ must restart. ContentFn checkpoint `6fb4c5660fd8bfbe13565565aa3b76f551f1d277` ad
 scope-hashed cursors and the explicit ordered-index migration hook. Hosts must
 implement and run that hook; populated SQLite plans are verified. PostgreSQL/MySQL
 index-entry limits and plans remain separate readiness gates.
+
+### Media library
+
+Media pages follow ContentFn's `createdAt` descending, then `assetId` ascending order.
+Each page contains at most 50 assets; next/previous navigation replaces the current page.
+This is the producer's offset pagination, not a stable snapshot: concurrent uploads or
+deletions can shift page boundaries. Refresh returns to the newest page.
+
+`limits.maxUploadBytes` bounds decoded file bytes and is checked against `File.size`
+before reading or encoding. Studio defaults to 1 MiB when it is omitted and rejects
+invalid nonpositive/noninteger limits. The producer independently enforces its decoded
+asset limit and the encoded JSON request limit. Configure the latter for base64 expansion
+and metadata; a file passing Studio's check can still exceed a stricter host request
+limit. Uploads are not automatically retried after an uncertain network outcome.
+
+File names and MIME metadata are length-bounded; names are rendered as text, never HTML.
+Media responses are validated and limited to 2 MiB with a ten-second request deadline.
+Access denial removes prior rows. Dataset, endpoint and document changes cancel pending
+work and prevent stale selections. Nested object asset fields use literal schema keys,
+preserve siblings and reject prototype keys or array traversal. Array-item media editing
+is not added by this object-field integration.
