@@ -97,13 +97,20 @@ it('stores validated survey responses atomically across HTTP races, rolling boun
     await promisify(execFile)(process.env.USERFN_SURVEY_PYTHON ?? 'python3', ['-c', `
 import asyncio, sys
 from userfn import UserFnClient, UserFnOptions, SurveyResponseAnswer, SurveyDeliveryError
+from userfn.types import Survey, SurveyCaps, CampaignTrigger
 async def run():
     client = UserFnClient(UserFnOptions(api_key='tenant:python', endpoint=sys.argv[1]))
+    client.identify('python')
+    client.set_surveys([Survey(id='survey', questions=[], enabled=True, triggers=[CampaignTrigger(type='event')], caps=SurveyCaps(2))])
     answers = [SurveyResponseAnswer(question_id='score', value=8)]
     first = await client.submit_survey_response('survey', answers, idempotency_key='py-lost')
     assert first.accepted
     assert await client.submit_survey_response('survey', answers, idempotency_key='py-lost') == first
+    assert len(client.get_eligible_surveys('event', 'any')) == 1
     await client.submit_survey_response('survey', answers, idempotency_key='py-next')
+    assert client.get_eligible_surveys('event', 'any') == []
+    client.identify('another-local-identity')
+    assert len(client.get_eligible_surveys('event', 'any')) == 1
     try:
         await client.submit_survey_response('survey', answers, idempotency_key='py-capped')
         raise AssertionError('cap not enforced')

@@ -430,5 +430,15 @@ proxy configuration and cookies are excluded by the fresh HTTP client. Requests
 and receipts are bounded to64KiB. Permanent errors, including cap denial429, do
 not retry automatically. Task cancellation cancels transport but cannot reverse
 a committed response. Explicit submissions do not use passive messaging consent.
-Python survey eligibility/rendering, persistent submission queues and automatic
-WatchFn analytics remain unfinished.
+Local survey candidates are available through `set_surveys(...)` and
+`get_eligible_surveys(trigger_type, context)`. They require an identified user and
+messaging consent, match event/URL substrings and configured segments, and apply
+per-identity local response counts. An omitted cap (`SurveyCaps(None)`) defaults
+to one; zero or malformed caps deny. Successful explicit submissions count once
+per receipt for the identity captured before the request, even if identity changes
+while awaiting it. Failed/uncertain attempts do not count until acknowledged.
+These counts survive configuration replacement within this client, but not process
+restart. Local identity and caps do not replace server authorization or durable
+caps; receipts must come from the configured service. Browser rendering, persistent
+submission queues, complete survey scheduling/branching and automatic WatchFn
+analytics remain unfinished.

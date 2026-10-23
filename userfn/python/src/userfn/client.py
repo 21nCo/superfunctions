@@ -1,5 +1,5 @@
 from .core.surveys_http import HttpSurveyService, SurveyDeliveryError
-from .types import SurveyResponseAnswer, SurveyReceipt
+from .types import SurveyResponseAnswer, SurveyReceipt, SurveyResponse
 from .core.messaging_http import HttpMessaging, MessagingDeliveryError
 from .core.exposures import FlagExposures
 from .core.consent import ConsentPolicy
@@ -13,6 +13,7 @@ from .core.feedback_http import HttpFeedbackService
 from .core.flags import FlagEvaluator
 from .core.segments import SegmentEvaluator
 from .core.messaging import MessagingEngine
+from .core.surveys import SurveyEngine
 
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
@@ -30,7 +31,7 @@ class UserFnClient:
         self.segments = SegmentEvaluator()
         self.flags = FlagEvaluator([], self.segments, options.environment)
         self.messaging = MessagingEngine(self.segments)
-        # self.surveys = SurveyEngine(self.segments) # TODO: Implement SurveyEngine
+        self.surveys = SurveyEngine(self.segments)
 
         self._bootstrap_keys = set((options.bootstrap_flags or {}).keys())
         self.flags.set_flags([
@@ -41,7 +42,11 @@ class UserFnClient:
     async def submit_survey_response(self, survey_id: str, answers: List[SurveyResponseAnswer], *, idempotency_key: str) -> SurveyReceipt:
         if not self.survey_service:
             raise SurveyDeliveryError('Survey service is not configured')
-        return await self.survey_service.submit(survey_id, answers, idempotency_key)
+        user = self.identity.get_user()
+        receipt = await self.survey_service.submit(survey_id, answers, idempotency_key)
+        if user is not None:
+            self.surveys.track_response(SurveyResponse(survey_id, answers, receipt.submitted_at), user, receipt.id)
+        return receipt
 
     def identify(self, id: str, traits: Optional[UserTraits] = None):
         self._messaging_epoch += 1
@@ -169,6 +174,15 @@ class UserFnClient:
 
     def set_campaigns(self, campaigns):
         self.messaging.set_campaigns(campaigns)
+
+    def set_surveys(self, surveys: List[Survey]) -> None:
+        self.surveys.set_surveys(surveys)
+
+    def get_eligible_surveys(self, trigger_type: str, context: str) -> List[Survey]:
+        """Return local candidates; this does not reserve a durable display slot."""
+        if not self.consent.state()['messaging']:
+            return []
+        return self.surveys.get_eligible_surveys(trigger_type, context, self.identity.get_user())
 
     async def submit_feedback(self, feedback: FeedbackSubmission, *, idempotency_key: Optional[str] = None) -> None:
         await self.feedback.submit(feedback, idempotency_key)
