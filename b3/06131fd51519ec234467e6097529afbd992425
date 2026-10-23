@@ -1,0 +1,77 @@
+cmsfn/.conduct/status-capability-readiness.md
+  s_e1c5fc1a65c0cf::t_30dec6a9247693 1-35
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_ccfde97a4605b0::t_c1193e3bdb89e2 33,37-42,65,244-256,259
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_ccfde97a4605b0::t_7270d5861b8151 35,39-40
+cmsfn/server/README.md
+  s_e1c5fc1a65c0cf::t_70931f8de016ad 1-21
+cmsfn/server/src/__tests__/audit-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_6f9770302cb39a 1,22,69-70,88-89,99-100,102-103
+cmsfn/server/src/__tests__/audit.test.ts
+  s_e1c5fc1a65c0cf::t_0569a136af22cc 1,50,105
+cmsfn/server/src/__tests__/capability-enforcement.test.ts
+  s_e1c5fc1a65c0cf::t_7ac399e77e95a5 1-54
+cmsfn/server/src/__tests__/compatibleStatus.ts
+  s_e1c5fc1a65c0cf::t_3d9ef735ef37a1 1-7
+cmsfn/server/src/__tests__/ops-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_c1d62b59e529d5 1,9-10
+cmsfn/server/src/__tests__/ops.test.ts
+  s_e1c5fc1a65c0cf::t_3bcae6cbe86490 1,64,105,140
+cmsfn/server/src/__tests__/preview.test.ts
+  s_e1c5fc1a65c0cf::t_41699a4b29df96 1,7,35-36
+cmsfn/server/src/__tests__/publish.test.ts
+  s_e1c5fc1a65c0cf::t_8fc62054f62ff7 1,51
+cmsfn/server/src/__tests__/releases-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_56d6569c2e9e18 1,41
+cmsfn/server/src/__tests__/releases.test.ts
+  s_e1c5fc1a65c0cf::t_c1db116cdab3eb 1,105,181
+cmsfn/server/src/__tests__/status.test.ts
+  s_e1c5fc1a65c0cf::t_4b741d5cd8f5bd 140-141
+cmsfn/server/src/__tests__/workflow-revision.test.ts
+  s_e1c5fc1a65c0cf::t_aedf6023791533 1,24
+cmsfn/server/src/contentfn/response.ts
+  s_e1c5fc1a65c0cf::t_07ddcdcded831f 28
+cmsfn/server/src/contentfn/statusClient.ts
+  s_e1c5fc1a65c0cf::t_7c63beda32e450 1-9,11-16,18-30,32-37,39-44
+cmsfn/server/src/http/audit.ts
+  s_e1c5fc1a65c0cf::t_9c491559430c03 9-10,41,52
+cmsfn/server/src/http/ops.ts
+  s_e1c5fc1a65c0cf::t_fd9f5cd8337516 9-10,31,45
+cmsfn/server/src/http/preview.ts
+  s_e1c5fc1a65c0cf::t_fcdc5c545e0853 12-15,36-37,53-55,59,64
+cmsfn/server/src/http/publish.ts
+  s_e1c5fc1a65c0cf::t_589048738df9de 15-18,35-36,48-50,54,59,84-85,97-99,103,108
+cmsfn/server/src/http/releases.ts
+  s_e1c5fc1a65c0cf::t_0f1d6f2d9becc3 15-16,140
+cmsfn/server/src/http/status.ts
+  s_e1c5fc1a65c0cf::t_6b0e39521a73d4 9,22,35-40
+cmsfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_a1a2dfc79c8b5a 6-7,44,72-73,85,118-119,131-132,144-145,158-159,172-173,186-187,201,216,231,245,260-261,283-295,298-300
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_cd8bcc199f6ce2 49-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b306131fd51519ec234467e6097529afbd992425",
+  "prompts": {},
+  "sessions": {
+    "s_ccfde97a4605b0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16871-f289-7982-89d7-7951935598f6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
