@@ -14,6 +14,10 @@
 > **Alpha software**.
 > Super functions is currently in alpha and is not yet fully ready for production use. APIs and behavior may change without notice, and some features may be incomplete or unstable. Evaluate it carefully and use it at your own risk.
 
+# Contributor runtime
+
+Use Node.js 20.19+ or 22.12+ for the root test tools. MailFn Cloudflare workerd tests require Node.js 22.12+; the release workflow uses Node 22. Individual published packages retain their own runtime requirements, including separately tested Node 18 consumers.
+
 # Functions
 
 ## Data and storage

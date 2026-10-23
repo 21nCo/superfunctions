@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 
+const defaultConfig = process.argv.includes('--default-config');
 const root = await mkdtemp(join(tmpdir(), 'shared-vitest-ui-'));
 const probe = createServer();
 probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
@@ -25,10 +26,13 @@ async function until(check, description) {
 }
 try {
   const config = join(root, 'vitest.config.mjs');
-  await writeFile(config, `export default ${JSON.stringify({ root, test: { globals: true, include: ['smoke.test.js'], maxWorkers: 1, minWorkers: 1 } })};\n`);
+  await writeFile(config, `export default ${JSON.stringify({ root, test: { globals: true, include: ['smoke.test.js'], maxWorkers: 1 } })};\n`);
   await writeFile(join(root, 'smoke.test.js'), "test('isolated UI smoke', () => expect(2 + 3).toBe(5));\n");
-  child = spawn('npm', ['run', 'test:ui', '--', '--config', config, '--api.host', '127.0.0.1', '--api.port', String(port)], {
-    cwd: new URL('../', import.meta.url), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const command = defaultConfig ? `${manifest.scripts['test:ui']} --api.host 127.0.0.1 --api.port ${port}` : 'npm';
+  const args = defaultConfig ? [] : ['run', 'test:ui', '--', '--config', config, '--api.host', '127.0.0.1', '--api.port', String(port)];
+  child = spawn(command, args, {
+    cwd: defaultConfig ? root : new URL('../', import.meta.url), shell: defaultConfig, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', CI: '' },
   });
   exited = once(child, 'exit');
@@ -44,8 +48,8 @@ try {
   const asset = await fetch(new URL(script[1], `${url}/__vitest__/`), { signal: AbortSignal.timeout(3000) });
   assert.equal(asset.status, 200);
   assert.ok((await asset.text()).length > 1000, 'UI JavaScript must be served');
-  assert.match(output, /3\.2\.7/);
-  console.log(JSON.stringify({ command: 'npm run test:ui', version: '3.2.7', testPassed: true, htmlStatus: response.status, javascriptStatus: asset.status, port, pid: child.pid }));
+  assert.match(output, /4\.1\.12/);
+  console.log(JSON.stringify({ command: 'npm run test:ui', defaultConfig, version: '4.1.12', testPassed: true, htmlStatus: response.status, javascriptStatus: asset.status, port, pid: child.pid }));
 } catch (error) {
   console.error(output);
   throw error;
