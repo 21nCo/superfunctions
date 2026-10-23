@@ -1,0 +1,329 @@
+{
+  "addedPaths": 524,
+  "removedPaths": [
+    "node_modules/@vitest/ui",
+    "node_modules/@vitest/ui/node_modules/pathe"
+  ],
+  "changedExistingVersions": [
+    {
+      "path": "node_modules/@vitest/expect",
+      "before": "3.2.4",
+      "after": "3.2.7"
+    },
+    {
+      "path": "node_modules/@vitest/spy",
+      "before": "3.2.4",
+      "after": "3.2.7"
+    },
+    {
+      "path": "node_modules/@vitest/utils",
+      "before": "3.2.4",
+      "after": "3.2.7"
+    },
+    {
+      "path": "node_modules/vitest",
+      "before": "3.2.4",
+      "after": "3.2.7"
+    },
+    {
+      "path": "node_modules/vitest/node_modules/check-error",
+      "before": "2.1.1",
+      "after": "2.1.3"
+    }
+  ],
+  "introducedPackageVersions": [
+    "picomatch@4.0.7",
+    "tinyspy@4.0.6"
+  ],
+  "remainingOlderVitest": [
+    {
+      "path": "botfn/slack-core/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "cifn/typescript/cli/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "cifn/typescript/dashboard/node_modules/vitest",
+      "version": "2.1.9"
+    },
+    {
+      "path": "clifn/admin/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "datafn/cli/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "datafn/client/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "datafn/svelte/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "docsfn/core/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "docsfn/provider-fs/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "docsfn/react/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "extfn/admin/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "flowfn/typescript/node_modules/vitest",
+      "version": "2.1.9"
+    },
+    {
+      "path": "hostfn/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "mailfn/cli/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/client/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/cloudflare/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/core/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/facade/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/mcp/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/sendfn/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mailfn/testing/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/adapter-kit/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/ai/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/client/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/collab/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/components-react/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/components-solid/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/components-svelte/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/components/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/contentfn/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/core/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/dom/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/extensions/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/facade/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/filefn/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/markdown/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/react/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/registry/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/render/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/searchfn/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/server/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/solid/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/source/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/svelte/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "mdfn/testing/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "memoryfn/typescript/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "packages/admin/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "plugfn/core/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "searchfn/server/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "sendfn/typescript/node_modules/vitest",
+      "version": "2.1.9"
+    },
+    {
+      "path": "superconsole/node_modules/vitest",
+      "version": "3.2.4"
+    },
+    {
+      "path": "uifn/adapter-kit/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/components-react/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/components-svelte/node_modules/vitest",
+      "version": "4.1.10"
+    },
+    {
+      "path": "uifn/core/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/patterns/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/react/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/recipes/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/sf/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/storybook/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/svelte/node_modules/vitest",
+      "version": "4.1.10"
+    },
+    {
+      "path": "uifn/theme-tailwind/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/theme/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "uifn/tokens/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "userfn/typescript/node_modules/vitest",
+      "version": "1.6.1"
+    },
+    {
+      "path": "watchfn/typescript/node_modules/vitest",
+      "version": "1.6.1"
+    }
+  ],
+  "audit": {
+    "counts": {
+      "info": 0,
+      "low": 4,
+      "moderate": 52,
+      "high": 56,
+      "critical": 10,
+      "total": 122
+    },
+    "vitestAdvisories": [
+      {
+        "title": "When Vitest UI server is listening, arbitrary file can be read and executed",
+        "url": "https://github.com/advisories/GHSA-5xrq-8626-4rwp",
+        "severity": "critical",
+        "range": "<3.2.6"
+      },
+      {
+        "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+        "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9",
+        "severity": "moderate",
+        "range": ">=2.1.0 <4.1.11"
+      }
+    ],
+    "rootVitestStillFlagged": true
+  }
+}
