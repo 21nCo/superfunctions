@@ -105,9 +105,10 @@ export function correlationResponseHeaders(ids: ReturnType<typeof extractCorrela
 export function withCorrelationHeaders(response: Response, ids: ReturnType<typeof extractCorrelationIds>): Response {
   // Opaque/error sentinels are not wire HTTP responses and cannot be reconstructed.
   if (response.status === 0) return response;
-  const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) headers.set(name, value);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  // Pass the full runtime initializer: Workers also carries webSocket/cf metadata.
+  const correlated = new Response(response.body, response);
+  for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) correlated.headers.set(name, value);
+  return correlated;
 }
 
 /**
