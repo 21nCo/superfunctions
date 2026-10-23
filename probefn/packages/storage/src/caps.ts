@@ -5,6 +5,8 @@ export interface StorageCaps {
   maxEventsPerSink: number;
   /** Shared accounting database file limit; excludes journals and browser scratch. */
   maxAccountingDatabaseBytes?: number;
+  /** Persistent native ownership slots across sessions and runs (2..65536). */
+  maxOwnershipSlots?: number;
 }
 
 export interface EventCapPolicy {

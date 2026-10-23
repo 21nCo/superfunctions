@@ -7,3 +7,5 @@ export * from './redaction.js';
 export * from './event-reader.js';
 
 export * from './event-page.js';
+
+export * from './session-ownership.js';

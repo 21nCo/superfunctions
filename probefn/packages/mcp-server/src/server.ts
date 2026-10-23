@@ -704,6 +704,7 @@ export async function startSessionFromConfig(
   assertArtifactIdentifier(sessionId, 'Session id');
   assertArtifactIdentifier(runId, 'Run id');
   const storageCaps: Partial<StorageCaps> = {
+    ...(config.storageCaps?.maxOwnershipSlots !== undefined ? { maxOwnershipSlots: config.storageCaps.maxOwnershipSlots } : {}),
     ...(config.storageCaps?.maxArtifactBytes !== undefined ? { maxArtifactBytes: config.storageCaps.maxArtifactBytes } : {}),
     ...(config.storageCaps?.maxEventsPerSink !== undefined ? { maxEventsPerSink: config.storageCaps.maxEventsPerSink } : {}),
     ...(config.storageCaps?.maxAccountingDatabaseBytes !== undefined ? { maxAccountingDatabaseBytes: config.storageCaps.maxAccountingDatabaseBytes } : {}),

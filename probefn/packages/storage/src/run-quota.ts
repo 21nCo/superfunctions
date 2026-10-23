@@ -192,7 +192,7 @@ export async function safeDirectory(repoRoot: string, relative: string): Promise
     if (!info.isDirectory() || info.isSymbolicLink()) throw failed('Artifact ancestor is not a regular directory.');
   }
 }
-async function safeFile(filename: string) {
+export async function safeFile(filename: string) {
   try {
     const info = await lstat(filename);
     if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || !Number.isSafeInteger(info.ino)) throw failed('Artifact path must be a regular file without links.');

@@ -105,6 +105,7 @@ const probefnConfigSchema = z.object({
   storageCaps: z.object({
     maxArtifactBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     maxEventsPerSink: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    maxOwnershipSlots: z.number().int().min(2).max(65536).optional(),
     maxAccountingDatabaseBytes: z.number().int().min(65536).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict().optional(),
   deterministicDefaults: deterministicSettingsSchema.default({}),
