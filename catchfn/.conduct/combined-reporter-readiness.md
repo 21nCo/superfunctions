@@ -35,3 +35,15 @@ package metadata are unchanged. It does not prove hosted upload authorization,
 external provider delivery, other browser engines or all original readiness
 gates. Hosts still own attachment retention and orphan cleanup. The test upload
 server is a bounded-fixture assertion, not a production ingress implementation.
+
+## Scoped browser credential
+
+The same native fixture now configures the shared WatchFn AuthProvider. Browser
+credentials receive only watchfn:ingest and watchfn:issues:status; a real browser
+POST /query returns403. The whole masked/annotated upload, postcommit503 retry,
+SQLite reopen and issue-link flow still passes. The trusted fixture operator has
+query scope separately. Watch prerequisite ec2d58e7c is merged normally, including
+its prior Python/shared prerequisites. Catch107tests/types and8shared checks pass.
+No tenant isolation is implied: these are operation scopes within one trusted
+Watch deployment. Logs /tmp/watch-catch-scoped-native.log and
+/tmp/catch-scoped-{tests,types,shared}.log.
