@@ -83,6 +83,7 @@ recfn/server/runtime/
 
 # Turbo
 .turbo/
+**/vite.config.*.timestamp-*.mjs
 
 # Misc
 *.tgz
