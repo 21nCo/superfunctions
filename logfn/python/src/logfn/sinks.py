@@ -108,6 +108,7 @@ class SinkHttp:
         self._delivery: Optional[asyncio.Task[bool]] = None
         self._closing = False
         self._closed = False
+        self._close_task: Optional[asyncio.Task[None]] = None
         self._overflow_evictions = 0
 
     @property
@@ -207,7 +208,19 @@ class SinkHttp:
     async def close(self) -> None:
         if self._closed:
             return
-        self._closing = True
+        if self._close_task is None or self._close_task.done():
+            self._closing = True
+            self._close_task = asyncio.create_task(self._finish_close())
+            self._close_task.add_done_callback(self._close_finished)
+        # Cancelling a caller must not cancel shared shutdown or reopen admission.
+        await asyncio.shield(self._close_task)
+
+    @staticmethod
+    def _close_finished(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()  # Observe failures even when every waiter cancelled.
+
+    async def _finish_close(self) -> None:
         try:
             await self.flush()
             if self._owns_client:

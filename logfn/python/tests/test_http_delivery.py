@@ -253,3 +253,41 @@ async def test_explicit_drain_joins_interval_request_without_cancelling(operatio
             await sink.close()
         assert calls == 1
         assert not sink.buffer
+
+
+@pytest.mark.parametrize("cancel_first", [False, True])
+async def test_concurrent_close_owns_one_client_shutdown(monkeypatch: pytest.MonkeyPatch, cancel_first: bool) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    closes = 0
+    class ClosingClient(httpx.AsyncClient):
+        async def aclose(self) -> None:
+            nonlocal closes
+            closes += 1
+            entered.set()
+            await release.wait()
+            await super().aclose()
+    client = ClosingClient(transport=httpx.MockTransport(lambda request: httpx.Response(202)))
+    monkeypatch.setattr("logfn.sinks.httpx.AsyncClient", lambda **kwargs: client)
+    sink = SinkHttp("https://example.test")
+    first = asyncio.create_task(sink.close())
+    await asyncio.wait_for(entered.wait(), 1)
+    second = asyncio.create_task(sink.close())
+    try:
+        for _ in range(10):
+            await asyncio.sleep(0)
+        if cancel_first:
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            with pytest.raises(RuntimeError, match="closed"):
+                sink([])
+        assert not second.done()
+        assert closes == 1
+    finally:
+        release.set()
+        await asyncio.gather(first, second, return_exceptions=True)
+        if not client.is_closed:
+            await client.aclose()
+    assert client.is_closed
+    await sink.close()
+    assert closes == 1

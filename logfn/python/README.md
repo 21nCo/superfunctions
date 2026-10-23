@@ -59,8 +59,10 @@ network/timeouts and HTTP 408/429/5xx with bounded backoff; other unsuccessful
 statuses fail immediately. `max_queue` bounds waiting events by discarding oldest
 entries on overflow. Each request contains at most `batch_size` events.
 
-Use `await sink.close()` to flush and close its owned HTTP client. Failed close
-leaves the sink available for retry. An injected `client` remains owned by its
+Use `await sink.close()` to flush and close its owned HTTP client. Concurrent
+callers join one shutdown. Cancelling a caller does not cancel that shutdown or
+reopen admission; await `close()` again to observe its completion. If the actual
+shutdown fails, the sink becomes available for retry. An injected `client` remains owned by its
 caller. Requests can be duplicated after ambiguous network errors, so ingestion
 storage should use idempotent writes where duplicates matter.
 
