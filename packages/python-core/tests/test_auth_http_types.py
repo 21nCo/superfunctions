@@ -63,15 +63,15 @@ def test_serialize_response_cookies_preserves_order() -> None:
 
 
 def test_route_meta_accepts_auth_and_openapi_payloads() -> None:
-    route = Route(
-        method=HttpMethod.GET,
-        path="/auth/session",
-        handler=lambda request, context: Response(status=200, body={}),
-        meta={
+    route = Route.model_validate({
+        "method": HttpMethod.GET,
+        "path": "/auth/session",
+        "handler": lambda request, context: Response(status=200, body={}),
+        "meta": {
             "auth": {"mode": "cookie-session", "csrf": True},
             "openapi": {"operationId": "getSession", "summary": "Read session"},
         },
-    )
+    })
 
     assert route.meta is not None
     assert route.meta.auth is not None
