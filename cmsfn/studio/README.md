@@ -72,5 +72,7 @@ proxy/session integration for the ContentFn API.
 
 Requires ContentFn's versioned document-bound history cursors (checkpoint
 `3b87a303d8c37a22ba1b08bad6b9cbfb2c65a8bc`, sf-next PR 56). Legacy cursor pages
-must restart. The producer bounds materialized candidates but still requires a
-supporting index migration and query-plan validation for large-history performance.
+must restart. ContentFn checkpoint `6fb4c5660fd8bfbe13565565aa3b76f551f1d277` adds compact
+scope-hashed cursors and the explicit ordered-index migration hook. Hosts must
+implement and run that hook; populated SQLite plans are verified. PostgreSQL/MySQL
+index-entry limits and plans remain separate readiness gates.
