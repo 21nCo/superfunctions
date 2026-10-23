@@ -7,7 +7,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildFixtureSdk, cleanupTemp, compile, fixtureCatalog, fixtureConfig, FixtureServer, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
+import type { CatalogOperation, CatalogResponse, OperationCatalog } from "@apifn/contracts";
+import { buildFixtureSdk, cleanupTemp, compile, fixtureCatalog, fixtureConfig, FixtureServer, generate, methodFor, okResponse, paramsFor, readJson } from "./helpers.js";
 
 const catalog = fixtureCatalog();
 const server = new FixtureServer();
@@ -573,35 +574,48 @@ describe("failure observation", () => {
 });
 
 describe("HEAD operations", () => {
-  /** HEAD clones of tasks.delete: one documents 404 and a 5XX range, the other only `default`, all with bodies. */
-  function headCatalog() {
-    const catalog = fixtureCatalog();
-    const del = catalog.operations.find((operation: any) => operation.id === "tasks.delete");
-    const problem = del.responses.find((response: any) => response.status === "404").contents;
-    const clone = (id: string, name: string, responses: unknown[]) => ({ ...structuredClone(del), id, name, openapiOperationId: name, method: "head", deprecation: { deprecated: false, message: null, replacement: null, since: null }, responses });
+  const pdf: CatalogResponse["contents"] = [{ mediaType: "application/pdf", schema: null, encoding: {} }];
+
+  /**
+   * HEAD clones of tasks.delete: one documents 404 and a 5XX range, one only `default`, all with bodies;
+   * two document a success, exact or a range, only as application/pdf, which the client cannot decode.
+   */
+  function headCatalog(): OperationCatalog {
+    const catalog: OperationCatalog = fixtureCatalog();
+    const del = catalog.operations.find((operation) => operation.id === "tasks.delete");
+    const problem = del?.responses.find((response) => response.status === "404")?.contents;
+    if (!del || !problem) throw new Error("the fixture catalog has no tasks.delete documenting 404");
+    const clone = (id: string, name: string, responses: CatalogResponse[]): CatalogOperation => ({ ...structuredClone(del), id, name, openapiOperationId: name, method: "head", deprecation: { deprecated: false, message: null, replacement: null, since: null }, responses });
+    const notFound: CatalogResponse = { status: "404", kind: "error", description: "Problem", contents: problem };
     catalog.operations.push(
-      clone("tasks.exists", "taskExists", [del.responses[0], { status: "404", kind: "error", description: "Problem", contents: problem }, { status: "5XX", kind: "error", description: "Problem", contents: problem }]),
-      clone("tasks.probe", "probeTask", [del.responses[0], { status: "default", kind: "default", description: "Problem", contents: problem }])
+      clone("tasks.exists", "taskExists", [del.responses[0]!, notFound, { status: "5XX", kind: "error", description: "Problem", contents: problem }]),
+      clone("tasks.probe", "probeTask", [del.responses[0]!, { status: "default", kind: "default", description: "Problem", contents: problem }]),
+      clone("tasks.document", "taskDocument", [{ status: "200", kind: "success", description: "The document's headers", contents: pdf }, notFound]),
+      clone("tasks.any", "anyTask", [{ status: "2XX", kind: "success", description: "The document's headers", contents: pdf }])
     );
-    catalog.operations.sort((a: any, b: any) => (a.id < b.id ? -1 : 1));
+    catalog.operations.sort((a, b) => (a.id < b.id ? -1 : 1));
     return catalog;
   }
+
+  type HttpError = { status: number; declared: boolean; body: unknown };
 
   it("declares every documented error status, which never has a body", async () => {
     const { dir, sdk: head } = await buildFixtureSdk(fixtureConfig(), headCatalog());
     const target = new head.TasksClient({ baseUrl: server.baseUrl, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
     const failure = async (call: () => Promise<unknown>, status: number) => {
       server.reset([{ status, headers: { "content-type": "application/problem+json" }, body: '{"title":"x"}' }]);
-      const error: any = await call().catch((caught: unknown) => caught);
+      const error = await call().catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(head.ApiHttpError);
       expect(server.requests.map((request) => request.method)).toEqual(["HEAD"]);
-      return { status: error.status, declared: error.declared, body: error.body };
+      const { status: received, declared, body } = error as HttpError;
+      return { status: received, declared, body };
     };
     const exists = () => target.taskExists({ projectId: "p", taskId: "t" });
     expect(await failure(exists, 404)).toEqual({ status: 404, declared: true, body: undefined });
     expect(await failure(exists, 503)).toEqual({ status: 503, declared: true, body: undefined });
     expect(await failure(exists, 409)).toEqual({ status: 409, declared: false, body: undefined });
     expect(await failure(() => target.probeTask({ projectId: "p", taskId: "t" }), 409)).toEqual({ status: 409, declared: true, body: undefined });
+    expect(await failure(() => target.taskDocument({ projectId: "p", taskId: "t" }), 404)).toEqual({ status: 404, declared: true, body: undefined });
 
     writeFileSync(
       path.join(dir, "src/custom/head-types.ts"),
@@ -616,6 +630,42 @@ export function bodies(error: unknown): undefined {
     return error.body.title;
   }
   return undefined;
+}
+`
+    );
+    expect(compile(dir)).toEqual([]);
+  });
+
+  it("includes a success documented only in media types the client cannot decode, which resolves to no content", async () => {
+    const catalog = headCatalog();
+    const generated = generate(catalog, fixtureConfig());
+    expect(generated.ok).toBe(true);
+    expect(generated.diagnostics.filter((diagnostic) => /tasks\.(document|any)|application\/pdf/.test(JSON.stringify(diagnostic)))).toEqual([]);
+    expect(generated.manifest?.operations.included.map((operation) => operation.id)).toEqual(expect.arrayContaining(["tasks.any", "tasks.document"]));
+    expect(generated.manifest?.operations.excluded.filter((operation) => operation.id.startsWith("tasks."))).toEqual([]);
+
+    const { dir, sdk: head } = await buildFixtureSdk(fixtureConfig(), catalog);
+    const target = new head.TasksClient({ baseUrl: server.baseUrl, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
+    // As for any operation, Accept lists only the documented media types the client can decode; with
+    // none, the client sets no Accept and fetch sends its default.
+    const calls = [
+      { call: () => target.taskDocument({ projectId: "p", taskId: "t" }), status: 200, accept: "application/problem+json" },
+      { call: () => target.anyTask({ projectId: "p", taskId: "t" }), status: 206, accept: "*/*" },
+    ];
+    for (const { call, status, accept } of calls) {
+      server.reset([{ status, headers: { "content-type": "application/pdf", "content-length": "1024" } }]);
+      expect(await call()).toBeUndefined();
+      expect(server.requests.map((request) => request.method)).toEqual(["HEAD"]);
+      expect(server.requests[0].headers.accept).toBe(accept);
+    }
+
+    writeFileSync(
+      path.join(dir, "src/custom/head-success.ts"),
+      `import type { TasksClient } from "../index.js";
+export async function results(client: TasksClient): Promise<undefined> {
+  const document: undefined = await client.taskDocument({ projectId: "p", taskId: "t" });
+  const any: undefined = await client.anyTask({ projectId: "p", taskId: "t" });
+  return document ?? any;
 }
 `
     );

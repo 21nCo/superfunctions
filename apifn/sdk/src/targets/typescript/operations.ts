@@ -185,9 +185,13 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
   let success: ResponseShape | null = null;
   const errors: OperationShape["errors"] = [];
   const accept = new Set<string>();
+  // A HEAD response never has a body, whatever its documented content, so every documented status
+  // (success, error, range or `default`) is matched, and typed, as no content, and its media types are
+  // never checked for support.
+  const bodyless = operation.method === "head";
   for (const response of operation.responses) {
     for (const content of response.contents) if (mediaKind(content.mediaType) !== null) accept.add(content.mediaType);
-    const { shape, unsupported } = responseShape(response.contents);
+    const { shape, unsupported } = bodyless ? responseShape([]) : responseShape(response.contents);
     // Only 2xx responses resolve a call; every other documented status (redirects are not followed) and
     // `default`, which documents every status not listed, become typed errors.
     if (!/^2(?:\d\d|XX)$/.test(response.status)) {
@@ -198,16 +202,12 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
       reasons.push(`success response ${response.status} media types ${unsupported.join(", ")} are not supported.`);
       continue;
     }
+    if (bodyless) {
+      success = shape;
+      continue;
+    }
     success ??= { kinds: [], contents: [] };
     merge(success, shape);
-  }
-
-  // A HEAD response never has a body, whatever its documented content, so every documented status
-  // (success, error, range or `default`) is matched, and typed, as no content.
-  if (operation.method === "head") {
-    const none = (): ResponseShape => ({ kinds: ["none"], contents: [{ kind: "none", schema: null }] });
-    if (success) success = none();
-    for (const error of errors) error.shape = none();
   }
 
   const unsupportedSchemes = new Set<string>();

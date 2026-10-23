@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, sha256Hex } from "@apifn/contracts";
+import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, sha256Hex, type CatalogParameter, type JsonValue } from "@apifn/contracts";
 import { afterAll, describe, expect, it } from "vitest";
 import { GENERATOR_VERSION, SDK_ARTIFACT_MANIFEST_FILE, TYPESCRIPT_TARGET_VERSION, writeSdk } from "../src/index.js";
 import { parameterSupport } from "../src/targets/typescript/operations.js";
@@ -602,12 +602,12 @@ export async function use(): Promise<void> {
   });
 
   it("analyzes objects with tens of thousands of members in linear time, reporting members in declaration order", () => {
-    const wide = (count: number, nested: number[]) => {
-      const properties: Record<string, unknown> = {};
+    const wide = (count: number, nested: number[]): CatalogParameter => {
+      const properties: Record<string, JsonValue> = {};
       for (let member = 0; member < count; member++) {
         properties[`p${member}`] = nested.includes(member) ? { type: "object", properties: { id: { type: "string" } } } : { type: "string" };
       }
-      return { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { type: "object", properties, additionalProperties: false } };
+      return { in: "query", name: "filter", style: "deepObject", explode: true, required: false, deprecated: false, allowReserved: false, description: null, schema: { type: "object", properties, additionalProperties: false } };
     };
     const reason = (member: number) => `query parameter "filter": its member "p${member}" admits only nested objects or arrays, which the client cannot serialize.`;
 
@@ -615,7 +615,7 @@ export async function use(): Promise<void> {
     // (quadratic) took 16 s. The ceiling leaves slow shared runners room and still catches that.
     const parameter = wide(128_000, [100, 127_000]);
     const started = performance.now();
-    const support = parameterSupport(parameter as any, {});
+    const support = parameterSupport(parameter, {});
     expect(performance.now() - started).toBeLessThan(2000);
     expect(support.reasons).toEqual([reason(100), reason(127_000)]);
 

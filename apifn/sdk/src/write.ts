@@ -272,18 +272,24 @@ async function dryRun(root: string, result: Generated): Promise<WriteSdkResult> 
     const before = await heldLock(root);
     if (before !== null) return failed(before, SDK_OUTPUT_LOCK_FILE);
     const reader = new RecordingReader();
-    let outcome: WriteSdkResult;
+    let planned: { outcome: WriteSdkResult } | { error: unknown };
     try {
-      outcome = await transaction(root, result, { dryRun: true }, { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] }, reader);
+      planned = { outcome: await transaction(root, result, { dryRun: true }, { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] }, reader) };
     } catch (error) {
       // A read can fail because another run replaced or removed what an earlier read saw; plan again then.
       if ((await reader.changed()) === null && (await heldLock(root)) === null) throw error;
-      outcome = { ok: false, written: [], unchanged: [], deleted: [], seeded: [], diagnostics: [] };
+      planned = { error };
     }
     const changed = await reader.changed();
     const held = await heldLock(root);
     if (held !== null) return failed(held, SDK_OUTPUT_LOCK_FILE);
-    if (changed === null) return outcome;
+    if (changed === null) {
+      if ("outcome" in planned) return planned.outcome;
+      // A writer held the lock when the read failed but has released it and changed nothing this plan
+      // read: plan again, and report the error itself if it persists.
+      if (attempt === DRY_RUN_ATTEMPTS) throw planned.error;
+      continue;
+    }
     if (attempt === DRY_RUN_ATTEMPTS) {
       const relative = path.relative(root, changed).split(path.sep).join("/");
       return failed(`"${relative}" changed while it was being checked, ${DRY_RUN_ATTEMPTS} times: another run is writing this directory. Rerun the check once it finishes.`, relative);

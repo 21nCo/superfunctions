@@ -343,6 +343,96 @@ describe("the output directory lock", () => {
       expect(result).toEqual({ ok: true, written: [], unchanged: expect.any(Array), deleted: [], seeded: [], diagnostics: [] });
     });
 
+    /**
+     * Makes the lock file present (`held`) or absent at each successive examination of it, then absent;
+     * `before` runs first, with the examination's 1-based number.
+     */
+    const scriptLock = (dir: string, states: Array<"absent" | "held">, before: (probe: number) => void = () => {}) => {
+      const lock = path.join(dir, SDK_OUTPUT_LOCK_FILE);
+      let probes = 0;
+      const next = () => {
+        before(probes + 1);
+        if (states[probes++] === "held") writeFileSync(lock, `${JSON.stringify({ pid: 4242, hostname: "build-host", startedAt: "2026-10-22T00:00:00.000Z", nonce: "other" })}\n`);
+        else rmSync(lock, { force: true });
+        pause.onStat.set(lock, next);
+      };
+      pause.onStat.set(lock, next);
+      return () => probes;
+    };
+
+    // A read error is put down to another run only while that run's lock is seen; when the lock is gone
+    // and nothing read has changed, the error must be planned again, then reported, never dropped.
+    describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("with a read error while another run holds the lock", () => {
+      const unreadable = async () => {
+        const dir = tempDir();
+        expect((await writeSdk(dir, generate())).ok).toBe(true);
+        const readmeFile = path.join(dir, "README.md");
+        const before = tree(dir);
+        chmodSync(readmeFile, 0o000);
+        return { dir, readmeFile, before };
+      };
+
+      it("reports the error when it persists after the lock is released", async () => {
+        const { dir, readmeFile, before } = await unreadable();
+        // Before planning: absent; when the read fails: held; after planning: absent; then absent throughout.
+        const probes = scriptLock(dir, ["absent", "held", "absent"]);
+        try {
+          await expect(writeSdk(dir, generate(), { dryRun: true })).rejects.toMatchObject({ code: "EACCES" });
+        } finally {
+          pause.onStat.clear();
+          chmodSync(readmeFile, 0o644);
+        }
+        expect(probes()).toBe(5);
+        expect(tree(dir)).toEqual(before);
+      });
+
+      it("reports the error once every attempt has seen the lock only when its read failed", async () => {
+        const { dir, readmeFile, before } = await unreadable();
+        const probes = scriptLock(dir, ["absent", "held", "absent", "absent", "held", "absent", "absent", "held", "absent"]);
+        try {
+          await expect(writeSdk(dir, generate(), { dryRun: true })).rejects.toMatchObject({ code: "EACCES" });
+        } finally {
+          pause.onStat.clear();
+          chmodSync(readmeFile, 0o644);
+        }
+        expect(probes()).toBe(9);
+        expect(tree(dir)).toEqual(before);
+      });
+
+      it("plans again, and succeeds, once the run holding the lock has made the file readable", async () => {
+        const { dir, readmeFile } = await unreadable();
+        // Held when the read fails; the writer then makes README.md readable and releases the lock.
+        const probes = scriptLock(dir, ["absent", "held"], (probe) => {
+          if (probe === 3) chmodSync(readmeFile, 0o644);
+        });
+        const lock = path.join(dir, SDK_OUTPUT_LOCK_FILE);
+        let result: WriteSdkResult;
+        try {
+          result = await writeSdk(dir, generate(), { dryRun: true });
+        } finally {
+          pause.onStat.clear();
+          chmodSync(readmeFile, 0o644);
+        }
+        expect(probes()).toBe(5);
+        expect(result).toEqual({ ok: true, written: [], unchanged: expect.any(Array), deleted: [], seeded: [], diagnostics: [] });
+        expect(existsSync(lock)).toBe(false);
+      });
+
+      it("still reports a lock held when planning ends", async () => {
+        const { dir, readmeFile } = await unreadable();
+        scriptLock(dir, ["absent", "held", "held"]);
+        let result: WriteSdkResult;
+        try {
+          result = await writeSdk(dir, generate(), { dryRun: true });
+        } finally {
+          pause.onStat.clear();
+          chmodSync(readmeFile, 0o644);
+          rmSync(path.join(dir, SDK_OUTPUT_LOCK_FILE), { force: true });
+        }
+        expectLockConflict(result);
+      });
+    });
+
     it("reports a conflict when each plan sees a file change between two observations of it", async () => {
       const dir = tempDir();
       const a = generate();
