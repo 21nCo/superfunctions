@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import { canonicalJson } from './utils/json';
 import { HttpSurveyService, SurveyDeliveryError } from './core/surveys-http';
+import { SurveyJournal } from './core/survey-journal';
+export type { SurveyJournalOptions } from './core/survey-journal';
 export { SurveyDeliveryError } from './core/surveys-http';
 import { HttpMessaging, MessagingDeliveryError } from './core/messaging-http';
 export { MessagingDeliveryError } from './core/messaging-http';
@@ -32,6 +34,7 @@ export class UserFnClient {
   private surveys: SurveyEngine;
   private surveyService?: HttpSurveyService;
   private renderedSurveyService?: HttpSurveyService;
+  private surveyJournal?: SurveyJournal;
   private surveyPresentation?: symbol;
   private readonly surveyAttempts = new Map<string, { key: string; response: SurveyResponse; pending?: Promise<SurveyReceipt>; receipt?: SurveyReceipt }>();
   private feedback: FeedbackEngine;
@@ -68,6 +71,7 @@ export class UserFnClient {
       // UI retries require a fresh explicit click and a current identity/consent fence.
       this.renderedSurveyService = new HttpSurveyService({ ...options, surveyMaxAttempts: 1 });
     }
+    if (options.surveyJournal) this.surveyJournal = new SurveyJournal(options);
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
@@ -148,7 +152,11 @@ export class UserFnClient {
     // Admission can await the network; never fall through to a stale user's survey.
     if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
     // 2. Surveys
-    const surveys = this.surveys.getEligibleSurveys(type, context, user);
+    const journal = this.surveyJournal && user ? await this.surveyJournal.snapshot(user.id) : undefined;
+    if (!this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user) return;
+    if (journal) for (const [owner, entry] of Object.entries(journal)) this.surveys.setResponseCount(user!.id, JSON.parse(owner)[1], entry.count);
+    const recovering = new Set(journal ? Object.entries(journal).filter(([, entry]) => entry.pending).map(([owner]) => JSON.parse(owner)[1] as string) : []);
+    const surveys = this.surveys.getEligibleSurveys(type, context, user, recovering);
     if (surveys.length > 0) {
       const survey = surveys[0];
       const presentation = Symbol('survey');
@@ -165,6 +173,14 @@ export class UserFnClient {
             submitted = true;
             this.surveys.trackResponse(response, user!);
             return 'local';
+          }
+          if (this.surveyJournal) {
+            const result = await this.surveyJournal.submit(owner, journal?.[owner]?.count ?? 0, response, valid,
+              (saved, key) => this.renderedSurveyService!.submit(saved.surveyId, saved.answers, key));
+            this.surveys.setResponseCount(user!.id, survey.id, result.count);
+            if (!result.stored || !valid()) return false;
+            submitted = true;
+            return 'stored';
           }
           let attempt = this.surveyAttempts.get(owner);
           if (!attempt) {
@@ -190,7 +206,7 @@ export class UserFnClient {
           return 'stored';
         },
         () => { if (this.surveyPresentation === presentation) this.surveyPresentation = undefined; },
-        this.surveyAttempts.get(owner)?.response,
+        journal?.[owner]?.pending?.response ?? this.surveyAttempts.get(owner)?.response,
       );
     }
   }

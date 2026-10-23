@@ -538,12 +538,12 @@ are captured by the HTTP transport at client construction; create a new client f
 a different authenticated server identity. Local `identify()` never changes the
 server credential.
 
-These pending answers live only in memory. **Keep the page open after an unknown
-outcome.** Reloading, closing the tab or replacing the client loses this retry
-state; there is no persistent journal or offline queue. A server commit cannot be
+By default these pending answers live only in memory. **Keep the page open after
+an unknown outcome unless you opted into the browser journal below.** Reloading,
+closing the tab or replacing the client otherwise loses retry state. A server commit cannot be
 undone by closing the form, withdrawing consent or timing out an in-flight request.
-The service remains authoritative for accepted-response quotas. A full recoverable
-renderer requires an explicitly owned persistent journal and remains open work.
+The service remains authoritative for accepted-response quotas. The opt-in browser
+journal below supports reload recovery; automatic offline delivery is not provided.
 
 Without an endpoint, existing local survey behavior remains available; completion
 says **Response recorded locally** and does not imply server acceptance. Empty
@@ -570,7 +570,7 @@ still requires an explicit submission confirmation. Pending retries retain their
 original answers and idempotency key.
 
 This is basic forward conditional visibility, not arbitrary expression evaluation
-or a looping form graph. Durable client journals and full survey analytics remain
+or a looping form graph. Python durable client journals and full survey analytics remain
 open.
 
 
@@ -581,3 +581,62 @@ client clock; the service independently enforces its trusted policy and server
 clock inside response admission. A committed receipt can still be replayed with
 the same key and answers after expiry; an expired new response rejects without
 consuming a cap. Client configuration never overrides server policy.
+
+
+### Opt-in browser survey journal
+
+```typescript
+const client = new UserFnClient({
+  apiKey: 'user-scoped-service-credential',
+  endpoint: 'https://your-service.example',
+  surveyJournal: { storageKey: 'product-surveys-v1' },
+});
+```
+
+This persists renderer submissions in `localStorage` under
+`userfn.surveys.product-surveys-v1`. It requires Web Locks and Web Crypto in a
+secure browser context; missing capabilities or inaccessible/corrupt storage fail
+closed. The direct `submitSurveyResponse` API remains caller-keyed and does not
+use this journal. Python retains its existing in-memory behavior.
+
+Before the first request, the journal saves an immutable answer payload and UUID.
+A lost response, timeout, reload or tab closure keeps that same payload/key
+available for explicit retry. Only a verified receipt followed by a successful
+local write removes pending answers and increments the accepted count. Failed
+receipt persistence leaves the saved key retryable. No background delivery or
+scheduled retry runs. A pending attempt may be reopened after local schedule
+expiry solely to replay its frozen payload; the server decides whether it is an
+already-accepted replay or a denied new response. Recovery requires the survey
+still be supplied through `setSurveys`; it does not restore survey definitions.
+
+Same-origin cooperating tabs sharing the storage key use a Web Lock held across
+the request and receipt write. A stale peer form cannot allocate another key
+when the saved count changed. Waiting for that lock has no deadline: a suspended
+tab or another same-origin lock holder can delay it. A timeout bounds each active
+request when browser timers run, not total lock-wait time or browser suspension.
+Different origins, partitions, profiles, devices or independently chosen storage
+keys do not coordinate. A custom `storage` must provide durable, atomic synchronous
+`getItem`/`setItem` semantics shared by those same cooperating tabs; a memory-only
+adapter cannot provide reload durability. This is not hostile-process isolation.
+
+**Privacy and retention:** pending answers, local user IDs and survey IDs are
+stored in plaintext and can be read by other scripts on the origin. The stored
+SHA-256 endpoint/credential scope is a mismatch check, not encryption or access
+control. Credentials themselves are not stored, but weak credentials may be
+recoverable by guessing their hash. Use only where persistent answer storage is
+appropriate. Identity change or consent withdrawal dismisses/fences UI and stops
+new admission; it does not erase an existing journal or undo an in-flight server
+commit. Late receipts remain associated with the original local owner. Credential
+or endpoint changes with the same key reject access instead of replaying under
+new credentials; hosts must plan rotation/reconciliation explicitly.
+
+There is no automatic expiration or eviction. Both pending attempts and completed
+counts occupy up to100 user/survey entries; the serialized journal is capped at
+262144 UTF-8 bytes, and each answer payload at65536 bytes/100 answers. These are
+logical payload bounds, not a browser disk quota. Capacity/quota failures prevent
+new sends; uncertain entries are never evicted to make room. Hosts own retention
+and deletion (for example `localStorage.removeItem('userfn.surveys.product-surveys-v1')`)
+and must coordinate it with active tabs and unresolved receipts. Deletion or
+browser eviction loses replay keys and counts, so a later submission may get a
+new key; service-side quotas remain authoritative. No automatic deletion on logout,
+consent withdrawal, credential rotation or service retention expiry is claimed.

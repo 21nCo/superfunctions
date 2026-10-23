@@ -1,4 +1,5 @@
 import type { DurableMessagingOptions } from './core/messaging-http';
+import type { SurveyJournalOptions } from './core/survey-journal';
 export interface UserTraits {
   [key: string]: any;
   email?: string;
@@ -125,6 +126,8 @@ export interface UserFnOptions {
   endpoint?: string;
   surveyMaxAttempts?: number;
   surveyTimeoutMs?: number;
+  /** Opt-in browser response persistence; requires Web Locks and durable storage. */
+  surveyJournal?: SurveyJournalOptions;
   feedbackMaxAttempts?: number;
   feedbackTimeoutMs?: number;
   /** Optional override; otherwise endpoint/apiKey configure the HTTP service. */

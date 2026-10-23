@@ -37,7 +37,7 @@ try {
     const actorId = request.headers.get('authorization')?.replace('Bearer ', '');
     return actorId ? { id: actorId, type: 'session', subject: { actorType: 'user', actorId, tenantId: 'owned' }, scopes: ['userfn:surveys:write', 'userfn:feedback:write'] } : null;
   } }, surveys: { resolvePolicy: (_session, id) => ({ enabled: true, questions: id === 'branch' ? branchQuestions : questions, perUser: 1 }) } });
-  execFileSync(join(root, 'node_modules/.bin/esbuild'), [join(root, 'userfn/typescript/dist/index.js'), '--bundle', '--format=esm', '--platform=browser', '--outfile=' + join(directory, 'sdk.js')], { stdio: 'pipe' });
+  execFileSync(join(root, 'node_modules/.bin/esbuild'), [process.env.USERFN_SDK_ENTRY ?? join(root, 'userfn/typescript/dist/index.js'), '--bundle', '--format=esm', '--platform=browser', '--outfile=' + join(directory, 'sdk.js')], { stdio: 'pipe' });
   const bundle = await readFile(join(directory, 'sdk.js'));
   server = createServer(async (incoming, outgoing) => {
     if (incoming.url === '/sdk.js') { outgoing.setHeader('content-type', 'text/javascript'); outgoing.end(bundle); return; }
@@ -56,23 +56,24 @@ try {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   browser = await chromium.launch({ headless: true, executablePath: process.env.USERFN_CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
-  const page = await browser.newPage(); page.setDefaultTimeout(5000);
+  const browserContext = await browser.newContext();
+  const page = await browserContext.newPage(); page.setDefaultTimeout(5000);
   await page.addInitScript(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); });
   await page.goto('http://127.0.0.1:' + server.address().port);
-  const setup = actor => page.evaluate(async ({ actor, questions }) => {
+  const setup = (actor, journal = false, expired = false, target = page) => target.evaluate(async ({ actor, questions, journal, expired }) => {
     const { UserFnClient } = await import('/sdk.js');
-    globalThis.client = new UserFnClient({ apiKey: actor, endpoint: location.origin, surveyTimeoutMs: 10000, surveyMaxAttempts: 3 });
-    client.identify('alice'); client.setSurveys([{ id: 'survey', enabled: true, title: 'Survey', questions, triggers: [{ type: 'event' }], caps: { global: 2 } }]);
+    globalThis.client = new UserFnClient({ apiKey: actor, endpoint: location.origin, surveyTimeoutMs: 10000, surveyMaxAttempts: 3, ...(journal ? { surveyJournal: { storageKey: typeof journal === 'string' ? journal : 'owned-reload' } } : {}) });
+    client.identify('alice'); client.setSurveys([{ id: 'survey', enabled: true, title: 'Survey', questions, triggers: [{ type: 'event' }], caps: { global: journal ? 1 : 2 }, ...(expired ? { schedule: { endAt: 1 } } : {}) }]);
     await client.trigger('event', 'show');
-  }, { actor, questions });
-  const fill = async text => {
-    assert.equal(await page.getByRole('button', { name: '0', exact: true }).count(), 0, 'CSAT defaults start at1');
-    assert.equal(await page.getByRole('button', { name: '6', exact: true }).count(), 0, 'CSAT defaults end at5');
-    await page.getByRole('button', { name: '5', exact: true }).click();
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.getByRole('combobox').selectOption('1');
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.getByRole('textbox').fill(text);
+  }, { actor, questions, journal, expired });
+  const fill = async (text, target = page) => {
+    assert.equal(await target.getByRole('button', { name: '0', exact: true }).count(), 0, 'CSAT defaults start at1');
+    assert.equal(await target.getByRole('button', { name: '6', exact: true }).count(), 0, 'CSAT defaults end at5');
+    await target.getByRole('button', { name: '5', exact: true }).click();
+    await target.getByRole('button', { name: 'Next', exact: true }).click();
+    await target.getByRole('combobox').selectOption('1');
+    await target.getByRole('button', { name: 'Next', exact: true }).click();
+    await target.getByRole('textbox').fill(text);
   };
   await page.locator('#outside').focus();
   await setup('browser');
@@ -244,7 +245,50 @@ try {
   }
 
   assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 4);
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 4, conditionalBranches: true, cesAndCustomScale: true, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: false }));
+  await page.reload();
+  await setup('journal', true);
+  await fill('survive reload');
+  denyAckNext = true;
+  await page.getByRole('button', { name: 'Submit', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent?.includes('not confirmed'));
+  const originalJournalRequest = requests.at(-1);
+  await page.reload();
+  await setup('journal', true, true);
+  assert.ok((await page.locator('.userfn-modal').textContent()).includes('survive reload'));
+  await page.getByRole('button', { name: 'Retry submission', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response saved.');
+  assert.deepEqual(requests.at(-1), originalJournalRequest, 'Reload recovery preserves key and body even after local schedule expiry');
+  assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 5);
+  await page.reload(); await setup('journal', true);
+  assert.equal(await page.getByRole('dialog').count(), 0, 'Accepted local count survives reload');
+  const scopeError = await page.evaluate(async () => {
+    const { UserFnClient } = await import('/sdk.js');
+    const changed = new UserFnClient({ apiKey: 'other-journal', endpoint: location.origin, surveyJournal: { storageKey: 'owned-reload' } });
+    changed.identify('alice');
+    try { await changed.trigger('event', 'show'); return false; } catch { return true; }
+  });
+  assert.equal(scopeError, true, 'Credential scope changes cannot replay persisted answers');
+  const peer = await page.context().newPage();
+  try {
+    await page.reload(); await peer.goto(page.url());
+    await setup('cross-tabs', 'owned-cross-tabs');
+    await setup('cross-tabs', 'owned-cross-tabs', false, peer);
+    await fill('one response across tabs'); await fill('different stale answers', peer);
+    const beforeTabs = requests.length;
+    holdNext = true;
+    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    const deadline = Date.now() + 5000;
+    while (!release && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(release);
+    await peer.getByRole('button', { name: 'Submit', exact: true }).click();
+    assert.equal(requests.length, beforeTabs + 1);
+    release(); release = undefined;
+    await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response saved.');
+    await peer.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'This survey is no longer active.');
+    assert.equal(requests.length, beforeTabs + 1, 'Web Locks prevent a stale peer form sending a second key');
+    assert.equal((await query`SELECT count(*) AS count FROM userfn_survey_responses`.execute(database)).rows[0].count, 6);
+  } finally { release?.(); release = undefined; await peer.close(); }
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 6, crossTabJournal: true, conditionalBranches: true, cesAndCustomScale: true, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, keyboardDialogs: true, feedbackSameKeyRetry: true, reducedMotion: true, reloadJournal: true }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

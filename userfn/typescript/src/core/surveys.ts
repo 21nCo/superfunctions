@@ -4,7 +4,7 @@ import { surveyScheduleActive } from './survey-questions';
 
 export class SurveyEngine {
   private surveys: Map<string, Survey> = new Map();
-  private responses = new Map<string, Map<string, SurveyResponse[]>>(); // userId -> surveyId -> responses
+  private responses = new Map<string, Map<string, number>>(); // userId -> surveyId -> accepted count
   private segments: SegmentEvaluator;
 
   constructor(segments: SegmentEvaluator, private readonly now: () => number = () => Date.now()) {
@@ -20,13 +20,17 @@ export class SurveyEngine {
   getEligibleSurveys(
     triggerType: CampaignTrigger['type'],
     triggerContext: string,
-    user: UserIdentity | null
+    user: UserIdentity | null,
+    recovering: ReadonlySet<string> = new Set(),
   ): Survey[] {
     if (!user) return [];
 
     const eligible: Survey[] = [];
 
     for (const survey of this.surveys.values()) {
+      // Recovery can only resend a previously frozen journal entry; service policy
+      // still decides whether it is a replay or an inadmissible new response.
+      if (recovering.has(survey.id)) { eligible.unshift(survey); continue; }
       if (!survey.enabled || !surveyScheduleActive(survey.schedule, this.now())) continue;
 
       // 1. Triggers
@@ -48,10 +52,10 @@ export class SurveyEngine {
       }
 
       // 3. Frequency Caps (already responded?)
-      const previousResponses = this.responses.get(user.id)?.get(survey.id) ?? [];
+      const previousResponses = this.responses.get(user.id)?.get(survey.id) ?? 0;
       const cap = survey.caps?.global ?? 1;
       // Zero denies delivery; malformed runtime policy must not become uncapped.
-      if (survey.caps?.global === null || !Number.isSafeInteger(cap) || cap < 0 || previousResponses.length >= cap) continue;
+      if (survey.caps?.global === null || !Number.isSafeInteger(cap) || cap < 0 || previousResponses >= cap) continue;
 
       eligible.push(survey);
     }
@@ -60,10 +64,13 @@ export class SurveyEngine {
   }
 
   trackResponse(response: SurveyResponse, user: UserIdentity) {
-    let surveys = this.responses.get(user.id);
-    if (!surveys) { surveys = new Map(); this.responses.set(user.id, surveys); }
-    const list = surveys.get(response.surveyId) ?? [];
-    list.push(response);
-    surveys.set(response.surveyId, list);
+    this.setResponseCount(user.id, response.surveyId, (this.responses.get(user.id)?.get(response.surveyId) ?? 0) + 1);
+  }
+
+  setResponseCount(userId: string, surveyId: string, count: number) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new TypeError('Invalid survey response count');
+    let surveys = this.responses.get(userId);
+    if (!surveys) { surveys = new Map(); this.responses.set(userId, surveys); }
+    surveys.set(surveyId, count);
   }
 }
