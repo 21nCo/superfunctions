@@ -25,7 +25,7 @@ try {
  assert.equal(snapshot.value.result.eventType,'query.snapshot');
  assert.equal(snapshot.value.result.queryResult.data.length,1);
  await queries.return();
- assert.equal(require('@contentfn/server').getSchema().version,3);
+ assert.equal(require('@contentfn/server').getSchema().version,4);
  assert.equal(require('@contentfn/server').getSchema().schemas.length,13);
  const audit = await client.audit.query({dataset:'packed',action:'docs.create'});
  assert.equal(audit.ok,true);
