@@ -13,6 +13,19 @@ export function auditDestinationUrl(value: string): string | null {
   } catch { return null; }
 }
 
+/** Legacy/custom worker errors are untrusted data, not safe audit metadata. */
+export function auditDeliveryError(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const safe = [
+    "Webhook request failed",
+    "Attempt limit reached; the last delivery outcome may be unknown",
+    "Webhook configuration is unavailable; delivery was not attempted",
+    "Webhook event is unavailable; delivery was not attempted",
+  ];
+  return typeof value === "string" && ((value.length === 8 && /^HTTP [1-5][0-9]{2}$/.test(value)) || safe.includes(value))
+    ? value : "Webhook delivery failed";
+}
+
 interface QueueRow {
   id: string; eventId: string; webhookId: string; attempt: number;
   status: WebhookAuditRecord["status"]; lastError: string | null;
@@ -76,7 +89,7 @@ export async function queryWebhookAudit(
   return ok({ records: rows.slice(0, limit).map(row => ({
     id: row.id, dataset: value.dataset as string, eventId: row.eventId, webhookId: row.webhookId,
     url: row.destinationUrl === null ? null : auditDestinationUrl(row.destinationUrl),
-    attempt: row.attempt, status: row.status, lastError: row.lastError,
+    attempt: row.attempt, status: row.status, lastError: auditDeliveryError(row.lastError),
     updatedAt: row.timestampKnown === true ? row.updatedAt : null, timestampKnown: row.timestampKnown === true,
   })), nextOffset: rows.length > limit ? offset + limit : null });
 }
