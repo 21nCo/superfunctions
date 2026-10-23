@@ -50,6 +50,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   browser = await chromium.launch({ headless: true, executablePath: process.env.USERFN_CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
   const page = await browser.newPage(); page.setDefaultTimeout(5000);
+  await page.addInitScript(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); });
   await page.goto('http://127.0.0.1:' + server.address().port);
   const setup = actor => page.evaluate(async ({ actor, questions }) => {
     const { UserFnClient } = await import('/sdk.js');
@@ -109,7 +110,22 @@ try {
   await page.getByRole('button', { name: 'Submit', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[role=status]')?.textContent === 'Response recorded locally.');
   assert.equal(requests.length, beforeLocal, 'Local mode does not claim or attempt server storage');
-  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, reloadJournal: false }));
+  const campaignKeys = [];
+  await page.route('**/messages/campaign/reserve', async route => {
+    campaignKeys.push(route.request().headers()['idempotency-key']);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ campaignId: 'campaign', allowed: false, shown: false }) });
+  });
+  await page.evaluate(async () => {
+    if (crypto.randomUUID !== undefined || typeof crypto.getRandomValues !== 'function') throw new Error('Capability fixture invalid');
+    const { UserFnClient } = await import('/sdk.js');
+    const messaging = new UserFnClient({ apiKey: 'browser', endpoint: location.origin, messaging: { storageKey: 'owned-compatibility', allowInsecureHttp: true } });
+    messaging.identify('alice');
+    messaging.setCampaigns([{ id: 'campaign', kind: 'modal', enabled: true, content: { body: 'once' }, triggers: [{ type: 'event' }], caps: { session: 1 } }]);
+    await messaging.trigger('event', 'show');
+  });
+  assert.equal(campaignKeys.length, 1);
+  assert.match(campaignKeys[0], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  console.log(JSON.stringify({ passed: true, browser: await browser.version(), lostAckSameKey: true, withoutRandomUUID: true, persistedResponses: 2, epochFences: true, typedChoicesAndCsat: true, explicitLocalMode: true, reloadJournal: false }));
 } finally {
   release?.(); await browser?.close();
   if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { canonicalJson } from './utils/json';
 import { HttpSurveyService, SurveyDeliveryError } from './core/surveys-http';
 export { SurveyDeliveryError } from './core/surveys-http';
@@ -168,7 +169,7 @@ export class UserFnClient {
             if (this.surveyAttempts.size >= 100) throw new SurveyDeliveryError('Pending survey response capacity reached');
             const raw = canonicalJson({ answers: response.answers });
             if (new TextEncoder().encode(raw).byteLength > 65536) throw new SurveyDeliveryError('Survey response exceeds bounds');
-            attempt = { key: crypto.randomUUID(), response: { surveyId: survey.id, answers: JSON.parse(raw).answers, submittedAt: Date.now() } };
+            attempt = { key: uuidv4(), response: { surveyId: survey.id, answers: JSON.parse(raw).answers, submittedAt: Date.now() } };
             this.surveyAttempts.set(owner, attempt);
           }
           const saved = attempt;

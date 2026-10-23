@@ -79,3 +79,22 @@ open when acknowledgement is unknown. Server caps remain authoritative but canno
 replace a lost idempotency key for every multi-response policy. Display admission,
 per-tenant submission limits, Python survey engine, WatchFn outbox/analytics,
 branching/templates and broader original readiness remain open.
+
+## Browser UUID capability follow-up
+
+Survey attempts and durable campaign reservations now use the existing uuid v4
+implementation instead of requiring crypto.randomUUID. Browser builds retain
+cryptographic getRandomValues entropy; no Math.random fallback is introduced.
+The immutable key/retry and journal semantics remain unchanged.
+
+Validation:18 focused SDK tests, strict SDK types and CJS/ESM/declaration build
+pass. Actual Chrome154.0.8037.58 acceptance disables crypto.randomUUID before
+loading the built browser bundle while preserving getRandomValues. Survey
+submission/lost-ack retry, original-owner reconciliation and native SQLite caps
+pass, and a locally intercepted campaign reservation carries a valid UUIDv4.
+The first test command selected sibling workspaces and admin had no matching
+tests; the successful command uses the exact ./userfn/typescript workspace.
+Logs: /tmp/user-uuid-tests.log, /tmp/user-uuid-types.log,
+/tmp/user-uuid-build.log and /tmp/user-uuid-native.log. The owned browser,
+localhost server and temporary SQLite directory were closed/removed. This does
+not add reload-safe survey journaling or certify additional browser versions.

@@ -64,3 +64,27 @@ it('preserves local mode without claiming durable storage', async () => {
   const { value, renders, record } = client(false); await value.trigger('event', 'open');
   expect(await renders[0].submit(response())).toBe('local'); expect(record).toHaveBeenCalledTimes(1); expect(fetch).not.toHaveBeenCalled();
 });
+
+it('submits with cryptographic UUIDs when randomUUID is unavailable', async () => {
+  const getRandomValues = vi.fn(crypto.getRandomValues.bind(crypto));
+  vi.stubGlobal('crypto', { getRandomValues });
+  vi.resetModules();
+  const { UserFnClient: CompatibleClient } = await import('../index');
+  const { HttpMessaging } = await import('../core/messaging-http');
+  const keys: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    keys.push(new Headers(init.headers).get('idempotency-key')!);
+    return new Response(JSON.stringify(url.includes('/messages/') ? { campaignId: 'campaign', allowed: false, shown: false } : receipt));
+  }));
+  const value = new CompatibleClient({ apiKey: 'verified', endpoint: 'https://service.example' });
+  let submit!: (value: SurveyResponse) => Promise<unknown>;
+  (value as any).renderer = { renderSurvey: (_survey: unknown, callback: typeof submit) => { submit = callback; }, dismissSurveys: vi.fn() };
+  value.identify('alice');
+  value.setSurveys([{ id: 'survey', enabled: true, questions: [], triggers: [{ type: 'event' }] }]);
+  await value.trigger('event', 'open'); await submit(response());
+  const data = new Map<string, string>();
+  await new HttpMessaging({ apiKey: 'verified', endpoint: 'https://service.example', messaging: { storageKey: 'test', storage: { getItem: key => data.get(key) ?? null, setItem: (key, value) => { data.set(key, value); } } } }).present('campaign', 'alice', () => true, () => false);
+  expect(keys).toHaveLength(2);
+  for (const key of keys) expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(keys[0]).not.toBe(keys[1]);
+});

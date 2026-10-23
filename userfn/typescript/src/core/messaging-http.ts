@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import type { UserFnOptions } from '../types';
 export interface MessageStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; }
 export interface DurableMessagingOptions { storageKey: string; storage?: MessageStorage; /** Explicit local-test opt-in; bearer credentials otherwise require HTTPS. */ allowInsecureHttp?: boolean; }
@@ -62,7 +63,7 @@ export class HttpMessaging {
     if (entry?.phase === 'shown') {
       await this.send(id, entry.key, 'shown'); delete journal[id]; this.save(journal); return;
     }
-    entry ??= { key: crypto.randomUUID(), phase: 'pending', user }; journal[id] = entry; this.save(journal);
+    entry ??= { key: uuidv4(), phase: 'pending', user }; journal[id] = entry; this.save(journal);
     const receipt = await this.send(id, entry.key, 'reserve');
     if (!receipt.allowed || receipt.shown) { delete journal[id]; this.save(journal); return receipt.allowed ? undefined : 'denied'; }
     if (requireExpiry && receipt.expiresAt === undefined) throw new MessagingDeliveryError('Temporal campaigns require reservation expiry');
