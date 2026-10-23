@@ -142,27 +142,32 @@ export async function addDocToRelease(
   if (!releaseId) return err("VALIDATION_FAILED", "releaseId is required", { path: "releaseId" });
   if (!docId) return err("VALIDATION_FAILED", "docId is required", { path: "docId" });
 
-  const release = await getRelease(config, { dataset, releaseId });
-  if (!release) return err("NOT_FOUND", "Release not found", { releaseId });
-
-  const docIds = [...release.docIds];
-  if (docIds.includes(docId)) return ok({});
-  if (docIds.length >= MAX_DOCS_PER_RELEASE) {
-    return err("VALIDATION_FAILED", "Release has reached max document count", {
-      path: "docId",
-      limit: MAX_DOCS_PER_RELEASE,
+  // updatedAt is the shared mutation token. A strict monotonic value avoids
+  // two changes in one millisecond accepting the same observed version.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const release = await getRelease(config, { dataset, releaseId });
+    if (!release) return err("NOT_FOUND", "Release not found", { releaseId });
+    const observed = Date.parse(release.updatedAt);
+    if (!Number.isFinite(observed) || new Date(observed).toISOString() !== release.updatedAt || observed >= 8_640_000_000_000_000) {
+      return err("CONFLICT", "Release version timestamp is invalid");
+    }
+    const docIds = [...release.docIds];
+    if (docIds.includes(docId)) return ok({});
+    if (docIds.length >= MAX_DOCS_PER_RELEASE) return err("VALIDATION_FAILED", "Release has reached max document count", { path: "docId", limit: MAX_DOCS_PER_RELEASE });
+    docIds.push(docId);
+    docIds.sort();
+    const updatedAt = new Date(Math.max(Date.now(), observed + 1)).toISOString();
+    const changed = await cmsfnStorageAdapter(config.db).updateMany({
+      model: CMSFN_RELEASES_TABLE,
+      where: [
+        { field: "dataset", operator: "eq", value: dataset },
+        { field: "releaseId", operator: "eq", value: releaseId },
+        { field: "updatedAt", operator: "eq", value: release.updatedAt },
+      ],
+      data: { docIds, updatedAt },
     });
+    if (changed === 1) return ok({});
+    if (changed !== 0) return err("CONFLICT", "Release update was not uniquely identified");
   }
-  docIds.push(docId);
-  docIds.sort();
-
-  await cmsfnStorageAdapter(config.db).update({
-    model: CMSFN_RELEASES_TABLE,
-    where: [
-      { field: "dataset", operator: "eq", value: dataset },
-      { field: "releaseId", operator: "eq", value: releaseId },
-    ],
-    data: { docIds, updatedAt: nowIso() },
-  });
-  return ok({});
+  return err("CONFLICT", "Release changed concurrently; refresh and retry");
 }

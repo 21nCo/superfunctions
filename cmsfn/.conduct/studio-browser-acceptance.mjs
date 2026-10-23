@@ -30,7 +30,7 @@ for (let n = 0; n < 25; n++) unwrap(await content.api.docs.create({ dataset: 'pr
 await writeFile('studio-entry.mjs', `import React from 'react'; import { createRoot } from 'react-dom/client'; import { App } from '@cmsfn/studio'; createRoot(document.getElementById('root')).render(React.createElement(App));`);
 await build({ entryPoints: ['studio-entry.mjs'], outfile: 'studio-bundle.js', bundle: true, platform: 'browser', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
 const bundle = await readFile('studio-bundle.js');
-let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true;
+let base = ''; let cmsBase = ''; let cms; let allowPublish = true; let allowAudit = true; let allowReleases = true;
 const requests = [];
 const server = createServer((req, res) => {
   if (req.url?.startsWith('/cmsfn/')) { requests.push(req.url); cms.emit('request', req, res); return; }
@@ -54,7 +54,7 @@ let browser;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  cms = createCmsfnServer({ db: cmsDb, contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : [])] }] });
+  cms = createCmsfnServer({ db: cmsDb, contentfn: { baseUrl: base }, datasets: [{ name: 'prod' }, { name: 'staging' }], auth: { kind: 'custom' }, desk: { kind: 'divider' }, getRolesForSubject: async () => [{ id: 'editor', name: 'Editor', rules: [...(allowPublish ? [{ datasets: ['prod'], types: '*', actions: ['doc.publish', 'doc.unpublish'] }] : []), ...(allowAudit ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['audit.read'] }] : []), ...(allowReleases ? [{ datasets: ['prod', 'staging'], types: '*', actions: ['release.manage'] }] : [])] }] });
   await new Promise(resolve => cms.listen(0, '127.0.0.1', resolve));
   cmsBase = base; // Host serves both APIs under its own origin, as a normal reverse proxy would.
   browser = await chromium.launch({ headless: true });
@@ -194,10 +194,29 @@ try {
   await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('prod'); await page.locator('[data-audit-delivery]').first().waitFor();
   allowAudit = false; await page.locator('[data-audit-webhooks-refresh]').click(); await page.locator('[data-audit-denied]').waitFor(); assert.equal(await page.locator('[data-audit-delivery]').count(), 0);
   await page.getByRole('button', { name: 'Audit events', exact: true }).click(); await page.locator('[data-audit-events-pane][data-audit-denied]').waitFor(); assert.equal(await page.locator('[data-audit-event]').count(), 0);
+  for (const [id, state] of [['release-a', 'draft'], ['release-z', 'approved']]) unwrap(await content.api.docs.create({ dataset: 'prod', id, type: 'post', asDraft: true, doc: { title: id, _cms: { workflow: 'default', state } } }));
+  await page.getByRole('button', { name: 'Releases', exact: true }).click(); await page.getByText('No releases.', { exact: true }).waitFor();
+  await page.getByLabel('Release name', { exact: true }).fill('Browser batch'); await page.locator('[data-releases-create-submit]').click(); await page.getByRole('heading', { name: 'Browser batch', exact: true }).waitFor();
+  for (const id of ['drafts.release-z', 'release-a', 'release-a']) {
+    await page.getByLabel('Draft document ID for Browser batch').fill(id);
+    await Promise.all([page.waitForResponse(response => response.url().endsWith('/cmsfn/releases/add')), page.locator('[data-release-add]').click()]);
+    await page.waitForFunction(() => !document.querySelector('[data-releases-refresh]')?.disabled);
+  }
+  assert.deepEqual(await page.locator('[data-release-document]').allTextContents(), ['release-a', 'release-z']);
+  await page.locator('[data-releases-publish]').click(); await page.getByText('Published: 1', { exact: true }).waitFor();
+  assert.deepEqual(await page.locator('[data-release-published]').allTextContents(), ['release-z']);
+  assert.match((await page.locator('[data-release-failure]').allTextContents()).join(''), /release-a: PERMISSION_DENIED/);
+  assert.equal((await content.api.docs.get({ dataset: 'prod', id: 'release-a' })).ok, false);
+  assert.equal(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'release-z' })).title, 'release-z');
+  await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('staging'); await page.getByText('No releases.', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-releases-item]').count(), 0); assert.equal(await page.locator('[data-releases-publish-result]').count(), 0);
+  await page.getByRole('combobox', { name: 'Select dataset' }).selectOption('prod'); await page.getByRole('heading', { name: 'Browser batch' }).waitFor();
+  allowReleases = false; await page.locator('[data-releases-refresh]').click(); await page.locator('[data-releases-denied]').waitFor();
+  assert.equal(await page.locator('[data-releases-item]').count(), 0); assert.equal(await page.locator('[data-releases-create-submit]').count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue'], requests: requests.length,
-    remaining: ['release and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial'], requests: requests.length,
+    remaining: ['automatic release scheduling and remaining operational shell integration', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();
 }

@@ -11,6 +11,7 @@ import type { DocumentListNode } from "./desk/DeskTree.js";
 import { DatasetSelector } from "./datasets/DatasetSelector.js";
 import { DocumentListPane } from "./panes/list/DocumentListPane.js";
 import { DocumentEditorPane } from "./panes/editor/DocumentEditorPane.js";
+import { ReleasesPane } from "./panes/releases/ReleasesPane.js";
 import { EventsPane } from "./panes/audit/EventsPane.js";
 import { WebhooksPane } from "./panes/audit/WebhooksPane.js";
 import { subscribeToDataset } from "./realtime/subscribe.js";
@@ -32,7 +33,7 @@ export function App({ config: configProp }: AppProps = {}) {
   const [dataset, setDataset] = useState<string>(() =>
     config ? getInitialDataset(config) : ""
   );
-  const [auditPane, setAuditPane] = useState<"events" | "webhooks" | null>(null);
+  const [auditPane, setAuditPane] = useState<"events" | "webhooks" | "releases" | null>(null);
   const [selectedList, setSelectedList] = useState<DocumentListNode | null>(null);
   const [perspective, setPerspective] = useState<"draft" | "published">("draft");
   const [expectedType, setExpectedType] = useState<string | undefined>();
@@ -102,13 +103,13 @@ export function App({ config: configProp }: AppProps = {}) {
             setSelectedDocId(node.id.replace(/^drafts\./, ""));
           }}
         />
-        <nav aria-label="Audit">
-          {(["events", "webhooks"] as const).map(kind => <button key={kind} type="button" data-audit-nav={kind} aria-pressed={auditPane === kind} onClick={() => { setAuditPane(kind); setSelectedDocId(null); setSelectedList(null); setNavigationError(null); setRemoteChanged(false); }}>{kind === "events" ? "Audit events" : "Webhook deliveries"}</button>)}
+        <nav aria-label="Operations">
+          {(["events", "webhooks", "releases"] as const).map(kind => <button key={kind} type="button" data-audit-nav={kind} aria-pressed={auditPane === kind} onClick={() => { setAuditPane(kind); setSelectedDocId(null); setSelectedList(null); setNavigationError(null); setRemoteChanged(false); }}>{kind === "events" ? "Audit events" : kind === "webhooks" ? "Webhook deliveries" : "Releases"}</button>)}
         </nav>
       </aside>
       <main data-studio-pane>
         {navigationError && <p role="alert" data-desk-error>{navigationError}</p>}
-        {auditPane ? (!config.cmsfn?.apiUrl ? <p role="alert" data-audit-unavailable>Audit requires a configured CmsFn API.</p> : !config.datasets.some(item => item.name === dataset) ? <p role="alert" data-audit-unavailable>Select a configured dataset.</p> : auditPane === "events" ? <EventsPane key={`events:${dataset}`} cmsfnApiUrl={config.cmsfn.apiUrl} dataset={dataset} /> : <WebhooksPane key={`webhooks:${dataset}`} cmsfnApiUrl={config.cmsfn.apiUrl} dataset={dataset} />) : selectedDocId ? (
+        {auditPane ? (!config.cmsfn?.apiUrl ? <p role="alert" data-audit-unavailable>{auditPane === "releases" ? "Releases require a configured CmsFn API." : "Audit requires a configured CmsFn API."}</p> : !config.datasets.some(item => item.name === dataset) ? <p role="alert" data-audit-unavailable>Select a configured dataset.</p> : auditPane === "releases" ? <ReleasesPane cmsfnApiUrl={config.cmsfn.apiUrl} dataset={dataset} /> : auditPane === "events" ? <EventsPane key={`events:${dataset}`} cmsfnApiUrl={config.cmsfn.apiUrl} dataset={dataset} /> : <WebhooksPane key={`webhooks:${dataset}`} cmsfnApiUrl={config.cmsfn.apiUrl} dataset={dataset} />) : selectedDocId ? (
           <>
             <button type="button" data-editor-back onClick={() => setSelectedDocId(null)}>
               {selectedList ? "Back to list" : "Back to desk"}
