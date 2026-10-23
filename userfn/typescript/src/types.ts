@@ -230,6 +230,8 @@ export interface Survey {
   segmentId?: string;
   triggers: CampaignTrigger[];
   enabled: boolean;
+  /** UTC epoch milliseconds: inclusive start, exclusive end. */
+  schedule?: CampaignSchedule;
   caps?: {
     /** Local response limit per user/survey in this client. Defaults to one; zero denies. Not a server-wide quota. */
     global?: number;

@@ -129,6 +129,20 @@ asyncio.run(run())
     expect(await (await send('race-' + winning)).json()).toEqual(saved);
     const stored = await query<{ answers: string }>`SELECT answers FROM userfn_survey_responses WHERE id = ${saved.id}`.execute(first.sql);
     expect(JSON.parse(stored.rows[0].answers)).toEqual(answers);
+    policy = { enabled: true, perUser: 10, questions: [{ id: 'score', type: 'nps', title: 'Score', required: true }], schedule: { startAt: 50000, endAt: 60000 } };
+    now = 49999;
+    expect((await send('scheduled', 'tenant:scheduled')).status).toBe(403);
+    now = 50000;
+    const scheduled = await send('scheduled', 'tenant:scheduled');
+    expect(scheduled.status).toBe(201);
+    const scheduledReceipt = await scheduled.json();
+    now = 59999;
+    expect((await send('inside', 'tenant:scheduled')).status).toBe(201);
+    now = 60000;
+    expect((await send('expired', 'tenant:scheduled')).status).toBe(403);
+    expect(await (await send('scheduled', 'tenant:scheduled')).json()).toEqual(scheduledReceipt);
+    const scheduledRows = await query<{ count: number }>`SELECT count(*) AS count FROM userfn_survey_responses WHERE actorId = 'scheduled'`.execute(first.sql);
+    expect(scheduledRows.rows[0].count).toBe(2);
   } finally {
     clock.mockRestore(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await first.adapter.close(); await second.adapter.close(); await rm(directory, { recursive: true, force: true });

@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import type { AuthSession } from '@superfunctions/auth';
 import type { Adapter } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
-import type { Question } from 'userfn';
-import { surveyQuestionVisible, surveyScaleBounds, validateSurveyBranches } from 'userfn';
+import type { CampaignSchedule, Question } from 'userfn';
+import { surveyQuestionVisible, surveyScaleBounds, surveyScheduleActive, validateSurveyBranches } from 'userfn';
 import { canonical, object } from './validation.js';
 
 export interface SurveyPolicy {
@@ -11,6 +11,7 @@ export interface SurveyPolicy {
   questions: Question[];
   /** Maximum accepted responses for this verified user; defaults to one. */
   perUser?: number;
+  schedule?: CampaignSchedule;
   /** Rolling interval (now-durationMs, now]; enforced in the same transaction as storage. */
   window?: { limit: number; durationMs: number };
 }
@@ -28,6 +29,7 @@ const integer = (value: unknown, max: number) => typeof value === 'number' && Nu
 const receipt = (row: StoredResponse) => ({ id: row.id, surveyId: row.surveyId, submittedAt: row.submittedAt, accepted: true });
 
 function validatePolicy(policy: SurveyPolicy) {
+  surveyScheduleActive(policy.schedule, 0);
   if (typeof policy.enabled !== 'boolean' || (policy.perUser !== undefined && !integer(policy.perUser, 1000000)) || !Array.isArray(policy.questions) || policy.questions.length > 100) throw new Error('Invalid survey policy');
   if (policy.window !== undefined && (!object(policy.window) || Object.keys(policy.window).some(key => !['limit', 'durationMs'].includes(key)) || !integer(policy.window.limit, 1000) || !integer(policy.window.durationMs, 8640000000000000) || policy.window.durationMs === 0)) throw new Error('Invalid survey window');
   const ids = new Set<string>();
@@ -92,6 +94,7 @@ export function surveyRoutes(database: Adapter, authorize: (request: Request, sc
             if (!policy.enabled) return json({ error: 'Survey is disabled' }, 403);
             const now = Date.now();
             if (!integer(now, 8640000000000000)) throw new Error('Invalid survey clock');
+            if (!surveyScheduleActive(policy.schedule, now)) return json({ error: 'Survey is outside its schedule' }, 403);
             const counter = await tx.findOne<Counter>({ model: 'userfn_survey_counters', where: [eq('id', counterId)] });
             if (counter && now < counter.lastSubmittedAt) return json({ error: 'Survey clock moved backwards' }, 503);
             if ((counter?.count ?? 0) >= (policy.perUser ?? 1)) return json({ error: 'Survey response cap reached' }, 429);

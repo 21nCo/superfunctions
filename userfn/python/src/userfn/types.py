@@ -233,6 +233,7 @@ class Survey:
     title: Optional[str] = None
     segment_id: Optional[str] = None
     caps: Optional[SurveyCaps] = None
+    schedule: Optional[CampaignSchedule] = None
 
 @dataclass
 class SurveyResponseAnswer:

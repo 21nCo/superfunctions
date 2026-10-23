@@ -1,4 +1,14 @@
-import type { Question, SurveyResponse } from '../types';
+import type { CampaignSchedule, Question, SurveyResponse } from '../types';
+
+const MAX_TIME = 8640000000000000;
+export function surveyScheduleActive(schedule: CampaignSchedule | undefined, now: number): boolean {
+  if (schedule !== undefined) {
+    if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule) || Object.keys(schedule).some(key => !['startAt', 'endAt'].includes(key)) ||
+        [schedule.startAt, schedule.endAt].some(value => value !== undefined && (!Number.isSafeInteger(value) || typeof value !== 'number' || value < 0 || value > MAX_TIME)) ||
+        (schedule.startAt ?? 0) >= (schedule.endAt ?? MAX_TIME)) throw new Error('Invalid survey schedule');
+  }
+  return Number.isSafeInteger(now) && now >= 0 && now <= MAX_TIME && now >= (schedule?.startAt ?? 0) && now < (schedule?.endAt ?? MAX_TIME);
+}
 
 /** Forward-only references keep conditional forms deterministic and cycle-free. */
 export function validateSurveyBranches(questions: Question[]): void {

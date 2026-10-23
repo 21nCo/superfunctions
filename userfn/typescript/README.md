@@ -572,3 +572,12 @@ original answers and idempotency key.
 This is basic forward conditional visibility, not arbitrary expression evaluation
 or a looping form graph. Durable client journals and full survey analytics remain
 open.
+
+
+Survey schedules use `schedule: { startAt, endAt }` with UTC epoch milliseconds, inclusive start
+and exclusive end. Omitted bounds mean zero and the maximum supported date.
+Invalid/reversed intervals reject configuration. Candidate eligibility uses the
+client clock; the service independently enforces its trusted policy and server
+clock inside response admission. A committed receipt can still be replayed with
+the same key and answers after expiry; an expired new response rejects without
+consuming a cap. Client configuration never overrides server policy.

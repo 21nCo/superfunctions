@@ -1,16 +1,18 @@
 import { Survey, CampaignTrigger, UserIdentity, SurveyResponse } from '../types';
 import { SegmentEvaluator } from './segments';
+import { surveyScheduleActive } from './survey-questions';
 
 export class SurveyEngine {
   private surveys: Map<string, Survey> = new Map();
   private responses = new Map<string, Map<string, SurveyResponse[]>>(); // userId -> surveyId -> responses
   private segments: SegmentEvaluator;
 
-  constructor(segments: SegmentEvaluator) {
+  constructor(segments: SegmentEvaluator, private readonly now: () => number = () => Date.now()) {
     this.segments = segments;
   }
 
   setSurveys(surveys: Survey[]) {
+    surveys.forEach(survey => surveyScheduleActive(survey.schedule, 0));
     this.surveys.clear();
     surveys.forEach(s => this.surveys.set(s.id, s));
   }
@@ -25,7 +27,7 @@ export class SurveyEngine {
     const eligible: Survey[] = [];
 
     for (const survey of this.surveys.values()) {
-      if (!survey.enabled) continue;
+      if (!survey.enabled || !surveyScheduleActive(survey.schedule, this.now())) continue;
 
       // 1. Triggers
       const matchesTrigger = survey.triggers.some(t => {

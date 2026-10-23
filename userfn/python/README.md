@@ -449,3 +449,12 @@ Survey question metadata also supports `ces` and `scale`, and
 These describe the same server/browser policy: primitive exact equality against an
 earlier question. The Python SDK does not render forms or authorize hidden answers;
 the configured service validates each submitted response.
+
+
+Survey schedules use `schedule=CampaignSchedule(start_at=..., end_at=...)` with UTC epoch milliseconds, inclusive start
+and exclusive end. Omitted bounds mean zero and the maximum supported date.
+Invalid/reversed intervals reject configuration. Candidate eligibility uses the
+client clock; the service independently enforces its trusted policy and server
+clock inside response admission. A committed receipt can still be replayed with
+the same key and answers after expiry; an expired new response rejects without
+consuming a cap. Client configuration never overrides server policy.

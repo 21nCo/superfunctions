@@ -1,0 +1,136 @@
+[
+  {
+    "name": "omitted",
+    "now": 100,
+    "expected": true
+  },
+  {
+    "name": "before",
+    "schedule": {
+      "startAt": 100,
+      "endAt": 200
+    },
+    "now": 99,
+    "expected": false
+  },
+  {
+    "name": "start",
+    "schedule": {
+      "startAt": 100,
+      "endAt": 200
+    },
+    "now": 100,
+    "expected": true
+  },
+  {
+    "name": "inside",
+    "schedule": {
+      "startAt": 100,
+      "endAt": 200
+    },
+    "now": 199,
+    "expected": true
+  },
+  {
+    "name": "end",
+    "schedule": {
+      "startAt": 100,
+      "endAt": 200
+    },
+    "now": 200,
+    "expected": false
+  },
+  {
+    "name": "zero-start",
+    "schedule": {
+      "startAt": 0,
+      "endAt": 1
+    },
+    "now": 0,
+    "expected": true
+  },
+  {
+    "name": "end-only",
+    "schedule": {
+      "endAt": 100
+    },
+    "now": 99,
+    "expected": true
+  },
+  {
+    "name": "start-only",
+    "schedule": {
+      "startAt": 100
+    },
+    "now": 101,
+    "expected": true
+  },
+  {
+    "name": "negative-clock",
+    "now": -1,
+    "expected": false
+  },
+  {
+    "name": "fractional-clock",
+    "now": 1.5,
+    "expected": false
+  },
+  {
+    "name": "empty-window",
+    "schedule": {
+      "startAt": 1,
+      "endAt": 1
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "reversed",
+    "schedule": {
+      "startAt": 2,
+      "endAt": 1
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "negative",
+    "schedule": {
+      "startAt": -1
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "fractional",
+    "schedule": {
+      "endAt": 1.5
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "boolean",
+    "schedule": {
+      "startAt": true
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "string",
+    "schedule": {
+      "startAt": "1"
+    },
+    "now": 10,
+    "invalid": true
+  },
+  {
+    "name": "overflow",
+    "schedule": {
+      "endAt": 8640000000000001
+    },
+    "now": 10,
+    "invalid": true
+  }
+]
