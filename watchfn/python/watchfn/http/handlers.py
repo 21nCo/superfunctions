@@ -7,6 +7,7 @@ from typing import cast
 from superfunctions.auth import AuthProvider, AuthSession, validate_auth_session
 from superfunctions.http import Request, Response, RouteContext
 from ..models import Event
+from ..query import Query, QueryValidationError
 from ..storage.memory_storage import MemoryStorage
 from ..storage.database import DatabaseStorage
 
@@ -113,13 +114,7 @@ class HttpHandlers:
             return denied
         try:
             body = await self.read_json(request, 65536)
-            if not isinstance(body, dict) or set(body) - {"metric", "limit"}:
-                raise ValueError()
-            metric, limit = body.get("metric"), body.get("limit", 1000)
-            if metric is not None and (not isinstance(metric, str) or not metric.strip() or len(metric) > 1024):
-                raise ValueError()
-            if type(limit) is not int or not 1 <= limit <= 1000:
-                raise ValueError()
+            Query(body)  # Validate before flushing programmatic events.
         except OverflowError:
             return reply(413, {"error": "Request body too large"})
         except Exception:
@@ -127,10 +122,11 @@ class HttpHandlers:
         if (not isinstance(self.watch.storage, (MemoryStorage, DatabaseStorage)) or (self.watch.config.storage == "database" and not isinstance(self.watch.storage, DatabaseStorage))):
             return reply(503, {"error": "Query unavailable"})
         try:
-            events = await asyncio.to_thread(self.watch.query, metric)
-            results = [event.model_dump(mode="json") for event in events[-limit:]]
+            results = await asyncio.to_thread(self.watch.query, body)
             if len(json.dumps({"results": results}, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 8 * 1024 * 1024:
                 raise ValueError()
             return reply(200, {"results": results})
+        except QueryValidationError:
+            return reply(400, {"error": "Invalid query"})
         except Exception:
             return reply(503, {"error": "Query unavailable"})

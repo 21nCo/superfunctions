@@ -1,0 +1,675 @@
+{
+  "events": [
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:00:00+00:00",
+      "context": {},
+      "properties": {
+        "duration": 0,
+        "endpoint": "/a",
+        "user": "u0",
+        "flag": true,
+        "mixed": 1,
+        "label": "a"
+      }
+    },
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:00:30+00:00",
+      "context": {},
+      "properties": {
+        "duration": 10,
+        "endpoint": "/a",
+        "user": "u1",
+        "mixed": 1.0,
+        "label": "b"
+      }
+    },
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:01:00+00:00",
+      "context": {},
+      "properties": {
+        "duration": 20,
+        "endpoint": "/b",
+        "user": "u1",
+        "mixed": true,
+        "label": "c"
+      }
+    },
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:01:30+00:00",
+      "context": {},
+      "properties": {
+        "duration": "30",
+        "endpoint": "/b",
+        "user": null,
+        "mixed": false,
+        "label": "d"
+      }
+    },
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:02:00+00:00",
+      "context": {},
+      "properties": {
+        "duration": null,
+        "endpoint": "/b",
+        "flag": false,
+        "mixed": "1",
+        "label": "e"
+      }
+    },
+    {
+      "type": "track",
+      "name": "request",
+      "timestamp": "2026-01-09T00:02:30+00:00",
+      "context": {},
+      "properties": {
+        "endpoint": null,
+        "mixed": null,
+        "label": "f"
+      }
+    },
+    {
+      "type": "track",
+      "name": "other",
+      "timestamp": "2026-01-09T00:03:00+00:00",
+      "context": {},
+      "properties": {
+        "duration": 100,
+        "endpoint": "/other",
+        "label": "g"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "strict null versus missing",
+      "query": {
+        "where": {
+          "duration": null
+        }
+      },
+      "expected": [
+        "e"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "missing or null exists false",
+      "query": {
+        "where": {
+          "duration": {
+            "exists": false
+          }
+        }
+      },
+      "expected": [
+        "e",
+        "f"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "scalar ordered coercion",
+      "query": {
+        "where": {
+          "duration": {
+            "gte": 10,
+            "lt": 100
+          }
+        }
+      },
+      "expected": [
+        "b",
+        "c",
+        "d"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "numeric contains coercion",
+      "query": {
+        "where": {
+          "duration": {
+            "contains": "0"
+          }
+        }
+      },
+      "expected": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "g"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "boolean distinct from number",
+      "query": {
+        "where": {
+          "mixed": true
+        }
+      },
+      "expected": [
+        "c"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "numeric equality",
+      "query": {
+        "where": {
+          "mixed": 1
+        }
+      },
+      "expected": [
+        "a",
+        "b"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "own name precedence",
+      "query": {
+        "where": {
+          "name": "request"
+        }
+      },
+      "expected": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "inclusive timestamp bounds",
+      "query": {
+        "metric": "request",
+        "timeRange": [
+          1767916800000,
+          1767916860000
+        ]
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ],
+      "rawLabels": true
+    },
+    {
+      "name": "numeric aggregations ignore strings and null",
+      "query": {
+        "metric": "request",
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          },
+          "sum": {
+            "operation": "sum",
+            "field": "duration"
+          },
+          "avg": {
+            "operation": "avg",
+            "field": "duration"
+          },
+          "min": {
+            "operation": "min",
+            "field": "duration"
+          },
+          "max": {
+            "operation": "max",
+            "field": "duration"
+          },
+          "percentile": {
+            "operation": "percentile",
+            "field": "duration",
+            "percentile": 95
+          },
+          "users": {
+            "operation": "count_distinct",
+            "field": "user"
+          }
+        }
+      },
+      "expected": [
+        {
+          "count": 6,
+          "sum": 30,
+          "avg": 10,
+          "min": 0,
+          "max": 20,
+          "percentile": 19,
+          "users": 2
+        }
+      ],
+      "rawLabels": false
+    },
+    {
+      "name": "empty aggregations",
+      "query": {
+        "metric": "absent",
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          },
+          "sum": {
+            "operation": "sum",
+            "field": "duration"
+          },
+          "avg": {
+            "operation": "avg",
+            "field": "duration"
+          },
+          "min": {
+            "operation": "min",
+            "field": "duration"
+          },
+          "max": {
+            "operation": "max",
+            "field": "duration"
+          },
+          "percentile": {
+            "operation": "percentile",
+            "field": "duration",
+            "percentile": 95
+          },
+          "users": {
+            "operation": "count_distinct",
+            "field": "user"
+          }
+        }
+      },
+      "expected": [
+        {
+          "count": 0,
+          "sum": 0,
+          "avg": null,
+          "min": null,
+          "max": null,
+          "percentile": null,
+          "users": 0
+        }
+      ],
+      "rawLabels": false
+    },
+    {
+      "name": "scalar grouping and ordering",
+      "query": {
+        "metric": "request",
+        "groupBy": "endpoint",
+        "aggregations": {
+          "mean": {
+            "operation": "avg",
+            "field": "duration"
+          }
+        },
+        "orderBy": {
+          "field": "mean",
+          "direction": "desc"
+        }
+      },
+      "expected": [
+        {
+          "endpoint": "/b",
+          "mean": 20
+        },
+        {
+          "endpoint": "/a",
+          "mean": 5
+        },
+        {
+          "endpoint": null,
+          "mean": null
+        }
+      ],
+      "rawLabels": false
+    },
+    {
+      "name": "time grouping",
+      "query": {
+        "metric": "request",
+        "groupBy": {
+          "interval": "1m"
+        },
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          },
+          "mean": {
+            "operation": "avg",
+            "field": "duration"
+          }
+        }
+      },
+      "expected": [
+        {
+          "timestamp": 1767916800000,
+          "count": 2,
+          "mean": 5
+        },
+        {
+          "timestamp": 1767916860000,
+          "count": 2,
+          "mean": 20
+        },
+        {
+          "timestamp": 1767916920000,
+          "count": 2,
+          "mean": null
+        }
+      ],
+      "rawLabels": false
+    },
+    {
+      "name": "numeric group identity",
+      "query": {
+        "metric": "request",
+        "groupBy": "mixed",
+        "aggregations": {
+          "count": {
+            "operation": "count"
+          }
+        }
+      },
+      "expected": [
+        {
+          "mixed": 1,
+          "count": 2
+        },
+        {
+          "mixed": true,
+          "count": 1
+        },
+        {
+          "mixed": false,
+          "count": 1
+        },
+        {
+          "mixed": "1",
+          "count": 1
+        },
+        {
+          "mixed": null,
+          "count": 1
+        }
+      ],
+      "rawLabels": false
+    },
+    {
+      "name": "zero limit",
+      "query": {
+        "limit": 0
+      },
+      "expected": [],
+      "rawLabels": true
+    },
+    {
+      "name": "JS ordered boolean empty array conversion",
+      "query": {
+        "where": {
+          "value": {
+            "gte": 0
+          }
+        }
+      },
+      "expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "rawLabels": true,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "0",
+            "value": true
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "1",
+            "value": false
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "2",
+            "value": ""
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "3",
+            "value": []
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "4",
+            "value": [
+              12
+            ]
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "5",
+            "value": {}
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "6",
+            "value": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "JS object contains",
+      "query": {
+        "where": {
+          "value": {
+            "contains": "Object"
+          }
+        }
+      },
+      "expected": [
+        "5"
+      ],
+      "rawLabels": true,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "0",
+            "value": true
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "1",
+            "value": false
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "2",
+            "value": ""
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "3",
+            "value": []
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "4",
+            "value": [
+              12
+            ]
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "5",
+            "value": {}
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "6",
+            "value": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "array own index and length",
+      "query": {
+        "where": {
+          "values.0": 2,
+          "values.length": 2
+        }
+      },
+      "expected": [
+        "a"
+      ],
+      "rawLabels": true,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "label": "a",
+            "values": [
+              2,
+              3
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sequential IEEE sum",
+      "query": {
+        "aggregations": {
+          "sum": {
+            "operation": "sum",
+            "field": "value"
+          }
+        }
+      },
+      "expected": [
+        {
+          "sum": 0
+        }
+      ],
+      "rawLabels": false,
+      "events": [
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "value": 1e+16
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "value": 1
+          }
+        },
+        {
+          "type": "track",
+          "name": "request",
+          "timestamp": "2026-01-09T00:00:00+00:00",
+          "context": {},
+          "properties": {
+            "value": -1e+16
+          }
+        }
+      ]
+    }
+  ]
+}

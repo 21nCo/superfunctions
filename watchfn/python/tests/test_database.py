@@ -236,3 +236,30 @@ def test_independent_instances_and_http_at_least_once(tmp_path):
             assert connection.scalar(select(func.count()).select_from(table)) == 22
     finally:
         one.stop(); two.stop(); engine.dispose()
+
+
+@pytest.mark.parametrize('framework', ['fastapi', 'flask'])
+def test_structured_query_after_reopen_and_complete_scan(tmp_path, framework):
+    from pathlib import Path
+    vectors = json.loads((Path(__file__).parent / 'fixtures/query-golden.json').read_text())
+    engine = create_engine('sqlite:///' + str(tmp_path / 'queries.sqlite'))
+    migrate(engine)
+    watch = start(create_adapter(engine))
+    try:
+        watch.storage.add_batch([Event.model_validate(value) for value in vectors['events']])
+    finally:
+        watch.stop(); engine.dispose()
+    engine = create_engine('sqlite:///' + str(tmp_path / 'queries.sqlite'))
+    watch = start(create_adapter(engine))
+    try:
+        post, body = http(watch, framework)
+        vector = next(value for value in vectors['cases'] if value['name'] == 'numeric aggregations ignore strings and null')
+        response = post('query', vector['query'])
+        assert response.status_code == 200
+        assert body(response)['results'] == vector['expected']
+        grouped = {'metric':'request','timeRange':[1767916800000,1767916860000], 'groupBy':'endpoint', 'aggregations':{'count':{'operation':'count'},'p95':{'operation':'percentile','field':'duration','percentile':95}},'orderBy':{'field':'count','direction':'desc'},'limit':1}
+        assert body(post('query', grouped))['results'] == [{'endpoint':'/a','count':2,'p95':9.5}]
+        watch.storage.SCAN_LIMIT = 2
+        assert post('query', grouped).status_code == 503  # Limit1 never bypasses the scan cap.
+    finally:
+        watch.stop(); engine.dispose()

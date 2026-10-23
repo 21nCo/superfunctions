@@ -1,8 +1,9 @@
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, overload
 from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
+from .query import Query
 from .storage.memory_storage import MemoryStorage
 from .storage.database import DatabaseStorage
 from .http.routes import create_routes
@@ -87,7 +88,17 @@ class WatchFn:
         )
         self.batcher.add(event)
 
-    def query(self, metric: Optional[str] = None) -> List[Event]:
+    @overload
+    def query(self, metric: Dict[str, Any]) -> List[Dict[str, Any]]: ...
+
+    @overload
+    def query(self, metric: Optional[str] = None) -> List[Event]: ...
+
+    def query(self, metric=None):
+        if isinstance(metric, dict):
+            query = Query(metric)
+            self.batcher.flush()
+            return query.execute(self.storage.query())
         self.batcher.flush()
         return self.storage.query(metric)
 

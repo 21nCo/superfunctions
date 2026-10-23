@@ -50,13 +50,58 @@ has returned successfully. Memory mode does not mean durable persistence. A stop
 from programmatic collectors; older events may be evicted immediately as new
 batches arrive. Memory admission is serialized with background batch writes.
 
-POST `/query` accepts `{}`, or `{"metric": "event.name", "limit": 100}`. `metric`
-filters the exact event name and `limit` selects the latest matching events
-(1–1000, default1000) in insertion order. Query flushes the existing synchronous
-batcher before taking a protected snapshot. The response is `{"results": [...]}`
-with JSON timestamps. Request bodies are limited to64KiB; results exceeding8MiB
-fail with503 instead of returning partial data. Unsupported query fields reject
-with400. No aggregation, time-range query or TS QueryEngine parity is claimed.
+POST `/query` accepts structured options matching the supported TypeScript query
+subset. `watch.query(options_dict)` returns raw/grouped dictionaries; existing
+`watch.query()` and `watch.query(metric="name")` still return Event objects.
+HTTP keeps `{"results": [...]}`. Supported options are:
+
+- `metric`: exact event name or type for structured queries.
+- `where`: dotted fields with direct equality or eq/neq/gt/gte/lt/lte/contains/exists.
+  Explicit top-level fields take precedence over properties even when null/false/0.
+  Missing differs from null for equality; both fail exists and ordered predicates.
+  As in TypeScript, ordered comparisons coerce numeric strings/booleans/empty
+  arrays, and contains converts scalar/array/object values to JavaScript-style text.
+  Numeric aggregates ignore strings, booleans, missing and nonfinite values.
+- `timeRange`: inclusive epoch-millisecond or timezone-aware ISO bounds, a two-item
+  array, an object with from/to, or last-Nm/h/d/w (also `{shortcut: ...}`). Relative
+  bounds are resolved once for the query, not separately per row.
+- `groupBy`: a dotted scalar field, `{interval: "5m"}`, or a list of both.
+  Supported units are ms/s/m/h/d/w. Grouping requires aggregations.
+- `aggregations`: named count/sum/avg/min/max/percentile/count_distinct operations.
+  Non-count operations require field; percentile requires a value from0 through100.
+  Empty count/sum/distinct yield0; empty avg/min/max/percentile yield null.
+- `orderBy`: `{field: "mean", direction: "desc"}` (or asc).
+- `limit`:0–1000, default1000, applied after filtering/grouping/ordering. Unlike the
+  earlier memory-only HTTP checkpoint's latest-tail limit, structured queries now
+  select the first rows after ordering, matching TypeScript. Specify descending
+  order when requesting recent/largest rows. Legacy metric-query behavior remains.
+
+For example:
+
+```python
+watch.query({
+    "metric": "api.request",
+    "where": {"duration": {"gte": 0}},
+    "timeRange": "last-1h",
+    "groupBy": ["endpoint", {"interval": "5m"}],
+    "aggregations": {
+        "count": {"operation": "count"},
+        "p95": {"operation": "percentile", "field": "duration", "percentile": 95},
+    },
+    "orderBy": {"field": "p95", "direction": "desc"},
+    "limit": 100,
+})
+```
+
+Invalid options/group values/nonfinite aggregate results reject, and HTTP returns
+400. Requests remain limited to64KiB and results to8MiB; output overflow/storage
+failure returns503. Query validates before flushing the synchronous batcher and
+uses one complete bounded storage scan, so limit/aggregation never hides scan
+capacity overflow. Numeric semantics target JavaScript IEEE doubles, including
+sequential sums. Calendar shortcuts, timezone-less date parsing, rate aggregation,
+scalar aggregate shorthand/suffix fallback, alert observation queries, query pushdown
+and unbounded TypeScript result sizes are not implemented by this slice. Unsupported
+options fail explicitly; this is not full query/metrics parity.
 
 The shared Request protocol exposes buffered `body()`, not a streaming iterator.
 Declared length is checked before reading and actual bytes before JSON parsing,
