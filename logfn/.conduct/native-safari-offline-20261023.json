@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-23",
+  "sourceHead": "ad0c8c34acb92757cb00005108c895b9ed19921d",
+  "command": "npm --workspace=logfn/typescript run build && node logfn/scripts/safari-offline-acceptance.mjs",
+  "result": {
+    "engine": "native-safari",
+    "browser": "27.0",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15",
+    "failedHttpPersisted": true,
+    "pageReloadRecovered": true,
+    "defaultPrivacyBeforeIndexedDB": true,
+    "acknowledgedRecordsRemoved": true,
+    "committedOverflowMetrics": {
+      "after": [
+        0,
+        1
+      ],
+      "before": [
+        0,
+        1
+      ],
+      "rejected": true
+    },
+    "osOfflineConnectivityTested": false,
+    "processRestartTested": false
+  },
+  "cleanup": {
+    "driverPid": 7020,
+    "driverExited": true,
+    "sessionCreated": true,
+    "sessionDeleted": true,
+    "databaseDeleted": true,
+    "serverClosed": true
+  },
+  "settings": {
+    "originalDeveloperFeatures": false,
+    "originalRemoteAutomation": false,
+    "temporarilyEnabled": true,
+    "restoredRemoteAutomation": false,
+    "restoredDeveloperFeatures": false,
+    "restorationVerifiedBy": "separate native accessibility checkbox readbacks",
+    "settingsWindowClosed": true
+  },
+  "limits": [
+    "Same-session page reload, not Safari process restart",
+    "Real HTTP503 unavailability, not OS network-offline switching",
+    "No Firefox, Safari performance or private-mode quota acceptance",
+    "Prior attempted about:blank opening had unverified creation/ownership; no unknown tabs were closed"
+  ]
+}
