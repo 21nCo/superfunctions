@@ -6,7 +6,10 @@ import {
   DEFAULT_MAX_FILTER_DEPTH,
 } from "@contentfn/core";
 
+export const DEFAULT_MAX_RICHTEXT_BLOCKS = 5000;
+
 export interface ContentfnLimits {
+  maxRichtextBlocks: number;
   maxPayloadBytes: number;
   maxPatchOps: number;
   maxQueryLimit: number;
@@ -16,6 +19,7 @@ export interface ContentfnLimits {
 
 export function resolveLimits(overrides?: Partial<ContentfnLimits>): ContentfnLimits {
   const limits = {
+    maxRichtextBlocks: overrides?.maxRichtextBlocks ?? DEFAULT_MAX_RICHTEXT_BLOCKS,
     maxPayloadBytes: overrides?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
     maxPatchOps: overrides?.maxPatchOps ?? DEFAULT_MAX_PATCH_OPS,
     maxQueryLimit: overrides?.maxQueryLimit ?? DEFAULT_MAX_QUERY_LIMIT,

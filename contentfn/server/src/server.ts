@@ -237,7 +237,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
   const router = createContentRouter(routerConfig, async (action, input, request) => invoke(action, input, config.context && request instanceof Request ? await config.context(request) : request, request instanceof Request ? request.headers.get("Idempotency-Key") ?? undefined : undefined), request => eventStream(request, { realtime: realtimeServer, authorize: config.authorize, context: config.context, logger, query: (query, context) => invoke("query", query, context) }));
   return {
     api: forContext(), forContext, router,
-    processScheduledPublishes: () => processScheduledPublishes({ db, onPublished: async (dataset, document) => {
+    processScheduledPublishes: () => processScheduledPublishes({ db, maxRichtextBlocks: limits.maxRichtextBlocks, onPublished: async (dataset, document) => {
       const rows = await db.findMany({ model: "contentfn_events", where: [
         { field: "dataset", operator: "eq", value: dataset },
         { field: "type", operator: "eq", value: "doc.published" },

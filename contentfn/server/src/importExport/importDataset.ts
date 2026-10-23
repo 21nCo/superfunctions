@@ -1,3 +1,4 @@
+import { validateImportedRichtextLimits } from "../storage/document-validation.js";
 import { atomicMutation } from "../storage/database.js";
 import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type { ContentfnEnvelope } from "@contentfn/core";
@@ -11,6 +12,7 @@ import { validateArtifact, type ContentfnExportArtifact } from "./format.js";
 import { documentStorageId, revisionStorageId } from "../storage/documentIdentity.js";
 
 export interface ImportConfig {
+  maxRichtextBlocks?: number;
   db: Adapter;
 }
 
@@ -18,12 +20,18 @@ export async function importDataset(
   config: ImportConfig,
   input: { dataset: string; artifact: unknown }
 ): Promise<ContentfnEnvelope<Record<string, never>>> {
-  if ("transaction" in config.db) return atomicMutation(config.db, db => importDataset({ db }, input));
+  if ("transaction" in config.db) return atomicMutation(config.db, db => importDataset({ ...config, db }, input));
   if (!validateArtifact(input.artifact)) {
     return err("VALIDATION_FAILED", "Malformed import artifact", { path: "artifact" });
   }
 
   const artifact = input.artifact;
+  if (artifact.schema) {
+    for (const document of [...artifact.publishedDocs, ...artifact.draftDocs, ...artifact.revisions.map(revision => revision.docJson)]) {
+      const checked = validateImportedRichtextLimits(artifact.schema.schemaJson, document, config.maxRichtextBlocks);
+      if (!checked.ok) return checked;
+    }
+  }
 
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {

@@ -14,6 +14,7 @@ import { schemaHash } from "../hash/schemaHash.js";
 import { datasetExists } from "./datasets.js";
 
 export interface SchemaStorageConfig {
+  maxRichtextBlocks?: number;
   db: Adapter;
 }
 
@@ -104,7 +105,7 @@ export async function schemaUpsert(
       const documents = await config.db.findMany({ model, where: [{ field: "dataset", operator: "eq", value: input.dataset }] });
       for (const row of documents) {
         const document = row.docJson as import("@contentfn/core").ContentfnDocument;
-        const compatible = validateDocumentAgainstSchema(schema, document._type, document);
+        const compatible = validateDocumentAgainstSchema(schema, document._type, document, config.maxRichtextBlocks);
         if (!compatible.ok) return err("SCHEMA_INVALID", "Schema would invalidate existing content; migrate it first or provide migration.description", { id: document._id, path: compatible.error.details.path });
       }
     }
