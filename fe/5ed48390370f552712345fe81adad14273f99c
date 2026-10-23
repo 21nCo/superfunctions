@@ -1,0 +1,45 @@
+cmsfn/.conduct/richtext-readiness.md
+  s_e1c5fc1a65c0cf::t_de2e1bc3823acb 1-52
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_34ca6c5cf41297 17-20,60,477-504,507
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_abcfa32b0a0ae3 132-152
+cmsfn/studio/src/__tests__/limits.test.tsx
+  s_e1c5fc1a65c0cf::t_1681f68147f16e 6,114
+cmsfn/studio/src/__tests__/richtext-authoring.test.tsx
+  s_7ba056c7e072f1::t_1278523de3ebbf 1-87
+cmsfn/studio/src/app.tsx
+  s_e1c5fc1a65c0cf::t_47f43e3876aed0 132
+cmsfn/studio/src/editor/renderField.tsx
+  s_e1c5fc1a65c0cf::t_6de66e52f03f9f 27,153,164-166
+cmsfn/studio/src/editor/widgets/RichtextWidget.tsx
+  s_7ba056c7e072f1::t_5e5e39e3561c5c 1-3,5-7,9-73
+cmsfn/studio/src/limits/precheck.ts
+  s_e1c5fc1a65c0cf::t_f307bfd45ca445 5,27-38,41-43
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_d65148ec73f761 40,48,130,159,175,199,333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe5ed48390370f552712345fe81adad14273f99c",
+  "prompts": {},
+  "sessions": {
+    "s_7ba056c7e072f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d16bb29-946b-4259-b60d-7953e513216f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
