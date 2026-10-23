@@ -124,3 +124,36 @@ async def test_claim_reply_after_local_lease_deadline_never_starts_handler(adapt
     assert replacement.id==claim.id
     replacement.state=JobStatus.COMPLETED
     await b.update_job(queue.name,replacement)
+
+
+async def test_delayed_native_replies_renew_from_request_start(
+    adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a, b = adapters
+    assert a.reclaim_after_ms == b.reclaim_after_ms == 1000
+    original = a._transition
+    renewals = 0
+
+    async def delayed(method: str, *args: Any) -> Any:
+        nonlocal renewals
+        result = await original(method, *args)
+        if method in ('dequeue', '_renew_job'):
+            # Real storage transitions; delay only delivery of their replies.
+            await asyncio.sleep(.45)
+            if method == '_renew_job':
+                renewals += 1
+        return result
+
+    monkeypatch.setattr(a, '_transition', delayed)
+    await a.enqueue('reply-delay', Job(id='held', name='held', data={}, timestamp=0))
+    claimed = await a.dequeue('reply-delay')
+    assert claimed is not None
+    lost = a.lease_loss_event('reply-delay', claimed)
+    assert lost is not None
+    await asyncio.sleep(1.6)
+    assert not lost.is_set()
+    assert renewals >= 2
+    assert await b.dequeue('reply-delay') is None
+    claimed.state = JobStatus.COMPLETED
+    await a.update_job('reply-delay', claimed)
+    assert (await b.get_all_jobs('reply-delay'))[0].state == JobStatus.COMPLETED

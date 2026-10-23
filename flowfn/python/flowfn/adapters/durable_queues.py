@@ -180,7 +180,10 @@ class DurableQueues(ABC):
                 if remaining <= 0:
                     lost.set()
                     return
-                await asyncio.sleep(min(self.reclaim_after_ms/3000,remaining))
+                # The deadline starts before the last request, so its renewal
+                # interval must start there too. A delayed reply has already
+                # consumed some (or all) of that interval.
+                await asyncio.sleep(max(0, remaining - 2*self.reclaim_after_ms/3000))
                 retry_delay = min(.05,self.reclaim_after_ms/6000)
                 while not self._closed:
                     remaining = deadline-time.monotonic()
