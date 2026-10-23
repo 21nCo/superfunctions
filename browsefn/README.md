@@ -255,14 +255,15 @@ request deadline includes DNS, redirects and body transfer. Proxies are rejected
 because an untrusted proxy can resolve the destination differently. Python
 protected static requests also reject cookies pending a bounded cookie policy.
 
-**Migration:** HTTP page requests using browser, hosted or custom web providers
-currently fail closed with `SECURITY_POLICY_BLOCKED`. These providers do not yet
-have an enforced egress boundary covering subresources, redirects and DNS
-rebinding. This is an interim restriction; browser functionality under this
-policy and full SEC-001 acceptance remain unfinished. Hosted-provider remote
-network access is a separate boundary that a local DNS check cannot certify.
+**Migration:** Protected TypeScript Playwright and Puppeteer requests require a
+trusted, explicitly provisioned Linux Docker worker, configured as described
+below. Unconfigured browser, hosted and custom providers fail closed with
+`SECURITY_POLICY_BLOCKED`. Hosted-provider remote network access is a separate
+boundary that a local DNS check cannot certify. Python currently implements only
+the static local web provider. Exact host allowlists and full SEC-001 acceptance
+remain unfinished.
 
-Trusted in-process static callers can select the checked transport with
+Trusted in-process callers can select the checked transport with
 `security: { allowPrivateHosts: false }`, or explicitly permit private hosts with
 `security: { allowPrivateHosts: true }`. Python accepts the same option through
 `GetPageOptions(security={"allowPrivateHosts": True})`. Calls without `security`
@@ -270,6 +271,99 @@ retain the legacy direct-library provider behavior, which is not a security
 boundary for untrusted URLs. Do not forward arbitrary request options to direct
 library methods. Protected direct calls should also disable caching; the HTTP
 routers enforce this automatically. Exact host allowlists are not implemented.
+
+## Isolated browser destinations
+
+The TypeScript browser providers can enforce the router's public-destination
+policy while retaining JavaScript rendering, screenshots, headers, cookies and
+trusted in-process page callbacks. Provision the worker image explicitly on a
+Docker daemon that runs Linux containers:
+
+```bash
+docker build -f browsefn/docker/browser-worker.Dockerfile -t browsefn-browser:1.57.0 .
+npm install playwright@1.57.0
+# Needed only when selecting Puppeteer:
+PUPPETEER_SKIP_DOWNLOAD=true npm install puppeteer@24.33.0
+```
+
+The supplied image pins the Playwright base digest and installs Playwright 1.57.0
+and Puppeteer Core 24.33.0. Keep the host Playwright version aligned with the
+image. Runtime uses `--pull=never`; missing Docker, an absent image, incompatible
+browser versions or failed startup produces an error rather than host-native
+execution. Image provisioning and updates are the deployment operator's task.
+
+```ts
+import { browseFn, createBrowseFnRouter } from 'browsefn';
+
+const browse = browseFn({
+  web: {
+    defaultProvider: 'playwright',
+    providers: {
+      playwright: {
+        browser: 'chromium', // also firefox or webkit
+        isolation: { dockerImage: 'browsefn-browser:1.57.0' },
+      },
+    },
+  },
+});
+const router = createBrowseFnRouter(browse);
+// Adapt router with the application's @superfunctions/http adapter.
+const page = await browse.web.getPage('https://example.com', {
+  security: { allowPrivateHosts: false },
+  cache: false,
+  screenshot: true,
+});
+```
+
+Use the same `isolation` configuration under `providers.puppeteer` to select
+Puppeteer. Configuration is server-owned; the HTTP body cannot choose an image,
+turn off isolation or enable private destinations. Direct trusted calls with
+`allowPrivateHosts: true`, or legacy calls without `security`, use the existing
+host-native browser behavior. Do not expose that path to untrusted callers.
+
+Each protected request gets a disposable container with `--network=none`, no host
+mounts, a read-only root filesystem, no Linux capabilities and a non-root user.
+Only its own loopback network exists. Browser control and proxy streams cross a
+bounded stdin/stdout broker. The host proxy checks every resolved address and
+connects to the checked IP; redirects, subresources, service workers and
+WebSockets must pass that proxy. TLS CONNECT forwards encrypted bytes without
+replacing certificate validation. The container cannot open an alternate host or
+internet TCP/UDP route. This requires the Docker/Linux boundary; native browser
+launch on an unsupported platform is never silently substituted. Docker Desktop
+with Linux containers was exercised locally; a production Linux host was not.
+
+Protected mode is headless and owns proxy configuration; caller proxies and
+`headless: false` are rejected. Puppeteer host `executablePath` and `args` apply
+only to host-native calls; the protected worker uses its provisioned executable
+and fixed arguments. Browser Chromium sandbox behavior is separate from the
+container network boundary (the Puppeteer worker uses `--no-sandbox`). Treat the
+image, Docker daemon, host and application callbacks as trusted; this is not an
+isolation guarantee against a compromised daemon, kernel or hostile local user.
+Do not expose the Docker socket to request handlers or put credentials in image
+layers. Worker stdout/stderr are not retained in Docker logs.
+
+Resource limits apply per browser operation: 32 broker peers, bounded concurrent
+proxy requests and DNS lookups, 10 MiB per plaintext HTTP request/response,
+20 MiB aggregate bytes per CONNECT/WebSocket tunnel, 1 GiB container memory,
+2 CPUs, 256 processes, and 256 MiB each for temporary storage and shared memory.
+Exceeding transport limits fails the request; exhausting the worker peer limit
+terminates the worker. These limits can reject large or unusually concurrent
+pages. Encrypted response expansion is bounded by container memory and the
+operation deadline, not a decoded-body byte counter. Browser redirects use the
+browser's redirect limits; the static transport's five-hop limit does not apply.
+
+The operation deadline includes initial DNS checking, worker startup, navigation
+and page callback results. A late DNS answer cannot create a proxy connection.
+Node's outstanding DNS work and arbitrary trusted callback side effects cannot
+be forcibly cancelled. Cleanup may extend beyond the operation deadline: it
+removes only the owned container and checks that the daemon reports it absent.
+If absence cannot be confirmed, the call fails with a cleanup error rather than
+reporting success. A host-process crash or inaccessible Docker daemon still
+requires operator reconciliation of `browsefn-<UUID>` containers; `--rm` is not a
+host-crash recovery service. No cross-process admission controller is included.
+
+See [browser isolation evidence](./.conduct/browser-isolation-readiness.md) for
+owned-fixture coverage and remaining release gates.
 
 ## Image download security policy
 

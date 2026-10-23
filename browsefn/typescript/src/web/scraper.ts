@@ -1,3 +1,5 @@
+import { PlaywrightProvider } from './providers/playwright.js';
+import { PuppeteerProvider } from './providers/puppeteer.js';
 /**
  * Web scraper interface.
  */
@@ -178,7 +180,7 @@ export class WebScraper {
         continue;
       }
 
-      if (options.security && !options.security.allowPrivateHosts && provider.constructor !== CheerioProvider) throw denied();
+      if (options.security && !options.security.allowPrivateHosts && !supportsProtectedDestinations(provider)) throw denied();
 
       const capabilityError = this.getCustomScrapeCapabilityError(providerName, provider);
       if (capabilityError) {
@@ -241,7 +243,7 @@ export class WebScraper {
         continue;
       }
 
-      if (options.security && !options.security.allowPrivateHosts && provider.constructor !== CheerioProvider) throw denied();
+      if (options.security && !options.security.allowPrivateHosts && !supportsProtectedDestinations(provider)) throw denied();
 
       const capabilityError = this.getCapabilityError(providerName, provider, options);
       if (capabilityError) {
@@ -475,4 +477,13 @@ export class WebScraper {
 
     return this.cache?.isEnabled() === true;
   }
+}
+
+/** Only built-in transports enforce the router boundary; caller capabilities cannot opt in. */
+function supportsProtectedDestinations(provider: WebProvider): boolean {
+  if (provider.constructor === CheerioProvider) return true;
+  if (provider.constructor === PlaywrightProvider || provider.constructor === PuppeteerProvider) {
+    return (provider as PlaywrightProvider | PuppeteerProvider).supportsProtectedDestinations();
+  }
+  return false;
 }

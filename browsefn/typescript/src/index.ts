@@ -109,3 +109,5 @@ export * as validation from "./utils/validation.js";
 
 // Router
 export { createBrowseFnRouter } from "./router/http-router.js";
+
+export type { BrowserIsolation } from './web/isolation/docker-browser.js';

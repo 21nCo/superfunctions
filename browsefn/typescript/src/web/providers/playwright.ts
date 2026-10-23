@@ -1,3 +1,7 @@
+import { browserDeadline } from '../isolation/lifecycle.js';
+import { assertBrowserDestination } from '../isolation/egress-proxy.js';
+import { launchIsolatedBrowser, type BrowserIsolation } from '../isolation/docker-browser.js';
+import { denied } from '../../utils/destination-policy.js';
 /**
  * Playwright provider for cross-browser scraping.
  */
@@ -42,6 +46,7 @@ type PlaywrightBrowser = {
 };
 
 type PlaywrightBrowserType = {
+  connect(endpoint: string, options?: { timeout: number }): Promise<PlaywrightBrowser>;
   launch(options: { headless: boolean; proxy?: { server: string; username?: string; password?: string } }): Promise<PlaywrightBrowser>;
 };
 
@@ -57,6 +62,7 @@ export class PlaywrightProvider extends BrowserProviderBase<PlaywrightPage> impl
       browser?: 'chromium' | 'firefox' | 'webkit';
       headless?: boolean;
       timeout?: number;
+      isolation?: BrowserIsolation;
     } = {}
   ) { super(); }
 
@@ -75,43 +81,57 @@ export class PlaywrightProvider extends BrowserProviderBase<PlaywrightPage> impl
 
     const browserType = this.config.browser || 'chromium';
     const proxy = parseBrowserProxy(options.proxy);
-    const browser = await playwright[browserType].launch({
-      headless: this.config.headless ?? true,
-      proxy,
-    });
+    const protectedRequest = !!options.security && !options.security.allowPrivateHosts;
+    if (protectedRequest && (!this.config.isolation || proxy || this.config.headless === false)) throw denied();
+    const deadline = browserDeadline(options.timeout ?? this.config.timeout ?? 30_000, startedAt);
+    if (protectedRequest) await deadline.wait(assertBrowserDestination(sanitizedUrl));
+    const isolation = protectedRequest
+      ? await launchIsolatedBrowser(this.config.isolation!, 'playwright', browserType, deadline.remaining())
+      : undefined;
+    try {
+      const browser = isolation
+        ? await playwright[browserType].connect(isolation.endpoint, { timeout: deadline.remaining() })
+        : await playwright[browserType].launch({ headless: this.config.headless ?? true, proxy });
 
-    return useBrowser(browser, async () => {
-      const context = await browser.newContext({
-        extraHTTPHeaders: options.headers,
-        javaScriptEnabled: options.javascript,
-        userAgent: options.mobile
-          ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)'
-          : undefined,
-        viewport: options.mobile ? { width: 375, height: 667 } : undefined,
+      return await useBrowser(browser, async () => {
+        const context = await browser.newContext({
+          extraHTTPHeaders: options.headers,
+          javaScriptEnabled: options.javascript,
+          userAgent: options.mobile
+            ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)'
+            : undefined,
+          viewport: options.mobile ? { width: 375, height: 667 } : undefined,
+        });
+
+        if (options.cookies) {
+          await context.addCookies(
+            options.cookies.map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              domain: cookie.domain || new URL(sanitizedUrl).hostname,
+              path: '/',
+            }))
+          );
+        }
+
+        const page = await context.newPage();
+        const waitUntil =
+          options.waitFor === 'networkidle' ? 'networkidle' : options.waitFor || 'load';
+        await page.goto(sanitizedUrl, {
+          waitUntil,
+          timeout: protectedRequest ? deadline.remaining() : options.timeout || this.config.timeout || 30_000,
+        });
+
+        const operation = callback(page, page.url(), startedAt);
+        const result = protectedRequest ? await deadline.wait(operation) : await operation;
+        isolation?.assertAllowed();
+        return result;
       });
-
-      if (options.cookies) {
-        await context.addCookies(
-          options.cookies.map((cookie) => ({
-            name: cookie.name,
-            value: cookie.value,
-            domain: cookie.domain || new URL(sanitizedUrl).hostname,
-            path: '/',
-          }))
-        );
-      }
-
-      const page = await context.newPage();
-      const waitUntil =
-        options.waitFor === 'networkidle' ? 'networkidle' : options.waitFor || 'load';
-      await page.goto(sanitizedUrl, {
-        waitUntil,
-        timeout: options.timeout || this.config.timeout || 30_000,
-      });
-
-      return await callback(page, page.url(), startedAt);
-    });
+    } catch (error) { isolation?.assertAllowed(); throw error; }
+    finally { await isolation?.close(); }
   }
+
+  supportsProtectedDestinations(): boolean { return !!this.config.isolation; }
   private async loadPlaywright(): Promise<PlaywrightModule> {
     if (!this.playwright) {
       try {

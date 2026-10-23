@@ -5,6 +5,11 @@ This checkpoint closes the reproduced default `/web/page` loopback request and
 caller-controlled image private-host override. It does not establish full
 production readiness or complete SEC-001.
 
+The browser restriction recorded below is historical checkpoint behavior.
+The [2026-10-23 browser isolation checkpoint](./browser-isolation-readiness.md)
+adds configured TypeScript browser execution through a Linux network namespace.
+Hosted/custom provider and full SEC-001 limits remain separately qualified.
+
 ## Behavior
 
 - Both routers overwrite page/metadata security with `allowPrivateHosts: false`
