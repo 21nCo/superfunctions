@@ -207,3 +207,11 @@ framework versions have their own security posture; an audit of CiFn's default
 production closure does not clear every historical peer version or the entire
 monorepo development graph. See [dependency checkpoint evidence](.conduct/dependency-readiness.md) for exact
 versions, audit scope and remaining original readiness requirements.
+
+`executeTestFnRunAsync` resolves `workspace` once before asynchronous work and
+passes it to TestFn's explicit `cwd` configuration. Concurrent calls for different
+workspaces do not change the host process directory. Framework discovery, local
+CLI selection and execution use that workspace; JSON report paths remain tied to
+it even if unrelated host code changes cwd. This requires the accompanying
+TestFn core0.0.4 workspace implementation. It does not sandbox test code or
+isolate simultaneous writes into the same workspace.

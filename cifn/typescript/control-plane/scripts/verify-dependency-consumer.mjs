@@ -42,10 +42,30 @@ try {
     const sync=runner.executeTestFnRun({workspace:'/must-not-open'});assert.equal(sync.success,false);assert.equal(process.cwd(),original);
     const result=await runner.executeTestFnRunAsync({workspace:original,testPattern:'./tests/**/*.{test,spec}.{ts,js}',parallel:1,timeout:15000});
     assert.equal(result.success,true,result.error);assert.ok(result.lines.includes('Tests completed: 2 total'));assert.equal(process.cwd(),original);
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const workspaces = ['one', 'two'].map(name => path.join(original, name));
+    for (const workspace of workspaces) {
+      await fs.mkdir(path.join(workspace, 'tests'), {recursive:true});
+      await fs.writeFile(path.join(workspace, 'package.json'), JSON.stringify({type:'module'}));
+      await fs.writeFile(path.join(workspace, 'tests/owned.test.js'), "import {it,expect} from 'vitest';import {writeFileSync} from 'node:fs';it('owned',()=>{writeFileSync('witness',process.cwd());expect(process.cwd()).toBe("+JSON.stringify(workspace)+");});");
+    }
+    const pending = workspaces.map(workspace => runner.executeTestFnRunAsync({workspace,reporter:'json',timeout:15000}));
+    process.chdir(workspaces[0]);
+    try {
+      const concurrent = await Promise.all(pending);
+      assert.deepEqual(concurrent.map(result => result.success), [true,true]);
+      assert.equal(process.cwd(),workspaces[0]);
+      for (const workspace of workspaces) {
+        assert.equal(await fs.readFile(path.join(workspace,'witness'),'utf8'),workspace);
+        await fs.access(path.join(workspace,'testfn-results.json'));
+      }
+    } finally { process.chdir(original); }
+
   `;
   await writeFile(join(directory,'consumer.cjs'),`const control=require('@cifn/control-plane');const runner=require('@cifn/runner');(async()=>{${body}})().catch(error=>{console.error(error);process.exitCode=1});`);
   await writeFile(join(directory,'consumer.mjs'),`import * as control from '@cifn/control-plane';import * as runner from '@cifn/runner';${body}`);
   run(process.execPath,['consumer.cjs']);run(process.execPath,['consumer.mjs']);
   const finalAudit=await auditReport('cifn-dependency-framework-audit.json');assert.equal(finalAudit.metadata.vulnerabilities.total,0);
-  console.log(JSON.stringify({passed:true,productionAudit:0,productionPackages:packages.size,cjsAndEsmActualGlobExecution:true}));
+  console.log(JSON.stringify({passed:true,productionAudit:0,productionPackages:packages.size,cjsAndEsmActualGlobExecution:true,concurrentWorkspaceIsolation:true}));
 } finally {await rm(directory,{recursive:true,force:true});}

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, symlink, rm, access } from 'node:fs/promises';
+import { realpath, mkdtemp, mkdir, writeFile, symlink, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { executeTestFnRun, executeTestFnRunAsync } from './steps/testfn-run.js';
@@ -23,3 +23,24 @@ it('executes actual brace-glob selected files, propagates failure and restores c
     const failed=await executeTestFnRunAsync(options);expect(failed.success).toBe(false);expect(failed.exitCode).toBe(1);expect(process.cwd()).toBe(original);
   } finally { process.chdir(original);await rm(directory,{recursive:true,force:true}); }
 },45000);
+it('overlapping workspaces execute independently without changing the host cwd', async () => {
+  const original = process.cwd();
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'cifn-overlap-')));
+  try {
+    for (const name of ['one', 'two']) {
+      const workspace = join(directory, name);
+      await mkdir(join(workspace, 'tests'), { recursive: true });
+      await writeFile(join(workspace, 'package.json'), JSON.stringify({ type: 'module' }));
+      await symlink(resolve(original, '../../../node_modules'), join(workspace, 'node_modules'), 'dir');
+      await writeFile(join(workspace, 'tests/owned.test.js'), `import {it,expect} from 'vitest'; import {writeFileSync} from 'node:fs'; it('${name}',async()=>{await new Promise(r=>setTimeout(r,150));writeFileSync('witness','${name}');expect(process.cwd()).toBe(${JSON.stringify(workspace)});});`);
+    }
+    const results = await Promise.all(['one', 'two'].map(name => executeTestFnRunAsync({ workspace: join(directory, name), reporter: 'json', timeout: 15000 })));
+    expect(results.map(result => result.success)).toEqual([true, true]);
+    const { readFile } = await import('node:fs/promises');
+    for (const name of ['one', 'two']) {
+      expect(await readFile(join(directory, name, 'witness'), 'utf8')).toBe(name);
+      await access(join(directory, name, 'testfn-results.json'));
+    }
+    expect(process.cwd()).toBe(original);
+  } finally { process.chdir(original); await rm(directory, { recursive: true, force: true }); }
+}, 45000);

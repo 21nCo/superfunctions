@@ -1,5 +1,5 @@
 import type { TestFnConfig } from '@testfn/core';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 
 export interface TestFnRunOptions {
@@ -44,6 +44,7 @@ export async function executeTestFnRunAsync(options: TestFnRunOptions): Promise<
   lines.push(`Running tests with testfn SDK (framework: ${framework})`);
 
   try {
+    const cwd = resolve(workspace);
     if (!['vitest', 'playwright', 'jest'].includes(framework)) {
       throw new Error(`Unsupported framework: ${framework}. Supported: vitest, playwright, jest`);
     }
@@ -51,47 +52,38 @@ export async function executeTestFnRunAsync(options: TestFnRunOptions): Promise<
     const { TestRunner, JsonReporter } = await import('@testfn/core');
     const config: TestFnConfig = {
       framework: framework as 'vitest' | 'playwright' | 'jest',
+      cwd,
       testPattern: testPattern || './tests/**/*.{test,spec}.{ts,js}',
       parallel,
       timeout,
       retries,
       env,
-      reporters: reporter === 'json' ? [new JsonReporter(join(workspace, outputPath))] : undefined,
+      reporters: reporter === 'json' ? [new JsonReporter(join(cwd, outputPath))] : undefined,
     };
 
-    const originalCwd = process.cwd();
-    try {
-      process.chdir(workspace);
-      
-      const runner = new TestRunner(config);
-      const results = await runner.run();
-      
-      process.chdir(originalCwd);
+    const runner = new TestRunner(config);
+    const results = await runner.run();
 
-      lines.push(`Tests completed: ${results.summary.total} total`);
-      lines.push(`Passed: ${results.summary.passed}, Failed: ${results.summary.failed}`);
-      
-      if (reporter === 'json' && outputPath) {
-        const fullPath = join(workspace, outputPath);
-        if (existsSync(fullPath)) {
-          lines.push(`JSON report written to ${outputPath}`);
-        }
+    lines.push(`Tests completed: ${results.summary.total} total`);
+    lines.push(`Passed: ${results.summary.passed}, Failed: ${results.summary.failed}`);
+
+    if (reporter === 'json' && outputPath) {
+      const fullPath = join(cwd, outputPath);
+      if (existsSync(fullPath)) {
+        lines.push(`JSON report written to ${outputPath}`);
       }
-
-      if (results.summary.failed > 0) {
-        return {
-          success: false,
-          exitCode: 1,
-          lines,
-          error: 'Tests failed'
-        };
-      }
-
-      return { success: true, exitCode: 0, lines };
-    } catch (innerErr) {
-      process.chdir(originalCwd);
-      throw innerErr;
     }
+
+    if (results.summary.failed > 0) {
+      return {
+        success: false,
+        exitCode: 1,
+        lines,
+        error: 'Tests failed'
+      };
+    }
+
+    return { success: true, exitCode: 0, lines };
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     lines.push(`Test execution failed: ${errorMessage}`);

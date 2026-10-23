@@ -77,3 +77,37 @@ The coherent TestFn implementation already uses tinyglobby0.2.17 instead. Audit
 results are dated registry evidence for the installed consumers, not proof of
 absence of all vulnerabilities, all framework-version compatibility, concurrent
 in-process workspace safety or completion of the original17-function rollout.
+
+## Concurrent workspace followup
+
+The concurrency limitation above is now addressed for the built-in TypeScript
+framework adapters. TestFn prerequisite `68e2dde643b18da9eb556075420830b1cca57381`
+adds explicit workspace propagation; its clean Test readiness cherry-pick is
+`498ec4b87`. Ci resolves the requested workspace before its first asynchronous
+import, supplies `TestFnConfig.cwd`, and keeps JSON report paths absolute. It
+never calls `process.chdir`, including on failure. The existing subprocess
+supervisor still controls framework timeouts and cancellation.
+
+The before-fix owned two-workspace regression leaves the caller in the first
+workspace (`/tmp/cifn-cwd-before.log`). After the change, independent runs write
+only their own witness/report files and the caller's cwd is unchanged. Additional
+packed CJS and ESM tests change the host cwd while both runs are pending; both
+runners succeed and preserve that unrelated host change.
+
+Final validation: TestFn58 tests, Ci runner100 tests, TestFn build and full runner
+typecheck/build pass. A real four-framework fixture passes Vitest, Jest,
+Playwright and Node-test/Puppeteer-adapter execution in concurrent independent
+workspaces, with relative Playwright configuration and generated-config cleanup.
+It does not launch browser engines. The fresh11-package packed consumer passes
+CJS/ESM selected-file and concurrent workspace execution; default production and
+selected-framework production audits remain zero. Receipt:
+`{"passed":true,"productionAudit":0,"productionPackages":11,"cjsAndEsmActualGlobExecution":true,"concurrentWorkspaceIsolation":true}`.
+
+Logs: `/tmp/cifn-cwd-{before,after,tests,types,build,packed}.log` and
+`/tmp/testfn-cwd-{build,frameworks}.log`. All owned commands exited and temporary
+fixtures were removed. No root dependency metadata changed in this followup.
+Custom TestFn adapters must honor the supplied cwd, and custom reporters/storage
+retain their caller-owned path semantics. Different workspaces are isolated from
+host cwd changes; arbitrary test code is not sandboxed, and simultaneous writes
+to the same workspace are not isolated. Python's separate pytest runner is
+unchanged. All other original readiness/provider/deployment boundaries remain.
