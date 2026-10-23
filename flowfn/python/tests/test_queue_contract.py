@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import asyncio
 
 import pytest
 
 from flowfn import create_flow
-from flowfn.queue.types import JobOptions, JobStatus
+from flowfn.adapters.memory import MemoryAdapter
+from flowfn.queue.types import Job, JobOptions, JobStatus
 
 
 @pytest.mark.asyncio
-async def test_atomic_identity_and_payload_deduplication():
+async def test_atomic_identity_and_payload_deduplication() -> None:
     flow = create_flow()
     queue = flow.queue("dedup")
     results = await asyncio.gather(
@@ -23,7 +26,7 @@ async def test_atomic_identity_and_payload_deduplication():
 
 
 @pytest.mark.asyncio
-async def test_dependencies_override_priority_and_failure_propagates():
+async def test_dependencies_override_priority_and_failure_propagates() -> None:
     flow = create_flow()
     queue = flow.queue("dependencies")
     parent = await queue.add("parent", {}, JobOptions(priority=99, attempts=1))
@@ -31,7 +34,7 @@ async def test_dependencies_override_priority_and_failure_propagates():
     grandchild = await queue.add("grandchild", {}, JobOptions(wait_for=[child.id]))
     assert await flow._adapter.dequeue(queue.name) is parent
 
-    async def fail(job):
+    async def fail(job: Job) -> None:
         raise ValueError("expected")
 
     await queue._process_job(parent, fail)
@@ -46,7 +49,7 @@ async def test_dependencies_override_priority_and_failure_propagates():
 
 
 @pytest.mark.asyncio
-async def test_dependency_success_and_cycle_rejection():
+async def test_dependency_success_and_cycle_rejection() -> None:
     flow = create_flow()
     queue = flow.queue("graph")
     child = await queue.add("child", {}, JobOptions(job_id="child", wait_for=["parent"]))
@@ -55,7 +58,7 @@ async def test_dependency_success_and_cycle_rejection():
     parent = await queue.add("parent", {}, JobOptions(job_id="parent"))
     assert await flow._adapter.dequeue(queue.name) is parent
 
-    async def succeed(job):
+    async def succeed(job: Job) -> str:
         return "ok"
 
     await queue._process_job(parent, succeed)
@@ -64,7 +67,7 @@ async def test_dependency_success_and_cycle_rejection():
 
 
 @pytest.mark.asyncio
-async def test_default_job_options_merge_explicit_values():
+async def test_default_job_options_merge_explicit_values() -> None:
     flow = create_flow(default_job_options={"attempts": 7, "priority": 9})
     queue = flow.queue("defaults")
     first = await queue.add("default", {})
@@ -76,13 +79,13 @@ async def test_default_job_options_merge_explicit_values():
 
 
 @pytest.mark.asyncio
-async def test_removal_retains_only_needed_dependency_outcomes():
+async def test_removal_retains_only_needed_dependency_outcomes() -> None:
     flow = create_flow()
     queue = flow.queue("retention")
     parent = await queue.add("parent", {}, JobOptions(remove_on_complete=True))
     child = await queue.add("child", {}, JobOptions(wait_for=[parent.id], remove_on_complete=True))
 
-    async def succeed(job):
+    async def succeed(job: Job) -> str:
         return "ok"
 
     assert await flow._adapter.dequeue(queue.name) is parent
@@ -91,16 +94,17 @@ async def test_removal_retains_only_needed_dependency_outcomes():
     assert await flow._adapter.dequeue(queue.name) is child
     await queue._process_job(child, succeed)
     assert await queue.get_job(child.id) is None
+    assert isinstance(flow._adapter, MemoryAdapter)
     assert flow._adapter._dependency_results == {}
     await flow.close()
 
 
 @pytest.mark.asyncio
-async def test_terminal_retention_count_and_failed_dead_letter_survives_removal():
+async def test_terminal_retention_count_and_failed_dead_letter_survives_removal() -> None:
     flow = create_flow()
     queue = flow.queue("bounded")
 
-    async def succeed(job):
+    async def succeed(job: Job) -> None:
         return None
 
     retained_ids = []
@@ -112,7 +116,7 @@ async def test_terminal_retention_count_and_failed_dead_letter_survives_removal(
     assert [job.id for job in await queue.get_jobs(JobStatus.COMPLETED)] == retained_ids[-2:]
     failed = await queue.add("failure", {}, JobOptions(attempts=1, remove_on_fail=True))
 
-    async def fail(job):
+    async def fail(job: Job) -> None:
         raise ValueError("expected")
 
     await flow._adapter.dequeue(queue.name)

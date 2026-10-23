@@ -1,16 +1,23 @@
 """Exported spans preserve context without exposing user payloads."""
 
+from __future__ import annotations
+
 import asyncio
+from typing import Any
 
 import pytest
 
 from flowfn import create_flow
+from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.core.telemetry import OperationObserver
-from flowfn.stream.types import ConsumerOptions
+from flowfn.queue.types import Job
+from flowfn.stream.types import ConsumerOptions, Message
+from flowfn.workflow.types import WorkflowContext
+from tests.native_support import NativeAdapters
 
 
-async def check_telemetry(adapter):
+async def check_telemetry(adapter: FlowAdapter) -> None:
     trace = pytest.importorskip("opentelemetry.trace")
     pytest.importorskip("opentelemetry.sdk.trace")
     from opentelemetry.sdk.trace import TracerProvider
@@ -31,7 +38,7 @@ async def check_telemetry(adapter):
     try:
         queue = flow.queue("traced")
 
-        async def handler(job):
+        async def handler(job: Job) -> int:
             span = trace.get_current_span()
             assert span.is_recording()
             await queue.get_job_counts()
@@ -43,9 +50,10 @@ async def check_telemetry(adapter):
         for name in ["success", "failure"]:
             await queue.add(name, {"secret": "never-export"})
             job = await flow._adapter.dequeue(queue.name)
+            assert job is not None
             await queue._process_job(job, handler)
 
-        async def step(context):
+        async def step(context: WorkflowContext) -> None:
             assert trace.get_current_span().is_recording()
             await queue.get_job_counts()
 
@@ -55,7 +63,7 @@ async def check_telemetry(adapter):
         stream = flow.stream("traced")
         received = asyncio.Event()
 
-        async def message_handler(message):
+        async def message_handler(message: Message) -> None:
             assert trace.get_current_span().is_recording()
             await message.ack()
             received.set()
@@ -79,42 +87,42 @@ async def check_telemetry(adapter):
         assert any(span.name == "flowfn.workflow.step" for span in spans)
         assert any(span.name == "flowfn.stream.message" for span in spans)
         assert "flowfn.job.execute" in errors
-        assert "never-export" not in str([dict(span.attributes) for span in spans])
+        assert "never-export" not in str([dict(span.attributes or {}) for span in spans])
     finally:
         await flow.close()
         provider.shutdown()
 
 
-async def test_memory_telemetry():
+async def test_memory_telemetry() -> None:
     await check_telemetry(MemoryAdapter())
 
 
-async def test_native_telemetry(adapters):
+async def test_native_telemetry(adapters: NativeAdapters) -> None:
     await check_telemetry(adapters[0])
 
 
 @pytest.mark.parametrize("failure", ["enter", "exit"])
-async def test_broken_instrumentation_never_replays_or_masks_application(failure):
+async def test_broken_instrumentation_never_replays_or_masks_application(failure: str) -> None:
     class Tracer:
-        def start_as_current_span(self, *args, **kwargs):
+        def start_as_current_span(self, *args: Any, **kwargs: Any) -> Tracer:
             return self
 
-        def __enter__(self):
+        def __enter__(self) -> None:
             if failure == "enter":
                 raise RuntimeError("tracer enter")
 
-        def __exit__(self, *args):
+        def __exit__(self, *args: Any) -> None:
             if failure == "exit":
                 raise RuntimeError("tracer exit")
 
     count = 0
 
-    async def work():
+    async def work() -> None:
         nonlocal count
         count += 1
         raise ValueError("application")
 
-    async def broken_callback(*args):
+    async def broken_callback(*args: Any) -> None:
         raise RuntimeError("callback")
 
     observer = OperationObserver(
@@ -125,13 +133,13 @@ async def test_broken_instrumentation_never_replays_or_masks_application(failure
     assert count == 1
 
 
-async def test_disabled_telemetry_and_callback_without_tracing():
+async def test_disabled_telemetry_and_callback_without_tracing() -> None:
     events = []
     observer = OperationObserver(
         {"enabled": False, "provider": "invalid"}, lambda e, details: events.append(details)
     )
 
-    async def fail():
+    async def fail() -> None:
         raise ValueError("expected")
 
     with pytest.raises(ValueError):

@@ -1,14 +1,19 @@
 """Integration tests for FlowFn Python SDK."""
 
+from __future__ import annotations
+
 import asyncio
 
 import pytest
 
 from flowfn import create_flow
+from flowfn.queue.types import Job
+from flowfn.stream.types import Message
+from flowfn.workflow.types import WorkflowContext
 
 
 @pytest.mark.asyncio
-async def test_queue_to_stream_integration():
+async def test_queue_to_stream_integration() -> None:
     """Test queue processing publishing to stream."""
     flow = create_flow(adapter="memory")
 
@@ -18,12 +23,12 @@ async def test_queue_to_stream_integration():
     received = []
 
     @stream.subscribe()
-    async def handle_event(msg):
+    async def handle_event(msg: Message) -> None:
         received.append(msg.data)
         await msg.ack()
 
     @queue.process()
-    async def process_job(job):
+    async def process_job(job: Job) -> dict[str, bool]:
         await stream.publish({"processed": job.data})
         return {"success": True}
 
@@ -39,17 +44,17 @@ async def test_queue_to_stream_integration():
 
 
 @pytest.mark.asyncio
-async def test_queue_to_workflow_integration():
+async def test_queue_to_workflow_integration() -> None:
     """Test queue triggering workflows."""
     flow = create_flow(adapter="memory")
 
     queue = flow.queue("triggers")
     executed = [False]
 
-    async def validate(ctx):
+    async def validate(ctx: WorkflowContext) -> None:
         ctx.set("validated", True)
 
-    async def execute(ctx):
+    async def execute(ctx: WorkflowContext) -> None:
         executed[0] = True
 
     workflow = (
@@ -57,7 +62,7 @@ async def test_queue_to_workflow_integration():
     )
 
     @queue.process()
-    async def process_trigger(job):
+    async def process_trigger(job: Job) -> dict[str, bool]:
         await workflow.execute(job.data)
         return {"done": True}
 
@@ -70,7 +75,7 @@ async def test_queue_to_workflow_integration():
 
 
 @pytest.mark.asyncio
-async def test_complete_e2e_flow():
+async def test_complete_e2e_flow() -> None:
     """Test complete queue → workflow → stream flow."""
     flow = create_flow(adapter="memory")
 
@@ -80,17 +85,17 @@ async def test_complete_e2e_flow():
     events = []
 
     @stream.subscribe()
-    async def track_events(msg):
+    async def track_events(msg: Message) -> None:
         events.append(msg.data["status"])
         await msg.ack()
 
-    async def validate(ctx):
+    async def validate(ctx: WorkflowContext) -> None:
         await stream.publish({"status": "validating", "order": ctx.input})
 
-    async def process(ctx):
+    async def process(ctx: WorkflowContext) -> None:
         await stream.publish({"status": "processing", "order": ctx.input})
 
-    async def complete(ctx):
+    async def complete(ctx: WorkflowContext) -> None:
         await stream.publish({"status": "completed", "order": ctx.input})
 
     workflow = (
@@ -102,7 +107,7 @@ async def test_complete_e2e_flow():
     )
 
     @queue.process()
-    async def process_order(job):
+    async def process_order(job: Job) -> dict[str, bool]:
         await workflow.execute(job.data)
         return {"success": True}
 
@@ -117,7 +122,7 @@ async def test_complete_e2e_flow():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_operations():
+async def test_concurrent_operations() -> None:
     """Test multiple queues and streams concurrently."""
     flow = create_flow(adapter="memory")
 
@@ -127,11 +132,11 @@ async def test_concurrent_operations():
     count1, count2 = [0], [0]
 
     @queue1.process()
-    async def proc1(job):
+    async def proc1(job: Job) -> None:
         count1[0] += 1
 
     @queue2.process()
-    async def proc2(job):
+    async def proc2(job: Job) -> None:
         count2[0] += 1
 
     await asyncio.gather(
@@ -150,7 +155,7 @@ async def test_concurrent_operations():
 
 
 @pytest.mark.asyncio
-async def test_health_and_metrics():
+async def test_health_and_metrics() -> None:
     """Test health checks and metrics collection."""
     flow = create_flow(adapter="memory")
 

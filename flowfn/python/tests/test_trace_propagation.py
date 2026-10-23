@@ -1,16 +1,28 @@
 """W3C context survives durable storage and cannot inherit an unrelated worker span."""
 
+from __future__ import annotations
+
 import asyncio
+from types import ModuleType
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from flowfn import create_flow
+from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.memory import MemoryAdapter
+from flowfn.adapters.postgres import PostgresAdapter
+from flowfn.adapters.redis import RedisAdapter
 from flowfn.core.telemetry import OperationObserver
-from flowfn.stream.types import ConsumerOptions
+from flowfn.queue.types import Job
+from flowfn.stream.types import ConsumerOptions, Message
+from flowfn.workflow.types import WorkflowContext
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters
 
 
-def tracing():
+def tracing() -> tuple[ModuleType, TracerProvider, InMemorySpanExporter]:
     trace = pytest.importorskip("opentelemetry.trace")
     pytest.importorskip("opentelemetry.sdk.trace")
     from opentelemetry.sdk.trace import TracerProvider
@@ -23,16 +35,17 @@ def tracing():
     return trace, provider, exporter
 
 
-async def check_propagation(a, b):
+async def check_propagation(a: FlowAdapter, b: FlowAdapter) -> None:
     trace, provider, exporter = tracing()
     options = {"enabled": True, "tracer_provider": provider}
     producer = create_flow(a, telemetry=options)
     worker = create_flow(b, telemetry=options)
-    if hasattr(a, "reclaim_after_ms"):
+    if isinstance(a, (RedisAdapter, PostgresAdapter)):
+        assert isinstance(b, (RedisAdapter, PostgresAdapter))
         a.reclaim_after_ms = b.reclaim_after_ms = 5000
     try:
 
-        async def step(context):
+        async def step(context: WorkflowContext) -> None:
             assert trace.get_current_span().is_recording()
 
         workflow = producer.workflow("trace").step("one", step).build()
@@ -43,20 +56,22 @@ async def check_propagation(a, b):
             execution = await workflow.execute({})
         await asyncio.wait_for(workflow._tasks[execution.id], 10)
         stored = await b.load_workflow_state(execution.id)
-        assert stored.trace_context["traceparent"].split("-")[1] == format(
+        assert stored is not None
+        assert require_value(stored.trace_context)["traceparent"].split("-")[1] == format(
             parent_context.trace_id, "032x"
         )
         queue = worker.queue("trace")
         claimed = await worker._adapter.dequeue(queue.name)
+        assert claimed is not None
         assert claimed.trace_context == job.trace_context
-        assert set(claimed.trace_context) <= {"traceparent", "tracestate"}
+        assert set(require_value(claimed.trace_context)) <= {"traceparent", "tracestate"}
 
-        async def handle(job):
+        async def handle(job: Job) -> None:
             assert trace.get_current_span().get_span_context().trace_id == parent_context.trace_id
 
         received = asyncio.Event()
 
-        async def message(message):
+        async def message(message: Message) -> None:
             assert trace.get_current_span().get_span_context().trace_id == parent_context.trace_id
             await message.ack()
             received.set()
@@ -76,19 +91,19 @@ async def check_propagation(a, b):
             if span.name in ("flowfn.job.execute", "flowfn.workflow.step", "flowfn.stream.message")
         ]
         assert len(observed) == 3
-        assert all(span.parent.span_id == parent_context.span_id for span in observed)
+        assert all(require_value(span.parent).span_id == parent_context.span_id for span in observed)
     finally:
         await producer.close()
         await worker.close()
         provider.shutdown()
 
 
-async def test_memory_trace_propagation():
+async def test_memory_trace_propagation() -> None:
     adapter = MemoryAdapter()
     await check_propagation(adapter, adapter)
 
 
-async def test_native_trace_propagation(adapters):
+async def test_native_trace_propagation(adapters: NativeAdapters) -> None:
     await check_propagation(*adapters)
 
 
@@ -104,11 +119,11 @@ async def test_native_trace_propagation(adapters):
         {"tracestate": "vendor=value"},
     ],
 )
-async def test_invalid_or_missing_carrier_starts_root(carrier):
+async def test_invalid_or_missing_carrier_starts_root(carrier: dict[str, str] | None) -> None:
     trace, provider, exporter = tracing()
     observer = OperationObserver({"enabled": True, "tracer_provider": provider})
 
-    async def work():
+    async def work() -> int:
         return 7
 
     try:
@@ -120,7 +135,7 @@ async def test_invalid_or_missing_carrier_starts_root(carrier):
         provider.shutdown()
 
 
-async def test_disabled_capture_and_baggage_omission():
+async def test_disabled_capture_and_baggage_omission() -> None:
     trace, provider, exporter = tracing()
     from opentelemetry import baggage, context
 

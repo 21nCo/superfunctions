@@ -1,38 +1,45 @@
 """Real Redis integration tests: set FLOWFN_REDIS_URL to a disposable service."""
+
+from __future__ import annotations
+
 import asyncio
 import os
 import uuid
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
 from flowfn.queue.dlq import DLQManager
 from flowfn.queue.types import Job, JobOptions, JobStatus
 from flowfn.stream.types import ConsumerOptions, Message, TrimStrategy
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters, PostgresFixtureAdapter, RedisFixtureAdapter
 
 
 @pytest.fixture(params=['redis', 'postgres'])
-async def adapters(request):
+async def adapters(request: pytest.FixtureRequest) -> AsyncIterator[NativeAdapters]:
     backend = request.param
     url = os.getenv('FLOWFN_' + backend.upper() + '_URL')
     if not url:
         pytest.skip('Requires disposable ' + backend)
     if backend == 'redis':
         pytest.importorskip('redis')
-        from flowfn.adapters.redis import RedisAdapter as Adapter
+        adapter_type: type[RedisFixtureAdapter] | type[PostgresFixtureAdapter] = RedisFixtureAdapter
     else:
         pytest.importorskip('asyncpg')
-        from flowfn.adapters.postgres import PostgresAdapter as Adapter
+        adapter_type = PostgresFixtureAdapter
     namespace = 'test-' + uuid.uuid4().hex
-    a = Adapter(url, namespace=namespace, reclaim_after_ms=1000)
-    b = Adapter(url, namespace=namespace, reclaim_after_ms=1000)
+    a = adapter_type(url, namespace=namespace, reclaim_after_ms=1000)
+    b = adapter_type(url, namespace=namespace, reclaim_after_ms=1000)
     a.test_url = b.test_url = url
     try:
         yield a, b
     finally:
         await a.cleanup()
         await b.cleanup()
-        client = Adapter(url, namespace=namespace)
-        if backend == 'redis':
+        client = adapter_type(url, namespace=namespace)
+        if isinstance(client, RedisFixtureAdapter):
             keys = [key async for key in client.client.scan_iter(match=client.prefix + ':*')]
             if keys:
                 await client.client.delete(*keys)
@@ -46,7 +53,7 @@ async def adapters(request):
         await client.cleanup()
 
 
-async def test_atomic_dedup_claim_and_dlq_retry(adapters):
+async def test_atomic_dedup_claim_and_dlq_retry(adapters: NativeAdapters) -> None:
     a, b = adapters
     jobs = [Job(id=str(i), name='send', data={}, timestamp=0,
                 opts=JobOptions(prevent_duplicates=True)) for i in range(12)]
@@ -64,15 +71,15 @@ async def test_atomic_dedup_claim_and_dlq_retry(adapters):
                                     b.retry_dead_letter('q', job.id), return_exceptions=True)
     assert sum(isinstance(item, Job) for item in attempts) == 1
     assert await b.get_dead_letters() == []
-    assert (await b.get_queue_stats('q')).waiting == 1
+    assert (require_value(await b.get_queue_stats('q'))).waiting == 1
 
 
-async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters):
+async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters: NativeAdapters) -> None:
     a, b = adapters
     started = asyncio.Event()
     deliveries = []
 
-    async def hold(message):
+    async def hold(message: Message) -> None:
         deliveries.append(message.id)
         started.set()
         await asyncio.Event().wait()
@@ -84,7 +91,7 @@ async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters):
     await asyncio.wait_for(started.wait(),2)
     received = asyncio.Event()
 
-    async def accept(message):
+    async def accept(message: Message) -> None:
         deliveries.append(message.id)
         await message.ack()
         received.set()
@@ -101,7 +108,7 @@ async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters):
     assert await b.get_stream_messages('events') == []
 
 
-async def test_durable_snapshot_new_connection_and_namespaces(adapters):
+async def test_durable_snapshot_new_connection_and_namespaces(adapters: NativeAdapters) -> None:
     a, b = adapters
     from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
     job = Job(id='parent', name='parent', data={'nested':[1]}, timestamp=0)
@@ -111,11 +118,12 @@ async def test_durable_snapshot_new_connection_and_namespaces(adapters):
                 opts=JobOptions(wait_for=['parent']))
     await b.enqueue('q',child)
     parent = await b.dequeue('q')
+    assert parent is not None
     assert parent.id == 'parent' and parent.data == {'nested':[1]}
     assert await a.dequeue('q') is None
     parent.state = JobStatus.COMPLETED
     await a.update_job('q', parent)
-    assert (await b.dequeue('q')).id == 'child'
+    assert (require_value(await b.dequeue('q'))).id == 'child'
     execution = WorkflowExecution(id='exec', workflow_id='workflow', input={},
                                   status=ExecutionStatus.RUNNING, started_at=1,created_at=1,updated_at=1)
     await a.save_workflow_state('exec',execution)
@@ -123,7 +131,7 @@ async def test_durable_snapshot_new_connection_and_namespaces(adapters):
     restored = type(a)(a.test_url, namespace=a.namespace)
     isolated = type(a)(a.test_url, namespace='isolated-' + uuid.uuid4().hex)
     try:
-        assert (await restored.load_workflow_state('exec')).id == 'exec'
+        assert (require_value(await restored.load_workflow_state('exec'))).id == 'exec'
         from flowfn.workflow.workflow import Workflow
         listed = await Workflow('workflow', restored, []).list_executions()
         assert [item.id for item in listed] == ['exec']
@@ -137,28 +145,30 @@ async def test_durable_snapshot_new_connection_and_namespaces(adapters):
         await isolated.cleanup()
 
 
-async def test_job_lease_recovery_fences_old_completion(adapters):
+async def test_job_lease_recovery_fences_old_completion(adapters: NativeAdapters) -> None:
     a, b = adapters
     await a.enqueue('jobs', Job(id='lease', name='work',data={},timestamp=0))
     old = await a.dequeue('jobs')
+    assert old is not None
     await asyncio.sleep(2.5)
     assert await b.dequeue('jobs') is None
     await a.cleanup()
     await asyncio.sleep(1.2)
     current = await b.dequeue('jobs')
+    assert current is not None
     assert current.id == old.id and current.lease_token != old.lease_token
     old.state = JobStatus.COMPLETED
     with pytest.raises(ValueError, match='ownership changed'):
         await b.update_job('jobs', old)
     current.state = JobStatus.COMPLETED
     await b.update_job('jobs',current)
-    assert (await b.get_queue_stats('jobs')).completed == 1
+    assert (require_value(await b.get_queue_stats('jobs'))).completed == 1
 
 
-async def test_custom_backoff_restored_before_claim(adapters):
+async def test_custom_backoff_restored_before_claim(adapters: NativeAdapters) -> None:
     from flowfn.queue.types import BackoffOptions, BackoffType
     a,b = adapters
-    def strategy(attempt):
+    def strategy(attempt: int) -> int:
         return attempt * 7
     a.backoff_strategies['custom'] = strategy
     job = Job(id='custom', name='custom', data={}, timestamp=0,
@@ -166,18 +176,19 @@ async def test_custom_backoff_restored_before_claim(adapters):
     await a.enqueue('q',job)
     with pytest.raises(ValueError,match='backoff_strategies'):
         await b.dequeue('q')
-    assert (await a.get_queue_stats('q')).waiting == 1
+    assert (require_value(await a.get_queue_stats('q'))).waiting == 1
     b.backoff_strategies['custom'] = strategy
     claimed = await b.dequeue('q')
-    assert claimed.opts.backoff.strategy(3) == 21
+    assert claimed is not None
+    assert require_value(require_value(claimed.opts.backoff).strategy)(3) == 21
 
 
-async def test_concurrent_publication_preserves_every_group_delivery(adapters):
+async def test_concurrent_publication_preserves_every_group_delivery(adapters: NativeAdapters) -> None:
     a,b = adapters
     seen = set()
     done = asyncio.Event()
 
-    async def handle(message):
+    async def handle(message: Message) -> None:
         seen.add(message.id)
         await message.ack()
         if len(seen) == 30:
@@ -191,12 +202,12 @@ async def test_concurrent_publication_preserves_every_group_delivery(adapters):
     assert seen == {str(i) for i in range(30)}
 
 
-async def test_job_heartbeat_retries_transient_transport_failure(adapters):
+async def test_job_heartbeat_retries_transient_transport_failure(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:
     a,b=adapters
     original=a._transition
     failed=False
     renewals=0
-    async def flaky(method,*args):
+    async def flaky(method: str,*args: Any) -> Any:
         nonlocal failed,renewals
         if method=='_renew_job':
             if not failed:
@@ -204,9 +215,10 @@ async def test_job_heartbeat_retries_transient_transport_failure(adapters):
                 raise ConnectionError('transient transport failure')
             renewals+=1
         return await original(method,*args)
-    a._transition=flaky
+    monkeypatch.setattr(a, "_transition", flaky)
     await a.enqueue('retry-heartbeat',Job(id='heartbeat',name='work',data={},timestamp=0))
     claimed=await a.dequeue('retry-heartbeat')
+    assert claimed is not None
     await asyncio.sleep(2.2)
     assert failed and renewals>=2
     assert await b.dequeue('retry-heartbeat') is None

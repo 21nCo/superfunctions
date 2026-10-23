@@ -1,15 +1,22 @@
 """Cooperative cancellation against actual durable ownership changes."""
+
+from __future__ import annotations
+
 import asyncio
 import json
+from typing import Any, Callable, cast
 
 import pytest
 
+from flowfn.adapters.redis import RedisAdapter
 from flowfn.queue.queue import Queue
-from flowfn.queue.types import JobStatus
+from flowfn.queue.types import Job, JobStatus
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters
 
 
 @pytest.mark.parametrize('failure', ['takeover', 'hung_renewal'])
-async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters, failure):
+async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters: NativeAdapters, failure: str, monkeypatch: pytest.MonkeyPatch) -> None:
     a, b = adapters
     queue = Queue('cancel', a)
     job = await queue.add('hold', {})
@@ -17,14 +24,14 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters,
     effects = []
     original = a._transition
 
-    async def transition(method, *args):
+    async def transition(method: str, *args: Any) -> Any:
         if method == '_renew_job' and failure == 'hung_renewal':
             await asyncio.Event().wait()
         return await original(method, *args)
 
-    a._transition = transition
+    monkeypatch.setattr(a, "_transition", transition)
 
-    async def handler(claim):
+    async def handler(claim: Job) -> None:
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -36,16 +43,19 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters,
     try:
         await asyncio.wait_for(entered.wait(), 3)
         if failure == 'takeover':
-            if hasattr(a, 'client'):
+            if isinstance(a, RedisAdapter):
                 from redis.exceptions import WatchError
                 base = a.prefix+':queue:cancel'
                 while True:
                     async with a.client.pipeline(transaction=True) as pipe:
                         try:
                             await pipe.watch(base+':version')
-                            state = json.loads(await pipe.hget(base+':jobs',job.id))
+                            raw_state = await pipe.hget(base+':jobs',job.id)
+                            assert isinstance(raw_state, (str, bytes))
+                            state = json.loads(raw_state)
                             state['lease_expires_at'] = 0
-                            pipe.multi()
+                            # redis-py exposes this synchronous transaction marker without annotations.
+                            cast(Callable[[], None], pipe.multi)()
                             pipe.hset(base+':jobs',job.id,json.dumps(state))
                             pipe.zadd(base+':leases',{job.id:0})
                             pipe.incr(base+':version')
@@ -86,7 +96,7 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters,
         await queue.close()
 
 
-async def test_claim_reply_after_local_lease_deadline_never_starts_handler(adapters):
+async def test_claim_reply_after_local_lease_deadline_never_starts_handler(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:
     from flowfn.queue.types import JobLeaseError
     a,b=adapters
     a.reclaim_after_ms=200
@@ -94,21 +104,23 @@ async def test_claim_reply_after_local_lease_deadline_never_starts_handler(adapt
     queue=Queue('late-claim',a)
     await queue.add('job',{})
     original=a._transition
-    async def delayed_reply(method,*args):
+    async def delayed_reply(method: str,*args: Any) -> Any:
         result=await original(method,*args)
         if method=='dequeue':
             await asyncio.sleep(.25)
         return result
-    a._transition=delayed_reply
+    monkeypatch.setattr(a, "_transition", delayed_reply)
     claim=await a.dequeue(queue.name)
-    assert a.lease_loss_event(queue.name,claim).is_set()
+    assert claim is not None
+    assert require_value(a.lease_loss_event(queue.name,claim)).is_set()
     effects=[]
-    async def handler(job):
+    async def handler(job: Job) -> None:
         effects.append(job.id)
     with pytest.raises(JobLeaseError):
         await queue._process_job(claim,handler)
     assert effects==[]
     replacement=await b.dequeue(queue.name)
+    assert replacement is not None
     assert replacement.id==claim.id
     replacement.state=JobStatus.COMPLETED
     await b.update_job(queue.name,replacement)

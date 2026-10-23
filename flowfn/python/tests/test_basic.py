@@ -1,14 +1,18 @@
 """Basic tests for FlowFn Python SDK."""
 
+from __future__ import annotations
+
 import asyncio
 
 import pytest
 
 from flowfn import create_flow
+from flowfn.queue.types import Job
+from flowfn.stream.types import Message
 
 
 @pytest.mark.asyncio
-async def test_create_flow():
+async def test_create_flow() -> None:
     """Test creating a FlowFn instance."""
     flow = create_flow(adapter="memory")
 
@@ -19,7 +23,7 @@ async def test_create_flow():
 
 
 @pytest.mark.asyncio
-async def test_queue_basic():
+async def test_queue_basic() -> None:
     """Test basic queue operations."""
     flow = create_flow(adapter="memory")
     queue = flow.queue("test-queue")
@@ -39,7 +43,7 @@ async def test_queue_basic():
 
 
 @pytest.mark.asyncio
-async def test_queue_processing():
+async def test_queue_processing() -> None:
     """Test queue job processing."""
     flow = create_flow(adapter="memory")
     queue = flow.queue("process-queue")
@@ -47,7 +51,7 @@ async def test_queue_processing():
     processed = []
 
     @queue.process()
-    async def process_job(job):
+    async def process_job(job: Job) -> dict[str, str]:
         processed.append(job.data)
         return {"result": "success"}
 
@@ -64,7 +68,7 @@ async def test_queue_processing():
 
 
 @pytest.mark.asyncio
-async def test_stream_publish_subscribe():
+async def test_stream_publish_subscribe() -> None:
     """Test stream pub/sub."""
     flow = create_flow(adapter="memory")
     stream = flow.stream("test-stream")
@@ -72,7 +76,7 @@ async def test_stream_publish_subscribe():
     received = []
 
     @stream.subscribe()
-    async def handle_message(message):
+    async def handle_message(message: Message) -> None:
         received.append(message.data)
         await message.ack()
 
@@ -89,7 +93,7 @@ async def test_stream_publish_subscribe():
 
 
 @pytest.mark.asyncio
-async def test_health_check():
+async def test_health_check() -> None:
     """Test health check."""
     flow = create_flow(adapter="memory")
 
@@ -103,7 +107,7 @@ async def test_health_check():
 
 
 @pytest.mark.asyncio
-async def test_metrics():
+async def test_metrics() -> None:
     """Test metrics recording."""
     flow = create_flow(adapter="memory")
 

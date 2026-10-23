@@ -4,7 +4,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import Awaitable
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar, overload
 
 from flowfn.adapters.base import FlowAdapter
 from flowfn.core.lifecycle import Admissions
@@ -21,6 +21,8 @@ from flowfn.stream.types import (
     SubscribeOptions,
     TrimStrategy,
 )
+
+H = TypeVar("H", bound=MessageHandler)
 
 
 class Stream:
@@ -83,6 +85,12 @@ class Stream:
         async def observed(message: Message) -> None:
             await self._observer.run("flowfn.stream.message", {"flowfn.stream.name": self.name, "flowfn.message.id": message.id}, lambda: handler(message), carrier=message.headers, consumer=True)
         return observed
+
+    @overload
+    def subscribe(self, handler: None = None, opts: Optional[SubscribeOptions] = None) -> Callable[[H], H]: ...
+
+    @overload
+    def subscribe(self, handler: MessageHandler, opts: Optional[SubscribeOptions] = None) -> asyncio.Task[Any]: ...
 
     def subscribe(
         self, handler: Optional[MessageHandler] = None, opts: Optional[SubscribeOptions] = None

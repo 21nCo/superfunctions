@@ -1,24 +1,27 @@
 """Workflow tests."""
 
+from __future__ import annotations
+
 import asyncio
 
 import pytest
 
 from flowfn import create_flow
+from flowfn.workflow.types import WorkflowContext
 
 
 @pytest.mark.asyncio
-async def test_workflow_basic():
+async def test_workflow_basic() -> None:
     """Test basic workflow execution."""
     flow = create_flow(adapter="memory")
 
     steps_executed = []
 
-    async def step1(ctx):
+    async def step1(ctx: WorkflowContext) -> None:
         steps_executed.append("step1")
         ctx.set("value", 10)
 
-    async def step2(ctx):
+    async def step2(ctx: WorkflowContext) -> None:
         steps_executed.append("step2")
         value = ctx.get("value")
         ctx.set("doubled", value * 2)
@@ -41,19 +44,19 @@ async def test_workflow_basic():
 
 
 @pytest.mark.asyncio
-async def test_workflow_parallel():
+async def test_workflow_parallel() -> None:
     """Test parallel workflow execution."""
     flow = create_flow(adapter="memory")
 
     executed = []
 
-    async def task1(ctx):
+    async def task1(ctx: WorkflowContext) -> None:
         executed.append(1)
 
-    async def task2(ctx):
+    async def task2(ctx: WorkflowContext) -> None:
         executed.append(2)
 
-    async def task3(ctx):
+    async def task3(ctx: WorkflowContext) -> None:
         executed.append(3)
 
     workflow = flow.workflow("parallel-workflow").parallel([task1, task2, task3]).build()
@@ -69,11 +72,11 @@ async def test_workflow_parallel():
 
 
 @pytest.mark.asyncio
-async def test_workflow_cancel():
+async def test_workflow_cancel() -> None:
     """Test workflow cancellation."""
     flow = create_flow(adapter="memory")
 
-    async def long_step(ctx):
+    async def long_step(ctx: WorkflowContext) -> None:
         await asyncio.sleep(10)
 
     workflow = flow.workflow("cancel-workflow").step("long", long_step).build()
@@ -91,13 +94,13 @@ async def test_workflow_cancel():
 
 
 @pytest.mark.asyncio
-async def test_workflow_retry():
+async def test_workflow_retry() -> None:
     """Test workflow retry."""
     flow = create_flow(adapter="memory")
 
     attempt = [0]
 
-    async def failing_step(ctx):
+    async def failing_step(ctx: WorkflowContext) -> None:
         attempt[0] += 1
         if attempt[0] == 1:
             raise Exception("First attempt fails")
@@ -123,11 +126,11 @@ async def test_workflow_retry():
 
 
 @pytest.mark.asyncio
-async def test_workflow_metrics():
+async def test_workflow_metrics() -> None:
     """Test workflow metrics."""
     flow = create_flow(adapter="memory")
 
-    async def simple_step(ctx):
+    async def simple_step(ctx: WorkflowContext) -> None:
         pass
 
     workflow = flow.workflow("metrics-workflow").step("work", simple_step).build()

@@ -1,18 +1,22 @@
+from __future__ import annotations
+
 import asyncio
+from typing import Any
 
 import pytest
 
 from flowfn import create_flow
-from flowfn.queue.types import JobOptions, JobStatus
+from flowfn.queue.types import Job, JobOptions, JobStatus
+from tests.assertions import require_value
 
 
 @pytest.mark.asyncio
-async def test_failed_job_retries_through_real_queue_preserving_options():
+async def test_failed_job_retries_through_real_queue_preserving_options() -> None:
     flow = create_flow()
     queue = flow.queue("emails")
     fail = [True]
 
-    async def handler(job):
+    async def handler(job: Job) -> str:
         if fail[0]:
             raise ValueError("delivery failed")
         return "sent"
@@ -38,10 +42,10 @@ async def test_failed_job_retries_through_real_queue_preserving_options():
 
 
 @pytest.mark.asyncio
-async def test_same_id_different_queues_require_explicit_scope():
+async def test_same_id_different_queues_require_explicit_scope() -> None:
     flow = create_flow()
 
-    async def fail(job):
+    async def fail(job: Job) -> None:
         raise ValueError("expected")
 
     for name in ["one", "two"]:
@@ -53,24 +57,24 @@ async def test_same_id_different_queues_require_explicit_scope():
         await flow.dlq().retry("same")
     assert await flow.dlq().retry_all("one") == 1
     assert len(await flow.dlq().get_all()) == 1
-    assert (await flow.dlq().get_stats()).by_queue == {"two": 1}
+    assert (require_value(await flow.dlq().get_stats())).by_queue == {"two": 1}
     assert await flow.dlq().clean(0) == 1
     await flow.close()
 
 
 @pytest.mark.asyncio
-async def test_failed_requeue_retains_dead_letter(monkeypatch):
+async def test_failed_requeue_retains_dead_letter(monkeypatch: pytest.MonkeyPatch) -> None:
     flow = create_flow()
     queue = flow.queue("persist")
     job = await queue.add("task", {}, JobOptions(attempts=1))
 
-    async def fail(job):
+    async def fail(job: Job) -> None:
         raise ValueError("expected")
 
     await flow._adapter.dequeue(queue.name)
     await queue._process_job(job, fail)
 
-    async def unavailable(*args):
+    async def unavailable(*args: Any) -> None:
         raise RuntimeError("storage unavailable")
 
     monkeypatch.setattr(flow._adapter, "retry_dead_letter", unavailable)

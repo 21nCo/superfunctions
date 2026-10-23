@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import asyncio
+from typing import Callable
 
 import pytest
 
 from flowfn import create_flow
-from flowfn.stream.types import ConsumerOptions
+from flowfn.adapters.memory import MemoryAdapter
+from flowfn.stream.types import ConsumerOptions, Message
+from tests.assertions import require_value
 
 
-async def eventually(predicate):
-    async def wait():
+async def eventually(predicate: Callable[[], bool]) -> None:
+    async def wait() -> None:
         while not predicate():
             await asyncio.sleep(0)
 
@@ -15,16 +20,16 @@ async def eventually(predicate):
 
 
 @pytest.mark.asyncio
-async def test_members_share_work_but_groups_receive_independent_copies():
+async def test_members_share_work_but_groups_receive_independent_copies() -> None:
     flow = create_flow()
     stream = flow.stream("events")
     first, second = [], []
 
-    async def receive_first(message):
+    async def receive_first(message: Message) -> None:
         first.append(message.data)
         await message.ack()
 
-    async def receive_second(message):
+    async def receive_second(message: Message) -> None:
         second.append(message.data)
         await message.ack()
 
@@ -39,19 +44,20 @@ async def test_members_share_work_but_groups_receive_independent_copies():
         await stream.publish(i)
     await eventually(lambda: len(first) == 8 and len(second) == 8)
     assert sorted(first) == sorted(second) == list(range(8))
-    assert (await stream.get_info()).groups == 2
+    assert (require_value(await stream.get_info())).groups == 2
     await stream.close()
+    assert isinstance(flow._adapter, MemoryAdapter)
     assert all(not group.consumers for group in flow._adapter._groups.values())
     await flow.close()
 
 
 @pytest.mark.asyncio
-async def test_manual_ack_bounds_delivery_and_disconnect_redelivers_pending():
+async def test_manual_ack_bounds_delivery_and_disconnect_redelivers_pending() -> None:
     flow = create_flow()
     stream = flow.stream("pending")
     first, resumed = [], []
 
-    async def receive(message):
+    async def receive(message: Message) -> None:
         first.append(message)
 
     old = stream.create_consumer("old", ConsumerOptions(group_id="group", max_in_flight=1))
@@ -63,7 +69,7 @@ async def test_manual_ack_bounds_delivery_and_disconnect_redelivers_pending():
     assert len(first) == 1
     await old.close()
 
-    async def replay(message):
+    async def replay(message: Message) -> None:
         resumed.append(message.data)
         await message.ack()
 
@@ -76,13 +82,13 @@ async def test_manual_ack_bounds_delivery_and_disconnect_redelivers_pending():
 
 
 @pytest.mark.asyncio
-async def test_nack_requeue_and_historical_auto_commit():
+async def test_nack_requeue_and_historical_auto_commit() -> None:
     flow = create_flow()
     stream = flow.stream("history")
     await stream.publish("old")
     seen = []
 
-    async def receive(message):
+    async def receive(message: Message) -> None:
         seen.append(message.data)
         if len(seen) == 1:
             await message.nack(requeue=True)
@@ -102,12 +108,12 @@ async def test_nack_requeue_and_historical_auto_commit():
 
 
 @pytest.mark.asyncio
-async def test_pause_resume_and_duplicate_identity():
+async def test_pause_resume_and_duplicate_identity() -> None:
     flow = create_flow()
     stream = flow.stream("paused")
     seen = []
 
-    async def receive(message):
+    async def receive(message: Message) -> None:
         seen.append(message.data)
         await message.ack()
 
@@ -127,7 +133,7 @@ async def test_pause_resume_and_duplicate_identity():
 
 
 @pytest.mark.asyncio
-async def test_retention_and_replay_use_shared_adapter_not_instance_cache():
+async def test_retention_and_replay_use_shared_adapter_not_instance_cache() -> None:
     from flowfn.stream.stream import Stream
     from flowfn.stream.types import TrimStrategy
 
@@ -136,10 +142,10 @@ async def test_retention_and_replay_use_shared_adapter_not_instance_cache():
     for number in range(3):
         await stream.publish(number)
     other = Stream("retained", flow._adapter)
-    assert (await other.get_info()).length == 2
+    assert (require_value(await other.get_info())).length == 2
     replayed = []
 
-    async def collect(message):
+    async def collect(message: Message) -> None:
         replayed.append(message.data)
 
     assert await other.replay(0, collect) == 2

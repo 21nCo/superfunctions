@@ -1,15 +1,23 @@
 """Native record storage preserves legacy semantics and migration boundaries."""
+
+from __future__ import annotations
+
 import asyncio
 import json
 import time
+from typing import Any
 
 import pytest
 
 from flowfn.adapters.memory import MemoryAdapter
+from flowfn.adapters.postgres import PostgresAdapter
+from flowfn.adapters.redis import RedisAdapter
 from flowfn.queue.types import Job, JobOptions, JobStatus
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters
 
 
-async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(adapters):
+async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(adapters: NativeAdapters) -> None:
     a,b=adapters
     # Migration exercises schema/data conversion, independently of the tight-lease tests.
     a.reclaim_after_ms=b.reclaim_after_ms=30000
@@ -24,7 +32,7 @@ async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(ada
     legacy._queues['failed']=[failed]
     await legacy.update_job('failed',failed)
     raw=a._encode(legacy)
-    if hasattr(a,'client'):
+    if isinstance(a, RedisAdapter):
         await a.client.set(a.state_key,raw)
     else:
         pool=await a._database()
@@ -42,6 +50,7 @@ async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(ada
     assert await b.dequeue('active') is None
     assert (await b.get_all_jobs('active'))[0].lease_token=='legacy-token'
     dependent=await b.dequeue('dependent')
+    assert dependent is not None
     assert dependent.id=='child'
     dependent.state=JobStatus.COMPLETED
     await b.update_job('dependent',dependent)
@@ -50,20 +59,22 @@ async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(ada
     assert await b.get_dead_letters()==[]
     await a.migrate_legacy_queues()
     assert len(await b.get_all_jobs('work'))==1
-    if hasattr(a,'client'):
+    if isinstance(a, RedisAdapter):
         persisted=await a.client.get(a.state_key)
     else:
         persisted=await pool.fetchval('SELECT payload FROM flowfn_py_state WHERE namespace=$1',a.namespace)
+    assert isinstance(persisted, (str, bytes))
     assert json.loads(persisted)==json.loads(raw)  # archived snapshot never rewritten
 
 
-async def test_ready_index_priority_fifo_due_and_dependency_failure(adapters):
+async def test_ready_index_priority_fifo_due_and_dependency_failure(adapters: NativeAdapters) -> None:
     a,b=adapters
     now=int(time.time()*1000)
     for identity,priority in [('z-first',2),('a-second',2),('priority',1)]:
         await a.enqueue('q',Job(id=identity,name='job',data={},timestamp=now,opts=JobOptions(priority=priority)))
     for identity in ('priority','z-first','a-second'):
         claim=await b.dequeue('q')
+        assert claim is not None
         assert claim.id==identity
         claim.state=JobStatus.COMPLETED
         await b.update_job('q',claim)
@@ -73,6 +84,7 @@ async def test_ready_index_priority_fifo_due_and_dependency_failure(adapters):
     assert await b.dequeue('q') is None
     await asyncio.sleep(max(0,(now+1050-int(time.time()*1000))/1000))
     claim=await b.dequeue('q')
+    assert claim is not None
     assert claim.id=='future'
     claim.state=JobStatus.FAILED
     await b.update_job('q',claim)
@@ -86,14 +98,15 @@ async def test_ready_index_priority_fifo_due_and_dependency_failure(adapters):
     assert next(j for j in await a.get_all_jobs('q') if j.id=='grandchild').state==JobStatus.FAILED
 
 
-async def test_native_json_payload_and_empty_dedup_key_round_trip(adapters):
+async def test_native_json_payload_and_empty_dedup_key_round_trip(adapters: NativeAdapters) -> None:
     a,b=adapters
     data={'state':[], 'lease_token': {'lease_expires_at':[]}, 'quoted':'"},\\"state\\":[]', 'arrays':[[],{},[[]]], 'unicode':'雪'}
     first=Job(id='first',name='payload',data=data,timestamp=0,opts=JobOptions(prevent_duplicates=True,deduplication_key=''))
     duplicate=Job(id='duplicate',name='payload',data={},timestamp=0,opts=JobOptions(prevent_duplicates=True,deduplication_key=''))
     await a.enqueue('json',first)
-    assert (await b.enqueue('json',duplicate)).id=='first'
+    assert (require_value(await b.enqueue('json',duplicate))).id=='first'
     claim=await a.dequeue('json')
+    assert claim is not None
     assert claim.data==data
     await asyncio.sleep(.45)  # exercise native heartbeat JSON scalar update
     assert (await b.get_all_jobs('json'))[0].data==data
@@ -105,40 +118,42 @@ async def test_native_json_payload_and_empty_dedup_key_round_trip(adapters):
     assert persisted.data==data
 
 
-async def test_different_queue_progresses_while_graph_transaction_is_blocked(adapters):
+async def test_different_queue_progresses_while_graph_transaction_is_blocked(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:
     a,b=adapters
     # Establish connections and migrate the namespace before timing queue isolation.
     await a.get_all_jobs('blocked')
     await b.get_all_jobs('independent')
     started,release=asyncio.Event(),asyncio.Event()
     original=a._apply
-    async def blocked(state,method,args,now):
+    async def blocked(state: MemoryAdapter,method: str,args: tuple[Any, ...],now: int) -> Any:
         if method=='enqueue' and args[0]=='blocked':
             started.set()
             await release.wait()
         return await original(state,method,args,now)
-    a._apply=blocked
+    monkeypatch.setattr(a, "_apply", blocked)
     task=asyncio.create_task(a.enqueue('blocked',Job(id='waiting',name='job',data={},timestamp=0,opts=JobOptions(wait_for=['future']))))
     try:
         await asyncio.wait_for(started.wait(),3)
         await asyncio.wait_for(b.enqueue('independent',Job(id='ready',name='job',data={},timestamp=0)),1)
         claim=await asyncio.wait_for(b.dequeue('independent'),1)
+        assert claim is not None
         assert claim.id=='ready'
     finally:
         release.set()
         await task
 
 
-async def test_failed_handler_uses_one_atomic_dlq_transition(adapters):
+async def test_failed_handler_uses_one_atomic_dlq_transition(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:
     from flowfn.queue.queue import Queue
     a,b=adapters
     queue=Queue('failure',a)
     job=await queue.add('fail',{},JobOptions(attempts=1,remove_on_fail=True))
     claim=await a.dequeue(queue.name)
-    async def unexpected(*args):
+    assert claim is not None
+    async def unexpected(*args: Any) -> None:
         raise AssertionError('A second DLQ write could resurrect a concurrently retried dead letter')
-    a.save_dead_letter=unexpected
-    async def fail(job):
+    monkeypatch.setattr(a, "save_dead_letter", unexpected)
+    async def fail(job: Job) -> None:
         raise ValueError('expected')
     await queue._process_job(claim,fail)
     assert [record.id for record in await b.get_dead_letters()]==[job.id]
@@ -146,30 +161,32 @@ async def test_failed_handler_uses_one_atomic_dlq_transition(adapters):
     assert await a.get_dead_letters()==[]
 
 
-async def test_concurrent_native_claims_and_completions_are_unique(adapters):
+async def test_concurrent_native_claims_and_completions_are_unique(adapters: NativeAdapters) -> None:
     a,b=adapters
     a.reclaim_after_ms=b.reclaim_after_ms=5000
     await asyncio.gather(*(a.enqueue('parallel',Job(id=str(i),name='job',data={},timestamp=0)) for i in range(24)))
     owners=[a,b]*12
     claims=await asyncio.gather(*(owner.dequeue('parallel') for owner in owners))
     assert all(claim is not None for claim in claims)
-    assert len({claim.id for claim in claims})==24
-    for claim in claims:
+    claimed_jobs = [require_value(claim) for claim in claims]
+    assert len({claim.id for claim in claimed_jobs})==24
+    for claim in claimed_jobs:
         claim.state=JobStatus.COMPLETED
-    await asyncio.gather(*(owner.update_job('parallel',claim) for owner,claim in zip(owners,claims)))
+    await asyncio.gather(*(owner.update_job('parallel',claim) for owner,claim in zip(owners,claimed_jobs)))
     stats=await a.get_queue_stats('parallel')
     assert stats.completed==24
     assert stats.active==stats.waiting==0
 
 
 @pytest.mark.parametrize('operation',['renew','complete'])
-async def test_postgres_row_lock_wait_cannot_revive_expired_owner(adapters,operation):
+async def test_postgres_row_lock_wait_cannot_revive_expired_owner(adapters: NativeAdapters,operation: str) -> None:
     a,b=adapters
-    if not hasattr(a,'_database'):
+    if not isinstance(a, PostgresAdapter):
         pytest.skip('PostgreSQL row-lock fencing regression')
     a.reclaim_after_ms=30000
     await a.enqueue('locked',Job(id='one',name='job',data={},timestamp=0))
     claim=await a.dequeue('locked')
+    assert claim is not None
     await a.release_job_lease('locked',claim)
     pool=await a._database()
     lock=json.dumps([a.namespace,'locked'])

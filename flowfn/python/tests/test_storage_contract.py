@@ -1,21 +1,32 @@
+from __future__ import annotations
+
+from typing import TypedDict
+
 import pytest
 
 from flowfn.patterns.priority import PriorityQueue
 from flowfn.queue.types import Job
 from flowfn.storage.event_log import Event, FilterOptions, MemoryEventLog
 from flowfn.storage.job_storage import ListOptions, MemoryJobStorage
+from tests.assertions import require_value
 
 
-def test_priority_comparator_and_fifo_ties():
-    queue = PriorityQueue(lambda left, right: left["rank"] - right["rank"])
-    for item in [
+class RankedItem(TypedDict):
+    rank: int
+    id: str
+
+
+def test_priority_comparator_and_fifo_ties() -> None:
+    queue: PriorityQueue[RankedItem] = PriorityQueue(lambda left, right: left["rank"] - right["rank"])
+    items: list[RankedItem] = [
         {"rank": 2, "id": "last"},
         {"rank": 1, "id": "first"},
         {"rank": 1, "id": "second"},
-    ]:
+    ]
+    for item in items:
         queue.enqueue(item)
-    assert [queue.dequeue()["id"] for _ in range(3)] == ["first", "second", "last"]
-    numbers = PriorityQueue()
+    assert [require_value(queue.dequeue())["id"] for _ in range(3)] == ["first", "second", "last"]
+    numbers: PriorityQueue[float] = PriorityQueue()
     for number in [3, 1.5, 2]:
         numbers.enqueue(number)
     assert [numbers.dequeue() for _ in range(3)] == [1.5, 2, 3]
@@ -25,7 +36,7 @@ def test_priority_comparator_and_fifo_ties():
 
 
 @pytest.mark.asyncio
-async def test_event_snapshot_and_unambiguous_version_scope():
+async def test_event_snapshot_and_unambiguous_version_scope() -> None:
     log = MemoryEventLog()
     event = Event(
         id="first",
@@ -37,7 +48,7 @@ async def test_event_snapshot_and_unambiguous_version_scope():
         version=0,
     )
 
-    async def mutate(delivered):
+    async def mutate(delivered: Event) -> None:
         delivered.data["value"].append(9)
 
     await log.subscribe(mutate)
@@ -63,12 +74,13 @@ async def test_event_snapshot_and_unambiguous_version_scope():
 
 
 @pytest.mark.asyncio
-async def test_job_storage_snapshots_and_pagination_validation():
+async def test_job_storage_snapshots_and_pagination_validation() -> None:
     store = MemoryJobStorage()
     job = Job(id="one", name="test", data={"value": []}, timestamp=1)
     await store.save(job)
     job.data["value"].append("outside")
     found = await store.get(job.id)
+    assert found is not None
     assert found.data == {"value": []}
     found.data["value"].append("read")
     assert (await store.list())[0].data == {"value": []}

@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
+from flowfn.adapters.redis import RedisAdapter
 from flowfn.scheduler import Scheduler
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters
 
 CHILD = r'''
 import asyncio,sys
@@ -30,15 +36,16 @@ asyncio.run(main())
 '''
 
 
-async def test_crash_reclaims_schedule_without_resetting_run_count(adapters):
+async def test_crash_reclaims_schedule_without_resetting_run_count(adapters: NativeAdapters) -> None:
     a,b=adapters
-    backend='redis' if type(a).__name__=='RedisAdapter' else 'postgres'
+    backend='redis' if isinstance(a, RedisAdapter) else 'postgres'
     process=await asyncio.create_subprocess_exec(sys.executable,'-c',CHILD,backend,a.test_url,a.namespace,
                                                 stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
     sa,sb=Scheduler(a,lease_ms=1000),Scheduler(b,lease_ms=1000)
+    assert process.stdout is not None
     try:
-        assert (await asyncio.wait_for(process.stdout.readline(),10)).strip()==b'blocked'
-        assert (await a.load_workflow_state('__schedule__:recover')).state['runs']==1
+        assert (require_value(await asyncio.wait_for(process.stdout.readline(),10))).strip()==b'blocked'
+        assert (require_value(await a.load_workflow_state('__schedule__:recover'))).state['runs']==1
         process.kill()
         await process.wait()
         await asyncio.sleep(1.2)
@@ -46,7 +53,7 @@ async def test_crash_reclaims_schedule_without_resetting_run_count(adapters):
         active=0
         maximum=0
 
-        async def callback(data):
+        async def callback(data: Any) -> None:
             nonlocal active,maximum
             assert data=={'value':42}
             active+=1
@@ -76,11 +83,11 @@ async def test_crash_reclaims_schedule_without_resetting_run_count(adapters):
         await sb.close()
 
 
-async def test_remote_pause_resume_cancel_and_definition_conflict(adapters):
+async def test_remote_pause_resume_cancel_and_definition_conflict(adapters: NativeAdapters) -> None:
     a,b=adapters
     owner,remote=Scheduler(a,lease_ms=1000),Scheduler(b,lease_ms=1000)
     calls=[]
-    async def callback(data):
+    async def callback(data: Any) -> None:
         calls.append(data)
     start=datetime.now(timezone.utc)+timedelta(seconds=.5)
     owner.repeat('controls',50,callback,start_date=start)

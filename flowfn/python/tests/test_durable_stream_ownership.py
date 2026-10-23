@@ -1,14 +1,21 @@
 """Durable consumer claims keep distinct ownership within one subscription."""
+
+from __future__ import annotations
+
 import asyncio
+from typing import Any
 
 import pytest
 
+from flowfn.adapters.postgres import PostgresAdapter, PostgresSubscription
+from flowfn.adapters.redis import RedisAdapter, RedisSubscription
 from flowfn.stream.types import ConsumerOptions, Message
+from tests.native_support import NativeAdapters
 
 
-async def test_same_subscription_reclaim_fences_old_ack_and_renew(adapters):
+async def test_same_subscription_reclaim_fences_old_ack_and_renew(adapters: NativeAdapters) -> None:
     adapter,_=adapters
-    if not hasattr(adapter,'_database'):
+    if not isinstance(adapter, PostgresAdapter):
         pytest.skip('PostgreSQL ownership regression')
     from flowfn.adapters.postgres import PostgresSubscription
     pool=await adapter._database()
@@ -27,14 +34,14 @@ async def test_same_subscription_reclaim_fences_old_ack_and_renew(adapters):
     assert await subscription._owned(second['id'],'attempt-two',acknowledge=True)
 
 
-async def test_default_consumer_capacity_does_not_flood_claim_connections(adapters,monkeypatch):
+async def test_default_consumer_capacity_does_not_flood_claim_connections(adapters: NativeAdapters,monkeypatch: pytest.MonkeyPatch) -> None:
     adapter,_=adapters
-    if not hasattr(adapter,'_database'):
+    if not isinstance(adapter, PostgresAdapter):
         pytest.skip('PostgreSQL polling regression')
     from flowfn.adapters.postgres import PostgresSubscription
     original=PostgresSubscription._next
     active=peak=0
-    async def tracked(self,token):
+    async def tracked(self: PostgresSubscription,token: str) -> Any:
         nonlocal active,peak
         active+=1
         peak=max(peak,active)
@@ -44,7 +51,7 @@ async def test_default_consumer_capacity_does_not_flood_claim_connections(adapte
             active-=1
     monkeypatch.setattr(PostgresSubscription,'_next',tracked)
     received=asyncio.Event()
-    async def receive(message):
+    async def receive(message: Message) -> None:
         await message.ack()
         received.set()
     subscription=await adapter.consume('capacity','group','reader',receive,ConsumerOptions(group_id='group'))
@@ -57,22 +64,27 @@ async def test_default_consumer_capacity_does_not_flood_claim_connections(adapte
 
 
 @pytest.mark.parametrize('renewal',['lost','hung'])
-async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters,monkeypatch,renewal):
+async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters: NativeAdapters,monkeypatch: pytest.MonkeyPatch,renewal: str) -> None:
     adapter,_=adapters
-    if hasattr(adapter,'_database'):
-        from flowfn.adapters.postgres import PostgresSubscription as Subscription
+    if isinstance(adapter, PostgresAdapter):
+        subscription_type: type[PostgresSubscription] | type[RedisSubscription] = PostgresSubscription
     else:
-        from flowfn.adapters.redis import RedisSubscription as Subscription
-    original=Subscription._owned
-    async def changed(self,identity,owner,acknowledge=False):
+        subscription_type = RedisSubscription
+    original_postgres = PostgresSubscription._owned
+    original_redis = RedisSubscription._owned
+    async def changed(self: PostgresSubscription | RedisSubscription,identity: int | str,owner: str,acknowledge: bool=False) -> bool:
         if acknowledge:
-            return await original(self,identity,owner,acknowledge=True)
+            if isinstance(self, PostgresSubscription):
+                assert isinstance(identity, int)
+                return await original_postgres(self,identity,owner,acknowledge=True)
+            assert isinstance(identity, str)
+            return await original_redis(self,identity,owner,acknowledge=True)
         if renewal=='hung':
             await asyncio.Event().wait()
         return False
-    monkeypatch.setattr(Subscription,'_owned',changed)
+    monkeypatch.setattr(subscription_type,'_owned',changed)
     entered,cancelled=asyncio.Event(),asyncio.Event()
-    async def handle(message):
+    async def handle(message: Message) -> None:
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -84,7 +96,7 @@ async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters
     try:
         await asyncio.wait_for(entered.wait(),5)
         await asyncio.wait_for(cancelled.wait(),3)
-        if hasattr(adapter,'_database'):
+        if isinstance(adapter, PostgresAdapter):
             pool=await adapter._database()
             assert await pool.fetchval('SELECT count(*) FROM flowfn_py_pending WHERE namespace=$1',adapter.namespace)==1
         else:
@@ -93,9 +105,9 @@ async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters
         await subscription.unsubscribe()
 
 
-async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters):
+async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters: NativeAdapters) -> None:
     adapter,_=adapters
-    if not hasattr(adapter,'client'):
+    if not isinstance(adapter, RedisAdapter):
         pytest.skip('Redis ownership regression')
     from flowfn.adapters.redis import RedisSubscription
     key=adapter._stream('owned')
@@ -115,26 +127,32 @@ async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters
     assert await adapter.client.hlen(subscription._owners_key)==0
 
 
-async def test_ack_reply_after_local_cancellation_is_settled_safely(adapters, monkeypatch):
+async def test_ack_reply_after_local_cancellation_is_settled_safely(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:
     adapter, _ = adapters
     adapter.reclaim_after_ms = 5000
-    if hasattr(adapter, '_database'):
-        from flowfn.adapters.postgres import PostgresSubscription as Subscription
+    if isinstance(adapter, PostgresAdapter):
+        subscription_type: type[PostgresSubscription] | type[RedisSubscription] = PostgresSubscription
     else:
-        from flowfn.adapters.redis import RedisSubscription as Subscription
-    original = Subscription._owned
+        subscription_type = RedisSubscription
+    original_postgres = PostgresSubscription._owned
+    original_redis = RedisSubscription._owned
     committed = asyncio.Event()
     release = asyncio.Event()
-    async def delayed(self, identity, owner, acknowledge=False):
-        result = await original(self, identity, owner, acknowledge=acknowledge)
+    async def delayed(self: PostgresSubscription | RedisSubscription, identity: int | str, owner: str, acknowledge: bool=False) -> bool:
+        if isinstance(self, PostgresSubscription):
+            assert isinstance(identity, int)
+            result = await original_postgres(self, identity, owner, acknowledge=acknowledge)
+        else:
+            assert isinstance(identity, str)
+            result = await original_redis(self, identity, owner, acknowledge=acknowledge)
         if acknowledge:
             committed.set()
             await release.wait()
         return result
-    monkeypatch.setattr(Subscription, '_owned', delayed)
+    monkeypatch.setattr(subscription_type, '_owned', delayed)
     received = asyncio.Event()
     messages = []
-    async def handler(message):
+    async def handler(message: Message) -> None:
         messages.append(message)
         received.set()
     subscription = await adapter.consume('ack-race', 'g', 'reader', handler, ConsumerOptions(group_id='g', max_in_flight=1))

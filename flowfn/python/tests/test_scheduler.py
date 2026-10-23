@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
@@ -7,12 +10,12 @@ from flowfn import create_flow
 from flowfn.scheduler import Scheduler
 
 
-async def test_repeat_limits_errors_and_snapshot_isolation():
+async def test_repeat_limits_errors_and_snapshot_isolation() -> None:
     scheduler = Scheduler()
     calls = []
     done = asyncio.Event()
 
-    async def callback(data):
+    async def callback(data: Any) -> None:
         calls.append(data)
         if len(calls) == 1:
             raise ValueError('transient')
@@ -29,13 +32,13 @@ async def test_repeat_limits_errors_and_snapshot_isolation():
     await scheduler.close()
 
 
-async def test_pause_resume_and_shutdown_cancel_running_callback():
+async def test_pause_resume_and_shutdown_cancel_running_callback() -> None:
     flow = create_flow()
     scheduler = flow.scheduler()
     entered = asyncio.Event()
     cleaned = asyncio.Event()
 
-    async def callback(data):
+    async def callback(data: Any) -> None:
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -55,13 +58,14 @@ async def test_pause_resume_and_shutdown_cancel_running_callback():
         scheduler.repeat('closed', 1, callback)
 
 
-async def test_cron_timezone_validation_and_unique_names():
+async def test_cron_timezone_validation_and_unique_names() -> None:
     scheduler = Scheduler()
 
-    async def callback(data):
+    async def callback(data: Any) -> None:
         pass
 
     job = scheduler.schedule('cron', '0 9 * * MON', callback, timezone_name='America/New_York')
+    assert job.next_run is not None
     assert job.next_run.weekday() == 0
     assert job.next_run.hour == 9
     assert str(job.next_run.tzinfo) == 'America/New_York'
@@ -78,14 +82,14 @@ async def test_cron_timezone_validation_and_unique_names():
     await scheduler.close()
 
 
-async def test_future_start_and_slow_callbacks_do_not_overlap():
+async def test_future_start_and_slow_callbacks_do_not_overlap() -> None:
     scheduler = Scheduler()
     active = 0
     maximum = 0
     done = asyncio.Event()
     calls = 0
 
-    async def callback(data):
+    async def callback(data: Any) -> None:
         nonlocal active, maximum, calls
         active += 1
         maximum = max(maximum, active)
@@ -104,13 +108,13 @@ async def test_future_start_and_slow_callbacks_do_not_overlap():
     await scheduler.close()
 
 
-async def test_persistent_registration_validates_and_snapshots_payload():
+async def test_persistent_registration_validates_and_snapshots_payload() -> None:
     from flowfn.adapters.memory import MemoryAdapter
     scheduler=Scheduler(MemoryAdapter())
     seen=[]
     done=asyncio.Event()
 
-    async def callback(data):
+    async def callback(data: Any) -> None:
         seen.append(list(data))
         data.append(99)
         if len(seen)==2:

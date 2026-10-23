@@ -1,13 +1,19 @@
 """Health status follows storage evidence instead of unconditional uptime."""
 
+from __future__ import annotations
+
 import asyncio
 
+import pytest
+
 from flowfn import create_flow
+from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
+from tests.native_support import NativeAdapters
 
 
-async def check_health(adapter):
+async def check_health(adapter: FlowAdapter) -> None:
     flow = create_flow(adapter)
     try:
         queue = flow.queue("ready")
@@ -42,19 +48,19 @@ async def check_health(adapter):
     assert not (await flow.health_check())["healthy"]
 
 
-async def test_memory_health():
+async def test_memory_health() -> None:
     await check_health(MemoryAdapter())
 
 
-async def test_native_health(adapters):
+async def test_native_health(adapters: NativeAdapters) -> None:
     await check_health(adapters[0])
 
 
-async def test_disconnected_storage_is_unhealthy_without_registered_resources(monkeypatch):
+async def test_disconnected_storage_is_unhealthy_without_registered_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = MemoryAdapter()
     flow = create_flow(adapter)
 
-    async def fail():
+    async def fail() -> None:
         raise ConnectionError("storage unavailable")
 
     monkeypatch.setattr(adapter, "health_probe", fail)
@@ -65,12 +71,12 @@ async def test_disconnected_storage_is_unhealthy_without_registered_resources(mo
     await flow.close()
 
 
-async def test_hung_probe_times_out_and_cancels_work(monkeypatch):
+async def test_hung_probe_times_out_and_cancels_work(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = MemoryAdapter()
     flow = create_flow(adapter)
     canceled = asyncio.Event()
 
-    async def hung():
+    async def hung() -> None:
         try:
             await asyncio.Event().wait()
         finally:
@@ -84,14 +90,14 @@ async def test_hung_probe_times_out_and_cancels_work(monkeypatch):
     await flow.close()
 
 
-async def test_resource_failure_and_missing_memory_measurement_are_visible(monkeypatch):
+async def test_resource_failure_and_missing_memory_measurement_are_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
 
     adapter = MemoryAdapter()
     flow = create_flow(adapter)
     flow.queue("broken")
 
-    async def fail(name):
+    async def fail(name: str) -> None:
         raise RuntimeError("queue unreadable")
 
     monkeypatch.setattr(adapter, "get_queue_stats", fail)

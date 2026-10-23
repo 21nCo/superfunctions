@@ -1,18 +1,24 @@
 """Metrics reflect committed operations and durable state without invented zeroes."""
 
+from __future__ import annotations
+
 import asyncio
+from typing import Any
 
 import pytest
 
 from flowfn import create_flow
+from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.core.metrics import MetricsManager
-from flowfn.queue.types import JobOptions
-from flowfn.stream.types import ConsumerOptions
+from flowfn.queue.types import Job, JobOptions
+from flowfn.stream.types import ConsumerOptions, Message
 from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
+from tests.assertions import require_value
+from tests.native_support import NativeAdapters
 
 
-async def test_queue_metrics_record_committed_completion_even_with_retention(monkeypatch):
+async def test_queue_metrics_record_committed_completion_even_with_retention(monkeypatch: pytest.MonkeyPatch) -> None:
     flow = create_flow()
     queue = flow.queue("measured")
     now = [1000]
@@ -20,8 +26,9 @@ async def test_queue_metrics_record_committed_completion_even_with_retention(mon
     monkeypatch.setattr(flow.metrics, "_now", lambda: now[0])
     job = await queue.add("one", {}, JobOptions(remove_on_complete=True))
     claim = await flow._adapter.dequeue(queue.name)
+    assert claim is not None
 
-    async def handler(job):
+    async def handler(job: Job) -> None:
         now[0] += 25
 
     await queue._process_job(claim, handler)
@@ -34,7 +41,7 @@ async def test_queue_metrics_record_committed_completion_even_with_retention(mon
     await flow.close()
 
 
-async def test_high_rate_counter_and_detached_series(monkeypatch):
+async def test_high_rate_counter_and_detached_series(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsManager(MemoryAdapter())
     monkeypatch.setattr(metrics, "_now", lambda: 1000)
     for _ in range(12000):
@@ -45,16 +52,17 @@ async def test_high_rate_counter_and_detached_series(monkeypatch):
     tags["a"] = "changed"
     metrics.record("latency", 20, {"a": "b,c:d"})
     result = metrics.get_time_series("latency", {"a": "b,c:d"}, since=0)
+    assert result is not None
     assert result.p95 == 20
     result.data_points[0].value = 999
-    assert metrics.get_time_series("latency", {"a": "b,c:d"}).min == 10
+    assert require_value(metrics.get_time_series("latency", {"a": "b,c:d"})).min == 10
     assert metrics.get_time_series("latency", {"a": "b", "c": "d"}) is None
     assert metrics.get_time_series("latency", {"a": "b,c:d"}, limit=0) is None
     with pytest.raises(ValueError):
         metrics.get_time_series("latency", limit=-1)
 
 
-async def check_workflow_metrics(adapter):
+async def check_workflow_metrics(adapter: FlowAdapter) -> None:
     for identity, status, end in [
         ("done", ExecutionStatus.COMPLETED, 200),
         ("failed", ExecutionStatus.FAILED, 400),
@@ -80,17 +88,17 @@ async def check_workflow_metrics(adapter):
     assert result["success_rate"] == pytest.approx(100 / 3)
 
 
-async def test_persisted_workflow_metrics(adapters):
+async def test_persisted_workflow_metrics(adapters: NativeAdapters) -> None:
     a, b = adapters
     await check_workflow_metrics(a)
     assert (await MetricsManager(b).get_workflow_metrics("metrics"))["total_executions"] == 3
 
 
-async def test_memory_workflow_metrics():
+async def test_memory_workflow_metrics() -> None:
     await check_workflow_metrics(MemoryAdapter())
 
 
-async def check_stream_metrics(adapter):
+async def check_stream_metrics(adapter: FlowAdapter) -> None:
     # Metrics acceptance is separate from the one-second lease stress cases.
     if hasattr(adapter, "reclaim_after_ms"):
         adapter.reclaim_after_ms = 5000
@@ -99,7 +107,7 @@ async def check_stream_metrics(adapter):
     captured = []
     received = asyncio.Event()
 
-    async def handler(message):
+    async def handler(message: Message) -> None:
         captured.append(message)
         received.set()
 
@@ -120,26 +128,27 @@ async def check_stream_metrics(adapter):
     await flow.close()
 
 
-async def test_stream_metrics(adapters):
+async def test_stream_metrics(adapters: NativeAdapters) -> None:
     await check_stream_metrics(adapters[0])
 
 
-async def test_memory_stream_metrics():
+async def test_memory_stream_metrics() -> None:
     await check_stream_metrics(MemoryAdapter())
 
 
-async def test_rejected_completion_does_not_count_as_success(monkeypatch):
+async def test_rejected_completion_does_not_count_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
     flow = create_flow()
     queue = flow.queue("fenced")
     await queue.add("job", {})
     job = await flow._adapter.dequeue(queue.name)
+    assert job is not None
 
-    async def reject(*args):
+    async def reject(*args: Any) -> None:
         raise RuntimeError("storage rejected completion")
 
     monkeypatch.setattr(flow._adapter, "update_job", reject)
 
-    async def handler(job):
+    async def handler(job: Job) -> str:
         return "done"
 
     with pytest.raises(RuntimeError, match="storage rejected"):
