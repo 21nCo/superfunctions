@@ -61,7 +61,25 @@ try {
     await sinkHttp({ url: '/ingest', offlineBuffer: 'indexeddb' }).close();
   });
   assert.equal(received.length, 1);
-  console.log(JSON.stringify({ ok: true, browser: await context.browser()?.version(), defaultPrivacyBeforeIndexedDB: true, failedDeliveryPersisted: true, processRestartRecovered: true, acknowledgedRecordsRemoved: true }));
+  const metrics = await page.evaluate(async () => {
+    const { sinkHttp } = await import('/logfn/typescript/dist/index.js');
+    const options = { url: '/ingest', offlineBuffer: 'indexeddb', offlineKey: 'overflow-proof', maxQueue: 2, batch: 10, flushIntervalMs: 60000 };
+    const first = sinkHttp(options), second = sinkHttp(options);
+    const event = msg => ({ ts: new Date().toISOString(), level: 'info', msg, name: 'overflow', version: '0' });
+    try {
+      await first([event('evicted'), event('retained-one')]);
+      await second([event('retained-two')]);
+      const before = [first.overflowEvictions, second.overflowEvictions];
+      let rejected = false;
+      try { await first([event('must-rollback'), { ...event('invalid'), ctx: { fn: () => {} } }]); } catch { rejected = true; }
+      await first.flush();
+      return { before, after: [first.overflowEvictions, second.overflowEvictions], rejected };
+    } finally { await first.close(); await second.close(); }
+  });
+  assert.deepEqual(metrics, { before: [0, 1], after: [0, 1], rejected: true });
+  assert.equal(received.length, 2);
+  assert.deepEqual(received[1].events.map(event => event.msg), ['retained-one', 'retained-two']);
+  console.log(JSON.stringify({ ok: true, browser: await context.browser()?.version(), defaultPrivacyBeforeIndexedDB: true, failedDeliveryPersisted: true, processRestartRecovered: true, acknowledgedRecordsRemoved: true, committedOverflowMetrics: metrics }));
 } finally {
   await context?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   await rm(profile, { recursive: true, force: true });

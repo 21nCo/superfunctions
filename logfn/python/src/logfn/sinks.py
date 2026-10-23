@@ -108,12 +108,19 @@ class SinkHttp:
         self._delivery: Optional[asyncio.Task[bool]] = None
         self._closing = False
         self._closed = False
+        self._overflow_evictions = 0
+
+    @property
+    def overflow_evictions(self) -> int:
+        """Queue-capacity evictions by this instance, including failed-send requeue."""
+        return self._overflow_evictions
 
     def __call__(self, batch: list[LogEvent]) -> None:
         if self._closed or self._closing:
             raise RuntimeError("HTTP sink is closed")
         self.buffer.extend(batch)
         if len(self.buffer) > self.max_queue:
+            self._overflow_evictions += len(self.buffer) - self.max_queue
             del self.buffer[: -self.max_queue]
         if not self.buffer:
             return
@@ -188,6 +195,7 @@ class SinkHttp:
                 try:
                     await self._send(batch)
                 except BaseException:
+                    self._overflow_evictions += max(0, len(batch) + len(self.buffer) - self.max_queue)
                     self.buffer = (batch + self.buffer)[-self.max_queue :]
                     raise
 

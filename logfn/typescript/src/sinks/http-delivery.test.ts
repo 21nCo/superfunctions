@@ -5,6 +5,25 @@ const event = (msg: string): LogEvent => ({ ts: new Date().toISOString(), level:
 describe("HTTP delivery lifecycle", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.spyOn(console, "error").mockImplementation(() => {}); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+  it("counts enqueue and failed-send requeue evictions without counting acknowledgements", async () => {
+    let fail!: (error: Error) => void;
+    const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { fail = reject; }))
+      .mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetch);
+    const sink = sinkHttp({ url: "https://example.test", maxQueue: 2, batch: 10, retry: { attempts: 1 } });
+    sink([event("old"), event("first"), event("second")]);
+    expect(sink.overflowEvictions).toBe(1);
+    const delivery = sink.flush!();
+    const rejected = expect(delivery).rejects.toThrow("offline");
+    sink([event("third"), event("fourth")]);
+    expect(sink.overflowEvictions).toBe(1);
+    fail(Error("offline")); await rejected;
+    expect(sink.overflowEvictions).toBe(3);
+    await sink.close();
+    expect(JSON.parse(fetch.mock.calls[1][1].body).events.map((item: LogEvent) => item.msg)).toEqual(["third", "fourth"]);
+    expect(sink.overflowEvictions).toBe(3);
+    expect(() => { (sink as { overflowEvictions: number }).overflowEvictions = 0; }).toThrow();
+  });
   it("flush waits for automatic delivery and drains logs appended while sending", async () => {
     let complete!: (response: Response) => void;
     const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; }))

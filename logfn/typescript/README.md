@@ -580,3 +580,24 @@ assumes the caller has already applied its privacy policy. Existing persisted
 IndexedDB events are not retroactively rewritten: handle pre-upgrade spool data
 under your retention/privacy policy before replaying it. New logger-generated
 events are masked before entering the durable queue.
+
+### Queue overflow metric
+
+`HttpSink.overflowEvictions` is a read-only cumulative count of records removed
+by this sink instance to keep the newest `maxQueue` events. Poll it from your
+metrics collector; it does not emit another log into the overflowing sink.
+Enqueue overflow and failed-send requeue overflow both increment the count.
+IndexedDB evictions count only after their transaction commits; rollback and
+normal acknowledged delivery do not increment it. With cooperating tabs, each
+instance counts the evictions committed by its own writes.
+
+The counter resets when the instance is recreated and saturates at
+`Number.MAX_SAFE_INTEGER`; it is not a persisted aggregate across browser tabs
+or processes. An evicted in-flight record may already have reached the receiver,
+so this measures queue eviction, not confirmed remote data loss.
+
+```ts
+const transport = sinkHttp({ url: '/watch/logs', maxQueue: 5000 });
+// Export this gauge/counter value using the host metrics system.
+const evictedRecords = transport.overflowEvictions;
+```

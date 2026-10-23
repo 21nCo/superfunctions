@@ -167,3 +167,13 @@ a 3.11 pass alone does not establish it. The Ruff and Black targets remain 3.9.
 The repository CI currently runs Python 3.11. See
 [the Python typing evidence](../.conduct/python-typing-readiness.md) for separate
 minimum-version and installed-wheel results.
+
+### Queue overflow metric
+
+`SinkHttp.overflow_evictions` is a read-only cumulative count of queue records
+evicted by this instance to retain the newest `max_queue` entries. It includes
+enqueue overflow and failed/cancelled-send requeue overflow, and excludes normal
+acknowledgements. Poll this value from the host metrics collector; reading it
+does not log or enqueue more events. The count resets with a new sink instance
+and is not persisted. An evicted in-flight record may already have reached the
+receiver, so this counts queue evictions rather than confirmed remote loss.

@@ -59,3 +59,17 @@ it('rolls back the entire enqueue transaction when an event cannot be cloned', a
   expect(await queue.batch(10)).toEqual([]);
   await queue.close();
 });
+it('counts only committed evictions across instances and does not count acknowledgements or rollback', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 202 })));
+  const options = { url: 'https://example.test/overflow', offlineBuffer: 'indexeddb' as const, maxQueue: 2, batch: 10, flushIntervalMs: 60000 };
+  const first = sinkHttp(options), second = sinkHttp(options);
+  try {
+    await first([event('one'), event('two')]);
+    await second([event('three')]);
+    expect(first.overflowEvictions).toBe(0); expect(second.overflowEvictions).toBe(1);
+    await expect(first([event('rollback'), { ...event('invalid'), ctx: { fn: () => {} } }])).rejects.toThrow();
+    expect(first.overflowEvictions).toBe(0);
+    await first.flush!();
+    expect(first.overflowEvictions).toBe(0); expect(second.overflowEvictions).toBe(1);
+  } finally { await first.close(); await second.close(); }
+});

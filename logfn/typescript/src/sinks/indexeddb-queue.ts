@@ -28,11 +28,12 @@ export class IndexedDbQueue {
     return this.database;
   }
 
-  async add(events: LogEvent[]): Promise<void> {
+  async add(events: LogEvent[]): Promise<number> {
     const db = await this.open();
-    await new Promise<void>((resolve, reject) => {
+    return new Promise<number>((resolve, reject) => {
+      let evicted = 0;
       const tx = db.transaction('events', 'readwrite');
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => resolve(evicted);
       tx.onabort = () => reject(tx.error ?? new Error('LogFn queue write aborted'));
       tx.onerror = () => {};
       try {
@@ -40,7 +41,8 @@ export class IndexedDbQueue {
         for (const event of events) store.add({ queue: this.key, event });
         const keys = store.index('queue').getAllKeys(this.key);
         keys.onsuccess = () => {
-          for (const key of keys.result.slice(0, Math.max(0, keys.result.length - this.limit))) store.delete(key);
+          evicted = Math.max(0, keys.result.length - this.limit);
+          for (const key of keys.result.slice(0, evicted)) store.delete(key);
         };
       } catch (error) { tx.abort(); reject(error); }
     });

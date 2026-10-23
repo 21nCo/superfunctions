@@ -136,9 +136,37 @@ async def test_overflow_retains_newest_events() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sink = SinkHttp("https://example.test", max_queue=2, client=client)
         sink([event("old"), event("middle"), event("new")])
+        assert sink.overflow_evictions == 1
         await sink.flush()
         assert [e["msg"] for e in received] == ["middle", "new"]
         await sink.close()
+        assert sink.overflow_evictions == 1
+
+
+async def test_failed_send_requeue_counts_evictions() -> None:
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content)["events"])
+        if len(calls) == 1:
+            started.set()
+            await finish.wait()
+            return httpx.Response(503)
+        return httpx.Response(202)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sink = SinkHttp("https://example.test", max_queue=2, batch_size=10, attempts=1, client=client)
+        sink([event("first"), event("second")])
+        delivery = asyncio.create_task(sink.flush())
+        await started.wait()
+        sink([event("third"), event("fourth")])
+        assert sink.overflow_evictions == 0
+        finish.set()
+        with pytest.raises(httpx.HTTPStatusError):
+            await delivery
+        assert sink.overflow_evictions == 2
+        await sink.close()
+        assert [item["msg"] for item in calls[1]] == ["third", "fourth"]
+        assert sink.overflow_evictions == 2
 
 
 async def test_logger_flush_reports_delivery_failure() -> None:

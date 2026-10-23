@@ -50,6 +50,8 @@ export interface HttpSinkOptions {
  * Create an HTTP sink
  */
 export interface HttpSink extends Sink {
+  /** Queue-capacity evictions by this instance; excludes acknowledgements and failed transactions. */
+  readonly overflowEvictions: number;
   /** Drain accepted events and remove owned timers/listeners. Failed close is retryable. */
   close(): Promise<void>;
 }
@@ -80,6 +82,10 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   let closed = false;
   let closing: Promise<void> | null = null;
   let buffer: LogEvent[] = [];
+  let overflowEvictions = 0;
+  function countEvictions(count: number): void {
+    overflowEvictions = Math.min(Number.MAX_SAFE_INTEGER, overflowEvictions + count);
+  }
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let flushing: Promise<void> | null = null;
   for (const [name, value] of Object.entries({ batchSize, flushIntervalMs, timeoutMs, maxQueue, attempts })) {
@@ -157,7 +163,9 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
         } catch (error) {
           failed = true;
           // Preserve queue order and the documented newest-events overflow policy.
-          buffer = [...toSend, ...buffer].slice(-maxQueue);
+          const pending = [...toSend, ...buffer];
+          countEvictions(Math.max(0, pending.length - maxQueue));
+          buffer = pending.slice(-maxQueue);
           throw error;
         }
       }
@@ -216,11 +224,11 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   browserDocument?.addEventListener("visibilitychange", visibilityHandler);
   browserWindow?.addEventListener("beforeunload", unloadHandler);
 
-  const sink: HttpSink = (batch: LogEvent[]) => {
+  const sink = ((batch: LogEvent[]) => {
     if (closed || closing) throw new Error("HTTP sink is closed");
     if (durable) {
       // Persist before delivery; Logger.flush joins this returned promise.
-      const operation = writes.then(() => durable.add(batch));
+      const operation = writes.then(() => durable.add(batch)).then(countEvictions);
       writes = operation.catch(() => {});
       return operation.then(async () => {
         if ((await durable.batch(batchSize)).length >= batchSize) backgroundFlush();
@@ -234,6 +242,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     if (buffer.length > maxQueue) {
       const excess = buffer.length - maxQueue;
       buffer.splice(0, excess);
+      countEvictions(excess);
     }
 
     // Flush if batch size reached
@@ -243,7 +252,8 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       scheduleFlush();
     }
     return undefined;
-  };
+  }) as HttpSink;
+  Object.defineProperty(sink, 'overflowEvictions', { get: () => overflowEvictions, enumerable: true });
 
   sink.flush = async (): Promise<void> => {
     if (flushTimer) {
