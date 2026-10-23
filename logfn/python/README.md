@@ -140,3 +140,30 @@ Key/value matching is heuristic; arbitrary unlabelled credentials and all PII
 cannot be detected. Configure application-specific stages as needed. Direct sink
 calls assume already-processed events. This parity checkpoint does not implement
 the future v0.2 Python middleware surface or close all original readiness gates.
+
+## Typed custom sinks and development checks
+
+A `Sink` is any callable accepting a list of `LogEvent` values as a positional
+argument. Plain functions, bound methods, callable objects, and async callables
+are supported. A `flush` hook is optional; when present, the logger calls it and
+awaits its result if awaitable. `logger.flush()` also joins accepted async delivery
+before completing. Sinks do not need an empty flush method to satisfy the type
+contract. The wheel includes `py.typed` for installed-package type checking.
+
+Run checks with the interpreter whose dependencies are installed:
+
+```sh
+python -m pip install -e '.[dev]'
+python -m ruff check .
+python -m mypy .
+python -m pytest .
+```
+
+Strict mypy checks source and tests. Only generated `build/` and `dist/` copies
+are excluded from discovery. Its Python target follows the running interpreter,
+so dependencies resolved for Python 3.11 are checked as Python 3.11. Minimum
+Python 3.9 support must also be checked in an actual Python 3.9 environment;
+a 3.11 pass alone does not establish it. The Ruff and Black targets remain 3.9.
+The repository CI currently runs Python 3.11. See
+[the Python typing evidence](../.conduct/python-typing-readiness.md) for separate
+minimum-version and installed-wheel results.

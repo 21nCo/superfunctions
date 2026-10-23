@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from logfn.core import Logger
 from logfn.pipeline import redact
 from logfn.serialization import sanitize_value
+from logfn.types import LogEvent
 
 
-def test_nested_cyclic_redaction_does_not_mutate_application_context():
-    events = []
-    context = {"nested": [{"token": "secret-123"}]}
+def test_nested_cyclic_redaction_does_not_mutate_application_context() -> None:
+    events: list[LogEvent] = []
+    nested = [{"token": "secret-123"}]
+    context: dict[str, object] = {"nested": nested}
     context["self"] = context
     logger = Logger("test", [lambda batch: events.extend(batch)], pipeline=[redact([r"secret-\d+"])])
     logger.info("secret-456", context)
@@ -16,19 +18,20 @@ def test_nested_cyclic_redaction_does_not_mutate_application_context():
     assert "secret-" not in encoded
     assert "[redacted]" in encoded
     assert "[circular]" in encoded
-    assert context["nested"][0]["token"] == "secret-123"
+    assert context["nested"] is nested
+    assert nested[0]["token"] == "secret-123"
 
 
-def test_selected_redaction_keys_cover_nested_values_only_under_selected_roots():
-    events = []
+def test_selected_redaction_keys_cover_nested_values_only_under_selected_roots() -> None:
+    events: list[LogEvent] = []
     logger = Logger("test", [lambda batch: events.extend(batch)], pipeline=[redact(["secret"], keys=["private"])])
     logger.info("hello", {"private": [{"token": "secret"}], "public": "secret"})
     assert events[0]["ctx"] == {"private": [{"token": "[redacted]"}], "public": "secret"}
 
 
-def test_sinks_receive_json_safe_values_after_pipeline():
-    events = []
-    def enrich(event):
+def test_sinks_receive_json_safe_values_after_pipeline() -> None:
+    events: list[LogEvent] = []
+    def enrich(event: LogEvent) -> LogEvent:
         event["ctx"] = {"date": datetime(2026, 1, 1, tzinfo=timezone.utc), "nan": float("nan"), "obj": object()}
         event["ctx"]["cycle"] = event["ctx"]
         return event
@@ -39,30 +42,32 @@ def test_sinks_receive_json_safe_values_after_pipeline():
     assert events[0]["ctx"]["cycle"] == "[circular]"
 
 
-def test_deep_values_are_bounded_and_repeated_siblings_are_not_cycles():
+def test_deep_values_are_bounded_and_repeated_siblings_are_not_cycles() -> None:
     shared = {"ok": True}
     assert sanitize_value([shared, shared]) == [shared, shared]
-    value = {}
+    value: dict[str, object] = {}
     cursor = value
     for _ in range(1000):
-        cursor["child"] = {}
-        cursor = cursor["child"]
+        child: dict[str, object] = {}
+        cursor["child"] = child
+        cursor = child
     assert "[depth_limit]" in json.dumps(sanitize_value(value))
 
 
-def test_event_size_preserves_small_context_fields_and_limits_tags():
-    events = []
-    context = {"huge": "😀" * 30000, "useful": {"id": 123}, "tail": True}
+def test_event_size_preserves_small_context_fields_and_limits_tags() -> None:
+    events: list[LogEvent] = []
+    context: dict[str, object] = {"huge": "😀" * 30000, "useful": {"id": 123}, "tail": True}
     Logger("test", [lambda batch: events.extend(batch)]).info("hello", context, tags=["tag"] * 30)
     event = events[0]
     assert len(json.dumps(event).encode("utf-8")) <= 65536
     assert event["ctx"] == {"_truncated": True, "_reason": "size_limit", "useful": {"id": 123}, "tail": True}
     assert len(event["tags"]) <= 20
+    assert isinstance(context["huge"], str)
     assert len(context["huge"]) == 30000
 
 
-def test_oversized_envelope_is_bounded_without_cutting_unicode_points():
-    events = []
+def test_oversized_envelope_is_bounded_without_cutting_unicode_points() -> None:
+    events: list[LogEvent] = []
     Logger("界" * 30000, [lambda batch: events.extend(batch)]).info("😀" * 30000)
     event = events[0]
     assert len(json.dumps(event).encode("utf-8")) <= 65536
@@ -72,21 +77,22 @@ def test_oversized_envelope_is_bounded_without_cutting_unicode_points():
     assert event["ctx"]["_truncated"] is True
 
 
-def test_twenty_tag_limit_applies_even_when_event_is_small():
-    events = []
+def test_twenty_tag_limit_applies_even_when_event_is_small() -> None:
+    events: list[LogEvent] = []
     Logger("test", [lambda batch: events.extend(batch)]).info("hello", tags=[str(i) for i in range(30)])
     assert events[0]["tags"] == [str(i) for i in range(20)]
 
 
-def test_integer_conversion_limit_does_not_break_logging_or_drop_other_context():
+def test_integer_conversion_limit_does_not_break_logging_or_drop_other_context() -> None:
     import sys
+
     import pytest
 
     if not hasattr(sys, "set_int_max_str_digits"):
         pytest.skip("Runtime has no integer conversion limit")
     previous = sys.get_int_max_str_digits()
     context = {"huge": 10 ** 5000, "useful": 123, "negative": -(10 ** 5000)}
-    events = []
+    events: list[LogEvent] = []
     try:
         sys.set_int_max_str_digits(640)
         Logger("test", [lambda batch: events.extend(batch)]).info("hello", context)

@@ -2,13 +2,13 @@
 import json
 import math
 from datetime import date, datetime
-from typing import Any, Set, cast
+from typing import Any, cast
 
 from .types import LogEvent
 
 
 def sanitize_value(value: Any) -> Any:
-    ancestors: Set[int] = set()
+    ancestors: set[int] = set()
 
     def visit(item: Any, depth: int) -> Any:
         if item is None or isinstance(item, (str, bool)):

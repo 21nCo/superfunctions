@@ -1,6 +1,7 @@
 """Default terminal privacy boundary; explicit allowlist uses exact JSON Pointers."""
 import re
 from typing import Any, Callable, Optional
+
 from .serialization import sanitize_value
 from .types import DefaultRedactionOptions
 

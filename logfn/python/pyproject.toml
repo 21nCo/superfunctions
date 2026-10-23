@@ -50,6 +50,9 @@ Issues = "https://github.com/21nCo/super-functions/issues"
 where = ["src"]
 include = ["logfn*"]
 
+[tool.setuptools.package-data]
+logfn = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -66,7 +69,7 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.9"
+exclude = '^(build|dist)/'
 strict = true
 warn_return_any = true
 warn_unused_configs = true

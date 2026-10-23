@@ -1,10 +1,11 @@
 import re
 
 from logfn import LogCorrelation, Logger, create_logger, with_request_ids
+from logfn.types import LogEvent
 
 
-def test_top_level_correlation_inheritance_and_input_isolation():
-    events = []
+def test_top_level_correlation_inheritance_and_input_isolation() -> None:
+    events: list[LogEvent] = []
     ids: LogCorrelation = {
         "traceId": "a" * 32, "spanId": "b" * 16, "requestId": "request",
         "userId": "parent", "tenantId": "tenant",
@@ -26,8 +27,8 @@ def test_top_level_correlation_inheritance_and_input_isolation():
     assert events[0]["ctx"]["requestId"] == "context-only"
 
 
-def test_direct_logger_correlation_reaches_pipeline():
-    events = []
+def test_direct_logger_correlation_reaches_pipeline() -> None:
+    events: list[LogEvent] = []
     logger = Logger("app", [events.extend], correlation={"requestId": "supplied"},
                     pipeline=[with_request_ids()])
     logger.info("first")
@@ -37,8 +38,8 @@ def test_direct_logger_correlation_reaches_pipeline():
     assert events[0]["traceId"] != events[1]["traceId"]
 
 
-def test_request_ids_preserve_supplied_values_and_generation_controls():
-    events = []
+def test_request_ids_preserve_supplied_values_and_generation_controls() -> None:
+    events: list[LogEvent] = []
     create_logger("app", [events.extend], correlation={"traceId": "external-trace"},
                   pipeline=[with_request_ids()]).info("partial")
     assert events[0]["traceId"] == "external-trace"

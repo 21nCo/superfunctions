@@ -1,15 +1,17 @@
 import random
 import re
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Pattern, Union
+from re import Pattern
+from typing import Any, Callable, Optional, Union
 
-from .types import LogEvent, PipelineStage, LogLevel
 from .serialization import sanitize_value
+from .types import LogEvent, LogLevel, PipelineStage
+
 
 def redact(
-    patterns: List[Union[str, Pattern[str]]],
+    patterns: list[Union[str, Pattern[str]]],
     replacement: str = "[redacted]",
-    keys: Optional[List[str]] = None
+    keys: Optional[list[str]] = None
 ) -> PipelineStage:
     """
     Redact sensitive information from log messages and context values.
@@ -47,8 +49,8 @@ def redact(
     return stage
 
 def enrich_context(
-    static_ctx: Optional[Dict[str, Any]] = None,
-    dynamic_ctx: Optional[Callable[[], Dict[str, Any]]] = None
+    static_ctx: Optional[dict[str, Any]] = None,
+    dynamic_ctx: Optional[Callable[[], dict[str, Any]]] = None
 ) -> PipelineStage:
     """
     Add context to every log event.
@@ -64,7 +66,7 @@ def enrich_context(
     
     return stage
 
-def sample(rates: Dict[LogLevel, float]) -> PipelineStage:
+def sample(rates: dict[LogLevel, float]) -> PipelineStage:
     """
     Sample log events based on level.
     Rate is 0.0 (drop all) to 1.0 (keep all).

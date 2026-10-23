@@ -1,26 +1,24 @@
 import asyncio
-import os
 import inspect
+import os
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union, Callable, Set
+from typing import Any, Callable, Optional
 
-from .serialization import bound_event, sanitize_value
 from .default_redaction import default_redactor
-
+from .serialization import bound_event, sanitize_value
 from .types import (
     DEFAULT_VERSION,
+    LOG_LEVEL_VALUES,
     DefaultRedactionOptions,
     ErrorHandler,
-    LOG_LEVEL_VALUES,
-    ChildLoggerOptions,
-    LogEvent,
     LogCorrelation,
-    LoggerOptions,
+    LogEvent,
     LogLevel,
     PipelineStage,
     Sink,
 )
+
 
 def default_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -35,7 +33,7 @@ class _ErrorReporter:
         self.redact = redact
         self.reporting = False
 
-    def report(self, error: BaseException, context: Dict[str, str]) -> None:
+    def report(self, error: BaseException, context: dict[str, str]) -> None:
         if self.reporting:
             return
         self.reporting = True
@@ -57,8 +55,8 @@ class _ErrorReporter:
 class _DeliveryState:
     def __init__(self, reporter: _ErrorReporter) -> None:
         self.reporter = reporter
-        self.contexts: Dict[asyncio.Future[Any], Dict[str, str]] = {}
-        self.pending: Set[asyncio.Future[Any]] = set()
+        self.contexts: dict[asyncio.Future[Any], dict[str, str]] = {}
+        self.pending: set[asyncio.Future[Any]] = set()
         self.error: Optional[BaseException] = None
 
     def completed(self, task: asyncio.Future[Any]) -> None:
@@ -75,12 +73,12 @@ class Logger:
     def __init__(
         self,
         name: str,
-        sinks: List[Sink],
+        sinks: list[Sink],
         level: Optional[LogLevel] = None,
-        pipeline: Optional[List[PipelineStage]] = None,
+        pipeline: Optional[list[PipelineStage]] = None,
         now: Optional[Callable[[], datetime]] = None,
-        base_context: Optional[Dict[str, Any]] = None,
-        base_tags: Optional[List[str]] = None,
+        base_context: Optional[dict[str, Any]] = None,
+        base_tags: Optional[list[str]] = None,
         on_error: Optional[ErrorHandler] = None,
         correlation: Optional[LogCorrelation] = None,
         redaction: Optional[DefaultRedactionOptions] = None,
@@ -109,8 +107,8 @@ class Logger:
         self,
         level: LogLevel,
         msg: str,
-        ctx: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None,
+        ctx: Optional[dict[str, Any]] = None,
+        tags: Optional[list[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not self.should_log(level):
@@ -192,25 +190,25 @@ class Logger:
             except Exception as e:
                 self._reporter.report(e, {"sink": getattr(sink, "__name__", type(sink).__name__)})
 
-    def trace(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def trace(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("trace", msg, ctx, tags, **kwargs)
 
-    def debug(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def debug(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("debug", msg, ctx, tags, **kwargs)
 
-    def info(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def info(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("info", msg, ctx, tags, **kwargs)
 
-    def warn(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def warn(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("warn", msg, ctx, tags, **kwargs)
 
-    def error(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def error(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("error", msg, ctx, tags, **kwargs)
 
-    def fatal(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def fatal(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("fatal", msg, ctx, tags, **kwargs)
 
-    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, correlation: Optional[LogCorrelation] = None) -> 'Logger':
+    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, correlation: Optional[LogCorrelation] = None) -> 'Logger':
         new_name = name or self.name
         new_level = level or self.level
         new_ctx = {**self.base_context}
@@ -268,11 +266,11 @@ class Logger:
 
 def create_logger(
     name: str,
-    sinks: List[Sink],
+    sinks: list[Sink],
     level: Optional[LogLevel] = None,
-    pipeline: Optional[List[PipelineStage]] = None,
-    base_context: Optional[Dict[str, Any]] = None,
-    base_tags: Optional[List[str]] = None,
+    pipeline: Optional[list[PipelineStage]] = None,
+    base_context: Optional[dict[str, Any]] = None,
+    base_tags: Optional[list[str]] = None,
     on_error: Optional[ErrorHandler] = None,
     correlation: Optional[LogCorrelation] = None,
     redaction: Optional[DefaultRedactionOptions] = None,

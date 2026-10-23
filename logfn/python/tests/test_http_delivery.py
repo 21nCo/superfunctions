@@ -1,17 +1,20 @@
 import asyncio
 import json
+
 import httpx
 import pytest
+
 from logfn.sinks import SinkHttp
+from logfn.types import LogEvent
 
 
-def event(msg="test"):
+def event(msg: str = "test") -> LogEvent:
     return {"ts": "2026-01-14T12:00:00.000Z", "level": "info", "msg": msg, "name": "test", "version": "0"}
 
 
-async def test_envelope_batch_bounds_and_borrowed_client():
+async def test_envelope_batch_bounds_and_borrowed_client() -> None:
     requests = []
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(202)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -27,9 +30,9 @@ async def test_envelope_batch_bounds_and_borrowed_client():
 
 
 @pytest.mark.parametrize("status", [408, 429, 503])
-async def test_retryable_statuses(status):
+async def test_retryable_statuses(status: int) -> None:
     calls = []
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         return httpx.Response(status if len(calls) == 1 else 202)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -41,10 +44,10 @@ async def test_retryable_statuses(status):
         await sink.close()
 
 
-async def test_permanent_failure_retained_and_close_retry():
+async def test_permanent_failure_retained_and_close_retry() -> None:
     calls = []
     status = 401
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         return httpx.Response(status)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -58,10 +61,10 @@ async def test_permanent_failure_retained_and_close_retry():
         assert len(calls) == 2
 
 
-async def test_flush_waits_for_active_delivery_and_new_arrivals():
+async def test_flush_waits_for_active_delivery_and_new_arrivals() -> None:
     started, finish = asyncio.Event(), asyncio.Event()
     received = []
-    async def handler(request):
+    async def handler(request: httpx.Request) -> httpx.Response:
         received.extend(json.loads(request.content)["events"])
         started.set()
         await finish.wait()
@@ -80,9 +83,9 @@ async def test_flush_waits_for_active_delivery_and_new_arrivals():
         await sink.close()
 
 
-async def test_interval_delivers_small_batch():
+async def test_interval_delivers_small_batch() -> None:
     delivered = asyncio.Event()
-    async def handler(request):
+    async def handler(request: httpx.Request) -> httpx.Response:
         delivered.set()
         return httpx.Response(202)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -92,9 +95,9 @@ async def test_interval_delivers_small_batch():
         await sink.close()
 
 
-async def test_timeout_retries_with_fresh_request():
+async def test_timeout_retries_with_fresh_request() -> None:
     calls = 0
-    async def handler(request):
+    async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -108,9 +111,9 @@ async def test_timeout_retries_with_fresh_request():
         await sink.close()
 
 
-async def test_cancelled_flush_retains_events():
+async def test_cancelled_flush_retains_events() -> None:
     started = asyncio.Event()
-    async def handler(request):
+    async def handler(request: httpx.Request) -> httpx.Response:
         started.set()
         await asyncio.sleep(10)
         return httpx.Response(202)
@@ -125,9 +128,9 @@ async def test_cancelled_flush_retains_events():
         assert len(sink.buffer) == 1
 
 
-async def test_overflow_retains_newest_events():
+async def test_overflow_retains_newest_events() -> None:
     received = []
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         received.extend(json.loads(request.content)["events"])
         return httpx.Response(202)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -138,9 +141,9 @@ async def test_overflow_retains_newest_events():
         await sink.close()
 
 
-async def test_logger_flush_reports_delivery_failure():
+async def test_logger_flush_reports_delivery_failure() -> None:
     from logfn.core import Logger
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sink = SinkHttp("https://example.test", attempts=1, client=client)
@@ -151,11 +154,12 @@ async def test_logger_flush_reports_delivery_failure():
         assert len(sink.buffer) == 1
 
 
-async def test_real_http_delivery_retries_and_preserves_envelope():
+async def test_real_http_delivery_retries_and_preserves_envelope() -> None:
     received = []
     handlers = set()
-    async def handle(reader, writer):
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
+        assert task is not None
         handlers.add(task)
         try:
             head = await reader.readuntil(b'\r\n\r\n')

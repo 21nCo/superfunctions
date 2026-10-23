@@ -1,17 +1,19 @@
 import asyncio
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Optional
+
 import httpx
 
-from .types import LogEvent, Sink
+from .types import LogEvent
+
 
 class SinkConsole:
     def __init__(self, json: bool = False, color: bool = True):
         self.json = json
         self.color = color
 
-    def __call__(self, batch: List[LogEvent]) -> None:
+    def __call__(self, batch: list[LogEvent]) -> None:
         for event in batch:
             if self.json:
                 print(json.dumps(event, default=str))
@@ -23,19 +25,25 @@ class SinkConsole:
         msg = event["msg"]
         ts = event["ts"]
         name = event["name"]
-        
+
         # Simple coloring
         color_code = ""
         reset = ""
         if self.color:
             reset = "\033[0m"
-            if level == "trace": color_code = "\033[90m" # Gray
-            elif level == "debug": color_code = "\033[34m" # Blue
-            elif level == "info": color_code = "\033[32m" # Green
-            elif level == "warn": color_code = "\033[33m" # Yellow
-            elif level == "error": color_code = "\033[31m" # Red
-            elif level == "fatal": color_code = "\033[35m" # Magenta
-        
+            if level == "trace":
+                color_code = "\033[90m"  # Gray
+            elif level == "debug":
+                color_code = "\033[34m"  # Blue
+            elif level == "info":
+                color_code = "\033[32m"  # Green
+            elif level == "warn":
+                color_code = "\033[33m"  # Yellow
+            elif level == "error":
+                color_code = "\033[31m"  # Red
+            elif level == "fatal":
+                color_code = "\033[35m"  # Magenta
+
         # Context string
         ctx_str = ""
         if "ctx" in event and event["ctx"]:
@@ -43,7 +51,7 @@ class SinkConsole:
             for k, v in event["ctx"].items():
                 ctx_items.append(f"{k}={v}")
             ctx_str = " " + " ".join(ctx_items)
-            
+
         print(f"{color_code}[{ts}] {level.upper()} ({name}): {msg}{reset}{ctx_str}")
 
     async def flush(self) -> None:
@@ -71,8 +79,13 @@ class SinkHttp:
         client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         import math
-        for name, value in {"batch_size": batch_size, "flush_interval_ms": flush_interval_ms,
-                            "attempts": attempts, "max_queue": max_queue}.items():
+
+        for name, value in {
+            "batch_size": batch_size,
+            "flush_interval_ms": flush_interval_ms,
+            "attempts": attempts,
+            "max_queue": max_queue,
+        }.items():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         if not math.isfinite(timeout) or timeout <= 0:
@@ -87,7 +100,7 @@ class SinkHttp:
         self.attempts = attempts
         self.backoff_ms = backoff_ms
         self.max_queue = max_queue
-        self.buffer: List[LogEvent] = []
+        self.buffer: list[LogEvent] = []
         self._client = client if client is not None else httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
         self._lock = asyncio.Lock()
@@ -96,12 +109,12 @@ class SinkHttp:
         self._closing = False
         self._closed = False
 
-    def __call__(self, batch: List[LogEvent]) -> None:
+    def __call__(self, batch: list[LogEvent]) -> None:
         if self._closed or self._closing:
             raise RuntimeError("HTTP sink is closed")
         self.buffer.extend(batch)
         if len(self.buffer) > self.max_queue:
-            del self.buffer[:-self.max_queue]
+            del self.buffer[: -self.max_queue]
         if not self.buffer:
             return
         try:
@@ -116,9 +129,9 @@ class SinkHttp:
             self._timer = loop.create_task(self._interval_flush())
 
     def _delivery_finished(self, task: asyncio.Task[bool]) -> None:
-        if not task.cancelled() and task.exception() is None and task.result():
-            if self.buffer and not self._closed and not self._closing:
-                self([])
+        if (not task.cancelled() and task.exception() is None and task.result()
+                and self.buffer and not self._closed and not self._closing):
+            self([])
 
     async def _interval_flush(self) -> None:
         try:
@@ -136,14 +149,16 @@ class SinkHttp:
             print(f"[logfn http-sink error] {type(error).__name__}", file=sys.stderr)
             return False
 
-    async def _send(self, batch: List[LogEvent]) -> None:
+    async def _send(self, batch: list[LogEvent]) -> None:
         headers = {"Content-Type": "application/json"}
         if self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"
         for attempt in range(self.attempts):
             try:
                 response = await asyncio.wait_for(
-                    self._client.post(self.url, json={"events": batch}, headers=headers, timeout=self.timeout),
+                    self._client.post(
+                        self.url, json={"events": batch}, headers=headers, timeout=self.timeout
+                    ),
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
@@ -168,12 +183,12 @@ class SinkHttp:
             self._timer = None
         async with self._lock:
             while self.buffer:
-                batch = self.buffer[:self.batch_size]
-                del self.buffer[:self.batch_size]
+                batch = self.buffer[: self.batch_size]
+                del self.buffer[: self.batch_size]
                 try:
                     await self._send(batch)
                 except BaseException:
-                    self.buffer = (batch + self.buffer)[-self.max_queue:]
+                    self.buffer = (batch + self.buffer)[-self.max_queue :]
                     raise
 
     async def close(self) -> None:

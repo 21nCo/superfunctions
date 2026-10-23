@@ -1,9 +1,18 @@
-from typing import Optional, List
+from typing import Optional
 
 from .core import Logger, create_logger
-from .pipeline import redact, enrich_context, sample, with_request_ids
+from .pipeline import enrich_context, redact, sample, with_request_ids
 from .sinks import SinkConsole, SinkHttp
-from .types import DefaultRedactionOptions, LogCorrelation, ErrorHandler, LogLevel, LogEvent, Sink, PipelineStage
+from .types import (
+    DefaultRedactionOptions,
+    ErrorHandler,
+    LogCorrelation,
+    LogEvent,
+    LogLevel,
+    PipelineStage,
+    Sink,
+)
+
 
 def dev_logger(name: str = "app") -> Logger:
     """
@@ -23,7 +32,7 @@ def server_logger(
     """
     Create a server logger with JSON output and optional HTTP sink.
     """
-    sinks: List[Sink] = [SinkConsole(json=True, color=False)]
+    sinks: list[Sink] = [SinkConsole(json=True, color=False)]
     if url:
         sinks.append(SinkHttp(url=url))
         
