@@ -1,0 +1,35 @@
+watchfn/.conduct/python-email-readiness.md
+  s_e1c5fc1a65c0cf::t_0b32c650f6a88d 1-68
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_c91f8e96a84acd 414-471
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_5ebd265f717280 15,17
+watchfn/python/scripts/verify-http-wheel.py
+  s_e1c5fc1a65c0cf::t_653f2cf3a7b3d3 1,13,18,22
+watchfn/python/tests/test_email_dispatch.py
+  s_e1c5fc1a65c0cf::t_aef0ee0c443722 1-279
+watchfn/python/watchfn/alerts/dispatch.py
+  s_e1c5fc1a65c0cf::t_62a5b1ad3f14f3 7,15-18,33,38-44,47,49,51-56,78-80,131-132,135-137,229-232
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_b84a01548be41f 41
+watchfn/python/watchfn/alerts/email.py
+  s_e1c5fc1a65c0cf::t_8462f05ce27e69 1-77
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_be956d5b5f5e35 27,32-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3aaa126d55b52c1bb588b5f72280dc3f0b907b24",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
