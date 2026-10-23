@@ -1,0 +1,21 @@
+{
+  "generatedSeconds": 3600,
+  "generatedVideoFrames": 108000,
+  "width": 64,
+  "height": 64,
+  "fps": 30,
+  "rawIngressBytes": 1442304000,
+  "captureElapsedSeconds": 37.400914916000005,
+  "afterBothProducerEofSeconds": 3.1923674580000005,
+  "v8HeapLimitBytes": 184549376,
+  "totalElapsedSeconds": 38.467124833,
+  "observedPeakNodeRssBytes": 134103040,
+  "observedPeakChildRssBytes": 38895616,
+  "outputBytes": 30749416,
+  "encodedDurationSeconds": 3600.064063,
+  "decodedVideoFrames": 108000,
+  "storageSha256": "22009a7ae5c2f615af4246c02a15bfa6fcc74a4bb7015bd169bbf947ad14523e",
+  "residualEntriesBeforeStorageCleanup": [
+    "storage"
+  ]
+}

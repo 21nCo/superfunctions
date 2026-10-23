@@ -1,11 +1,11 @@
 import type { AudioChunk, VideoChunk, RecordingFormat } from '@recfn/core';
 import { ErrorCode, createError } from '@recfn/core';
-import { mkdtemp, open, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { Readable, type Writable } from 'node:stream';
+import type { Writable } from 'node:stream';
+import { EncryptedMediaFile } from './encrypted-media-file.js';
 
 export interface CaptureResult {
   data: Uint8Array;
@@ -26,7 +26,7 @@ export interface CaptureOptions {
   videoStream?: ReadableStream<VideoChunk>;
   /** Optional total ingress quota; raw media is never spooled. */
   maxInputBytes?: number;
-  /** Encoded-file disk quota (default 1 GiB for file capture). */
+  /** Encoded plaintext byte limit (default 1 GiB); encrypted scratch adds 28 bytes per 64 KiB chunk. */
   maxOutputBytes?: number;
   maxChunkBytes?: number;
   signal?: AbortSignal;
@@ -38,27 +38,79 @@ export interface CaptureOptions {
 }
 const failure = (message: string) => createError(ErrorCode.RECORDING_FINALIZATION_FAILED, message);
 
-async function run(binary: string, args: string[], signal?: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'ignore'] });
-    let output = '';
-    let exceeded = false;
-    const abort = () => { exceeded = true; child.kill('SIGKILL'); };
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
-    const timeout = setTimeout(abort, 60_000);
-    child.stdout.on('data', (data: Buffer) => {
-      output += data.toString();
-      if (output.length > 64 * 1024) { exceeded = true; child.kill('SIGKILL'); }
-    });
-    child.once('error', () => { signal?.removeEventListener('abort', abort); clearTimeout(timeout); reject(failure('Media encoder/decoder executable is unavailable.')); });
-    child.once('close', (code) => {
-      signal?.removeEventListener('abort', abort);
-      clearTimeout(timeout);
-      if (code !== 0 || exceeded) reject(failure('Media encoding or validation failed.'));
-      else resolve(output);
+async function run(binary: string, args: string[], input: () => ReadableStream<Uint8Array>, signal?: AbortSignal, onLine?: (line: string) => void): Promise<string> {
+  const reader = input().getReader();
+  const child = (() => {
+    try { return spawn(binary, args, { stdio: ['pipe', 'pipe', 'ignore'] }); }
+    catch (error) { void reader.cancel().then(() => reader.releaseLock(), () => reader.releaseLock()); throw error; }
+  })();
+  let output = '';
+  let reason: unknown;
+  let inputDone = false;
+  const stop = (error: unknown) => { reason ??= error; child.kill('SIGKILL'); void reader.cancel().catch(() => {}); };
+  const abort = () => stop(failure('Media validation was canceled or exceeded its deadline.'));
+  child.stdin.on('error', error => stop(error));
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once('error', () => { const error = failure('Media encoder/decoder executable is unavailable.'); stop(error); reject(error); });
+    child.once('close', code => {
+      if (code !== 0 || !inputDone || reason) reject(reason ?? failure('Media encoding or validation failed.'));
+      else resolve();
+      void reader.cancel().catch(() => {});
     });
   });
+  void exited.catch(() => {});
+  child.stdout.on('data', (data: Buffer) => {
+    try {
+      output += data.toString();
+      if (onLine) {
+        let newline: number;
+        while ((newline = output.indexOf('\n')) >= 0) { if (newline > 64 * 1024) throw failure('Media validation line limit exceeded.'); onLine(output.slice(0, newline)); output = output.slice(newline + 1); }
+      }
+      if (output.length > 64 * 1024) throw failure('Media validation output limit exceeded.');
+    } catch (error) { stop(error); }
+  });
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  const timeout = setTimeout(abort, 60_000);
+  const pumping = (async () => {
+    try {
+      for (;;) {
+        const result = await reader.read();
+        if (reason) throw reason;
+        if (result.done) { inputDone = true; child.stdin.end(); break; }
+        await new Promise<void>((resolve, reject) => child.stdin.write(result.value, error => error ? reject(error) : resolve()));
+      }
+    } catch (error) { stop(error); throw error; }
+  })();
+  try {
+    await Promise.all([exited, pumping]);
+    if (onLine && output) onLine(output);
+    return output;
+  } finally {
+    child.kill('SIGKILL');
+    await reader.cancel().catch(() => {});
+    await Promise.allSettled([exited, pumping]);
+    reader.releaseLock();
+    signal?.removeEventListener('abort', abort); clearTimeout(timeout);
+  }
+}
+
+async function inspectMedia(file: EncryptedMediaFile, options: CaptureOptions) {
+  let duration = 0;
+  const tracks: Array<Record<string, string>> = [];
+  await run(options.ffprobePath ?? 'ffprobe', ['-v', 'error', '-show_packets', '-show_streams', '-show_entries', 'packet=pts_time,duration_time:stream=codec_type,codec_name,sample_rate,channels,width,height', '-of', 'compact=p=1:nk=0', 'pipe:0'], () => file.openStream(), options.signal, line => {
+    const [kind, ...fields] = line.split('|');
+    const values = Object.fromEntries(fields.map(field => { const index = field.indexOf('='); return [field.slice(0, index), field.slice(index + 1)]; }));
+    if (kind === 'packet') {
+      const timestamp = Number(values.pts_time), span = Number(values.duration_time);
+      if (!Number.isFinite(timestamp) || !Number.isFinite(span) || span < 0) throw failure('Encoded packet has no valid presentation duration.');
+      duration = Math.max(duration, (timestamp + span) * 1000);
+    } else if (kind === 'stream') {
+      if (tracks.length >= 16) throw failure('Encoded recording has too many tracks.');
+      tracks.push(values);
+    }
+  });
+  return { duration, tracks };
 }
 
 export async function captureToFile(stream: ReadableStream<AudioChunk>, options: CaptureOptions): Promise<CaptureArtifact> {
@@ -69,6 +121,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
   const maxChunk = options.maxChunkBytes ?? 64 * 1024 * 1024;
   const captureMs = options.maxCaptureMs ?? 4 * 60 * 60 * 1000;
   let directory: string | undefined;
+  let encrypted: EncryptedMediaFile | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let total = 0;
   let keepArtifact = false;
@@ -121,7 +174,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     if (first.some(frame => frame.done)) throw failure('Captured recording stream was empty.');
     const audioFrame = first[0].value as AudioChunk;
     const videoFrame = first[1]?.value as VideoChunk | undefined;
-    const output = join(directory, options.recordingFormat === 'mp4' ? 'recording.mp4' : 'recording.wav');
+    const output = join(directory, 'recording.enc');
     const a = firstAudio!;
     const args = ['-nostdin', '-v', 'error', '-xerror', '-y', '-protocol_whitelist', 'file,pipe', '-thread_queue_size', '4', '-analyzeduration', '1', '-probesize', '32', '-f', a.encoding === 'pcm_s16le' ? 's16le' : a.encoding === 'webm' ? 'matroska' : 'ogg'];
     if (a.encoding === 'pcm_s16le') args.push('-ar', String(a.sampleRate), '-ac', String(a.channels));
@@ -134,7 +187,8 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
       args.push('-itsoffset', String(Math.max(0, offset) / 1000), '-thread_queue_size', '4', '-analyzeduration', '1', '-probesize', '32', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', `${firstVideo.width}x${firstVideo.height}`, '-framerate', String(firstVideo.frameRate), '-i', 'pipe:4', '-map', '0:a:0', '-map', '1:v:0', '-c:a', 'aac', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-threads', '2', '-bf', '0', '-g', '60', '-pix_fmt', 'yuv420p', '-movflags', 'frag_keyframe+empty_moov', '-frag_duration', '1000000', '-max_interleave_delta', '1000000');
     } else args.push('-map', '0:a:0', '-c:a', 'pcm_s16le');
     args.push('-f', firstVideo ? 'mp4' : 'wav', 'pipe:1');
-    const file = await open(output, 'wx', 0o600);
+    const file = await EncryptedMediaFile.create(output);
+    encrypted = file;
     const child = spawn(options.ffmpegPath ?? 'ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore', 'pipe', ...(video ? ['pipe' as const] : [])] });
     killEncoder = () => { child.kill('SIGKILL'); };
     let completedPumps = 0;
@@ -173,7 +227,7 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
       for await (const chunk of child.stdout!) {
         outputSize += chunk.length;
         if (outputSize > maxOutput) throw failure('Capture output byte limit exceeded.');
-        await file.writeFile(chunk);
+        await file.append(chunk);
       }
     })());
     try {
@@ -186,59 +240,49 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     } finally {
       killEncoder();
       await Promise.allSettled([...pumps, outputTask, exited]);
-      await file.close();
       killEncoder = () => {};
     }
     if (timer) clearTimeout(timer);
+    await file.finish();
     if (!firstVideo) {
-      // Patch unknown pipe RIFF/data sizes with bounded header reads, not readFile.
-      const wav = await open(output, 'r+');
-      try {
-        const header = Buffer.alloc(8);
-        header.writeUInt32LE(outputSize - 8, 0);
-        await wav.write(header.subarray(0, 4), 0, 4, 4);
-        let offset = 12;
-        let patched = false;
-        while (offset + 8 <= Math.min(outputSize, 64 * 1024)) {
-          await wav.read(header, 0, 8, offset);
-          const size = header.readUInt32LE(4);
-          if (header.toString('ascii', 0, 4) === 'data') {
-            header.writeUInt32LE(outputSize - offset - 8, 4);
-            await wav.write(header.subarray(4), 0, 4, offset + 4); patched = true; break;
-          }
-          offset += 8 + size + size % 2;
+      // Patch unknown pipe RIFF/data sizes using authenticated bounded reads in memory.
+      const header = Buffer.alloc(4);
+      header.writeUInt32LE(outputSize - 8);
+      await file.patch(4, header);
+      let offset = 12;
+      let patched = false;
+      while (offset + 8 <= Math.min(outputSize, 64 * 1024)) {
+        const chunk = await file.read(offset, 8);
+        const size = chunk.readUInt32LE(4);
+        if (chunk.toString('ascii', 0, 4) === 'data') {
+          header.writeUInt32LE(outputSize - offset - 8);
+          await file.patch(offset + 4, header); patched = true; break;
         }
-        if (!patched) throw failure('Invalid WAV encoder header.');
-      } finally { await wav.close(); }
+        offset += 8 + size + size % 2;
+      }
+      if (!patched) throw failure('Invalid WAV encoder header.');
     }
-    const info = await stat(output);
-    if (!info.size || info.size > maxOutput) throw failure('Capture output byte limit exceeded.');
-    const probe = JSON.parse(await run(options.ffprobePath ?? 'ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', output], options.signal));
-    const duration = Number(probe.format?.duration) * 1000;
-    const audioTrack = probe.streams?.find((s: { codec_type: string }) => s.codec_type === 'audio');
-    const videoTrack = probe.streams?.find((s: { codec_type: string }) => s.codec_type === 'video');
-    if (!Number.isFinite(duration) || duration <= 0 || !audioTrack || (firstVideo && !videoTrack)) throw failure('Encoded recording failed media validation.');
-    // Decode all packets, not just the container header, before accepting a recording.
-    await run(options.ffmpegPath ?? 'ffmpeg', ['-nostdin', '-v', 'error', '-xerror', '-i', output, '-f', 'null', '-'], options.signal);
+    if (!file.size || file.size > maxOutput) throw failure('Capture output byte limit exceeded.');
+    const { duration, tracks } = await inspectMedia(file, options);
+    if (!Number.isFinite(duration) || duration <= 0 || !tracks.some(track => track.codec_type === 'audio') || (firstVideo && !tracks.some(track => track.codec_type === 'video'))) throw failure('Encoded recording failed media validation.');
+    // Full decode receives authenticated plaintext over a pipe, never a plaintext file.
+    await run(options.ffmpegPath ?? 'ffmpeg', ['-nostdin', '-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-'], () => file.openStream(), options.signal);
     if (options.signal?.aborted) throw failure('Capture was canceled.');
     keepArtifact = true;
     const ownedDirectory = directory;
     let disposed = false;
-    const readers = new Set<ReturnType<typeof createReadStream>>();
     let disposing: Promise<void> | undefined;
     return {
-      format: firstVideo ? 'mp4' : 'wav', duration, size: info.size,
+      format: firstVideo ? 'mp4' : 'wav', duration, size: file.size,
       openStream() {
         if (disposed) throw failure('Capture artifact has been disposed.');
-        const file = createReadStream(output, { highWaterMark: 64 * 1024 });
-        readers.add(file); file.once('close', () => readers.delete(file));
-        return Readable.toWeb(file) as ReadableStream<Uint8Array>;
+        return file.openStream();
       },
       dispose() {
         if (!disposing) {
           disposed = true;
           disposing = (async () => {
-            await Promise.all([...readers].map(file => new Promise<void>(resolve => { file.once('close', resolve); file.destroy(); })));
+            await file.dispose();
             await rm(ownedDirectory!, { recursive: true, force: true });
           })();
         }
@@ -251,7 +295,9 @@ export async function captureToFile(stream: ReadableStream<AudioChunk>, options:
     cancel();
     audio.releaseLock();
     video?.releaseLock();
-    if (directory && !keepArtifact) await rm(directory, { recursive: true, force: true });
+    if (!keepArtifact) {
+      try { await encrypted?.dispose(); } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+    }
   }
 }
 /** Compatibility API: explicit bounded final buffer; workers use captureToFile. */

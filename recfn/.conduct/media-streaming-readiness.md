@@ -1,6 +1,8 @@
 # Streaming meeting media — 2026-10-22
 
 This supersedes the raw-spool limitation in `media-finalization-readiness.md`.
+The encrypted-scratch successor is documented in `encrypted-capture-readiness.md`;
+the measurements below describe the earlier checkpoint.
 Original REC-001/REC-003 still require provider-backed recordings and practical
 meeting-duration acceptance. The preceding valid-media checkpoint could hold
 only about 1.4 seconds of 1080p RGB frames. Increasing that raw spool limit would
