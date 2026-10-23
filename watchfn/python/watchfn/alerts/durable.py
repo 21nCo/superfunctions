@@ -43,12 +43,15 @@ class DurableAlertManager:
     def _where(self, identifier=None):
         return [WhereClause(field='namespace', value=self.namespace)] + ([WhereClause(field='id', value=identifier)] if identifier else [])
 
-    def _run(self, action):
+    def _run(self, action, *, mutating=False):
         async def transaction(tx):
             if not callable(getattr(tx, 'update_many', None)):
                 raise RuntimeError('Durable alerts require atomic transaction.update_many')
             return await action(tx)
         try:
+            if mutating:
+                from .dispatch import Dispatcher
+                return self.storage.run_operation(lambda: Dispatcher(self).transaction(action))
             return self.storage.run_transaction(transaction)
         except AdapterError:
             # Shared adapter errors can include SQL parameters/credential-bearing JSON.
@@ -141,7 +144,7 @@ class DurableAlertManager:
         value = deepcopy(record)
         from importlib.util import find_spec
         http_available = find_spec('httpx') is not None
-        value['channels'] = [{'type': item['type'], 'configured': http_available and item['type'] in ('webhook', 'slack', 'pagerduty')} for item in value['channels']]
+        value['channels'] = [{'type': item['type'], 'configured': (self.delivery.email is not None if item['type'] == 'email' else http_available and item['type'] in ('webhook', 'slack', 'pagerduty'))} for item in value['channels']]
         value.pop('pagerDuty', None)
         return value
 
@@ -166,7 +169,7 @@ class DurableAlertManager:
             record = dict(definition, id=identifier, enabled=definition.get('enabled', True), state='normal', createdAt=now, updatedAt=now, notes=[], pendingNotifications=0)
             await tx.create(CreateParams(model=ALERTS, data={'id': identifier, 'namespace': self.namespace, 'state': 'normal', 'revision': 0, 'payload': encode(record)}))
             return self._public(record)
-        return self._run(action)
+        return self._run(action, mutating=True)
 
     def register(self, alert):
         if not isinstance(alert, Alert) or not text(alert.id, 128): raise ValueError('Invalid legacy alert')
@@ -249,7 +252,7 @@ class DurableAlertManager:
             for job in jobs:
                 await tx.create(CreateParams(model=OUTBOX, data=job))
             return record
-        return self._run(action)
+        return self._run(action, mutating=True)
 
     def update(self, identifier, definition):
         definition = self._definition(definition)

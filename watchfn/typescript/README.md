@@ -119,8 +119,9 @@ retention cleanup. See [native query acceptance and remaining limits](../.conduc
 with the shared database adapter. Migrate the exported `getAlertSchema()` tables
 before use. Run `await watch.alerts.evaluate()` and
 `await watch.alerts.processNotifications()` from your host scheduler; both accept
-bounded pages and participate in shutdown draining. Configure `alerts.emailSender`
-or `alerts.pagerDutySender` for those channels, including after restart. Webhook
+bounded pages and participate in shutdown draining. Email currently requires
+`alerts.emailSender`, including after restart. PagerDuty has a built-in Events v2
+client; `alerts.pagerDutySender` remains a legacy host-owned override. Webhook
 and Slack destinations supplied at creation are retained in the database; public
 alert results hide their credentials. Memory storage remains process-local.
 
@@ -132,7 +133,8 @@ Alert definition updates replace optional metadata and recovery policy; omitted
 during its observation scan and must be retried with fresh observations. Missing
 database or unsupported hybrid alert storage fails explicitly. Sender completion
 after its deadline or lease expiry does not acknowledge delivery; providers should
-deduplicate by notification ID because retry outcomes can remain uncertain.
+deduplicate by notification ID where supported. Unknown provider outcomes, expired
+leases, and failed receipt commits are never permission for automatic replay.
 
 ### Separate HTTP credentials by operation
 
@@ -184,11 +186,70 @@ unfiltered global exact-name precedence is unchanged.
 ### Alert dispatcher ownership migration
 
 Migrate all tables returned by `getAlertSchema()`, including
-`watchfn_alert_runtime`, before calling alert dispatch or dismissal. Stop older
-workers first: pre-marker releases cannot enforce ownership. The first current
-runtime atomically claims the Watch namespace as `ts-v1` or `python-v1`; a different
-protocol fails before sending or dismissing an obligation. Multiple workers of the
-same protocol are supported. Do not delete/change the marker while jobs or receipts
-remain. Python's parked unknown-outcome receipts use a different reconciliation
-contract and must not be processed by the TypeScript dispatcher. This boundary is
-not tenant authorization and does not change TypeScript provider retry semantics.
+`watchfn_alert_runtime`, before lifecycle or delivery operations. Stop and drain
+all older writers first: historical releases cannot enforce the current ownership
+rules. Current TS mutation/dispatch owns `ts-v2`, while Python owns `python-v1`;
+each rejects the other protocol before mutation or sending. Read-only inspection
+remains available. Existing rows without a marker require explicit ownership
+migration; the runtime does not infer ownership from the missing marker.
+
+For a stopped **ts-v1** namespace without unresolved legacy PagerDuty jobs or active
+incidents, call `await watch.alerts.migrateStoppedLegacyNamespace({limit:100})`.
+This trusted host operation reads at most `limit+1` alerts and jobs (limit1..1000)
+and rejects overflow, unexpected receipts, or legacy PagerDuty obligations before
+changing state. In one shared transaction it parks attempted non-PD jobs unknown,
+retains pending counts, and conditionally advances the exact marker. It never sends
+notifications or fabricates incident identifiers. Larger namespaces and legacy PD
+obligations require explicit offline migration; this API does not silently remove
+them. No migration is safe while old writers or provider operations remain active.
+
+### Built-in PagerDuty Events v2
+
+The specification's `type:'pagerduty'`, `integrationKey`, and optional channel
+`severity` work without a sender callback. The host may configure a trusted
+`alerts.pagerDutyEndpoint`; it defaults to PagerDuty's official HTTPS endpoint.
+Keep routing keys in trusted definitions and protect database payloads at rest.
+Public lists/notifications expose metadata; successful or reconciled receipts
+remove routing credentials. No hosted provider is contacted during local tests.
+
+Each triggered incident persists an episode and stable dedup key. Acknowledgement
+and resolution wait for a retained delivered predecessor on the same route. A new
+incident waits for the prior resolution, then uses a different dedup key. Routes
+cannot change while an incident or unresolved route obligation remains. Missing
+legacy episode metadata fails before claim. Channel severity overrides alert
+severity. The bounded client accepts only a202 JSON success response with the
+expected dedup key; this proves API acceptance, not human notification.
+
+`notifications()` now retains delivered/dismissed receipts and exposes `outcome`.
+Unknown/rejected deliveries remain counted against the pending cap. Reconcile
+only after independent verification:
+
+```typescript
+await watch.alerts.reconcileNotification(jobId, {
+  outcome: 'delivered', // or 'dismissed'; dismissal does not unblock a PD successor
+  actor: 'operator',
+  reason: 'Provider acceptance independently verified',
+});
+```
+
+`dismissNotification(id)` remains an explicit legacy dismissal wrapper. Delivered
+reconciliation can unblock a predecessor chain; dismissal cannot assert provider
+acceptance. Terminal receipts currently have no automatic TTL. Receipt pruning is
+separate work and must preserve route tails and every unresolved obligation.
+
+Dispatch pages use `after`/`nextCursor`. Traverse all pages and start a new scan to
+avoid starving jobs behind missing senders or blocked predecessors. Slack retries
+only a validated429 Retry-After rejection; transport failures, callback errors,
+5xx responses and expired leases park unknown without replay. Legacy callbacks
+must settle and honor AbortSignal; arbitrary callbacks cannot provide a hard
+shutdown deadline or built-in Events v2 response validation.
+
+Shared Kysely SQLite body contention can retry a DB-only transaction at most three
+times with a50ms monotonic retry scheduling budget and short jitter. The exact
+callback sentinel must propagate only after rollback; COMMIT-stage, rollback,
+unrecognized and exhausted failures remain visible. This budget does **not** bound
+individual database lock waits or rollback duration. Provider I/O and listeners
+remain outside retried transaction closures. The shared memory adapter's existing
+serialization is retained, without a second queue in WatchFn.
+
+See [TS durable PagerDuty acceptance](../.conduct/ts-pagerduty-readiness.md).

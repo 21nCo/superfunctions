@@ -98,15 +98,6 @@ def test_real_ses_acceptance_reopen_two_workers_and_private_config(database, end
     watch.stop(); engine.dispose()
     first_engine, first = open_watch(path, alerts=config)
     second_engine, second = open_watch(path, alerts=config)
-    from superfunctions_sqlalchemy.adapter import SQLAlchemyTransactionAdapter
-    find_one = SQLAlchemyTransactionAdapter.find_one
-    barrier = threading.Barrier(2)
-    async def simultaneous_first_read(self, params):
-        row = await find_one(self, params)
-        if params.model == 'watchfn_alert_runtime' and row is None:
-            barrier.wait(timeout=3)
-        return row
-    monkeypatch.setattr(SQLAlchemyTransactionAdapter, 'find_one', simultaneous_first_read)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda w: w.alerts.process_notifications(), [first, second]))
@@ -251,11 +242,10 @@ def test_marker_failure_does_not_admit_email(database, endpoint, monkeypatch, ki
         return await create(self, params)
     monkeypatch.setattr(SQLAlchemyTransactionAdapter, 'create', failed_marker)
     path, engine, watch, config = database
-    identifier = watch.alerts.create(rule())['id']; watch.alerts.trigger(identifier)
     with pytest.raises(RuntimeError, match='ownership could not be verified|storage operation failed'):
-        watch.alerts.process_notifications()
+        watch.alerts.create(rule())
     assert not endpoint[1]['requests']
-    assert watch.alerts.notifications()[0]['attempts'] == 0
+    assert watch.alerts.notifications() == []
 
 
 @pytest.mark.parametrize('email', [
@@ -277,3 +267,40 @@ def test_provider_capability_is_required_before_dispatch_configuration(endpoint,
     with pytest.raises(ValueError, match='operation-ownership prerequisite'):
         AlertDeliveryConfig(email={'fromEmail': 'sender@example.com', 'awsSes': endpoint[0].model_dump()})
     assert not endpoint[1]['requests']
+
+
+def test_concurrent_empty_namespace_claim_then_lifecycle(database, monkeypatch):
+    path, engine, watch, config = database
+    other_engine, other = open_watch(path, alerts=config)
+    from superfunctions_sqlalchemy.adapter import SQLAlchemyTransactionAdapter
+    find_one = SQLAlchemyTransactionAdapter.find_one
+    barrier = threading.Barrier(2)
+    async def simultaneous_first_read(self, params):
+        row = await find_one(self, params)
+        if params.model == 'watchfn_alert_runtime' and row is None:
+            barrier.wait(timeout=3)
+        return row
+    monkeypatch.setattr(SQLAlchemyTransactionAdapter, 'find_one', simultaneous_first_read)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda w: w.alerts.process_notifications(), [watch, other]))
+        identifier = watch.alerts.create(rule())['id']
+        assert other.alerts.get_record(identifier)['state'] == 'normal'
+    finally: other.stop(); other_engine.dispose()
+
+
+def test_ses_projection_and_delivery_do_not_require_httpx(database, endpoint, monkeypatch):
+    import builtins
+    import importlib.util
+    original_spec, original_import = importlib.util.find_spec, builtins.__import__
+    monkeypatch.setattr(importlib.util, 'find_spec', lambda name, *args: None if name == 'httpx' else original_spec(name, *args))
+    def no_httpx(name, *args, **kwargs):
+        if name == 'httpx': raise ImportError('owned absent optional HTTP client')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', no_httpx)
+    path, engine, watch, config = database
+    alert = watch.alerts.create(rule())
+    assert alert['channels'] == [{'type': 'email', 'configured': True}]
+    watch.alerts.trigger(alert['id']); watch.alerts.process_notifications()
+    assert watch.alerts.get_record(alert['id'])['pendingNotifications'] == 0
+    assert len(endpoint[1]['requests']) == 1

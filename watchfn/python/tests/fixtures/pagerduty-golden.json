@@ -1,0 +1,104 @@
+[
+  {
+    "namespace": "owned-東京",
+    "notification": {
+      "id": "owned-triggered",
+      "event": "triggered",
+      "timestamp": 1,
+      "alert": {
+        "id": "owned-alert",
+        "name": "slow",
+        "severity": "warning",
+        "description": "",
+        "state": "triggered"
+      }
+    },
+    "channel": {
+      "type": "pagerduty",
+      "integrationKey": "owned-route",
+      "severity": "critical"
+    },
+    "metadata": {
+      "episode": "owned-episode",
+      "route": "cb893bbedd7995c8cc10c939e668820cf7ce4372e1233699de16ff91500394e2",
+      "predecessor": null,
+      "predecessorEpisode": null
+    },
+    "expected": {
+      "routing_key": "owned-route",
+      "event_action": "trigger",
+      "dedup_key": "watchfn:8a317f3353dc01c649fac9ea0f13ae73d1f0a3a01d50857430ac18c31e043e5e",
+      "payload": {
+        "summary": "slow",
+        "source": "owned-東京",
+        "severity": "critical",
+        "custom_details": {
+          "alertId": "owned-alert",
+          "description": ""
+        }
+      }
+    }
+  },
+  {
+    "namespace": "owned-東京",
+    "notification": {
+      "id": "owned-acknowledged",
+      "event": "acknowledged",
+      "timestamp": 1,
+      "alert": {
+        "id": "owned-alert",
+        "name": "slow",
+        "severity": "warning",
+        "description": "",
+        "state": "triggered"
+      }
+    },
+    "channel": {
+      "type": "pagerduty",
+      "integrationKey": "owned-route",
+      "severity": "critical"
+    },
+    "metadata": {
+      "episode": "owned-episode",
+      "route": "cb893bbedd7995c8cc10c939e668820cf7ce4372e1233699de16ff91500394e2",
+      "predecessor": null,
+      "predecessorEpisode": null
+    },
+    "expected": {
+      "routing_key": "owned-route",
+      "event_action": "acknowledge",
+      "dedup_key": "watchfn:8a317f3353dc01c649fac9ea0f13ae73d1f0a3a01d50857430ac18c31e043e5e"
+    }
+  },
+  {
+    "namespace": "owned-東京",
+    "notification": {
+      "id": "owned-resolved",
+      "event": "resolved",
+      "timestamp": 1,
+      "alert": {
+        "id": "owned-alert",
+        "name": "slow",
+        "severity": "warning",
+        "description": "",
+        "state": "triggered"
+      }
+    },
+    "channel": {
+      "type": "pagerduty",
+      "integrationKey": "owned-route",
+      "severity": "critical"
+    },
+    "metadata": {
+      "episode": "owned-episode",
+      "route": "cb893bbedd7995c8cc10c939e668820cf7ce4372e1233699de16ff91500394e2",
+      "predecessor": null,
+      "predecessorEpisode": null
+    },
+    "expected": {
+      "routing_key": "owned-route",
+      "event_action": "resolve",
+      "dedup_key": "watchfn:8a317f3353dc01c649fac9ea0f13ae73d1f0a3a01d50857430ac18c31e043e5e"
+    }
+  }
+]

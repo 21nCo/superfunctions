@@ -213,7 +213,7 @@ def test_foreign_protocol_blocks_actual_http_job_before_claim(database, endpoint
     url, state = endpoint
     identifier = enqueue(watch, url)
     with engine.begin() as connection:
-        connection.execute(tables['watchfn_alert_runtime'].insert().values(id='database', protocol='ts-v1'))
+        connection.execute(tables['watchfn_alert_runtime'].update().values(protocol='ts-v2'))
     with pytest.raises(RuntimeError, match='incompatible'): watch.alerts.process_notifications()
     assert not state['requests']
     assert watch.alerts.notifications()[0]['attempts'] == 0
@@ -253,3 +253,16 @@ def test_provider_success_with_failed_receipt_commit_keeps_lease_and_no_replay(d
         second.alerts.reconcile_notification(item['id'], outcome='delivered', actor='operator', reason='Receipt independently confirmed')
         assert second.alerts.get_record(identifier)['pendingNotifications'] == 0
     finally: second.stop(); second_engine.dispose()
+
+
+def test_foreign_protocol_fences_lifecycle_creation_and_mutation(database):
+    path, engine, watch, tables = database
+    identifier = watch.alerts.create(definition())['id']
+    before = watch.alerts.get_record(identifier)
+    with engine.begin() as connection:
+        connection.execute(tables['watchfn_alert_runtime'].update().values(protocol='ts-v2'))
+    for action in [lambda: watch.alerts.create(definition()), lambda: watch.alerts.trigger(identifier),
+                   lambda: watch.alerts.add_note(identifier, content='note', created_by='operator')]:
+        with pytest.raises(RuntimeError, match='incompatible dispatch protocol'): action()
+    assert watch.alerts.get_record(identifier) == before
+    assert watch.alerts.notifications() == []

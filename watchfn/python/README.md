@@ -469,3 +469,11 @@ errors remain fail-closed.
 Stop older Python dispatch writers before enabling email: the existing python-v1
 namespace marker separates runtimes, not releases. Terminal receipt retention,
 TS built-in provider parity, and the rest of full readiness remain separate work.
+
+
+Current Python durable lifecycle writers also verify the immutable python-v1
+namespace marker before definitions or state/outbox mutation. TS-v2 ownership or
+existing rows without any marker fail closed; read-only inspection remains
+available for migration. Stop older writers before enabling these checks.
+SES configured status and delivery require validated SendFn/boto capabilities,
+not the optional httpx client used by Slack/webhook/PagerDuty.

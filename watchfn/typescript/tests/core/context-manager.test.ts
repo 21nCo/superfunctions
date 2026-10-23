@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ContextManager, Context } from "../../src/core/context-manager";
 
 describe("ContextManager", () => {
@@ -78,12 +78,18 @@ describe("ContextManager", () => {
 
   describe("elapsed time", () => {
     it("should track elapsed time", async () => {
-      await contextManager.run({ requestId: "test" }, async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        const elapsed = contextManager.getElapsedTime();
-        expect(elapsed).toBeGreaterThanOrEqual(100);
-      });
+      const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+      try {
+        await contextManager.run({ requestId: "test" }, async () => {
+          expect(contextManager.getElapsedTime()).toBe(0);
+          await Promise.resolve();
+          now.mockReturnValue(1099);
+          expect(contextManager.getElapsedTime()).toBe(99);
+          now.mockReturnValue(1100);
+          expect(contextManager.getElapsedTime()).toBe(100);
+        });
+        expect(contextManager.getElapsedTime()).toBeUndefined();
+      } finally { now.mockRestore(); }
     });
   });
 

@@ -36,6 +36,9 @@ class Dispatcher:
             if row.get('protocol') != PROTOCOL: raise RuntimeError('Alert namespace belongs to an incompatible dispatch protocol')
         else:
             if existing_only: raise RuntimeError('Alert namespace ownership could not be verified')
+            if (await tx.find_one(FindOneParams(model=ALERTS, where=self.manager._where()))
+                    or await tx.find_one(FindOneParams(model=OUTBOX, where=self.manager._where()))):
+                raise RuntimeError('Existing alert rows require explicit namespace ownership migration')
             try:
                 await tx.create(CreateParams(model=RUNTIME, data={'id': self.manager.namespace, 'protocol': PROTOCOL}))
             except DuplicateKeyError:
@@ -130,6 +133,9 @@ class Dispatcher:
             if not isinstance(channel, dict): raise ValueError('Missing pending notification channel')
             if channel.get('type') not in ('slack', 'webhook', 'pagerduty', 'email'): return None
             if channel['type'] == 'email' and self.manager.delivery.email is None: return None
+            if channel['type'] != 'email':
+                try: import httpx  # noqa: F401
+                except ImportError: raise RuntimeError('Install watchfn[dispatch] before HTTP notification dispatch') from None
             # Revalidate stored routing before any claim/request; credentials stay private.
             self.manager._definition({'name': 'dispatch', 'condition': {'metric': 'dispatch', 'window': '1m', 'operator': 'gt', 'threshold': 0}, 'channels': [channel]})
             if channel['type'] == 'email':
@@ -209,8 +215,6 @@ class Dispatcher:
         return True
 
     def process(self):
-        try: import httpx  # noqa: F401
-        except ImportError: raise RuntimeError('Install watchfn[dispatch] before notification dispatch') from None
         async def operation():
             async def select(tx):
                 return await tx.find_many(FindManyParams(model=OUTBOX, where=self.manager._where() + [WhereClause(field='state', operator='in', value=['pending', 'sending']), WhereClause(field='availableAt', operator='lte', value=clock())] + ([WhereClause(field='id', operator='gt', value=self.after)] if self.after else []), order_by=[OrderBy(field='id')], limit=self.limit))

@@ -78,17 +78,17 @@ it('errors on observation overflow without changing lifecycle or emitting jobs',
   await expect(watch.alerts.evaluate()).rejects.toThrow('capacity');
   expect((await watch.alerts.get(alert.id)).state).toBe('normal');
 });
-it('rejects unconfigured email and PagerDuty instead of claiming delivery', async () => {
+it('rejects unconfigured email and accepts built-in PagerDuty configuration', async () => {
   const { watch } = await setup();
   expect(() => watch.alerts.create({ name: 'email', condition: rule, channels: [{ type: 'email', recipients: ['team@example.test'] }] })).toThrow('configured sender');
-  expect(() => watch.alerts.create({ name: 'pager', condition: rule, channels: [{ type: 'pagerduty', integrationKey: 'secret' }] })).toThrow('configured sender');
+  expect((await watch.alerts.create({ name: 'pager', condition: rule, channels: [{ type: 'pagerduty', integrationKey: 'secret', severity: 'critical' }] })).channels).toEqual([{ type: 'pagerduty', configured: true }]);
 });
 it('claims each persisted job once across concurrent managers', async () => {
   const { watch, create } = await setup(); const target = await endpoint();
   const alert = await watch.alerts.create({ name: 'concurrent', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
   await watch.alerts.trigger(alert.id);
   const second = create(); await Promise.all([watch.alerts.processNotifications(), second.alerts.processNotifications()]);
-  expect(target.received).toHaveLength(1); expect(await watch.alerts.notifications()).toEqual([]);
+  expect(target.received).toHaveLength(1); expect(await watch.alerts.notifications()).toMatchObject([{ outcome: 'delivered' }]);
   expect((await second.alerts.get(alert.id)).pendingNotifications).toBe(0);
 });
 it('stop waits for admitted dispatch and rejects new evaluation', async () => {
@@ -174,7 +174,7 @@ it('does not treat a sender returning after its deadline as a successful deliver
   expect(await watch.alerts.notifications()).toMatchObject([{ state: 'dead', attempts: 1 }]);
   expect(await watch.alerts.get(alert.id)).not.toHaveProperty('lastNotification');
 });
-it('fences a previous sender after another manager reclaims an expired notification lease', async () => {
+it('parks an expired claim without replay and fences the original sender', async () => {
   const deliveries: { id: string; release: () => void }[] = [];
   const { watch, create } = await setup({ timeoutMs: 10000, leaseMs: 10100, maxAttempts: 2, emailSender: async (notification: { id: string }) => {
     await new Promise<void>(resolve => deliveries.push({ id: notification.id, release: resolve }));
@@ -182,22 +182,22 @@ it('fences a previous sender after another manager reclaims an expired notificat
   const alert = await watch.alerts.create({ name: 'lease ownership', condition: rule, channels: [{ type: 'email', recipients: ['test@example.test'] }] });
   await watch.alerts.trigger(alert.id);
   const first = watch.alerts.processNotifications();
-  let second: Promise<unknown> | undefined, clock: ReturnType<typeof vi.spyOn> | undefined;
+  let clock: ReturnType<typeof vi.spyOn> | undefined;
   try {
     await vi.waitFor(() => expect(deliveries).toHaveLength(1));
     clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10101);
-    const reopened = create(); second = reopened.alerts.processNotifications();
-    await vi.waitFor(() => expect(deliveries).toHaveLength(2));
-    expect(deliveries[1].id).toBe(deliveries[0].id);
+    const reopened = create(); expect(await reopened.alerts.processNotifications()).toEqual({ processed: 0, nextCursor: null });
+    expect(deliveries).toHaveLength(1);
     deliveries[0].release(); await first;
-    expect(await reopened.alerts.notifications()).toMatchObject([{ state: 'sending', attempts: 2 }]);
-    expect(await watch.alerts.processNotifications()).toEqual({ processed: 0 });
-    deliveries[1].release(); await second;
-    expect(await reopened.alerts.notifications()).toEqual([]);
+    const [job] = await reopened.alerts.notifications();
+    expect(job).toMatchObject({ state: 'dead', attempts: 1, outcome: 'unknown' });
+    expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(1);
+    await reopened.alerts.reconcileNotification(job.id, { outcome: 'delivered', actor: 'operator', reason: 'Independent acceptance verification' });
     expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(0);
+    expect(deliveries).toHaveLength(1);
   } finally {
     for (const delivery of deliveries) delivery.release();
-    await Promise.allSettled([first, ...(second ? [second] : [])]); clock?.mockRestore();
+    await Promise.allSettled([first]); clock?.mockRestore();
   }
 });
 it('exhausts expired claims durably and never starts another sender beyond maxAttempts', async () => {
@@ -211,7 +211,7 @@ it('exhausts expired claims durably and never starts another sender beyond maxAt
   try {
     await vi.waitFor(() => expect(entered).toBe(true));
     clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10101);
-    const reopened = create(); expect(await reopened.alerts.processNotifications()).toEqual({ processed: 0 });
+    const reopened = create(); expect(await reopened.alerts.processNotifications()).toEqual({ processed: 0, nextCursor: null });
     expect(await reopened.alerts.notifications()).toMatchObject([{ state: 'dead', attempts: 1 }]);
     release(); await dispatch;
     const jobs = await reopened.alerts.notifications(); expect(jobs).toMatchObject([{ state: 'dead', attempts: 1 }]);
@@ -252,24 +252,20 @@ it('rejects an empty dead-letter id without deleting an unrelated notification',
   expect(await watch.alerts.notifications()).toEqual(jobs);
   expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(1);
 });
-it('retains lifecycle and retry attempts after all SQLite connections close and reopen', async () => {
+it('retains unknown outcomes after all SQLite connections close without replay', async () => {
   const { watch, create } = await setup({ maxAttempts: 2 }); const target = await endpoint(500);
   const alert = await watch.alerts.create({ name: 'physical reopen', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
   await watch.alerts.trigger(alert.id);
   await watch.alerts.addNote(alert.id, { content: 'Before shutdown', createdBy: 'operator' });
   await watch.alerts.processNotifications();
-  const [pending] = await watch.alerts.notifications(); expect(pending).toMatchObject({ state: 'pending', attempts: 1 });
+  const [pending] = await watch.alerts.notifications(); expect(pending).toMatchObject({ state: 'dead', attempts: 1, outcome: 'unknown' });
   await watch.stop();
   for (const db of databases.splice(0)) await db.destroy();
   const reopened = create();
   expect(await reopened.alerts.notifications()).toEqual([pending]);
   expect(await reopened.alerts.get(alert.id)).toMatchObject({ state: 'triggered', pendingNotifications: 1, notes: [{ content: 'Before shutdown' }] });
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(pending.availableAt + 1);
-  try { await reopened.alerts.processNotifications(); }
-  finally { clock.mockRestore(); }
-  expect(await reopened.alerts.notifications()).toMatchObject([{ id: pending.id, state: 'dead', attempts: 2 }]);
-  expect(target.received).toHaveLength(2);
-  expect(target.received[0].headers['idempotency-key']).toBe(target.received[1].headers['idempotency-key']);
+  await reopened.alerts.processNotifications();
+  expect(target.received).toHaveLength(1);
 });
 
 
@@ -289,7 +285,7 @@ it('rejects foreign dispatch ownership before sending or dismissing obligations'
   const { watch, sql } = await setup(); const target = await endpoint();
   const alert = await watch.alerts.create({ name: 'owned', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
   await watch.alerts.trigger(alert.id);
-  await sql.insertInto('watchfn_alert_runtime').values({ id: 'test', protocol: 'python-v1' }).execute();
+  await sql.updateTable('watchfn_alert_runtime').set({ protocol: 'python-v1' }).execute();
   const jobs = await watch.alerts.notifications();
   await expect(watch.alerts.processNotifications()).rejects.toThrow('incompatible dispatch protocol');
   await expect(watch.alerts.dismissNotification(jobs[0].id)).rejects.toThrow('incompatible dispatch protocol');
@@ -302,5 +298,5 @@ it('converges independent first-owner claims on the same immutable protocol', as
   const { watch, create, sql } = await setup();
   const second = create();
   await Promise.all([watch.alerts.processNotifications(), second.alerts.processNotifications()]);
-  expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toEqual([{ id: 'test', protocol: 'ts-v1' }]);
+  expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toEqual([{ id: 'test', protocol: 'ts-v2' }]);
 });

@@ -148,3 +148,10 @@ def test_provider_configuration_rejects_invalid_severity_duplicates_and_endpoint
     with pytest.raises(ValueError, match='Duplicate'): watch.alerts.create(value)
     for url in ['file:///tmp/not-http', 'https://user:password@example.invalid/api', 'https://example.invalid:bad/api']:
         with pytest.raises(ValueError, match='endpoint'): WatchFn('validation', alerts={'pagerDutyEndpoint': url})
+
+
+def test_shared_pagerduty_wire_vectors():
+    from pathlib import Path
+    from watchfn.alerts.pagerduty import request
+    for value in json.loads((Path(__file__).parent / 'fixtures' / 'pagerduty-golden.json').read_text()):
+        assert request(value['namespace'], value['notification'], value['channel'], value['metadata']) == value['expected']
