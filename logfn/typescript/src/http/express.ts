@@ -5,6 +5,7 @@
 import type { Request, Response, NextFunction } from "express";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
+  correlationResponseHeaders,
   extractCorrelationIds,
   getDefaultRequestLogger,
   createRequestSampler,
@@ -31,6 +32,7 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
 
     // Extract correlation IDs
     const ids = extractCorrelationIds(req.headers, header);
+    for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) res.setHeader(name, value);
 
     // Create child logger with correlation IDs
     let requestLogger = logger

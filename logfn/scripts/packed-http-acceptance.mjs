@@ -26,6 +26,7 @@ router.use(requestLogger({logger:createLogger({name:'middleware',sinks:[batch=>l
 const event={ts:new Date().toISOString(),name:'packed',msg:'ok',level:'info',version:'0'};
 const response=await router.handler(new Request('http://local/api/watch/logs',{method:'POST',body:JSON.stringify({events:[event]})}));
 assert.equal(response.status,202);assert.deepEqual(received,[[event]]);assert.equal(logs.length,2);assert.equal(logs[0].requestId,logs[1].requestId);
+for(const [header,field] of [['x-request-id','requestId'],['x-trace-id','traceId'],['x-span-id','spanId']]) assert.equal(response.headers.get(header),logs[0][field]);
 assert.equal((await router.handler(new Request('http://local/api/watch/logs'))).status,405);
 console.log('packed shared HTTP',process.version);`);
   for (const version of ['18.18.0', '20.19.0', '22']) console.log(npm(['exec', '--yes', `--package=node@${version}`, '--', 'node', 'smoke.mjs']).trim());

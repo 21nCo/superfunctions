@@ -1,7 +1,7 @@
 import type { Middleware } from '@superfunctions/http';
 import type { Logger } from '../core/logger.js';
 import {
-  captureRequestBody, createRequestSampler, extractCorrelationIds,
+  withCorrelationHeaders, captureRequestBody, createRequestSampler, extractCorrelationIds,
   getDefaultRequestLogger, redactHeaders, type RequestLoggerOptions,
 } from './middleware.js';
 
@@ -36,7 +36,7 @@ export function requestLogger<TContext extends LogRequestContext = LogRequestCon
         ...metadata, statusCode: response.status,
         contentLength: response.headers.get('content-length'), latencyMs: Date.now() - started,
       });
-      return response;
+      return withCorrelationHeaders(response, ids);
     } catch (error) {
       if (sampled) logger.info('Request failed', { ...metadata, statusCode: 500, latencyMs: Date.now() - started });
       throw error;

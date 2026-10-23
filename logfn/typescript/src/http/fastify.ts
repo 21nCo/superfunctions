@@ -17,6 +17,7 @@ declare module "fastify" {
   }
 }
 import {
+  correlationResponseHeaders,
   extractCorrelationIds,
   getDefaultRequestLogger,
   createRequestSampler,
@@ -41,12 +42,13 @@ export function requestLogger(
 
   const sampled = new WeakMap<FastifyRequest, boolean>();
   const plugin: FastifyPluginCallback = (fastify, _opts, done) => {
-    fastify.addHook("onRequest", async (request: FastifyRequest) => {
+    fastify.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
       const startTime = Date.now();
       sampled.set(request, shouldSample());
 
       // Extract correlation IDs
       const ids = extractCorrelationIds(request.headers, header);
+      for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) reply.header(name, value);
 
       // Create child logger with correlation IDs
       const requestLogger = logger

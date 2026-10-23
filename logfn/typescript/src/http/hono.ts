@@ -5,6 +5,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
+  withCorrelationHeaders,
   extractCorrelationIds,
   getDefaultRequestLogger,
   createRequestSampler,
@@ -91,6 +92,7 @@ export function requestLogger(
 
     // Process request
     await next();
+    c.res = withCorrelationHeaders(c.res, ids);
 
     // Log response
     const latencyMs = Date.now() - startTime;

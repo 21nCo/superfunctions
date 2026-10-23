@@ -67,7 +67,7 @@ export interface ResponseMetadata {
 export function extractCorrelationIds(
   headers: Record<string, string | string[] | undefined>,
   headerName = "traceparent"
-): { traceId?: string; spanId?: string; requestId?: string } {
+): { traceId: string; spanId: string; requestId: string } {
   const traceparent = headers[headerName.toLowerCase()];
   const traceparentValue = Array.isArray(traceparent)
     ? traceparent[0]
@@ -90,6 +90,24 @@ export function extractCorrelationIds(
     spanId: generateSpanId(),
     requestId: generateRequestId(),
   };
+}
+
+/** Response headers owned by the request logger; never reflect raw input headers. */
+export function correlationResponseHeaders(ids: ReturnType<typeof extractCorrelationIds>): Record<string, string> {
+  return {
+    "x-request-id": ids.requestId,
+    "x-trace-id": ids.traceId,
+    "x-span-id": ids.spanId,
+  };
+}
+
+/** Copy headers without buffering or consuming the response body (including immutable headers). */
+export function withCorrelationHeaders(response: Response, ids: ReturnType<typeof extractCorrelationIds>): Response {
+  // Opaque/error sentinels are not wire HTTP responses and cannot be reconstructed.
+  if (response.status === 0) return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 /**
