@@ -121,6 +121,49 @@ export class IndexedDBStorage<T = any> implements StorageBackend<T> {
     });
   }
 
+  /** Match live entries and commit all removals in one transaction. */
+  async deleteMatching(matches: (key: string) => boolean): Promise<string[]> {
+    return this.transaction<string[]>([], (store, result, guard) => {
+      const expiry = store.indexNames.contains('expiresAt') ? store.index('expiresAt') : undefined;
+      if (expiry?.keyPath === 'metadata.expiresAt' && !expiry.multiEntry) {
+        // Do not clone unrelated payloads just to decide which keys to remove.
+        // Both requests and all deletes share the same readwrite transaction.
+        const keys = store.getAllKeys();
+        keys.onsuccess = guard(() => {
+          const expired = expiry.getAllKeys(IDBKeyRange.upperBound(Date.now()));
+          expired.onsuccess = guard(() => {
+            const expiredKeys = new Set(expired.result);
+            for (const key of expiredKeys) store.delete(key);
+            const deleted: string[] = [];
+            for (const key of keys.result) {
+              if (expiredKeys.has(key)) continue;
+              if (typeof key !== 'string') throw new TypeError('Cache keys must be strings');
+              if (matches(key)) {
+                store.delete(key);
+                deleted.push(key);
+              }
+            }
+            result(deleted);
+          });
+        });
+      } else {
+        // Older/externally provisioned databases may lack the expected index.
+        const request = store.getAll();
+        request.onsuccess = guard(() => {
+          const deleted: string[] = [];
+          for (const entry of request.result as IndexedDBEntry<T>[]) {
+            if (this.expired(entry)) store.delete(entry.key);
+            else if (matches(entry.key)) {
+              store.delete(entry.key);
+              deleted.push(entry.key);
+            }
+          }
+          result(deleted);
+        });
+      }
+    });
+  }
+
   async clear(): Promise<void> {
     return this.transaction(undefined, (store) => { store.clear(); });
   }

@@ -555,6 +555,27 @@ cache size, values, browser storage and runtime; original sub-millisecond target
 are design goals, not measured guarantees. `memoryUsage` is an estimate, not a
 memory quota. Adaptive eviction uses the browser heap sample described above.
 
+### Reproducing browser performance measurements
+
+Build and run `node scripts/benchmark.mjs` from this package with Playwright
+available. `PLAYWRIGHT_MODULE_PATH` can select an existing Playwright installation;
+`BROWSER_EXECUTABLE_PATH` can select an installed browser. The default engine is
+Chromium; `BROWSER_ENGINE` can select another Playwright engine. Only Chromium
+provides the CDP retained-heap measurement used for the numeric-entry fixture.
+Other engines are partial measurements: a zero exit status means their measured
+targets passed, while `memory_measured` and `all_targets_pass` remain false. Do not
+use exit status alone to certify the full V0 benchmark on those engines.
+
+The harness retains the V0 thresholds and 10,000-entry workload, checks returned
+values and counts outside timed samples, reports p50/p95/p99, and exits nonzero
+on a measured threshold failure. It also measures full-capacity memory replacement
+and IndexedDB invalidation of 1,000 matches among 10,000 entries. The owned browser
+is closed after a 180-second workload deadline. `--ref=<commit>` bundles that
+commit's CacheFn source with the same current harness without changing the checkout.
+Source-bundle and harness hashes identify each receipt. Local measurements and
+remaining browser gates are recorded in
+[the performance evidence](../.conduct/indexeddb-pattern-performance-readiness.md).
+
 ## License
 
 MIT
@@ -588,6 +609,18 @@ removed during those operations. Tags are stored on each entry, so updates,
 replacement, expiration, and deletion cannot leave a separate tag index out of
 sync. Tag queries scan entries; choose a bounded cache size appropriate to the
 application. Historical `tags` object stores from older versions are ignored.
+
+With explicit IndexedDB storage, pattern invalidation reads keys and the existing
+expiration index, then removes live matches in one transaction. Namespace filtering
+and expiry cleanup occur inside that transaction. Delete events/statistics and the invalidation event are
+reported only after commit; aborts leave the stored records intact and reject.
+The invalidation count is the number of live matching records actually removed.
+Pending fills are fenced within this CacheFn instance, including when a storage
+failure occurs; this does not cancel the underlying caller's fetch promise.
+Other storage backends retain their existing per-key fallback. Pattern matching
+still scans all keys; it is not a constant-memory API. Older databases without
+the expected expiration index use an entry snapshot in the same transaction,
+without a schema migration. That compatibility path materializes stored payloads.
 
 ### Concurrent cache-aside operations
 

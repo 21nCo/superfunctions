@@ -40,6 +40,9 @@ export interface StorageBackend<T = any> {
    */
   delete(key: string): Promise<boolean>;
 
+  /** Optional atomic live-entry matching/deletion; return removed keys after commit. */
+  deleteMatching?(matches: (key: string) => boolean): Promise<string[]>;
+
   /**
    * Clear all values from storage
    */

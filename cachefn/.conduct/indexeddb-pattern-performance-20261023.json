@@ -1,0 +1,3591 @@
+{
+  "date": "2026-10-23",
+  "baseline": "04d8a77fa",
+  "notes": [
+    "All completed paired attempts retained, including failed intermediate candidates.",
+    "The third transactional-payload candidate was not started: five-minute quiet-window allowance exhausted after its baseline.",
+    "Final stage uses identical harness and source-bundle hashes across each revision. First two pairs ran while other agents deferred heavy checks; a small Python check could overlap. Third baseline overlapped a reported short Python mypy process. No claim of machine-exclusive scheduling.",
+    "Intermediate stages were superseded; only final transactional keys/expiry-index source is retained."
+  ],
+  "stages": [
+    {
+      "name": "public-batch-cursor",
+      "runs": [
+        {
+          "receipt": "cache-paired-baseline-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:14:03.766Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.7249999940395355,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.10000002384185791,
+                "p99_ms": 0.13999998569488525,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.14500001072883606,
+                "p99_ms": 0.20000001788139343,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.08000001311302185,
+                "p95_ms": 0.10500001907348633,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 117.16999998688698,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 123.4050000011921,
+                "p95_ms": 151.70999997854233,
+                "p99_ms": 317.44499999284744,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5699999928474426,
+                "p95_ms": 0.6849999725818634,
+                "p99_ms": 0.7199999988079071,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4724,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-paired-baseline-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:14:35.946Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5550000071525574,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.06000000238418579,
+                "p95_ms": 0.11500000953674316,
+                "p99_ms": 0.14500001072883606,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.0949999988079071,
+                "p95_ms": 0.1550000011920929,
+                "p99_ms": 0.2550000250339508,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.10499998927116394,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 112.58499997854233,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 116.1550000011921,
+                "p95_ms": 159.1850000023842,
+                "p99_ms": 416.40000000596046,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5600000023841858,
+                "p95_ms": 0.6400000154972076,
+                "p99_ms": 0.9050000011920929,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4292,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-paired-baseline-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:15:10.524Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5900000035762787,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.10000002384185791,
+                "p99_ms": 0.13499999046325684,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.14500001072883606,
+                "p99_ms": 0.19500002264976501,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.10999998450279236,
+                "p99_ms": 0.1550000011920929,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 112.93999999761581,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 118.97499999403954,
+                "p95_ms": 162.7699999809265,
+                "p99_ms": 631.794999986887,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.574999988079071,
+                "p95_ms": 0.7400000095367432,
+                "p99_ms": 1.0550000071525574,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4724,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-paired-candidate-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:14:20.199Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "df353f588cd41e5bc5bd5b9dd0ddd11635665485aee6ee620c1efcf78faaf8df",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.554999977350235,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.11499997973442078,
+                "p99_ms": 0.13999998569488525,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11500000953674316,
+                "p95_ms": 0.16500002145767212,
+                "p99_ms": 0.20000001788139343,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.08499997854232788,
+                "p95_ms": 0.125,
+                "p99_ms": 0.1550000011920929,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 134.61999997496605,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 31.240000009536743,
+                "p95_ms": 37.41999998688698,
+                "p99_ms": 68.37000000476837,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5399999916553497,
+                "p95_ms": 0.75,
+                "p99_ms": 0.8900000154972076,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.524,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-paired-candidate-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:14:49.365Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "df353f588cd41e5bc5bd5b9dd0ddd11635665485aee6ee620c1efcf78faaf8df",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.550000011920929,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.11499997973442078,
+                "p99_ms": 0.13499999046325684,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.13500002026557922,
+                "p99_ms": 0.1899999976158142,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.0949999988079071,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 120.1749999821186,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 32.894999980926514,
+                "p95_ms": 41.52999997138977,
+                "p99_ms": 51.78000000119209,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5499999821186066,
+                "p95_ms": 1.1699999868869781,
+                "p99_ms": 1.2150000035762787,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4352,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-paired-candidate-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:15:22.460Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "df353f588cd41e5bc5bd5b9dd0ddd11635665485aee6ee620c1efcf78faaf8df",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.6150000095367432,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.10000002384185791,
+                "p99_ms": 0.1300000250339508,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.14499998092651367,
+                "p99_ms": 0.19499999284744263,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.13500002026557922,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 112.4500000178814,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 29.194999992847443,
+                "p95_ms": 31.810000002384186,
+                "p99_ms": 37.15500000119209,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5649999976158142,
+                "p95_ms": 0.7150000035762787,
+                "p99_ms": 0.7950000166893005,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.3072,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [],
+            "memory_measured": true,
+            "all_targets_pass": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "public-batch-payload-snapshot",
+      "runs": [
+        {
+          "receipt": "cache-final-paired-baseline-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:18:02.362Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.6099999845027924,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.10499998927116394,
+                "p99_ms": 0.1499999761581421,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11500000953674316,
+                "p95_ms": 0.16999998688697815,
+                "p99_ms": 0.22499999403953552,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.13499999046325684,
+                "p99_ms": 0.22499999403953552,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 115.30500000715256,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 119.81000000238419,
+                "p95_ms": 162.83000001311302,
+                "p99_ms": 598.380000025034,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5649999976158142,
+                "p95_ms": 0.6299999952316284,
+                "p99_ms": 0.6450000107288361,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.478,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-final-paired-baseline-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:18:30.669Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5250000059604645,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.125,
+                "p99_ms": 0.1849999725818634,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.18000000715255737,
+                "p99_ms": 0.27000001072883606,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.12000000476837158,
+                "p99_ms": 0.1550000011920929,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 109.27000001072884,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 119.64000001549721,
+                "p95_ms": 162.9699999988079,
+                "p99_ms": 178.55000001192093,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.570000022649765,
+                "p95_ms": 1.0499999821186066,
+                "p99_ms": 1.175000011920929,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.5408,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-final-paired-baseline-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:19:02.374Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5349999964237213,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.11500000953674316,
+                "p99_ms": 0.18000000715255737,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.08500000834465027,
+                "p95_ms": 0.12000000476837158,
+                "p99_ms": 0.1850000023841858,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.06999999284744263,
+                "p95_ms": 0.12000000476837158,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 109.8449999988079,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 115.70500001311302,
+                "p95_ms": 157.98500001430511,
+                "p99_ms": 619.2800000011921,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5550000071525574,
+                "p95_ms": 0.9650000035762787,
+                "p99_ms": 1.5999999940395355,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4876,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-final-paired-candidate-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:18:14.289Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "586a62aa6661225449bf1da0314c329916b3ad261299edbc45b2cde0d9dd01f1",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5300000011920929,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.0949999988079071,
+                "p99_ms": 0.1300000250339508,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.1550000011920929,
+                "p99_ms": 0.21000000834465027,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09000000357627869,
+                "p99_ms": 0.12000000476837158,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 114.06000000238419,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 28.87999999523163,
+                "p95_ms": 42.14999997615814,
+                "p99_ms": 57.11999997496605,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5449999868869781,
+                "p95_ms": 0.7449999749660492,
+                "p99_ms": 1.3700000047683716,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4352,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-final-paired-candidate-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:18:42.539Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "586a62aa6661225449bf1da0314c329916b3ad261299edbc45b2cde0d9dd01f1",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.6050000190734863,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.14499998092651367,
+                "p99_ms": 0.2849999964237213,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10499998927116394,
+                "p95_ms": 0.18000000715255737,
+                "p99_ms": 0.32999998331069946,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.10499998927116394,
+                "p99_ms": 0.13500002026557922,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 115.04499998688698,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 28.169999986886978,
+                "p95_ms": 33.21000000834465,
+                "p99_ms": 51.60999998450279,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5300000011920929,
+                "p95_ms": 0.6899999976158142,
+                "p99_ms": 0.75,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4352,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-final-paired-candidate-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:19:15.327Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "1847f7601fcfdb064683d4378e64462c22682e27f0c9ea6137dae767294828d7",
+            "source_bundle_sha256": "586a62aa6661225449bf1da0314c329916b3ad261299edbc45b2cde0d9dd01f1",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5349999964237213,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.14000001549720764,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.17500001192092896,
+                "p99_ms": 0.30000001192092896,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.08000001311302185,
+                "p95_ms": 0.11000001430511475,
+                "p99_ms": 0.1599999964237213,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 118.08500000834465,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 32.11500000953674,
+                "p95_ms": 41.13499999046326,
+                "p99_ms": 69.68999999761581,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5449999868869781,
+                "p95_ms": 0.6349999904632568,
+                "p99_ms": 0.7699999809265137,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4352,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "transactional-payload-snapshot",
+      "runs": [
+        {
+          "receipt": "cache-transaction-paired-baseline-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:27:08.979Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.6100000143051147,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07000002264976501,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.12999999523162842,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10500001907348633,
+                "p95_ms": 0.125,
+                "p99_ms": 0.1850000023841858,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.16499999165534973,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 115.33500000834465,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 165.65999999642372,
+                "p95_ms": 198.4849999845028,
+                "p99_ms": 205.87000000476837,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 125.93500000238419,
+                "p95_ms": 154.41499999165535,
+                "p99_ms": 173.81999999284744,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5349999964237213,
+                "p95_ms": 0.695000022649765,
+                "p99_ms": 0.9800000190734863,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4288,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-transaction-paired-baseline-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:28:51.501Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5799999833106995,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.125,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11499997973442078,
+                "p95_ms": 0.14500001072883606,
+                "p99_ms": 0.1900000274181366,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.08000001311302185,
+                "p95_ms": 0.11000001430511475,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 118.64500001072884,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 167.68000000715256,
+                "p95_ms": 180.65999999642372,
+                "p99_ms": 181.41999998688698,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 111.63999998569489,
+                "p95_ms": 143.86000001430511,
+                "p99_ms": 163.90999999642372,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.574999988079071,
+                "p95_ms": 0.7400000095367432,
+                "p99_ms": 1.854999989271164,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.5348,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-transaction-paired-baseline-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:30:33.966Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.6550000011920929,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.125,
+                "p99_ms": 0.1599999964237213,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11499997973442078,
+                "p95_ms": 0.16500002145767212,
+                "p99_ms": 0.2199999988079071,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.10999998450279236,
+                "p99_ms": 0.1550000011920929,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 108.2800000011921,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 163.03499999642372,
+                "p95_ms": 220.5199999809265,
+                "p99_ms": 334.5150000154972,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 121.63499999046326,
+                "p95_ms": 142.77500000596046,
+                "p99_ms": 175.76000002026558,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5399999916553497,
+                "p95_ms": 0.6149999797344208,
+                "p99_ms": 0.6450000107288361,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.44,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-transaction-paired-candidate-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:27:54.662Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "39839dac47e77db476b6812ea854905e4f2a830ddc0601d34406603c0294f1b7",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5600000023841858,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.10500001907348633,
+                "p99_ms": 0.14499998092651367,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11500000953674316,
+                "p95_ms": 0.1550000011920929,
+                "p99_ms": 0.2250000238418579,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.08000001311302185,
+                "p95_ms": 0.10500001907348633,
+                "p99_ms": 0.17999997735023499,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 110.84000000357628,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 46.195000022649765,
+                "p95_ms": 49.86500000953674,
+                "p99_ms": 53.50499999523163,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 20.679999977350235,
+                "p95_ms": 23.725000023841858,
+                "p99_ms": 36.2950000166893,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5249999761581421,
+                "p95_ms": 0.7450000047683716,
+                "p99_ms": 0.9350000023841858,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.5264,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-transaction-paired-candidate-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:29:36.903Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "39839dac47e77db476b6812ea854905e4f2a830ddc0601d34406603c0294f1b7",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.625,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.125,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.11000001430511475,
+                "p95_ms": 0.13999998569488525,
+                "p99_ms": 0.20999997854232788,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07999998331069946,
+                "p95_ms": 0.10999998450279236,
+                "p99_ms": 0.1499999761581421,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 118.0300000011921,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 44.99500000476837,
+                "p95_ms": 65.86500000953674,
+                "p99_ms": 305.5150000154972,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 19.55000001192093,
+                "p95_ms": 24.71500000357628,
+                "p99_ms": 29.734999984502792,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5300000011920929,
+                "p95_ms": 0.6699999868869781,
+                "p99_ms": 0.6949999928474426,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4316,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "final-transactional-keys-expiry-index",
+      "runs": [
+        {
+          "receipt": "cache-index-paired-baseline-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:36:13.900Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5850000083446503,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.06999999284744263,
+                "p95_ms": 0.09999999403953552,
+                "p99_ms": 0.13500002026557922,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10500001907348633,
+                "p95_ms": 0.125,
+                "p99_ms": 0.18000000715255737,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.08500000834465027,
+                "p99_ms": 0.13999998569488525,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 102.68000000715256,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 155.8149999976158,
+                "p95_ms": 192.41999998688698,
+                "p99_ms": 327.7450000047684,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 116.4050000011921,
+                "p95_ms": 151.47999998927116,
+                "p99_ms": 164.08500000834465,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5450000166893005,
+                "p95_ms": 0.5900000035762787,
+                "p99_ms": 0.5999999940395355,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4288,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-index-paired-baseline-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:37:23.488Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5150000154972076,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.09000000357627869,
+                "p99_ms": 0.12999999523162842,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10499998927116394,
+                "p95_ms": 0.12999999523162842,
+                "p99_ms": 0.17500001192092896,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.09000000357627869,
+                "p99_ms": 0.13999998569488525,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 101.80499997735023,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 157.1400000154972,
+                "p95_ms": 175.52499997615814,
+                "p99_ms": 194.78499999642372,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 114.03499999642372,
+                "p95_ms": 131.02000001072884,
+                "p99_ms": 146.17500001192093,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5049999952316284,
+                "p95_ms": 0.5600000023841858,
+                "p99_ms": 0.5649999976158142,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4316,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-index-paired-baseline-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:44:10.706Z",
+            "source_ref": "04d8a77fa92faab5f38cd3b08ac07041ef794456",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "78e4fc771c9368be1a3fe8d6f53d918911103a361f38df9acd97bdb8bea42430",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5799999833106995,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.08500000834465027,
+                "p99_ms": 0.11500000953674316,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10500001907348633,
+                "p95_ms": 0.125,
+                "p99_ms": 0.18000000715255737,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07500001788139343,
+                "p95_ms": 0.09000000357627869,
+                "p99_ms": 0.11499997973442078,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 93,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 155.85499998927116,
+                "p95_ms": 188.6550000011921,
+                "p99_ms": 193.86500000953674,
+                "target_ms": 50,
+                "pass": false
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 114.96000000834465,
+                "p95_ms": 150.21500000357628,
+                "p99_ms": 151.15000000596046,
+                "target_ms": 50,
+                "pass": false
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5399999916553497,
+                "p95_ms": 0.625,
+                "p99_ms": 1.2650000154972076,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.5432,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [
+              "indexeddb_pattern_invalidation_1000_of_10000",
+              "indexeddb_pattern_invalidation_1000"
+            ],
+            "memory_measured": true,
+            "all_targets_pass": false
+          }
+        },
+        {
+          "receipt": "cache-index-paired-candidate-1-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:36:56.617Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "0bca66c5d7dfd63eebf536686a3cb161706073464d46d582c508a6b3bbb81ec6",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5399999916553497,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07000002264976501,
+                "p95_ms": 0.0949999988079071,
+                "p99_ms": 0.12000000476837158,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10499998927116394,
+                "p95_ms": 0.1199999749660492,
+                "p99_ms": 0.16500002145767212,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07000002264976501,
+                "p95_ms": 0.08499997854232788,
+                "p99_ms": 0.10999998450279236,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 98.85499998927116,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 22.805000007152557,
+                "p95_ms": 24.92500001192093,
+                "p99_ms": 26.069999992847443,
+                "target_ms": 50,
+                "pass": true
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 16.945000022649765,
+                "p95_ms": 20.525000005960464,
+                "p99_ms": 21.594999998807907,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5100000202655792,
+                "p95_ms": 0.6499999761581421,
+                "p99_ms": 0.9150000214576721,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.4316,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [],
+            "memory_measured": true,
+            "all_targets_pass": true
+          }
+        },
+        {
+          "receipt": "cache-index-paired-candidate-2-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:38:01.476Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "0bca66c5d7dfd63eebf536686a3cb161706073464d46d582c508a6b3bbb81ec6",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5100000202655792,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07000002264976501,
+                "p95_ms": 0.08500000834465027,
+                "p99_ms": 0.12000000476837158,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10499998927116394,
+                "p95_ms": 0.12000000476837158,
+                "p99_ms": 0.17499998211860657,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.08500000834465027,
+                "p99_ms": 0.10500001907348633,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 91.65999999642372,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 23.479999989271164,
+                "p95_ms": 26.599999994039536,
+                "p99_ms": 27.15999999642372,
+                "target_ms": 50,
+                "pass": true
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 16.899999976158142,
+                "p95_ms": 18.719999998807907,
+                "p99_ms": 18.894999980926514,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5200000107288361,
+                "p95_ms": 0.5999999940395355,
+                "p99_ms": 0.6200000047683716,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.5432,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [],
+            "memory_measured": true,
+            "all_targets_pass": true
+          }
+        },
+        {
+          "receipt": "cache-index-paired-candidate-3-20261023.json",
+          "result": {
+            "timestamp": "2026-10-23T05:44:49.735Z",
+            "source_ref": "working-tree",
+            "benchmark_sha256": "28d31e770621435f9f122c88b85cd4a7568d833e5326f7582d3e6ae1c408888b",
+            "source_bundle_sha256": "0bca66c5d7dfd63eebf536686a3cb161706073464d46d582c508a6b3bbb81ec6",
+            "host": {
+              "platform": "darwin",
+              "release": "27.0.0",
+              "architecture": "arm64",
+              "cpu": "Apple M4 Pro",
+              "logicalCPUs": 14,
+              "memoryBytes": 25769803776,
+              "node": "v22.22.0"
+            },
+            "engine": "chromium",
+            "browser": "154.0.8037.58",
+            "timer_resolution_ms": 0.004999995231628418,
+            "crossOriginIsolated": true,
+            "entries": 10000,
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+            "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+            "results": {
+              "memory_set": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_get": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "memory_concurrent_1000_reads": {
+                "elapsed_ms": 0.5300000011920929,
+                "operations": 1000
+              },
+              "memory_new_keys_at_10000_capacity": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 1,
+                "pass": true
+              },
+              "indexeddb_set": {
+                "samples": 10000,
+                "p50_ms": 0.07000002264976501,
+                "p95_ms": 0.08500000834465027,
+                "p99_ms": 0.12000000476837158,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_get": {
+                "samples": 10000,
+                "p50_ms": 0.10499998927116394,
+                "p95_ms": 0.12999999523162842,
+                "p99_ms": 0.18000000715255737,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_overwrite_full": {
+                "samples": 10000,
+                "p50_ms": 0.07499998807907104,
+                "p95_ms": 0.09000000357627869,
+                "p99_ms": 0.15000000596046448,
+                "target_ms": 10,
+                "pass": true
+              },
+              "indexeddb_concurrent_1000_reads": {
+                "elapsed_ms": 113.1550000011921,
+                "operations": 1000
+              },
+              "indexeddb_pattern_invalidation_1000_of_10000": {
+                "samples": 30,
+                "p50_ms": 23.75499999523163,
+                "p95_ms": 26,
+                "p99_ms": 26.145000010728836,
+                "target_ms": 50,
+                "pass": true
+              },
+              "indexeddb_pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 17.269999980926514,
+                "p95_ms": 21.140000015497208,
+                "p99_ms": 22.0450000166893,
+                "target_ms": 50,
+                "pass": true
+              },
+              "lru_at_1000_entries": {
+                "samples": 1000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 5,
+                "pass": true
+              },
+              "pattern_invalidation_1000": {
+                "samples": 30,
+                "p50_ms": 0.5299999713897705,
+                "p95_ms": 0.6200000047683716,
+                "p99_ms": 0.6550000011920929,
+                "target_ms": 50,
+                "pass": true
+              },
+              "async_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "sync_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "factory_memoized_hit": {
+                "samples": 10000,
+                "p50_ms": 0,
+                "p95_ms": 0.004999995231628418,
+                "p99_ms": 0.005000025033950806,
+                "target_ms": 0.1,
+                "pass": true
+              },
+              "retained_bytes_per_numeric_entry": {
+                "bytes": 185.3012,
+                "target_bytes": 200,
+                "pass": true,
+                "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+              }
+            },
+            "correctness": "all populated sizes, read values, overwrites, eviction victims, replacement values, invalidation counts and memoized values asserted outside timed samples",
+            "failures": [],
+            "memory_measured": true,
+            "all_targets_pass": true
+          }
+        }
+      ]
+    }
+  ]
+}

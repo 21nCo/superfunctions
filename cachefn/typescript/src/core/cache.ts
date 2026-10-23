@@ -472,6 +472,21 @@ export class CacheFn<T = any> {
         this.pending.delete(key);
       }
     }
+    if (this.storage.deleteMatching) {
+      const deleted = await this.storage.deleteMatching(key => {
+        if (!this.ownsKey(key) || !filterByPattern([key.slice(this.keyPrefix().length)], pattern).length) return false;
+        // Fence matching fills admitted while the transaction was being opened.
+        this.pending.delete(key);
+        return true;
+      });
+      // The transaction must commit before exposing any successful deletion.
+      for (const key of deleted) {
+        this.stats.recordDelete();
+        this.events.emit("delete", { key: this.eventKey(key.slice(this.keyPrefix().length)) });
+      }
+      this.events.emit("invalidate", { pattern: pattern instanceof RegExp ? pattern.source : pattern, count: deleted.length });
+      return;
+    }
     const allKeys = await this.keys();
     const matchingKeys = filterByPattern(allKeys, pattern);
     const count = matchingKeys.length;

@@ -107,6 +107,32 @@ try {
           }
           assert(rejected, "abort after request success rejects");
           assert(await storage.has("key"), "aborted delete rollback");
+          const batch = new CacheFn({ name, storage: 'indexeddb', namespace: 'batch' });
+          const batchNeighbor = new CacheFn({ name, storage: 'indexeddb', namespace: 'batch:neighbor' });
+          await batch.set('match:a', 1); await batch.set('match:b', 2);
+          await batchNeighbor.set('match:a', 3);
+          const deletionEvents = [], invalidationEvents = [];
+          batch.on('delete', event => deletionEvents.push(event));
+          batch.on('invalidate', event => invalidationEvents.push(event));
+          rejected = false;
+          try {
+            IDBObjectStore.prototype.delete = function (key) {
+              const request = original.call(this, key);
+              if (String(key).endsWith('match:b')) request.addEventListener('success', () => this.transaction.abort());
+              return request;
+            };
+            try { await batch.invalidateByPattern('match:*'); } catch { rejected = true; }
+          } finally { IDBObjectStore.prototype.delete = original; }
+          assert(rejected, 'batch invalidation abort rejects');
+          assert((await batch.getMany(['match:a', 'match:b'])).join() === '1,2', 'batch abort rolls back every key');
+          assert(deletionEvents.length === 0 && invalidationEvents.length === 0, 'batch abort emits no success');
+          assert((await batch.getStats()).deletes === 0, 'batch abort preserves delete statistics');
+          await batch.invalidateByPattern('match:*');
+          assert(await batch.size() === 0, 'batch invalidation committed');
+          assert(await batchNeighbor.get('match:a') === 3, 'batch invalidation preserves adjacent namespace');
+          assert(deletionEvents.length === 2 && invalidationEvents[0]?.count === 2, 'batch commit emits accurate counts');
+          assert((await batch.getStats()).deletes === 2, 'batch commit updates statistics');
+          batch.dispose(); batchNeighbor.dispose();
           const persistentName = `local-${crypto.randomUUID()}`;
           const local = new CacheFn({ name: persistentName, storage: 'localstorage', namespace: 'one' });
           await local.set('key', { value: 1n }, { tags: ['tag'] });
