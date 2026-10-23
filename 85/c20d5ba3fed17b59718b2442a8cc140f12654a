@@ -1,0 +1,25 @@
+watchfn/.conduct/python-http-auth-default-readiness.md
+  s_e1c5fc1a65c0cf::t_eb4fe4dde531e5 1-9
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_02daf64d0e5e7e 32-36
+watchfn/python/tests/test_http.py
+  s_e1c5fc1a65c0cf::t_8eda4d57403914 163,192-264
+watchfn/python/watchfn/http/handlers.py
+  s_e1c5fc1a65c0cf::t_ba16c0a8dff65a 25-26,47-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85c20d5ba3fed17b59718b2442a8cc140f12654a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
