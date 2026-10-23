@@ -90,3 +90,25 @@ it("records scheduled publication atomically under an explicit system actor", as
     expect(await server.api.audit.query({ dataset: "prod", action: "docs.publish" })).toMatchObject({ ok: true, result: { records: [{ actor: { subject: "system:scheduler" }, targetIds: expect.arrayContaining(["prod", "scheduled"]) }] } });
   } finally { await db.close(); }
 });
+
+
+it("supports descending timestamps with ascending identity ties and rejects unknown orders", async () => {
+  const { wrapWithSchema } = await import("@superfunctions/db");
+  const { getContentfnSchema } = await import("../storage/schema.js");
+  const raw = memoryAdapter();
+  const db = wrapWithSchema(raw, getContentfnSchema());
+  const server = createContentfnServer({ db: raw });
+  try {
+    for (const [id, timestamp] of [["old", "2026-10-22T00:00:00Z"], ["b", "2026-10-23T00:00:00Z"], ["a", "2026-10-23T00:00:00Z"]]) {
+      await db.create({ model: "contentfn_audit", data: { id, dataset: "prod", action: "docs.publish", actor: null, targetIds: [id], timestamp } });
+    }
+    const first = await server.api.audit.query({ dataset: "prod", order: "desc", limit: 2 });
+    expect(first).toMatchObject({ ok: true, result: { records: [{ id: "a" }, { id: "b" }], nextOffset: 2 } });
+    expect(await server.api.audit.query({ dataset: "prod", order: "desc", limit: 2, offset: 2 })).toMatchObject({ ok: true, result: { records: [{ id: "old" }], nextOffset: null } });
+    expect(await server.api.audit.query({ dataset: "prod" })).toMatchObject({ ok: true, result: { records: [{ id: "old" }, { id: "a" }, { id: "b" }] } });
+    for (const order of ["DESC", "invalid", null, 1]) {
+      const response = await server.router.handle(new Request("http://local/contentfn/audit/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataset: "prod", order }) }));
+      expect(await response.json()).toMatchObject({ ok: false, error: { code: "VALIDATION_FAILED" } });
+    }
+  } finally { await raw.close(); }
+});

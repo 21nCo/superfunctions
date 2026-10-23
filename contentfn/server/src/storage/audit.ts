@@ -26,11 +26,12 @@ export async function appendAudit(db: ContentfnDatabase, action: string, input: 
 export async function queryAudit(config: { db: ContentfnDatabase }, input: unknown): Promise<ContentfnEnvelope<{ records: AuditRecord[]; nextOffset: number | null }>> {
   const value = input as Record<string, unknown> | null;
   if (!value || typeof value.dataset !== "string" || !value.dataset || (value.action !== undefined && typeof value.action !== "string")) return err("VALIDATION_FAILED", "dataset and an optional action string are required", {});
+  if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return err("VALIDATION_FAILED", "order must be asc or desc", {});
   const limit = value.limit ?? 100, offset = value.offset ?? 0;
   if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 1000 || !Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) > Number.MAX_SAFE_INTEGER - 1001) return err("VALIDATION_FAILED", "limit must be 1 to 1000 and offset a nonnegative safe integer", {});
   const rows = await config.db.findMany({ model: AUDIT_TABLE,
     where: [{ field: "dataset", operator: "eq", value: value.dataset }, ...(value.action === undefined ? [] : [{ field: "action", operator: "eq" as const, value: value.action }])],
-    orderBy: [{ field: "timestamp", direction: "asc" }, { field: "id", direction: "asc" }],
+    orderBy: [{ field: "timestamp", direction: value.order ?? "asc" }, { field: "id", direction: "asc" }],
     limit: (limit as number) + 1, offset: offset as number,
   });
   return ok({ records: rows.slice(0, limit as number) as unknown as AuditRecord[], nextOffset: rows.length > (limit as number) ? (offset as number) + (limit as number) : null });
