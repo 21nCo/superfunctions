@@ -74,7 +74,7 @@ def test_error_code_map_has_all_error_codes() -> None:
         (ErrorCode.INTERNAL_ERROR.value, CiFnInternalError),
     ],
 )
-def test_raise_for_error_raises_correct_subclass(code: str, exc_cls: type) -> None:
+def test_raise_for_error_raises_correct_subclass(code: str, exc_cls: type[CiFnError]) -> None:
     with pytest.raises(exc_cls) as exc_info:
         raise_for_error(code, "test message", http_status=400)
     assert exc_info.value.message == "test message"

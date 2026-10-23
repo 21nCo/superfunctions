@@ -224,8 +224,8 @@ def test_list_runs_result_with_pagination() -> None:
 
 
 def test_create_run_result_populate_by_name_snake_case() -> None:
-    a = CreateRunResult(run_id="r1", status="queued", created_at="2026-01-01T00:00:00Z")
-    b = CreateRunResult(runId="r1", status="queued", createdAt="2026-01-01T00:00:00Z")
+    a = CreateRunResult.model_validate({"run_id": "r1", "status": "queued", "created_at": "2026-01-01T00:00:00Z"})
+    b = CreateRunResult.model_validate({"runId": "r1", "status": "queued", "createdAt": "2026-01-01T00:00:00Z"})
     assert a.run_id == b.run_id == "r1"
     assert a.status == b.status == RunStatus.QUEUED
 
@@ -335,7 +335,7 @@ def test_missing_optional_fields_default_none() -> None:
 
 def test_missing_required_field_raises_validation_error() -> None:
     with pytest.raises(ValidationError):
-        CreateRunResult(run_id="r1", status="queued")  # missing created_at
+        CreateRunResult.model_validate({"run_id": "r1", "status": "queued"})  # missing created_at
     with pytest.raises(ValidationError):
         PipelineSpec.model_validate({"name": "x"})  # missing on, jobs
     with pytest.raises(ValidationError):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Annotated, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,7 +71,7 @@ class PipelineRef(BaseModel):
 
     repo: str
     ref: str
-    config_path: Optional[str] = Field(None, alias="configPath")
+    config_path: Annotated[Optional[str], Field(alias="configPath")] = None
 
 
 class TriggerInput(BaseModel):
@@ -112,15 +112,15 @@ class RunStep(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     run: str
-    if_condition: Optional[str] = Field(None, alias="if")
+    if_condition: Annotated[Optional[str], Field(alias="if")] = None
 
 
 class UsesStep(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     uses: StepUsesType
-    with_params: Optional[Dict[str, Any]] = Field(None, alias="with")
-    if_condition: Optional[str] = Field(None, alias="if")
+    with_params: Annotated[Optional[Dict[str, Any]], Field(alias="with")] = None
+    if_condition: Annotated[Optional[str], Field(alias="if")] = None
 
 
 # Union for step specs: try RunStep first (has "run"), then UsesStep (has "uses")
@@ -130,10 +130,10 @@ StepSpec = Union[RunStep, UsesStep]
 class JobSpec(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    runs_on: str = Field(alias="runs-on")
+    runs_on: Annotated[str, Field(alias="runs-on")]
     image: Optional[str] = None
     needs: Optional[List[str]] = None
-    if_condition: Optional[str] = Field(None, alias="if")
+    if_condition: Annotated[Optional[str], Field(alias="if")] = None
     env: Optional[Dict[str, str]] = None
     steps: List[Union[RunStep, UsesStep]]
 
@@ -154,34 +154,34 @@ class Step(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    job_id: str = Field(alias="jobId")
-    step_key: str = Field(alias="stepKey")
+    job_id: Annotated[str, Field(alias="jobId")]
+    step_key: Annotated[str, Field(alias="stepKey")]
     status: StepStatus
-    started_at: Optional[str] = Field(None, alias="startedAt")
-    completed_at: Optional[str] = Field(None, alias="completedAt")
+    started_at: Annotated[Optional[str], Field(alias="startedAt")] = None
+    completed_at: Annotated[Optional[str], Field(alias="completedAt")] = None
 
 
 class Job(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    run_id: str = Field(alias="runId")
-    job_key: str = Field(alias="jobKey")
+    run_id: Annotated[str, Field(alias="runId")]
+    job_key: Annotated[str, Field(alias="jobKey")]
     status: JobStatus
     steps: List[Step]
-    started_at: Optional[str] = Field(None, alias="startedAt")
-    completed_at: Optional[str] = Field(None, alias="completedAt")
+    started_at: Annotated[Optional[str], Field(alias="startedAt")] = None
+    completed_at: Annotated[Optional[str], Field(alias="completedAt")] = None
 
 
 class Run(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    pipeline_ref: Optional[PipelineRef] = Field(None, alias="pipelineRef")
+    pipeline_ref: Annotated[Optional[PipelineRef], Field(alias="pipelineRef")] = None
     trigger: TriggerInput
     status: RunStatus
-    created_at: str = Field(alias="createdAt")
-    updated_at: str = Field(alias="updatedAt")
+    created_at: Annotated[str, Field(alias="createdAt")]
+    updated_at: Annotated[str, Field(alias="updatedAt")]
     jobs: List[Job] = []
 
 
@@ -191,22 +191,22 @@ class Run(BaseModel):
 class CreateRunResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    run_id: str = Field(alias="runId")
+    run_id: Annotated[str, Field(alias="runId")]
     status: RunStatus
-    created_at: str = Field(alias="createdAt")
+    created_at: Annotated[str, Field(alias="createdAt")]
 
 
 class ListRunsResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     runs: List[Run]
-    next_cursor: Optional[str] = Field(None, alias="nextCursor")
+    next_cursor: Annotated[Optional[str], Field(alias="nextCursor")] = None
 
 
 class CancelRunResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    run_id: str = Field(alias="runId")
+    run_id: Annotated[str, Field(alias="runId")]
     status: RunStatus
 
 
@@ -214,7 +214,7 @@ class Artifact(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str
-    file_id: Optional[str] = Field(None, alias="fileId")
+    file_id: Annotated[Optional[str], Field(alias="fileId")] = None
     url: Optional[str] = None
 
 
@@ -229,7 +229,7 @@ class JobLogLine(BaseModel):
 
     line: str
     timestamp: str
-    step_key: str = Field(alias="stepKey")
+    step_key: Annotated[str, Field(alias="stepKey")]
 
 
 class JobLogs(BaseModel):
@@ -241,8 +241,8 @@ class JobLogs(BaseModel):
 class RegisterRunnerResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    runner_id: str = Field(alias="runnerId")
-    runner_secret: str = Field(alias="runnerSecret")
+    runner_id: Annotated[str, Field(alias="runnerId")]
+    runner_secret: Annotated[str, Field(alias="runnerSecret")]
 
 
 class HeartbeatResult(BaseModel):

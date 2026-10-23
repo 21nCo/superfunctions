@@ -72,7 +72,7 @@ def test_config_repr_redacts_credentials() -> None:
 
 @pytest.mark.asyncio
 async def test_client_sends_auth_header() -> None:
-    seen_headers: list[dict] = []
+    seen_headers: list[dict[str, str]] = []
 
     def capture_handler(request: httpx.Request) -> httpx.Response:
         seen_headers.append(dict(request.headers))
@@ -190,7 +190,7 @@ async def test_list_runs_defaults() -> None:
 
 @pytest.mark.asyncio
 async def test_list_runs_limit_clamping() -> None:
-    params_captured: list[dict] = []
+    params_captured: list[dict[str, str]] = []
 
     def capture_params(request: httpx.Request) -> httpx.Response:
         params_captured.append(dict(request.url.params))

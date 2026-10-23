@@ -135,3 +135,22 @@ mypy cifn/
 ## License
 
 MIT.
+
+## Type checking model constructors
+
+The wheel includes `py.typed`. Typed Python constructors use Python field names
+and enum values, without requiring a mypy plugin:
+
+```python
+from cifn import CreateRunResult, RunStatus
+
+result = CreateRunResult(
+    run_id="run-1", status=RunStatus.QUEUED, created_at="2026-01-01T00:00:00Z"
+)
+```
+
+Use `model_validate` for raw input dictionaries, including wire aliases and
+string enum values. Both Python field names and wire aliases remain accepted by
+runtime validation; `model_dump(by_alias=True)` retains the server field names.
+Missing required fields still fail validation. Optional aliased fields retain
+explicit `None` defaults.
