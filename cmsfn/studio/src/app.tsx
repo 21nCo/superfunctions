@@ -129,6 +129,7 @@ export function App({ config: configProp }: AppProps = {}) {
               cmsfnApiUrl={config.cmsfn?.apiUrl}
               previewConfig={config.preview}
               realtimeUrl={config.contentfn.realtimeUrl}
+              maxRichtextBlocks={config.limits?.maxRichtextBlocks}
               maxUploadBytes={config.limits?.maxUploadBytes}
               allowContentfnReferenceAuthorization={config.references?.authorization === "contentfn"}
               remoteChanged={remoteChanged}

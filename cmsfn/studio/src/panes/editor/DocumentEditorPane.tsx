@@ -37,6 +37,7 @@ export interface DocumentEditorPaneProps {
   realtimeUrl?: string;
   /** Max upload bytes for media library (client pre-check). */
   maxUploadBytes?: number;
+  maxRichtextBlocks?: number;
   allowContentfnReferenceAuthorization?: boolean;
   /** When true, show "remote changed" banner (TV-COLLAB-002). */
   remoteChanged?: boolean;
@@ -44,7 +45,7 @@ export interface DocumentEditorPaneProps {
   onClearRemoteChanged?: () => void;
 }
 
-export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", expectedType, onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, allowContentfnReferenceAuthorization, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
+export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "draft", expectedType, onOpenDraft, onUnpublished, cmsfnApiUrl, isPublished, previewConfig, realtimeUrl, maxUploadBytes, maxRichtextBlocks, allowContentfnReferenceAuthorization, remoteChanged, onClearRemoteChanged }: DocumentEditorPaneProps) {
   const generation = useRef(0);
   const scope = JSON.stringify([baseUrl, dataset, docId, perspective, expectedType]);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
@@ -126,7 +127,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
         return;
       }
     }
-    const richtextCheck = checkRichtextLimits(formState, docType);
+    const richtextCheck = checkRichtextLimits(formState, docType, maxRichtextBlocks);
     if (!richtextCheck.ok) {
       setValidationError(richtextCheck.path);
       return;
@@ -155,7 +156,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
         });
       }
     }
-  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope]);
+  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope, maxRichtextBlocks]);
 
   const handleRefresh = useCallback(async () => {
     setConflict(false);
@@ -171,6 +172,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
       setServerError({ code: docRes.error.code, message: docRes.error.message });
       return;
     }
+    if (docType) { const checked = checkRichtextLimits(formState, docType, maxRichtextBlocks); if (!checked.ok) { setValidationError(checked.path); return; } }
     setOriginalDoc(docRes.result);
     setConflict(false);
     setSaveLoading(true);
@@ -194,7 +196,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
         path: (res.error.details as { path?: string })?.path,
       });
     }
-  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope]);
+  }, [baseUrl, dataset, docId, perspective, originalDoc, schema, docType, formState, loadedScope, scope, maxRichtextBlocks]);
 
   const handleFork = async () => {
     if (loadedScope !== scope || perspective !== "published" || !originalDoc || !onOpenDraft) return;
@@ -328,7 +330,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
               errorPath,
               {
                 onOpenMediaPicker: (_name, segments) => setMediaPickerField({ scope, path: segments }),
-                baseUrl, maxUploadBytes,
+                baseUrl, maxUploadBytes, maxRichtextBlocks,
                 cmsfnApiUrl, allowContentfnReferenceAuthorization, referenceOwnerScope: scope,
                 dataset,
                 docTypeName: docType.name,

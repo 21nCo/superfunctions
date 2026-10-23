@@ -129,3 +129,24 @@ variant's initial value and must satisfy ContentFn validation before save. `maxL
 prevents adding beyond the declared count. Published documents remain read-only, required
 fields retain their indicators, and save-time producer validation remains authoritative.
 Reference dialogs contain Tab/Shift-Tab navigation and return focus on close or Escape.
+
+Richtext fields use a block-array editor. Add, remove and reorder text blocks; edit
+individual spans and apply the schema's allowed marks. Existing block/span keys, styles,
+annotations and untouched custom objects remain intact. New blocks and spans receive
+canonical keys. Existing malformed values remain visible without coercion; ContentFn
+validates the complete document on save. This is basic block authoring, not a collaborative
+WYSIWYG or arbitrary custom-object designer.
+
+The editor displays 20 blocks and 20 spans per page without truncating stored content.
+When `allowObjects` includes `asset`, Insert media block uses the authenticated media
+library and appends a canonical keyed asset while preserving intervening text edits.
+Document, schema, configured-limit and external-value changes invalidate pending selections.
+Richtext works inside objects and array items with the same ownership rules as other fields.
+
+`limits.maxRichtextBlocks` defaults to 5000 blocks per field. Studio prevents additions
+past that count and checks nested fields before ordinary save and conflict reapplication.
+Configure the matching ContentFn limit: its independent validation rejects over-limit
+writes, publication and restoration. Existing oversized content stays readable and can be
+reduced; pagination does not discard it. Imported historical fields that no longer appear
+in the archive's latest schema cannot be classified as richtext during import; later
+restoration and publication use the current schema's validation.

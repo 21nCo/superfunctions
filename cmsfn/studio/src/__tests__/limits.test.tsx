@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DocumentEditorPane } from "../panes/editor/DocumentEditorPane.js";
 import { countRichtextBlocks, checkRichtextLimits, MAX_RICHTEXT_BLOCKS } from "../limits/precheck.js";
 
@@ -111,7 +111,7 @@ describe("TV-LIMIT-RICHTEXT-001: editor save rejected when richtext too large", 
 
     render(<DocumentEditorPane baseUrl={BASE_URL} dataset="prod" docId="post-1" />);
     await waitFor(() => expect(screen.getByRole("button", { name: /save/i })).toBeDefined());
-    screen.getByRole("button", { name: /save/i }).click();
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(patchCalls).toBe(0), { timeout: 500 });
   });
 });

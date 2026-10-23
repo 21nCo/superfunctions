@@ -24,6 +24,7 @@ type ReactNode = import("react").ReactNode;
 
 export interface RenderFieldOptions {
   maxUploadBytes?: number;
+  maxRichtextBlocks?: number;
   onOpenMediaPicker?: (fieldName: string, segments: readonly string[]) => void;
   /** Literal schema keys for nested object assets; never split display paths. */
   fieldSegments?: readonly string[];
@@ -149,7 +150,7 @@ export function renderField(
                 {renderField(f, subPath, subVal, (v) => {
                   const next = typeof value === "object" && value !== null ? { ...(value as object), [f.name]: v } : { [f.name]: v };
                   onChange(next);
-                }, errorPath, { maxUploadBytes: options?.maxUploadBytes, baseUrl: options?.baseUrl, dataset: options?.dataset, cmsfnApiUrl: options?.cmsfnApiUrl, allowContentfnReferenceAuthorization: options?.allowContentfnReferenceAuthorization, referenceOwnerScope: options?.referenceOwnerScope, hasDocReadForReference: options?.hasDocReadForReference, onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
+                }, errorPath, { maxRichtextBlocks: options?.maxRichtextBlocks, maxUploadBytes: options?.maxUploadBytes, baseUrl: options?.baseUrl, dataset: options?.dataset, cmsfnApiUrl: options?.cmsfnApiUrl, allowContentfnReferenceAuthorization: options?.allowContentfnReferenceAuthorization, referenceOwnerScope: options?.referenceOwnerScope, hasDocReadForReference: options?.hasDocReadForReference, onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
               </Container>
             );
           })}
@@ -160,6 +161,9 @@ export function renderField(
     case "richtext":
       return (
         <RichtextWidget
+          allowMarks={type.allowMarks} allowObjects={type.allowObjects}
+          baseUrl={options?.baseUrl} dataset={options?.dataset} maxUploadBytes={options?.maxUploadBytes} maxBlocks={options?.maxRichtextBlocks}
+          ownerScope={options?.referenceOwnerScope === undefined ? undefined : `${options.referenceOwnerScope}:${JSON.stringify(options.fieldSegments ?? [field.name])}`}
           data-field-path={path}
           value={value}
           onChange={(v) => onChange(v)}
