@@ -202,7 +202,7 @@ function collectPythonDependents(seedNames, manifestsByName) {
   const dependents = new Map();
 
   for (const manifest of manifestsByName.values()) {
-    for (const dependency of manifest.dependencies) {
+    for (const dependency of [...manifest.dependencies, ...manifest.devDependencies]) {
       if (!manifestsByName.has(dependency)) {
         continue;
       }
