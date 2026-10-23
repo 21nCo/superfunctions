@@ -66,8 +66,8 @@ export function attachFlushHooks(logger: Logger): () => void {
 
   const visibilityHandler = () => {
     if (document.visibilityState === "hidden") {
-      logger.flush().catch((error) => {
-        console.error("[logfn] Failed to flush on visibility change", error);
+      logger.flush().catch(() => {
+        console.error("[logfn] Failed to flush on visibility change");
       });
     }
   };

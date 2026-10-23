@@ -179,7 +179,9 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   function backgroundFlush(keepalive = false): void {
     if (closed) return;
-    void flushBuffer(keepalive).catch(error => console.error("[logfn http-sink error]", error));
+    // Background diagnostics have no caller redaction policy. Never print raw
+    // transport/storage errors or server-controlled status text here.
+    void flushBuffer(keepalive).catch(() => console.error("[logfn http-sink error] Background delivery failed"));
   }
 
   /**

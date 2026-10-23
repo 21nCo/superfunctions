@@ -24,9 +24,10 @@ it.each(['SIGTERM', 'SIGINT'] as const)('drains before exit on %s and adds no un
 it('exits unsuccessfully when delivery fails', async () => {
   const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
   const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const cleanup = registerProcessHandlers({ info: vi.fn(), flush: async () => { throw Error('offline'); } } as unknown as Logger);
+  const cleanup = registerProcessHandlers({ info: vi.fn(), flush: async () => { throw Error('password=shutdown-secret'); } } as unknown as Logger);
   try {
     await (process.listeners('SIGTERM').at(-1) as () => Promise<void>)();
     expect(exit).toHaveBeenCalledWith(1);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith('[logfn] Failed to flush on shutdown');
   } finally { cleanup(); exit.mockRestore(); stderr.mockRestore(); }
 });

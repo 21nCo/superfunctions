@@ -601,3 +601,6 @@ const transport = sinkHttp({ url: '/watch/logs', maxQueue: 5000 });
 // Export this gauge/counter value using the host metrics system.
 const evictedRecords = transport.overflowEvictions;
 ```
+
+
+Lifecycle and background-delivery console diagnostics use fixed failure messages; raw transport, storage and sink errors are not printed there. Explicit `flush()`/`close()` callers still receive failures and must handle them according to their application privacy policy.
