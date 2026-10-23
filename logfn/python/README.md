@@ -180,3 +180,71 @@ acknowledgements. Poll this value from the host metrics collector; reading it
 does not log or enqueue more events. The count resets with a new sink instance
 and is not persisted. An evicted in-flight record may already have reached the
 receiver, so this counts queue evictions rather than confirmed remote loss.
+
+## Shared HTTP request logging (Python 3.10+)
+
+Install `logfn[http]` and the framework adapter you use (`superfunctions-fastapi`
+or `superfunctions-flask`). The base logger still supports Python 3.9 without
+HTTP dependencies; the HTTP extra requires Python 3.10 because the shared HTTP
+packages do. Importing `logfn` does not import the optional HTTP module.
+
+```python
+from logfn import create_logger, SinkConsole
+from logfn.http import request_logger, get_request_logger
+from superfunctions.http import Route, HttpMethod, Response
+from superfunctions_fastapi import create_router  # Flask: create_blueprint
+
+logger = create_logger("api", sinks=[SinkConsole()])
+
+async def handler(request, context):
+    request_log = get_request_logger()
+    assert request_log is not None
+    request_log.info("application event")
+    return Response(body={"ok": True})
+
+routes = [Route(method=HttpMethod.GET, path="/", handler=handler,
+                middleware=[request_logger(logger=logger, sample=1.0)])]
+# FastAPI: app.include_router(create_router(routes))
+# Flask: app.register_blueprint(create_blueprint(routes))
+```
+
+This uses the shared route executor and adapters, without replacing native
+framework request/response machinery. The original request/context objects pass
+through unchanged. `get_request_logger()` uses context-local state, supports
+nested middleware, and resets after return, exception or cancellation. Tasks
+spawned inside a request inherit Python's context snapshot; applications own
+those tasks and must not treat the logger as proof a request is still active.
+
+The logger inherits `traceId`, `spanId` and `requestId`. A valid W3C `traceparent`
+(or the configured `header`) supplies trace/span IDs; invalid input generates
+fresh IDs, and request IDs always come from local secure randomness. Returned
+responses receive `x-trace-id`, `x-span-id` and `x-request-id`, matching event IDs
+before custom pipeline transformations. These reserved response headers replace
+case-insensitive earlier values while other headers, cookies and body remain
+unchanged. They are correlation values, not authentication tokens. No W3C flags
+or user/tenant identifiers are synthesized into response headers. Hosts own CORS
+expose-header configuration.
+
+`sample` is a finite number from 0 to 1, controlling one decision for the
+start/completion pair. It never disables the application logger or response IDs.
+`redact_headers` adds to the default authorization/cookie/API-key/token redaction.
+`capture_user(request)` may supply `userId` and `tenantId`; it cannot override
+correlation IDs and existing logger privacy policy still applies. Bodies are
+never read or captured. Shared Python Request exposes only a fully buffering
+body API; bounded body-capture parity remains open rather than silently buffering
+an arbitrary body for logging.
+
+A returned error Response is correlated like any other response. Thrown
+exceptions (including shared HttpError) and cancellation propagate unchanged;
+LogFn emits a sanitized failure event without exception text and resets context.
+Responses subsequently created by the outer framework adapter cannot acquire
+these headers through route middleware. LogFn does not replace adapter error
+handling or suppress cancellation.
+
+Sink delivery and flush remain owned by the host. FastAPI uses its running
+application loop; arrange logger flush/shutdown there for async sinks. The shared
+Flask adapter runs each async route in a temporary loop: use synchronous sinks
+with this middleware there. This does not provide a persistent async delivery
+loop or durable background queue for Flask. Only routes with this middleware are
+instrumented; native framework routes, routing failures before it, and WebSocket
+routes are outside this shared HTTP contract.
