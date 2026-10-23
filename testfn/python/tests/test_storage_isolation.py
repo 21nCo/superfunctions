@@ -1,14 +1,23 @@
+from pathlib import Path
+
 from testfn.storage import Storage
 from testfn.types import (
-    TestRun as Run,
-    TestResult as Result,
-    TestRunSummary as Summary,
-    EnvironmentInfo,
     Artifact,
+    EnvironmentInfo,
+    ResultStatus,
+)
+from testfn.types import (
+    TestResult as Result,
+)
+from testfn.types import (
+    TestRun as Run,
+)
+from testfn.types import (
+    TestRunSummary as Summary,
 )
 
 
-def test_artifacts_isolated_for_same_test_across_runs(tmp_path):
+def test_artifacts_isolated_for_same_test_across_runs(tmp_path: Path) -> None:
     database = f"sqlite:///{tmp_path}/runs.db"
     store = Storage(database)
     for i in range(2):
@@ -21,7 +30,7 @@ def test_artifacts_isolated_for_same_test_across_runs(tmp_path):
                 results=[
                     Result(
                         id="same-test",
-                        status="passed",
+                        status=ResultStatus.PASSED,
                         duration=1,
                         artifacts=[Artifact(type="log", path=f"run-{i}.log")],
                     )
@@ -30,8 +39,10 @@ def test_artifacts_isolated_for_same_test_across_runs(tmp_path):
         )
     store.close()
     store = Storage(database)
-    assert store.get_run("0").results[0].artifacts[0].path == "run-0.log"
-    assert store.get_run("1").results[0].artifacts[0].path == "run-1.log"
+    first, second = store.get_run("0"), store.get_run("1")
+    assert first is not None and second is not None
+    assert first.results[0].artifacts[0].path == "run-0.log"
+    assert second.results[0].artifacts[0].path == "run-1.log"
     assert [
         len(result.artifacts) for result in store.get_test_history("same-test")
     ] == [1, 1]

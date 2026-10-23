@@ -1,15 +1,16 @@
-from pathlib import Path
-import pytest
 import os
-import shutil
-from testfn.runner import Runner
-from testfn.types import ResultStatus
-from testfn.storage import Storage
+from pathlib import Path
+
+import pytest
+
 from testfn.analytics import AnalyticsEngine
+from testfn.runner import Runner
+from testfn.storage import Storage
+from testfn.types import ResultStatus
 
 
 @pytest.mark.asyncio
-async def test_runner_execution(tmp_path):
+async def test_runner_execution(tmp_path: Path) -> None:
     # Use a temporary DB for testing
     db_path = str(tmp_path / "test_testfn.db")
     if os.path.exists(db_path):
@@ -58,7 +59,7 @@ async def test_runner_execution(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_flaky_detection(tmp_path):
+async def test_flaky_detection(tmp_path: Path) -> None:
     db_path = str(tmp_path / "test_flaky.db")
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -67,9 +68,10 @@ async def test_flaky_detection(tmp_path):
     analytics = AnalyticsEngine(storage)
 
     # Manually save some runs to simulate history
-    from testfn.types import TestRun, TestRunSummary, EnvironmentInfo, TestResult
     import time
     import uuid
+
+    from testfn.types import EnvironmentInfo, TestResult, TestRun, TestRunSummary
 
     test_id = "test_flaky_id"
 

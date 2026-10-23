@@ -1,14 +1,19 @@
 import asyncio
 from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
+
 from testfn.adapters.pytest import PytestAdapter
 from testfn.core import RunOptions
 from testfn.types import ResultStatus
+from testfn.types import TestResult as Result
 
 
 @pytest.mark.asyncio
-async def test_exact_ids_phases_globs_and_callbacks(tmp_path, monkeypatch):
+async def test_exact_ids_phases_globs_and_callbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test sample.py").write_text("""import pytest
 class TestNested:
@@ -27,7 +32,7 @@ def test_skip(): pass
 """)
     adapter = PytestAdapter()
     discovered = await adapter.discover(["*.py"])
-    seen = []
+    seen: list[Result] = []
     results = await adapter.run(discovered, RunOptions(parallel=2), seen.append)
     assert [row.id for row in results] == [row.id for row in discovered]
     assert len(seen) == 5
@@ -37,7 +42,9 @@ def test_skip(): pass
 
 
 @pytest.mark.asyncio
-async def test_env_retry_timeout_and_cancellation(tmp_path, monkeypatch):
+async def test_env_retry_timeout_and_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test_run.py").write_text("""import os, time
 from pathlib import Path
@@ -75,7 +82,9 @@ def test_slow():
 
 
 @pytest.mark.asyncio
-async def test_collection_errors_are_not_empty_success(tmp_path, monkeypatch):
+async def test_collection_errors_are_not_empty_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test_bad.py").write_text("invalid python !!")
     with pytest.raises(RuntimeError, match="pytest exited"):
@@ -89,15 +98,15 @@ async def test_collection_errors_are_not_empty_success(tmp_path, monkeypatch):
     "kwargs",
     [{"parallel": 0}, {"retries": -1}, {"timeout": 0}, {"timeout": float("nan")}],
 )
-def test_invalid_execution_limits(kwargs):
+def test_invalid_execution_limits(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
-        RunOptions(**kwargs)
+        RunOptions.model_validate(kwargs)
 
 
 @pytest.mark.asyncio
 async def test_missing_report_cannot_pass_and_discovery_environment(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test_report.py").write_text(
         'import os\nassert os.environ["COLLECTION"] == "yes"\ndef test_exit(): os._exit(0)\n'
@@ -110,7 +119,9 @@ async def test_missing_report_cannot_pass_and_discovery_environment(
 
 
 @pytest.mark.asyncio
-async def test_default_run_preserves_session_fixture_scope(tmp_path, monkeypatch):
+async def test_default_run_preserves_session_fixture_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test_session.py").write_text("""import pytest
 from pathlib import Path
@@ -131,7 +142,9 @@ def test_two(shared): assert shared is not None
 
 
 @pytest.mark.asyncio
-async def test_live_completion_before_remaining_suite_finishes(tmp_path, monkeypatch):
+async def test_live_completion_before_remaining_suite_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path("test_live.py").write_text("""import time
 from pathlib import Path
@@ -143,9 +156,9 @@ def test_second():
     assert False, "first completion was not streamed"
 """)
     adapter = PytestAdapter()
-    seen = []
+    seen: list[str] = []
 
-    def completed(result):
+    def completed(result: Result) -> None:
         seen.append(result.id)
         Path("callback").write_text("seen")
 
@@ -157,18 +170,22 @@ def test_second():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parallel", [1, 2])
-async def test_project_root_is_preserved_when_running_from_outside(tmp_path, monkeypatch, parallel):
+async def test_project_root_is_preserved_when_running_from_outside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parallel: int
+) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (project / "pytest.ini").write_text("[pytest]\n")
     test_file = project / "test_nested.py"
-    test_file.write_text("import pytest\nclass TestGroup:\n    @pytest.mark.parametrize('value', [1, 2])\n    def test_ok(self, value): assert value > 0\n")
+    test_file.write_text(
+        "import pytest\nclass TestGroup:\n    @pytest.mark.parametrize('value', [1, 2])\n    def test_ok(self, value): assert value > 0\n"
+    )
     monkeypatch.chdir(tmp_path)
     adapter = PytestAdapter()
     tests = await adapter.discover([str(test_file)])
     assert tests[0].id.startswith("test_nested.py::TestGroup::")
     assert all(test.rootdir == str(project) for test in tests)
-    seen = []
+    seen: list[Result] = []
     results = await adapter.run(tests, RunOptions(parallel=parallel), seen.append)
     assert [result.id for result in results] == [test.id for test in tests]
     assert all(result.status == ResultStatus.PASSED for result in results)

@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
+
 import pytest
 from PIL import Image
+
 from testfn.visual import VisualTester
 
 
-def test_visual_comparison(tmp_path, monkeypatch):
+def test_visual_comparison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     tester = VisualTester(baseline_dir="test_baselines", diff_dir="test_diffs")
 
@@ -40,9 +43,9 @@ def test_visual_comparison(tmp_path, monkeypatch):
         os.rmdir("test_diffs")
 
 
-def test_alpha_and_safe_paths(tmp_path):
-    import pytest
+def test_alpha_and_safe_paths(tmp_path: Path) -> None:
     from PIL import Image
+
     from testfn.visual import VisualTester
 
     tester = VisualTester(str(tmp_path / "base"), str(tmp_path / "diff"))
