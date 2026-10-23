@@ -80,11 +80,13 @@ console.log('Installed CLI bin, MCP stdio, config loader and scoped admin persis
 `;
   await writeFile(join(directory, 'consumer.mjs'), fixture);
   process.stdout.write(run(process.execPath, ['consumer.mjs']));
+  await writeFile(join(directory, 'event-journal-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-event-journal-consumer.mjs')));
+  process.stdout.write(run(process.execPath, ['event-journal-consumer.mjs']));
   if (process.argv.includes('--browser')) {
     await writeFile(join(directory, 'browser-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-browser-consumer.mjs')));
     process.stdout.write(run(process.execPath, ['browser-consumer.mjs']));
   }
-  await writeFile(join(directory, 'consumer.mts'), `import {executeCli} from '@probefn/cli'; import {runMcpCli} from '@probefn/mcp-server'; import {createProbeFnAdminAdapter} from '@probefn/admin'; import {loadConfig} from '@probefn/contracts/config'; void [executeCli,runMcpCli,createProbeFnAdminAdapter,loadConfig];`);
+  await writeFile(join(directory, 'consumer.mts'), `import {executeCli} from '@probefn/cli'; import {runMcpCli} from '@probefn/mcp-server'; import {createProbeFnAdminAdapter} from '@probefn/admin'; import {loadConfig} from '@probefn/contracts/config'; import {ArtifactStore} from '@probefn/storage'; const health: Promise<{failed:boolean}> = new ArtifactStore({repoRoot:'.'}).recoverEventWrites('run'); void [executeCli,runMcpCli,createProbeFnAdminAdapter,loadConfig,health];`);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc','--strict','--noEmit','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','consumer.mts']));
   let audit;
   try { audit = npm(['audit','--omit=dev','--json']); } catch (error) { audit = String(error.stdout); }

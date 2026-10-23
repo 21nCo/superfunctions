@@ -157,7 +157,57 @@ does not establish a physical disk quota.
 
 A reported event-flush failure also retains cleanup ownership and any finalized
 trace receipt until stop is retried. This preserves the trace and lets a transient
-flush operation finish; it does not replay failed event writes. The original
-persistence error remains evidence of missing event data even if later cleanup
-succeeds. Irrecoverable trace-finalization errors likewise cannot be repaired by
-closing an already disconnected browser.
+flush operation finish. Managed event append recovery is described below; the
+volatile browser queue itself is not a durable queue. Irrecoverable trace-finalization
+errors cannot be repaired by closing an already disconnected browser.
+
+### Managed event append recovery
+
+Run-scoped `ArtifactStore.createEventSink` writes a redacted append intent to the
+existing quota SQLite database before appending NDJSON. The coordinator is restricted
+to owner read/write permissions because it now contains redacted event bodies. At most one intent exists
+per run. The serialized intent and future file bytes must fit the remaining artifact
+budget simultaneously; the intent also remains subject to the existing accounting
+SQLite page limit. This temporary overhead can reject a write earlier than a
+payload-only estimate. Rejection is explicit; records are never truncated to fit.
+
+Each intent binds the file identity, byte offset, complete-record prefix hash chain,
+redacted payload digest and rollover count. New appends verify that the inspected
+prefix still matches the opened file before admission. On reopen, the next managed
+operation (or explicit `recoverEventWrites(runId)`) streams the old prefix and
+compares every existing suffix byte. It appends only a missing suffix, syncs the
+file, and commits counts and intent removal. Already-complete appends are not
+repeated. Changed identity, missing files, changed prefixes or unrelated suffixes
+fail closed and retain the intent; recovery never truncates external data. The
+existing native SQLite run owner fences live competing processes throughout the
+operation, including journal commits. This is recovery of one admitted append,
+not deduplication of a caller submitting the same event again.
+
+Before attempting event admission, storage persists a failure latch. Successful
+admission/recovery restores its prior value; a rejected event remains recorded as
+missing even after later writes succeed. `recoverEventWrites` returns this state.
+Session shutdown records such runs as failed, including previously completed runs;
+completed session-state and run-manifest writes check the latch in their write
+transaction. A conflicting pending intent rejects shutdown instead of reporting
+completion. Preserve that database and evidence for explicit operator investigation;
+there is no automatic discard/reset or permission to truncate unknown bytes.
+
+Admission begins when the latch is durably committed. An event still only in a
+browser callback, a serialization failure before admission, or an unavailable
+coordinator that cannot persist even the latch cannot be recovered by this journal.
+Hosts must propagate those failures; they must not claim capture of never-admitted
+events. Failure to persist a final manifest also remains a reported storage error.
+
+The additive `event_journal_schema` version 1 migration creates append intents,
+adds the failure latch and prefix-chain cache, and preserves existing caps and
+files. **Stop every older writer before upgrading a shared artifact root.** Old
+binaries do not enforce this schema version and cannot safely coexist with the new
+protocol; the host must enforce this deployment barrier. Unknown future versions
+are rejected. Migration cannot infer previously lost legacy events, so a migrated
+zero latch is not retrospective proof of complete historical capture.
+
+Files and their parent directories are synced before intent admission, and SQLite
+uses FULL synchronous DELETE-journal commits. Acceptance covers independent process
+SIGKILL and reopen on local SQLite, not physical power-loss certification or remote
+filesystem semantics. Opaque browser scratch, total filesystem physical quota and
+orphaned encoder scratch reclamation remain separate open requirements.

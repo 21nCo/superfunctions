@@ -109,7 +109,7 @@ export class ArtifactStore {
 
   public async writeRunManifest(runId: string, manifest: RunManifest): Promise<string> {
     const relativePath = this.getRunPaths(runId).sessionManifestPath;
-    await this.writeJson(relativePath, manifest);
+    await this.writeText(relativePath, `${JSON.stringify(manifest, null, 2)}\n`, { runId, requireEventIntegrity: manifest.status === 'completed' });
     return relativePath;
   }
 
@@ -141,7 +141,7 @@ export class ArtifactStore {
     return relativePath;
   }
 
-  public async writeArtifact(relativePath: string, contents: string | Uint8Array, scope?: { runId: string }): Promise<string> {
+  public async writeArtifact(relativePath: string, contents: string | Uint8Array, scope?: { runId: string; requireEventIntegrity?: boolean }): Promise<string> {
     await this.writeText(relativePath, contents, scope);
     return assertRepositoryRelativePath(relativePath);
   }
@@ -207,9 +207,14 @@ export class ArtifactStore {
       baseName,
       capTracker: this.capTracker,
       appendPersisted: (payload, policy) => this.runQuota.transaction(runId, relativeDirectory,
-        quota => quota.append(relativeDirectory, baseName, payload, policy, options?.policy?.maxEventsPerSink !== undefined)),
+        quota => quota.append(relativeDirectory, baseName, payload, policy, options?.policy?.maxEventsPerSink !== undefined), false, true),
       policy: { maxEventsPerSink: this.maxEventsPerSink, ...options?.policy },
     });
+  }
+
+  /** Recover durably admitted appends; report any event rejected before durable admission. */
+  public async recoverEventWrites(runId: string): Promise<{ failed: boolean }> {
+    return this.runQuota.transaction(runId, this.getRunPaths(runId).runRoot, async quota => ({ failed: quota.hasEventFailure() }));
   }
 
   /** Admit a completed external producer file incrementally; caller owns its scratch cleanup. */
@@ -259,8 +264,9 @@ export class ArtifactStore {
   }
 
   private async writeManaged(relative: string, runId: string,
-    produce: (write: (chunk: string | Uint8Array) => Promise<void>, assertCanWrite: (bytes: number) => void) => Promise<void>, external = false): Promise<string> {
+    produce: (write: (chunk: string | Uint8Array) => Promise<void>, assertCanWrite: (bytes: number) => void) => Promise<void>, external = false, requireEventIntegrity = false): Promise<string> {
     await this.runQuota.transaction(runId, relative, async quota => {
+      if (requireEventIntegrity && quota.hasEventFailure()) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Run has an event write that was not durably admitted; completion is denied.', retryable: false });
       const absolute = await quota.prepare(relative);
       const temporary = await quota.prepare(path.posix.join(this.getRunPaths(runId).runRoot, '.probefn-staging', `${randomUUID()}.probefn-tmp-${randomUUID()}`));
       const handle = await open(temporary, 'wx', 0o600);
@@ -296,11 +302,11 @@ export class ArtifactStore {
     await this.writeText(relativePath, `${JSON.stringify(value, null, 2)}\n`);
   }
 
-  private async writeText(relativePath: string, contents: string | Uint8Array, scope?: { runId: string }): Promise<void> {
+  private async writeText(relativePath: string, contents: string | Uint8Array, scope?: { runId: string; requireEventIntegrity?: boolean }): Promise<void> {
     const normalizedPath = this.validateDestination(relativePath);
     const snapshot = typeof contents === 'string' ? contents : new Uint8Array(contents);
     const runId = this.resolveScope(normalizedPath, scope);
-    if (runId) { await this.writeManaged(normalizedPath, runId, write => write(snapshot), !!scope && !this.runIdForPath(normalizedPath)); return; }
+    if (runId) { await this.writeManaged(normalizedPath, runId, write => write(snapshot), !!scope && !this.runIdForPath(normalizedPath), scope?.requireEventIntegrity); return; }
     const bytes = typeof snapshot === 'string' ? Buffer.byteLength(snapshot) : snapshot.byteLength;
     const reservation = this.capTracker.reserve(bytes, normalizedPath);
     // Also serialize replacements: atomic writer temp names are time based, and two

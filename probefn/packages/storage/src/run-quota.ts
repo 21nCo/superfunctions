@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { SessionOwnership } from './session-ownership.js';
-import { createReadStream, constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
+import { EMPTY_EVENT_CHAIN, eventDigest, extendEventChain, inspectEventPrefix, parseEventIntent, reconcileEventAppend, type EventAppendIntent } from './event-journal.js';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { createProbefnError } from '@probefn/contracts/errors';
 import { assertArtifactIdentifier, assertRepositoryRelativePath } from './manifest-writer.js';
@@ -23,7 +24,7 @@ export class RunQuota {
     if (accountingLimit !== undefined && (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536)) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
   }
 
-  public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false): Promise<T> {
+  public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false, eventWrite = false): Promise<T> {
     if (activeTransaction.getStore()) throw failed('Nested managed storage transactions are unsupported; finish the producer before starting another write.');
     assertArtifactIdentifier(runId, 'Run id');
     let sessionId: string | undefined;
@@ -50,6 +51,8 @@ export class RunQuota {
       const database = new DatabaseSync(databasePath);
       let effectiveAccountingLimit = this.accountingLimit ?? DEFAULT_ACCOUNTING_DATABASE_BYTES;
       try {
+        // The coordinator now contains redacted event bodies, matching private sink permissions.
+        await chmod(databasePath, 0o600);
         await retryBusy(() => database.exec('PRAGMA busy_timeout=0; PRAGMA synchronous=FULL;'));
         await retryBusy(() => {
           const mode = database.prepare('PRAGMA journal_mode=DELETE').get()!.journal_mode;
@@ -60,6 +63,13 @@ export class RunQuota {
         database.exec('CREATE TABLE IF NOT EXISTS run_caps (run_id TEXT PRIMARY KEY, cap INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS external_paths (path TEXT PRIMARY KEY, run_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sink_counts (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime REAL NOT NULL, count INTEGER NOT NULL, inode TEXT NOT NULL);');
         if (!database.prepare('PRAGMA table_info(sink_counts)').all().some(row => row.name === 'inode')) database.exec("ALTER TABLE sink_counts ADD COLUMN inode TEXT NOT NULL DEFAULT ''");
         if (!database.prepare('PRAGMA table_info(run_caps)').all().some(row => row.name === 'max_events')) database.exec('ALTER TABLE run_caps ADD COLUMN max_events INTEGER NOT NULL DEFAULT 50000');
+        database.exec('CREATE TABLE IF NOT EXISTS event_journal_schema (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)');
+        const version = database.prepare('SELECT version FROM event_journal_schema WHERE id=1').get();
+        if (version && version.version !== 1) throw failed('Unsupported event journal schema version.');
+        database.exec('INSERT OR IGNORE INTO event_journal_schema VALUES (1,1)');
+        if (!database.prepare('PRAGMA table_info(run_caps)').all().some(row => row.name === 'event_failed')) database.exec('ALTER TABLE run_caps ADD COLUMN event_failed INTEGER NOT NULL DEFAULT 0');
+        if (!database.prepare('PRAGMA table_info(sink_counts)').all().some(row => row.name === 'chain_digest')) database.exec("ALTER TABLE sink_counts ADD COLUMN chain_digest TEXT NOT NULL DEFAULT ''");
+        database.exec('CREATE TABLE IF NOT EXISTS event_append_intents (run_id TEXT PRIMARY KEY, intent TEXT NOT NULL)');
         const priorCap = database.prepare('SELECT cap FROM run_caps WHERE run_id=?').get(runId);
         if (!priorCap) database.prepare('INSERT INTO run_caps (run_id,cap,max_events) VALUES (?, ?, ?)').run(runId, this.configuredCap ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes, this.configuredEventCap ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink);
         else if (this.configuredCap !== undefined && this.configuredCap < Number(priorCap.cap)) database.prepare('UPDATE run_caps SET cap=? WHERE run_id=?').run(this.configuredCap, runId);
@@ -84,7 +94,14 @@ export class RunQuota {
           used += item?.size ?? 0;
         }
         const eventCap = Number(database.prepare('SELECT max_events FROM run_caps WHERE run_id=?').get(runId)!.max_events);
-        const quota = new QuotaTransaction(this.repoRoot, database, cap, used, eventCap);
+        const checkpoint = async () => {
+          await retryBusy(() => database.exec('COMMIT'));
+          await begin(database);
+          effectiveAccountingLimit = this.applyAccountingLimit(database);
+        };
+        const quota = new QuotaTransaction(this.repoRoot, database, cap, used, eventCap, runId, runRoot, checkpoint);
+        await quota.recoverEventWrite();
+        if (eventWrite) await quota.armEventWrite();
         const result = await activeTransaction.run(true, () => operation(quota));
         await retryBusy(() => database.exec('COMMIT'));
         return result;
@@ -143,7 +160,42 @@ async function retryBusy(operation: () => void): Promise<void> {
 }
 
 export class QuotaTransaction {
-  public constructor(private readonly repoRoot: string, private readonly database: DatabaseSync, private readonly cap: number, private used: number, private readonly maxEventsPerSink = DEFAULT_STORAGE_CAPS.maxEventsPerSink) {}
+  public constructor(private readonly repoRoot: string, private readonly database: DatabaseSync, private readonly cap: number, private used: number, private readonly maxEventsPerSink = DEFAULT_STORAGE_CAPS.maxEventsPerSink,
+    private readonly runId: string,
+    private readonly runRoot: string,
+    private readonly checkpoint: () => Promise<void>) {}
+  private priorFailed: 0 | 1 = 0;
+  public hasEventFailure(): boolean {
+    return this.database.prepare('SELECT event_failed FROM run_caps WHERE run_id=?').get(this.runId)!.event_failed !== 0;
+  }
+  public async armEventWrite(): Promise<void> {
+    this.priorFailed = this.hasEventFailure() ? 1 : 0;
+    this.database.prepare('UPDATE run_caps SET event_failed=1 WHERE run_id=?').run(this.runId);
+    await this.checkpoint();
+  }
+  public async recoverEventWrite(): Promise<void> {
+    const pending = this.database.prepare('SELECT intent FROM event_append_intents WHERE run_id=?').get(this.runId);
+    if (!pending) return;
+    const intent = parseEventIntent(String(pending.intent));
+    const runSegment = this.runRoot + '/';
+    if (typeof intent.path !== 'string' || !intent.path.startsWith(runSegment) || !Number.isSafeInteger(intent.count) || intent.count < 0 || (intent.priorFailed !== 0 && intent.priorFailed !== 1)) throw failed('Invalid persisted event append intent.');
+    const absolute = await this.prepare(intent.path);
+    const info = await safeFile(absolute);
+    if (!info) throw failed('Pending event append file is missing.');
+    this.reserve(Math.max(0, intent.offset + Buffer.byteLength(intent.payload) - info.size), intent.path);
+    this.assertCanWrite(Buffer.byteLength(String(pending.intent)), intent.path);
+    const file = await open(absolute, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW);
+    try { await reconcileEventAppend(file, intent); } finally { await file.close(); }
+    await this.finishEventWrite(intent);
+    await this.checkpoint();
+  }
+  private async finishEventWrite(intent: EventAppendIntent): Promise<void> {
+    const info = (await safeFile(path.resolve(this.repoRoot, intent.path)))!;
+    if (!info || info.ino !== intent.ino || info.dev !== intent.dev || info.size !== intent.offset + Buffer.byteLength(intent.payload)) throw failed('Event append file changed before accounting commit.');
+    this.database.prepare('INSERT INTO sink_counts (path,size,mtime,count,inode,chain_digest) VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,count=excluded.count,inode=excluded.inode,chain_digest=excluded.chain_digest').run(intent.path, info.size, info.mtimeMs, intent.count + 1, String(info.ino), extendEventChain(intent.prefixChain, intent.digest));
+    this.database.prepare('DELETE FROM event_append_intents WHERE run_id=?').run(this.runId);
+    this.database.prepare('UPDATE run_caps SET event_failed=? WHERE run_id=?').run(intent.priorFailed, this.runId);
+  }
   public assertCanWrite(bytes: number, targetPath: string): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw failed('Invalid artifact byte count.');
     if (this.used + bytes > this.cap) throw createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message: `Artifact cap exceeded before ${targetPath} could be committed.`, retryable: false, details: { targetPath, maxArtifactBytes: this.cap, attemptedTotalBytes: this.used + bytes } });
@@ -172,34 +224,43 @@ export class QuotaTransaction {
     const filename = (number: number) => number === 1 ? `${baseName}.ndjson` : `${baseName}-${String(number).padStart(4, '0')}.ndjson`;
     let relativePath = path.posix.join(relativeDirectory, filename(index));
     let absolute = await this.prepare(relativePath);
-    let count = await this.eventCount(absolute, relativePath);
+    let prefix = await this.eventPrefix(absolute, relativePath);
+    let count = prefix.count;
     const rollover = count >= (explicitPolicyCap ? Math.min(policy.maxEventsPerSink, this.maxEventsPerSink) : this.maxEventsPerSink);
     if (rollover) {
       if (policy.strategy === 'error') throw createProbefnError({ code: 'E_STORAGE_CAP_EXCEEDED', message: `Event cap exceeded for ${relativePath}.`, retryable: false });
       index += 1; count = 0;
       relativePath = path.posix.join(relativeDirectory, filename(index));
       absolute = await this.prepare(relativePath);
+      prefix = await this.eventPrefix(absolute, relativePath); count = prefix.count;
     }
     this.reserve(Buffer.byteLength(payload), relativePath);
-    const file = await open(absolute, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
-    try { await file.writeFile(payload); await file.sync(); }
-    finally { await file.close(); }
-    const info = (await safeFile(absolute))!;
-    this.database.prepare('INSERT INTO sink_counts VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,count=excluded.count,inode=excluded.inode').run(relativePath, info.size, info.mtimeMs, count + 1, String(info.ino));
+    const file = await open(absolute, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+    try {
+      const info = await file.stat();
+      if (prefix.identity === null ? info.size !== 0 : info.dev !== prefix.identity.dev || info.ino !== prefix.identity.ino || info.size !== prefix.identity.size || info.mtimeMs !== prefix.identity.mtime) throw failed('Event prefix changed before append admission.');
+      await file.sync();
+      const directory = await open(path.dirname(absolute), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try { await directory.sync(); } finally { await directory.close(); }
+      const intent: EventAppendIntent = { path: relativePath, dev: info.dev, ino: info.ino, offset: info.size, mtime: info.mtimeMs,
+        payload, digest: eventDigest(payload), prefixChain: prefix.chain, count, sinkIndex: index, rollover, priorFailed: this.priorFailed };
+      const serialized = JSON.stringify(intent);
+      this.assertCanWrite(Buffer.byteLength(serialized), relativePath);
+      this.database.prepare('INSERT INTO event_append_intents VALUES (?,?)').run(this.runId, serialized);
+      await this.checkpoint();
+      await reconcileEventAppend(file, intent, false);
+      await this.finishEventWrite(intent);
+    } finally { await file.close(); }
     return { relativePath, eventCount: count + 1, sinkIndex: index, ...(rollover ? { warning: `Event cap reached; rollover sink ${filename(index)} created.` } : {}) };
   }
-  private async eventCount(absolute: string, relative: string): Promise<number> {
+  private async eventPrefix(absolute: string, relative: string): Promise<{ count: number; chain: string; identity: { dev: number; ino: number; size: number; mtime: number } | null }> {
     const info = await safeFile(absolute);
-    if (!info || info.size === 0) return 0;
-    const cached = this.database.prepare('SELECT size,mtime,count,inode FROM sink_counts WHERE path=?').get(relative);
-    if (cached && cached.size === info.size && cached.mtime === info.mtimeMs && cached.inode === String(info.ino)) return Number(cached.count);
-    let count = 0, last = -1;
-    for await (const chunk of createReadStream(absolute)) {
-      for (const byte of chunk as Buffer) if (byte === 10) count++;
-      last = (chunk as Buffer).at(-1) ?? last;
-    }
-    if (last !== 10) throw failed('Event sink contains an incomplete record; refusing to append.');
-    return count;
+    const identity = info ? { dev: info.dev, ino: info.ino, size: info.size, mtime: info.mtimeMs } : null;
+    if (!info || info.size === 0) return { count: 0, chain: EMPTY_EVENT_CHAIN, identity };
+    const cached = this.database.prepare('SELECT size,mtime,count,inode,chain_digest FROM sink_counts WHERE path=?').get(relative);
+    if (cached && cached.size === info.size && cached.mtime === info.mtimeMs && cached.inode === String(info.ino) && /^[0-9a-f]{64}$/.test(String(cached.chain_digest))) return { count: Number(cached.count), chain: String(cached.chain_digest), identity };
+    const file = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { return { ...await inspectEventPrefix(file, info.size), identity }; } finally { await file.close(); }
   }
 }
 

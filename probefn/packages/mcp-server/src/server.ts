@@ -317,7 +317,8 @@ export class ProbefnRuntime {
     const patch = { artifacts: {
       tracePath, tracePaths: [...new Set([...(session.artifacts.tracePaths ?? []), ...(session.artifacts.tracePath ? [session.artifacts.tracePath] : []), tracePath])],
     } };
-    if (session.status === 'failed') await scope.sessionManager.markFailed(sessionId, patch);
+    const integrity = await scope.artifactStore.recoverEventWrites(session.runId);
+    if (session.status === 'failed' || integrity.failed) await scope.sessionManager.markFailed(sessionId, patch);
     else if (session.status === 'completed') await scope.sessionManager.markCompleted(sessionId, patch);
     else await scope.sessionManager.markRunning(sessionId, patch);
   }
@@ -1128,8 +1129,10 @@ export async function stopSession(
     }
   }
 
-  const nextState =
-    session.status === 'completed' || session.status === 'failed'
+  const integrity = await scope.artifactStore.recoverEventWrites(session.runId);
+  const nextState = integrity.failed
+    ? await scope.sessionManager.markFailed(sessionId)
+    : session.status === 'completed' || session.status === 'failed'
       ? session
       : await scope.sessionManager.markCompleted(sessionId);
 
@@ -1587,7 +1590,8 @@ async function finalizeRunManifest(
   status: 'completed' | 'failed',
 ): Promise<void> {
   const manifest = await readRunManifest(repoRoot, session.artifacts.manifestPath);
-  manifest.status = status;
+  const integrity = await scope.artifactStore.recoverEventWrites(session.runId);
+  manifest.status = integrity.failed ? 'failed' : status;
   manifest.endedAt = new Date().toISOString();
   await scope.artifactStore.writeRunManifest(session.runId, manifest);
 }

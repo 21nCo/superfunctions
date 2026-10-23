@@ -92,6 +92,9 @@ describe.sequential('real Chromium lifecycle ownership', () => {
     await expect(runner.stopSession(options.sessionId)).rejects.toMatchObject({ code: 'E_BROWSER_LAUNCH_FAILED' });
     expect(browsers[0]!.isConnected()).toBe(false);
     expect((session.page as unknown as { listenerCount(event: string): number }).listenerCount('console')).toBe(0);
+    expect(runner.hasSession(options.sessionId)).toBe(true);
+    await expect(runner.stopSession(options.sessionId)).resolves.toMatchObject({ tracePath: null });
+    expect(runner.hasSession(options.sessionId)).toBe(false);
     await expect(runner.stopSession(options.sessionId)).rejects.toMatchObject({ code: 'E_SESSION_NOT_FOUND' });
   });
 

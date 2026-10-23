@@ -254,6 +254,6 @@ export class SessionManager {
 
   private async writeState(state: SessionState): Promise<void> {
     const relativePath = this.getStatePath(state.sessionId);
-    await this.artifactStore.writeArtifact(`${relativePath}`, `${JSON.stringify(state, null, 2)}\n`, { runId: state.runId });
+    await this.artifactStore.writeArtifact(`${relativePath}`, `${JSON.stringify(state, null, 2)}\n`, { runId: state.runId, requireEventIntegrity: state.status === 'completed' });
   }
 }

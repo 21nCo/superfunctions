@@ -204,7 +204,8 @@ export class DevServerManager {
     }
     if (session.child) await terminateChildProcessGroup(session.child, session.closed!, this.shutdownTimeoutMs);
     await session.exitMonitor;
-    if (session.outputFailure) session.manifest.status = 'failed';
+    const integrity = await this.artifactStore.recoverEventWrites(session.runId);
+    if (session.outputFailure || integrity.failed) session.manifest.status = 'failed';
 
     session.manifest.status = session.manifest.status === 'failed' ? 'failed' : 'completed';
     session.manifest.endedAt = this.now();
