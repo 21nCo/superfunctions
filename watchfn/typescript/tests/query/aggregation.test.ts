@@ -124,3 +124,29 @@ describe("query aggregations", () => {
     expect((await query.aggregate({ metric: "cpu.usage", aggregation: "avg" })).data).toEqual([{ value: 0.25 }]);
   });
 });
+
+it("short-circuits and closes the exact-presence probe while retaining candidate filters", async () => {
+  const calls: any[] = [];
+  let closed = 0;
+  const query = new QueryEngine({
+    async *iterateQuery(options: any) {
+      calls.push(options);
+      try {
+        if (!Object.keys(options).length) {
+          yield { name: "request.duration", timestamp: 0, properties: { value: 999 } };
+          throw new Error("Exact-presence probe must stop immediately");
+        }
+        yield { name: "request", timestamp: 100, properties: { duration: 10 } };
+      } finally { closed++; }
+    },
+  } as any);
+  const options = { metric: "request.duration", aggregation: "avg" as const, timeRange: { from: 50, to: 150 } };
+  expect((await query.aggregate(options)).data).toEqual([{ value: null }]);
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toEqual({});
+  expect(calls[1].resolvedTimeRange).toEqual({ from: 50, to: 150 });
+  expect(closed).toBe(2);
+  calls.length = 0;
+  expect((await query.aggregate({ ...options, metric: "request", aggregation: "count" })).data).toEqual([{ value: 1 }]);
+  expect(calls).toHaveLength(1);
+});

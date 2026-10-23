@@ -72,3 +72,33 @@ it("streams every SQLite projection/version page in storage order and preserves 
     expect((await query.aggregate({ metric: "request.value", aggregation: "sum" })).data).toEqual([{ value: expected.filter(event => event.name === "request").reduce((sum, event) => sum + event.properties.value, 0) }]);
   } finally { await sql?.destroy(); await rm(directory, { recursive: true, force: true }); }
 });
+
+it("keeps exact scalar metric presence independent of projected residual filters", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "watch-exact-metric-"));
+  let sql: Kysely<any> | undefined;
+  try {
+    const native = new Database(join(directory, "events.sqlite"));
+    sql = new Kysely({ dialect: new SqliteDialect({ database: native }) });
+    const schema = getWatchFnSchema().watchfn_events;
+    native.exec(`CREATE TABLE watchfn_events (${Object.entries(schema.fields).map(([field, definition]) => `"${field}" ${definition.type === "number" ? "REAL" : "TEXT"}${field === "id" ? " PRIMARY KEY" : ""}`).join(",")})`);
+    const adapter = kyselyAdapter({ db: sql, dialect: "sqlite", schema: { watchfn_events: "watchfn_events" } });
+    const storage = new DatabaseStorage(adapter);
+    const base = { name: "request", type: "track", app: { name: "web" }, timestamp: 100, properties: { duration: 10 } };
+    const exact = { name: "request.duration", type: "track", app: { name: "other" }, timestamp: 0, properties: { value: 999 } };
+    await storage.add(base);
+    const query = new QueryEngine(storage);
+    const options = { metric: "request.duration", aggregation: "avg" as const, where: { "app.name": "web" }, timeRange: { from: 50, to: 150 } };
+    expect((await query.aggregate(options)).data).toEqual([{ value: 10 }]);
+    await storage.add(exact);
+    const memory = new QueryEngine({ getAll: () => [base, exact] } as any);
+    expect((await memory.aggregate(options)).data).toEqual([{ value: null }]);
+    const spy = vi.spyOn(adapter, "findMany");
+    expect((await query.aggregate(options)).data).toEqual([{ value: null }]);
+    expect(spy.mock.calls.every(([params]) => params.limit === 128)).toBe(true);
+    expect(spy.mock.calls.some(([params]) => params.where?.some(clause => clause.field === "eventTimestamp"))).toBe(true);
+    expect(spy.mock.calls.some(([params]) => params.where?.some(clause => clause.field === "eventApp"))).toBe(true);
+  } finally {
+    await sql?.destroy();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

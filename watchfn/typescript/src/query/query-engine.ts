@@ -74,12 +74,24 @@ export class QueryEngine {
     const suffixAt = scalarMetric && options.metric?.includes(".") ? options.metric.lastIndexOf(".") : -1;
     const fallbackMetric = suffixAt >= 0 ? options.metric!.slice(0, suffixAt) : undefined;
     const fallbackConfigs = fallbackMetric === undefined ? undefined : { value: { ...aggregations!.value, field: options.metric!.slice(suffixAt + 1) } };
-    let fallback = fallbackConfigs ? this.collector(options, fallbackConfigs, grouping) : undefined;
+    // Projection-aware storage can exclude an exact metric before residual
+    // filters run. Probe presence without filters only for suffix fallback;
+    // retain the normal filtered/pushed-down scan for aggregation afterwards.
+    // This is a bounded-memory live probe, not a snapshot across concurrent writes.
     let exactMetricSeen = false;
+    if (fallbackConfigs && (options.where !== undefined || range !== undefined)) {
+      for await (const event of this.events({})) {
+        if (event.name === options.metric || event.type === options.metric) {
+          exactMetricSeen = true;
+          break;
+        }
+      }
+    }
+    let fallback = fallbackConfigs && !exactMetricSeen ? this.collector(options, fallbackConfigs, grouping) : undefined;
     for await (const event of source) {
       const exact = !options.metric || event.name === options.metric || event.type === options.metric;
-      // Exact metric presence is determined before residual where/time filters,
-      // matching the original suffix fallback rule. Never run a second live scan.
+      // A newly arriving exact metric observed in the candidate scan also
+      // disables fallback before residual where/time filters.
       if (fallback && exact) { exactMetricSeen = true; fallback = undefined; }
       let target = primary;
       if (rates.length) {

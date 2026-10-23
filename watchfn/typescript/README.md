@@ -164,3 +164,13 @@ and tenant metadata do not automatically restrict those reads. Use separate
 trusted storage/deployments for mutually untrusted tenants until tenant-aware
 query enforcement is implemented. Programmatic methods are trusted host APIs;
 health remains public. Python HTTP routes do not yet implement this contract.
+
+Scalar suffix aggregates preserve exact metric precedence before residual filters.
+For example, an existing `request.duration` event outside the selected time range
+prevents interpreting in-range `request` events' `duration` fields as that metric.
+Filtered suffix queries first probe the unfiltered storage iterator for exact
+presence, stopping at the first match, then retain the ordinary projected query
+for aggregation. Other query forms are unchanged. Database pages remain bounded
+at128 rows, but an absent exact metric can require an additional full scan; this
+is a memory bound, not a total-row or latency bound. The probe and candidate scan
+are live and do not provide a transactional snapshot across concurrent changes.
