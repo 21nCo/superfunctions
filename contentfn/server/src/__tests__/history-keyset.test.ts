@@ -57,7 +57,7 @@ it('pages bounded document history with equal timestamp/revision ties across ind
     }
     expect(titles).toEqual(Array.from({ length: 8 }, (_, index) => `row-${index}`));
     for (const [query] of spy.mock.calls.filter(([query]) => query.model === 'contentfn_revisions')) {
-      expect(query.limit).toBe(2); expect(query.where).toEqual(expect.arrayContaining([{ field: 'dataset', operator: 'eq', value: 'prod' }, { field: 'docId', operator: 'in', value: ['post', 'drafts.post'] }]));
+      expect(query.limit).toBe(2); expect(query.where).toEqual(expect.arrayContaining([{ field: 'dataset', operator: 'eq', value: 'prod' }, expect.objectContaining({ field: 'docId', operator: 'eq', value: expect.stringMatching(/^(drafts\.)?post$/) })]));
     }
     sqlite.prepare("UPDATE contentfn_revisions SET timestamp = ? WHERE id = ?").run('2026-10-24T00:00:00.000Z', 'row-7');
     sqlite.prepare("UPDATE contentfn_revisions SET timestamp = ? WHERE id = ?").run('2026-10-22T00:00:00.000Z', 'row-6');
@@ -87,5 +87,31 @@ it('detaches native memory snapshots so history callers cannot mutate stored his
     page.result.revisions[0].title = 'corrupted';
     expect(await api.docs.history({ dataset: 'prod', id: 'one' })).toMatchObject({ ok: true, result: { revisions: [{ title: 'original' }] } });
     expect(await api.docs.restore({ dataset: 'prod', id: 'one', rev: created.result._rev })).toMatchObject({ ok: true, result: { title: 'original' } });
+  } finally { await db.close(); }
+});
+
+
+it('bounds cursor size for unrestricted public IDs and accepts safe previous scoped cursors', async () => {
+  const db = memoryAdapter(); const { api } = createContentfnServer({ db });
+  try {
+    await api.datasets.create({ dataset: 'prod' });
+    await api.schema.upsert({ dataset: 'prod', schema: { version: 1, documentTypes: [{ name: 'post', fields: [] }] } });
+    const id = 'unicode-文'.repeat(3000);
+    expect(await api.docs.create({ dataset: 'prod', id, type: 'post', doc: {}, asDraft: true })).toMatchObject({ ok: true });
+    expect(await api.docs.patch({ dataset: 'prod', id: `drafts.${id}`, ops: [] })).toMatchObject({ ok: true });
+    const first = await api.docs.history({ dataset: 'prod', id, limit: 1 });
+    if (!first.ok || !first.result.nextCursor) throw Error('Expected pagination');
+    expect(first.result.nextCursor.length).toBeLessThan(1024);
+    const next = await api.docs.history({ dataset: 'prod', id, limit: 1, cursor: first.result.nextCursor });
+    expect(next).toMatchObject({ ok: true, result: { revisions: [expect.any(Object)], nextCursor: null } });
+    await api.docs.create({ dataset: 'prod', id: 'short', type: 'post', doc: {}, asDraft: true });
+    await api.docs.patch({ dataset: 'prod', id: 'drafts.short', ops: [] });
+    const short = await api.docs.history({ dataset: 'prod', id: 'short', limit: 1 });
+    if (!short.ok || !short.result.nextCursor) throw Error('Expected short pagination');
+    const current: unknown = JSON.parse(Buffer.from(short.result.nextCursor, 'base64').toString('utf8'));
+    if (!current || typeof current !== 'object') throw Error('Expected cursor');
+    const legacy = Buffer.from(JSON.stringify({ ...current, version: 1, dataset: 'prod', docId: 'short' })).toString('base64');
+    expect(await api.docs.history({ dataset: 'prod', id: 'short', limit: 1, cursor: legacy })).toMatchObject({ ok: true });
+    expect(await api.docs.history({ dataset: 'prod', id: 'another', cursor: legacy })).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
   } finally { await db.close(); }
 });

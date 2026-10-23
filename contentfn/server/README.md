@@ -61,17 +61,51 @@ rollback, or independent writes by older servers are outside this guarantee.
 versions of the requested document. Pages sort by recorded timestamp descending,
 revision ascending, then storage identity ascending. Queries are scoped to the
 dataset and base document identity and return at most `limit` snapshots (1–1000).
-Versioned opaque cursors bind that scope; `drafts.id` and `id` address the same
-history. Old timestamp/revision-only cursors now fail validation: restart from the
-first page after upgrading. The existing `docs.history` authorization action is
+Version-2 opaque cursors bind a compact hash of that scope; `drafts.id` and `id`
+address the same history, including unrestricted long public IDs. Safely parseable
+version-1 dataset/document-bound cursors remain accepted. Old unbound
+timestamp/revision-only cursors fail validation: restart from the first page. The existing `docs.history` authorization action is
 checked before storage access. Snapshots may contain private draft content, so
 hosts must grant this action only to authorized history readers. New revisions
 inserted ahead of an existing cursor appear after refreshing the first page.
 
-Each page materializes at most `3 * (limit + 1)` candidate rows using disjoint
-keyset ranges. This bounds application memory, not database scan/sort work:
-existing tables have only the revision identity index. Large histories need a
-nonunique index beginning `(dataset, docId, timestamp DESC, rev, id)`, followed by
-adapter-specific query-plan validation for the two-document-ID predicate. Adding
-and validating that index on supported databases remains a performance readiness
-gate; the example is not evidence that an existing deployment has migrated.
+Each page materializes at most `6 * (limit + 1)` candidate rows using disjoint
+keyset ranges for each exact base/draft identity. First pages use two queries;
+continuations use six. The host must install the directional index below to avoid
+scanning/sorting an entire document history. These are shared-adapter reads, not
+an additional SQL runtime.
+
+### Install the ordered history index
+
+Existing and fresh databases can call `upgradeHistoryIndexSchema` after table
+creation. It passes `getHistoryIndexDefinition()` to the host's idempotent
+`ensureOrderedIndex` implementation:
+
+```ts
+import { upgradeHistoryIndexSchema } from "@contentfn/server";
+// Supply the host's implemented schema migration adapter, not a no-op callback.
+await upgradeHistoryIndexSchema(hostMigrations);
+```
+
+Required definition (SQLite syntax):
+
+```sql
+CREATE INDEX contentfn_revisions_history_v1
+ON contentfn_revisions (dataset ASC, docId ASC, timestamp DESC, rev ASC, id ASC);
+```
+
+Do not treat `CREATE INDEX IF NOT EXISTS` alone as verification: a same-name
+index with different columns/directions must fail readiness. Index creation is
+additive and requires no row backfill; failures leave the previous data readable.
+The hook is explicit and never runs at import/server construction. Deployments
+choose maintenance/online-DDL policy appropriate to their database.
+
+The shared `IndexSchema`/schema CLI currently cannot express mixed directions,
+so this descriptor is separate and the CLI does not establish ordered-index
+readiness. Keep this index in the host migration inventory. SQLite native tests
+verify populated first/deep page plans use indexed range searches without a
+temporary sort. PostgreSQL/MySQL execution plans and online migrations have not
+been validated here. In particular, unrestricted public `docId` values are TEXT;
+MySQL prefix indexes/byte budgets and PostgreSQL index-entry limits need a distinct
+bounded-key design before claiming equivalent performance for all supported IDs.
+Memory storage keeps functional behavior but has no physical index acceleration.

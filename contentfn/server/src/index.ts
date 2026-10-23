@@ -48,3 +48,6 @@ export type { AuditRecord, AuditQuery } from "./storage/audit.js";
 export { upgradeWebhookAuditSchema } from "./storage/migrate.js";
 export { backfillWebhookAudit } from "./storage/webhookAudit.js";
 export type { WebhookAuditRecord, WebhookAuditQuery } from "@contentfn/core";
+
+export { getHistoryIndexDefinition, upgradeHistoryIndexSchema } from "./storage/migrate.js";
+export type { HistoryIndexDefinition } from "./storage/migrate.js";
