@@ -1,3 +1,5 @@
+import { mergeSecurity, normalizeSecurity, requiresProtectedTransport } from '../utils/destination-policy.js';
+import type { DestinationSecurity } from '../core/types.js';
 import { PlaywrightProvider } from './providers/playwright.js';
 import { PuppeteerProvider } from './providers/puppeteer.js';
 /**
@@ -38,9 +40,11 @@ export class WebScraper {
     fallbackChain?: string[],
     private hooks?: ServiceHooks,
     private fallbackOnErrors?: string[],
-    private userAgents: string[] = []
+    private userAgents: string[] = [],
+    private security?: DestinationSecurity
   ) {
     if (userAgents.some(value => !value.trim() || /[\r\n]/.test(value))) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'userAgents must contain non-empty valid header values.' });
+    this.security = normalizeSecurity(security);
     this.providerManager = new ProviderManager(defaultProvider, fallbackChain);
   }
 
@@ -55,7 +59,7 @@ export class WebScraper {
   }
 
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
-    options = this.withUserAgent(options);
+    options = this.withUserAgent({ ...options, security: mergeSecurity(this.security, options.security) });
     const sanitizedUrl = sanitizeUrl(url);
     validateGetPageOptions(options);
 
@@ -88,6 +92,7 @@ export class WebScraper {
     urls: string[],
     options: MetadataOptions = {}
   ): Promise<MetadataResult[]> {
+    options = { ...options, security: mergeSecurity(this.security, options.security) };
     const maxBatchSize = options.maxBatchOverride ?? DEFAULT_METADATA_BATCH_LIMIT;
     if (urls.length > maxBatchSize) {
       throw new BrowseFnError({
@@ -151,7 +156,7 @@ export class WebScraper {
     url: string,
     options: GetPageOptions & { script?: (page: unknown) => Promise<T> | T }
   ): Promise<T> {
-    options = { ...options, ...this.withUserAgent(options) };
+    options = { ...options, ...this.withUserAgent(options), security: mergeSecurity(this.security, options.security) };
     const sanitizedUrl = sanitizeUrl(url);
     const script = options.script;
     if (!script) {
@@ -180,7 +185,7 @@ export class WebScraper {
         continue;
       }
 
-      if (options.security && !options.security.allowPrivateHosts && !supportsProtectedDestinations(provider)) throw denied();
+      if (requiresProtectedTransport(options.security) && !supportsProtectedDestinations(provider)) throw denied();
 
       const capabilityError = this.getCustomScrapeCapabilityError(providerName, provider);
       if (capabilityError) {
@@ -243,7 +248,7 @@ export class WebScraper {
         continue;
       }
 
-      if (options.security && !options.security.allowPrivateHosts && !supportsProtectedDestinations(provider)) throw denied();
+      if (requiresProtectedTransport(options.security) && !supportsProtectedDestinations(provider)) throw denied();
 
       const capabilityError = this.getCapabilityError(providerName, provider, options);
       if (capabilityError) {

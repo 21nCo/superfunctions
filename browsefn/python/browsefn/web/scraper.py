@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from browsefn.utils.destination_policy import merge_security, normalize_security, requires_protected_transport
+from browsefn.core.types import DestinationSecurity
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.provider_manager import ProviderManager
 from browsefn.core.provider_registry import (
@@ -31,7 +33,8 @@ class WebScraper:
 
     MAX_METADATA_BATCH = 50
 
-    def __init__(self, config: Optional[WebConfig] = None):
+    def __init__(self, config: Optional[WebConfig] = None, security: Optional[DestinationSecurity] = None):
+        self.security = normalize_security(security)
         self.config = config or WebConfig()
         self._user_agent_index = 0
         if any(not value.strip() or "\r" in value or "\n" in value for value in self.config.user_agents or []):
@@ -88,6 +91,7 @@ class WebScraper:
             self.provider_manager.default_provider = canonical_name
 
     def prepare_options(self, options: GetPageOptions) -> GetPageOptions:
+        options = options.model_copy(update={"security": merge_security(self.security, options.security)})
         agents = self.config.user_agents or []
         if not agents or any(key.lower() == "user-agent" for key in options.headers or {}):
             return options
@@ -102,7 +106,7 @@ class WebScraper:
         requested_provider = self._normalize_provider_id(options.provider)
 
         def assert_destination_policy(provider: WebProvider) -> None:
-            if options.security is not None and not options.security.allow_private_hosts and type(provider) is not BeautifulSoupProvider:
+            if requires_protected_transport(options.security) and type(provider) is not BeautifulSoupProvider:
                 raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Provider cannot enforce the active destination policy.")
 
         async def executor(provider: WebProvider, provider_name: str) -> PageResult:
@@ -123,6 +127,7 @@ class WebScraper:
         options: Optional[MetadataOptions] = None,
     ) -> List[MetadataResult]:
         options = options or MetadataOptions()
+        options = options.model_copy(update={"security": merge_security(self.security, options.security)})
         max_batch = options.max_batch_override or self.MAX_METADATA_BATCH
         if len(urls) > max_batch:
             raise BrowseFnError(

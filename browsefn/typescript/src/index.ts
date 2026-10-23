@@ -26,6 +26,8 @@ export {
 // Core types
 export type {
   BrowseFnConfig,
+  SecurityConfig,
+  DestinationSecurity,
   BrowseFnEvent,
   EventHandler,
   EventData,

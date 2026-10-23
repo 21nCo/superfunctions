@@ -12,6 +12,8 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "BrowseFnErrorCode": ("browsefn.core.errors", "BrowseFnErrorCode"),
     "create_success_envelope": ("browsefn.core.errors", "create_success_envelope"),
     "create_error_envelope": ("browsefn.core.errors", "create_error_envelope"),
+    "SecurityConfig": ("browsefn.core.types", "SecurityConfig"),
+    "DestinationSecurity": ("browsefn.core.types", "DestinationSecurity"),
     "BrowseFnConfig": ("browsefn.core.types", "BrowseFnConfig"),
     "WebConfig": ("browsefn.core.types", "WebConfig"),
     "ImageConfig": ("browsefn.core.types", "ImageConfig"),

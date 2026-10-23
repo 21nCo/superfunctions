@@ -9,6 +9,8 @@ The browser restriction recorded below is historical checkpoint behavior.
 The [2026-10-23 browser isolation checkpoint](./browser-isolation-readiness.md)
 adds configured TypeScript browser execution through a Linux network namespace.
 Hosted/custom provider and full SEC-001 limits remain separately qualified.
+The [hostname policy checkpoint](./hostname-policy-readiness.md) subsequently adds
+exact hostname exceptions and deny rules.
 
 ## Behavior
 

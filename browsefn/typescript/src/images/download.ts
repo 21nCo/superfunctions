@@ -3,7 +3,7 @@ import { lookup } from 'node:dns';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
-import { isPublicAddress, denied } from '../utils/destination-policy.js';
+import { isPublicAddress, denied, permitsPrivateHost } from '../utils/destination-policy.js';
 export { isPublicAddress } from '../utils/destination-policy.js';
 import { constants } from 'node:fs';
 import { open, mkdir, link, rename, unlink } from 'node:fs/promises';
@@ -19,7 +19,8 @@ export async function fetchImageBytes(input: string, options: ImageDownloadOptio
   for (let redirects = 0; ; redirects++) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw denied();
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
-    if (!options.allowPrivateHosts && (isIP(hostname) ? !isPublicAddress(hostname) : hostname === 'localhost')) throw denied();
+    const allowPrivate = permitsPrivateHost(hostname, options.security ?? { allowPrivateHosts: options.allowPrivateHosts });
+    if (!allowPrivate && (isIP(hostname) ? !isPublicAddress(hostname) : hostname === 'localhost')) throw denied();
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new BrowseFnError({ code: 'PROVIDER_ERROR', message: 'Image download timed out.' });
     const result = await new Promise<{ bytes?: Uint8Array; location?: string }>((resolve, reject) => {
@@ -29,7 +30,7 @@ export async function fetchImageBytes(input: string, options: ImageDownloadOptio
         lookup: (host, _lookupOptions, callback) => {
           lookup(host, { all: true, verbatim: true }, (error, addresses) => {
             if (error) return callback(error, '', 4);
-            if (!addresses.length || (!options.allowPrivateHosts && addresses.some(({ address }) => !isPublicAddress(address)))) return callback(denied(), '', 4);
+            if (!addresses.length || (!allowPrivate && addresses.some(({ address }) => !isPublicAddress(address)))) return callback(denied(), '', 4);
             // Return the checked address directly; the connection never resolves it again.
             const chosen = addresses[0];
             if (_lookupOptions.all) (callback as Function)(null, addresses);

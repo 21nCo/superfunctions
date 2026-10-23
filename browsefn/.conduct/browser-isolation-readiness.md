@@ -97,6 +97,9 @@ abort, malformed/oversized frames, and daemon failure during cleanup. Malformed
 worker and daemon-failure cases use isolated process doubles; native failure
 acceptance covers the actual missing-image and deadline paths.
 
+Exact hostname exceptions/deny rules were added subsequently in the
+[hostname policy checkpoint](./hostname-policy-readiness.md).
+
 ## Remaining gates and operational limits
 
 This is an opt-in deployment boundary. A Linux-container Docker daemon, trusted
@@ -113,7 +116,7 @@ image, kernel, local host users and application callbacks are trusted. The
 Puppeteer Chromium sandbox is disabled within the container; the enforced
 network boundary is the Linux namespace, not a browser sandbox claim.
 
-Hosted provider egress, custom provider attestations, exact hostname allowlists,
+Hosted provider egress, custom provider attestations,
 Python browser support and the full original performance/release requirements
 remain separate unfinished scope. Protected custom proxies and headed browser
 mode remain unsupported. Puppeteer host executable/argument configuration applies

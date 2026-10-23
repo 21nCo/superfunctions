@@ -135,6 +135,10 @@ export interface WebConfig {
 }
 
 export interface DestinationSecurity {
+  /** Exact private-host exceptions; does not restrict other public hosts. */
+  allowedHosts?: string[];
+  /** Exact deny rules; take precedence over every private-host opt-in. */
+  blockedHosts?: string[];
   /** Explicit trusted in-process opt-in. HTTP routes always override this. */
   allowPrivateHosts?: boolean;
 }
@@ -477,7 +481,10 @@ export interface GeoProvider {
 
 // ===== Main Config =====
 
+export type SecurityConfig = DestinationSecurity;
+
 export interface BrowseFnConfig {
+  security?: SecurityConfig;
   web?: WebConfig;
   images?: ImageConfig;
   geo?: GeoConfig;

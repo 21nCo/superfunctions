@@ -97,3 +97,12 @@ describe('router destination policy', () => {
     await expect(fetchPublicPage(base + '/slow', { security: { allowPrivateHosts: true }, timeout: 20 })).rejects.toMatchObject({ code: 'UPSTREAM_TIMEOUT' });
   });
 });
+
+it('does not turn private exceptions into an exclusive public hostname allowlist',async()=>{
+  const actual=await vi.importActual<typeof import('../src/utils/destination-policy.js')>('../src/utils/destination-policy.js');
+  vi.mocked(isPublicAddress).mockImplementation(address=>address==='127.0.0.1');
+  try {
+    expect((await fetchPublicPage(base,{security:{allowedHosts:['other-private.test']}})).bytes.length).toBeGreaterThan(0);
+    expect(calls).toEqual(['/']);
+  } finally {vi.mocked(isPublicAddress).mockImplementation(actual.isPublicAddress);}
+});

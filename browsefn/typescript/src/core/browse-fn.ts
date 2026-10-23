@@ -144,7 +144,8 @@ export class BrowseFn {
       config.web?.fallbackChain,
       operationHooks,
       config.web?.fallbackOnErrors,
-      config.web?.userAgents
+      config.web?.userAgents,
+      config.security
     );
 
     if (config.web?.providers) {
@@ -174,7 +175,8 @@ export class BrowseFn {
       this.rateLimiter,
       config.images?.defaultProvider,
       [],
-      operationHooks
+      operationHooks,
+      config.security
     );
 
     if (config.images?.providers) {

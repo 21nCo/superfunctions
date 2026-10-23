@@ -169,6 +169,17 @@ class Cookie(BaseModel):
     domain: Optional[str] = None
 
 class DestinationSecurity(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_host_arrays(cls, value):
+        if isinstance(value, dict):
+            for key in ("allowedHosts", "allowed_hosts", "blockedHosts", "blocked_hosts"):
+                if key in value and (not isinstance(value[key], list) or any(not isinstance(host, str) for host in value[key])):
+                    raise ValueError("Security host rules must be arrays of exact hostnames")
+        return value
+
+    allowed_hosts: List[str] = Field(default_factory=list, alias="allowedHosts", strict=True)
+    blocked_hosts: List[str] = Field(default_factory=list, alias="blockedHosts", strict=True)
     allow_private_hosts: bool = Field(False, alias="allowPrivateHosts", strict=True)
 
 class GetPageOptions(BaseModel):
@@ -342,6 +353,7 @@ class Watermark(BaseModel):
     opacity: Optional[float] = None
 
 class ImageDownloadOptions(BaseModel):
+    security: Optional[DestinationSecurity] = None
     allow_private_hosts: bool = Field(False, alias="allowPrivateHosts")
     max_redirects: int = Field(5, alias="maxRedirects", ge=0, strict=True)
     max_payload_bytes: int = Field(20 * 1024 * 1024, alias="maxPayloadBytes", gt=0, strict=True)
@@ -501,7 +513,10 @@ class GeoProvider(Protocol):
 
 # ===== Main Config =====
 
+SecurityConfig = DestinationSecurity
+
 class BrowseFnConfig(BaseModel):
+    security: Optional[SecurityConfig] = None
     web: Optional[WebConfig] = None
     images: Optional[ImageConfig] = None
     geo: Optional[GeoConfig] = None

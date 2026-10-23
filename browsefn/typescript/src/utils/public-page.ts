@@ -4,7 +4,7 @@ import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { BrowseFnError } from '../core/errors.js';
 import type { GetPageOptions } from '../core/types.js';
-import { isPublicAddress, denied } from './destination-policy.js';
+import { isPublicAddress, denied, permitsPrivateHost } from './destination-policy.js';
 
 export async function fetchPublicPage(input: string, options: GetPageOptions): Promise<{ bytes: Uint8Array; url: string }> {
   const deadline = Date.now() + (options.timeout ?? 30_000);
@@ -15,7 +15,8 @@ export async function fetchPublicPage(input: string, options: GetPageOptions): P
   for (let redirects = 0; ; redirects++) {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw denied();
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
-    if (!options.security?.allowPrivateHosts && (isIP(hostname) ? !isPublicAddress(hostname) : hostname === 'localhost')) throw denied();
+    const allowPrivate = permitsPrivateHost(hostname, options.security);
+    if (!allowPrivate && (isIP(hostname) ? !isPublicAddress(hostname) : hostname === 'localhost')) throw denied();
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new BrowseFnError({ code: 'UPSTREAM_TIMEOUT', message: 'Page request timed out.' });
     const result = await new Promise<{ bytes?: Uint8Array; location?: string }>((resolve, reject) => {
@@ -25,7 +26,7 @@ export async function fetchPublicPage(input: string, options: GetPageOptions): P
         lookup: (host, _lookupOptions, callback) => {
           lookup(host, { all: true, verbatim: true }, (error, addresses) => {
             if (error) return callback(error, '', 4);
-            if (!addresses.length || (!options.security?.allowPrivateHosts && addresses.some(({ address }) => !isPublicAddress(address)))) return callback(denied(), '', 4);
+            if (!addresses.length || (!allowPrivate && addresses.some(({ address }) => !isPublicAddress(address)))) return callback(denied(), '', 4);
             // Return the checked address directly; the connection never resolves it again.
             const chosen = addresses[0];
             if (_lookupOptions.all) (callback as Function)(null, addresses);

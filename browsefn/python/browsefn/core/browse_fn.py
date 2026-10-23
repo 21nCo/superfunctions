@@ -5,6 +5,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, Set, Type, TypeVar
 
+from browsefn.utils.destination_policy import normalize_security
 from browsefn.core.cache_manager import CacheManager
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.rate_limiter import RateLimiter
@@ -214,6 +215,7 @@ class BrowseFn:
 
     def __init__(self, config: Optional[BrowseFnConfig] = None):
         self.config = config or BrowseFnConfig()
+        self.config.security = normalize_security(self.config.security)
 
         self.cache_manager: Optional[CacheManager] = None
         if self.config.cache and self.config.cache.enabled:
@@ -263,7 +265,7 @@ class BrowseFn:
         from browsefn.web.providers.bs4 import BeautifulSoupProvider
         from browsefn.web.scraper import WebScraper
 
-        service = WebScraper(self.config.web)
+        service = WebScraper(self.config.web, self.config.security)
         if self.config.web and self.config.web.providers:
             if any(name in self.config.web.providers for name in ("bs4", "beautifulsoup", "cheerio")):
                 service.register_provider("cheerio", BeautifulSoupProvider())
@@ -277,7 +279,7 @@ class BrowseFn:
         from browsefn.images.providers.pixabay import PixabayProvider
         from browsefn.images.providers.unsplash import UnsplashProvider
 
-        service = ImageBrowser(self.config.images)
+        service = ImageBrowser(self.config.images, self.config.security)
         if self.config.images and self.config.images.providers:
             providers_config = self.config.images.providers
             if "unsplash" in providers_config:

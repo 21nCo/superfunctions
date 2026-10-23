@@ -1,4 +1,6 @@
 from __future__ import annotations
+from browsefn.utils.destination_policy import permits_private_host
+from browsefn.core.types import DestinationSecurity
 
 from pathlib import Path
 from urllib.parse import urlparse
@@ -47,10 +49,11 @@ async def _fetch_image_bytes(url: str, options: ImageDownloadOptions) -> bytes:
             parsed = httpx.URL(url)
             if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not parsed.host:
                 raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Target URL is not allowed by the active security policy.")
+            allow_private = permits_private_host(parsed.host, options.security if options.security is not None else DestinationSecurity(allowPrivateHosts=options.allow_private_hosts))
             addresses = await asyncio.get_running_loop().getaddrinfo(
                 parsed.host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM,
             )
-            if not addresses or (not options.allow_private_hosts and any(not is_public_address(item[4][0]) for item in addresses)):
+            if not addresses or (not allow_private and any(not is_public_address(item[4][0]) for item in addresses)):
                 raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Target host is not allowed by the active security policy.")
             address = addresses[0][4][0]
             target = parsed.copy_with(host=address)

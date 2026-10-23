@@ -95,6 +95,15 @@ describe.skipIf(!image)('Docker browser network isolation', () => {
       rmSync(directory,{recursive:true,force:true});
     }
   },120_000);
+  it('fails closed for browser hostname rules without disabling the default isolated path',async()=>{
+    for(const provider of [new PlaywrightProvider({isolation:{dockerImage:image!}}),new PuppeteerProvider({isolation:{dockerImage:image!}})]) {
+      for(const security of [{allowedHosts:['127.0.0.1']},{allowPrivateHosts:true,blockedHosts:['elsewhere.test']}]) {
+        await expect(provider.getPage(allowed+'/page',{security,timeout:30_000})).rejects.toMatchObject({code:'SECURITY_POLICY_BLOCKED'});
+      }
+    }
+    expect(privateRequests).toEqual([]);
+    expect(execFileSync('docker',['ps','-aq','--filter','name=browsefn-'],{encoding:'utf8'}).trim()).toBe('');
+  });
   it('allows public WebSockets through the pinned proxy',async()=>{
     const provider=new PlaywrightProvider({isolation:{dockerImage:image!}});
     const message=await provider.scrape(allowed+'/page',{security:{},timeout:30_000,script:async(page:any)=>page.evaluate((url:string)=>new Promise((resolve,reject)=>{

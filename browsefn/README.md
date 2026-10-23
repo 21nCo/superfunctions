@@ -260,8 +260,8 @@ trusted, explicitly provisioned Linux Docker worker, configured as described
 below. Unconfigured browser, hosted and custom providers fail closed with
 `SECURITY_POLICY_BLOCKED`. Hosted-provider remote network access is a separate
 boundary that a local DNS check cannot certify. Python currently implements only
-the static local web provider. Exact host allowlists and full SEC-001 acceptance
-remain unfinished.
+the static local web provider. The hostname policy below covers exact private-host exceptions and deny rules;
+full SEC-001 acceptance remains unfinished.
 
 Trusted in-process callers can select the checked transport with
 `security: { allowPrivateHosts: false }`, or explicitly permit private hosts with
@@ -270,7 +270,65 @@ Trusted in-process callers can select the checked transport with
 retain the legacy direct-library provider behavior, which is not a security
 boundary for untrusted URLs. Do not forward arbitrary request options to direct
 library methods. Protected direct calls should also disable caching; the HTTP
-routers enforce this automatically. Exact host allowlists are not implemented.
+routers enforce this automatically.
+
+## Exact hostname policy
+
+Both SDKs accept a global `security` policy in `BrowseFnConfig`, and per-call
+`security` on page, metadata and image download options. `SecurityConfig` and
+`DestinationSecurity` expose `allowPrivateHosts`, `allowedHosts` and
+`blockedHosts` in this checkpoint.
+
+`allowedHosts` contains **exact private-host exceptions**, not an exclusive
+allowlist: other public hosts remain accessible. `blockedHosts` denies an exact
+host even when it is also allowed or `allowPrivateHosts` is true. Rules match
+hostnames, not URL prefixes or ports; all ports for the exact host share the rule.
+There is no suffix or subdomain matching. A hostname exception explicitly trusts
+that name's resolved addresses, including private addresses; the actual socket
+still uses a checked, pinned answer and each new destination is checked again.
+
+```ts
+const browse = browseFn({
+  security: {
+    allowedHosts: ['internal.example'],
+    blockedHosts: ['metadata.internal.example'],
+  },
+});
+// Trusted direct call; only internal.example gets the private-host exception.
+const page = await browse.web.getPage('http://internal.example/status', { cache: false });
+```
+
+Python accepts `BrowseFnConfig(security={"allowedHosts": ["internal.example"],
+"blockedHosts": ["metadata.internal.example"]})`; snake_case aliases are also
+accepted. Names are normalized to lowercase IDNA ASCII, one trailing dot is
+removed, and IPv6 literals are canonicalized. Wildcards, CIDRs, URL schemes,
+credentials, paths, ports, zone IDs and ambiguous numeric IPv4 spellings are
+rejected. Use canonical IPv4 literals; bracketed IPv6 is accepted. Malformed
+arrays and rule entries fail before DNS or a target connection.
+
+Per-call allowed-host lists replace global lists when supplied (`[]` removes
+exceptions); omitted lists inherit the defaults. Blocked-host lists are combined,
+so a call cannot remove a global deny rule. Per-call `allowPrivateHosts` overrides
+the global boolean. Effective policy is part of page-cache identity, preventing
+an allowed cached response from satisfying a later denied policy. Hostname rules
+also apply to direct image transfers and all redirect destinations.
+
+HTTP routes force `allowPrivateHosts: false` and `allowedHosts: []`, preserving
+global deny rules. Request-body rules and the legacy image `allowPrivateHosts`
+flag cannot weaken that boundary. On trusted direct image calls, nested
+`security` takes precedence over the legacy flag. Browser calls with nonempty hostname rules fail closed, even when broad private
+access is also enabled. CONNECT authority checks alone do not prove per-request
+hostname enforcement across encrypted connection reuse. Browser HTTP/2
+coalescing/ORIGIN handling needs further enforcement and multi-origin TLS
+acceptance before those rules can be enabled. The existing isolated browser path
+without hostname rules remains available. Unsupported protected providers remain
+denied.
+
+This implements the hostname portion of the original security configuration.
+Configurable global `maxResponseBytes`, `maxDownloadBytes` and `maxRedirects`
+remain unimplemented; existing transport limits still apply. See
+[hostname policy evidence](./.conduct/hostname-policy-readiness.md) for remaining
+payload-cap discrepancies and validation.
 
 ## Isolated browser destinations
 

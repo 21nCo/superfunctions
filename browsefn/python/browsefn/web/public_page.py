@@ -6,6 +6,7 @@ from typing import Tuple
 
 import httpx
 
+from browsefn.utils.destination_policy import permits_private_host
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import GetPageOptions
 from browsefn.images._download_utils import is_public_address
@@ -26,13 +27,13 @@ async def fetch_public_page(url: str, options: GetPageOptions) -> Tuple[str, str
 
 async def _fetch(url: str, options: GetPageOptions) -> Tuple[str, str]:
     headers = dict(options.headers or {})
-    allow_private = options.security is not None and options.security.allow_private_hosts
     async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
                                  limits=httpx.Limits(max_keepalive_connections=0)) as client:
         for redirects in range(6):
             parsed = httpx.URL(url)
             if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not parsed.host:
                 raise denied()
+            allow_private = permits_private_host(parsed.host, options.security)
             addresses = await asyncio.get_running_loop().getaddrinfo(
                 parsed.host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
             if not addresses or (not allow_private and any(not is_public_address(item[4][0]) for item in addresses)):

@@ -22,3 +22,55 @@ export function denied(): BrowseFnError {
   return new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Target host is not allowed by the active security policy.' });
 }
 
+
+import type { DestinationSecurity } from '../core/types.js';
+/** Exact names only. URL components, wildcards and ambiguous numeric hosts are invalid. */
+export function normalizePolicyHost(value: string): string {
+  const invalid = () => new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Security host rules must be exact hostnames or IP addresses.' });
+  if (typeof value !== 'string' || !value || /[\s/@?#\\%*]/u.test(value)) throw invalid();
+  let host = value.endsWith('.') ? value.slice(0, -1) : value;
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  if (isIP(host) === 6) return new URL(`http://[${host}]/`).hostname.slice(1, -1);
+  if (host.includes(':') || !host || host.endsWith('.') || host.includes('..')) throw invalid();
+  let normalized: string;
+  try { normalized = new URL(`http://${host}/`).hostname; } catch { throw invalid(); }
+  if (isIP(normalized) === 4 && normalized !== host) throw invalid();
+  if (/^[\d.]+$/.test(host) && !isIP(host)) throw invalid();
+  if (!normalized.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label) && label.length <= 63) || normalized.length > 253) throw invalid();
+  return normalized.toLowerCase();
+}
+export function normalizeSecurity(value?: DestinationSecurity): DestinationSecurity | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || (value.allowPrivateHosts !== undefined && typeof value.allowPrivateHosts !== 'boolean')) {
+    throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Invalid destination security policy.' });
+  }
+  const hosts = (rules: unknown): string[] | undefined => {
+    if (rules === undefined) return undefined;
+    if (!Array.isArray(rules) || rules.some(rule => typeof rule !== 'string')) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Security host rules must be arrays of exact hostnames.' });
+    return [...new Set(rules.map(normalizePolicyHost))];
+  };
+  return { allowPrivateHosts: value.allowPrivateHosts, allowedHosts: hosts(value.allowedHosts), blockedHosts: hosts(value.blockedHosts) };
+}
+export function mergeSecurity(defaults?: DestinationSecurity, override?: DestinationSecurity): DestinationSecurity | undefined {
+  const base = normalizeSecurity(defaults), call = normalizeSecurity(override);
+  if (!base && !call) return undefined;
+  return { allowPrivateHosts: call?.allowPrivateHosts ?? base?.allowPrivateHosts ?? false,
+    allowedHosts: call?.allowedHosts ?? base?.allowedHosts ?? [],
+    blockedHosts: [...new Set([...(base?.blockedHosts ?? []), ...(call?.blockedHosts ?? [])])] };
+}
+/** Returns whether this exact destination has an explicit private-address exception. */
+export function permitsPrivateHost(host: string, security?: DestinationSecurity): boolean {
+  const policy = normalizeSecurity(security);
+  const normalized = normalizePolicyHost(host);
+  if (policy?.blockedHosts?.includes(normalized)) throw denied();
+  return policy?.allowPrivateHosts === true || policy?.allowedHosts?.includes(normalized) === true;
+}
+export function requiresProtectedTransport(security?: DestinationSecurity): boolean {
+  const policy = normalizeSecurity(security);
+  return !!policy && (!policy.allowPrivateHosts || !!policy.blockedHosts?.length || !!policy.allowedHosts?.length);
+}
+
+export function hasHostnameRules(security?: DestinationSecurity): boolean {
+  const policy = normalizeSecurity(security);
+  return !!policy?.allowedHosts?.length || !!policy?.blockedHosts?.length;
+}

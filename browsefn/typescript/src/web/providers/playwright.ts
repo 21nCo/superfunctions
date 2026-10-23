@@ -1,7 +1,7 @@
 import { browserDeadline } from '../isolation/lifecycle.js';
 import { assertBrowserDestination } from '../isolation/egress-proxy.js';
 import { launchIsolatedBrowser, type BrowserIsolation } from '../isolation/docker-browser.js';
-import { denied } from '../../utils/destination-policy.js';
+import { denied, requiresProtectedTransport, hasHostnameRules } from '../../utils/destination-policy.js';
 /**
  * Playwright provider for cross-browser scraping.
  */
@@ -81,7 +81,9 @@ export class PlaywrightProvider extends BrowserProviderBase<PlaywrightPage> impl
 
     const browserType = this.config.browser || 'chromium';
     const proxy = parseBrowserProxy(options.proxy);
-    const protectedRequest = !!options.security && !options.security.allowPrivateHosts;
+    const protectedRequest = requiresProtectedTransport(options.security);
+    // CONNECT authority alone does not prove hostname rules across encrypted connection reuse.
+    if (hasHostnameRules(options.security)) throw denied();
     if (protectedRequest && (!this.config.isolation || proxy || this.config.headless === false)) throw denied();
     const deadline = browserDeadline(options.timeout ?? this.config.timeout ?? 30_000, startedAt);
     if (protectedRequest) await deadline.wait(assertBrowserDestination(sanitizedUrl));

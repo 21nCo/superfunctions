@@ -1,3 +1,5 @@
+import { mergeSecurity, normalizeSecurity, requiresProtectedTransport } from '../utils/destination-policy.js';
+import type { DestinationSecurity } from '../core/types.js';
 /**
  * Image browsing and search interface.
  */
@@ -40,8 +42,10 @@ export class ImageBrowser {
     private rateLimiter?: RateLimiter,
     defaultProvider?: string,
     fallbackChain: string[] = [],
-    private hooks?: ServiceHooks
+    private hooks?: ServiceHooks,
+    private security?: DestinationSecurity
   ) {
+    this.security = normalizeSecurity(security);
     this.providerManager = new ProviderManager(defaultProvider, fallbackChain);
   }
 
@@ -97,6 +101,7 @@ export class ImageBrowser {
     input: string | ImageResult,
     options: ImageDownloadOptions = {}
   ): Promise<DownloadResult> {
+    options = { ...options, security: mergeSecurity(this.security, options.security ?? (options.allowPrivateHosts === undefined ? undefined : { allowPrivateHosts: options.allowPrivateHosts })) };
     validateImageDownloadOptions(options);
     const providerOptions = options;
     const selection = this.selection.resolve(input, options);
@@ -107,7 +112,7 @@ export class ImageBrowser {
       : undefined;
 
     const provider = this.providerManager.getDefault();
-    if (provider?.download && options.security && !options.security.allowPrivateHosts) {
+    if (provider?.download && requiresProtectedTransport(options.security)) {
       throw new BrowseFnError({ code: 'SECURITY_POLICY_BLOCKED', message: 'Provider cannot enforce the active destination policy.' });
     }
     if (provider?.download) {
