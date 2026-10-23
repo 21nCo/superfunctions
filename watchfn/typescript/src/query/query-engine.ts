@@ -23,11 +23,13 @@ export class QueryEngine {
     let exactSeen = false;
     const range = { from: from ?? -8640000000000000, to: now };
     for await (const event of this.events({ resolvedTimeRange: range })) {
+      const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp > now || (from !== undefined && timestamp < from)) continue;
+      // Alert presence belongs to the requested observation window, unlike
+      // scalar aggregate's global exact-metric precedence.
       const exact = event.name === metric || event.type === metric;
       if (exact) { exactSeen = true; fallback.length = 0; }
       if (!exact && (exactSeen || !base || (event.name !== base && event.type !== base))) continue;
-      const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
-      if (!Number.isFinite(timestamp) || timestamp > now || (from !== undefined && timestamp < from)) continue;
       const value = this.getFieldValue(event, exact ? 'value' : metric.slice(suffix + 1));
       if (typeof value !== 'number' || !Number.isFinite(value)) continue;
       const destination = exact ? points : fallback;

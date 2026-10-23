@@ -188,3 +188,54 @@ five local wheels, installs them in an isolated environment and runs tests throu
 the actual shared FastAPI and Flask adapters. It removes the temporary consumer
 and uses no external service. The tests exercise framework HTTP stacks in-process;
 they do not certify a deployed server or proxy's transport limits.
+
+### Stored alert evaluation
+
+`watch.alerts.register(Alert(...))` and `watch.alerts.evaluate_stored()` connect
+existing `track(name, properties)` observations to windowed conditions. Import
+`Alert` from `watchfn.alerts.alert_manager`. For example:
+
+```python
+from watchfn.alerts.alert_manager import Alert
+
+watch.track('api', {'latency': 120})
+watch.alerts.register(Alert(
+    id='slow-api', name='Slow API', description=None, enabled=True,
+    condition={'metric': 'api.latency', 'operator': 'gt', 'threshold': 100,
+               'window': '5m', 'aggregation': 'avg'},
+    severity='warning', channels=[],
+    auto_resolve={'enabled': True, 'condition': {
+        'metric': 'api.latency', 'operator': 'lt', 'threshold': 50,
+        'window': '5m'}}))
+results = watch.alerts.evaluate_stored()  # Requires watch.start().
+```
+
+Evaluation flushes pending producers and reads one completed storage snapshot.
+Database reads keep the existing 10,000-row/16-MiB scan bounds; memory retains
+its configured recent-event limit. The per-metric observation cap defaults to
+10,000 (`maximum=...`, 1..1,000,000); overflow or a storage failure raises before
+any alert state changes. `now` is optional epoch milliseconds. Composite children
+use their own metrics and windows; shared metrics load the union of those windows.
+Anomalies use all retained observations through `now`, ordered by timestamp.
+An exact metric name/type within that loaded window selects its finite numeric
+`value`; otherwise `api.latency` reads `latency` from `api` events. Even an exact
+sample with a nonnumeric value suppresses fallback. This alert presence scope
+is distinct from scalar aggregate's global exact-name precedence.
+
+`result.matched` is `True`, `False`, or `None` (unknown); `observed` distinguishes
+missing/insufficient data from a healthy measurement. Only an explicitly enabled
+`auto_resolve` condition returning true resolves a triggered alert. Threshold
+windows are inclusive; nonfinite values, booleans, strings and future samples
+are excluded. `minDataPoints` and legacy `min_data_points` are supported for
+anomalies. Invalid conditions fail before reading storage.
+
+Definitions, states and recovery configuration are **process-local**. A restarted
+client can re-register a definition and evaluate persisted events, but does not
+recover prior alert state. No notifications are sent. Durable definitions,
+lifecycle, acknowledgement, notes and outbox delivery remain unfinished. Host
+code must serialize definition edits/legacy evaluations with stored evaluation;
+concurrent `evaluate_stored` calls alone are serialized. The old standalone
+`evaluate`/`evaluate_all(data)` APIs retain their legacy array behavior and are
+not the stored/windowed path. Synchronous stored evaluation uses the same DB
+owner-loop boundary as synchronous queries; do not block an async request loop
+with it.

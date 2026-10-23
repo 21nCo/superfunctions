@@ -3,6 +3,9 @@
 from typing import List, Dict, Any, Optional, Literal
 from dataclasses import dataclass
 import time
+import threading
+from .observations import validate, evaluate as evaluate_stored, ranges
+from ..query import number
 from .conditions import ConditionEvaluator
 
 
@@ -19,6 +22,7 @@ class Alert:
     triggered_at: Optional[float] = None
     last_evaluated: Optional[float] = None
     consecutive_failures: int = 0
+    auto_resolve: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -28,15 +32,65 @@ class EvaluationResult:
     timestamp: float
     value: Optional[float] = None
     message: Optional[str] = None
+    matched: Optional[bool] = None
+    observed: bool = False
 
 
 class AlertManager:
     """Manage alerts and evaluate conditions."""
     
-    def __init__(self):
+    def __init__(self, snapshot=None):
         self.alerts: Dict[str, Alert] = {}
         self.evaluator = ConditionEvaluator()
+        self._snapshot = snapshot
+        self._evaluation_lock = threading.Lock()
     
+    def evaluate_stored(self, *, now=None, maximum=10000) -> List[EvaluationResult]:
+        """Evaluate owned storage explicitly; definitions/state remain process-local.
+
+        Unlike the legacy array API, only explicit auto_resolve can recover a
+        triggered alert. Storage/validation failures leave all states unchanged.
+        """
+        if self._snapshot is None:
+            raise RuntimeError("Stored evaluation requires a WatchFn-owned alert manager")
+        now = time.time() * 1000 if now is None else now
+        if not number(now): raise ValueError("Evaluation time must be finite")
+        if type(maximum) is not int or not 1 <= maximum <= 1000000:
+            raise ValueError("Observation capacity must be 1..1000000")
+        with self._evaluation_lock:
+            alerts = [alert for alert in self.alerts.values() if alert.enabled]
+            requested = {}
+            for alert in alerts:
+                validate(alert.condition)
+                ranges(alert.condition, now, requested)
+                if alert.auto_resolve is not None:
+                    if not isinstance(alert.auto_resolve, dict) or type(alert.auto_resolve.get("enabled")) is not bool:
+                        raise ValueError("Invalid auto_resolve configuration")
+                    if alert.auto_resolve["enabled"]:
+                        validate(alert.auto_resolve.get("condition"))
+                        ranges(alert.auto_resolve["condition"], now, requested)
+            data = self._snapshot(requested, now, maximum)
+            evaluated = [(alert, evaluate_stored(alert.condition, data, now),
+                evaluate_stored(alert.auto_resolve["condition"], data, now)
+                if alert.auto_resolve and alert.auto_resolve["enabled"] else None) for alert in alerts]
+            results = []
+            for alert, matched, recovery in evaluated:
+                if alert.last_evaluated is not None and now < alert.last_evaluated:
+                    raise ValueError("Evaluation time must not move backwards")
+            for alert, matched, recovery in evaluated:
+                if matched is True:
+                    alert.consecutive_failures += 1
+                    if alert.state == "normal":
+                        alert.state = "triggered"
+                        alert.triggered_at = now
+                if alert.state == "triggered" and recovery is True:
+                    alert.state = "normal"
+                    alert.triggered_at = None
+                    alert.consecutive_failures = 0
+                alert.last_evaluated = now
+                results.append(EvaluationResult(alert, matched is True, now, matched=matched, observed=matched is not None))
+            return results
+
     def register(self, alert: Alert) -> None:
         """Register an alert."""
         alert.state = "normal"

@@ -1,0 +1,10 @@
+[
+ {"name":"inclusive-window","condition":{"metric":"a","operator":"gt","threshold":10,"window":"5m"},"data":{"a":[{"value":20,"timestamp":700000}]},"now":1000000,"expected":true},
+ {"name":"expired-unknown","condition":{"metric":"a","operator":"gt","threshold":10,"window":"5m"},"data":{"a":[{"value":20,"timestamp":699999}]},"now":1000000,"expected":null},
+ {"name":"future-unknown","condition":{"metric":"a","operator":"gt","threshold":10,"window":"5m"},"data":{"a":[{"value":20,"timestamp":1000001}]},"now":1000000,"expected":null},
+ {"name":"independent-composite-windows","condition":{"type":"composite","operator":"and","conditions":[{"metric":"a","operator":"gt","threshold":10,"window":"5m"},{"metric":"b","operator":"gt","threshold":10,"window":"1m"}]},"data":{"a":[{"value":20,"timestamp":800000}],"b":[{"value":20,"timestamp":800000}]},"now":1000000,"expected":null},
+ {"name":"different-metric-false","condition":{"type":"composite","operator":"and","conditions":[{"metric":"a","operator":"gt","threshold":10,"window":"5m"},{"metric":"b","operator":"gt","threshold":10,"window":"5m"}]},"data":{"a":[{"value":20,"timestamp":1000000}],"b":[{"value":0,"timestamp":1000000}]},"now":1000000,"expected":false},
+ {"name":"zero-history-anomaly","condition":{"type":"anomaly","metric":"a","sensitivity":0.8,"minDataPoints":3,"algorithm":"moving-average"},"data":{"a":[{"value":5,"timestamp":3},{"value":0,"timestamp":1},{"value":0,"timestamp":2}]},"now":3,"expected":true},
+ {"name":"zero-variance-anomaly","condition":{"type":"anomaly","metric":"a","sensitivity":0.8,"minDataPoints":3,"algorithm":"stddev"},"data":{"a":[{"value":5,"timestamp":3},{"value":0,"timestamp":1},{"value":0,"timestamp":2}]},"now":3,"expected":true},
+ {"name":"sum-overflow-unknown","condition":{"metric":"a","operator":"gt","threshold":10,"window":"5m","aggregation":"sum"},"data":{"a":[{"value":1e308,"timestamp":1},{"value":1e308,"timestamp":2}]},"now":3,"expected":null}
+]

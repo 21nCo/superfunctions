@@ -4,6 +4,8 @@ from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
 from .query import Query, Aggregate
+from .alerts.alert_manager import AlertManager
+from .alerts.observations import observations
 from .storage.memory_storage import MemoryStorage
 from .storage.database import DatabaseStorage
 from .http.routes import create_routes
@@ -31,8 +33,18 @@ class WatchFn:
         self.system_metrics = SystemMetricsCollector(self)
         self.process_metrics = ProcessMetricsCollector(self)
 
+        self.alerts = AlertManager(snapshot=self._alert_snapshot)
+
         # HTTP Routes
         self.http_routes: List[Route] = create_routes(self)
+
+    def _alert_snapshot(self, requested, now, maximum):
+        if not self.is_started:
+            raise RuntimeError("WatchFn storage is unavailable")
+        self.batcher.flush()
+        events = self.storage.query()
+        return {metric: observations(events, metric, start, now, maximum)
+                for metric, start in requested.items()}
 
     def _flush_events(self, events: List[Event]):
         if hasattr(self.storage, 'add_batch'):

@@ -102,3 +102,27 @@ it("keeps exact scalar metric presence independent of projected residual filters
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+it("uses window-local alert presence consistently in memory and projected SQLite", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "watch-alert-window-"));
+  let sql: Kysely<any> | undefined;
+  try {
+    const native = new Database(join(directory, "events.sqlite"));
+    sql = new Kysely({ dialect: new SqliteDialect({ database: native }) });
+    const schema = getWatchFnSchema().watchfn_events;
+    native.exec(`CREATE TABLE watchfn_events (${Object.entries(schema.fields).map(([field, definition]) => `"${field}" ${definition.type === "number" ? "REAL" : "TEXT"}${field === "id" ? " PRIMARY KEY" : ""}`).join(",")})`);
+    const adapter = kyselyAdapter({ db: sql, dialect: "sqlite", schema: { watchfn_events: "watchfn_events" } });
+    const storage = new DatabaseStorage(adapter);
+    const rows = [
+      { name: "request", type: "track", timestamp: 100, properties: { duration: 10 } },
+      { name: "request.duration", type: "track", timestamp: 0, properties: { value: 999 } },
+    ];
+    for (const row of rows) await storage.add(row);
+    const query = new QueryEngine(storage), memory = new QueryEngine({ getAll: () => rows } as any);
+    for (const engine of [memory, query]) expect(await engine.alertObservations("request.duration", 50, 150, 10)).toEqual([{ value: 10, timestamp: 100 }]);
+    const invalid = { name: "request.duration", type: "track", timestamp: 100, properties: { value: null } };
+    rows.push(invalid as any); await storage.add(invalid);
+    for (const engine of [memory, query]) expect(await engine.alertObservations("request.duration", 50, 150, 10)).toEqual([]);
+  } finally { await sql?.destroy(); await rm(directory, { recursive: true, force: true }); }
+});
