@@ -76,3 +76,12 @@ result still covers storage correctness, not Playwright offline toggling or the
 original p99/memory/performance targets. Prior Chrome performance receipts remain
 separate and unchanged. Native Safari needs the host automation gate resolved;
 Firefox needs an environment where an owned isolated profile can start.
+
+
+## Authorized native Safari acceptance
+
+A subsequent user-authorized temporary settings change unblocked native Safari27.0. On source `19a7af179b1c0aa6c0be74ba4a0c2c180bbe27b2`, `node cachefn/typescript/scripts/safari-acceptance.mjs` exited0 and passed all34 shared storage assertions. These cover namespace separation, TTL, tag consistency, failed-write and transaction-abort rollback, persistence after connection reopen, atomic pattern invalidation, localStorage and quota/fallback handling. This supersedes the earlier session-creation blocker for this run only.
+
+Receipt: `/tmp/cache-native-safari-authorized-20261023.log`. The actual native browser reported Safari27.0, AppleWebKit605.1.15. Cleanup reported `driverPid:58699`, `driverExited:true`, `sessionCreated:true`, `sessionDeleted:true`, `serverClosed:true`. The fixture used its isolated WebDriver session and a disposable localhost origin.
+
+Afterward, Safari settings read back both Allow remote automation and external agents and Show features for web developers as0, restoring their original disabled state; settings were closed. No persistent enablement is required or claimed. No library source changed. This proves the34-check native storage contract; offline connectivity toggling, native Safari performance and the blocked Firefox matrix remain unverified.
