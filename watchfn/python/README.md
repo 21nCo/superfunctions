@@ -286,9 +286,8 @@ host's trusted full channel configuration; use `get_record` only for sanitized
 inspection, not credential round-tripping. Identical re-registration means the
 original full definition, not a public metadata projection. IDs are unique across the table;
 reusing one caller-owned ID under another namespace fails. Legacy array evaluation
-rejects on the durable manager; use actual stored observations. Removal is
-explicitly unavailable until a receipt-retention/deletion policy is implemented;
-disable an alert instead.
+rejects on the durable manager; use actual stored observations. Alert deletion remains unavailable;
+disable an alert instead. Receipt pruning does not delete alert definitions.
 
 Every lifecycle transition compares the persisted revision and enqueues its
 pending channel obligations in the same transaction. Failed outbox creation rolls
@@ -316,8 +315,9 @@ storage across all alerts.
 
 Install `watchfn[dispatch]` and migrate **all** tables from `get_alert_schema()`,
 including `watchfn_alert_runtime`. Stop older dispatchers before migration: older
-releases cannot honor the new namespace ownership marker. The first dispatch or
-reconciliation claims the Watch name for `python-v1` (or `ts-v1` in TypeScript).
+releases cannot honor the new namespace ownership marker. The first lifecycle or dispatch operation in an empty namespace claims the Watch
+name for `python-v2` (or `ts-v3` in TypeScript). Existing namespaces require the
+explicit receipt-schema migration below.
 Current runtimes reject another protocol before sending or dismissing jobs. Do
 not change/delete that marker to transfer work with outstanding obligations.
 
@@ -354,17 +354,17 @@ outcome externally, the host can call
 reason='receipt verified or delivery cancelled')`. This releases capacity once;
 repeated reconciliation returns false. It never resends. Interrupted claims retain
 their obligation and become unknown after expiry. Terminal rows are retained for
-reconciliation/idempotency; **historical receipt storage is currently unbounded**
-and requires a future retention policy. Page notifications to inspect history.
+reconciliation/idempotency. Host-driven receipt maintenance below prunes only
+unpinned terminal rows; without scheduled maintenance, history keeps growing.
+Page notifications to inspect retained history.
 
 Credentials and notification snapshots remain plaintext at rest before settlement;
 protect the database and backups. Receipt snapshots can still contain event/alert
 context. Adapter failures and provider responses are sanitized; custom adapters
 must honor shared error contracts and avoid logging secrets themselves.
 
-Configured email delivery, transition callbacks, calculated-value
-notification context, terminal retention and complete TS lifecycle parity remain
-required follow-up work. Standalone legacy channel helpers are not this durable
+Transition callbacks, calculated-value notification context and complete
+TypeScript provider parity remain required follow-up work. Standalone legacy channel helpers are not this durable
 dispatch protocol. HTTP auth/ingestion/query routes are unchanged; no public
 alert-management route is introduced. These methods are trusted host APIs.
 
@@ -466,14 +466,48 @@ Concurrent first-start workers converge only after a duplicate marker insertion
 rolls back and a fresh transaction verifies identical namespace ownership; other
 errors remain fail-closed.
 
-Stop older Python dispatch writers before enabling email: the existing python-v1
-namespace marker separates runtimes, not releases. Terminal receipt retention,
-TS built-in provider parity, and the rest of full readiness remain separate work.
+Stop older Python dispatch writers before enabling email and receipt maintenance.
+The explicit protocol upgrade below fences current writers; older releases must
+still be drained. TS built-in email and the rest of full readiness remain open.
 
 
-Current Python durable lifecycle writers also verify the immutable python-v1
-namespace marker before definitions or state/outbox mutation. TS-v2 ownership or
+Current Python durable lifecycle writers verify the python-v2 namespace marker
+before definitions or state/outbox mutation. TypeScript ownership or
 existing rows without any marker fail closed; read-only inspection remains
 available for migration. Stop older writers before enabling these checks.
 SES configured status and delivery require validated SendFn/boto capabilities,
 not the optional httpx client used by Slack/webhook/PagerDuty.
+
+### Receipt retention and resumable migration
+
+Use `watch.alerts.prune_notifications(completed_before=<epoch milliseconds>,
+limit=100, after=<previous nextCursor>)` to process bounded pages of old terminal
+receipts. The boundary is exclusive, must not be in the future and has no default
+TTL. Continue until `nextCursor` is null; schedule another scan under your host's
+retention policy. Full IDs and completion timestamps form a stable cursor.
+
+Current PagerDuty tails and every incoming operational dependency remain pinned.
+Unknown/rejected/pending/sending work is never removed; dismissed blocked chains
+can remain indefinitely. Only authoritative delivery releases a job's predecessor
+pin; episode/route and historical predecessor identity remain in the payload.
+Pruning uses owner and candidate revision CAS, the existing shared transaction
+`delete`, and same-transaction absence verification. Failure rolls all accounting
+and deletion back. It never decrements pending counts or sends provider requests.
+The page bound is not a disk quota or a lock-wait deadline. Schedule maintenance,
+monitor storage and retain admission limits and explicit incident reconciliation.
+
+Apply the new Watch-owned outbox/runtime columns and indexes before use, then stop
+and drain every old writer and provider operation. Call
+`watch.alerts.migrate_receipt_retention(limit=100)` repeatedly on an exact
+`python-v1` namespace until `done`. Durable phases backfill projections, validate
+current tails, and validate dependencies before activating `python-v2`. The
+intermediate marker fences every mutation/dispatch/maintenance operation; reads and
+`receipt_retention_status()` remain available. A killed worker resumes its saved
+page. Validation errors preserve progress and require offline investigation, not
+an arbitrary marker rewrite. TypeScript owns separate `ts-v3` namespaces; neither
+runtime silently takes the other's namespace. New empty Python namespaces claim
+`python-v2` directly. Schema registration does not run production DDL. Physical
+indexes are required; native SQLite query plans are covered by acceptance tests.
+Projection integrity assumes cooperating writers; no hostile direct database
+modification isolation is promised. See the shared
+[receipt-retention acceptance](../.conduct/receipt-retention-readiness.md).

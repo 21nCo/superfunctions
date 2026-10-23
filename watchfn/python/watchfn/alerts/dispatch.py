@@ -9,7 +9,7 @@ from .schema import ALERTS, OUTBOX, RUNTIME
 from .durable import AlertConflict, encode, text
 from .pagerduty import request as pagerduty_request, route_key
 
-PROTOCOL = 'python-v1'
+PROTOCOL = 'python-v2'
 
 
 class _MarkerCollision(Exception):
@@ -63,7 +63,7 @@ class Dispatcher:
         try: return self.manager.storage.run_operation(operation)
         except AdapterError: raise RuntimeError('Alert storage operation failed') from None
 
-    def payload(self, row):
+    def payload(self, row, *, legacy=False):
         raw = row.get('payload')
         if not isinstance(raw, str) or len(raw.encode('utf-8')) > 524288: raise ValueError('Invalid notification payload')
         value = json.loads(raw)
@@ -74,6 +74,9 @@ class Dispatcher:
                 or type(row.get('revision')) is not int or not 0 <= row['revision'] < 9007199254740991
                 or type(row.get('attempts')) is not int or not 0 <= row['attempts'] <= 100):
             raise ValueError('Invalid notification payload')
+        if not legacy:
+            from .retention import validate_projection
+            validate_projection(row, value)
         return value
 
     async def _send(self, notification, channel, metadata=None):
@@ -210,7 +213,7 @@ class Dispatcher:
         # Keep a receipt for ambiguous local commits; remove routing credentials.
         payload = {'notification': value['notification'], 'delivery': delivery}
         if 'pagerDuty' in value: payload['pagerDuty'] = value['pagerDuty']
-        changed = await tx.update_many(UpdateManyParams(model=OUTBOX, where=self.manager._where(row['id']) + [WhereClause(field='revision', value=row['revision'])], data={'state': 'dead', 'leaseToken': None, 'revision': row['revision'] + 1, 'payload': encode(payload)}))
+        changed = await tx.update_many(UpdateManyParams(model=OUTBOX, where=self.manager._where(row['id']) + [WhereClause(field='revision', value=row['revision'])], data={'state': 'dead', 'leaseToken': None, 'revision': row['revision'] + 1, 'payload': encode(payload), 'completedAt': delivery['completedAt'], 'predecessorId': None if outcome == 'delivered' else row['predecessorId']}))
         if changed != 1: raise AlertConflict('Concurrent notification reconciliation')
         return True
 

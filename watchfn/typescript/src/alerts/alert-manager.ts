@@ -3,14 +3,15 @@ import { wrapWithSchema, type Adapter, type TransactionAdapter, type WhereClause
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { ConditionEvaluator, validateAlertCondition, alertWindowMs, type AlertCondition, type AlertMetricPoint } from './conditions';
 import { ALERTS, ALERT_OUTBOX, ALERT_RUNTIME, getAlertSchema } from './schema';
+import { ReceiptRetention, validateReceiptProjection } from './retention';
 import { pagerDutyRoute, pagerDutyRequest, type PagerDutyJob } from './channels/pagerduty';
 import type { AlertConfig, AlertChannel, AlertRecord, PublicAlert, AlertRuntimeConfig, AlertNotification } from './types';
 export type { AlertConfig, AlertChannel } from './types';
 interface Row { id: string; namespace: string; revision: number; payload: AlertRecord }
 interface Delivery { outcome: 'pending' | 'unknown' | 'rejected' | 'delivered' | 'dismissed'; reason?: string; completedAt?: number; actor?: string }
-interface Job { id: string; namespace: string; alertId: string; revision: number; state: string; availableAt: number; leaseToken: string | null; attempts: number; payload: { notification: AlertNotification; channel?: AlertChannel; pagerDuty?: PagerDutyJob; delivery?: Delivery } }
+export interface Job { id: string; namespace: string; alertId: string; revision: number; state: string; availableAt: number; leaseToken: string | null; attempts: number; predecessorId: string | null; completedAt: number | null; payload: { notification: AlertNotification; channel?: AlertChannel; pagerDuty?: PagerDutyJob; delivery?: Delivery } }
 type Outcome = { outcome: 'delivered' | 'unknown' | 'rejected' | 'retryable'; retryAfter?: number };
-const PROTOCOL = 'ts-v2';
+const PROTOCOL = 'ts-v3';
 
 type DB = Adapter | TransactionAdapter;
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -44,14 +45,17 @@ export class AlertManager {
     for (const key of ['maxObservations', 'maxPendingPerAlert', 'timeoutMs', 'leaseMs', 'maxAttempts'] as const) if (!Number.isSafeInteger(this.config[key]) || this.config[key] < 1) throw new TypeError(`Invalid alert ${key}`);
     if (this.config.timeoutMs > 60000 || this.config.leaseMs < this.config.timeoutMs + 100 || this.config.leaseMs > 300000 || this.config.maxAttempts > 100 || this.config.maxPendingPerAlert > 1000 || this.config.maxObservations > 1000000) throw new TypeError('Alert runtime bounds exceeded');
   }
-  private async transaction<T>(action: (tx: TransactionAdapter) => Promise<T>): Promise<T> {
+  private async transaction<T>(action: (tx: TransactionAdapter) => Promise<T>, migration = false): Promise<T> {
     const started = performance.now();
     for (let attempt = 0; ; attempt++) {
       const rolledBack = new Error('Owned transaction rollback sentinel');
       let cause: unknown;
       try {
         return await this.db.transaction(async tx => {
-          try { return await action(tx); }
+          try {
+            if (!migration) { const owner = await tx.findOne<{ protocol: string }>({ model: ALERT_RUNTIME, where: [{ field: 'id', operator: 'eq', value: this.namespace }] }); if (owner && owner.protocol !== PROTOCOL) throw new Error('Alert namespace belongs to an incompatible dispatch protocol'); }
+            return await action(tx);
+          }
           catch (error) {
             const code = (error as { code?: string })?.code;
             // Audited shared Kysely adapter preserves callback errors; Kysely
@@ -109,7 +113,7 @@ export class AlertManager {
       await this.assertDispatchProtocol();
       const now = Date.now(); const id = randomUUID();
       const record: AlertRecord = { ...config, id, enabled: config.enabled ?? true, state: 'normal', createdAt: now, updatedAt: now, notes: [], pendingNotifications: 0 };
-      await this.db.create({ model: ALERTS, data: { id, namespace: this.namespace, state: record.state, revision: 0, payload: record } });
+      await this.transaction(tx => tx.create({ model: ALERTS, data: { id, namespace: this.namespace, state: record.state, revision: 0, payload: record } }));
       return this.public(record);
     });
   }
@@ -237,7 +241,7 @@ export class AlertManager {
               sequence.tails[route] = jobId; sequence.settled = sequence.settled.filter(value => value !== route);
             }
           }
-          jobs.push({ id: jobId, namespace: this.namespace, alertId: id, revision: 0, state: 'pending', availableAt: now, leaseToken: null, attempts: 0, payload });
+          jobs.push({ id: jobId, namespace: this.namespace, alertId: id, revision: 0, state: 'pending', availableAt: now, leaseToken: null, attempts: 0, predecessorId: payload.pagerDuty?.predecessor ?? null, completedAt: null, payload });
         }
       }
       const changed = await tx.updateMany({ model: ALERTS, where: [...this.where(id), { field: 'revision', operator: 'eq', value: row.revision }], data: { revision: row.revision + 1, state: record.state, payload: record } });
@@ -283,15 +287,23 @@ export class AlertManager {
       const jobs = await tx.findMany<Job>({ model: ALERT_OUTBOX, where: this.where(), limit: limit + 1 });
       if (alerts.length > limit || jobs.length > limit) throw new Error('Migration scan capacity exceeded');
       if (alerts.some(row => active(row.payload) && row.payload.channels.some(channel => channel.type === 'pagerduty')) || jobs.some(job => job.payload.channel?.type === 'pagerduty' || job.payload.pagerDuty)) throw new Error('Legacy PagerDuty obligations require explicit incident migration');
-      for (const job of jobs) { this.validJob(job); if (job.payload.delivery) throw new Error('Legacy migration cannot reinterpret retained delivery receipts'); }
+      for (const job of jobs) { this.validJob(job, true); if (job.payload.delivery) throw new Error('Legacy migration cannot reinterpret retained delivery receipts'); }
       let parked = 0;
       for (const job of jobs) {
         if (job.attempts > 0 || job.state !== 'pending') { await this.park(tx, job, 'unknown', 'legacy-migration'); parked++; }
       }
-      const changed = await tx.updateMany({ model: ALERT_RUNTIME, where: [{ field: 'id', operator: 'eq', value: this.namespace }, { field: 'protocol', operator: 'eq', value: 'ts-v1' }], data: { protocol: PROTOCOL } });
+      const changed = await tx.updateMany({ model: ALERT_RUNTIME, where: [{ field: 'id', operator: 'eq', value: this.namespace }, { field: 'protocol', operator: 'eq', value: 'ts-v1' }], data: { protocol: 'ts-v2' } });
       if (changed !== 1) throw new Conflict('Concurrent namespace migration');
-      return { alerts: alerts.length, notifications: jobs.length, parked, protocol: PROTOCOL };
-    }));
+      return { alerts: alerts.length, notifications: jobs.length, parked, protocol: 'ts-v2' };
+    }, true));
+  }
+  private retention() { return new ReceiptRetention(this.namespace, (action, migration) => this.transaction(action, migration), job => this.validJob(job, true)); }
+  receiptRetentionStatus() { return this.host.admit(() => this.retention().status()); }
+  migrateReceiptRetention(options: { limit?: number } = {}) {
+    return this.host.admit(() => this.retention().migrate(options.limit));
+  }
+  pruneNotifications(options: { completedBefore: number; limit?: number; after?: { completedAt: number; id: string } }) {
+    return this.host.admit(async () => { await this.assertDispatchProtocol(); return this.retention().prune(options); });
   }
   dismissNotification(id: string) {
     if (!text(id, 128)) throw new TypeError('Invalid notification id');
@@ -312,7 +324,8 @@ export class AlertManager {
       });
     });
   }
-  private validJob(job: Job) {
+  private validJob(job: Job, legacy = false) {
+    if (!legacy) validateReceiptProjection(job);
     const value = job.payload;
     if (!value || Buffer.byteLength(JSON.stringify(value)) > 524288 || value.notification?.id !== job.id || value.notification?.alert?.id !== job.alertId
         || !['triggered', 'acknowledged', 'resolved'].includes(value.notification.event)
@@ -331,7 +344,7 @@ export class AlertManager {
     const count = await tx.updateMany({ model: ALERTS, where: [...this.where(row.id), { field: 'revision', operator: 'eq', value: row.revision }], data: { revision: row.revision + 1, state: record.state, payload: record } });
     if (count !== 1) throw new Conflict('Concurrent alert delivery; retry');
     const payload: Job['payload'] = { notification: job.payload.notification, delivery: { outcome, completedAt: Date.now(), ...(actor ? { actor, reason } : {}) }, ...(job.payload.pagerDuty ? { pagerDuty: job.payload.pagerDuty } : {}) };
-    const changed = await tx.updateMany({ model: ALERT_OUTBOX, where: [...this.where(job.id), { field: 'revision', operator: 'eq', value: job.revision }], data: { state: 'dead', leaseToken: null, revision: job.revision + 1, payload } });
+    const changed = await tx.updateMany({ model: ALERT_OUTBOX, where: [...this.where(job.id), { field: 'revision', operator: 'eq', value: job.revision }], data: { state: 'dead', leaseToken: null, revision: job.revision + 1, payload, completedAt: payload.delivery!.completedAt, predecessorId: outcome === 'delivered' ? null : job.predecessorId } });
     if (changed !== 1) throw new Conflict('Concurrent notification completion');
     return true;
   }

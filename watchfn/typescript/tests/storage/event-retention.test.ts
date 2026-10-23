@@ -102,7 +102,7 @@ describe("canonical event retention", () => {
   });
   it("fails closed for unsupported storage/config and observes cleanup failure through flush", async () => {
     const db = memoryAdapter();
-    expect(() => new DatabaseStorage({ ...db, capabilities: { transactions: { supported: false } } } as any, "watchfn_events", undefined, { apps: ["web"] })).toThrow("transactional");
+    expect(() => new DatabaseStorage({ ...db, capabilities: { ...db.capabilities, transactions: { supported: false } } } as any, "watchfn_events", undefined, { apps: ["web"] })).toThrow("transactional");
     expect(() => new WatchFn({ name: "bad", retention: { apps: ["web"] } } as any)).toThrow("database");
     for (const config of [{ apps: [] }, { apps: ["web"], defaultTtlMs: 0 }, { apps: ["web"], bugReportTtlMs: NaN }]) expect(() => new DatabaseStorage(db, "watchfn_events", undefined, config)).toThrow();
     const { watch } = setup(db); vi.spyOn(db, "findMany").mockRejectedValue(new Error("storage unavailable"));

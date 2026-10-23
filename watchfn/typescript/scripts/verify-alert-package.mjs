@@ -42,10 +42,19 @@ try {
  assert.ok(!JSON.stringify(await first.alerts.list()).includes('owned-private-route'));
  drop=true;await second.alerts.trigger(alert.id);await second.alerts.acknowledge(alert.id,{acknowledgedBy:'operator'});await second.alerts.resolve(alert.id,{resolvedBy:'operator'});await drain(second);
  assert.equal(received.length,4);const job=(await first.alerts.notifications()).find(value=>value.outcome==='unknown');assert.ok(job);
+ await new Promise(resolve=>setTimeout(resolve,2));
+ const uncertainPrune=await first.alerts.pruneNotifications({completedBefore:Date.now()});assert.equal(uncertainPrune.deleted,2);assert.equal((await first.alerts.get(alert.id)).pendingNotifications,3);
  drop=false;await drain(first);assert.equal(received.length,4);
  assert.equal(await first.alerts.reconcileNotification(job.id,{outcome:'delivered',actor:'operator',reason:'Owned protocol acceptance verified'}),true);
  await drain(first);assert.equal(received.length,6);assert.equal((await first.alerts.get(alert.id)).pendingNotifications,0);
  assert.notEqual(received[0].dedup_key,received[3].dedup_key);
+ await database.updateMany({model:'watchfn_alert_runtime',where:[{field:'id',operator:'eq',value:'packed-alerts'}],data:{protocol:'ts-v2'}});
+ await database.updateMany({model:'watchfn_alert_outbox',where:[{field:'namespace',operator:'eq',value:'packed-alerts'}],data:{completedAt:null,predecessorId:null}});
+ for(let index=0;index<20;index++){const result=await first.alerts.migrateReceiptRetention({limit:1});if(result.done)break;}
+ assert.equal((await first.alerts.receiptRetentionStatus()).protocol,'ts-v3');
+ await new Promise(resolve=>setTimeout(resolve,2));
+ let after,removed=0;for(let index=0;index<10;index++){const result=await second.alerts.pruneNotifications({completedBefore:Date.now(),limit:1,after});removed+=result.deleted;after=result.nextCursor;if(!after)break;}
+ assert.equal(removed,3);assert.equal((await first.alerts.notifications()).length,1);
  await assert.rejects(first.alerts.migrateStoppedLegacyNamespace(),/existing ts-v1/);
  await assert.rejects(first.flush(),error=>error instanceof AggregateError && error.errors.length===1 && /existing ts-v1/.test(error.errors[0].message));
  }finally{const stopped=await Promise.allSettled([first.stop(),second.stop()]);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));const failures=stopped.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw new AggregateError(failures,'Installed consumer cleanup failed');}
@@ -53,5 +62,9 @@ try {
  for(const [extension,imports] of [['mjs',"import assert from 'node:assert/strict';import {WatchFn} from '@watchfn/core';"],['cjs',"const assert=require('node:assert/strict');const {WatchFn}=require('@watchfn/core');"]]){
   const path=join(temporary,'consumer.'+extension);await writeFile(path,imports+'\n(async()=>{'+body+'})().catch(error=>{console.error(error);process.exitCode=1;});');execFileSync(process.execPath,[path],{cwd:temporary,stdio:'inherit',timeout:30000});
  }
- console.log(`Fresh ${closure.size}-tarball ESM/CJS durable PagerDuty ESM/CJS consumers passed`);
+ await writeFile(join(temporary,'consumer.ts'), `import {WatchFn} from '@watchfn/core';
+ const watch=new WatchFn({name:'typed',storage:'memory'});
+ async function maintenance(){const status=await watch.alerts.receiptRetentionStatus();const migration=await watch.alerts.migrateReceiptRetention({limit:1});const page=await watch.alerts.pruneNotifications({completedBefore:Date.now(),limit:1});if(page.nextCursor)await watch.alerts.pruneNotifications({completedBefore:Date.now(),after:page.nextCursor});const done:boolean=migration.done;const protocol:string|undefined=status?.protocol;return {done,protocol};}void maintenance;`);
+ execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
+ console.log(`Fresh ${closure.size}-tarball typed ESM/CJS durable PagerDuty and receipt-retention consumers passed`);
 }finally{await rm(temporary,{recursive:true,force:true});}

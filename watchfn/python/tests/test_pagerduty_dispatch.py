@@ -135,7 +135,7 @@ def test_legacy_job_without_episode_fails_before_claim_or_http(database, endpoin
         raw = json.loads(connection.execute(select(table.c.payload)).scalar_one()); raw.pop('pagerDuty')
         if metadata is not None: raw['pagerDuty'] = metadata
         connection.execute(table.update().values(payload=json.dumps(raw)))
-    with pytest.raises(ValueError, match='metadata migration'): watch.alerts.process_notifications()
+    with pytest.raises(ValueError, match='incident migration|dependency metadata'): watch.alerts.process_notifications()
     assert watch.alerts.notifications()[0]['attempts'] == 0
     assert not endpoint[1]['requests']
 

@@ -3,7 +3,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from sqlalchemy import BigInteger, Column, MetaData, String, Table, Text, create_engine, select, func
+from sqlalchemy import BigInteger, Column, MetaData, String, Table, Text, Index, create_engine, select, func
 from superfunctions_sqlalchemy import create_adapter
 from watchfn import WatchFn, AlertConflict, get_alert_schema
 from watchfn.alerts.alert_manager import Alert
@@ -15,6 +15,8 @@ def migrate_alerts(engine):
     tables = {}
     for schema in get_alert_schema().values():
         tables[schema.name] = Table(schema.name, metadata, *[Column(field.name, Text if field.type == 'text' else BigInteger if field.type == 'bigint' else String, primary_key=field.primary_key, nullable=field.nullable, unique=field.unique) for field in schema.fields])
+        for index in schema.indexes or []:
+            Index(index.name, *[tables[schema.name].c[field] for field in index.fields], unique=index.unique)
     metadata.create_all(engine)
     return tables
 

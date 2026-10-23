@@ -29,9 +29,10 @@ async function setup(extra: any = {}) {
     let migration = connection.sql.schema.createTable(name);
     for (const [field, options] of Object.entries(table.fields)) migration = migration.addColumn(field, options.type === 'number' ? 'integer' : 'text', column => field === 'id' ? column.primaryKey() : options.required ? column.notNull() : column);
     await migration.execute();
+    for (const index of table.indexes ?? []) await connection.sql.schema.createIndex(index.name).on(name).columns(index.fields).execute();
   }
   const create = () => { const watch = new WatchFn({ name: 'test', storage: 'database', database: connect(filename).adapter, infra: { enabled: false }, alerts: extra }); watches.push(watch); watch.start(); return watch; };
-  return { watch: create(), create, sql: connection.sql };
+  return { watch: create(), create, sql: connection.sql, filename };
 }
 const rule = { metric: 'latency', operator: 'gt' as const, threshold: 5, window: '5m' };
 
@@ -121,7 +122,7 @@ it('rejects legacy missing incident metadata before claiming or sending', async 
   const job = await sql.selectFrom('watchfn_alert_outbox').selectAll().executeTakeFirstOrThrow();
   const payload = JSON.parse(job.payload); delete payload.pagerDuty;
   await sql.updateTable('watchfn_alert_outbox').set({ payload: JSON.stringify(payload) }).where('id', '=', job.id).execute();
-  await expect(watch.alerts.processNotifications()).rejects.toThrow('metadata migration');
+  await expect(watch.alerts.processNotifications()).rejects.toThrow('incident migration');
   expect(target.received).toHaveLength(0); expect(await watch.alerts.notifications()).toMatchObject([{ attempts: 0 }]);
 });
 
@@ -234,4 +235,170 @@ it('serializes concurrent claims on the default shared memory adapter without ro
   expect(target.received).toHaveLength(2);
   expect((await first.alerts.notifications()).map(job => job.outcome)).toEqual(['delivered', 'delivered']);
   expect((await first.alerts.list()).map(alert => alert.pendingNotifications)).toEqual([0, 0]);
+});
+
+it('prunes delivered ancestors but durably pins tails and dismissed blocked dependencies', async () => {
+  const target = await endpoint(); const { watch, create } = await setup({ pagerDutyEndpoint: target.url });
+  const alert = await watch.alerts.create(definition());
+  await watch.alerts.trigger(alert.id); await watch.alerts.acknowledge(alert.id, { acknowledgedBy: 'operator' }); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  for (let i = 0; i < 4; i++) await watch.alerts.processNotifications();
+  await new Promise(resolve => setTimeout(resolve, 2));
+  const result = await watch.alerts.pruneNotifications({ completedBefore: Date.now(), limit: 10 });
+  expect(result).toMatchObject({ scanned: 3, deleted: 2, pinned: 1 });
+  const oldTail = (await watch.alerts.notifications())[0].id;
+  await watch.stop(); const reopened = create();
+  target.state.drop = true;
+  await reopened.alerts.trigger(alert.id); await reopened.alerts.acknowledge(alert.id, { acknowledgedBy: 'operator' }); await reopened.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  await reopened.alerts.processNotifications();
+  const unknown = (await reopened.alerts.notifications()).find(job => job.outcome === 'unknown')!;
+  await reopened.alerts.reconcileNotification(unknown.id, { outcome: 'dismissed', actor: 'operator', reason: 'Explicit unresolved incident closure' });
+  await new Promise(resolve => setTimeout(resolve, 2));
+  expect(await reopened.alerts.pruneNotifications({ completedBefore: Date.now() })).toMatchObject({ deleted: 0, pinned: 2 });
+  expect((await reopened.alerts.notifications()).some(job => job.id === oldTail)).toBe(true);
+  expect((await reopened.alerts.get(alert.id)).pendingNotifications).toBe(2);
+  expect(target.received).toHaveLength(4);
+});
+
+it('serializes competing prune and lifecycle transactions without deleting a new predecessor', async () => {
+  const target = await endpoint(); const { watch, create } = await setup({ pagerDutyEndpoint: target.url });
+  const alert = await watch.alerts.create(definition());
+  await watch.alerts.trigger(alert.id); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  for (let i = 0; i < 3; i++) await watch.alerts.processNotifications();
+  await new Promise(resolve => setTimeout(resolve, 2));
+  const second = create();
+  await Promise.all([watch.alerts.pruneNotifications({ completedBefore: Date.now(), limit: 1 }), second.alerts.trigger(alert.id)]);
+  for (let i = 0; i < 3; i++) await second.alerts.processNotifications();
+  const prune = async (instance: WatchFn) => { let after; do { const result = await instance.alerts.pruneNotifications({ completedBefore: Date.now(), limit: 1, after }); after = result.nextCursor ?? undefined; } while (after); };
+  await Promise.all([prune(watch), prune(second)]);
+  expect(target.received.map(body => body.event_action)).toEqual(['trigger', 'resolve', 'trigger']);
+  expect((await watch.alerts.notifications())).toHaveLength(1);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(0);
+});
+
+it('resumes bounded migration after reopen, fencing writers until every phase validates', async () => {
+  const target = await endpoint(); const { watch, create, sql } = await setup({ pagerDutyEndpoint: target.url });
+  const alert = await watch.alerts.create(definition());
+  await watch.alerts.trigger(alert.id); await watch.alerts.acknowledge(alert.id, { acknowledgedBy: 'operator' }); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  for (let i = 0; i < 4; i++) await watch.alerts.processNotifications();
+  await sql.updateTable('watchfn_alert_runtime').set({ protocol: 'ts-v2' }).execute();
+  await sql.updateTable('watchfn_alert_outbox').set({ predecessorId: null, completedAt: null }).execute();
+  const first = await watch.alerts.migrateReceiptRetention({ limit: 1 }); expect(first).toMatchObject({ done: false, phase: 'backfill', processed: 1 });
+  await expect(watch.alerts.trigger(alert.id)).rejects.toThrow('incompatible');
+  await expect(watch.alerts.create(definition())).rejects.toThrow('incompatible');
+  await expect(watch.alerts.processNotifications()).rejects.toThrow('incompatible');
+  await expect(watch.alerts.pruneNotifications({ completedBefore: Date.now() })).rejects.toThrow('incompatible');
+  await watch.flush().catch(() => {}); await watch.stop(); const reopened = create(), other = create();
+  expect((await reopened.alerts.receiptRetentionStatus())?.cursor).toBe(first.cursor);
+  for (let i = 0; i < 8; i++) { const results = await Promise.all([reopened.alerts.migrateReceiptRetention({ limit: 1 }), other.alerts.migrateReceiptRetention({ limit: 1 })]); if (results.some(result => result.done)) break; }
+  expect(await reopened.alerts.receiptRetentionStatus()).toMatchObject({ protocol: 'ts-v3', phase: null, cursor: null });
+  await new Promise(resolve => setTimeout(resolve, 2));
+  expect(await reopened.alerts.pruneNotifications({ completedBefore: Date.now() })).toMatchObject({ deleted: 2, pinned: 1 });
+  expect(target.received).toHaveLength(3);
+});
+
+it('does not activate migration with a missing predecessor, and preserves inspectable progress', async () => {
+  const { watch, sql } = await setup(); const alert = await watch.alerts.create(definition());
+  await watch.alerts.trigger(alert.id); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  const rows = await sql.selectFrom('watchfn_alert_outbox').selectAll().execute();
+  const trigger = rows.find(row => JSON.parse(row.payload).notification.event === 'triggered')!;
+  await sql.deleteFrom('watchfn_alert_outbox').where('id', '=', trigger.id).execute();
+  await sql.updateTable('watchfn_alert_runtime').set({ protocol: 'ts-v2' }).execute();
+  await watch.alerts.migrateReceiptRetention({ limit: 1 });
+  const progress = await watch.alerts.receiptRetentionStatus();
+  await expect(watch.alerts.migrateReceiptRetention({ limit: 1 })).rejects.toThrow('predecessor missing');
+  expect(await watch.alerts.receiptRetentionStatus()).toEqual(progress);
+  await expect(watch.alerts.processNotifications()).rejects.toThrow('incompatible');
+  await sql.insertInto('watchfn_alert_outbox').values(trigger).execute();
+  // An operator must restart backfill after restoring a missing historical row.
+  await sql.updateTable('watchfn_alert_runtime').set({ migrationPhase: 'backfill', migrationCursor: null }).execute();
+  for (let i = 0; i < 8; i++) if ((await watch.alerts.migrateReceiptRetention({ limit: 1 })).done) break;
+  expect(await watch.alerts.receiptRetentionStatus()).toMatchObject({ protocol: 'ts-v3' });
+});
+
+it('rejects corrupt terminal projection instead of deleting or refunding it', async () => {
+  const target = await endpoint(); const { watch, sql } = await setup({ pagerDutyEndpoint: target.url });
+  const alert = await watch.alerts.create(definition()); await watch.alerts.trigger(alert.id); await watch.alerts.processNotifications();
+  await sql.updateTable('watchfn_alert_outbox').set({ completedAt: 1 }).execute();
+  await expect(watch.alerts.pruneNotifications({ completedBefore: Date.now() })).rejects.toThrow('projection');
+  expect(await sql.selectFrom('watchfn_alert_outbox').selectAll().execute()).toHaveLength(1);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(0);
+});
+
+it('recovers committed migration progress after a killed native worker', async () => {
+  const { watch, sql, filename } = await setup();
+  const alert = await watch.alerts.create({ name: 'crash', condition: rule, channels: [{ type: 'webhook', webhook: 'http://127.0.0.1:1/no-send' }] });
+  await watch.alerts.trigger(alert.id); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  await sql.updateTable('watchfn_alert_runtime').set({ protocol: 'ts-v2' }).execute();
+  const { spawnSync } = await import('node:child_process');
+  const source = new URL('../../src/core/watch-fn.ts', import.meta.url).pathname;
+  const code = `const {WatchFn}=require(${JSON.stringify(source)});const Database=require('better-sqlite3');const {Kysely,SqliteDialect}=require('kysely');
+  (async()=>{const {kyselyAdapter}=await import('@superfunctions/db/adapters');const db=new Kysely({dialect:new SqliteDialect({database:new Database(${JSON.stringify(filename)})})});const watch=new WatchFn({name:'test',storage:'database',database:kyselyAdapter({db,dialect:'sqlite',schema:${JSON.stringify(Object.fromEntries(Object.keys({ ...getWatchFnSchema(), ...getAlertSchema() }).map(key => [key, key])))} }),infra:{enabled:false}});watch.start();const result=await watch.alerts.migrateReceiptRetention({limit:1});require('node:fs').writeSync(1,JSON.stringify(result));process.kill(process.pid,'SIGKILL');})().catch(error=>{console.error(error);process.exit(1)});`;
+  const child = spawnSync(process.execPath, ['--import', 'tsx', '-e', code], { cwd: process.cwd(), encoding: 'utf8', timeout: 10000 });
+  expect(child.signal, child.stderr).toBe('SIGKILL');
+  const saved = JSON.parse(child.stdout); expect(saved.phase).toBe('backfill');
+  expect((await watch.alerts.receiptRetentionStatus())?.cursor).toBe(saved.cursor);
+  for (let i = 0; i < 8; i++) if ((await watch.alerts.migrateReceiptRetention({ limit: 1 })).done) break;
+  expect(await watch.alerts.receiptRetentionStatus()).toMatchObject({ protocol: 'ts-v3' });
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(2);
+});
+
+it('pages tied receipt timestamps and long legacy IDs without truncating migration cursors', async () => {
+  const target = await endpoint(); const { watch, sql } = await setup();
+  const alert = await watch.alerts.create({ name: 'receipts', condition: rule, channels: [{ type: 'webhook', webhook: target.url }] });
+  for (let i = 0; i < 3; i++) { await watch.alerts.trigger(alert.id); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' }); }
+  await watch.alerts.processNotifications();
+  const rows = await sql.selectFrom('watchfn_alert_outbox').selectAll().execute();
+  for (const [index, row] of rows.entries()) {
+    const id = '東京'.repeat(100) + index, payload = JSON.parse(row.payload); payload.notification.id = id; payload.delivery.completedAt = 123;
+    await sql.updateTable('watchfn_alert_outbox').set({ id, payload: JSON.stringify(payload), completedAt: null }).where('id', '=', row.id).execute();
+  }
+  await sql.updateTable('watchfn_alert_runtime').set({ protocol: 'ts-v2' }).execute();
+  let longest = 0;
+  for (let i = 0; i < 20; i++) { const result = await watch.alerts.migrateReceiptRetention({ limit: 1 }); longest = Math.max(longest, result.cursor?.length ?? 0); if (result.done) break; }
+  expect(longest).toBeGreaterThan(128);
+  let after, deleted = 0;
+  for (let i = 0; i < 10; i++) { const result = await watch.alerts.pruneNotifications({ completedBefore: Date.now(), limit: 1, after }); deleted += result.deleted; after = result.nextCursor ?? undefined; if (!after) break; }
+  expect(deleted).toBe(6); expect(await watch.alerts.notifications()).toEqual([]);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(0);
+});
+
+it('rolls back receipt deletion and owner revision together on storage failure', async () => {
+  const target = await endpoint(); const { watch, sql } = await setup({ pagerDutyEndpoint: target.url });
+  const alert = await watch.alerts.create(definition()); await watch.alerts.trigger(alert.id); await watch.alerts.resolve(alert.id, { resolvedBy: 'operator' });
+  for (let i = 0; i < 3; i++) await watch.alerts.processNotifications();
+  const owner = await sql.selectFrom('watchfn_alerts').selectAll().execute(), jobs = await sql.selectFrom('watchfn_alert_outbox').selectAll().execute();
+  const manager = watch.alerts as any, original = manager.db.transaction.bind(manager.db);
+  manager.db.transaction = (action: any) => original((tx: any) => action(new Proxy(tx, { get(object, property) {
+    if (property === 'deleteMany') return async (params: any) => { await object.deleteMany(params); throw new Error('Owned deletion rollback'); };
+    const value = object[property]; return typeof value === 'function' ? value.bind(object) : value;
+  } })));
+  await new Promise(resolve => setTimeout(resolve, 2));
+  await expect(watch.alerts.pruneNotifications({ completedBefore: Date.now() })).rejects.toThrow('Owned deletion rollback');
+  expect(await sql.selectFrom('watchfn_alerts').selectAll().execute()).toEqual(owner);
+  expect(await sql.selectFrom('watchfn_alert_outbox').selectAll().execute()).toEqual(jobs);
+});
+
+it('uses declared SQLite indexes for bounded retention, dependency and migration ranges', async () => {
+  const { filename } = await setup(); const native = new Database(filename, { readonly: true });
+  try {
+    for (const [query, values, index] of [
+      ['SELECT id FROM watchfn_alert_outbox WHERE namespace=? AND completedAt>? AND completedAt<? ORDER BY completedAt,id LIMIT 5', ['test', 0, 100], 'watchfn_alert_receipts'],
+      ['SELECT id FROM watchfn_alert_outbox WHERE namespace=? AND predecessorId=? LIMIT 1', ['test', 'owned'], 'watchfn_alert_predecessor'],
+      ['SELECT id FROM watchfn_alert_outbox WHERE namespace=? AND id>? ORDER BY id LIMIT 6', ['test', 'owned'], 'watchfn_alert_jobs'],
+      ['SELECT id FROM watchfn_alerts WHERE namespace=? AND id>? ORDER BY id LIMIT 6', ['test', 'owned'], 'watchfn_alert_namespace'],
+    ] as const) {
+      const plan = native.prepare('EXPLAIN QUERY PLAN ' + query).all(...values) as { detail: string }[];
+      expect(plan.some(row => row.detail.includes(index))).toBe(true);
+      expect(plan.some(row => row.detail.includes('USE TEMP B-TREE'))).toBe(false);
+    }
+  } finally { native.close(); }
+});
+
+it('never selects null completion projections for unknown memory obligations', async () => {
+  const watch = new WatchFn({ name: 'unknown-memory', infra: { enabled: false }, alerts: { emailSender: async () => { throw new Error('owned ambiguous result'); } } }); watches.push(watch); watch.start();
+  const alert = await watch.alerts.create({ name: 'unknown', condition: rule, channels: [{ type: 'email', recipients: ['owned@example.test'] }] });
+  await watch.alerts.trigger(alert.id); await watch.alerts.processNotifications();
+  expect(await watch.alerts.pruneNotifications({ completedBefore: Date.now() })).toEqual({ scanned: 0, deleted: 0, pinned: 0, nextCursor: null });
+  expect(await watch.alerts.notifications()).toMatchObject([{ outcome: 'unknown' }]);
+  expect((await watch.alerts.get(alert.id)).pendingNotifications).toBe(1);
 });

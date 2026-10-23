@@ -188,7 +188,7 @@ unfiltered global exact-name precedence is unchanged.
 Migrate all tables returned by `getAlertSchema()`, including
 `watchfn_alert_runtime`, before lifecycle or delivery operations. Stop and drain
 all older writers first: historical releases cannot enforce the current ownership
-rules. Current TS mutation/dispatch owns `ts-v2`, while Python owns `python-v1`;
+rules. Current TS mutation/dispatch owns `ts-v3`, while Python owns `python-v2`;
 each rejects the other protocol before mutation or sending. Read-only inspection
 remains available. Existing rows without a marker require explicit ownership
 migration; the runtime does not infer ownership from the missing marker.
@@ -234,8 +234,8 @@ await watch.alerts.reconcileNotification(jobId, {
 
 `dismissNotification(id)` remains an explicit legacy dismissal wrapper. Delivered
 reconciliation can unblock a predecessor chain; dismissal cannot assert provider
-acceptance. Terminal receipts currently have no automatic TTL. Receipt pruning is
-separate work and must preserve route tails and every unresolved obligation.
+acceptance. Terminal receipts have no automatic TTL. Use the bounded host-driven
+receipt maintenance described below; route tails and unresolved obligations remain pinned.
 
 Dispatch pages use `after`/`nextCursor`. Traverse all pages and start a new scan to
 avoid starving jobs behind missing senders or blocked predecessors. Slack retries
@@ -253,3 +253,59 @@ remain outside retried transaction closures. The shared memory adapter's existin
 serialization is retained, without a second queue in WatchFn.
 
 See [TS durable PagerDuty acceptance](../.conduct/ts-pagerduty-readiness.md).
+
+### Bounded receipt maintenance
+
+Successful/dismissed receipts are eligible for explicit host maintenance:
+
+```typescript
+let after: { completedAt: number; id: string } | undefined;
+do {
+  const page = await watch.alerts.pruneNotifications({
+    completedBefore: Date.now() - 30 * 24 * 60 * 60 * 1000, // host policy, example only
+    limit: 100,
+    after,
+  });
+  after = page.nextCursor ?? undefined;
+} while (after);
+```
+
+The boundary is exclusive and must not be in the future. No default receipt TTL
+is imposed. The host must schedule maintenance and finish all cursor pages, then
+start a fresh scan on its next scheduled run. Equal timestamps use the full ID as
+a compound cursor; IDs are not truncated. Page limits are 1..1000. This bounds
+work and returned rows per call, not database lock time or total disk usage.
+
+Pending, sending, unknown and rejected jobs are never deleted. Current PagerDuty
+route tails are always pinned. Incoming operational predecessor references also
+pin receipts, including dismissed work that still blocks a successor. Authoritative
+delivered receipts release their own predecessor dependency while keeping episode,
+route and predecessor history in their payload. A shared transaction conditionally
+advances the owning alert revision before deleting an unpinned terminal receipt;
+concurrent lifecycle operations cannot introduce a lost predecessor. Pruning never
+refunds pending counts or resends notifications. Dismissed blocked chains can remain
+indefinitely; maintenance is not a hard capacity guarantee. Hosts need storage
+monitoring/admission policy and explicit incident reconciliation.
+
+**Schema and protocol upgrade:** install the current Watch-owned schema additions
+and indexes before maintenance: outbox `completedAt`, `predecessorId`, and runtime
+`migrationPhase`, `migrationCursor`, `migrationRevision`. Runtime is now `ts-v3`;
+Python's independent namespace runtime is `python-v2`. Stop and drain *all* old
+writers and provider operations first. Then repeatedly call
+`await watch.alerts.migrateReceiptRetention({limit:100})` on an exact `ts-v2`
+namespace until `done` is true. Each transaction persists a bounded keyset page
+through backfill, alert-tail validation and dependency validation. The intermediate
+marker fences creation, lifecycle, dispatch and pruning; read-only inspection and
+`receiptRetentionStatus()` remain available. A crash resumes the saved phase and
+cursor. Invalid/missing dependencies fail without advancing that page. Repair and
+restart requirements must be assessed offline; do not rewrite the marker to bypass
+validation. Migration activates `ts-v3` only after all phases finish. Empty new
+namespaces claim `ts-v3` directly. The older bounded `ts-v1` migration remains a
+separate first step to `ts-v2`, with its legacy PagerDuty/overflow restrictions.
+
+Native SQLite acceptance checks the receipt range, incoming dependency and keyset
+indexes; equivalent physical indexes must be applied by hosts for other adapters.
+The schema wrapper does not automatically migrate a production database. Projection
+integrity assumes cooperating supported writers on an owned database. Missing or
+inconsistent projections encountered by dispatch/maintenance fail closed.
+See [receipt-retention acceptance](../.conduct/receipt-retention-readiness.md).

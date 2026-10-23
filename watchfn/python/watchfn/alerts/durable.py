@@ -246,7 +246,7 @@ class DurableAlertManager:
                             payload['pagerDuty'] = {'episode': sequence['episode'], 'route': route, 'predecessor': predecessor, 'predecessorEpisode': prior['episode'] if predecessor else None}
                             sequence['tails'][route] = job
                             sequence['settled'] = [key for key in sequence.get('settled', []) if key != route]
-                    jobs.append({'id': job, 'namespace': self.namespace, 'alertId': identifier, 'revision': 0, 'state': 'pending', 'availableAt': int(now), 'leaseToken': None, 'attempts': 0, 'payload': encode(payload)})
+                    jobs.append({'id': job, 'namespace': self.namespace, 'alertId': identifier, 'revision': 0, 'state': 'pending', 'availableAt': int(now), 'leaseToken': None, 'attempts': 0, 'predecessorId': payload.get('pagerDuty', {}).get('predecessor'), 'completedAt': None, 'payload': encode(payload)})
             count = await tx.update_many(UpdateManyParams(model=ALERTS, where=self._where(identifier) + [WhereClause(field='revision', value=row['revision'])], data={'revision': row['revision'] + 1, 'state': record['state'], 'payload': encode(record)}))
             if count != 1: raise AlertConflict('Concurrent alert update; retry')
             for job in jobs:
@@ -348,6 +348,18 @@ class DurableAlertManager:
                 result.append(dict({key: row[key] for key in ('id', 'alertId', 'state', 'attempts', 'availableAt')}, event=payload['notification']['event'], outcome=payload.get('delivery', {}).get('outcome', 'pending')))
             return result
         return self._run(action)
+
+    def receipt_retention_status(self):
+        from .retention import Retention
+        return Retention(self).status()
+
+    def migrate_receipt_retention(self, *, limit=50):
+        from .retention import Retention
+        return Retention(self).migrate(limit)
+
+    def prune_notifications(self, *, completed_before, limit=50, after=None):
+        from .retention import Retention
+        return Retention(self).prune(completed_before, limit, after)
 
     def process_notifications(self, **kwargs):
         from .dispatch import Dispatcher

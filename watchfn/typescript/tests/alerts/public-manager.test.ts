@@ -298,5 +298,5 @@ it('converges independent first-owner claims on the same immutable protocol', as
   const { watch, create, sql } = await setup();
   const second = create();
   await Promise.all([watch.alerts.processNotifications(), second.alerts.processNotifications()]);
-  expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toEqual([{ id: 'test', protocol: 'ts-v2' }]);
+  expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toMatchObject([{ id: 'test', protocol: 'ts-v3' }]);
 });
