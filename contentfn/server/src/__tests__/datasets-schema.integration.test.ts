@@ -178,3 +178,17 @@ describe("PHASE_01 datasets + schema", () => {
     });
   });
 });
+
+it("requires explicit migration steps before invalidating stored content", async () => {
+  const server = createContentfnServer({ db: memoryAdapter() });
+  await server.api.datasets.create({ dataset: "migration" });
+  const schema = { version: 1, documentTypes: [{ name: "post", fields: [] }] };
+  await server.api.schema.upsert({ dataset: "migration", schema });
+  await server.api.docs.create({ dataset: "migration", id: "old", type: "post", doc: {}, asDraft: true });
+  const next = { version: 2, documentTypes: [{ name: "post", fields: [{ name: "title", required: true, type: { kind: "primitive" as const, type: "string" as const } }] }] };
+  expect(await server.api.schema.upsert({ dataset: "migration", schema: next })).toMatchObject({ ok: false, error: { code: "SCHEMA_INVALID" } });
+  expect(await server.api.schema.get({ dataset: "migration" })).toMatchObject({ ok: true, result: { version: 1 } });
+  expect(await server.api.schema.upsert({ dataset: "migration", schema: next, migration: { description: "Backfill draft titles before publication" } })).toMatchObject({ ok: true });
+  expect(await server.api.docs.get({ dataset: "migration", id: "drafts.old", perspective: "draft" })).toMatchObject({ ok: true });
+  expect(await server.api.docs.publish({ dataset: "migration", id: "old" })).toMatchObject({ ok: false, error: { code: "VALIDATION_FAILED" } });
+});

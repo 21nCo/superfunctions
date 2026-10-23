@@ -1,4 +1,4 @@
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type {
   CfqlQuery,
   CfqlResultPage,
@@ -20,6 +20,8 @@ export interface ExecuteCfqlConfig {
   maxQueryLimit?: number;
   maxExpandDepth?: number;
   maxFilterDepth?: number;
+  /** Enable deterministic case-insensitive Unicode token matching. */
+  search?: { enabled: boolean };
 }
 
 function matchesFilter(doc: ContentfnDocument, filter: CfqlFilter | undefined): boolean {
@@ -63,7 +65,10 @@ function matchesFilter(doc: ContentfnDocument, filter: CfqlFilter | undefined): 
     case "is_not_null":
       return docValue !== null && docValue !== undefined;
     case "match":
-      return err("QUERY_INVALID", "match operator not supported in this phase", { path: "filter.op" }) as never;
+      return typeof docValue === "string" && typeof value === "string" &&
+        value.normalize("NFKC").toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean).every(
+          (token) => docValue.normalize("NFKC").toLowerCase().split(/[^\p{L}\p{N}_]+/u).includes(token)
+        );
     default:
       return false;
   }
@@ -83,13 +88,13 @@ function getFieldValue(doc: Record<string, unknown>, field: string): unknown {
 
 function compareValues(a: unknown, b: unknown, direction: "asc" | "desc"): number {
   const mult = direction === "asc" ? 1 : -1;
-  
+
   if (a === b) return 0;
   if (a === null || a === undefined) return mult;
   if (b === null || b === undefined) return -mult;
-  
+
   if (typeof a === "string" && typeof b === "string") {
-    return mult * a.localeCompare(b);
+    return mult * (a < b ? -1 : 1);
   }
   if (typeof a === "number" && typeof b === "number") {
     return mult * (a - b);
@@ -97,10 +102,10 @@ function compareValues(a: unknown, b: unknown, direction: "asc" | "desc"): numbe
   if (typeof a === "boolean" && typeof b === "boolean") {
     return mult * (a === b ? 0 : a ? 1 : -1);
   }
-  
+
   const aStr = String(a);
   const bStr = String(b);
-  return mult * aStr.localeCompare(bStr);
+  return mult * (aStr < bStr ? -1 : aStr > bStr ? 1 : 0);
 }
 
 function sortDocuments(docs: ContentfnDocument[], orderBy: CfqlOrderBy[]): ContentfnDocument[] {
@@ -125,48 +130,40 @@ function shouldSkipBasedOnCursor(
   cursorValues: unknown[]
 ): boolean {
   const docValues = extractOrderingValues(doc, orderBy);
-  
+
   for (let i = 0; i < orderBy.length; i++) {
     const cmp = compareValues(docValues[i], cursorValues[i], orderBy[i].direction);
     if (cmp < 0) return true;
     if (cmp > 0) return false;
   }
-  
+
   return true;
-}
-
-function applyProjection(doc: ContentfnDocument, projection: CfqlProjection | undefined): ContentfnDocument {
-  if (!projection || !projection.fields) {
-    return doc;
-  }
-
-  const projected: Record<string, unknown> = {};
-  const systemFields = ["_id", "_type", "_rev", "_createdAt", "_updatedAt", "_publishedAt"];
-  
-  for (const field of projection.fields) {
-    if (field in doc) {
-      projected[field] = doc[field];
-    }
-  }
-  
-  for (const sysField of systemFields) {
-    if (sysField in doc && !(sysField in projected)) {
-      projected[sysField] = doc[sysField];
-    }
-  }
-
-  return projected as ContentfnDocument;
 }
 
 export async function executeCfql(
   config: ExecuteCfqlConfig,
   query: CfqlQuery
 ): Promise<ContentfnEnvelope<CfqlResultPage>> {
-  const validation = validateCfql(query, { maxFilterDepth: config.maxFilterDepth });
+  const validation = validateCfql(query, { maxFilterDepth: config.maxFilterDepth, maxExpandDepth: config.maxExpandDepth });
   if (!validation.ok) {
     return validation as ContentfnEnvelope<CfqlResultPage>;
   }
 
+  function checkMatch(filter: CfqlFilter | undefined): ContentfnEnvelope<void> | null {
+    if (!filter) return null;
+    if (filter.op === "and" || filter.op === "or") {
+      for (const child of filter.filters) { const failure = checkMatch(child); if (failure) return failure; }
+    } else if (filter.op === "match") {
+      if (!config.search?.enabled) return err("QUERY_INVALID", "Text search is disabled; configure search.enabled", { path: "filter.op" });
+      if (typeof filter.value !== "string" || !/[\p{L}\p{N}_]/u.test(filter.value)) return err("QUERY_INVALID", "match requires a non-empty text query", { path: "filter.value" });
+    }
+    return null;
+  }
+  const matchFailure = checkMatch(query.filter);
+  if (matchFailure) return matchFailure as ContentfnEnvelope<CfqlResultPage>;
+  if (query.limit !== undefined && query.limit > (config.maxQueryLimit ?? DEFAULT_MAX_QUERY_LIMIT)) {
+    return err("QUERY_TOO_COMPLEX", "Query limit exceeds configured maximum", { path: "limit" });
+  }
   const exists = await datasetExists({ db: config.db }, query.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: query.dataset });
@@ -193,7 +190,7 @@ export async function executeCfql(
   let cursorValues: unknown[] | null = null;
   if (query.cursor) {
     const decoded = decodeCursor(query.cursor);
-    if (!decoded) {
+    if (!decoded || decoded.values.length !== normalizedOrderBy.length) {
       return err("QUERY_INVALID", "Invalid cursor", { path: "cursor" });
     }
     cursorValues = decoded.values;
@@ -203,10 +200,8 @@ export async function executeCfql(
   const hasMore = docs.length > limit;
   const resultDocs = docs.slice(0, limit);
 
-  const projectedDocs = resultDocs.map((doc) => applyProjection(doc, query.projection));
-
   const expandedDocs: ContentfnDocument[] = [];
-  for (const doc of projectedDocs) {
+  for (const doc of resultDocs) {
     const expandResult = await expandDocument(
       {
         db: config.db,
@@ -216,11 +211,11 @@ export async function executeCfql(
       doc,
       query.projection
     );
-    
+
     if (!expandResult.ok) {
       return expandResult as ContentfnEnvelope<CfqlResultPage>;
     }
-    
+
     expandedDocs.push(expandResult.result);
   }
 

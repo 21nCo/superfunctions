@@ -175,3 +175,22 @@ describe("PHASE_08 assets subsystem", () => {
     });
   });
 });
+
+it("persists asset.created with its subscribed delivery and sanitizes backend failures", async () => {
+  const db = memoryAdapter();
+  const server = createContentfnServer({ db });
+  await server.api.datasets.create({ dataset: "assets" });
+  expect((await server.api.webhooks.register({ dataset: "assets", url: "https://example.com/hook", events: ["asset.created"] })).ok).toBe(true);
+  const uploaded = await server.forContext({ subject: "uploader" }).assets.upload({ dataset: "assets", filename: "a.txt", contentType: "text/plain", bytesBase64: "aGk=" });
+  expect(uploaded.ok).toBe(true);
+  const events = await db.findMany({ model: "contentfn_events", where: [{ field: "type", operator: "eq", value: "asset.created" }] });
+  expect(events).toHaveLength(1);
+  const queue = await db.findMany({ model: "contentfn_webhook_queue", where: [] });
+  expect(queue).toHaveLength(1);
+  expect(queue[0].eventId).toBe(events[0].eventId);
+  const failing = createContentfnServer({ db, storage: { writeAsset: async () => { throw new Error("provider-secret-token"); } } });
+  const failed = await failing.api.assets.upload({ dataset: "assets", filename: "a.txt", contentType: "text/plain", bytesBase64: "aGk=" });
+  expect(failed.ok).toBe(false);
+  expect(JSON.stringify(failed)).not.toContain("provider-secret-token");
+  expect(await db.findMany({ model: "contentfn_events", where: [{ field: "type", operator: "eq", value: "asset.created" }] })).toHaveLength(1);
+});

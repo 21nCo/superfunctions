@@ -103,6 +103,7 @@ function applyOperation(
   op: ContentfnPatchOp
 ): ContentfnEnvelope<void> {
   const segments = parsePath(op.path);
+  if (segments.some(segment => ["__proto__", "prototype", "constructor"].includes(segment))) return err("PATCH_INVALID", "Unsafe path segment", { path: op.path });
 
   switch (op.op) {
     case "set": {

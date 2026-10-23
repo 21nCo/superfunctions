@@ -28,7 +28,7 @@ function validatePath(path: unknown, pathField: string): ContentfnEnvelope<strin
         path: `${pathField}`,
       });
     }
-    if (!SEGMENT_REGEX.test(seg)) {
+    if (["__proto__", "prototype", "constructor"].includes(seg) || !SEGMENT_REGEX.test(seg)) {
       return err("PATCH_INVALID", "Path segment has invalid characters", {
         path: pathField,
       });
@@ -57,7 +57,7 @@ function validateOp(op: unknown, index: number): ContentfnEnvelope<ContentfnPatc
       return { ok: true, result: { op: "unset", path: pathRes.result } };
     case "inc":
     case "dec":
-      if (typeof o.value !== "number") {
+      if (typeof o.value !== "number" || !Number.isFinite(o.value)) {
         return err("PATCH_INVALID", `${o.op} requires numeric value`, {
           path: `${opPath}.value`,
         });
@@ -93,12 +93,12 @@ function validateOp(op: unknown, index: number): ContentfnEnvelope<ContentfnPatc
         },
       };
     case "splice":
-      if (typeof o.index !== "number" || o.index < 0) {
+      if (typeof o.index !== "number" || !Number.isSafeInteger(o.index) || o.index < 0) {
         return err("PATCH_INVALID", "splice index must be non-negative number", {
           path: `${opPath}.index`,
         });
       }
-      if (typeof o.deleteCount !== "number" || o.deleteCount < 0) {
+      if (typeof o.deleteCount !== "number" || !Number.isSafeInteger(o.deleteCount) || o.deleteCount < 0) {
         return err("PATCH_INVALID", "splice deleteCount must be non-negative number", {
           path: `${opPath}.deleteCount`,
         });

@@ -1,4 +1,4 @@
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "./database.js";
 import type { ContentfnEnvelope } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
@@ -12,7 +12,7 @@ export interface WebhooksStorageConfig {
 function isValidUrl(urlStr: string): boolean {
   try {
     const u = new URL(urlStr);
-    return u.protocol === "https:" || u.protocol === "http:";
+    return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password;
   } catch {
     return false;
   }
@@ -40,7 +40,7 @@ export async function webhookRegister(
     return err("VALIDATION_FAILED", "Invalid webhook URL", { path: "url" });
   }
 
-  if (!Array.isArray(input.events) || input.events.length === 0) {
+  if (!Array.isArray(input.events) || input.events.length === 0 || input.events.some(event => !["doc.created", "doc.updated", "doc.deleted", "doc.published", "doc.unpublished", "asset.created"].includes(event))) {
     return err("VALIDATION_FAILED", "events must be a non-empty array", { path: "events" });
   }
 
@@ -50,6 +50,7 @@ export async function webhookRegister(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.webhooks,
     data: {
+      id: webhookId,
       webhookId,
       dataset: input.dataset,
       url: input.url,
@@ -115,4 +116,18 @@ export async function webhookDelete(
   });
 
   return ok({});
+}
+
+/** Dataset-scoped delivery status; authorization is enforced by the API boundary. */
+export async function webhookDeliveries(config: WebhooksStorageConfig, body: unknown) {
+  if (!body || typeof body !== "object") return err("VALIDATION_FAILED", "Input must be an object", {});
+  const input = body as Record<string, unknown>;
+  if (typeof input.dataset !== "string" || typeof input.webhookId !== "string") return err("VALIDATION_FAILED", "dataset and webhookId are required", {});
+  const hook = await config.db.findOne({ model: CONTENTFN_TABLE_NAMES.webhooks, where: [
+    { field: "dataset", operator: "eq", value: input.dataset },
+    { field: "webhookId", operator: "eq", value: input.webhookId },
+  ] });
+  if (!hook) return err("VALIDATION_FAILED", "Webhook not found in dataset", {});
+  const deliveries = await config.db.findMany({ model: CONTENTFN_TABLE_NAMES.webhookQueue, where: [{ field: "webhookId", operator: "eq", value: input.webhookId }], orderBy: [{ field: "nextRunAt", direction: "desc" }, { field: "eventId", direction: "asc" }], limit: 100 });
+  return ok({ deliveries });
 }

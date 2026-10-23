@@ -1,8 +1,11 @@
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import { CONTENTFN_TABLE_NAMES } from "../storage/schema.js";
 import type { ContentfnEvent } from "../storage/events.js";
 import {
   fetchDueEntries,
+  claimDelivery,
+  failExhaustedDelivery,
+  failUnavailableDelivery,
   markDelivered,
   markFailed,
 } from "../storage/webhookQueue.js";
@@ -11,6 +14,9 @@ import { computeWebhookSignature } from "./sign.js";
 export interface DeliveryConfig {
   db: Adapter;
   fetch?: typeof globalThis.fetch;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  logger?: import("../logging/logger.js").ContentfnLogger;
 }
 
 export interface WebhookPayload {
@@ -78,13 +84,20 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
   let failed = 0;
 
   for (const entry of dueEntries) {
+    const exhausted = await failExhaustedDelivery(config, entry);
+    if (exhausted !== undefined) {
+      if (exhausted) failed++;
+      continue;
+    }
+    const leaseUntil = new Date(Date.now() + (config.timeoutMs ?? 10_000) + 5000).toISOString();
+    if (!await claimDelivery({ db: config.db }, entry, leaseUntil)) continue;
     const webhookRow = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.webhooks,
       where: [{ field: "webhookId", operator: "eq" as const, value: entry.webhookId }],
     });
 
     if (!webhookRow) {
-      await markDelivered({ db: config.db }, entry.eventId, entry.webhookId);
+      if (await failUnavailableDelivery({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId, "configuration")) failed++;
       continue;
     }
 
@@ -96,12 +109,20 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
     });
 
     if (!eventRow) {
-      await markDelivered({ db: config.db }, entry.eventId, entry.webhookId);
+      if (await failUnavailableDelivery({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId, "event")) failed++;
       continue;
     }
 
     const event = eventRow as ContentfnEvent;
     const payload = buildPayload(event);
+    if (payload.document && event.rev) {
+      const snapshot = await config.db.findOne({ model: CONTENTFN_TABLE_NAMES.revisions, where: [
+        { field: "dataset", operator: "eq", value: event.dataset },
+        { field: "rev", operator: "eq", value: event.rev },
+      ] });
+      const document = snapshot?.docJson as Record<string, unknown> | undefined;
+      if (typeof document?._type === "string") payload.document._type = document._type;
+    }
     const bodyStr = JSON.stringify(payload);
 
     const headers: Record<string, string> = {
@@ -111,20 +132,25 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
       headers["X-ContentFn-Signature"] = computeWebhookSignature(bodyStr, wh.secret);
     }
 
+    try { config.logger?.logMutation({ action: "webhooks.delivery_attempt", dataset: event.dataset }); } catch { /* Observability must not prevent delivery. */ }
     try {
       const response = await fetchFn(wh.url, {
         method: "POST",
         headers,
         body: bodyStr,
+        redirect: "error",
+        signal: AbortSignal.timeout(config.timeoutMs ?? 10_000),
       });
 
+      await response.body?.cancel();
       if (response.ok) {
-        await markDelivered({ db: config.db }, entry.eventId, entry.webhookId);
+        await markDelivered({ db: config.db, leaseUntil }, entry.eventId, entry.webhookId);
         delivered++;
       } else {
         const errMsg = `HTTP ${response.status}`;
+        try { config.logger?.logWebhookFailure({ dataset: event.dataset, webhookUrl: new URL(wh.url).origin, error: errMsg }); } catch {}
         await markFailed(
-          { db: config.db },
+          { db: config.db, maxAttempts: config.maxAttempts, leaseUntil },
           entry.eventId,
           entry.webhookId,
           entry.attempt,
@@ -133,9 +159,10 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
         failed++;
       }
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = "Webhook request failed";
+      try { config.logger?.logWebhookFailure({ dataset: event.dataset, webhookUrl: new URL(wh.url).origin, error: errMsg }); } catch {}
       await markFailed(
-        { db: config.db },
+        { db: config.db, maxAttempts: config.maxAttempts, leaseUntil },
         entry.eventId,
         entry.webhookId,
         entry.attempt,

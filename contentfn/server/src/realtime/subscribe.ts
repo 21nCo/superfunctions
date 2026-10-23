@@ -55,7 +55,7 @@ export class SubscriptionRouter {
       for (const sub of conn.subscriptions) {
         if (sub.dataset !== event.dataset) continue;
         if (sub.docId && sub.docId !== event.docId) continue;
-        conn.send(msg);
+        try { conn.send(msg); } catch { this.removeConnection(conn.id); }
         break;
       }
     }
@@ -73,6 +73,7 @@ function buildEventMessage(event: ContentfnEvent): RealtimeEventMessage {
     dataset: event.dataset,
     timestamp: event.timestamp,
     eventType: event.type,
+    ...(event.actor ? { actor: event.actor } : {}),
   };
   if (event.docId) {
     msg.document = { _id: event.docId };

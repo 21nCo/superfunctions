@@ -1,9 +1,10 @@
+import { atomicMutation } from "./database.js";
 /**
  * Dataset lifecycle: create, list, delete.
  * Uses @superfunctions/db adapter; table contentfn_datasets.
  */
 
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "./database.js";
 import type { ContentfnEnvelope } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { validateDatasetName } from "@contentfn/core";
@@ -36,6 +37,7 @@ export async function datasetCreate(
   config: DatasetsStorageConfig,
   input: { dataset: string }
 ): Promise<ContentfnEnvelope<{ dataset: string }>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => datasetCreate({ ...config, db }, input));
   const v = validateDatasetName(input.dataset);
   if (!v.ok) {
     return err("VALIDATION_FAILED", "Dataset name is invalid", { path: "dataset" });
@@ -86,19 +88,18 @@ export async function datasetDelete(
   config: DatasetsStorageConfig,
   input: { dataset: string }
 ): Promise<ContentfnEnvelope<Record<string, never>>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => datasetDelete({ ...config, db }, input));
   const v = validateDatasetName(input.dataset);
   if (!v.ok) {
     return err("VALIDATION_FAILED", "Dataset name is invalid", { path: "dataset" });
   }
   const name = v.name;
 
-  await config.db.deleteMany({
-    model: CONTENTFN_TABLE_NAMES.datasets,
-    where: [{ field: "name", operator: "eq" as const, value: name }],
-  });
-  await config.db.deleteMany({
-    model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq" as const, value: name }],
-  });
+  const hooks = await config.db.findMany({ model: CONTENTFN_TABLE_NAMES.webhooks, where: [{ field: "dataset", operator: "eq", value: name }] });
+  for (const hook of hooks) await config.db.deleteMany({ model: CONTENTFN_TABLE_NAMES.webhookQueue, where: [{ field: "webhookId", operator: "eq", value: hook.webhookId }] });
+  for (const table of [CONTENTFN_TABLE_NAMES.webhookQueue, "contentfn_idempotency", "contentfn_schedules", CONTENTFN_TABLE_NAMES.schema, CONTENTFN_TABLE_NAMES.docsDrafts, CONTENTFN_TABLE_NAMES.docsPublished, CONTENTFN_TABLE_NAMES.revisions, CONTENTFN_TABLE_NAMES.assets, CONTENTFN_TABLE_NAMES.webhooks, CONTENTFN_TABLE_NAMES.events]) {
+    await config.db.deleteMany({ model: table, where: [{ field: "dataset", operator: "eq", value: name }] });
+  }
+  await config.db.deleteMany({ model: CONTENTFN_TABLE_NAMES.datasets, where: [{ field: "name", operator: "eq", value: name }] });
   return ok({});
 }

@@ -1,9 +1,11 @@
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "./database.js";
+import { enqueueWebhookDelivery } from "./webhookQueue.js";
 import { nowISO } from "../time/clock.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
 
 export interface EventsStorageConfig {
   db: Adapter;
+  actor?: { subject: string };
 }
 
 export interface ContentfnEvent {
@@ -32,6 +34,7 @@ export async function appendEvent(
     changedPaths?: string[];
   }
 ): Promise<ContentfnEvent> {
+  const actor = input.actor ?? config.actor;
   const eventId = generateEventId();
   const timestamp = nowISO();
 
@@ -40,7 +43,7 @@ export async function appendEvent(
     dataset: input.dataset,
     type: input.type,
     timestamp,
-    actor: input.actor,
+    actor,
     docId: input.docId,
     rev: input.rev,
     changedPaths: input.changedPaths || [],
@@ -49,16 +52,23 @@ export async function appendEvent(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.events,
     data: {
+      id: eventId,
       eventId,
       dataset: input.dataset,
       type: input.type,
       timestamp,
-      actor: input.actor || null,
+      actor: actor || null,
       docId: input.docId || null,
       rev: input.rev || null,
       changedPaths: input.changedPaths || [],
     },
   });
 
+  const hooks = await config.db.findMany({ model: CONTENTFN_TABLE_NAMES.webhooks, where: [{ field: "dataset", operator: "eq", value: input.dataset }] });
+  for (const hook of hooks) {
+    if (Array.isArray(hook.events) && hook.events.includes(input.type)) {
+      await enqueueWebhookDelivery(config, { eventId, webhookId: hook.webhookId as string });
+    }
+  }
   return event;
 }

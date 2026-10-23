@@ -22,6 +22,7 @@ export function handleStatus(
     "content.docs",
     "content.assets",
     "content.webhooks",
+    "content.audit",
   ];
 
   if (config.realtimeEnabled !== false) {

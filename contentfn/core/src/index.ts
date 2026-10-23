@@ -43,3 +43,5 @@ export {
   DEFAULT_MAX_EXPAND_DEPTH,
   DEFAULT_MAX_FILTER_DEPTH,
 } from "./limits.js";
+
+export type { AuditRecord, AuditQuery, WebhookAuditRecord, WebhookAuditQuery } from "./audit.js";

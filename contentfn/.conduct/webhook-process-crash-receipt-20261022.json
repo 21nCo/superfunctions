@@ -1,0 +1,151 @@
+{
+  "runtime": "v22.23.3",
+  "timeoutMs": 500,
+  "realProcessesKilled": 2,
+  "noLeaseOrAttemptStateInjection": true,
+  "cases": [
+    {
+      "maxAttempts": 2,
+      "killedAt": "2026-10-22T08:03:40.790Z",
+      "killedPid": 58060,
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "reservedBeforeKill": {
+        "eventId": "evt_1792656220548_hoymbjum06",
+        "status": "processing",
+        "attempt": 1,
+        "nextRunAt": "2026-10-22T08:03:46.281Z",
+        "lastError": null
+      },
+      "persistedAfterKill": {
+        "eventId": "evt_1792656220548_hoymbjum06",
+        "status": "processing",
+        "attempt": 1,
+        "nextRunAt": "2026-10-22T08:03:46.281Z",
+        "lastError": null
+      },
+      "beforeExpiry": {
+        "delivered": 0,
+        "failed": 0
+      },
+      "realExpiryWaitMs": 5271,
+      "recovery": [
+        {
+          "pid": 58504,
+          "result": {
+            "delivered": 1,
+            "failed": 0
+          }
+        }
+      ],
+      "final": {
+        "eventId": "evt_1792656220548_hoymbjum06",
+        "status": "delivered",
+        "attempt": 2,
+        "nextRunAt": "2026-10-22T08:03:52.045Z",
+        "lastError": null
+      },
+      "httpRequests": 2,
+      "deduplicatedApplications": 1,
+      "requestReceipts": [
+        {
+          "body": "{\"eventId\":\"evt_1792656220548_hoymbjum06\",\"dataset\":\"crash\",\"type\":\"doc.published\",\"timestamp\":\"2026-10-22T08:03:40.548Z\",\"document\":{\"_id\":\"post\",\"_rev\":\"rev_e0ae7753-a4e9-4dfb-a3c3-1633545390dd\",\"_type\":\"post\"}}",
+          "signature": "v1=9f9fa6d1870909e98ec2a59d6b8b1e891181d672c62653e524970311ccf311a4",
+          "eventId": "evt_1792656220548_hoymbjum06",
+          "duplicate": false,
+          "receivedAt": "2026-10-22T08:03:40.790Z",
+          "completeRequest": true,
+          "responseSent": false
+        },
+        {
+          "body": "{\"eventId\":\"evt_1792656220548_hoymbjum06\",\"dataset\":\"crash\",\"type\":\"doc.published\",\"timestamp\":\"2026-10-22T08:03:40.548Z\",\"document\":{\"_id\":\"post\",\"_rev\":\"rev_e0ae7753-a4e9-4dfb-a3c3-1633545390dd\",\"_type\":\"post\"}}",
+          "signature": "v1=9f9fa6d1870909e98ec2a59d6b8b1e891181d672c62653e524970311ccf311a4",
+          "eventId": "evt_1792656220548_hoymbjum06",
+          "duplicate": true,
+          "receivedAt": "2026-10-22T08:03:46.555Z",
+          "completeRequest": true,
+          "responseSent": false
+        }
+      ],
+      "reopened": {
+        "delivered": 0,
+        "failed": 0
+      }
+    },
+    {
+      "maxAttempts": 1,
+      "killedAt": "2026-10-22T08:03:47.085Z",
+      "killedPid": 58529,
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "reservedBeforeKill": {
+        "eventId": "evt_1792656226831_80fhlpcwo0",
+        "status": "processing",
+        "attempt": 1,
+        "nextRunAt": "2026-10-22T08:03:52.577Z",
+        "lastError": null
+      },
+      "persistedAfterKill": {
+        "eventId": "evt_1792656226831_80fhlpcwo0",
+        "status": "processing",
+        "attempt": 1,
+        "nextRunAt": "2026-10-22T08:03:52.577Z",
+        "lastError": null
+      },
+      "beforeExpiry": {
+        "delivered": 0,
+        "failed": 0
+      },
+      "realExpiryWaitMs": 5273,
+      "recovery": [
+        {
+          "pid": 58918,
+          "result": {
+            "delivered": 0,
+            "failed": 1
+          }
+        },
+        {
+          "pid": 58919,
+          "result": {
+            "delivered": 0,
+            "failed": 0
+          }
+        }
+      ],
+      "final": {
+        "eventId": "evt_1792656226831_80fhlpcwo0",
+        "status": "failed",
+        "attempt": 1,
+        "nextRunAt": "2026-10-22T08:03:52.577Z",
+        "lastError": "Attempt limit reached; the last delivery outcome may be unknown"
+      },
+      "httpRequests": 1,
+      "deduplicatedApplications": 1,
+      "requestReceipts": [
+        {
+          "body": "{\"eventId\":\"evt_1792656226831_80fhlpcwo0\",\"dataset\":\"crash\",\"type\":\"doc.published\",\"timestamp\":\"2026-10-22T08:03:46.831Z\",\"document\":{\"_id\":\"post\",\"_rev\":\"rev_f3f29616-d29a-4b3d-bd7e-c0e453731c19\",\"_type\":\"post\"}}",
+          "signature": "v1=31be0dbfc96ae6e340569a79e31a16aa58deeb327c1ff58df8e2fc2b36c24411",
+          "eventId": "evt_1792656226831_80fhlpcwo0",
+          "duplicate": false,
+          "receivedAt": "2026-10-22T08:03:47.084Z",
+          "completeRequest": true,
+          "responseSent": false
+        }
+      ],
+      "reopened": {
+        "delivered": 0,
+        "failed": 0
+      }
+    }
+  ],
+  "cleanup": {
+    "remainingOwnedWorkers": 0,
+    "receiversClosed": true,
+    "directoryRemoved": true
+  }
+}

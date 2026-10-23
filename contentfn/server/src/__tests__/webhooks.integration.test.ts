@@ -172,6 +172,7 @@ describe("PHASE_09 webhooks subsystem", () => {
       expect(payload.type).toBe("doc.published");
       expect(payload.timestamp).toBeDefined();
       expect(payload.document._id).toBe("post-3");
+      expect(payload.document._type).toBe("post");
 
       const sigHeader = req.headers["x-contentfn-signature"];
       expect(sigHeader).toBeDefined();
@@ -283,7 +284,7 @@ describe("PHASE_09 webhooks subsystem", () => {
         .find((r) => r.status === "pending" && r.lastError !== null);
 
       expect(failedEntry).toBeDefined();
-      expect(failedEntry!.lastError).toBe("Connection refused");
+      expect(failedEntry!.lastError).toBe("Webhook request failed");
       expect(failedEntry!.lastError).not.toContain("super-secret");
     });
   });
@@ -294,5 +295,49 @@ async function processQueueWithFetch(
   fetchFn: typeof globalThis.fetch
 ): Promise<{ delivered: number; failed: number }> {
   const { processWebhookQueue } = await import("../webhooks/deliver.js");
-  return processWebhookQueue({ db, fetch: fetchFn });
+  const { wrapWithSchema } = await import("@superfunctions/db/schema");
+  const { getContentfnSchema } = await import("../storage/schema.js");
+  return processWebhookQueue({ db: wrapWithSchema(db, getContentfnSchema()), fetch: fetchFn });
 }
+
+it("honors configured attempt ceilings and exposes dataset-scoped failures", async () => {
+  const server = createContentfnServer({ db: memoryAdapter(), webhooks: { maxAttempts: 1, timeoutMs: 100 } });
+  await server.api.datasets.create({ dataset: "prod" });
+  await server.api.datasets.create({ dataset: "other" });
+  const hook = await server.api.webhooks.register({ dataset: "prod", url: "https://example.com/hook", events: ["asset.created"], secret: "hidden-secret" });
+  expect(hook.ok).toBe(true); if (!hook.ok) return;
+  await server.api.assets.upload({ dataset: "prod", filename: "x", contentType: "text/plain", bytesBase64: "eA==" });
+  const mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+  try {
+    expect(await server.processWebhookQueue()).toEqual({ delivered: 0, failed: 1 });
+    expect(await server.processWebhookQueue()).toEqual({ delivered: 0, failed: 0 });
+    expect(mock).toHaveBeenCalledTimes(1);
+    const result = await server.api.webhooks.deliveries({ dataset: "prod", webhookId: hook.result.webhookId });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.result.deliveries).toEqual([expect.objectContaining({ attempt: 1, status: "failed", lastError: "HTTP 503" })]);
+    expect(JSON.stringify(result)).not.toContain("hidden-secret");
+    expect((await server.api.webhooks.deliveries({ dataset: "other", webhookId: hook.result.webhookId })).ok).toBe(false);
+  } finally { mock.mockRestore(); }
+});
+
+it("leases active deliveries across workers and recovers expired leases", async () => {
+  const db = memoryAdapter();
+  const server = createContentfnServer({ db });
+  await server.api.datasets.create({ dataset: 'leases' });
+  await server.api.webhooks.register({ dataset: 'leases', url: 'https://example.com/hook', events: ['asset.created'] });
+  await server.api.assets.upload({ dataset: 'leases', filename: 'x', contentType: 'text/plain', bytesBase64: 'eA==' });
+  let release!: () => void;
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const mock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { began(); await pending; return new Response(null, { status: 204 }); });
+  try {
+    const first = server.processWebhookQueue(); await started;
+    expect(await createContentfnServer({ db }).processWebhookQueue()).toEqual({ delivered: 0, failed: 0 });
+    release(); expect(await first).toEqual({ delivered: 1, failed: 0 });
+    expect(mock).toHaveBeenCalledTimes(1);
+    await db.updateMany({ model: 'contentfn_webhook_queue', where: [], data: { status: 'processing', nextRunAt: '2000-01-01T00:00:00.000Z' } });
+    expect(await server.processWebhookQueue()).toEqual({ delivered: 1, failed: 0 });
+    expect(mock).toHaveBeenCalledTimes(2);
+  } finally { release(); mock.mockRestore(); await db.close(); }
+});

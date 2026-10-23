@@ -11,6 +11,7 @@ import { DEFAULT_MAX_FILTER_DEPTH } from "../limits.js";
 
 export interface ValidateCfqlOptions {
   maxFilterDepth?: number;
+  maxExpandDepth?: number;
 }
 
 function validateFilter(
@@ -84,7 +85,8 @@ function validateOrderBy(orderBy: unknown, path: string): ContentfnEnvelope<void
   return { ok: true, result: undefined };
 }
 
-function validateProjection(proj: unknown, path: string): ContentfnEnvelope<void> {
+function validateProjection(proj: unknown, path: string, depth = 0, maxDepth = 8): ContentfnEnvelope<void> {
+  if (depth > maxDepth) return err("QUERY_TOO_COMPLEX", "Projection depth exceeds limit", { path });
   if (proj === null || typeof proj !== "object") {
     return err("QUERY_INVALID", "projection must be an object", { path });
   }
@@ -122,7 +124,7 @@ function validateProjection(proj: unknown, path: string): ContentfnEnvelope<void
       }
       const v = val as { projection?: CfqlProjection };
       if (v.projection !== undefined) {
-        const res = validateProjection(v.projection, `${path}.expand.${key}.projection`);
+        const res = validateProjection(v.projection, `${path}.expand.${key}.projection`, depth + 1, maxDepth);
         if (!res.ok) return res;
       }
     }
@@ -166,10 +168,10 @@ export function validateCfql(
     if (!res.ok) return res;
   }
   if (q.projection !== undefined) {
-    const res = validateProjection(q.projection, "projection");
+    const res = validateProjection(q.projection, "projection", 0, options.maxExpandDepth);
     if (!res.ok) return res;
   }
-  if (q.limit !== undefined && (typeof q.limit !== "number" || q.limit < 1)) {
+  if (q.limit !== undefined && (typeof q.limit !== "number" || !Number.isSafeInteger(q.limit) || q.limit < 1)) {
     return err("QUERY_INVALID", "limit must be positive number", { path: "limit" });
   }
   if (q.cursor !== undefined && q.cursor !== null && typeof q.cursor !== "string") {

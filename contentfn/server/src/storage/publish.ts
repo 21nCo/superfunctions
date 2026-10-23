@@ -1,4 +1,7 @@
-import type { Adapter } from "@superfunctions/db";
+import { schemaGet } from "./schemaStorage.js";
+import { normalizeMarkdownFields, validateDocumentAgainstSchema, validateReferences } from "./document-validation.js";
+import { atomicMutation } from "./database.js";
+import type { ContentfnDatabase as Adapter } from "./database.js";
 import type { ContentfnEnvelope, ContentfnDocument } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
@@ -6,11 +9,12 @@ import { generateRev } from "../rev/rev.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
 import { datasetExists } from "./datasets.js";
 import { appendEvent } from "./events.js";
-import { appendRevision } from "./revisions.js";
+import { appendRevision, appendRemovalRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
 
 export interface PublishStorageConfig {
   db: Adapter;
+  actor?: { subject: string };
 }
 
 export async function docPublish(
@@ -21,6 +25,7 @@ export async function docPublish(
     ifRev?: string;
   }
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docPublish({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
@@ -33,7 +38,7 @@ export async function docPublish(
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: draftId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, draftId) },
     ],
   });
 
@@ -50,11 +55,30 @@ export async function docPublish(
     });
   }
 
+  const schema = await schemaGet(config, { dataset: input.dataset });
+  if (!schema.ok) return schema;
+  const normalized = normalizeMarkdownFields(schema.result, draftDoc._type, draftDoc);
+  if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
+  const validation = validateDocumentAgainstSchema(schema.result, draftDoc._type, normalized.value);
+  if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
+  const references = await validateReferences(config.db, schema.result, input.dataset, "published", draftDoc._type, normalized.value, publishedId);
+  if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;
+  // Lock the captured draft revision through a conditional update before publication.
+  const nextDraftRev = generateRev();
+  const updatedDraft: ContentfnDocument = { ...draftDoc, _rev: nextDraftRev, _updatedAt: nowISO() };
+  const locked = await config.db.updateMany({ model: CONTENTFN_TABLE_NAMES.docsDrafts, where: [
+    { field: "dataset", operator: "eq", value: input.dataset },
+    { field: "id", operator: "eq", value: documentStorageId(input.dataset, draftId) },
+    { field: "rev", operator: "eq", value: draftDoc._rev },
+  ], data: { rev: nextDraftRev, docJson: updatedDraft, updatedAt: updatedDraft._updatedAt } });
+  if (locked !== 1) return err("REV_CONFLICT", "Draft changed during publication", { expectedRev: draftDoc._rev });
+  await appendRevision(config, { dataset: input.dataset, docId: draftId, perspective: "draft", rev: nextDraftRev, docJson: updatedDraft });
   const now = nowISO();
   const newRev = generateRev();
 
   const publishedDoc: ContentfnDocument = {
     ...draftDoc,
+    ...normalized.value,
     _id: publishedId,
     _rev: newRev,
     _updatedAt: now,
@@ -65,7 +89,7 @@ export async function docPublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: publishedId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
     ],
   });
 
@@ -74,7 +98,7 @@ export async function docPublish(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: publishedId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
       ],
     });
   }
@@ -106,7 +130,7 @@ export async function docPublish(
   );
 
   await appendEvent(
-    { db: config.db },
+    config,
     {
       dataset: input.dataset,
       type: "doc.published",
@@ -127,6 +151,7 @@ export async function docUnpublish(
     ifRev?: string;
   }
 ): Promise<ContentfnEnvelope<Record<string, never>>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docUnpublish({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
@@ -138,7 +163,7 @@ export async function docUnpublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: publishedId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
     ],
   });
 
@@ -152,19 +177,22 @@ export async function docUnpublish(
     }
   }
 
+  const removedRev = publishedRow ? await appendRemovalRevision(config, input.dataset, (publishedRow as { docJson: ContentfnDocument }).docJson) : undefined;
+
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: publishedId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
     ],
   });
 
   await appendEvent(
-    { db: config.db },
+    config,
     {
       dataset: input.dataset,
       type: "doc.unpublished",
+      rev: removedRev,
       docId: publishedId,
       changedPaths: [],
     }

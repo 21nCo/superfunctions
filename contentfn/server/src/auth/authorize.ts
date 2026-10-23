@@ -11,7 +11,8 @@ export async function checkAuthorize<T>(
   input: Record<string, unknown>
 ): Promise<ContentfnEnvelope<null> | null> {
   if (!authorize) return null;
-  const allowed = await authorize(ctx, action, input);
+  let allowed = false;
+  try { allowed = await authorize(ctx, action, input); } catch { /* Authorization failures deny access. */ }
   if (!allowed) {
     return err("PERMISSION_DENIED", `Not authorized for action: ${action}`, {});
   }
@@ -43,4 +44,6 @@ export const ACTIONS = {
   WEBHOOKS_DELETE: "webhooks.delete",
   REALTIME_SUBSCRIBE: "realtime.subscribe",
   STATUS: "status",
+  AUDIT_QUERY: "audit.query",
+  AUDIT_WEBHOOKS: "audit.webhooks",
 } as const;

@@ -376,3 +376,20 @@ describe("PHASE_11 import/export", () => {
     });
   });
 });
+
+it('exports equal-time revisions deterministically regardless of database row order', async () => {
+  const db = memoryAdapter();
+  const server = createContentfnServer({ db });
+  await server.api.datasets.create({ dataset: 'stable' });
+  await server.api.schema.upsert({ dataset: 'stable', schema: { version: 1, documentTypes: [{ name: 'post', fields: [] }] } });
+  await server.api.docs.create({ dataset: 'stable', id: 'post', type: 'post', doc: {}, asDraft: false });
+  await server.api.docs.patch({ dataset: 'stable', id: 'post', ops: [] });
+  await db.updateMany({ model: 'contentfn_revisions', where: [], data: { timestamp: '2026-01-01T00:00:00.000Z' } });
+  const first = await server.api.datasets.export({ dataset: 'stable' });
+  const original = db.findMany.bind(db);
+  db.findMany = async params => (await original(params)).reverse();
+  const second = await server.api.datasets.export({ dataset: 'stable' });
+  expect(first.ok && second.ok).toBe(true);
+  if (first.ok && second.ok) expect(second.result.artifact.revisions).toEqual(first.result.artifact.revisions);
+  await db.close();
+});

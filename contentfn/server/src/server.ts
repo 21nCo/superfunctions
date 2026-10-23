@@ -1,8 +1,20 @@
+import { queryWebhookAudit } from "./storage/webhookAudit.js";
+import type { WebhookAuditQuery } from "@contentfn/core";
+import { appendAudit, type AuditQuery, type queryAudit } from "./storage/audit.js";
+import { atomicMutation } from "./storage/database.js";
+import { randomUUID } from "node:crypto";
+import { validateOptionalInput } from "./http/validateInput.js";
+import { webhookDeliveries } from "./storage/webhooks.js";
+import { eventStream } from "./realtime/sse.js";
+import { executeIdempotent } from "./storage/idempotency.js";
+import { schedulePublish, cancelScheduledPublish, processScheduledPublishes } from "./storage/schedules.js";
 /**
  * Create ContentFn server: programmatic API + HTTP handler.
  */
 
-import { wrapWithSchema, type Adapter } from "@superfunctions/db";
+import { InMemoryStorageBackend } from "./storage/storageBackend.js";
+import type { Adapter } from "@superfunctions/db";
+import { wrapWithSchema } from "@superfunctions/db/schema";
 import { datasetCreate, datasetList, datasetDelete } from "./storage/datasets.js";
 import { schemaUpsert, schemaGet } from "./storage/schemaStorage.js";
 import { docCreate, docGet, docDelete, docPatch } from "./storage/docs.js";
@@ -14,7 +26,10 @@ import { enqueueForEvent, processWebhookQueue } from "./webhooks/deliver.js";
 import { exportDataset } from "./importExport/exportDataset.js";
 import { importDataset } from "./importExport/importDataset.js";
 import { executeCfql } from "./query/executeCfql.js";
-import { createRouter } from "./http/router.js";
+import { createContentRouter, endpointHandlers, handleStatus } from "./http/router.js";
+import { nodeHandler } from "./http/node-handler.js";
+import { checkAuthorize } from "./auth/authorize.js";
+import { err, type ContentfnEnvelope } from "@contentfn/core";
 import { RealtimeServer, type AuthorizeFn } from "./realtime/server.js";
 import type { ContentfnEvent } from "./storage/events.js";
 import { resolveLimits, type ContentfnLimits } from "./limits/limits.js";
@@ -23,16 +38,24 @@ import { getContentfnSchema } from "./storage/schema.js";
 
 export interface ContentfnServerConfig {
   db: Adapter;
+  /** Host attests all legacy writers are stopped and schema4 DDL is installed. Not a distributed fence. */
+  webhookAuditWriterSchemaVersion?: 4;
+  /** Use native for database drivers that encode/decode JSON columns (PostgreSQL/MySQL). */
+  jsonStorage?: "native" | "json-text";
   storage?: import("./storage/storageBackend.js").AssetStorageBackend;
   maxPayloadBytes?: number;
   authorize?: AuthorizeFn;
+  context?: (request: Request) => unknown | Promise<unknown>;
   limits?: Partial<ContentfnLimits>;
   logSink?: ContentfnLogSink;
+  search?: { enabled: boolean };
+  webhooks?: { maxAttempts?: number; timeoutMs?: number };
 }
 
 export interface ContentfnServer {
   /** Programmatic API (datasets + schema + docs). */
   api: {
+    audit: { webhooks: (input: WebhookAuditQuery) => ReturnType<typeof queryWebhookAudit>; query: (input: AuditQuery) => ReturnType<typeof queryAudit> };
     datasets: {
       create: (input: { dataset: string }) => ReturnType<typeof datasetCreate>;
       list: (input?: {}) => ReturnType<typeof datasetList>;
@@ -41,11 +64,14 @@ export interface ContentfnServer {
       import: (input: { dataset: string; artifact: unknown }) => ReturnType<typeof importDataset>;
     };
     schema: {
-      upsert: (input: { dataset: string; schema: import("@contentfn/core").ContentfnSchema }) => ReturnType<typeof schemaUpsert>;
+      upsert: (input: { dataset: string; schema: import("@contentfn/core").ContentfnSchema; migration?: { description: string } }) => ReturnType<typeof schemaUpsert>;
       get: (input: { dataset: string }) => ReturnType<typeof schemaGet>;
     };
     docs: {
+      schedule: (input: { dataset: string; id: string; publishAt: string; ifRev?: string }) => ReturnType<typeof schedulePublish>;
+      cancelSchedule: (input: { dataset: string; id: string }) => ReturnType<typeof cancelScheduledPublish>;
       list: (input: import("@contentfn/core").CfqlQuery) => ReturnType<typeof executeCfql>;
+      query: (input: import("@contentfn/core").CfqlQuery) => ReturnType<typeof executeCfql>;
       create: (input: {
         dataset: string;
         id?: string;
@@ -100,6 +126,7 @@ export interface ContentfnServer {
       }) => ReturnType<typeof assetGet>;
     };
     webhooks: {
+      deliveries: (input: { dataset: string; webhookId: string }) => ReturnType<typeof webhookDeliveries>;
       register: (input: {
         dataset: string;
         url: string;
@@ -113,6 +140,9 @@ export interface ContentfnServer {
       }) => ReturnType<typeof webhookDelete>;
     };
   };
+  processScheduledPublishes: () => ReturnType<typeof processScheduledPublishes>;
+  router: import("@superfunctions/http").Router;
+  forContext: (context: unknown) => ContentfnServer["api"];
   processWebhookQueue: () => ReturnType<typeof processWebhookQueue>;
   realtime: RealtimeServer;
   /** HTTP request handler (Node.js IncomingMessage / ServerResponse). */
@@ -122,126 +152,99 @@ export interface ContentfnServer {
 export function createContentfnServer(config: ContentfnServerConfig): ContentfnServer {
   const limits = resolveLimits(config.limits);
   const logger = createLogger(config.logSink);
-  const db = wrapWithSchema(config.db, getContentfnSchema());
+  const db = wrapWithSchema(config.db, getContentfnSchema({ jsonStorage: config.jsonStorage }));
 
   const storage = {
     db,
-    storage: config.storage,
+    storage: config.storage ?? new InMemoryStorageBackend(),
     maxPayloadBytes: config.maxPayloadBytes ?? limits.maxPayloadBytes,
   };
 
   const routerConfig = {
     ...storage,
+    webhookAuditWriterSchemaVersion: config.webhookAuditWriterSchemaVersion,
     authorize: config.authorize,
     limits,
     logger,
+    ...limits,
+    maxPayloadBytes: storage.maxPayloadBytes,
+    search: config.search,
   };
+
+  for (const [name, value] of Object.entries(config.webhooks ?? {})) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError(`webhooks.${name} must be a positive safe integer`);
+  }
 
   const realtimeServer = new RealtimeServer({ authorize: config.authorize });
 
-  async function getLatestEvent(
-    dataset: string,
-    type: string,
-    docId: string
-  ): Promise<ContentfnEvent | null> {
-    const events = await db.findMany({
-      model: "contentfn_events",
-      where: [
-        { field: "dataset", operator: "eq" as const, value: dataset },
-        { field: "type", operator: "eq" as const, value: type },
-        { field: "docId", operator: "eq" as const, value: docId },
-      ],
-      orderBy: [{ field: "timestamp", direction: "desc" }],
-    });
-    return events.length > 0 ? (events[0] as ContentfnEvent) : null;
-  }
-
-  async function publishWithWebhooks(input: {
-    dataset: string;
-    id: string;
-    ifRev?: string;
-  }) {
-    const result = await docPublish(storage, input);
-    if (result.ok) {
-      const event = await getLatestEvent(input.dataset, "doc.published", result.result._id);
-      if (event) {
-        await enqueueForEvent({ db }, event);
-        realtimeServer.broadcast(event);
-      }
-    }
-    return result;
-  }
-
-  async function unpublishWithWebhooks(input: {
-    dataset: string;
-    id: string;
-    ifRev?: string;
-  }) {
-    const result = await docUnpublish(storage, input);
-    if (result.ok) {
-      const publishedId = input.id.startsWith("drafts.") ? input.id.substring(7) : input.id;
-      const event = await getLatestEvent(input.dataset, "doc.unpublished", publishedId);
-      if (event) {
-        await enqueueForEvent({ db }, event);
-        realtimeServer.broadcast(event);
-      }
-    }
-    return result;
-  }
-
-  return {
-    api: {
-      datasets: {
-        create: (input) => datasetCreate(storage, input),
-        list: (input = {}) => datasetList(storage, input),
-        delete: (input) => datasetDelete(storage, input),
-        export: (input) => exportDataset(storage, input),
-        import: (input) => importDataset(storage, input),
-      },
-      schema: {
-        upsert: (input) => schemaUpsert(storage, input),
-        get: (input) => schemaGet(storage, input),
-      },
-      docs: {
-        list: (input) => executeCfql({
-          db,
-          maxQueryLimit: limits.maxQueryLimit,
-          maxExpandDepth: limits.maxExpandDepth,
-          maxFilterDepth: limits.maxFilterDepth,
-        }, input),
-        create: (input) => docCreate(storage, input),
-        get: (input) => docGet(storage, input),
-        delete: (input) => docDelete(storage, input),
-        patch: (input) => {
-          if (input.ops.length > limits.maxPatchOps) {
-            return Promise.resolve({
-              ok: false as const,
-              error: {
-                code: "VALIDATION_FAILED" as const,
-                message: `Patch ops count ${input.ops.length} exceeds limit ${limits.maxPatchOps}`,
-                details: { count: input.ops.length, limit: limits.maxPatchOps },
-              },
-            });
+  async function invoke(action: string, input: unknown, context?: unknown, idempotencyKey?: string): Promise<ContentfnEnvelope<unknown>> {
+    try {
+      if (input === null || typeof input !== "object" || Array.isArray(input)) return err("VALIDATION_FAILED", "Input must be an object", { path: "body" });
+      const record = input as Record<string, unknown>;
+      const invalidInput = validateOptionalInput(action, record);
+      if (invalidInput) return invalidInput;
+      const denied = await checkAuthorize(config.authorize, context, action, record);
+      if (denied) return denied;
+      if (Buffer.byteLength(JSON.stringify(input), "utf8") > limits.maxPayloadBytes) return err("PAYLOAD_TOO_LARGE", "Input exceeds configured byte limit", {});
+      if (action === "status") return handleStatus({ limits });
+      if (action === "docs.patch" && Array.isArray(record.ops) && record.ops.length > limits.maxPatchOps) return err("VALIDATION_FAILED", "Patch operation limit exceeded", { path: "ops" });
+      const endpoint = Object.values(endpointHandlers).find(endpoint => endpoint.action === action);
+      if (!endpoint) return err("VALIDATION_FAILED", "Unknown operation", {});
+      const subject = typeof context === "object" && context !== null && "subject" in context && typeof context.subject === "string" ? context.subject : undefined;
+      const call = async (database: import("./storage/database.js").ContentfnDatabase): Promise<ContentfnEnvelope<unknown>> => {
+        const response = await endpoint.handle({ ...routerConfig, db: database, actor: subject ? { subject } : undefined }, input);
+        if (mutating && response.ok) await appendAudit(database, action, record, response.result, subject);
+        return response;
+      };
+      let replayed = false;
+      const mutating = /\.(create|delete|import|upsert|patch|publish|unpublish|restore|upload|register|schedule|cancelSchedule)$/.test(action);
+      const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : mutating ? await atomicMutation(db, call) : await call(db);
+      if (result.ok && !replayed) {
+        try {
+        if (action === "datasets.delete") realtimeServer.broadcast({ eventId: randomUUID(), dataset: String(record.dataset), type: "dataset.deleted", timestamp: new Date().toISOString() });
+        if (/^(docs\.(create|patch|delete|publish|unpublish|restore)|schema\.upsert)$/.test(action)) {
+          logger.logMutation({ action, dataset: record.dataset as string, docId: record.id as string, actor: subject });
+          const document = result.result as Record<string, unknown>;
+          if (action.startsWith("docs.")) {
+            const rows = await db.findMany({ model: "contentfn_events", where: [
+              { field: "dataset", operator: "eq", value: record.dataset },
+              { field: "type", operator: "eq", value: ({ "docs.create": "doc.created", "docs.patch": "doc.updated", "docs.restore": "doc.updated", "docs.publish": "doc.published", "docs.unpublish": "doc.unpublished", "docs.delete": "doc.deleted" } as Record<string, string>)[action] },
+              ...(typeof document?._rev === "string" ? [{ field: "rev", operator: "eq" as const, value: document._rev }] : [{ field: "docId", operator: "eq" as const, value: String(record.id).replace(/^drafts\./, "") }]),
+            ], orderBy: [{ field: "timestamp", direction: "desc" }] });
+            if (rows[0]) realtimeServer.broadcast(rows[0] as unknown as ContentfnEvent);
           }
-          return docPatch(storage, input);
-        },
-        publish: (input) => publishWithWebhooks(input),
-        unpublish: (input) => unpublishWithWebhooks(input),
-        history: (input) => listHistory(storage, input),
-        restore: (input) => restoreRevision(storage, input),
-      },
-      assets: {
-        upload: (input) => assetUpload(storage, input),
-        get: (input) => assetGet(storage, input),
-      },
-      webhooks: {
-        register: (input) => webhookRegister(storage, input),
-        list: (input) => webhookList(storage, input),
-        delete: (input) => webhookDelete(storage, input),
-      },
-    },
-    processWebhookQueue: () => processWebhookQueue({ db }),
+        }
+        if (action === "assets.upload") logger.logAssetUpload({ dataset: record.dataset as string, size: Buffer.from(record.bytesBase64 as string, "base64").length, contentType: record.contentType as string });
+        } catch { /* Delivery callbacks cannot turn a committed mutation into a failure. */ }
+      }
+      return result;
+    } catch {
+      return err("STORAGE_ERROR", "Content operation could not be completed", {});
+    }
+  }
+  function forContext(context?: unknown): ContentfnServer["api"] {
+    const api: Record<string, Record<string, (input?: unknown) => Promise<ContentfnEnvelope<unknown>>>> = {};
+    for (const endpoint of Object.values(endpointHandlers)) {
+      const [namespace, method] = endpoint.action === "query" ? ["docs", "query"] : endpoint.action.split(".");
+      (api[namespace] ??= {})[method] = (input = {}) => invoke(endpoint.action, input, context);
+    }
+    api.docs.list = api.docs.query;
+    return api as unknown as ContentfnServer["api"];
+  }
+  const router = createContentRouter(routerConfig, async (action, input, request) => invoke(action, input, config.context && request instanceof Request ? await config.context(request) : request, request instanceof Request ? request.headers.get("Idempotency-Key") ?? undefined : undefined), request => eventStream(request, { realtime: realtimeServer, authorize: config.authorize, context: config.context, logger, query: (query, context) => invoke("query", query, context) }));
+  return {
+    api: forContext(), forContext, router,
+    processScheduledPublishes: () => processScheduledPublishes({ db, onPublished: async (dataset, document) => {
+      const rows = await db.findMany({ model: "contentfn_events", where: [
+        { field: "dataset", operator: "eq", value: dataset },
+        { field: "type", operator: "eq", value: "doc.published" },
+        { field: "rev", operator: "eq", value: document._rev },
+      ] });
+      for (const event of rows) realtimeServer.broadcast(event as unknown as ContentfnEvent);
+      logger.logMutation({ action: "docs.publish", dataset, docId: String(document._id) });
+    } }),
+    processWebhookQueue: () => processWebhookQueue({ db, logger, ...config.webhooks }),
     realtime: realtimeServer,
-    handler: createRouter(routerConfig),
+    handler: nodeHandler(router),
   };
 }

@@ -69,6 +69,7 @@ export class ContentfnLogger {
       action: "webhooks.delivery_failed",
       dataset: info.dataset,
       error: info.error,
+      webhookUrl: info.webhookUrl,
     });
   }
 }

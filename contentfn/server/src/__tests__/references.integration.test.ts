@@ -75,7 +75,7 @@ describe("References (REF-001) integration tests", () => {
 
       expect(queryRes.ok).toBe(true);
       if (!queryRes.ok) return;
-      
+
       const doc = queryRes.result.data[0];
       expect(doc._id).toBe("post-10");
       expect(doc.author).toEqual({
@@ -116,7 +116,7 @@ describe("References (REF-001) integration tests", () => {
           types: ["post"],
           filter: { field: "_id", op: "eq", value: "post-11" },
           projection: {
-            fields: ["_id", "title", "author"],
+            fields: ["_id", "title"],
             expand: {
               authorDoc: { field: "author", projection: { fields: ["_id", "name"] } },
             },
@@ -132,7 +132,8 @@ describe("References (REF-001) integration tests", () => {
       expect(doc._id).toBe("post-11");
       expect(doc.title).toBe("Expandable");
       expect(doc.authorDoc).toBeDefined();
-      
+      expect(doc.author).toBeUndefined();
+
       const authorDoc = doc.authorDoc as Record<string, unknown>;
       expect(authorDoc._id).toBe("author-2");
       expect(authorDoc.name).toBe("Grace");

@@ -1,200 +1,30 @@
+import { atomicMutation } from "./database.js";
 /**
  * Document storage: create/get/delete with draft vs published perspectives.
  * Implements schema validation, system fields, and draft ID mapping.
  */
 
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "./database.js";
 import type {
   ContentfnEnvelope,
   ContentfnDocument,
-  ContentfnSchema,
-  ContentfnDocumentType,
-  ContentfnField,
-  ContentfnFieldType,
   ContentfnPatchOp,
 } from "@contentfn/core";
-import { ok, err } from "@contentfn/core";
+import { ok, err, validatePatch } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
 import { generateRev } from "../rev/rev.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
 import { datasetExists } from "./datasets.js";
 import { schemaGet } from "./schemaStorage.js";
 import { applyPatch } from "../patch/applyPatch.js";
-import { appendRevision } from "./revisions.js";
+import { appendEvent } from "./events.js";
+import { appendRevision, appendRemovalRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
-import { parseMarkdown } from "@mdfn/markdown";
-import { calloutExtension, commonmarkExtension, diagramExtension, gfmExtension } from "@mdfn/extensions";
-import { isMarkdownContent, markdownContent, type MarkdownContent, type MarkdownContentProfile } from "@mdfn/contentfn";
-
-const markdownExtensionByName = {
-  callout: calloutExtension,
-  "directive/callout": calloutExtension,
-  diagram: diagramExtension,
-  "directive/diagram": diagramExtension,
-} as const;
+import { validateDocumentAgainstSchema, normalizeMarkdownFields, validateReferences } from "./document-validation.js";
 
 export interface DocsStorageConfig {
   db: Adapter;
-}
-
-/**
- * Validate document against schema.
- * Returns VALIDATION_FAILED if required fields missing or type mismatches.
- */
-function validateDocumentAgainstSchema(
-  schema: ContentfnSchema,
-  docType: string,
-  doc: Record<string, unknown>
-): ContentfnEnvelope<void> {
-  const type = schema.documentTypes.find((t) => t.name === docType);
-  if (!type) {
-    return err("VALIDATION_FAILED", `Document type "${docType}" not found in schema`, { type: docType });
-  }
-
-  // Validate required fields
-  for (const field of type.fields) {
-    if (field.required && !(field.name in doc)) {
-      return err("VALIDATION_FAILED", `Required field "${field.name}" is missing`, { path: field.name });
-    }
-  }
-
-  // Basic type validation (simplified for PHASE_02; full validation in later phases)
-  for (const field of type.fields) {
-    if (field.name in doc) {
-      const value = doc[field.name];
-      const valid = validateFieldType(field.type, value);
-      if (!valid.ok) {
-        return err("VALIDATION_FAILED", `Field "${field.name}" has invalid type: ${valid.error}`, {
-          path: field.name,
-        });
-      }
-    }
-  }
-
-  return ok(undefined);
-}
-
-function markdownProfile(fieldType: Extract<ContentfnFieldType, { kind: "markdown" }>): MarkdownContentProfile {
-  const dialect = fieldType.dialect ?? "gfm";
-  return {
-    id: `mdfn:${dialect}`,
-    dialect,
-    allowRawHtml: fieldType.allowRawHtml ?? false,
-    extensions: [...(fieldType.extensions ?? [])],
-    schemaVersion: fieldType.schemaVersion ?? 1,
-  };
-}
-
-function markdownProfilesEqual(left: MarkdownContentProfile, right: MarkdownContentProfile): boolean {
-  return left.id === right.id
-    && left.dialect === right.dialect
-    && left.allowRawHtml === right.allowRawHtml
-    && left.schemaVersion === right.schemaVersion
-    && left.extensions.length === right.extensions.length
-    && left.extensions.every((extension, index) => extension === right.extensions[index]);
-}
-
-function normalizeMarkdownFields(schema: ContentfnSchema, docType: string, doc: Record<string, unknown>): { ok: true; value: Record<string, unknown> } | { ok: false; field: string; error: string } {
-  const type = schema.documentTypes.find((candidate) => candidate.name === docType);
-  if (!type) return { ok: false, field: "_type", error: `document type ${docType} not found` };
-  const value = { ...doc };
-  for (const field of type.fields) {
-    if (field.type.kind !== "markdown" || !(field.name in value) || value[field.name] == null) continue;
-    const current = value[field.name];
-    const expectedProfile = markdownProfile(field.type);
-    if (typeof current === "string") value[field.name] = markdownContent(current, { profile: expectedProfile });
-    else if (!isMarkdownContent(current)) return { ok: false, field: field.name, error: "expected a versioned Markdown value or legacy string" };
-    else if (!markdownProfilesEqual(current.profile, expectedProfile)) return { ok: false, field: field.name, error: "markdown profile does not match the field schema" };
-  }
-  return { ok: true, value };
-}
-
-/**
- * Basic field type validation.
- */
-function validateFieldType(
-  fieldType: ContentfnFieldType,
-  value: unknown
-): { ok: true } | { ok: false; error: string } {
-  if (value === null || value === undefined) {
-    return { ok: true }; // nullable fields are handled by required check
-  }
-
-  switch (fieldType.kind) {
-    case "primitive": {
-      const { type } = fieldType;
-      if (type === "string" || type === "text") {
-        if (typeof value !== "string") return { ok: false, error: `expected string, got ${typeof value}` };
-      } else if (type === "number") {
-        if (typeof value !== "number") return { ok: false, error: `expected number, got ${typeof value}` };
-      } else if (type === "boolean") {
-        if (typeof value !== "boolean") return { ok: false, error: `expected boolean, got ${typeof value}` };
-      } else if (type === "date" || type === "datetime") {
-        if (typeof value !== "string") return { ok: false, error: `expected ISO string, got ${typeof value}` };
-      } else if (type === "json") {
-        // any JSON-serializable value is ok
-      }
-      return { ok: true };
-    }
-    case "reference": {
-      // Reference must be canonical shape: { _type: "reference", _ref: string, _weak?: boolean }
-      if (typeof value !== "object" || value === null) {
-        return { ok: false, error: "reference must be object" };
-      }
-      const ref = value as Record<string, unknown>;
-      if (ref._type !== "reference" || typeof ref._ref !== "string") {
-        return { ok: false, error: 'reference must have _type="reference" and _ref as string' };
-      }
-      return { ok: true };
-    }
-    case "asset": {
-      // Asset must be canonical shape: { _type: "asset", _ref: string, assetType: "file" | "image" }
-      if (typeof value !== "object" || value === null) {
-        return { ok: false, error: "asset must be object" };
-      }
-      const asset = value as Record<string, unknown>;
-      if (asset._type !== "asset" || typeof asset._ref !== "string") {
-        return { ok: false, error: 'asset must have _type="asset" and _ref as string' };
-      }
-      return { ok: true };
-    }
-    case "array": {
-      if (!Array.isArray(value)) {
-        return { ok: false, error: `expected array, got ${typeof value}` };
-      }
-      // Array element validation deferred to later phases
-      return { ok: true };
-    }
-    case "object": {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return { ok: false, error: `expected object, got ${typeof value}` };
-      }
-      // Object field validation deferred to later phases
-      return { ok: true };
-    }
-    case "richtext": {
-      // Richtext is array of blocks (simplified validation for PHASE_02)
-      if (!Array.isArray(value)) {
-        return { ok: false, error: `expected richtext array, got ${typeof value}` };
-      }
-      return { ok: true };
-    }
-    case "markdown": {
-      if (!isMarkdownContent(value)) return { ok: false, error: "expected versioned Markdown value" };
-      try {
-        const content = value as MarkdownContent;
-        const dialect = content.profile.dialect;
-        const configured = content.profile.extensions.map((name) => markdownExtensionByName[name as keyof typeof markdownExtensionByName]);
-        if (configured.some((extension) => !extension)) return { ok: false, error: "unknown markdown extension" };
-        parseMarkdown(content.markdown, { dialect, allowRawHtml: content.profile.allowRawHtml, schemaVersion: content.profile.schemaVersion, extensions: [commonmarkExtension, ...(dialect === "gfm" ? [gfmExtension] : []), ...configured] });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, error: `invalid markdown: ${error instanceof Error ? error.message : String(error)}` };
-      }
-    }
-    default:
-      return { ok: false, error: `unknown field kind` };
-  }
+  actor?: { subject: string };
 }
 
 /**
@@ -231,6 +61,7 @@ export async function docCreate(
     asDraft?: boolean;
   }
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docCreate({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
@@ -254,12 +85,15 @@ export async function docCreate(
   const docId = normalizeDraftId(input.id, asDraft);
   const table = asDraft ? CONTENTFN_TABLE_NAMES.docsDrafts : CONTENTFN_TABLE_NAMES.docsPublished;
 
+  const references = await validateReferences(config.db, schema, input.dataset, asDraft ? "draft" : "published", input.type, normalized.value, docId);
+  if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;
+
   // Check if document already exists in target perspective
   const existing = await config.db.findOne({
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: docId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, docId) },
     ],
   });
 
@@ -271,14 +105,15 @@ export async function docCreate(
   const rev = generateRev();
 
   const fullDoc: ContentfnDocument = {
+    ...normalized.value,
     _id: docId,
     _type: input.type,
     _rev: rev,
     _createdAt: now,
     _updatedAt: now,
-    ...normalized.value,
   };
 
+  delete fullDoc._publishedAt;
   // If published, may have _publishedAt
   if (!asDraft) {
     fullDoc._publishedAt = now;
@@ -310,6 +145,7 @@ export async function docCreate(
     }
   );
 
+  await appendEvent(config, { dataset: input.dataset, type: "doc.created", docId, rev, changedPaths: Object.keys(normalized.value) });
   return ok(fullDoc);
 }
 
@@ -344,7 +180,7 @@ export async function docGet(
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: input.id },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, perspective === "draft" && !input.id.startsWith("drafts.") ? `drafts.${input.id}` : input.id) },
     ],
   });
 
@@ -372,12 +208,23 @@ export async function docDelete(
     purge?: boolean;
   }
 ): Promise<ContentfnEnvelope<Record<string, never>>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docDelete({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
   }
 
   const purge = input.purge ?? false;
+  const publishedId = input.id.startsWith("drafts.") ? input.id.substring(7) : input.id;
+
+  let removedRev: string | undefined;
+  for (const [model, documentId] of [
+    [CONTENTFN_TABLE_NAMES.docsPublished, publishedId],
+    ...(purge ? [[CONTENTFN_TABLE_NAMES.docsDrafts, `drafts.${publishedId}`]] : []),
+  ]) {
+    const row = await config.db.findOne({ model, where: [{ field: "dataset", operator: "eq", value: input.dataset }, { field: "id", operator: "eq", value: documentStorageId(input.dataset, documentId) }] });
+    if (row) removedRev = await appendRemovalRevision(config, input.dataset, row.docJson as ContentfnDocument);
+  }
 
   if (purge) {
     // Delete from both perspectives
@@ -386,7 +233,7 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: input.id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
       ],
     });
     // Draft doc uses "drafts." prefix
@@ -395,7 +242,7 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: draftId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, draftId) },
       ],
     });
   } else {
@@ -404,11 +251,12 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: input.id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
       ],
     });
   }
 
+  await appendEvent(config, { dataset: input.dataset, type: "doc.deleted", docId: publishedId, rev: removedRev });
   return ok({});
 }
 
@@ -430,11 +278,19 @@ export async function docPatch(
     ops: ContentfnPatchOp[];
   }
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docPatch({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
   }
 
+  const validatedPatch = validatePatch(input);
+  if (!validatedPatch.ok) return validatedPatch as ContentfnEnvelope<ContentfnDocument>;
+  for (const op of validatedPatch.result.ops) {
+    if (["_id", "_type", "_rev", "_createdAt", "_updatedAt", "_publishedAt"].includes(op.path.split(".")[0])) {
+      return err("PATCH_INVALID", "System fields cannot be modified", { path: op.path });
+    }
+  }
   // Determine perspective from ID
   const isDraft = input.id.startsWith("drafts.");
   const table = isDraft ? CONTENTFN_TABLE_NAMES.docsDrafts : CONTENTFN_TABLE_NAMES.docsPublished;
@@ -445,7 +301,7 @@ export async function docPatch(
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: input.id },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, input.id) },
     ],
   });
 
@@ -488,31 +344,21 @@ export async function docPatch(
   if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
   const validation = validateDocumentAgainstSchema(schemaRes.result, currentDoc._type, normalized.value);
   if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
+  const references = await validateReferences(config.db, schemaRes.result, input.dataset, perspective, currentDoc._type, normalized.value, input.id);
+  if (!references.ok) return references as ContentfnEnvelope<ContentfnDocument>;
   const persistedDoc = normalized.value as ContentfnDocument;
 
-  // Persist updated document (delete old, create new with updated data)
-  await config.db.deleteMany({
+  // Compare-and-swap is enforced by the database even across server processes.
+  const updated = await config.db.updateMany({
     model: table,
     where: [
-      { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: input.id },
+      { field: "dataset", operator: "eq", value: input.dataset },
+      { field: "id", operator: "eq", value: documentStorageId(input.dataset, input.id) },
+      { field: "rev", operator: "eq", value: currentRev },
     ],
+    data: { docJson: persistedDoc, rev: newRev, updatedAt: now },
   });
-
-  await config.db.create({
-    model: table,
-    data: {
-      dataset: input.dataset,
-      id: documentStorageId(input.dataset, input.id),
-      documentId: input.id,
-      type: currentDoc._type,
-      docJson: persistedDoc,
-      rev: newRev,
-      createdAt: currentDoc._createdAt,
-      updatedAt: now,
-      ...(isDraft ? {} : { publishedAt: currentDoc._publishedAt || now }),
-    },
-  });
+  if (updated !== 1) return err("REV_CONFLICT", "Document changed during mutation", { expectedRev: currentRev });
 
   // Append revision record
   await appendRevision(
@@ -526,5 +372,6 @@ export async function docPatch(
     }
   );
 
+  await appendEvent(config, { dataset: input.dataset, type: "doc.updated", docId: input.id, rev: newRev, changedPaths: input.ops.map(op => op.path) });
   return ok(persistedDoc);
 }

@@ -1,6 +1,6 @@
 {
   "name": "@contentfn/cli",
-  "version": "0.0.3",
+  "version": "0.2.0",
   "description": "ContentFn CLI - schema validation/upsert, dataset export/import, document operations",
   "type": "module",
   "main": "dist/index.js",
@@ -21,16 +21,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "superfunctions": {
-    "initFunction": "contentFn",
-    "schemaVersion": 1,
-    "namespace": "contentfn"
-  },
   "scripts": {
     "build": "tsup",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:watch": "vitest watch"
   },
   "engines": {
@@ -43,8 +38,8 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@contentfn/core": "0.0.2",
-    "@contentfn/client": "0.0.2",
+    "@contentfn/core": "0.2.0",
+    "@contentfn/client": "0.2.0",
     "commander": "^12.0.0"
   },
   "devDependencies": {

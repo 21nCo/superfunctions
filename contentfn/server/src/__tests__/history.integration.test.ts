@@ -66,7 +66,7 @@ describe("PHASE_05 history + restore", () => {
       expect(historyRes.ok).toBe(true);
       if (historyRes.ok) {
         expect(historyRes.result.revisions.length).toBeGreaterThanOrEqual(2);
-        
+
         for (const rev of historyRes.result.revisions) {
           expect(rev._id).toBe("post-1");
           expect(rev._type).toBe("post");
@@ -225,4 +225,22 @@ describe("PHASE_05 history + restore", () => {
       }
     });
   });
+});
+
+it("retains restorable snapshots for unpublish and delete mutations", async () => {
+  const server = createContentfnServer({ db: memoryAdapter() });
+  await server.api.datasets.create({ dataset: "history" });
+  await server.api.schema.upsert({ dataset: "history", schema: { version: 1, documentTypes: [{ name: "post", fields: [] }] } });
+  await server.api.docs.create({ dataset: "history", id: "post", type: "post", doc: {}, asDraft: false });
+  await server.api.docs.unpublish({ dataset: "history", id: "post" });
+  const afterUnpublish = await server.api.docs.history({ dataset: "history", id: "post" });
+  expect(afterUnpublish.ok).toBe(true);
+  if (!afterUnpublish.ok) return;
+  expect(afterUnpublish.result.revisions).toHaveLength(2);
+  await server.api.docs.create({ dataset: "history", id: "post", type: "post", doc: {}, asDraft: false });
+  await server.api.docs.delete({ dataset: "history", id: "post" });
+  const afterDelete = await server.api.docs.history({ dataset: "history", id: "post" });
+  expect(afterDelete.ok).toBe(true);
+  if (!afterDelete.ok) return;
+  expect(afterDelete.result.revisions).toHaveLength(4);
 });

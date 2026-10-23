@@ -32,6 +32,7 @@ export interface RealtimeEventMessage {
   dataset: string;
   timestamp: string;
   eventType: string;
+  actor?: { subject: string };
   document?: { _id: string; _type?: string; _rev?: string };
 }
 

@@ -452,8 +452,8 @@ describe("PHASE_03 patch operations + optimistic concurrency", () => {
       expect(res.ok).toBe(false);
       if (res.ok) return;
 
-      // Empty dataset triggers DATASET_NOT_FOUND at storage layer
-      expect(res.error.code).toBe("DATASET_NOT_FOUND");
+      // Invalid input is rejected consistently before storage access.
+      expect(res.error.code).toBe("PATCH_INVALID");
     });
 
     it("returns DOCUMENT_NOT_FOUND for missing document", async () => {

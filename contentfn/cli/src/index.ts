@@ -10,7 +10,7 @@ const program = new Command();
 program
   .name("contentfn")
   .description("ContentFn CLI - schema, dataset, and document operations")
-  .version("0.0.1")
+  .version("0.2.0")
   .option("--server <url>", "ContentFn server URL", process.env.CONTENTFN_SERVER ?? "http://localhost:3000");
 
 registerSchemaCommands(program);
