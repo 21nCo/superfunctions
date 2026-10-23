@@ -76,12 +76,16 @@ export class MemoryAdapter implements FlowAdapter {
     return snapshotJob(ready);
   }
   async saveJob(queue: string, job: Job): Promise<void> {
-    this.assertLease(this.queue(queue).get(job.id), job.lease?.token);
-    if (!this.queue(queue).has(job.id)) throw new Error("Job not found");
+    const jobs = this.queue(queue);
+    const current = jobs.get(job.id);
+    this.assertLease(current, job.lease?.token);
+    if (!current) throw new Error("Job not found");
     const value = snapshotJob(job);
+    // Reuse the private immutable ID already shared with the Map key.
+    value.id = current.id;
     if (["completed", "failed"].includes(value.state)) value.lease = undefined;
-    else if (value.lease) value.lease = structuredClone(this.queue(queue).get(job.id)!.lease);
-    this.queue(queue).set(job.id, value);
+    else if (value.lease) value.lease = structuredClone(current.lease);
+    jobs.set(value.id, value);
   }
   private assertLease(current: Job | undefined, token?: string) {
     if (current?.lease && (current.lease.token !== token || current.lease.expiresAt <= Date.now()))

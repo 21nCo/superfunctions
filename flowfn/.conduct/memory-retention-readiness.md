@@ -79,3 +79,7 @@ Local logs: /tmp/flow-memory-final-build.log, /tmp/flow-memory-types.log,
 /tmp/flow-memory-final-compare.log. The owned temporary baseline directory was removed after validation, with
 absence read back; all benchmark/test subprocesses exited. This is measurable progress toward the original requirement, not
 production-readiness completion.
+
+The subsequent [stored ID reuse checkpoint](stored-id-reuse-readiness.md) preserves
+this workload and records three candidate runs below the original 1,000-byte goal,
+with direct heap evidence explaining the additional reduction.

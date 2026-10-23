@@ -1,0 +1,281 @@
+{
+  "baseline": {
+    "sha": "c3a3e16203bd2c0489cc6656840aeb7ec48cd548",
+    "trackedFilesVerified": 98,
+    "path": "/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/flow-id-baseline-hvm9kdrt"
+  },
+  "benchmarkSha256": "7693782a8fa7d080e644cddcda304390cc37c0d5b4d8ecbe0b978aeee4caf48e",
+  "node": "/opt/homebrew/opt/node@20/bin/node",
+  "sequence": [
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 34.386292000000026,
+        "jobsPerSecond": 29081.35602408074,
+        "enqueueP99Ms": 2.1505829999999833,
+        "dequeueP99Ms": 0.5117079999999987,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 79429632,
+        "rssAfter": 87375872,
+        "heapDeltaPerRetainedJob": 1021.056,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 33.430375,
+        "jobsPerSecond": 29912.916023227383,
+        "enqueueP99Ms": 1.6350829999999945,
+        "dequeueP99Ms": 0.5847089999999895,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 79675392,
+        "rssAfter": 87982080,
+        "heapDeltaPerRetainedJob": 943.64,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.324417,
+        "jobsPerSecond": 30936.366153177645,
+        "enqueueP99Ms": 1.6270000000000095,
+        "dequeueP99Ms": 0.440250000000006,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 75923456,
+        "rssAfter": 83820544,
+        "heapDeltaPerRetainedJob": 993.232,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.200874999999996,
+        "jobsPerSecond": 31055.056733706773,
+        "enqueueP99Ms": 1.7434590000000014,
+        "dequeueP99Ms": 0.39708299999999497,
+        "queueToHandlerP99Ms": 14,
+        "rssBefore": 77512704,
+        "rssAfter": 86196224,
+        "heapDeltaPerRetainedJob": 966.904,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.88008400000001,
+        "jobsPerSecond": 30413.547605291995,
+        "enqueueP99Ms": 1.642583000000002,
+        "dequeueP99Ms": 0.3889169999999922,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 77332480,
+        "rssAfter": 85164032,
+        "heapDeltaPerRetainedJob": 1005.92,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "result": {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.420666999999995,
+        "jobsPerSecond": 30844.52272373052,
+        "enqueueP99Ms": 1.7044170000000065,
+        "dequeueP99Ms": 0.39350000000000307,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 80986112,
+        "rssAfter": 89341952,
+        "heapDeltaPerRetainedJob": 922.064,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      }
+    }
+  ],
+  "heapSnapshotSummary": {
+    "baseline": {
+      "jobs": 1000,
+      "jobObjectsShallowBytes": 144000,
+      "mapTableBytes": 28712,
+      "distinctEqualKeyIdPairs": 1000,
+      "uniqueKeyAndIdStringBytes": 112000,
+      "fieldUniqueReferents": {
+        "state": {
+          "count": 1,
+          "shallowBytes": 32
+        },
+        "logs": {
+          "count": 1000,
+          "shallowBytes": 32000
+        },
+        "discarded": {
+          "count": 1,
+          "shallowBytes": 48
+        },
+        "id": {
+          "count": 1000,
+          "shallowBytes": 56000
+        },
+        "name": {
+          "count": 1,
+          "shallowBytes": 24
+        },
+        "data": {
+          "count": 1000,
+          "shallowBytes": 32000
+        },
+        "opts": {
+          "count": 1000,
+          "shallowBytes": 56000
+        },
+        "lease": {
+          "count": 1,
+          "shallowBytes": 48
+        },
+        "2": {
+          "count": 1000,
+          "shallowBytes": 16000
+        },
+        "3": {
+          "count": 1000,
+          "shallowBytes": 16000
+        },
+        "4": {
+          "count": 1000,
+          "shallowBytes": 16000
+        }
+      }
+    },
+    "candidate": {
+      "jobs": 1000,
+      "jobObjectsShallowBytes": 144000,
+      "mapTableBytes": 28712,
+      "distinctEqualKeyIdPairs": 0,
+      "uniqueKeyAndIdStringBytes": 56000,
+      "fieldUniqueReferents": {
+        "state": {
+          "count": 1,
+          "shallowBytes": 32
+        },
+        "logs": {
+          "count": 1000,
+          "shallowBytes": 32000
+        },
+        "discarded": {
+          "count": 1,
+          "shallowBytes": 48
+        },
+        "id": {
+          "count": 1000,
+          "shallowBytes": 56000
+        },
+        "name": {
+          "count": 1,
+          "shallowBytes": 24
+        },
+        "data": {
+          "count": 1000,
+          "shallowBytes": 32000
+        },
+        "opts": {
+          "count": 1000,
+          "shallowBytes": 56000
+        },
+        "lease": {
+          "count": 1,
+          "shallowBytes": 48
+        },
+        "2": {
+          "count": 1000,
+          "shallowBytes": 16000
+        },
+        "3": {
+          "count": 1000,
+          "shallowBytes": 16000
+        },
+        "4": {
+          "count": 1000,
+          "shallowBytes": 16000
+        }
+      }
+    }
+  },
+  "candidateMemorySourceSha256": "84f3ce5e2db3b8c084151d37db9ed90cb9de8ecd261946effc60f0da8a4a359d",
+  "limits": [
+    "Local memory-adapter synthetic workload only; not universal payload or provider certification.",
+    "Heap snapshot shallow graph accounting is separate from process heap deltas.",
+    "All original jobs, producers, handlers, metrics and isolation retained."
+  ]
+}
