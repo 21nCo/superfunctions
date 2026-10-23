@@ -95,8 +95,8 @@ File names and MIME metadata are length-bounded; names are rendered as text, nev
 Media responses are validated and limited to 2 MiB with a ten-second request deadline.
 Access denial removes prior rows. Dataset, endpoint and document changes cancel pending
 work and prevent stale selections. Nested object asset fields use literal schema keys,
-preserve siblings and reject prototype keys or array traversal. Array-item media editing
-is not added by this object-field integration.
+preserve siblings and reject prototype keys. Object paths never reinterpret string keys
+as array indices; array editors resolve stable item ownership separately as described below.
 
 Reference fields, including fields nested inside objects, use the configured CmsFn API
 for candidate discovery. The host must grant `doc.read` for the selected dataset and
@@ -113,4 +113,19 @@ its ContentFn `query` policy, which must enforce the authenticated subject's dat
 type access. Without either configuration, candidate discovery denies access. When a
 CmsFn URL is present it always takes precedence; UI read flags cannot bypass the server.
 Use same-origin authenticated routes or a host proxy; service credentials belong only in
-server configuration. Array-item reference editing remains separate editor work.
+server configuration. Array-item editing follows the schema-driven behavior below.
+
+Array fields use their declared item widgets and support add, remove and reorder. Reference
+and asset items, nested objects and nested arrays retain canonical ContentFn values;
+editor-local item IDs are never written into documents. Open pickers follow the same item
+through normal edits and reorders. Removing that item, replacing the array externally or
+changing document scope discards its picker. Literal object keys remain literal inside
+array values. Existing unknown object fields and sibling values survive item edits.
+
+For heterogeneous `of` unions, the editor infers an unambiguous primitive/canonical kind
+when possible. Ambiguous object or union values require an explicit item-type choice;
+choosing that view alone does not coerce the stored value. New items use the selected
+variant's initial value and must satisfy ContentFn validation before save. `maxLength`
+prevents adding beyond the declared count. Published documents remain read-only, required
+fields retain their indicators, and save-time producer validation remains authoritative.
+Reference dialogs contain Tab/Shift-Tab navigation and return focus on close or Escape.

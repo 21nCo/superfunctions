@@ -78,3 +78,13 @@ it('keeps dialog controls outside the field label and returns focus on escape', 
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull(); expect(document.activeElement).toBe(open);
 });
+
+it('contains Tab and Shift-Tab within the modal controls', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => page('Alice')));
+  render(<ReferencePickerDialog baseUrl="http://content" allowContentfnAuthorization dataset="prod" allowedTypes={['author']} onSelect={() => {}} onClose={() => {}} />);
+  await screen.findByText('Alice');
+  const first = screen.getByRole('button', { name: 'Close' });
+  const last = document.querySelector<HTMLButtonElement>('[data-ref-picker-select]')!;
+  last.focus(); fireEvent.keyDown(last, { key: 'Tab' }); expect(document.activeElement).toBe(first);
+  fireEvent.keyDown(first, { key: 'Tab', shiftKey: true }); expect(document.activeElement).toBe(last);
+});

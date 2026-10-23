@@ -328,7 +328,7 @@ export function DocumentEditorPane({ baseUrl, dataset, docId, perspective = "dra
               errorPath,
               {
                 onOpenMediaPicker: (_name, segments) => setMediaPickerField({ scope, path: segments }),
-                baseUrl,
+                baseUrl, maxUploadBytes,
                 cmsfnApiUrl, allowContentfnReferenceAuthorization, referenceOwnerScope: scope,
                 dataset,
                 docTypeName: docType.name,

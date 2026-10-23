@@ -4,6 +4,7 @@
  */
 
 import type { ContentfnField, ContentfnFieldType } from "@contentfn/core";
+import { ArrayField } from "./widgets/ArrayField.js";
 import { getWidgetForField } from "../plugins/registerWidget.js";
 import {
   StringWidget,
@@ -12,7 +13,6 @@ import {
   DateWidget,
   JsonWidget,
   ObjectWidget,
-  ArrayWidget,
   RichtextWidget,
   MarkdownWidget,
   ReferenceWidget,
@@ -23,6 +23,7 @@ import {
 type ReactNode = import("react").ReactNode;
 
 export interface RenderFieldOptions {
+  maxUploadBytes?: number;
   onOpenMediaPicker?: (fieldName: string, segments: readonly string[]) => void;
   /** Literal schema keys for nested object assets; never split display paths. */
   fieldSegments?: readonly string[];
@@ -139,41 +140,23 @@ export function renderField(
       return (
         <ObjectWidget data-field-path={path} required={required}>
           {type.fields.map((f) => {
+            const Container = f.type.kind === "primitive" ? "label" : "div";
             const subPath = path ? `${path}.${f.name}` : f.name;
             const subVal = value && typeof value === "object" && value !== null && f.name in (value as object) ? (value as Record<string, unknown>)[f.name] : undefined;
             return (
-              <label key={f.name}>
-                {f.name}
+              <Container key={f.name}>
+                <span>{f.name}</span>
                 {renderField(f, subPath, subVal, (v) => {
                   const next = typeof value === "object" && value !== null ? { ...(value as object), [f.name]: v } : { [f.name]: v };
                   onChange(next);
-                }, errorPath, { baseUrl: options?.baseUrl, dataset: options?.dataset, cmsfnApiUrl: options?.cmsfnApiUrl, allowContentfnReferenceAuthorization: options?.allowContentfnReferenceAuthorization, referenceOwnerScope: options?.referenceOwnerScope, hasDocReadForReference: options?.hasDocReadForReference, onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
-              </label>
+                }, errorPath, { maxUploadBytes: options?.maxUploadBytes, baseUrl: options?.baseUrl, dataset: options?.dataset, cmsfnApiUrl: options?.cmsfnApiUrl, allowContentfnReferenceAuthorization: options?.allowContentfnReferenceAuthorization, referenceOwnerScope: options?.referenceOwnerScope, hasDocReadForReference: options?.hasDocReadForReference, onOpenMediaPicker: options?.onOpenMediaPicker, fieldSegments: [...(options?.fieldSegments ?? [field.name]), f.name] })}
+              </Container>
             );
           })}
         </ObjectWidget>
       );
     case "array":
-      return (
-        <ArrayWidget data-field-path={path} required={required}>
-          {Array.isArray(value) ? (value as unknown[]).map((item, i) => (
-            <div key={i}>
-              <input
-                data-widget="array-item"
-                value={typeof item === "object" && item !== null && "text" in (item as object) ? (item as { text: string }).text : String(item)}
-                onChange={(e) => {
-                  const arr = [...(value as unknown[])];
-                  arr[i] = e.target.value;
-                  onChange(arr);
-                }}
-              />
-            </div>
-          )) : null}
-          <button type="button" onClick={() => onChange(Array.isArray(value) ? [...(value as unknown[]), ""] : [""])}>
-            Add item
-          </button>
-        </ArrayWidget>
-      );
+      return <ArrayField type={type} value={value} onChange={onChange} path={path} required={required} options={options} />;
     case "richtext":
       return (
         <RichtextWidget
@@ -211,7 +194,7 @@ export function renderField(
             baseUrl={options.baseUrl}
             cmsfnApiUrl={options.cmsfnApiUrl}
             allowContentfnAuthorization={options.allowContentfnReferenceAuthorization}
-            ownerScope={options.referenceOwnerScope}
+            ownerScope={options.referenceOwnerScope === undefined ? undefined : `${options.referenceOwnerScope}:${JSON.stringify(options.fieldSegments ?? [field.name])}`}
             dataset={options.dataset}
             allowedTypes={allowedTypes}
             hasDocRead={options.hasDocReadForReference ?? true}

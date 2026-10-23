@@ -15,7 +15,8 @@ const previewSecret = 'fixture-preview-secret-32-bytes-minimum';
 let allowPreview = true; let deniedMediaDataset = ''; let allowReferences = true;
 let denySingletonReads = false; let denyHistory = false;
 const content = createContentfnServer({ db, storage: assetStorage, maxPayloadBytes: 16, context: request => Object.assign(request, { subject: request.headers.get('authorization') === 'Bearer fixture-release-service' ? 'scheduler' : undefined }), webhookAuditWriterSchemaVersion: 4, authorize: (context, action, input) => context instanceof Request && action.startsWith('assets.') && input.dataset === deniedMediaDataset ? false : context instanceof Request && action === 'query' && Array.isArray(input.types) && input.types.includes('author') ? context.headers.get('authorization') === 'Bearer fixture-reference-service' : action === 'realtime.subscribe' ? context instanceof Request && context.headers.get('cookie')?.includes('fixture_session=preview') === true : context instanceof Request && ['datasets.export', 'datasets.import'].includes(action) ? context.headers.get('authorization') === 'Bearer fixture-ops-service' : !(denyHistory && action === 'docs.history') && !(denySingletonReads && context instanceof Request && action === 'docs.get' && String(input.id).replace(/^drafts\./, '') === 'private-home') });
-const schema = { version: 1, documentTypes: ['post', 'page', 'author'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }, ...(name === 'post' ? [{ name: 'media', type: { kind: 'object', fields: [{ name: 'caption', type: { kind: 'primitive', type: 'string' } }, { name: 'attachment', type: { kind: 'asset', assetType: 'file' } }, { name: 'author', type: { kind: 'reference', to: ['author'] } }] } }] : [])] })) };
+const arrayObjectType = { kind: 'object', fields: [{ name: 'caption', type: { kind: 'primitive', type: 'string' } }, { name: 'literal.asset', type: { kind: 'asset', assetType: 'file' } }, { name: 'author', type: { kind: 'reference', to: ['author'] } }] };
+const schema = { version: 1, documentTypes: ['post', 'page', 'author'].map(name => ({ name, fields: [{ name: 'title', required: true, type: { kind: 'primitive', type: 'string' } }, ...(name === 'post' ? [{ name: 'items', type: { kind: 'array', of: [arrayObjectType], maxLength: 3 } }, { name: 'links', type: { kind: 'array', of: [{ kind: 'reference', to: ['author'] }] } }, { name: 'files', type: { kind: 'array', of: [{ kind: 'asset', assetType: 'file' }] } }, { name: 'media', type: { kind: 'object', fields: [{ name: 'caption', type: { kind: 'primitive', type: 'string' } }, { name: 'attachment', type: { kind: 'asset', assetType: 'file' } }, { name: 'author', type: { kind: 'reference', to: ['author'] } }] } }] : [])] })) };
 for (const dataset of ['prod', 'staging']) {
   unwrap(await content.api.datasets.create({ dataset }));
   unwrap(await content.api.schema.upsert({ dataset, schema }));
@@ -395,6 +396,11 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Choose reference', exact: true }).count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Apply reference filter' }).count(), 1);
   assert.equal(await page.locator('[data-ref-picker]').evaluate(element => element.closest('label') === null), true);
+  await page.locator('[data-ref-picker-close]').focus();
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await page.locator('[data-ref-picker]').evaluate(element => element.contains(document.activeElement)), true);
+  await page.keyboard.press('Tab');
+  assert.equal(await page.locator('[data-ref-picker-close]').evaluate(element => document.activeElement === element), true);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('[data-ref-picker]').count(), 0);
   assert.equal(await page.locator('[data-reference-open-picker]').evaluate(element => document.activeElement === element), true);
@@ -431,9 +437,45 @@ try {
   const [rejectedSave] = await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
   assert.equal((await rejectedSave.json()).ok, false);
   assert.deepEqual(unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' })), beforeInvalidReference);
+  // Array widgets retain item ownership and persist real canonical producer values.
+  unwrap(await content.api.docs.patch({ dataset: 'prod', id: 'drafts.editable', ops: [{ op: 'set', path: 'items', value: [{ caption: 'Array first' }, { caption: 'Array second' }] }, { op: 'set', path: 'links', value: [] }, { op: 'set', path: 'files', value: [] }] }));
+  await page.goto(`${base}/studio`); await page.getByRole('button', { name: 'Posts', exact: true }).click();
+  await page.locator('[data-doc-id="drafts.editable"] [data-doc-open]').click();
+  const itemArray = page.locator('[data-widget="array"][data-field-path="items"]');
+  const firstItem = itemArray.locator('[data-array-item]').first();
+  const ownerId = await firstItem.getAttribute('data-array-item-id');
+  await firstItem.locator('[data-asset-open-media]').click(); await page.locator('[data-media-item]').first().waitFor();
+  await page.locator('input[data-field-path="items[0].caption"]').fill('Array first edited');
+  await itemArray.getByRole('button', { name: 'Move item 1 down' }).click();
+  assert.equal(await itemArray.locator('[data-array-item]').nth(1).getAttribute('data-array-item-id'), ownerId);
+  await page.locator(`[data-media-item][data-asset-id="${uploaded.assetId}"] [data-media-select]`).click();
+  await itemArray.locator('[data-array-item]').nth(1).getByRole('button', { name: 'Choose reference', exact: true }).click();
+  await page.locator('[data-ref-picker-item]').first().waitFor();
+  await page.getByRole('textbox', { name: 'Filter references' }).fill('Author 23');
+  await page.getByRole('button', { name: 'Apply reference filter', exact: true }).click();
+  await page.locator('[data-ref-picker-item-id="author-23"] [data-ref-picker-select]').click();
+  // Removing an item with its library open cannot transfer that picker to its neighbor.
+  await itemArray.locator('[data-array-item]').first().locator('[data-asset-open-media]').click();
+  await page.locator('[data-media-item]').first().waitFor();
+  await itemArray.getByRole('button', { name: 'Remove item 1' }).click();
+  assert.equal(await page.locator('[data-media-library-pane]').count(), 0);
+  const linkArray = page.locator('[data-widget="array"][data-field-path="links"]');
+  await linkArray.getByRole('button', { name: 'Add item', exact: true }).click();
+  await linkArray.getByRole('button', { name: 'Choose reference', exact: true }).click();
+  await page.locator('[data-ref-picker-item-id="author-01"] [data-ref-picker-select]').click();
+  const fileArray = page.locator('[data-widget="array"][data-field-path="files"]');
+  await fileArray.getByRole('button', { name: 'Add item', exact: true }).click();
+  await fileArray.locator('[data-asset-open-media]').click();
+  await page.locator(`[data-media-item][data-asset-id="${uploaded.assetId}"] [data-media-select]`).click();
+  const [arraySave] = await Promise.all([page.waitForResponse(response => response.url().endsWith('/contentfn/docs/patch')), page.locator('[data-editor-save]').click()]);
+  assert.equal((await arraySave.json()).ok, true);
+  const withArrays = unwrap(await content.api.docs.get({ dataset: 'prod', id: 'editable', perspective: 'draft' }));
+  assert.deepEqual(withArrays.items, [{ caption: 'Array first edited', 'literal.asset': { _type: 'asset', _ref: uploaded.assetId, assetType: 'file' }, author: { _type: 'reference', _ref: 'author-23' } }]);
+  assert.deepEqual(withArrays.links, [{ _type: 'reference', _ref: 'author-01' }]);
+  assert.deepEqual(withArrays.files, [{ _type: 'asset', _ref: uploaded.assetId, assetType: 'file' }]);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: '/tmp/cms-studio-browser.png', fullPage: true });
-  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['authorized reference pages and filters', 'nested canonical reference persistence', 'CMS type/dataset denial before producer', 'changed-filter cursor denial and deleted-target save rejection', 'media exact server byte limits and browser preflight', 'deterministic bounded media pages', 'nested canonical asset insertion and persisted sibling preservation', 'media permission revocation and document scope cleanup', 'trusted-audience preview target and exact scope verification', 'real cookie-authorized SSE refresh', 'token renewal and permission revocation', 'unsafe resolver denied before token request', 'no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
+  console.log(JSON.stringify({ browser: await browser.version(), package: '@cmsfn/studio', route: '/studio', checks: ['array item reorder/delete ownership and literal keys', 'canonical object/reference/asset arrays persisted', 'authorized reference pages and filters', 'nested canonical reference persistence', 'CMS type/dataset denial before producer', 'changed-filter cursor denial and deleted-target save rejection', 'media exact server byte limits and browser preflight', 'deterministic bounded media pages', 'nested canonical asset insertion and persisted sibling preservation', 'media permission revocation and document scope cleanup', 'trusted-audience preview target and exact scope verification', 'real cookie-authorized SSE refresh', 'token renewal and permission revocation', 'unsafe resolver denied before token request', 'no-config', 'boot', 'desk', 'actual ContentFn list', 'draft save with ifRev', 'concurrent conflict and refresh', 'draft-only discovery', 'published read-only view', 'source CAS fork and collision', 'workflow approval', 'publish and republish', 'role denial', 'unpublish preserves draft', 'dataset scope', 'singleton navigation and isolated saves', 'singleton denied/missing/type mismatch', 'unconfigured singleton makes no request', 'server-backed audit navigation/pagination', 'audit dataset isolation and denial', 'metadata-only webhook queue', 'release create/add/duplicate and partial publish', 'release dataset isolation and role denial', 'full revision history pages and snapshots', 'history permission revocation and dataset isolation', 'empty due schedule waits for membership before explicit host execution', 'committed publish lost ACK and stable-key recovery with one audit entry', 'complete export download and same-dataset restore', 'malformed import no mutation', 'default migration denial and explicit target-authorized migration', 'ops role denial and trusted producer identity', 'startup readiness and fail-closed capability/outage recovery'], requests: requests.length,
     remaining: ['remaining operational shell acceptance', 'native Safari and deployment acceptance'] }));
 } finally {
   await browser?.close(); if (cms) { cms.closeAllConnections(); await new Promise(resolve => cms.close(resolve)); } server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); await cmsDb.close();

@@ -36,7 +36,16 @@ export function ReferencePickerDialog({ baseUrl, cmsfnApiUrl, dataset, allowedTy
   useEffect(() => { void load(); return () => { ++generation.current; controller.current?.abort(); }; }, [load]);
   const active = state.scope === requestScope; const loading = !active || state.loading;
   const denied = !hasDocRead || (active && state.denied);
-  const dialog = <div ref={dialogRef} role="dialog" aria-label="Choose reference" aria-modal="true" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRef.current(); } }} data-ref-picker data-ref-picker-denied={denied || undefined}>
+  const dialog = <div ref={dialogRef} role="dialog" aria-label="Choose reference" aria-modal="true" onKeyDown={event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRef.current(); return; }
+    if (event.key === 'Tab') {
+      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]') ?? []).filter(element => element.tabIndex >= 0 && !element.matches(':disabled, [hidden], [aria-hidden="true"]'));
+      const first = controls[0]; const last = controls[controls.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    }
+  }} data-ref-picker data-ref-picker-denied={denied || undefined}>
     <h2>Choose reference</h2><button type="button" onClick={onClose} data-ref-picker-close>Close</button>
     {allowedTypes.length > 1 && <label>Reference type<select aria-label="Reference type" value={selectedType} onChange={event => setTypeFilter({ scope: baseScope, type: event.target.value })}><option value="">All field types</option>{[...new Set(allowedTypes)].sort().map(type => <option key={type} value={type}>{type}</option>)}</select></label>}
     <label>Filter references<input aria-label="Filter references" maxLength={128} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (!loading && !denied) setFilter({ scope, text: search.scope === scope ? search.text.trim() : '' }); } }} value={search.scope === scope ? search.text : ''} onChange={event => setSearch({ scope, text: event.target.value })} /></label>

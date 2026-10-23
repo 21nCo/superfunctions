@@ -44,7 +44,7 @@ export function ReferenceField({
   const ref = canonicalRef(value);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const closePicker = () => { setPickerScope(null); buttonRef.current?.focus(); };
-  const scope = JSON.stringify([baseUrl, cmsfnApiUrl, dataset, path, [...allowedTypes].sort(), allowContentfnAuthorization, ownerScope, disabled, hasDocRead]);
+  const scope = JSON.stringify([baseUrl, cmsfnApiUrl, dataset, ownerScope === undefined ? path : undefined, [...allowedTypes].sort(), allowContentfnAuthorization, ownerScope, disabled, hasDocRead]);
   const current = useRef(scope); current.current = scope;
   const [pickerScope, setPickerScope] = useState<string | null>(null);
 
