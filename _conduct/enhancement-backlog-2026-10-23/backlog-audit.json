@@ -1,0 +1,1757 @@
+{
+  "workspace": "21n",
+  "linear_account": "21n",
+  "project": {
+    "id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+    "name": "Super functions t1",
+    "url": "https://linear.app/21n/project/super-functions-t1-d4acb4adecb8"
+  },
+  "retrieved_issue_count": 146,
+  "issue_identities": [
+    {
+      "id": "df7188df-4ac7-4632-ad3b-b44e01cf0bde",
+      "identifier": "DOC-3",
+      "url": "https://linear.app/21n/issue/DOC-3/qualify-docsfn-publishing-with-clean-installs-browsers-and-an-actual",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "f0fb6a1daccabbaf572bc299f1ff463f4b96b6d207cc0ee70d6adcd4173e366a"
+    },
+    {
+      "id": "a8770eaa-078e-4cc7-bc81-217104c7fcb4",
+      "identifier": "DOC-10",
+      "url": "https://linear.app/21n/issue/DOC-10/add-a-revision-pinned-remote-repository-content-provider-for-docsfn",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "ee5a5b01ae658b7742a57ef8d116be610884d6fb872efa670d95e83fd370a5cd"
+    },
+    {
+      "id": "fb809a6f-518f-431a-bb1f-046fa1a498ce",
+      "identifier": "DOC-9",
+      "url": "https://linear.app/21n/issue/DOC-9/expose-docsfn-reader-search-and-page-access-through-mcpfn",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "23b298f4636e4e5db100e6ba605f1d841204a6449a8764c2be903d894cf03a30"
+    },
+    {
+      "id": "98724840-6e14-4180-8734-d85fefdfee5b",
+      "identifier": "DOC-5",
+      "url": "https://linear.app/21n/issue/DOC-5/initialize-and-run-standalone-docsfn-sites-through-the-cli",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "2e1cb64e405d6bc4528fdda791752fdf606be16691434def934785959b97ef0d"
+    },
+    {
+      "id": "ce5bc9ea-d0f9-4db0-b7e3-c8a86f069a1d",
+      "identifier": "DOC-4",
+      "url": "https://linear.app/21n/issue/DOC-4/package-complete-docsfn-site-routes-for-nextjs-and-sveltekit",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "73368a78c23d122def0c67a91ffcb173bc4e8ffaef0ef331f23024b4809bfa00"
+    },
+    {
+      "id": "9076c6fa-3b2b-4900-b82a-af344a07b9ff",
+      "identifier": "DOC-8",
+      "url": "https://linear.app/21n/issue/DOC-8/generate-public-llm-and-per-page-markdown-artifacts-during-docsfn-site",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "41dcc72856e0605d45db2f2f4f2cdc3166c8157e39d85b4295598ed2943ba2e5"
+    },
+    {
+      "id": "cb8dee2c-3270-497f-b3a5-7fdd61bf2010",
+      "identifier": "DOC-2",
+      "url": "https://linear.app/21n/issue/DOC-2/compose-docsfn-content-providers-through-the-canonical-provider",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9e90af95a02cd02a3efba22861eb2a0e59a5d405f18965cdc9a5e474159b8f65"
+    },
+    {
+      "id": "80f34bcb-c5e5-4183-9497-52bf55555139",
+      "identifier": "DOC-7",
+      "url": "https://linear.app/21n/issue/DOC-7/extract-a-shared-docsfn-site-runtime-with-consistent-build-snapshots",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "04bfee4b7914dca7508c315b3c8cb26f5beec5471cc50b87ae25f2e3cf96beb9"
+    },
+    {
+      "id": "53be584a-c5ec-48d1-b8c0-48af97d2ca3a",
+      "identifier": "DOC-6",
+      "url": "https://linear.app/21n/issue/DOC-6/qualify-the-merged-docsfn-engine-baseline-on-dev-for-publishing",
+      "team": "DOC",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "597e3aafd1bf0e650f965bf681bab944c0ec1d71df3c826f07cb84bf4964a28b"
+    },
+    {
+      "id": "8a171037-a574-4d89-9cf7-c848012677fa",
+      "identifier": "DOC-1",
+      "url": "https://linear.app/21n/issue/DOC-1/make-docsfn-a-complete-publishing-toolchain-for-standalone-and",
+      "team": "DOC",
+      "state": "Todo",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "cc62b84ec65ccda2eeb90d0ddd2b8a3968ed159ef705ba1f93306903af9a99e1"
+    },
+    {
+      "id": "5e47946d-5e0a-44c1-9240-d41789da35fb",
+      "identifier": "PLUG-1",
+      "url": "https://linear.app/21n/issue/PLUG-1/make-plugfn-production-ready-for-fellotron-class-consumers",
+      "team": "PLUG",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "dd4249555c62e4a551b99795d8317d812b582e4a37dd92ca898277965f57f9bf"
+    },
+    {
+      "id": "f20ed2c8-dc3a-4715-ab68-f2d88cf73a0b",
+      "identifier": "DEV-39",
+      "url": "https://linear.app/21n/issue/DEV-39/dev-8-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "8f667065085623d12e79cba24172c05b9ed6fadcee04064fb6d0230d8d65559c"
+    },
+    {
+      "id": "8336a2c1-a3a1-429c-92ff-c19d697e00c3",
+      "identifier": "DEV-38",
+      "url": "https://linear.app/21n/issue/DEV-38/dev-7-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "4654fd892c52dd8f05cf540dac225a6d8bb49cd531405555ff31800bae53730e"
+    },
+    {
+      "id": "3d0c6a13-6a68-47f1-a40a-692edc6a7c96",
+      "identifier": "DEV-37",
+      "url": "https://linear.app/21n/issue/DEV-37/dev-32-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "cb7826b4489afe0a27e51d0acabeae7834ef40ffb8c3a8b4ecb2fe29b1c3f676"
+    },
+    {
+      "id": "bd17f4e9-6ed5-4fe0-b625-f1c040d8a517",
+      "identifier": "DEV-36",
+      "url": "https://linear.app/21n/issue/DEV-36/dev-31-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "42601cd02931469992edcf8ba80323dcd2ea58cc32e9bac8a93e23339887396d"
+    },
+    {
+      "id": "e645ad23-9c6e-4874-ac6b-a3d1a3805929",
+      "identifier": "DEV-35",
+      "url": "https://linear.app/21n/issue/DEV-35/dev-30-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "f17e0f3eadf071667975fa5df2c85ad337065a9ac3692bb36015c6c187d537ca"
+    },
+    {
+      "id": "f7c31505-5134-4d5d-a00f-f2d93bc6e44a",
+      "identifier": "DEV-34",
+      "url": "https://linear.app/21n/issue/DEV-34/fix-devfnadmin-timing-flakes-in-the-full-javascript-ci-plan",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "06edab814fe9552c926f42e883b126a83bfd821ca1a99acde5d022a8f8399148"
+    },
+    {
+      "id": "ab3ccf35-3a78-49f3-af8f-fd90c96567de",
+      "identifier": "DEV-33",
+      "url": "https://linear.app/21n/issue/DEV-33/dev-29-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "be2b2fc98ffc71191ceb987b88b0c809af5faaf51727ee43c6c791e0aa9174d7"
+    },
+    {
+      "id": "4743bf5b-de0a-4fab-ac0d-92ff11da7419",
+      "identifier": "DEV-32",
+      "url": "https://linear.app/21n/issue/DEV-32/dev-6-slice-44-oauth-relay-service-lifecycle-and-commands",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "6c4fb9b188ca0e1ff399721a1aa923b1980a99c670f0576ec4415bcb6fa22058"
+    },
+    {
+      "id": "7904ac73-3d00-492a-9823-a3d6b4235128",
+      "identifier": "DEV-31",
+      "url": "https://linear.app/21n/issue/DEV-31/dev-6-slice-34-oauth-relay-state-and-callback-interface",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "fdd22ee7f4999ea54e48095f858ed50a2354cc6100aadb2e5b91fd0de3a492de"
+    },
+    {
+      "id": "642622ff-a704-43d9-bac1-9e51a19bceaf",
+      "identifier": "DEV-30",
+      "url": "https://linear.app/21n/issue/DEV-30/dev-6-slice-24-registry-owner-evidence-authorization",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "0a690684de36b1051d125a381c08204d960db2851be252ea1492e698a9094d23"
+    },
+    {
+      "id": "35d2ba4a-f781-49de-a090-c971707ca846",
+      "identifier": "DEV-29",
+      "url": "https://linear.app/21n/issue/DEV-29/dev-6-slice-14-proxy-route-transition-integrity",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "2c9fd2767d761517a7c28ac63f873392c83a989307a2ba641f011cb51c8214a9"
+    },
+    {
+      "id": "dedf5751-7a58-470a-a9fb-71299fd5d9d4",
+      "identifier": "DEV-28",
+      "url": "https://linear.app/21n/issue/DEV-28/dev-5-minor-review-follow-ups",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "caaff0b4f48bd253ea8b0241921646e96a9d7de6969adeb7fbe52b862b8d8ad4"
+    },
+    {
+      "id": "f259ae8c-54d8-4794-a395-3f91dcb00c5e",
+      "identifier": "DEV-27",
+      "url": "https://linear.app/21n/issue/DEV-27/qualify-devfn-agent-diagnostics-access-isolation-and-recovery-on-real",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "42105ce4edf8467287a70218c73680951e149ce2368f4a81f92f262132956579"
+    },
+    {
+      "id": "cc9909eb-8c70-41dc-b987-4224de99811b",
+      "identifier": "DEV-26",
+      "url": "https://linear.app/21n/issue/DEV-26/integrate-devfn-diagnostics-and-access-grants-with-tasks-named",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "51e88d30e4a6fdb157ab09e8df83b2cdf36f0f4241f2f4088811af057a233e6e"
+    },
+    {
+      "id": "b83844e0-bf52-4a18-996c-f137d4a47d93",
+      "identifier": "DEV-25",
+      "url": "https://linear.app/21n/issue/DEV-25/restart-and-stop-selected-owned-devfn-services-without-disrupting",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "7362373fcc76ef8d2cbb64c1fe961615dbd1a69edfed703155f72a4afcc608bb"
+    },
+    {
+      "id": "d55df127-df3d-44ea-a297-a3167df6615a",
+      "identifier": "DEV-24",
+      "url": "https://linear.app/21n/issue/DEV-24/make-repeated-devfn-startup-safe-across-concurrency-configuration",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "32c715f0109bdb6593b3c73ee12ea859235e2b3a8cdc9fd9afa1e19910412145"
+    },
+    {
+      "id": "04294e08-0cf4-4b06-a85e-5e4c62b8d24d",
+      "identifier": "DEV-23",
+      "url": "https://linear.app/21n/issue/DEV-23/expose-finite-read-only-devfn-runtime-and-diagnostic-tools-through",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "870ae0de711fa4149fd3bf9f43bc178143a866e5316516c030a1b9a5eee6d4a1"
+    },
+    {
+      "id": "7b7151be-f71d-4512-b718-b67f4a2cd2d6",
+      "identifier": "DEV-22",
+      "url": "https://linear.app/21n/issue/DEV-22/enforce-scoped-devfn-agent-capabilities-revocation-and-audited",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "6e42fe1389a7b8fe77c6f9c85a12c3c8221079c764eaaf217833ad9e2f2a690a"
+    },
+    {
+      "id": "596db34e-149d-462f-84f9-68497dcdce84",
+      "identifier": "DEV-21",
+      "url": "https://linear.app/21n/issue/DEV-21/capture-managed-devfn-container-output-without-persisting-raw",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "27dd5887b9c1bb6a459f479e428bd483217425ddb08dd63b54595f48b5a229fe"
+    },
+    {
+      "id": "443bf5d7-7885-45cf-b154-2c7db210c704",
+      "identifier": "DEV-20",
+      "url": "https://linear.app/21n/issue/DEV-20/expose-scoped-devfn-runtime-and-container-inspection-with-verified",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "bb9a53df0ef28f619c16c68588c36a1ab72695fe4d5b834d588f716f99126c6b"
+    },
+    {
+      "id": "8b160049-48e4-4d71-a338-a9e13878cce9",
+      "identifier": "DEV-19",
+      "url": "https://linear.app/21n/issue/DEV-19/preserve-devfn-native-run-history-and-provide-bounded-log-and-event",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e36566766b4e03e1984719cb956f26c56ecd068b78e75e3d46f3e2bf33744507"
+    },
+    {
+      "id": "4dc32f8d-a91e-4b8e-8297-2093dc2e1eb1",
+      "identifier": "DEV-18",
+      "url": "https://linear.app/21n/issue/DEV-18/make-devfn-runtimes-observable-and-safely-operable-by-coding-agents",
+      "team": "DEV",
+      "state": "Todo",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "614cf3e9cdec6fb111a1cdde7b23a81ab116ce58816c157be9dabc2d31e404d5"
+    },
+    {
+      "id": "cd49e0a5-f453-4f12-b33f-6f6e26622f42",
+      "identifier": "DEV-17",
+      "url": "https://linear.app/21n/issue/DEV-17/qualify-integrated-devfn-environments-data-preservation-and-recovery",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "f9a2d65cb5e5733a29cf0304d7546d058ac9deee97a7faf6acddd55244d56276"
+    },
+    {
+      "id": "0ad93300-58b3-47c1-8c46-6a22c2dd4864",
+      "identifier": "DEV-16",
+      "url": "https://linear.app/21n/issue/DEV-16/compose-devfn-repositories-through-explicit-trusted-root-and-worktree",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "dcaa7025b11dee61380a72a97bcd98e67b5dfed2abdae33e7da342fb0ee3d358"
+    },
+    {
+      "id": "5cc2b520-4878-4ec4-acab-ce942da8987d",
+      "identifier": "DEV-15",
+      "url": "https://linear.app/21n/issue/DEV-15/validate-devfn-higher-environment-access-and-isolated-reproduction",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "85851184173e30157a84683bb8ece9e4f07dbea36fe28a277acaa0b67ae7226c"
+    },
+    {
+      "id": "319e7631-f2fb-4d3f-89b9-cde53ee0e0d9",
+      "identifier": "DEV-14",
+      "url": "https://linear.app/21n/issue/DEV-14/separate-devfn-durable-data-identity-from-runtime-reset-and-clone",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "24d53cfa7a454a822c1ba8359d16c1cb810ae8d649bed1cab65126d040c294dc"
+    },
+    {
+      "id": "aa39b2a9-7eab-4982-8fe6-f68dadc07f5c",
+      "identifier": "DEV-13",
+      "url": "https://linear.app/21n/issue/DEV-13/track-devfn-shared-and-external-resource-ownership-with-crash-safe",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "196117081b04a8ba93b8aa35534fb661c2d58e371de6698394d4473775b34b91"
+    },
+    {
+      "id": "310b287d-b66a-4197-ad1f-5642631a7476",
+      "identifier": "DEV-12",
+      "url": "https://linear.app/21n/issue/DEV-12/isolate-named-devfn-runtimes-within-one-checkout",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9ab4564a1168f4c6711526ecb11d1b301b4b823f6a35e8a57edbf377e3c54870"
+    },
+    {
+      "id": "f9ab1496-57f1-4958-917b-bc6524356137",
+      "identifier": "DEV-11",
+      "url": "https://linear.app/21n/issue/DEV-11/gate-devfn-service-readiness-on-successful-setup-task-completion",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "ed2b4b35696e3635b986a9e2039ea27e129d73652e625ca1a5eb28035be5b2a7"
+    },
+    {
+      "id": "fc62cc0a-d565-41aa-b0ee-2e4c488ee65f",
+      "identifier": "DEV-10",
+      "url": "https://linear.app/21n/issue/DEV-10/plan-devfn-resource-targets-namespaces-and-redacted-configuration",
+      "team": "DEV",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "d3e69457629bf1a0c958c7923d25e183a16a97e38c26b61fab9cc0e23cfdd31e"
+    },
+    {
+      "id": "3a52d73c-e918-4ec7-bcb6-147125c8fbe9",
+      "identifier": "DEV-9",
+      "url": "https://linear.app/21n/issue/DEV-9/qualify-devfn-networking-oauth-and-tunnel-isolation-on-real-hosts",
+      "team": "DEV",
+      "state": "In Progress",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9052804d0aceaa6ffe46e9320378cd5c673db228fce824de33ce59bba95a2985"
+    },
+    {
+      "id": "dc73af33-7da1-4c78-ba73-e6610fbfa071",
+      "identifier": "DEV-8",
+      "url": "https://linear.app/21n/issue/DEV-8/add-ngrok-to-the-devfn-tunnel-lifecycle-contract",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "92ee94ba809e5b830a9e6a2c947eac29ad8d3ffec73d771e6cf96bb2d3b785dc"
+    },
+    {
+      "id": "f7bbccaf-9740-4921-80ae-1f350c324b7b",
+      "identifier": "DEV-7",
+      "url": "https://linear.app/21n/issue/DEV-7/manage-selected-cloudflare-tunnel-routes-with-devfn-ownership-and",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "627e8f9e670dbf3d34bae13d6d6c7807ec6d72838cfdebb5b7c81a206bf51780"
+    },
+    {
+      "id": "cbd6fee6-f589-4f99-aeba-de0cfaadd75f",
+      "identifier": "DEV-6",
+      "url": "https://linear.app/21n/issue/DEV-6/integrate-devfn-oauth-callbacks-with-live-runtime-ownership-and-single",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "34086d3c61c24d9bd3be7abd992f5fc562f04a214fb10f0ca6ab528d27dddf96"
+    },
+    {
+      "id": "8fafe835-bfbc-4446-9698-5a7e9eda41b4",
+      "identifier": "DEV-5",
+      "url": "https://linear.app/21n/issue/DEV-5/add-registered-domains-tls-and-deterministic-hostpath-routing-to-devfn",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "c508a2956f569c53bd0de50178e51c79277f36b513b63ef31883f9fa5c94699a"
+    },
+    {
+      "id": "40bf21b0-5d51-4d21-bb3a-b0b0b7beb9ec",
+      "identifier": "DEV-4",
+      "url": "https://linear.app/21n/issue/DEV-4/resolve-devfn-endpoints-and-environmentargv-templates-before-startup",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "4bb51f57475fd0c16fa58f0e78a3459cc896feb8a1f8e20afb454cf0570e9977"
+    },
+    {
+      "id": "966b5e15-8af0-4b2d-9aa9-f04ffe1e579a",
+      "identifier": "DEV-3",
+      "url": "https://linear.app/21n/issue/DEV-3/compose-reproducible-devfn-environments-across-runtimes-infrastructure",
+      "team": "DEV",
+      "state": "Todo",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "a0c8a14d99cbfa36de11f03be7b89c20e991c81f289137fe37d0e3ce99889d50"
+    },
+    {
+      "id": "267884be-1843-4d38-88ff-ef34be83bf2f",
+      "identifier": "DEV-2",
+      "url": "https://linear.app/21n/issue/DEV-2/extend-devfn-with-owned-local-domains-tunnel-providers-and-multi",
+      "team": "DEV",
+      "state": "In Progress",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "c982041419afc32695f8666e48882caf6f7b27e872809f8496d3eeb73f29df5b"
+    },
+    {
+      "id": "8cf3d22c-a1d2-4ec9-9b14-ca575eae0c9c",
+      "identifier": "DEV-1",
+      "url": "https://linear.app/21n/issue/DEV-1/build-devfn-as-a-portable-local-development-environment-and-port",
+      "team": "DEV",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "24ac9655bd6d72db4701892e7232b19ba0843668cd3a5fc713edd897e93112aa"
+    },
+    {
+      "id": "13ea0e71-d51b-4d86-a264-a7a35ecfcb1f",
+      "identifier": "UIF-2",
+      "url": "https://linear.app/21n/issue/UIF-2/build-uifn-create-with-versioned-presets-and-safe-project-application",
+      "team": "UIF",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e7bdac87db971ac115cd897ed916d7c7d2e2fc6d7639327da0920faa9625e931"
+    },
+    {
+      "id": "44009af9-60dd-486e-9031-fa597fa460cd",
+      "identifier": "UIF-1",
+      "url": "https://linear.app/21n/issue/UIF-1/make-uifn-styled-components-comparable-to-shadcn-and-coss-ui",
+      "team": "UIF",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "d216fb2006364047d8dde3d8ed92df2fc32891f47eb5015aa07b61c3d1b4b662"
+    },
+    {
+      "id": "ceea6e42-59ed-47c8-8ec5-a5acc33aaa79",
+      "identifier": "MCP-5",
+      "url": "https://linear.app/21n/issue/MCP-5/expose-explicitly-selected-openapi-operations-as-executable-mcpfn",
+      "team": "MCP",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "1ce1278058ddf6b9916958e861323dc0f05e0694a494868959fc33cda3e2d49b"
+    },
+    {
+      "id": "7b874ccc-aad9-4c0b-9840-866600b438b2",
+      "identifier": "MCP-4",
+      "url": "https://linear.app/21n/issue/MCP-4/make-mcpfn-cloudflare-worker-bundles-resilient-to-mixed-zod-entry",
+      "team": "MCP",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "c9cc3bfc9d3d293071a1f32423de6db3d9083d7193e7f661b1b0a30c4701e456"
+    },
+    {
+      "id": "0c87a23e-144d-4f42-a442-89875c3c57c1",
+      "identifier": "MCP-3",
+      "url": "https://linear.app/21n/issue/MCP-3/add-deterministic-client-profile-contracts-and-actionable-schema",
+      "team": "MCP",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "901787000d9f9526d886473dbb142a20b8d3bdba1022f10e464187f7888658ce"
+    },
+    {
+      "id": "37842a92-3860-4b65-a4f0-d48bc8b5e560",
+      "identifier": "MCP-2",
+      "url": "https://linear.app/21n/issue/MCP-2/make-mcpfn-the-batteries-included-mcp-sdk-and-quality-platform",
+      "team": "MCP",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "16908cbab84d7568caef04a8146545a87a1f845a9fdb4e07fa243f2bee4221aa"
+    },
+    {
+      "id": "6283bb40-0de7-4875-a6f1-31a5016044c8",
+      "identifier": "MCP-1",
+      "url": "https://linear.app/21n/issue/MCP-1/enable-transport-neutral-mcpfn-regression-and-conformance-testing",
+      "team": "MCP",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "af70de1f12bec7f0c2f927a08529efa36270f1b9fe98d63682533082eed1ecc2"
+    },
+    {
+      "id": "bf1375b6-fcce-4192-bb46-4a36a033c464",
+      "identifier": "AUTH-2",
+      "url": "https://linear.app/21n/issue/AUTH-2/expose-placement-bound-auth-context-for-regional-application-data",
+      "team": "AUTH",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "122ed176f229d23186226818a6077a484aed6b584bedcaeb6e425b8ec1e0243e"
+    },
+    {
+      "id": "3507e3c6-f62c-4089-a88e-f85aa260c16f",
+      "identifier": "AUTH-1",
+      "url": "https://linear.app/21n/issue/AUTH-1/support-canonical-gateway-routing-in-authfn-multi-region",
+      "team": "AUTH",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9906db832ec43faf04d921d516f0542065bbe5afe76bde856c18f22591c1096f"
+    },
+    {
+      "id": "86043e68-bc37-4491-aa63-665b8c735fe7",
+      "identifier": "DATA-6",
+      "url": "https://linear.app/21n/issue/DATA-6/expose-canonical-structural-resource-selector-extraction",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9645311f5d1cf1d255b406e51dbe11d0ed0f9a36be3d4bd6089bb6c1e0fc45fc"
+    },
+    {
+      "id": "58bad60e-c835-4ee5-8bd0-7447b0380f6e",
+      "identifier": "DATA-5",
+      "url": "https://linear.app/21n/issue/DATA-5/expose-canonical-namespace-storage-metadata-for-datafn-operations",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "76c21a47a6880f597a273811fbab0a002103d53fc4a0fcafb5ed3d924c6186b8"
+    },
+    {
+      "id": "296ffa4b-37e7-4d13-b848-759263b2e0f0",
+      "identifier": "DATA-4",
+      "url": "https://linear.app/21n/issue/DATA-4/support-gateway-issued-direct-regional-sync-tickets",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "a4bbe5fb046c3a0d38445959950772be876d8c66eb4b8f9c0d9cba4d6b6f0a77"
+    },
+    {
+      "id": "19500bcb-ee71-43d1-b63d-ad956f829fcb",
+      "identifier": "DATA-3",
+      "url": "https://linear.app/21n/issue/DATA-3/own-isancestorinactive-as-a-datafn-system-field",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "7c43dd04acb3e2db9011ad4a97bd463ef2dc8190c0282eced319dd97ce020bc8"
+    },
+    {
+      "id": "b80c565b-11ca-4d69-92ef-f5701b13384e",
+      "identifier": "DATA-2",
+      "url": "https://linear.app/21n/issue/DATA-2/add-const-safe-field-builders-and-align-datafn-schema-inference",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "b225d8825a30cda9b44cd5efb02a96ff6bdc4d4686fbdab05741c58e23fbd649"
+    },
+    {
+      "id": "1f0c8135-e6b8-471c-9628-1f76f873e877",
+      "identifier": "DATA-1",
+      "url": "https://linear.app/21n/issue/DATA-1/add-tenant-placement-and-canonical-gateway-routing-to-datafn-multi",
+      "team": "DATA",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "5ef1702acc9314954aaaa24349481779ba499f0465e5f1bf92c5b1ee7f8ff586"
+    },
+    {
+      "id": "e993843e-9831-4a9a-bc7a-dbb16cad09ac",
+      "identifier": "SFNS-30",
+      "url": "https://linear.app/21n/issue/SFNS-30/declare-server-idempotency-in-the-operation-catalog-so-sdks-can-retry",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "0620a3b25b81fbc7d0da6ffa48258b3e9db284ead41733f2bf1723b976442938"
+    },
+    {
+      "id": "9973f401-7499-4dff-a977-481949998c84",
+      "identifier": "SFNS-29",
+      "url": "https://linear.app/21n/issue/SFNS-29/sfns-16-minor-review-follow-ups",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": null,
+      "description_sha256": "f3c80116d0062f9db4f806a90cb8b886eb924d34e4267fc7c8b628039236b516"
+    },
+    {
+      "id": "e10ab528-919b-410f-bb54-32ce24874ee9",
+      "identifier": "SFNS-28",
+      "url": "https://linear.app/21n/issue/SFNS-28/upgrade-vitest-monorepo-wide-to-clear-the-pr-241-advisories",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "ea42e63f1563b2054016bfef7f622d0d7feddc6344171a181b84e71490c8f151"
+    },
+    {
+      "id": "75fc10e9-6fe8-43e6-b4a2-3736234430d7",
+      "identifier": "SFNS-27",
+      "url": "https://linear.app/21n/issue/SFNS-27/sfns-16-credential-detection-hardening-follow-ups",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "5a98bdb1225269463c3f034d79076fe237f1a856b6afac3e983dd3b0e7d6cc78"
+    },
+    {
+      "id": "029d29e2-dd19-49aa-a4bb-cfd3dfd0297a",
+      "identifier": "SFNS-26",
+      "url": "https://linear.app/21n/issue/SFNS-26/qualify-integrated-api-sdks-executable-tools-and-sdk-failure-feedback",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "dab49681165e39e69e887dd66fb3a0a2ceb94c7ecf96b63589b6a6f663143fc2"
+    },
+    {
+      "id": "e4e7cc7d-0e84-40ec-a643-76e3013ad336",
+      "identifier": "SFNS-25",
+      "url": "https://linear.app/21n/issue/SFNS-25/connect-apifn-release-artifacts-to-the-canonical-docsfn-provider",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "0f47599bdfe7cb72a6c155a1ab2062d4f4fd51c8d2867bd71e3dc54043523202"
+    },
+    {
+      "id": "08945292-8dbf-4ccc-9af4-f1c55e13a7a3",
+      "identifier": "SFNS-24",
+      "url": "https://linear.app/21n/issue/SFNS-24/ingest-and-query-sdk-failures-by-api-operation-and-release-in-watchfn",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "960a00dc2167a527039458b80a48e82cb0f0bf6c42fcb227028a4b880210dd61"
+    },
+    {
+      "id": "5a4eaed9-303a-49a7-809a-79b85ec2cf3d",
+      "identifier": "SFNS-23",
+      "url": "https://linear.app/21n/issue/SFNS-23/report-bounded-typescript-and-python-sdk-failures-without-changing-api",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "2768b2a55186389cb58d1b7fad058ee71204f59ef7a5031d85b49a3a36777cea"
+    },
+    {
+      "id": "15a12868-a278-4a78-be2f-cd67c88c6ba3",
+      "identifier": "SFNS-22",
+      "url": "https://linear.app/21n/issue/SFNS-22/port-a-qualified-watchfn-event-runtime-for-dev-telemetry-consumers",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "ab8e82382bfc8d1dcffb25da1a66ce20a01aea5688bd35358897040030ac1125"
+    },
+    {
+      "id": "56bd26ac-86f0-4057-8d4b-ac7dbe4a9abf",
+      "identifier": "SFNS-21",
+      "url": "https://linear.app/21n/issue/SFNS-21/port-and-qualify-the-reusable-logfn-event-pipeline-for-dev-telemetry",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "c0b570194e0d184d842ca3cd55b6338cf4f52b8136240d68d75b8852dd5a3203"
+    },
+    {
+      "id": "8c8fc7f6-56c0-4eb6-b1f1-2e5f9afc863e",
+      "identifier": "SFNS-20",
+      "url": "https://linear.app/21n/issue/SFNS-20/publish-approved-sdk-artifacts-with-registry-reconciliation-and",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "581dec1200023ecc2c4a1e441009fc2c59ef26938eeac61bb71372ce6c82a0fa"
+    },
+    {
+      "id": "ae75180c-ab96-4ace-a6a0-5a3a0ef880ae",
+      "identifier": "SFNS-19",
+      "url": "https://linear.app/21n/issue/SFNS-19/persist-reviewable-sdk-release-candidates-and-per-target-build",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "27142e9d7183eb452bd72c805086d037a0d891e628ea379f73cbbd0a5de358c5"
+    },
+    {
+      "id": "beef6bb6-f81f-4aa1-b430-6c3c0c3528fa",
+      "identifier": "SFNS-18",
+      "url": "https://linear.app/21n/issue/SFNS-18/generate-installable-python-sdks-from-the-apifn-operation-contract",
+      "team": "SFNS",
+      "state": "Backlog",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "d3b35201ec89023e729f4772940f4511ee904ce34f1df297e99b4fa258600058"
+    },
+    {
+      "id": "6d7f6621-0103-4f20-b0a8-950b85b389b2",
+      "identifier": "SFNS-17",
+      "url": "https://linear.app/21n/issue/SFNS-17/generate-installable-typescript-sdks-through-deterministic-apifn-build",
+      "team": "SFNS",
+      "state": "In Review",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "2cdcef23b942d613309a84a9f82421368bf2c07cad078f0a505aef4dc639f9dc"
+    },
+    {
+      "id": "22ca6a4c-8f88-4599-8ebb-e17116ce700b",
+      "identifier": "SFNS-16",
+      "url": "https://linear.app/21n/issue/SFNS-16/define-a-shared-versioned-api-operation-and-release-contract",
+      "team": "SFNS",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "95c6189e85e73d3205b17454c58b6a98c687372c1baa6118412bc06f42378a66"
+    },
+    {
+      "id": "9c8d58d0-3130-41c2-8873-a40dabb9e5eb",
+      "identifier": "SFNS-15",
+      "url": "https://linear.app/21n/issue/SFNS-15/deliver-a-shared-api-contract-with-generated-sdk-releases-agent-tools",
+      "team": "SFNS",
+      "state": "Todo",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "7a96d0b505c6092be735ea76dd2e19411e214be0e2708c8a19a357fad722850b"
+    },
+    {
+      "id": "fa9abaf6-5453-43ba-8196-a6b2eb45b321",
+      "identifier": "SFNS-4",
+      "url": "https://linear.app/21n/issue/SFNS-4/deliver-super-functions-upstream-capabilities-and-compatibility",
+      "team": "SFNS",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "24a4ec6ed2adf0b5d5617c0933a3b6cf06c997dce18e6dbd2d53b6ee2e56c35a"
+    },
+    {
+      "id": "2d345256-0a0a-4774-a363-2b969c2d2d93",
+      "identifier": "SFNS-3",
+      "url": "https://linear.app/21n/issue/SFNS-3/plan-reviewfn-portable-evidence-backed-pr-review-with-configurable",
+      "team": "SFNS",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "6e9b0000a92bacca4b5cb7aa51728a9106d2f24605cfbc49e872cb34fb70edfd"
+    },
+    {
+      "id": "72eb8e14-d25e-4c54-b695-fb69500b5766",
+      "identifier": "SFNS-2",
+      "url": "https://linear.app/21n/issue/SFNS-2/port-function-agnostic-super-console-and-dev-admin-surfaces-to-dev",
+      "team": "SFNS",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "55f3b8e7c1d7ec820ff133815a8ad9496fa12eb4ad1286fd04c61a5f0df875ee"
+    },
+    {
+      "id": "814b7218-1d06-4682-9c6d-f3b913da5bd6",
+      "identifier": "SFN-22",
+      "url": "https://linear.app/21n/issue/SFN-22/make-super-console-function-agnostic-and-manifest-driven",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "adef5d3b66e9fa5cd9c01a440accc28c5a9fd07ec3e6e1ca0213d3715eeab711"
+    },
+    {
+      "id": "78416064-ba70-4e5c-92b0-6ec96a38c2b0",
+      "identifier": "SFN-21",
+      "url": "https://linear.app/21n/issue/SFN-21/build-super-console-as-the-modular-self-hosted-administration-control",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "02d9d52d8ad95e4c955294dc2238754345bada4419028cf1e912a98c67e970f0"
+    },
+    {
+      "id": "61f0b779-b4d0-4d28-a34f-ca9bf99ec43c",
+      "identifier": "SFN-20",
+      "url": "https://linear.app/21n/issue/SFN-20/build-mdfn-as-the-superfunctions-markdown-authoring-platform",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9a1689373b33e9bc7445eddc2c96c75172a5fa5a7b60410347752bf78724383a"
+    },
+    {
+      "id": "aa2f4a7e-2e61-4230-80b6-cba3a39a0b06",
+      "identifier": "SFNS-1",
+      "url": "https://linear.app/21n/issue/SFNS-1/super-functions-local-worktrees-sync",
+      "team": "SFNS",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "b00fd5473dc0d0f5b6e0b520ffb92693d1f2f2260ae564e3a31e4ddaff916631"
+    },
+    {
+      "id": "a44566ef-0f0a-4aa5-b5fa-abe7c38032c3",
+      "identifier": "SFN-19",
+      "url": "https://linear.app/21n/issue/SFN-19/mcpfn-init",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "77ee508c709f71ff429a9ffe0a89c049049c1b8563be9bdd6a5175bac156e8a9"
+    },
+    {
+      "id": "d055d513-f2ab-4ef3-8bf2-25c6d5ab6be5",
+      "identifier": "SFN-18",
+      "url": "https://linear.app/21n/issue/SFN-18/production-readiness-audit-2026-08-11",
+      "team": "SFN",
+      "state": "Inbox",
+      "project_id": null,
+      "description_sha256": "c78f09c1da9683a36c374cf404fbe87a59deb1d2f9719ba1063fad385f86dc61"
+    },
+    {
+      "id": "207037a4-1a10-4a41-a063-8a81bd738a67",
+      "identifier": "SFN-17",
+      "url": "https://linear.app/21n/issue/SFN-17/build-mailfn-as-a-reusable-programmable-mailbox-function",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "d7f56984199b8e49e668b0ba9f5e8366de2bf38c00ecda887d79aad4e5522598"
+    },
+    {
+      "id": "b06e5109-4b7d-4761-b5a7-9df3d21c1a0d",
+      "identifier": "SFO-44",
+      "url": "https://linear.app/21n/issue/SFO-44/extfn-v020",
+      "team": "SFO",
+      "state": "Todo",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "8178bc6ef56b6ed8ad48ffe19f50d282c81d3782d8e5c5c9b4bde32b5cbdaa34"
+    },
+    {
+      "id": "52fab572-4026-4549-b7a3-f2cdd99ace8e",
+      "identifier": "SFO-43",
+      "url": "https://linear.app/21n/issue/SFO-43/make-extfn-production-ready",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "565ab896-74df-4456-bcc3-729594fac56f",
+      "identifier": "SFO-42",
+      "url": "https://linear.app/21n/issue/SFO-42/make-apifn-production-ready",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "8f02c35c-7e89-4e4a-be00-de0b35e614da",
+      "identifier": "SFO-41",
+      "url": "https://linear.app/21n/issue/SFO-41/production-readiness-shared-packages",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "c5cffa0508d101707f00301fe86b8921efac1bdc4f8715fde60f54bfa0400daa"
+    },
+    {
+      "id": "ea1e7d37-460b-4920-8512-005af09b8077",
+      "identifier": "SFN-16",
+      "url": "https://linear.app/21n/issue/SFN-16/make-secfn-production-ready",
+      "team": "SFN",
+      "state": "In Progress",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "2436f811-644e-49b4-bd47-e5cbbf7263b7",
+      "identifier": "SFN-15",
+      "url": "https://linear.app/21n/issue/SFN-15/uifn-v010",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "7c27a27e04886db4df0e7593a2d18ece3f7b9b1f8317c31ffcac7de5c9d824d6"
+    },
+    {
+      "id": "63188752-5d02-44b8-ae6f-c25d3dbdc5b0",
+      "identifier": "SFN-14",
+      "url": "https://linear.app/21n/issue/SFN-14/docsfn-v010",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "ab80a3ae7d9c1e560b1b0e4c402be055bd84ab14c365e294c31fd803c2c6b554"
+    },
+    {
+      "id": "7ef595fd-8b53-4131-8135-ce120388e33c",
+      "identifier": "SFO-40",
+      "url": "https://linear.app/21n/issue/SFO-40/userfn-init",
+      "team": "SFO",
+      "state": "Todo",
+      "project_id": null,
+      "description_sha256": "7f95a56315a48cf9f62023655366450c8421336c195e51594341f8e5660e165d"
+    },
+    {
+      "id": "a8716b0b-6e40-41c5-865e-1773ea1cd62c",
+      "identifier": "SFO-39",
+      "url": "https://linear.app/21n/issue/SFO-39/authfn-access-plugin",
+      "team": "SFO",
+      "state": "Todo",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "499b8b6e-8a3b-44cf-a9a0-330ab93fce4b",
+      "identifier": "SFO-38",
+      "url": "https://linear.app/21n/issue/SFO-38/datafn-e2ee",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "4644b034-950d-46f7-a846-f49490b2d7c2",
+      "identifier": "SFO-37",
+      "url": "https://linear.app/21n/issue/SFO-37/super-functions-improvements-via-nucleum-datafn-adoption",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "a8f08f15-1cc2-4ffa-935a-5d3dae4014c8",
+      "identifier": "SFO-36",
+      "url": "https://linear.app/21n/issue/SFO-36/plugfn-managed-persistence-datafn-persistence-docs",
+      "team": "SFO",
+      "state": "Todo",
+      "project_id": null,
+      "description_sha256": "4b90adf4340f69e77f180bfc8438d5403b6f36ee87d0d167ccaf125f51d1e289"
+    },
+    {
+      "id": "45362637-2289-4e4d-b4f8-e8fef598828c",
+      "identifier": "SFO-35",
+      "url": "https://linear.app/21n/issue/SFO-35/docs-and-landing-production-readiness-improvements",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "9421d6ad2fee96f41cdd9d81132129ff86718377447347ff7d4b7ed9671a4f04"
+    },
+    {
+      "id": "20102e2f-741e-4e1c-bd58-6c7bbff9f853",
+      "identifier": "SFO-34",
+      "url": "https://linear.app/21n/issue/SFO-34/apifn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "6858b385-9c13-4760-997b-cd4fab69aa58",
+      "identifier": "SFO-33",
+      "url": "https://linear.app/21n/issue/SFO-33/authfn-improvements-and-fixes-via-nucleum-adoption",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "a0ef0b87-b860-4de4-ab51-d0d75b5b1803",
+      "identifier": "SFO-32",
+      "url": "https://linear.app/21n/issue/SFO-32/secfn-v010",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "da59e19e-098d-4a54-ae6b-8c02e8c038ad",
+      "identifier": "SFN-13",
+      "url": "https://linear.app/21n/issue/SFN-13/probefn-init",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "26f75fd5-0548-42be-a51c-4596e10003cb",
+      "identifier": "SFN-12",
+      "url": "https://linear.app/21n/issue/SFN-12/production-readiness-audits-and-fixes",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "0fd1d168-7d7c-4e1b-80b4-b70e0223f766",
+      "identifier": "SFO-31",
+      "url": "https://linear.app/21n/issue/SFO-31/datafn-query-execution-in-memory-classification-for-groupbyhaving-and",
+      "team": "SFO",
+      "state": "Inbox",
+      "project_id": null,
+      "description_sha256": "acb83f62565f1b459cffefabb6d8ffd2bfeaeeb7c23c52ed242ef1a383c352d0"
+    },
+    {
+      "id": "7e68a664-0360-4d1e-8ff0-b046c8684f06",
+      "identifier": "SFO-30",
+      "url": "https://linear.app/21n/issue/SFO-30/shared-packages-legacy-packages-cleanup",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "9887e782-3cf8-4ef6-8e5e-f15272ef61b1",
+      "identifier": "SFO-29",
+      "url": "https://linear.app/21n/issue/SFO-29/publish-workflow",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "8b867d48-62dd-4a97-a2fb-5e5478b4e370",
+      "identifier": "SFO-28",
+      "url": "https://linear.app/21n/issue/SFO-28/cicd-tests-publish-workflows",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "cbea6b9d-ab48-4a33-81dc-888e98b9ee91",
+      "identifier": "SFO-27",
+      "url": "https://linear.app/21n/issue/SFO-27/searchfn-v020",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "c42ceb20-2353-43e3-80b2-f4811973f5fb",
+      "identifier": "SFO-26",
+      "url": "https://linear.app/21n/issue/SFO-26/extfn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "7bc60cd2-6c4e-43c4-94ba-1935238aa5bb",
+      "identifier": "SFO-25",
+      "url": "https://linear.app/21n/issue/SFO-25/searchfn-rust-engine",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "f8ec06c4e31069f42753262001f79ea907d077508f5b4c28fc796dd37f5e593b"
+    },
+    {
+      "id": "48e6208b-87b7-402c-b879-db6f6a6ade87",
+      "identifier": "SFO-24",
+      "url": "https://linear.app/21n/issue/SFO-24/searchfn-swift",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "07eae60d-1b62-4bec-ba5c-890b4b3dd09d",
+      "identifier": "SFO-23",
+      "url": "https://linear.app/21n/issue/SFO-23/filefn-swift-client",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "36164f30-b79a-4803-8a35-f500da5aa8f5",
+      "identifier": "SFO-22",
+      "url": "https://linear.app/21n/issue/SFO-22/datafn-swift-client-core-data-persistence-js-bridge",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "042e262f-2ad0-4ed3-bb47-ed85a9077be8",
+      "identifier": "SFN-11",
+      "url": "https://linear.app/21n/issue/SFN-11/drawfn-prod-readiness-audit-and-fixes",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "6d27410d-602a-46bb-a7e4-0df20d7b92a6",
+      "identifier": "SFN-10",
+      "url": "https://linear.app/21n/issue/SFN-10/example-apps-improvements-docs-update",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "5f85e553-a5f1-4fc9-90a1-29fda553cd7a",
+      "identifier": "SFN-9",
+      "url": "https://linear.app/21n/issue/SFN-9/plugfn-examples",
+      "team": "SFN",
+      "state": "Todo",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "c24186c6-1dad-4c78-af90-f39f77bf7f38",
+      "identifier": "SFN-8",
+      "url": "https://linear.app/21n/issue/SFN-8/plugfn-prod-readiness-audit-and-fixes",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "9f14513a-61b5-42ee-abc9-4570b17660eb",
+      "identifier": "SFN-7",
+      "url": "https://linear.app/21n/issue/SFN-7/uifn-example-apps",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "adf9ec15-dfca-4eff-a97a-134f5e1ca2c9",
+      "identifier": "SFN-6",
+      "url": "https://linear.app/21n/issue/SFN-6/prod-readiness-audit-and-fixes",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "5bbfdcd0-30dd-4d1e-9657-0ea0befc364c",
+      "identifier": "SFN-5",
+      "url": "https://linear.app/21n/issue/SFN-5/uifn-prod-readiness-audit-and-fixes",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "7d745f98-a586-44cf-99d7-8f835fce9bd7",
+      "identifier": "SFN-4",
+      "url": "https://linear.app/21n/issue/SFN-4/docsfn-init",
+      "team": "SFN",
+      "state": "Done",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "5eb523ed-d088-4e76-8ec5-8c1fed87a2f3",
+      "identifier": "SFO-21",
+      "url": "https://linear.app/21n/issue/SFO-21/authfn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "b3aec4bc-9e1f-42ee-8575-78e5650ed965",
+      "identifier": "SFO-20",
+      "url": "https://linear.app/21n/issue/SFO-20/datafn-docs-improvements",
+      "team": "SFO",
+      "state": "Todo",
+      "project_id": null,
+      "description_sha256": "0f66810aeb2c8d07100d056b0dffa4aabf92eac286f6b0b2be0e5dabaae2bef2"
+    },
+    {
+      "id": "07fa30da-d292-4f6d-b8e5-c2bc67ffaf92",
+      "identifier": "SFN-2",
+      "url": "https://linear.app/21n/issue/SFN-2/v001-super-functions",
+      "team": "SFN",
+      "state": "In Progress",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "100442f3-0658-4468-b9e3-1e397ddd5d1c",
+      "identifier": "SFN-1",
+      "url": "https://linear.app/21n/issue/SFN-1/oauth-primitives",
+      "team": "SFN",
+      "state": "Duplicate",
+      "project_id": null,
+      "description_sha256": "60944e36e6d17249866569722012d12186e83f79d4234b42b2e62c82745bd811"
+    },
+    {
+      "id": "ffe4052a-66c5-4b15-8714-e233acdf18f4",
+      "identifier": "SFO-19",
+      "url": "https://linear.app/21n/issue/SFO-19/super-functions-root-docs-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "9bbcbb96-aba2-4f8b-b03b-41240f666c22",
+      "identifier": "SFO-18",
+      "url": "https://linear.app/21n/issue/SFO-18/sharing-capability-v2",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "f0ee94f3-3893-49a4-8500-dc81c0b840cf",
+      "identifier": "SFO-17",
+      "url": "https://linear.app/21n/issue/SFO-17/hostfn-bug-fixes",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "872c22eb-abf3-4956-92a7-20e69b5cf535",
+      "identifier": "SFO-16",
+      "url": "https://linear.app/21n/issue/SFO-16/searchfn-v030",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "0f67c177-dbfb-4b1d-9a24-80730ac9484d",
+      "identifier": "SFO-15",
+      "url": "https://linear.app/21n/issue/SFO-15/billfn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "219573c1-920c-4f5a-ad4f-cecae87f8413",
+      "identifier": "SFO-14",
+      "url": "https://linear.app/21n/issue/SFO-14/filefn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "f7a515cd-c436-407d-b544-2e21f95d2029",
+      "identifier": "SFO-13",
+      "url": "https://linear.app/21n/issue/SFO-13/server-framework-endpoints-abstraction-factory",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "bb934382-eec9-4a26-9c0e-cc2c1e6ad7ed",
+      "identifier": "SFO-12",
+      "url": "https://linear.app/21n/issue/SFO-12/db-adapter-core-cli-migration-packages-auth-core",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "be677fb2-866e-4793-bef6-dbc08fa30a71",
+      "identifier": "SFO-10",
+      "url": "https://linear.app/21n/issue/SFO-10/logfn-init",
+      "team": "SFO",
+      "state": "Canceled",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "e0a6317e-ae52-41a0-94e7-ac70186054ca",
+      "identifier": "SFO-9",
+      "url": "https://linear.app/21n/issue/SFO-9/webfn-init",
+      "team": "SFO",
+      "state": "Canceled",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "d4f25ee0-6c3b-4b0b-a47f-57f6bffb031c",
+      "identifier": "SFO-8",
+      "url": "https://linear.app/21n/issue/SFO-8/plugfn-init-shared-oauth-primitives",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "9c27560e-66e2-42a1-ac01-20431b90d648",
+      "identifier": "SFO-7",
+      "url": "https://linear.app/21n/issue/SFO-7/datafn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "2e145678-1bd4-48f2-b120-a07aa68df35a",
+      "identifier": "SFO-6",
+      "url": "https://linear.app/21n/issue/SFO-6/searchfn-improvements",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "2d03b4b7dce69a6faba5640c59462824575f6f33d21b6287f39aa3b1e9b80b8c"
+    },
+    {
+      "id": "0855041e-180a-49f4-97d5-d7200d013235",
+      "identifier": "SFO-4",
+      "url": "https://linear.app/21n/issue/SFO-4/searchfn-init",
+      "team": "SFO",
+      "state": "Done",
+      "project_id": "ddb7a6a8-0c46-48f2-80c1-e4533bbe1750",
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "ace8de0a-889b-474d-afff-d46163c2df56",
+      "identifier": "SFO-3",
+      "url": "https://linear.app/21n/issue/SFO-3/botfn-linear-discord-notifier",
+      "team": "SFO",
+      "state": "Canceled",
+      "project_id": null,
+      "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "selected_discussions": 46,
+  "base_sha": "9205cbd3ac4372c5964acae1c41622d3dee8a707",
+  "base_checks": [
+    {
+      "name": "SonarCloud Code Analysis",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://sonarcloud.io/dashboard?id=21nCo_super-functions&branch=dev"
+    },
+    {
+      "name": "McpFn release gate",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170183935"
+    },
+    {
+      "name": "McpFn Node 20 compatibility",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170183761"
+    },
+    {
+      "name": "McpFn Node 18 CommonJS",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170183547"
+    },
+    {
+      "name": "Python",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170183478"
+    },
+    {
+      "name": "JavaScript",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170181604"
+    },
+    {
+      "name": "deploy (devfn)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558303/job/120170164202"
+    },
+    {
+      "name": "Socket Security: Project Report",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://socket.dev/dashboard/org/21n/sbom/89bed432-103c-4bb8-8fe8-7bf70221cbfa"
+    },
+    {
+      "name": "Plan",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558357/job/120170090511"
+    },
+    {
+      "name": "Analyze (rust)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556400/job/120170090338"
+    },
+    {
+      "name": "Analyze (actions)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556400/job/120170090210"
+    },
+    {
+      "name": "Analyze (swift)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556400/job/120170090200"
+    },
+    {
+      "name": "detect",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878558303/job/120170090111"
+    },
+    {
+      "name": "Analyze (python)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556400/job/120170090032"
+    },
+    {
+      "name": "Analyze (javascript-typescript)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556400/job/120170089547"
+    },
+    {
+      "name": "Analyze (python)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556216/job/120170089312"
+    },
+    {
+      "name": "Analyze (javascript-typescript)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/21nCo/superfunctions/actions/runs/39878556216/job/120170089059"
+    }
+  ],
+  "open_prs": [
+    {
+      "number": 257,
+      "baseRefName": "dev",
+      "headRefOid": "89cae9df462f2f7b03115d400b878223d68c3092",
+      "url": "https://github.com/21nCo/superfunctions/pull/257"
+    },
+    {
+      "number": 256,
+      "baseRefName": "dev",
+      "headRefOid": "15a181c787d4506115a40d87b12d2d3f2563b627",
+      "url": "https://github.com/21nCo/superfunctions/pull/256"
+    },
+    {
+      "number": 254,
+      "baseRefName": "dev",
+      "headRefOid": "adeafd22fed294146913166250999aebab2084da",
+      "url": "https://github.com/21nCo/superfunctions/pull/254"
+    },
+    {
+      "number": 248,
+      "baseRefName": "dev",
+      "headRefOid": "43c9437001160856a7ef8e322a3ffb6cec37d78f",
+      "url": "https://github.com/21nCo/superfunctions/pull/248"
+    },
+    {
+      "number": 244,
+      "baseRefName": "dev",
+      "headRefOid": "19c38aa34c6cce3f830d9d21d681ac16bb111a75",
+      "url": "https://github.com/21nCo/superfunctions/pull/244"
+    },
+    {
+      "number": 206,
+      "baseRefName": "dev",
+      "headRefOid": "a44402b3e47a410316720107721201fbcf1e36a1",
+      "url": "https://github.com/21nCo/superfunctions/pull/206"
+    },
+    {
+      "number": 133,
+      "baseRefName": "dev",
+      "headRefOid": "a7722fdddfc8bcd9dbb4cfd884564984e75b2305",
+      "url": "https://github.com/21nCo/superfunctions/pull/133"
+    }
+  ],
+  "settings": [
+    {
+      "team": "DOC",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "f2be1a1d-bc71-4089-a5d8-e24781534590"
+    },
+    {
+      "team": "PLUG",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "30f7d6cf-565b-4100-a154-abd4785460ae"
+    },
+    {
+      "team": "EXT",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "463cb5b9-f543-4a9f-8fa6-4398c2552590"
+    },
+    {
+      "team": "MAIL",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "a749607f-703f-47dd-b35c-9acf3c232317"
+    },
+    {
+      "team": "BILL",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "14a3b9a1-d4a2-4317-b9e6-305ffbad91b3"
+    },
+    {
+      "team": "UIF",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "21b99c0f-397a-4b92-a848-ee519be733b9"
+    },
+    {
+      "team": "FILE",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "16a34e85-fbf4-4369-a5d7-716c597e2434"
+    },
+    {
+      "team": "MCP",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "493d64c2-bba5-4c87-a1cc-b1512db7f7bc"
+    },
+    {
+      "team": "AUTH",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "e71660d9-1570-4782-9b08-4cc82ec89a81"
+    },
+    {
+      "team": "DATA",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "b9bcc40b-15c1-4f4c-97d7-864dab5b644d"
+    },
+    {
+      "team": "SFNS",
+      "auto_close_parent": null,
+      "auto_close_child": null,
+      "backlog_state": "439a598f-dd4f-48e0-aeb3-e283c94edef7"
+    }
+  ],
+  "loops": [
+    {
+      "path": "/Users/serro/Documents/dev/n/agent/automation/linear-loop/projects/superfunctions.json",
+      "id": "superfunctions",
+      "base_ref": "origin/dev",
+      "team": "Devfn",
+      "issue_order": [
+        "DEV-4",
+        "DEV-5",
+        "DEV-6",
+        "DEV-29",
+        "DEV-30",
+        "DEV-31",
+        "DEV-32",
+        "DEV-7",
+        "DEV-8",
+        "DEV-9",
+        "DEV-10",
+        "DEV-11",
+        "DEV-12",
+        "DEV-13",
+        "DEV-14",
+        "DEV-15",
+        "DEV-16",
+        "DEV-17"
+      ],
+      "dependencies": {
+        "DEV-4": [
+          "DEV-1"
+        ],
+        "DEV-5": [
+          "DEV-4"
+        ],
+        "DEV-6": [
+          "DEV-5"
+        ],
+        "DEV-7": [
+          "DEV-5"
+        ],
+        "DEV-8": [
+          "DEV-7"
+        ],
+        "DEV-9": [
+          "DEV-4",
+          "DEV-5",
+          "DEV-6",
+          "DEV-7",
+          "DEV-8",
+          "DEV-32"
+        ],
+        "DEV-10": [
+          "DEV-9"
+        ],
+        "DEV-11": [
+          "DEV-10"
+        ],
+        "DEV-12": [
+          "DEV-10"
+        ],
+        "DEV-13": [
+          "DEV-10",
+          "DEV-12"
+        ],
+        "DEV-14": [
+          "DEV-13",
+          "DEV-11"
+        ],
+        "DEV-15": [
+          "DEV-10",
+          "DEV-13",
+          "DEV-14"
+        ],
+        "DEV-16": [
+          "DEV-10",
+          "DEV-12",
+          "DEV-13"
+        ],
+        "DEV-17": [
+          "DEV-4",
+          "DEV-9",
+          "DEV-10",
+          "DEV-11",
+          "DEV-12",
+          "DEV-13",
+          "DEV-14",
+          "DEV-15",
+          "DEV-16"
+        ],
+        "DEV-29": [
+          "DEV-5"
+        ],
+        "DEV-30": [
+          "DEV-29"
+        ],
+        "DEV-31": [
+          "DEV-30"
+        ],
+        "DEV-32": [
+          "DEV-31"
+        ]
+      },
+      "external_acceptance": {
+        "requiredByIssue": {
+          "DEV-4": [
+            "endpoint-template-contract"
+          ],
+          "DEV-5": [
+            "domain-routing-contract"
+          ],
+          "DEV-6": [
+            "oauth-relay-contract"
+          ],
+          "DEV-7": [
+            "cloudflare-tunnel-contract"
+          ],
+          "DEV-8": [
+            "ngrok-tunnel-contract"
+          ],
+          "DEV-9": [
+            "networking-qualification-contract"
+          ],
+          "DEV-10": [
+            "resource-target-contract"
+          ],
+          "DEV-11": [
+            "setup-task-contract"
+          ],
+          "DEV-12": [
+            "named-runtime-contract"
+          ],
+          "DEV-13": [
+            "resource-ownership-contract"
+          ],
+          "DEV-14": [
+            "persistence-contract"
+          ],
+          "DEV-15": [
+            "remote-capability-contract"
+          ],
+          "DEV-16": [
+            "multi-root-contract"
+          ],
+          "DEV-17": [
+            "real-host-networking",
+            "owned-domain-tls",
+            "google-oauth",
+            "live-tunnel-isolation",
+            "real-host-environments",
+            "docker-persistence",
+            "live-database-capabilities",
+            "authenticated-browser",
+            "recovery-isolation",
+            "disposable-cleanup"
+          ]
+        },
+        "resourcesRequiredByIssue": {
+          "DEV-17": [
+            "railway",
+            "cloudflare"
+          ]
+        },
+        "deferredLiveAcceptanceByIssue": {
+          "DEV-4": "DEV-17",
+          "DEV-9": "DEV-17"
+        }
+      },
+      "beta_handoff": null,
+      "sha256": "0b922f50d7cb3e29ef7e86f932cbe58e8b75ecf1cc942db31a02def90a61c138"
+    },
+    {
+      "path": "/Users/serro/Documents/dev/n/agent/automation/linear-loop/projects/superfunctions-sfns.json",
+      "id": "superfunctions-sfns",
+      "base_ref": "origin/dev",
+      "team": "Super functions",
+      "issue_order": [
+        "SFNS-16",
+        "SFNS-17",
+        "SFNS-18",
+        "SFNS-21",
+        "SFNS-22"
+      ],
+      "dependencies": {
+        "SFNS-17": [
+          "SFNS-16"
+        ],
+        "SFNS-18": [
+          "SFNS-17"
+        ]
+      },
+      "external_acceptance": {
+        "requiredByIssue": {
+          "SFNS-16": [
+            "api-operation-contract"
+          ],
+          "SFNS-17": [
+            "typescript-sdk-contract"
+          ],
+          "SFNS-18": [
+            "python-sdk-contract"
+          ],
+          "SFNS-21": [
+            "logfn-event-pipeline-contract"
+          ],
+          "SFNS-22": [
+            "watchfn-event-runtime-contract"
+          ]
+        }
+      },
+      "beta_handoff": null,
+      "sha256": "722d8bf5c72511238fb0d00368254da2aed32e739541f32c7f6d7a5f19026279"
+    }
+  ],
+  "mutations": 0
+}

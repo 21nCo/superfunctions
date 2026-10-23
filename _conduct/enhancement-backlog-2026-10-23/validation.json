@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "coverage": 38,
+  "implementation_contracts": 54,
+  "boundary_acceptance": 37,
+  "independent_resource_items": 19,
+  "authored_source_name_exclusion_patterns": 81,
+  "exact_hosted_skill_snapshots_verified": 2,
+  "generic_nouns_in_exact_skill_source": 1,
+  "unchanged_queue_configs": 2,
+  "table_structures": 7,
+  "dag": "acyclic",
+  "linear_mutations": 0,
+  "code_tests_run": false
+}

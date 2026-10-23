@@ -5,3 +5,15 @@ using my composio - read product hunt archives in my tron notion workspace and p
 <send_user_message_question_reply>
 [{"answer":"Local research report in Superfunctions","question":"Where would you like the finished mapping saved? I’ll include a concise summary here either way.","questionItemId":"[\"request_user_input_async\",\"call_3fc734aec600429e8af0947495b36e1d\",0]"}]
 </send_user_message_question_reply>
+
+---
+
+$use-skillplane linear-backlog-architect (dont mention these product names anywhere)
+
+---
+
+pause at 11:55 PM
+
+---
+
+continue (ignore my pause instruction)
