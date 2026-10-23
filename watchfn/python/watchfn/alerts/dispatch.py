@@ -7,6 +7,7 @@ from uuid import uuid4
 from superfunctions.db import AdapterError, CreateParams, FindOneParams, FindManyParams, OrderBy, WhereClause, UpdateManyParams
 from .schema import ALERTS, OUTBOX, RUNTIME
 from .durable import AlertConflict, encode, text
+from .pagerduty import request as pagerduty_request, route_key
 
 PROTOCOL = 'python-v1'
 
@@ -57,25 +58,35 @@ class Dispatcher:
             raise ValueError('Invalid notification payload')
         return value
 
-    async def _send(self, notification, channel):
+    async def _send(self, notification, channel, metadata=None):
         """Built-in HTTP clients only; no unbounded arbitrary sender callback."""
         import httpx
         payload = notification
+        endpoint = channel.get('webhook')
+        if channel['type'] == 'pagerduty':
+            payload = pagerduty_request(self.manager.namespace, notification, channel, metadata)
+            endpoint = self.manager.delivery.pagerduty_endpoint
         if channel['type'] == 'slack':
             # Incoming webhooks use the channel configured by Slack, not an override.
             alert = notification['alert']
             payload = {'text': f"[{alert.get('severity', 'warning')}] {alert['name']}: {notification['event']}"}
         try:
             async with httpx.AsyncClient(timeout=self.timeout / 1000, follow_redirects=False, trust_env=False) as client:
-                async with client.stream('POST', channel['webhook'], json=payload, headers={'idempotency-key': notification['id'], 'content-type': 'application/json', 'accept-encoding': 'identity'}) as response:
+                async with client.stream('POST', endpoint, json=payload, headers={'idempotency-key': notification['id'], 'content-type': 'application/json', 'accept-encoding': 'identity'}) as response:
                     if 200 <= response.status_code < 300:
-                        if channel['type'] == 'slack':
+                        if channel['type'] in ('slack', 'pagerduty'):
                             body = bytearray()
                             if response.headers.get('content-encoding', 'identity') != 'identity': return 'unknown'
                             async for part in response.aiter_raw():
                                 body.extend(part)
-                                if len(body) > 1024: return 'unknown'
-                            if response.status_code != 200 or bytes(body).strip() != b'ok': return 'unknown'
+                                if len(body) > (4096 if channel['type'] == 'pagerduty' else 1024): return 'unknown'
+                            if channel['type'] == 'slack':
+                                if response.status_code != 200 or bytes(body).strip() != b'ok': return 'unknown'
+                            else:
+                                receipt = json.loads(body)
+                                if (response.status_code != 202 or not isinstance(receipt, dict)
+                                        or receipt.get('status') != 'success' or receipt.get('dedup_key') != payload['dedup_key']):
+                                    return 'unknown'
                         return 'delivered'
                     if response.status_code == 429 and channel['type'] == 'slack':
                         delay = response.headers.get('retry-after', '')
@@ -99,9 +110,31 @@ class Dispatcher:
                 return None
             channel = value.get('channel')
             if not isinstance(channel, dict): raise ValueError('Missing pending notification channel')
-            if channel.get('type') not in ('slack', 'webhook'): return None
+            if channel.get('type') not in ('slack', 'webhook', 'pagerduty'): return None
             # Revalidate stored routing before any claim/request; credentials stay private.
             self.manager._definition({'name': 'dispatch', 'condition': {'metric': 'dispatch', 'window': '1m', 'operator': 'gt', 'threshold': 0}, 'channels': [channel]})
+            if channel['type'] == 'pagerduty':
+                metadata = value.get('pagerDuty')
+                if (not isinstance(metadata, dict) or not text(metadata.get('episode'), 128)
+                        or metadata.get('route') != route_key(channel)):
+                    raise ValueError('PagerDuty job requires incident metadata migration')
+                predecessor = metadata.get('predecessor')
+                event = value['notification']['event']
+                if predecessor is None:
+                    if event != 'triggered' or metadata.get('predecessorEpisode') is not None:
+                        raise ValueError('Missing PagerDuty predecessor')
+                else:
+                    if not text(predecessor, 128): raise ValueError('Invalid PagerDuty predecessor')
+                    previous = await tx.find_one(FindOneParams(model=OUTBOX, where=self.manager._where(predecessor)))
+                    if previous is None: raise ValueError('Missing retained PagerDuty predecessor receipt')
+                    previous_value = self.payload(previous)
+                    previous_metadata = previous_value.get('pagerDuty', {})
+                    if (previous['alertId'] != row['alertId'] or previous_metadata.get('episode') != metadata.get('predecessorEpisode')
+                            or previous_metadata.get('route') != metadata['route']
+                            or (event == 'triggered' and (previous_value['notification']['event'] != 'resolved' or previous_metadata.get('episode') == metadata['episode']))
+                            or (event != 'triggered' and previous_metadata.get('episode') != metadata['episode'])):
+                        raise ValueError('Invalid PagerDuty predecessor ownership')
+                    if previous_value.get('delivery', {}).get('outcome') != 'delivered': return None
             if row['attempts'] >= self.attempts:
                 value['delivery'] = {'outcome': 'rejected', 'reason': 'retry-limit'}
                 changed = await tx.update_many(UpdateManyParams(model=OUTBOX, where=self.manager._where(identifier) + [WhereClause(field='revision', value=row['revision'])], data={'state': 'dead', 'leaseToken': None, 'revision': row['revision'] + 1, 'payload': encode(value)}))
@@ -110,6 +143,7 @@ class Dispatcher:
             token = str(uuid4())
             update = {'state': 'sending', 'leaseToken': token, 'revision': row['revision'] + 1, 'attempts': row['attempts'] + 1, 'availableAt': clock() + self.lease}
             changed = await tx.update_many(UpdateManyParams(model=OUTBOX, where=self.manager._where(identifier) + [WhereClause(field='revision', value=row['revision'])], data=update))
+            if changed == 0: return None  # Another worker owns this claim; no I/O occurred.
             if changed != 1: raise AlertConflict('Concurrent notification claim')
             return dict(row, **update), value
         return await self.transaction(action)
@@ -137,6 +171,9 @@ class Dispatcher:
         record = self.manager._decode(alert_row)
         if record['pendingNotifications'] < 1 or alert_row['revision'] >= 9007199254740991: raise AlertConflict('Invalid notification accounting')
         record['pendingNotifications'] -= 1
+        metadata, sequence = value.get('pagerDuty'), record.get('pagerDuty')
+        if (outcome == 'delivered' and metadata and sequence and sequence.get('tails', {}).get(metadata['route']) == row['id']):
+            sequence['settled'] = list(set(sequence.get('settled', [])) | {metadata['route']})
         if outcome == 'delivered': record['lastNotification'] = {'event': value['notification']['event'], 'deliveredAt': clock()}
         changed = await tx.update_many(UpdateManyParams(model=ALERTS, where=self.manager._where(row['alertId']) + [WhereClause(field='revision', value=alert_row['revision'])], data={'revision': alert_row['revision'] + 1, 'state': record['state'], 'payload': encode(record)}))
         if changed != 1: raise AlertConflict('Concurrent alert delivery')
@@ -144,6 +181,7 @@ class Dispatcher:
         if actor is not None: delivery.update(actor=actor, reason=reason)
         # Keep a receipt for ambiguous local commits; remove routing credentials.
         payload = {'notification': value['notification'], 'delivery': delivery}
+        if 'pagerDuty' in value: payload['pagerDuty'] = value['pagerDuty']
         changed = await tx.update_many(UpdateManyParams(model=OUTBOX, where=self.manager._where(row['id']) + [WhereClause(field='revision', value=row['revision'])], data={'state': 'dead', 'leaseToken': None, 'revision': row['revision'] + 1, 'payload': encode(payload)}))
         if changed != 1: raise AlertConflict('Concurrent notification reconciliation')
         return True
@@ -165,7 +203,7 @@ class Dispatcher:
                 # never a second worker's permission to replay uncertain work.
                 if not self.manager.active(): break
                 processed += 1
-                try: outcome = await asyncio.wait_for(self._send(deepcopy(payload['notification']), deepcopy(payload['channel'])), self.timeout / 1000)
+                try: outcome = await asyncio.wait_for(self._send(deepcopy(payload['notification']), deepcopy(payload['channel']), deepcopy(payload.get('pagerDuty'))), self.timeout / 1000)
                 except Exception: outcome = 'unknown'
                 await self._settle(job, outcome)
             return {'processed': processed, 'nextCursor': rows[-1]['id'] if len(rows) == self.limit else None}

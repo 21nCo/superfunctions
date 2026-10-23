@@ -23,10 +23,10 @@ def definition(**extra):
     return dict(name='slow', condition={'metric': 'api.latency', 'operator': 'gt', 'threshold': 10, 'window': '5m'}, channels=[{'type': 'webhook', 'webhook': 'https://example.invalid/private-token'}], **extra)
 
 
-def open_watch(path, namespace='database'):
+def open_watch(path, namespace='database', **kwargs):
     engine = create_engine(path)
     adapter = create_adapter(engine)
-    watch = WatchFn(namespace, storage='database', database=adapter)
+    watch = WatchFn(namespace, storage='database', database=adapter, **kwargs)
     watch.system_metrics.start = lambda: None
     watch.process_metrics.start = lambda: None
     watch.start()

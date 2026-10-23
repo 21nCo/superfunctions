@@ -22,9 +22,28 @@ class HttpAuthConfig(BaseModel):
         return self
 
 
+class AlertDeliveryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    pagerduty_endpoint: str = Field("https://events.pagerduty.com/v2/enqueue", alias="pagerDutyEndpoint", strict=True)
+
+    @model_validator(mode="after")
+    def validate_endpoint(self):
+        from urllib.parse import urlsplit
+        try:
+            url = urlsplit(self.pagerduty_endpoint)
+            port = url.port
+        except ValueError:
+            raise ValueError("Invalid PagerDuty endpoint") from None
+        if (len(self.pagerduty_endpoint) > 4096 or url.scheme not in ("http", "https")
+                or not url.hostname or url.username or url.password or url.fragment):
+            raise ValueError("Invalid PagerDuty endpoint")
+        return self
+
+
 class WatchFnConfig(BaseModel):
     name: str
     auth: Optional[HttpAuthConfig] = None
+    alerts: AlertDeliveryConfig = Field(default_factory=AlertDeliveryConfig)
     project_id: Optional[str] = None
     storage: Literal["memory", "database"] = "memory"
     apm_enabled: bool = True

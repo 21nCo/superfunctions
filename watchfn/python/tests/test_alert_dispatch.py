@@ -17,14 +17,16 @@ def endpoint():
     state = {'requests': [], 'status': 200, 'drop': False, 'delay': 0, 'body': b'ok', 'retry_after': '60'}
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            state['requests'].append({'key': self.headers.get('idempotency-key'), 'body': json.loads(self.rfile.read(int(self.headers['content-length'])))})
+            received = {'key': self.headers.get('idempotency-key'), 'body': json.loads(self.rfile.read(int(self.headers['content-length'])))}
+            state['requests'].append(received)
             if state['delay']: time.sleep(state['delay'])
             if state['drop']:
                 self.connection.shutdown(socket.SHUT_RDWR); self.connection.close(); return
             try:
                 self.send_response(state['status'])
                 if state['status'] == 429: self.send_header('Retry-After', state['retry_after'])
-                self.end_headers(); self.wfile.write(state['body'])
+                body = json.dumps({'status': 'success', 'dedup_key': received['body'].get('dedup_key')}).encode() if state.get('pagerduty') else state['body']
+                self.end_headers(); self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError): pass
         def log_message(self, *args): pass
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)

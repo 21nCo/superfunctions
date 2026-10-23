@@ -341,9 +341,9 @@ attempts/backoff; Slack retry timing respects the header. Other ambiguous outcom
 including timeouts, disconnects, unexpected responses, or expired claims, are
 parked as `state=dead, outcome=unknown` without replay. Definite rejection or
 retry exhaustion is parked with `outcome=rejected`. Both retain pending capacity.
-Email/PagerDuty have no configured dispatcher here and remain pending with zero
-attempts. Public HTTP channels report `configured:true` when the optional HTTP client is
-installed; email/PagerDuty report false. Configuration does not imply a running
+Email has no configured dispatcher here and remains pending with zero attempts.
+Public HTTP channels report `configured:true` when the optional HTTP client is
+installed; email reports false. Configuration does not imply a running
 dispatch scheduler or successful provider connectivity.
 
 `notifications()` exposes metadata/outcome, never routing credentials or raw
@@ -362,8 +362,52 @@ protect the database and backups. Receipt snapshots can still contain event/aler
 context. Adapter failures and provider responses are sanitized; custom adapters
 must honor shared error contracts and avoid logging secrets themselves.
 
-Configured email/PagerDuty delivery, transition callbacks, calculated-value
+Configured email delivery, transition callbacks, calculated-value
 notification context, terminal retention and complete TS lifecycle parity remain
 required follow-up work. Standalone legacy channel helpers are not this durable
 dispatch protocol. HTTP auth/ingestion/query routes are unchanged; no public
 alert-management route is introduced. These methods are trusted host APIs.
+
+
+### PagerDuty Events v2
+
+Database-backed alerts support the original `type: "pagerduty"` channel with
+`integrationKey` and optional `severity` (`critical`, `error`, `warning`, `info`).
+The channel override takes precedence over alert severity. The endpoint defaults
+to `https://events.pagerduty.com/v2/enqueue`; trusted host configuration can select
+an alternative endpoint through `WatchFn(..., alerts={"pagerDutyEndpoint": url})`.
+URLs must use HTTP(S) without embedded credentials/fragments; use HTTPS for real
+provider traffic. This setting is not accepted from alert definitions or HTTP
+request bodies. Install the same `dispatch` extra and explicitly drive dispatch.
+
+Every trigger creates a persisted random incident ID. Trigger/acknowledgement/
+resolution jobs retain a stable hashed dedup key for that incident and a predecessor
+link per routing key. A successor cannot claim until its predecessor has a retained
+`delivered` receipt. New incidents get new dedup keys and, on the same route, wait
+for the previous incident's resolution receipt. This keeps random outbox ID order
+and concurrent workers from resolving before a trigger. Page and repeat dispatch
+cycles to revisit successors skipped before their predecessor completes.
+
+Provider success requires HTTP202 and a bounded JSON `status:success` receipt with
+the expected dedup key. This records **provider acceptance**, not independent proof
+of incident creation, paging, or human acknowledgement. Unknown outcomes remain
+parked without retry, even though PagerDuty deduplicates open incidents: a repeated
+trigger after external resolution could create another incident. Operator-verified
+`delivered` reconciliation unblocks successors. A `dismissed` predecessor does not
+prove delivery and keeps successors blocked; explicit chain cancellation/migration
+is not implemented yet. Unexpected bodies/statuses and rate limiting are parked
+conservatively rather than treated as successful delivery.
+
+Routing keys cannot change while the incident is active or its latest per-route
+job lacks a delivered receipt. Duplicate routes in one alert are rejected. Provider
+credentials are removed from terminal outbox receipts; nonsecret episode/predecessor
+metadata is retained to enforce ordering. Alert definitions still retain their
+configured credentials at rest. Drain and stop **all pre-PagerDuty Python writers**, including lifecycle writers,
+before enabling this provider. They share the `python-v1` marker, so that marker
+alone does not fence this rollout: older workers can enqueue jobs without required
+incident metadata or fail to advance the predecessor sequence. Such
+legacy PagerDuty jobs fail before claim/I/O and require explicit offline migration
+or cancellation; no automatic replay/backfill is performed.
+
+Terminal receipt retention must preserve predecessor links. No TTL deletion is
+introduced: unknown/rejected obligations and referenced receipts remain protected.

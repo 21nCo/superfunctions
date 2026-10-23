@@ -12,6 +12,7 @@ from superfunctions.db import AdapterError, CreateParams, FindOneParams, FindMan
 from .schema import ALERTS, OUTBOX
 from .alert_manager import Alert, EvaluationResult
 from .observations import validate, ranges, evaluate
+from .pagerduty import route_key
 from ..query import number
 
 
@@ -30,12 +31,14 @@ def encode(value, maximum=524288):
 
 
 class DurableAlertManager:
-    def __init__(self, storage, snapshot, namespace, max_pending=100, active=lambda: True):
+    def __init__(self, storage, snapshot, namespace, max_pending=100, active=lambda: True, delivery=None):
         if not text(namespace, 128): raise ValueError('Invalid alert namespace')
         if type(max_pending) is not int or not 1 <= max_pending <= 1000: raise ValueError('Invalid notification capacity')
         self.storage, self.snapshot, self.namespace = storage, snapshot, namespace
         self.max_pending = max_pending
         self.active = active
+        from ..models import AlertDeliveryConfig
+        self.delivery = delivery or AlertDeliveryConfig()
 
     def _where(self, identifier=None):
         return [WhereClause(field='namespace', value=self.namespace)] + ([WhereClause(field='id', value=identifier)] if identifier else [])
@@ -75,6 +78,7 @@ class DurableAlertManager:
             if not isinstance(recovery, dict) or type(recovery.get('enabled')) is not bool: raise ValueError('Invalid autoResolve')
             validate(recovery.get('condition'))
             canonical_condition(recovery['condition'])
+        pd_routes = set()
         for channel in value['channels']:
             if not isinstance(channel, dict) or channel.get('type') not in ('email', 'slack', 'webhook', 'pagerduty'):
                 raise ValueError('Unsupported alert channel')
@@ -85,7 +89,12 @@ class DurableAlertManager:
                     raise ValueError('Invalid alert webhook')
             if channel['type'] == 'email' and (not isinstance(channel.get('recipients'), list) or not 1 <= len(channel['recipients']) <= 100 or any(not text(item, 320) for item in channel['recipients'])):
                 raise ValueError('Invalid email recipients')
-            if channel['type'] == 'pagerduty' and not text(channel.get('integrationKey'), 1024): raise ValueError('Invalid integration key')
+            if channel['type'] == 'pagerduty':
+                if not text(channel.get('integrationKey'), 1024): raise ValueError('Invalid integration key')
+                if channel.get('severity', 'warning') not in ('critical', 'error', 'warning', 'info'): raise ValueError('Invalid PagerDuty severity')
+                route = route_key(channel)
+                if route in pd_routes: raise ValueError('Duplicate PagerDuty routing key')
+                pd_routes.add(route)
         allowed = ('name', 'condition', 'channels', 'enabled', 'severity', 'description', 'runbook', 'tags', 'autoResolve')
         value = {key: value[key] for key in allowed if key in value}
         encode(value, 32768)
@@ -111,6 +120,14 @@ class DurableAlertManager:
                 raise ValueError('Invalid stored alert note')
         if record['state'] == 'acknowledged' and not text(record.get('acknowledgedBy'), 255): raise ValueError('Invalid stored acknowledgement')
         if record['state'] == 'resolved' and not text(record.get('resolvedBy'), 255): raise ValueError('Invalid stored resolution')
+        if 'pagerDuty' in record:
+            sequence = record['pagerDuty']
+            if (not isinstance(sequence, dict) or not text(sequence.get('episode'), 128)
+                    or not isinstance(sequence.get('tails'), dict) or len(sequence['tails']) > 10
+                    or any(not text(key, 64) or not text(value, 128) for key, value in sequence['tails'].items())
+                    or not isinstance(sequence.get('settled', []), list) or len(sequence.get('settled', [])) > 10
+                    or any(not isinstance(key, str) or key not in sequence['tails'] for key in sequence.get('settled', []))):
+                raise ValueError('Invalid PagerDuty incident state')
         self._definition(record)
         return record
 
@@ -124,7 +141,8 @@ class DurableAlertManager:
         value = deepcopy(record)
         from importlib.util import find_spec
         http_available = find_spec('httpx') is not None
-        value['channels'] = [{'type': item['type'], 'configured': http_available and item['type'] in ('webhook', 'slack')} for item in value['channels']]
+        value['channels'] = [{'type': item['type'], 'configured': http_available and item['type'] in ('webhook', 'slack', 'pagerduty')} for item in value['channels']]
+        value.pop('pagerDuty', None)
         return value
 
     def _legacy(self, record):
@@ -205,21 +223,43 @@ class DurableAlertManager:
             if transition and record['pendingNotifications'] + len(record['channels']) > self.max_pending:
                 raise ValueError('Alert notification capacity reached; dispatcher required')
             record['updatedAt'] = now
-            if transition: record['pendingNotifications'] += len(record['channels'])
-            count = await tx.update_many(UpdateManyParams(model=ALERTS, where=self._where(identifier) + [WhereClause(field='revision', value=row['revision'])], data={'revision': row['revision'] + 1, 'state': record['state'], 'payload': encode(record)}))
-            if count != 1: raise AlertConflict('Concurrent alert update; retry')
+            jobs = []
             if transition:
+                record['pendingNotifications'] += len(record['channels'])
+                previous_sequence = record.get('pagerDuty')
+                if transition == 'triggered':
+                    record['pagerDuty'] = {'episode': str(uuid4()), 'tails': {}, 'settled': []}
                 for channel in record['channels']:
                     job = str(uuid4())
                     notification = {'id': job, 'event': transition, 'timestamp': now, 'alert': {key: record[key] for key in ('id', 'name', 'state', 'description', 'runbook', 'triggeredAt') if key in record}}
                     notification['alert']['severity'] = record.get('severity', 'warning')
-                    await tx.create(CreateParams(model=OUTBOX, data={'id': job, 'namespace': self.namespace, 'alertId': identifier, 'revision': 0, 'state': 'pending', 'availableAt': int(now), 'leaseToken': None, 'attempts': 0, 'payload': encode({'notification': notification, 'channel': channel})}))
+                    payload = {'notification': notification, 'channel': channel}
+                    if channel['type'] == 'pagerduty' and 'pagerDuty' in record:
+                        sequence, route = record['pagerDuty'], route_key(channel)
+                        prior = previous_sequence if transition == 'triggered' else sequence
+                        predecessor = prior['tails'].get(route) if prior else None
+                        # A route added to a legacy active incident has no known trigger.
+                        if transition == 'triggered' or predecessor:
+                            payload['pagerDuty'] = {'episode': sequence['episode'], 'route': route, 'predecessor': predecessor, 'predecessorEpisode': prior['episode'] if predecessor else None}
+                            sequence['tails'][route] = job
+                            sequence['settled'] = [key for key in sequence.get('settled', []) if key != route]
+                    jobs.append({'id': job, 'namespace': self.namespace, 'alertId': identifier, 'revision': 0, 'state': 'pending', 'availableAt': int(now), 'leaseToken': None, 'attempts': 0, 'payload': encode(payload)})
+            count = await tx.update_many(UpdateManyParams(model=ALERTS, where=self._where(identifier) + [WhereClause(field='revision', value=row['revision'])], data={'revision': row['revision'] + 1, 'state': record['state'], 'payload': encode(record)}))
+            if count != 1: raise AlertConflict('Concurrent alert update; retry')
+            for job in jobs:
+                await tx.create(CreateParams(model=OUTBOX, data=job))
             return record
         return self._run(action)
 
     def update(self, identifier, definition):
         definition = self._definition(definition)
         def change(record, now):
+            before = {route_key(channel) for channel in record['channels'] if channel['type'] == 'pagerduty'}
+            after = {route_key(channel) for channel in definition['channels'] if channel['type'] == 'pagerduty'}
+            sequence = record.get('pagerDuty', {})
+            unsettled = set(sequence.get('tails', {})) - set(sequence.get('settled', []))
+            if before != after and (record['state'] in ('triggered', 'acknowledged') or unsettled):
+                raise ValueError('PagerDuty routing keys cannot change before incident delivery is complete')
             for key in ('description', 'severity', 'tags', 'runbook', 'autoResolve'): record.pop(key, None)
             record.update(dict(definition, enabled=definition.get('enabled', record['enabled'])))
         return self._public(self._mutate(identifier, change))
@@ -299,7 +339,11 @@ class DurableAlertManager:
         if after is not None and not text(after, 128): raise ValueError('Invalid notification cursor')
         async def action(tx):
             rows = await tx.find_many(FindManyParams(model=OUTBOX, where=self._where() + ([WhereClause(field='id', operator='gt', value=after)] if after else []), order_by=[OrderBy(field='id')], limit=limit))
-            return [dict({key: row[key] for key in ('id', 'alertId', 'state', 'attempts', 'availableAt')}, outcome=json.loads(row['payload']).get('delivery', {}).get('outcome', 'pending')) for row in rows]
+            result = []
+            for row in rows:
+                payload = json.loads(row['payload'])
+                result.append(dict({key: row[key] for key in ('id', 'alertId', 'state', 'attempts', 'availableAt')}, event=payload['notification']['event'], outcome=payload.get('delivery', {}).get('outcome', 'pending')))
+            return result
         return self._run(action)
 
     def process_notifications(self, **kwargs):

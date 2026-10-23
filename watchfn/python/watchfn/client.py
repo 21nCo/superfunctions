@@ -42,7 +42,7 @@ class WatchFn:
     @property
     def alerts(self):
         if self._alerts is None:
-            self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name, active=lambda: self.is_started) if isinstance(self.storage, DatabaseStorage) else AlertManager(snapshot=self._alert_snapshot)
+            self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name, active=lambda: self.is_started, delivery=self.config.alerts) if isinstance(self.storage, DatabaseStorage) else AlertManager(snapshot=self._alert_snapshot)
         return self._alerts
 
     def _alert_snapshot(self, requested, now, maximum):
