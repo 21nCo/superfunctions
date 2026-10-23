@@ -1,7 +1,6 @@
 """Terminal retention preserves dependency and dead-letter semantics in storage."""
 from flowfn.queue.queue import Queue
 from flowfn.queue.types import JobOptions, JobStatus
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def test_retention_keeps_dependency_until_last_waiter_completes(adapters):

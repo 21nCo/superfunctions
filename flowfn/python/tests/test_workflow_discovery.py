@@ -2,7 +2,7 @@ import pytest
 
 from flowfn import create_flow
 from flowfn.adapters.memory import MemoryAdapter
-from flowfn.workflow.types import WorkflowExecution, ExecutionStatus, ListOptions
+from flowfn.workflow.types import ExecutionStatus, ListOptions, WorkflowExecution
 
 
 async def test_workflow_discovery_reads_adapter_and_enforces_definition_scope():

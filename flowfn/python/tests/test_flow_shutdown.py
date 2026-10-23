@@ -125,7 +125,6 @@ async def test_admitted_workflow_does_not_start_handler_after_close(monkeypatch)
     assert adapter.cleaned==1
 
 
-from tests.test_durable_adapters import adapters  # noqa: E402,F401
 
 
 @pytest.mark.parametrize('operation',['enqueue','publish'])

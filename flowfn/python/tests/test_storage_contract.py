@@ -1,8 +1,9 @@
 import pytest
+
 from flowfn.patterns.priority import PriorityQueue
-from flowfn.storage.event_log import MemoryEventLog, Event, FilterOptions
-from flowfn.storage.job_storage import MemoryJobStorage, ListOptions
 from flowfn.queue.types import Job
+from flowfn.storage.event_log import Event, FilterOptions, MemoryEventLog
+from flowfn.storage.job_storage import ListOptions, MemoryJobStorage
 
 
 def test_priority_comparator_and_fifo_ties():

@@ -1,24 +1,26 @@
 """Stream implementation."""
 
-from typing import Any, Optional, Callable, Awaitable
-from flowfn.stream.types import (
-    Message,
-    PublishOptions,
-    SubscribeOptions,
-    MessageHandler,
-    ConsumerOptions,
-    StreamInfo,
-    TrimStrategy,
-    StreamOptions,
-)
-from flowfn.adapters.base import FlowAdapter
 import asyncio
+import time
+import uuid
+from collections.abc import Awaitable
+from typing import Any, Callable, Optional
+
+from flowfn.adapters.base import FlowAdapter
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
 from flowfn.core.telemetry import OperationObserver
 from flowfn.monitoring.health import EventTracker
-import uuid
-import time
+from flowfn.stream.types import (
+    ConsumerOptions,
+    Message,
+    MessageHandler,
+    PublishOptions,
+    StreamInfo,
+    StreamOptions,
+    SubscribeOptions,
+    TrimStrategy,
+)
 
 
 class Stream:

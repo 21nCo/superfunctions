@@ -1,6 +1,8 @@
 """Stream type definitions."""
 
-from typing import Any, Optional, Callable, Awaitable
+from collections.abc import Awaitable
+from typing import Any, Callable, Optional
+
 from pydantic import BaseModel, Field, PrivateAttr
 
 

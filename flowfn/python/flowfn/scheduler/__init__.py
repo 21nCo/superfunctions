@@ -1,18 +1,20 @@
 """Process-local scheduling with explicit lifecycle and timezone-aware cron."""
 
 import asyncio
-import math
 import hashlib
 import json
+import math
+from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
+
 from flowfn.adapters.base import FlowAdapter
-from flowfn.adapters.workflow_state import WorkflowLeaseError
-from flowfn.workflow.types import WorkflowExecution, ExecutionStatus
+from flowfn.adapters.workflow_state import WorkflowLeaseError as WorkflowLeaseError
+from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
 
 Handler = Callable[[Any], Awaitable[Any]]
 
@@ -191,7 +193,7 @@ class Scheduler:
                     continue
                 task = asyncio.current_task()
 
-                async def renew(record: WorkflowExecution) -> None:
+                async def renew(record: WorkflowExecution, owner_task: Optional[asyncio.Task[Any]] = task) -> None:
                     while True:
                         await asyncio.sleep(self._lease_ms/3000)
                         try:
@@ -200,8 +202,8 @@ class Scheduler:
                                 continue
                         except Exception:
                             pass
-                        if task is not None:
-                            task.cancel()
+                        if owner_task is not None:
+                            owner_task.cancel()
                         return
 
                 heartbeat = asyncio.create_task(renew(owner))

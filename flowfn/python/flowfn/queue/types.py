@@ -1,8 +1,10 @@
 """Queue type definitions."""
 
-from typing import Any, Literal, Optional, Callable, Awaitable, Union
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from collections.abc import Awaitable
 from enum import Enum
+from typing import Any, Callable, Optional, Union
+
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 
 class JobLeaseError(ValueError):

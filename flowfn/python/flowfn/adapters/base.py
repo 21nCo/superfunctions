@@ -1,10 +1,10 @@
 """Base adapter protocol."""
 
 import asyncio
-from typing import Any, Protocol, Optional, TYPE_CHECKING
-from flowfn.queue.types import Job, JobStatus, QueueStats
-from flowfn.stream.types import Message, StreamInfo, ConsumerOptions, TrimStrategy
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
+from flowfn.queue.types import Job, JobStatus, QueueStats
+from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 
 if TYPE_CHECKING:
     from flowfn.queue.dlq import DLQJob

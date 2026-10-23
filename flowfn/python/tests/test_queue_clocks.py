@@ -5,8 +5,7 @@ import time
 import pytest
 
 from flowfn.queue.queue import Queue
-from flowfn.queue.types import Job, JobOptions, JobStatus, BackoffOptions, BackoffType
-from tests.test_durable_adapters import adapters  # noqa: F401
+from flowfn.queue.types import BackoffOptions, BackoffType, Job, JobOptions, JobStatus
 
 
 @pytest.mark.parametrize('skew', [-3_600_000, 3_600_000])
@@ -15,7 +14,8 @@ async def test_queue_clock_relative_creation_retry_and_claim(adapters, skew, dep
     a, b = adapters
     a.reclaim_after_ms = b.reclaim_after_ms = 10000
     queue = Queue('clock', a)
-    now = lambda: int(time.time() * 1000)
+    def now():
+        return int(time.time() * 1000)
     queue._now = lambda: now() + skew
     if dependencies:
         await a.enqueue('clock', Job(id='parent', name='parent', data={}, timestamp=now()))

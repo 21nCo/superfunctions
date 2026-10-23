@@ -5,12 +5,11 @@ import asyncio
 import pytest
 
 from flowfn import create_flow
-from flowfn.core.metrics import MetricsManager
 from flowfn.adapters.memory import MemoryAdapter
+from flowfn.core.metrics import MetricsManager
 from flowfn.queue.types import JobOptions
 from flowfn.stream.types import ConsumerOptions
-from flowfn.workflow.types import WorkflowExecution, ExecutionStatus
-from tests.test_durable_adapters import adapters  # noqa: F401
+from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
 
 
 async def test_queue_metrics_record_committed_completion_even_with_retention(monkeypatch):

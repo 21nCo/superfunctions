@@ -1,9 +1,11 @@
 """Optional, application-owned tracing with failure-isolated error callbacks."""
 
 import asyncio
+import contextlib
 import importlib
 import inspect
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from collections.abc import Awaitable
+from typing import Any, Callable, Optional, TypeVar
 
 T = TypeVar("T")
 
@@ -98,14 +100,12 @@ class OperationObserver:
             raise
         finally:
             if manager is not None:
-                try:
+                with contextlib.suppress(Exception):
                     manager.__exit__(
                         type(error) if error else None,
                         error,
                         error.__traceback__ if error else None,
                     )
-                except Exception:
-                    pass
 
 
 class ObservedAdapter:

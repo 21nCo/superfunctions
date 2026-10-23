@@ -5,9 +5,9 @@ import uuid
 
 import pytest
 
-from flowfn.queue.types import Job, JobOptions, JobStatus
 from flowfn.queue.dlq import DLQManager
-from flowfn.stream.types import Message, ConsumerOptions, TrimStrategy
+from flowfn.queue.types import Job, JobOptions, JobStatus
+from flowfn.stream.types import ConsumerOptions, Message, TrimStrategy
 
 
 @pytest.fixture(params=['redis', 'postgres'])
@@ -38,12 +38,11 @@ async def adapters(request):
                 await client.client.delete(*keys)
         else:
             pool = await client._database()
-            async with pool.acquire() as connection:
-                async with connection.transaction():
-                    for table in ('job_edges','job_outcomes','dead_letters','jobs','queue_layout','pending','groups','events','workflows','state'):
-                        if not await connection.fetchval("SELECT to_regclass($1)",'flowfn_py_'+table):
-                            continue
-                        await connection.execute('DELETE FROM flowfn_py_' + table + ' WHERE namespace=$1',namespace)
+            async with pool.acquire() as connection, connection.transaction():
+                for table in ('job_edges','job_outcomes','dead_letters','jobs','queue_layout','pending','groups','events','workflows','state'):
+                    if not await connection.fetchval("SELECT to_regclass($1)",'flowfn_py_'+table):
+                        continue
+                    await connection.execute('DELETE FROM flowfn_py_' + table + ' WHERE namespace=$1',namespace)
         await client.cleanup()
 
 
@@ -104,7 +103,7 @@ async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters):
 
 async def test_durable_snapshot_new_connection_and_namespaces(adapters):
     a, b = adapters
-    from flowfn.workflow.types import WorkflowExecution, ExecutionStatus
+    from flowfn.workflow.types import ExecutionStatus, WorkflowExecution
     job = Job(id='parent', name='parent', data={'nested':[1]}, timestamp=0)
     await a.enqueue('q',job)
     job.data['nested'].append(2)
@@ -159,7 +158,8 @@ async def test_job_lease_recovery_fences_old_completion(adapters):
 async def test_custom_backoff_restored_before_claim(adapters):
     from flowfn.queue.types import BackoffOptions, BackoffType
     a,b = adapters
-    strategy = lambda attempt: attempt * 7
+    def strategy(attempt):
+        return attempt * 7
     a.backoff_strategies['custom'] = strategy
     job = Job(id='custom', name='custom', data={}, timestamp=0,
               opts=JobOptions(backoff=BackoffOptions(type=BackoffType.CUSTOM,strategy=strategy)))

@@ -2,9 +2,9 @@
 FlowFn - Distributed job queues, event streams, and workflow orchestration for Python.
 """
 
-from flowfn.core.flow import FlowFn, create_flow, FlowFnConfig
-
 from importlib.metadata import PackageNotFoundError, version
+
+from flowfn.core.flow import FlowFn, FlowFnConfig, create_flow
 
 try:
     __version__ = version("flowfn")

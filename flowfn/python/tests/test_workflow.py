@@ -1,7 +1,9 @@
 """Workflow tests."""
 
-import pytest
 import asyncio
+
+import pytest
+
 from flowfn import create_flow
 
 

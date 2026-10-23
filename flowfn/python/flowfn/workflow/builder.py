@@ -1,7 +1,8 @@
 """Workflow builder implementation."""
 
-from typing import Any, Optional, Callable, Awaitable, TYPE_CHECKING
-from flowfn.workflow.types import StepHandler, ConditionFunc
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+from flowfn.workflow.types import ConditionFunc, StepHandler
 
 if TYPE_CHECKING:
     from flowfn.workflow.workflow import Workflow

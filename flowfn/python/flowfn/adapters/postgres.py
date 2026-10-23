@@ -3,13 +3,15 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Any, Callable, Optional
+from collections.abc import Awaitable, Callable
+from functools import partial
+from typing import Any, Optional
 
 import asyncpg  # type: ignore[import-untyped]
 
 from flowfn.adapters.durable_queues import DurableQueues
-from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.queue.dlq import DLQJob
+from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 from flowfn.workflow.types import WorkflowExecution
 
@@ -102,16 +104,15 @@ class PostgresAdapter(DurableQueues):
     async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Optional[WorkflowExecution]:
         from flowfn.adapters.workflow_state import transition
         pool = await self._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,1))",json.dumps([self.namespace,execution_id]))
-                raw = await connection.fetchval('SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND id=$2 FOR UPDATE',self.namespace,execution_id)
-                current = WorkflowExecution.model_validate_json(raw) if raw else None
-                now = await connection.fetchval("SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint")
-                result = transition(current,operation,payload,now)
-                if result is not None:
-                    await connection.execute('INSERT INTO flowfn_py_workflows VALUES($1,$2,$3) ON CONFLICT(namespace,id) DO UPDATE SET payload=EXCLUDED.payload',self.namespace,execution_id,result.model_dump_json())
-                return result
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,1))",json.dumps([self.namespace,execution_id]))
+            raw = await connection.fetchval('SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND id=$2 FOR UPDATE',self.namespace,execution_id)
+            current = WorkflowExecution.model_validate_json(raw) if raw else None
+            now = await connection.fetchval("SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint")
+            result = transition(current,operation,payload,now)
+            if result is not None:
+                await connection.execute('INSERT INTO flowfn_py_workflows VALUES($1,$2,$3) ON CONFLICT(namespace,id) DO UPDATE SET payload=EXCLUDED.payload',self.namespace,execution_id,result.model_dump_json())
+            return result
 
     async def list_workflow_states(self, workflow_id: str) -> list[WorkflowExecution]:
         pool = await self._database()
@@ -123,10 +124,9 @@ class PostgresAdapter(DurableQueues):
 
     async def publish(self, stream: str, message: Message) -> str:
         pool = await self._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await self._lock_stream(connection, stream)
-                await connection.execute('INSERT INTO flowfn_py_events(namespace,stream,payload) VALUES($1,$2,$3)', self.namespace, stream, message.model_dump_json())
+        async with pool.acquire() as connection, connection.transaction():
+            await self._lock_stream(connection, stream)
+            await connection.execute('INSERT INTO flowfn_py_events(namespace,stream,payload) VALUES($1,$2,$3)', self.namespace, stream, message.model_dump_json())
         return message.id
 
     async def get_stream_messages(self, stream: str) -> list[Message]:
@@ -146,23 +146,22 @@ class PostgresAdapter(DurableQueues):
 
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
         pool = await self._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await self._lock_stream(connection, stream)
-                # Group cursors and pending claims must remain stable while trimming.
-                await connection.fetch('SELECT name FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 FOR UPDATE', self.namespace, stream)
-                result = await connection.fetch('''
-                    WITH ranked AS (
-                      SELECT id, created_at, row_number() OVER(ORDER BY id DESC) AS position
-                      FROM flowfn_py_events WHERE namespace=$1 AND stream=$2
-                    ) DELETE FROM flowfn_py_events e USING ranked r
-                    WHERE e.id=r.id AND (($3::bigint IS NOT NULL AND r.position>$3)
-                        OR ($4::double precision IS NOT NULL AND r.created_at<clock_timestamp()-$4*interval '1 second'))
-                    AND NOT EXISTS(SELECT 1 FROM flowfn_py_pending p WHERE p.event_id=e.id)
-                    AND NOT EXISTS(SELECT 1 FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2 AND g.cursor<e.id)
-                    RETURNING e.id
-                ''', self.namespace, stream, strategy.max_length, strategy.max_age_seconds)
-                return len(result)
+        async with pool.acquire() as connection, connection.transaction():
+            await self._lock_stream(connection, stream)
+            # Group cursors and pending claims must remain stable while trimming.
+            await connection.fetch('SELECT name FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 FOR UPDATE', self.namespace, stream)
+            result = await connection.fetch('''
+                WITH ranked AS (
+                  SELECT id, created_at, row_number() OVER(ORDER BY id DESC) AS position
+                  FROM flowfn_py_events WHERE namespace=$1 AND stream=$2
+                ) DELETE FROM flowfn_py_events e USING ranked r
+                WHERE e.id=r.id AND (($3::bigint IS NOT NULL AND r.position>$3)
+                    OR ($4::double precision IS NOT NULL AND r.created_at<clock_timestamp()-$4*interval '1 second'))
+                AND NOT EXISTS(SELECT 1 FROM flowfn_py_pending p WHERE p.event_id=e.id)
+                AND NOT EXISTS(SELECT 1 FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2 AND g.cursor<e.id)
+                RETURNING e.id
+            ''', self.namespace, stream, strategy.max_length, strategy.max_age_seconds)
+            return len(result)
 
     async def subscribe(self, stream: str, handler: Any) -> 'PostgresSubscription':
         pool = await self._database()
@@ -176,12 +175,11 @@ class PostgresAdapter(DurableQueues):
                       options: Optional[ConsumerOptions] = None) -> 'PostgresSubscription':
         options = options or ConsumerOptions(group_id=group)
         pool = await self._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await self._lock_stream(connection, stream)
-                await connection.execute('''INSERT INTO flowfn_py_groups VALUES($1,$2,$3,
-                    CASE WHEN $4 THEN 0 ELSE (SELECT COALESCE(max(id),0) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) END)
-                    ON CONFLICT DO NOTHING''', self.namespace, stream, group, options.from_beginning)
+        async with pool.acquire() as connection, connection.transaction():
+            await self._lock_stream(connection, stream)
+            await connection.execute('''INSERT INTO flowfn_py_groups VALUES($1,$2,$3,
+                CASE WHEN $4 THEN 0 ELSE (SELECT COALESCE(max(id),0) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) END)
+                ON CONFLICT DO NOTHING''', self.namespace, stream, group, options.from_beginning)
         subscription = PostgresSubscription(self,stream,handler,group=group,consumer=consumer,options=options)
         self._subscriptions.add(subscription)
         subscription.start()
@@ -225,31 +223,29 @@ class PostgresSubscription:
         namespace = self.adapter.namespace
         if self.group is None:
             return await pool.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE namespace=$1 AND stream=$2 AND id>$3 ORDER BY id LIMIT 1', namespace,self.stream,self.cursor)
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await self.adapter._lock_stream(connection, self.stream)
-                cursor = await connection.fetchval('SELECT cursor FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 AND name=$3 FOR UPDATE', namespace,self.stream,self.group)
-                pending = await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND expires_at<=clock_timestamp() ORDER BY event_id LIMIT 1 FOR UPDATE SKIP LOCKED', namespace,self.stream,self.group)
-                if pending is not None:
-                    await connection.execute("UPDATE flowfn_py_pending SET consumer=$4,expires_at=clock_timestamp()+$5*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$6",namespace,self.stream,self.group,delivery_owner,self.adapter.reclaim_after_ms,pending)
-                    return await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE id=$1',pending)
-                row = await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE namespace=$1 AND stream=$2 AND id>$3 ORDER BY id LIMIT 1', namespace,self.stream,cursor)
-                if row is not None:
-                    await connection.execute('UPDATE flowfn_py_groups SET cursor=$4 WHERE namespace=$1 AND stream=$2 AND name=$3',namespace,self.stream,self.group,row['id'])
-                    await connection.execute("INSERT INTO flowfn_py_pending VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6*interval '1 millisecond')",namespace,self.stream,self.group,row['id'],delivery_owner,self.adapter.reclaim_after_ms)
-                return row
+        async with pool.acquire() as connection, connection.transaction():
+            await self.adapter._lock_stream(connection, self.stream)
+            cursor = await connection.fetchval('SELECT cursor FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 AND name=$3 FOR UPDATE', namespace,self.stream,self.group)
+            pending = await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND expires_at<=clock_timestamp() ORDER BY event_id LIMIT 1 FOR UPDATE SKIP LOCKED', namespace,self.stream,self.group)
+            if pending is not None:
+                await connection.execute("UPDATE flowfn_py_pending SET consumer=$4,expires_at=clock_timestamp()+$5*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$6",namespace,self.stream,self.group,delivery_owner,self.adapter.reclaim_after_ms,pending)
+                return await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE id=$1',pending)
+            row = await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE namespace=$1 AND stream=$2 AND id>$3 ORDER BY id LIMIT 1', namespace,self.stream,cursor)
+            if row is not None:
+                await connection.execute('UPDATE flowfn_py_groups SET cursor=$4 WHERE namespace=$1 AND stream=$2 AND name=$3',namespace,self.stream,self.group,row['id'])
+                await connection.execute("INSERT INTO flowfn_py_pending VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6*interval '1 millisecond')",namespace,self.stream,self.group,row['id'],delivery_owner,self.adapter.reclaim_after_ms)
+            return row
 
     async def _owned(self, identity: int, delivery_owner: str, acknowledge: bool = False) -> bool:
         pool = await self.adapter._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                # Evaluate expiry only after taking the row lock: a blocked
-                # renewal cannot revive a claim using a timestamp from before its wait.
-                await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 FOR UPDATE',self.adapter.namespace,self.stream,self.group,identity)
-                if acknowledge:
-                    result = await connection.execute('DELETE FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()', self.adapter.namespace,self.stream,self.group,identity,delivery_owner)
-                else:
-                    result = await connection.execute("UPDATE flowfn_py_pending SET expires_at=clock_timestamp()+$6*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()", self.adapter.namespace,self.stream,self.group,identity,delivery_owner,self.adapter.reclaim_after_ms)
+        async with pool.acquire() as connection, connection.transaction():
+            # Evaluate expiry only after taking the row lock: a blocked
+            # renewal cannot revive a claim using a timestamp from before its wait.
+            await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 FOR UPDATE',self.adapter.namespace,self.stream,self.group,identity)
+            if acknowledge:
+                result = await connection.execute('DELETE FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()', self.adapter.namespace,self.stream,self.group,identity,delivery_owner)
+            else:
+                result = await connection.execute("UPDATE flowfn_py_pending SET expires_at=clock_timestamp()+$6*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()", self.adapter.namespace,self.stream,self.group,identity,delivery_owner,self.adapter.reclaim_after_ms)
         return bool(result != ('DELETE 0' if acknowledge else 'UPDATE 0'))
 
     async def _worker(self) -> None:
@@ -280,16 +276,16 @@ class PostgresSubscription:
                             target.set_result(requeue)
 
                 message._acknowledge = settle
-                async def process() -> None:
-                    await self.handler(message)
+                async def process(payload: Message = message, outcome: asyncio.Future[bool] = decision, acknowledge: Callable[[bool], Awaitable[None]] = settle) -> None:
+                    await self.handler(payload)
                     if self.options is None or self.options.auto_commit:
-                        await settle(False)
-                    await decision
+                        await acknowledge(False)
+                    await outcome
 
                 try:
                     if self.group:
                         from flowfn.adapters.stream_lease import run_with_lease
-                        await run_with_lease(process,lambda: self._owned(row['id'],delivery_owner),
+                        await run_with_lease(process,partial(self._owned, row['id'], delivery_owner),
                                              self.adapter.reclaim_after_ms,claim_started)
                     else:
                         await process()

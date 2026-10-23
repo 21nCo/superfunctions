@@ -8,7 +8,6 @@ import pytest
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.stream.stream import Stream
 from flowfn.stream.types import ConsumerOptions, Message
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def seed_old(adapter,name):

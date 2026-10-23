@@ -42,6 +42,8 @@ postgres = [
     "asyncpg>=0.29.0",
 ]
 dev = [
+    "redis>=5.0.0",
+    "asyncpg>=0.29.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
@@ -83,6 +85,8 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
+# setuptools creates a duplicate package here before CI type checking.
+exclude = ["^build/"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true

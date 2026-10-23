@@ -1,7 +1,8 @@
 """Track admitted operations until their storage transitions finish."""
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
+from typing import Callable
 
 
 class Admissions:

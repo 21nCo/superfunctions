@@ -6,8 +6,7 @@ import time
 import pytest
 
 from flowfn.adapters.memory import MemoryAdapter
-from flowfn.queue.types import Job,JobOptions,JobStatus
-from tests.test_durable_adapters import adapters  # noqa: F401
+from flowfn.queue.types import Job, JobOptions, JobStatus
 
 
 async def test_explicit_atomic_legacy_migration_preserves_history_and_claims(adapters):
@@ -174,16 +173,15 @@ async def test_postgres_row_lock_wait_cannot_revive_expired_owner(adapters,opera
     await a.release_job_lease('locked',claim)
     pool=await a._database()
     lock=json.dumps([a.namespace,'locked'])
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            await connection.execute("UPDATE flowfn_py_jobs SET lease=(EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint+300 WHERE namespace=$1 AND queue='locked' AND id='one'",a.namespace)
-            if operation=='renew':
-                task=asyncio.create_task(pool.fetchval('SELECT flowfn_py_renew_v2($1,$2,$3,$4,$5,$6)',a.namespace,'locked',lock,claim.id,claim.lease_token,30000))
-            else:
-                claim.state=JobStatus.COMPLETED
-                task=asyncio.create_task(pool.fetchval('SELECT flowfn_py_update_v2($1,$2,$3,$4,$5,$6)',a.namespace,'locked',lock,claim.model_dump_json(),30000,'null'))
-            await asyncio.sleep(.6)
-            assert not task.done(), 'The transition must be waiting for the held job row'
+    async with pool.acquire() as connection, connection.transaction():
+        await connection.execute("UPDATE flowfn_py_jobs SET lease=(EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint+300 WHERE namespace=$1 AND queue='locked' AND id='one'",a.namespace)
+        if operation=='renew':
+            task=asyncio.create_task(pool.fetchval('SELECT flowfn_py_renew_v2($1,$2,$3,$4,$5,$6)',a.namespace,'locked',lock,claim.id,claim.lease_token,30000))
+        else:
+            claim.state=JobStatus.COMPLETED
+            task=asyncio.create_task(pool.fetchval('SELECT flowfn_py_update_v2($1,$2,$3,$4,$5,$6)',a.namespace,'locked',lock,claim.model_dump_json(),30000,'null'))
+        await asyncio.sleep(.6)
+        assert not task.done(), 'The transition must be waiting for the held job row'
     assert await task == 0
     row=await pool.fetchrow("SELECT state,lease FROM flowfn_py_jobs WHERE namespace=$1 AND queue='locked' AND id='one'",a.namespace)
     assert row['state']=='active'

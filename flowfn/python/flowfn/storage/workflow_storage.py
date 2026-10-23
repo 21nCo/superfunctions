@@ -1,7 +1,8 @@
 """Workflow storage abstraction."""
 
 from typing import Optional, Protocol
-from flowfn.workflow.types import WorkflowExecution, ExecutionStatus, ListOptions
+
+from flowfn.workflow.types import ExecutionStatus, ListOptions, WorkflowExecution
 
 
 class WorkflowStorage(Protocol):

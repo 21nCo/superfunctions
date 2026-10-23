@@ -1,24 +1,26 @@
 """Workflow execution engine."""
 
-from typing import Any, Optional
-from flowfn.workflow.types import (
-    WorkflowExecution,
-    WorkflowEvent,
-    ExecutionStatus,
-    WorkflowContext,
-    ListOptions,
-)
-from flowfn.adapters.base import FlowAdapter
 import asyncio
+import hashlib
+import json
+import time
+import uuid
+from copy import copy
+from functools import partial
+from typing import Any, Optional
+
+from flowfn.adapters.base import FlowAdapter
+from flowfn.adapters.workflow_state import WorkflowLeaseError
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.telemetry import OperationObserver
 from flowfn.monitoring.health import EventTracker
-import uuid
-import time
-import hashlib
-import json
-from copy import copy
-from flowfn.adapters.workflow_state import WorkflowLeaseError
+from flowfn.workflow.types import (
+    ExecutionStatus,
+    ListOptions,
+    WorkflowContext,
+    WorkflowEvent,
+    WorkflowExecution,
+)
 
 
 class Workflow:
@@ -397,7 +399,7 @@ class Workflow:
             execution = self._executions[execution_id]
             execution.state["sagas"].remove(saga["path"])
             try:
-                await self._observer.run("flowfn.workflow.compensate", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution_id, "flowfn.step.name": saga["name"]}, lambda: saga["compensate"](context), carrier=execution.trace_context, consumer=True)
+                await self._observer.run("flowfn.workflow.compensate", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution_id, "flowfn.step.name": saga["name"]}, partial(saga["compensate"], context), carrier=execution.trace_context, consumer=True)
                 await self._log_event(execution_id, "saga.compensated", {"saga": saga["name"]})
             except Exception as error:
                 await self._log_event(execution_id, "saga.compensation_failed", {"saga": saga["name"], "error": str(error)})

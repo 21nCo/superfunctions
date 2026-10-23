@@ -1,5 +1,7 @@
 import asyncio
+
 import pytest
+
 from flowfn import create_flow
 from flowfn.queue.types import JobOptions, JobStatus
 
@@ -102,7 +104,7 @@ async def test_terminal_retention_count_and_failed_dead_letter_survives_removal(
         return None
 
     retained_ids = []
-    for i in range(4):
+    for _i in range(4):
         job = await queue.add("success", {}, JobOptions(remove_on_complete=2))
         await flow._adapter.dequeue(queue.name)
         await queue._process_job(job, succeed)

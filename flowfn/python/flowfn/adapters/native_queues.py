@@ -8,8 +8,8 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-from flowfn.adapters.memory import MemoryAdapter
 from flowfn.adapters.durable_queues import DurableQueues
+from flowfn.adapters.memory import MemoryAdapter
 from flowfn.queue.types import Job, JobStatus
 
 
@@ -92,6 +92,7 @@ async def apply_native(owner: DurableQueues, tx: QueueTransaction, queue: str,
 
 async def failure_record(queue: str, job: Job) -> str:
     from dataclasses import asdict
+
     from flowfn.queue.dlq import DLQManager
     if job.state!=JobStatus.FAILED:
         return 'null'

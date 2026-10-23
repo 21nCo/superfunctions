@@ -1,14 +1,14 @@
 """PostgreSQL per-job queue persistence and transactional indexes."""
-import json
 import hashlib
+import json
 import uuid
-from typing import Any, Optional
 from dataclasses import asdict
+from typing import Any, Optional
 
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.adapters.native_queues import QueueTransaction, apply_native
-from flowfn.queue.types import Job, JobStatus, JobOptions, JobLeaseError
 from flowfn.queue.dlq import DLQJob
+from flowfn.queue.types import Job, JobLeaseError, JobOptions, JobStatus
 
 _SCHEMA = '''
 CREATE TABLE IF NOT EXISTS flowfn_py_queue_layout(namespace TEXT PRIMARY KEY, version INTEGER NOT NULL);
@@ -90,7 +90,8 @@ class PostgresQueueTransaction(QueueTransaction):
         }
         for key,record in after._dead_letters.items():
             if before._dead_letters.get(key)!=record:
-                value=asdict(record);value['options']=record.options.model_dump(mode='json')
+                value=asdict(record)
+                value['options']=record.options.model_dump(mode='json')
                 delta['dlq'].append(value)
         if any(delta.values()):
             await self.connection.execute('SELECT flowfn_py_apply_v2($1,$2,$3)',self.namespace,self.queue,json.dumps(delta,allow_nan=False))
@@ -167,25 +168,24 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
         if not owned:
             raise JobLeaseError('Job lease has expired or ownership changed')
         return None
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            now = await connection.fetchval('WITH barrier AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended($1,2))) SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint FROM barrier',lock)
-            return await apply_native(owner,PostgresQueueTransaction(connection,owner.namespace,queue),queue,method,args,now)
+    async with pool.acquire() as connection, connection.transaction():
+        now = await connection.fetchval('WITH barrier AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended($1,2))) SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint FROM barrier',lock)
+        return await apply_native(owner,PostgresQueueTransaction(connection,owner.namespace,queue),queue,method,args,now)
 
 
 async def read_snapshot(owner: Any) -> Optional[str]:
     await ensure_native(owner)
     pool = await owner._database()
     state = MemoryAdapter()
-    async with pool.acquire() as connection:
-        async with connection.transaction(isolation='repeatable_read',readonly=True):
-            for row in await connection.fetch('SELECT queue,payload FROM flowfn_py_jobs WHERE namespace=$1 ORDER BY sequence',owner.namespace):
-                state._queues[row['queue']].append(Job.model_validate_json(row['payload']))
-            for row in await connection.fetch('SELECT queue,id,state FROM flowfn_py_job_outcomes WHERE namespace=$1',owner.namespace):
-                state._dependency_results[(row['queue'],row['id'])] = JobStatus(row['state'])
-            for row in await connection.fetch('SELECT queue,id,payload FROM flowfn_py_dead_letters WHERE namespace=$1',owner.namespace):
-                value=json.loads(row['payload']);value['options']=JobOptions.model_validate(value['options'])
-                state._dead_letters[(row['queue'],row['id'])]=DLQJob(**value)
+    async with pool.acquire() as connection, connection.transaction(isolation='repeatable_read',readonly=True):
+        for row in await connection.fetch('SELECT queue,payload FROM flowfn_py_jobs WHERE namespace=$1 ORDER BY sequence',owner.namespace):
+            state._queues[row['queue']].append(Job.model_validate_json(row['payload']))
+        for row in await connection.fetch('SELECT queue,id,state FROM flowfn_py_job_outcomes WHERE namespace=$1',owner.namespace):
+            state._dependency_results[(row['queue'],row['id'])] = JobStatus(row['state'])
+        for row in await connection.fetch('SELECT queue,id,payload FROM flowfn_py_dead_letters WHERE namespace=$1',owner.namespace):
+            value=json.loads(row['payload'])
+            value['options']=JobOptions.model_validate(value['options'])
+            state._dead_letters[(row['queue'],row['id'])]=DLQJob(**value)
     result: str = owner._encode(state)
     return result
 
@@ -213,7 +213,8 @@ async def get_dead_letters(owner: Any) -> list[DLQJob]:
     pool=await owner._database()
     result=[]
     for row in await pool.fetch('SELECT payload FROM flowfn_py_dead_letters WHERE namespace=$1',owner.namespace):
-        value=json.loads(row['payload']);value['options']=JobOptions.model_validate(value['options'])
+        value=json.loads(row['payload'])
+        value['options']=JobOptions.model_validate(value['options'])
         result.append(DLQJob(**value))
     return result
 

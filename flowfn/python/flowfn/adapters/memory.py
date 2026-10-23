@@ -1,15 +1,16 @@
 """Memory adapter implementation."""
 
-from typing import Any, Optional
-from flowfn.queue.types import Job, JobStatus, QueueStats
-from flowfn.stream.types import Message, StreamInfo, MessageHandler, ConsumerOptions, TrimStrategy
-from flowfn.adapters.memory_stream import MemoryConsumerGroup
 import asyncio
-import time
 import hashlib
 import json
-from copy import deepcopy
+import time
 from collections import defaultdict
+from copy import deepcopy
+from typing import Any, Optional
+
+from flowfn.adapters.memory_stream import MemoryConsumerGroup
+from flowfn.queue.types import Job, JobStatus, QueueStats
+from flowfn.stream.types import ConsumerOptions, Message, MessageHandler, StreamInfo, TrimStrategy
 
 
 class MemoryAdapter:
@@ -289,9 +290,10 @@ class MemoryAdapter:
 
         # Notify subscribers
         for handler in self._stream_subscribers.get(stream, []):
+            snapshot = message.model_copy(deep=True)
 
             async def deliver(
-                callback: MessageHandler = handler, payload: Message = message.model_copy(deep=True)
+                callback: MessageHandler = handler, payload: Message = snapshot
             ) -> None:
                 await callback(payload)
 
@@ -316,10 +318,12 @@ class MemoryAdapter:
         """Subscribe to stream."""
         self._stream_subscribers[stream].append(handler)
 
+        subscribers = self._stream_subscribers[stream]
+
         class Subscription:
-            async def unsubscribe(self_sub: Any) -> None:
-                if handler in self._stream_subscribers[stream]:
-                    self._stream_subscribers[stream].remove(handler)
+            async def unsubscribe(self) -> None:
+                if handler in subscribers:
+                    subscribers.remove(handler)
 
         return Subscription()
 

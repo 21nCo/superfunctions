@@ -8,7 +8,6 @@ from flowfn import create_flow
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.core.telemetry import OperationObserver
 from flowfn.stream.types import ConsumerOptions
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def check_telemetry(adapter):

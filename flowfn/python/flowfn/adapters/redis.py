@@ -5,19 +5,19 @@ Dependency and DLQ transitions remain atomic across independent processes.
 """
 
 import asyncio
-import json
 import time
 import uuid
-from dataclasses import asdict
-from typing import Any, Optional, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from functools import partial
+from typing import Any, Optional
 from urllib.parse import quote
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError, WatchError
 
 from flowfn.adapters.durable_queues import DurableQueues
-from flowfn.queue.dlq import DLQJob, DLQManager
-from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType
+from flowfn.queue.dlq import DLQJob
+from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 from flowfn.workflow.types import WorkflowExecution
 
@@ -320,16 +320,16 @@ class RedisSubscription:
                                 future.set_result(requeue)
 
                     message._acknowledge = settle
-                    async def process() -> None:
-                        await self.handler(message)
+                    async def process(payload: Message = message, outcome: asyncio.Future[bool] = decision, acknowledge: Callable[[bool], Awaitable[None]] = settle) -> None:
+                        await self.handler(payload)
                         if self.options is None or self.options.auto_commit:
-                            await settle(False)
-                        await decision
+                            await acknowledge(False)
+                        await outcome
 
                     try:
                         if self.group:
                             from flowfn.adapters.stream_lease import run_with_lease
-                            await run_with_lease(process,lambda: self._owned(identity,delivery_owner),
+                            await run_with_lease(process,partial(self._owned, identity, delivery_owner),
                                                  self.adapter.reclaim_after_ms,claim_started)
                         else:
                             await process()

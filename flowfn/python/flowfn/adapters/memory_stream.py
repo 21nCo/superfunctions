@@ -1,7 +1,6 @@
 """In-memory consumer groups with acknowledgement and pending redelivery."""
 
 import asyncio
-from typing import Any
 
 from flowfn.stream.types import ConsumerOptions, Message, MessageHandler
 
@@ -65,11 +64,11 @@ class MemoryConsumer:
                 await self.running.wait()
                 message = original.model_copy(deep=True)
 
-                async def settle(requeue: bool, target: asyncio.Future[bool] = decision) -> None:
+                async def settle(requeue: bool, target: asyncio.Future[bool] = decision, message_id: str = original.id) -> None:
                     if not target.done():
                         target.set_result(requeue)
                         if not requeue:
-                            self.group.unacknowledged.discard(original.id)
+                            self.group.unacknowledged.discard(message_id)
 
                 message._acknowledge = settle
                 try:

@@ -1,8 +1,9 @@
 import asyncio
 import sys
-from datetime import datetime,timezone,timedelta
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from tests.test_durable_adapters import adapters
+
 from flowfn.scheduler import Scheduler
 
 CHILD = r'''

@@ -5,7 +5,6 @@ from urllib.parse import quote
 
 from flowfn.workflow.builder import WorkflowBuilder
 from flowfn.workflow.types import ExecutionStatus
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def test_stale_workflow_close_preserves_reclaimed_execution(adapters,monkeypatch):

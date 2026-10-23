@@ -1,8 +1,9 @@
 """Job storage abstraction."""
 
+from dataclasses import dataclass
 from typing import Optional, Protocol
+
 from flowfn.queue.types import Job, JobStatus
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -91,10 +92,8 @@ class MemoryJobStorage:
 
         for job_id, job in self._jobs.items():
             # Check age
-            if job.timestamp < opts.older_than:
-                # Check status filter
-                if opts.status is None or job.state == opts.status:
-                    to_delete.append(job_id)
+            if job.timestamp < opts.older_than and (opts.status is None or job.state == opts.status):
+                to_delete.append(job_id)
 
         for job_id in to_delete:
             del self._jobs[job_id]

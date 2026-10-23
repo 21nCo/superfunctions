@@ -1,10 +1,10 @@
 """Metrics manager implementation."""
 
-import math
 import json
+import math
 from copy import deepcopy
-from typing import Any, Optional, Callable
 from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
 
 @dataclass

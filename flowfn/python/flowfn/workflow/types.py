@@ -1,8 +1,10 @@
 """Workflow type definitions."""
 
-from typing import Any, Optional, Callable, Awaitable
-from pydantic import BaseModel, Field
+from collections.abc import Awaitable
 from enum import Enum
+from typing import Any, Callable, Optional
+
+from pydantic import BaseModel, Field
 
 
 class ExecutionStatus(str, Enum):

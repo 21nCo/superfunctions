@@ -7,7 +7,6 @@ import pytest
 from flowfn import create_flow
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.queue.types import JobOptions
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def check_events(adapter):
@@ -167,6 +166,7 @@ async def test_terminal_failures_and_fenced_completion_events(monkeypatch):
 
 async def test_postgres_old_enqueue_reply_stays_compatible(adapters):
     import json
+
     from flowfn.queue.types import Job
 
     adapter, _ = adapters

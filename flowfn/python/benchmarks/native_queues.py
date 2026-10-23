@@ -13,7 +13,7 @@ import time
 import uuid
 
 from flowfn.adapters.memory import MemoryAdapter
-from flowfn.queue.types import Job,JobOptions,JobStatus
+from flowfn.queue.types import Job, JobOptions, JobStatus
 
 
 def metrics(samples):
@@ -43,8 +43,12 @@ async def run(backend,history,samples=200,concurrency=16):
         enqueues,dequeues=[],[]
         for i in range(samples):
             job=Job(id=str(i),name='new',data={},timestamp=0,opts=JobOptions(remove_on_complete=True))
-            start=time.perf_counter();await adapter.enqueue('active',job);enqueues.append((time.perf_counter()-start)*1000)
-            start=time.perf_counter();claim=await adapter.dequeue('active');dequeues.append((time.perf_counter()-start)*1000)
+            start=time.perf_counter()
+            await adapter.enqueue('active',job)
+            enqueues.append((time.perf_counter()-start)*1000)
+            start=time.perf_counter()
+            claim=await adapter.dequeue('active')
+            dequeues.append((time.perf_counter()-start)*1000)
             assert claim is not None
             claim.state=JobStatus.COMPLETED
             await adapter.update_job('active',claim)
@@ -77,10 +81,9 @@ async def run(backend,history,samples=200,concurrency=16):
                 await adapter.client.delete(*keys)
         else:
             pool=await adapter._database()
-            async with pool.acquire() as connection:
-                async with connection.transaction():
-                    for table in ('job_edges','job_outcomes','dead_letters','jobs','queue_layout','state'):
-                        await connection.execute('DELETE FROM flowfn_py_'+table+' WHERE namespace=$1',adapter.namespace)
+            async with pool.acquire() as connection, connection.transaction():
+                for table in ('job_edges','job_outcomes','dead_letters','jobs','queue_layout','state'):
+                    await connection.execute('DELETE FROM flowfn_py_'+table+' WHERE namespace=$1',adapter.namespace)
         await adapter.cleanup()
 
 

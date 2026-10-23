@@ -3,7 +3,7 @@
 import heapq
 from dataclasses import dataclass, field
 from functools import cmp_to_key
-from typing import Any, TypeVar, Generic, Callable, Optional
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 T = TypeVar("T")
 
@@ -26,10 +26,7 @@ class PriorityQueue(Generic[T]):
         self._counter = 0
 
     def enqueue(self, item: T, priority: Optional[int] = None) -> None:
-        if self._key is not None:
-            key = self._key(item)
-        else:
-            key = 0
+        key = self._key(item) if self._key is not None else 0
         rank = (
             priority
             if priority is not None

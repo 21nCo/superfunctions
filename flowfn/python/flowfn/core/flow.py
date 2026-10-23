@@ -2,21 +2,22 @@
 
 import asyncio
 import math
-from typing import Any, Optional, TYPE_CHECKING, Union, cast, Callable
-from pydantic import BaseModel, Field
-from flowfn.adapters.base import FlowAdapter
-from flowfn.scheduler import Scheduler
-from flowfn.core.telemetry import OperationObserver, ObservedAdapter
-from flowfn.core.metrics import MetricsManager
-from flowfn.monitoring.health import HealthChecker, EventTracker
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast
 
+from pydantic import BaseModel
+
+from flowfn.adapters.base import FlowAdapter
+from flowfn.core.metrics import MetricsManager
+from flowfn.core.telemetry import ObservedAdapter, OperationObserver
+from flowfn.monitoring.health import EventTracker, HealthChecker
+from flowfn.scheduler import Scheduler
 
 if TYPE_CHECKING:
+    from flowfn.queue.dlq import DLQManager
     from flowfn.queue.queue import Queue
     from flowfn.stream.stream import Stream
     from flowfn.workflow.builder import WorkflowBuilder
     from flowfn.workflow.workflow import Workflow
-    from flowfn.queue.dlq import DLQManager
 
 
 class FlowFnConfig(BaseModel):
@@ -40,9 +41,9 @@ class FlowFn:
         self._closing = False
         self._close_task: Optional[asyncio.Task[None]] = None
         self._adapter: FlowAdapter
-        self._queues: dict[str, "Queue"] = {}
-        self._streams: dict[str, "Stream"] = {}
-        self._workflows: list["Workflow"] = []
+        self._queues: dict[str, Queue] = {}
+        self._streams: dict[str, Stream] = {}
+        self._workflows: list[Workflow] = []
         self._metrics: MetricsManager
         self._health_checker: HealthChecker
         self._event_tracker: EventTracker
@@ -69,7 +70,7 @@ class FlowFn:
     def _setup_monitoring(self) -> None:
         """Set up monitoring components."""
         from flowfn.core.metrics import MetricsManager
-        from flowfn.monitoring.health import HealthChecker, EventTracker
+        from flowfn.monitoring.health import EventTracker, HealthChecker
 
         self._metrics = MetricsManager(self._adapter,lambda: {
             "queues":len(self._queues),"streams":len(self._streams),"workflows":len(self._workflows),

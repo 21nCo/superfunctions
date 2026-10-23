@@ -1,11 +1,12 @@
 """Health monitoring implementation."""
 
-from typing import Any, Optional, Callable, Awaitable
-from dataclasses import dataclass, field
-from enum import Enum
-import time
 import inspect
+import time
+from collections.abc import Awaitable
 from copy import deepcopy
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable, Optional
 
 
 class HealthStatus(str, Enum):
@@ -179,8 +180,8 @@ class EventTracker:
         self.track({"type": event_type, "category": category, "severity": severity,
                     "message": event_type, "metadata": metadata})
         for listener in list(self._listeners.get(event_type, [])):
-            async def invoke() -> None:
-                result = listener(deepcopy(metadata))
+            async def invoke(callback: Callable[..., Any] = listener) -> None:
+                result = callback(deepcopy(metadata))
                 if inspect.isawaitable(result):
                     await result
             try:

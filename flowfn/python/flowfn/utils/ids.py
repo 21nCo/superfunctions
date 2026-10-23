@@ -1,9 +1,8 @@
 """ID generation utilities."""
 
-import uuid
 import time
-from typing import Literal, Optional
-
+import uuid
+from typing import Literal
 
 IDStrategy = Literal["uuid-v4", "uuid-v1", "nanoid", "timestamp", "deterministic"]
 

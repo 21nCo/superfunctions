@@ -5,7 +5,6 @@ import sys
 
 import pytest
 
-from tests.test_durable_adapters import adapters
 from flowfn import create_flow
 from flowfn.adapters.workflow_state import WorkflowLeaseError
 from flowfn.workflow.types import ExecutionStatus

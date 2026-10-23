@@ -1,9 +1,9 @@
 """Batching pattern utilities."""
 
 import asyncio
-from typing import Any, Callable, Awaitable, Optional, TypeVar, Generic
 from collections import defaultdict
-
+from collections.abc import Awaitable
+from typing import Callable, Generic, Optional, TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")

@@ -4,7 +4,6 @@ import asyncio
 import pytest
 
 from flowfn.stream.types import ConsumerOptions, Message
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 async def test_same_subscription_reclaim_fences_old_ack_and_renew(adapters):

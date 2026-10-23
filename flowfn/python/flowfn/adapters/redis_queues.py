@@ -1,17 +1,18 @@
 """Redis per-job records and transactionally maintained queue indexes."""
 import asyncio
-import json
 import hashlib
+import json
 import uuid
 from dataclasses import asdict
 from typing import Any, Optional
 from urllib.parse import quote
 
 from redis.exceptions import WatchError
+
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.adapters.native_queues import QueueTransaction, apply_native
-from flowfn.queue.types import Job, JobOptions, JobStatus, JobLeaseError
 from flowfn.queue.dlq import DLQJob
+from flowfn.queue.types import Job, JobLeaseError, JobOptions, JobStatus
 
 
 class RedisQueueTransaction(QueueTransaction):
@@ -67,7 +68,8 @@ class RedisQueueTransaction(QueueTransaction):
         raw = await self.pipe.hget(self.key('dlq'),identity)
         if raw is None:
             return {}
-        value=json.loads(raw);value['options']=JobOptions.model_validate(value['options'])
+        value=json.loads(raw)
+        value['options']=JobOptions.model_validate(value['options'])
         return {(self.queue,identity):DLQJob(**value)}
 
     def indexes(self, job: Job, position: int, remove: bool) -> None:
@@ -134,7 +136,8 @@ class RedisQueueTransaction(QueueTransaction):
             self.pipe.hdel(self.key('dlq'),key[1])
         for key,record in after._dead_letters.items():
             if before._dead_letters.get(key)!=record:
-                value=asdict(record);value['options']=record.options.model_dump(mode='json')
+                value=asdict(record)
+                value['options']=record.options.model_dump(mode='json')
                 self.pipe.hset(self.key('dlq'),key[1],json.dumps(value,allow_nan=False))
         self.pipe.set(self.key('counter'),self.sequence)
         self.pipe.incr(self.key('version'))
@@ -182,7 +185,7 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
     await ensure_native(owner)
     queue=args[0].original_queue if method=='save_dead_letter' else args[0]
     base=owner.prefix+':queue:'+quote(queue,safe='')
-    from flowfn.adapters.redis_queue_scripts import ENQUEUE,DEQUEUE,RENEW,UPDATE
+    from flowfn.adapters.redis_queue_scripts import DEQUEUE, ENQUEUE, RENEW, UPDATE
     if not hasattr(owner,'_queue_scripts'):
         owner._queue_scripts={name:owner.client.register_script(source) for name,source in [('enqueue',ENQUEUE),('dequeue',DEQUEUE),('renew',RENEW),('update',UPDATE)]}
     if method=='enqueue' and not args[1].opts.wait_for:
@@ -249,7 +252,8 @@ async def read_snapshot(owner: Any) -> Optional[str]:
                     for identity,status in (await pipe.hgetall(base+':outcomes')).items():
                         state._dependency_results[(queue,identity)]=JobStatus(status)
                     for identity,raw in (await pipe.hgetall(base+':dlq')).items():
-                        value=json.loads(raw);value['options']=JobOptions.model_validate(value['options'])
+                        value=json.loads(raw)
+                        value['options']=JobOptions.model_validate(value['options'])
                         state._dead_letters[(queue,identity)]=DLQJob(**value)
                 pipe.multi()
                 await pipe.execute()
@@ -292,6 +296,7 @@ async def get_dead_letters(owner: Any) -> list[DLQJob]:
     for queue in await owner.client.smembers(owner.prefix+':queues'):
         raws=await owner.client.hvals(owner.prefix+':queue:'+quote(queue,safe='')+':dlq')
         for raw in raws:
-            value=json.loads(raw);value['options']=JobOptions.model_validate(value['options'])
+            value=json.loads(raw)
+            value['options']=JobOptions.model_validate(value['options'])
             result.append(DLQJob(**value))
     return result

@@ -1,9 +1,12 @@
 """Event log for event sourcing."""
 
-from typing import Any, Optional, Protocol, Callable, Awaitable
-from pydantic import BaseModel
-from dataclasses import dataclass
+import contextlib
 import time
+from collections.abc import Awaitable
+from dataclasses import dataclass
+from typing import Any, Callable, Optional, Protocol
+
+from pydantic import BaseModel
 
 
 class Event(BaseModel):
@@ -87,10 +90,8 @@ class MemoryEventLog:
 
         # Notify subscribers
         for handler in list(self._subscribers):
-            try:
+            with contextlib.suppress(Exception):
                 await handler(event.model_copy(deep=True))
-            except Exception:
-                pass
 
     async def get_events(self, opts: Optional[FilterOptions] = None) -> list[Event]:
         """Get events with filtering."""

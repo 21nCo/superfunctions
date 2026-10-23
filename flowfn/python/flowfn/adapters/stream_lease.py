@@ -1,7 +1,8 @@
 """Bound cooperative delivery work by its renewable storage ownership."""
 import asyncio
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Callable
 
 
 async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[], Awaitable[bool]],

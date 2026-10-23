@@ -1,7 +1,9 @@
 import asyncio
+
 import pytest
+
 from flowfn import create_flow
-from flowfn.queue.types import JobOptions, BackoffOptions, BackoffType, JobStatus
+from flowfn.queue.types import BackoffOptions, BackoffType, JobOptions, JobStatus
 
 
 @pytest.mark.asyncio

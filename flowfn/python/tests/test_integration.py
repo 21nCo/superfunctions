@@ -1,7 +1,9 @@
 """Integration tests for FlowFn Python SDK."""
 
-import pytest
 import asyncio
+
+import pytest
+
 from flowfn import create_flow
 
 

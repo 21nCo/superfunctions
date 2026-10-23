@@ -6,7 +6,6 @@ import pytest
 
 from flowfn.queue.queue import Queue
 from flowfn.queue.types import JobStatus
-from tests.test_durable_adapters import adapters  # noqa: F401
 
 
 @pytest.mark.parametrize('failure', ['takeover', 'hung_renewal'])

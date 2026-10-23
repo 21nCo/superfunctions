@@ -5,10 +5,11 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import asdict
-from typing import Any, Optional, Callable
+from typing import Any, Callable, Optional
+
 from flowfn.adapters.memory import MemoryAdapter
-from flowfn.queue.dlq import DLQJob, DLQManager
-from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType, JobLeaseError
+from flowfn.queue.dlq import DLQJob
+from flowfn.queue.types import BackoffType, Job, JobLeaseError, JobOptions, JobStatus, QueueStats
 
 
 class DurableQueues(ABC):

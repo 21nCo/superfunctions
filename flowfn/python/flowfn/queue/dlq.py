@@ -1,12 +1,13 @@
 """Dead-letter inspection and recovery backed by the configured adapter."""
 
+import time
+from collections.abc import Awaitable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Optional, Callable, Awaitable
-import time
+from typing import Any, Callable, Optional
 
-from flowfn.queue.types import Job, JobOptions
 from flowfn.adapters.base import FlowAdapter
+from flowfn.queue.types import Job, JobOptions
 
 
 @dataclass

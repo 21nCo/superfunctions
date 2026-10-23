@@ -2,9 +2,8 @@
 
 import asyncio
 import time
-from typing import Literal
 from collections import deque
-
+from typing import Literal
 
 Strategy = Literal["throw", "delay", "drop"]
 
