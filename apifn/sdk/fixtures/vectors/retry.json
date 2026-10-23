@@ -1,0 +1,63 @@
+{
+  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504; writes retry only when the catalog declares that the server makes them idempotent, never because the method is PUT or DELETE, because an Idempotency-Key is sent, or because an SDK config says so. Catalog v1 has no idempotency field, so no write is retried; targets test their declared-idempotent path directly against their runtime. `expect.attempts` is the number of requests the server receives.",
+  "cases": [
+    {
+      "name": "a read retries within the budget",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 502 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "success" }
+    },
+    {
+      "name": "a read stops at the budget",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 503 }, { "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a client error is not retried",
+      "operation": "tasks.get",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 400 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 400 }
+    },
+    {
+      "name": "429 with Retry-After is retried",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "p1" } },
+      "responses": [{ "status": 429, "headers": { "retry-after": "0" } }, { "status": 200 }],
+      "expect": { "attempts": 2, "outcome": "success" }
+    },
+    {
+      "name": "a write with an Idempotency-Key is not retried without a declaration",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "key-1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 201 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a POST read-like search is not retried",
+      "operation": "tasks.search",
+      "parameters": { "path": { "projectId": "p1" } },
+      "responses": [{ "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "an undeclared DELETE is not retried",
+      "operation": "tasks.delete",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "responses": [{ "status": 503 }, { "status": 204 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a PUT is not retried without a catalog idempotency declaration",
+      "operation": "tasks.replace",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    }
+  ]
+}
