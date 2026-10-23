@@ -413,6 +413,18 @@ class TransactionAdapter(Protocol):
         pass
 
 
+class AtomicUpdateTransactionAdapter(TransactionAdapter, Protocol):
+    """Optional transaction extension; callers must feature-detect update_many."""
+
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
+        """Atomically update all matching rows, retaining every WHERE predicate.
+
+        Returns the backend's affected/matched row count. CAS callers must change
+        a revision field and require exactly one row; no select/write emulation.
+        """
+        pass
+
+
 class Adapter(Protocol):
     """Database adapter protocol."""
 
