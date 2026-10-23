@@ -43,6 +43,8 @@ export interface CfqlProjection {
 
 export interface CfqlQuery {
   dataset: string;
+  /** Defaults to published; draft queries require the query.drafts authorization action. */
+  perspective?: "published" | "draft";
   types?: string[];
   filter?: CfqlFilter;
   orderBy?: CfqlOrderBy[];

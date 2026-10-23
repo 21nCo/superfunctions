@@ -17,7 +17,7 @@ import type { Adapter } from "@superfunctions/db";
 import { wrapWithSchema } from "@superfunctions/db/schema";
 import { datasetCreate, datasetList, datasetDelete } from "./storage/datasets.js";
 import { schemaUpsert, schemaGet } from "./storage/schemaStorage.js";
-import { docCreate, docGet, docDelete, docPatch } from "./storage/docs.js";
+import { docCreate, docGet, docDelete, docPatch, docFork } from "./storage/docs.js";
 import { docPublish, docUnpublish } from "./storage/publish.js";
 import { listHistory, restoreRevision } from "./storage/revisions.js";
 import { assetUpload, assetGet } from "./storage/assets.js";
@@ -68,6 +68,7 @@ export interface ContentfnServer {
       get: (input: { dataset: string }) => ReturnType<typeof schemaGet>;
     };
     docs: {
+      fork: (input: { dataset: string; id: string; ifRev: string }) => ReturnType<typeof docFork>;
       schedule: (input: { dataset: string; id: string; publishAt: string; ifRev?: string }) => ReturnType<typeof schedulePublish>;
       cancelSchedule: (input: { dataset: string; id: string }) => ReturnType<typeof cancelScheduledPublish>;
       list: (input: import("@contentfn/core").CfqlQuery) => ReturnType<typeof executeCfql>;
@@ -183,7 +184,8 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       const record = input as Record<string, unknown>;
       const invalidInput = validateOptionalInput(action, record);
       if (invalidInput) return invalidInput;
-      const denied = await checkAuthorize(config.authorize, context, action, record);
+      const authorizationAction = action === "query" && record.perspective === "draft" ? "query.drafts" : action;
+      const denied = await checkAuthorize(config.authorize, context, authorizationAction, record);
       if (denied) return denied;
       if (Buffer.byteLength(JSON.stringify(input), "utf8") > limits.maxPayloadBytes) return err("PAYLOAD_TOO_LARGE", "Input exceeds configured byte limit", {});
       if (action === "status") return handleStatus({ limits });
@@ -197,18 +199,18 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
         return response;
       };
       let replayed = false;
-      const mutating = /\.(create|delete|import|upsert|patch|publish|unpublish|restore|upload|register|schedule|cancelSchedule)$/.test(action);
+      const mutating = /\.(create|fork|delete|import|upsert|patch|publish|unpublish|restore|upload|register|schedule|cancelSchedule)$/.test(action);
       const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : mutating ? await atomicMutation(db, call) : await call(db);
       if (result.ok && !replayed) {
         try {
         if (action === "datasets.delete") realtimeServer.broadcast({ eventId: randomUUID(), dataset: String(record.dataset), type: "dataset.deleted", timestamp: new Date().toISOString() });
-        if (/^(docs\.(create|patch|delete|publish|unpublish|restore)|schema\.upsert)$/.test(action)) {
+        if (/^(docs\.(create|fork|patch|delete|publish|unpublish|restore)|schema\.upsert)$/.test(action)) {
           logger.logMutation({ action, dataset: record.dataset as string, docId: record.id as string, actor: subject });
           const document = result.result as Record<string, unknown>;
           if (action.startsWith("docs.")) {
             const rows = await db.findMany({ model: "contentfn_events", where: [
               { field: "dataset", operator: "eq", value: record.dataset },
-              { field: "type", operator: "eq", value: ({ "docs.create": "doc.created", "docs.patch": "doc.updated", "docs.restore": "doc.updated", "docs.publish": "doc.published", "docs.unpublish": "doc.unpublished", "docs.delete": "doc.deleted" } as Record<string, string>)[action] },
+              { field: "type", operator: "eq", value: ({ "docs.create": "doc.created", "docs.fork": "doc.created", "docs.patch": "doc.updated", "docs.restore": "doc.updated", "docs.publish": "doc.published", "docs.unpublish": "doc.unpublished", "docs.delete": "doc.deleted" } as Record<string, string>)[action] },
               ...(typeof document?._rev === "string" ? [{ field: "rev", operator: "eq" as const, value: document._rev }] : [{ field: "docId", operator: "eq" as const, value: String(record.id).replace(/^drafts\./, "") }]),
             ], orderBy: [{ field: "timestamp", direction: "desc" }] });
             if (rows[0]) realtimeServer.broadcast(rows[0] as unknown as ContentfnEvent);

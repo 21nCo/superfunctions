@@ -14,6 +14,8 @@ export type CursorString = string;
 export interface CursorPayload {
   /** Ordering values at the last seen document (e.g. _updatedAt, _id). */
   values: unknown[];
+  /** Query binding emitted by the server; unbound legacy cursors must restart pagination. */
+  queryKey?: string;
 }
 
 /**

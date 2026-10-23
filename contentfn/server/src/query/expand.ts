@@ -12,6 +12,7 @@ export interface ExpandConfig {
   db: Adapter;
   dataset: string;
   maxExpandDepth?: number;
+  perspective?: "published" | "draft";
 }
 
 interface ReferenceObject {
@@ -29,8 +30,16 @@ function isReferenceObject(value: unknown): value is ReferenceObject {
 async function fetchDocument(
   db: Adapter,
   dataset: string,
-  docId: string
+  docId: string,
+  perspective: "published" | "draft" = "published"
 ): Promise<ContentfnDocument | null> {
+  if (perspective === "draft") {
+    const draft = await db.findOne({ model: CONTENTFN_TABLE_NAMES.docsDrafts, where: [
+      { field: "dataset", operator: "eq", value: dataset },
+      { field: "id", operator: "eq", value: documentStorageId(dataset, docId.startsWith("drafts.") ? docId : `drafts.${docId}`) },
+    ] });
+    if (draft) return (draft as { docJson: ContentfnDocument }).docJson;
+  }
   const rows = await db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
@@ -127,7 +136,7 @@ async function expandReference(
 
   visited.add(ref._ref);
 
-  const referencedDoc = await fetchDocument(config.db, config.dataset, ref._ref);
+  const referencedDoc = await fetchDocument(config.db, config.dataset, ref._ref, config.perspective);
 
   if (!referencedDoc) {
     return ok(ref);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type {
   CfqlQuery,
@@ -171,8 +172,14 @@ export async function executeCfql(
 
   const limit = Math.min(query.limit ?? DEFAULT_MAX_QUERY_LIMIT, config.maxQueryLimit ?? DEFAULT_MAX_QUERY_LIMIT);
 
+  const perspective = query.perspective ?? "published";
+  const normalizedOrderBy = normalizeOrderBy(query.orderBy);
+  const queryKey = createHash("sha256").update(JSON.stringify({
+    dataset: query.dataset, perspective, types: query.types ?? [], filter: query.filter ?? null,
+    orderBy: normalizedOrderBy, projection: query.projection ?? null,
+  })).digest("hex");
   const rows = await config.db.findMany({
-    model: CONTENTFN_TABLE_NAMES.docsPublished,
+    model: perspective === "draft" ? CONTENTFN_TABLE_NAMES.docsDrafts : CONTENTFN_TABLE_NAMES.docsPublished,
     where: [{ field: "dataset", operator: "eq" as const, value: query.dataset }],
   });
 
@@ -184,14 +191,13 @@ export async function executeCfql(
 
   docs = docs.filter((doc) => matchesFilter(doc, query.filter));
 
-  const normalizedOrderBy = normalizeOrderBy(query.orderBy);
   docs = sortDocuments(docs, normalizedOrderBy);
 
   let cursorValues: unknown[] | null = null;
   if (query.cursor) {
     const decoded = decodeCursor(query.cursor);
-    if (!decoded || decoded.values.length !== normalizedOrderBy.length) {
-      return err("QUERY_INVALID", "Invalid cursor", { path: "cursor" });
+    if (!decoded || decoded.queryKey !== queryKey || decoded.values.length !== normalizedOrderBy.length) {
+      return err("QUERY_INVALID", "Cursor does not match this query; restart pagination", { path: "cursor" });
     }
     cursorValues = decoded.values;
     docs = docs.filter((doc) => !shouldSkipBasedOnCursor(doc, normalizedOrderBy, cursorValues!));
@@ -206,6 +212,7 @@ export async function executeCfql(
       {
         db: config.db,
         dataset: query.dataset,
+        perspective,
         maxExpandDepth: config.maxExpandDepth,
       },
       doc,
@@ -220,7 +227,7 @@ export async function executeCfql(
   }
 
   const nextCursor = hasMore
-    ? encodeCursor({ values: extractOrderingValues(resultDocs[resultDocs.length - 1], normalizedOrderBy) })
+    ? encodeCursor({ queryKey, values: extractOrderingValues(resultDocs[resultDocs.length - 1], normalizedOrderBy) })
     : null;
 
   return ok({

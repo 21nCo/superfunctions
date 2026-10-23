@@ -8,7 +8,7 @@ import type { ContentfnEnvelope } from "@contentfn/core";
 import { err } from "@contentfn/core";
 import { handleDatasetsCreate, handleDatasetsList, handleDatasetsDelete } from "./endpoints/datasets.js";
 import { handleSchemaUpsert, handleSchemaGet } from "./endpoints/schema.js";
-import { handleDocsCreate, handleDocsGet, handleDocsDelete, handleDocsPatch } from "./endpoints/docs.js";
+import { handleDocsCreate, handleDocsGet, handleDocsDelete, handleDocsPatch, handleDocsFork } from "./endpoints/docs.js";
 import { handleDocsPublish, handleDocsUnpublish } from "./endpoints/publish.js";
 import { handleDocsHistory, handleDocsRestore } from "./endpoints/history.js";
 import { handleQuery } from "./endpoints/query.js";
@@ -49,6 +49,7 @@ export const endpointHandlers = {
   "/contentfn/datasets/import": { action: ACTIONS.DATASETS_IMPORT, handle: handleDatasetsImport },
   "/contentfn/schema/upsert": { action: ACTIONS.SCHEMA_UPSERT, handle: handleSchemaUpsert },
   "/contentfn/schema/get": { action: ACTIONS.SCHEMA_GET, handle: handleSchemaGet },
+  "/contentfn/docs/fork": { action: "docs.fork", handle: handleDocsFork },
   "/contentfn/docs/create": { action: ACTIONS.DOCS_CREATE, handle: handleDocsCreate },
   "/contentfn/docs/get": { action: ACTIONS.DOCS_GET, handle: handleDocsGet },
   "/contentfn/docs/delete": { action: ACTIONS.DOCS_DELETE, handle: handleDocsDelete },

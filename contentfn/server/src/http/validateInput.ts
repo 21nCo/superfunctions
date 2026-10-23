@@ -4,6 +4,7 @@ import { err } from '@contentfn/core';
 export function validateOptionalInput(action: string, input: Record<string, unknown>) {
   if (input.dataset !== undefined && typeof input.dataset !== 'string') return err('VALIDATION_FAILED', 'dataset must be a string', { path: 'dataset' });
   const rules: Record<string, Record<string, string>> = {
+    'docs.fork': { ifRev: 'string' },
     'docs.create': { id: 'string', asDraft: 'boolean' },
     'docs.get': { perspective: 'string' },
     'docs.delete': { purge: 'boolean' },
