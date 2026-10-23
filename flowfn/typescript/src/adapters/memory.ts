@@ -47,28 +47,27 @@ export class MemoryAdapter implements FlowAdapter {
     value.state = (value.opts.delay ?? 0) > 0 ? "delayed" : "waiting";
     value.delay = value.opts.delay ?? 0;
     value.timestamp = Date.now();
+    // Requeue is a new insertion; ordinary saveJob keeps the existing position.
+    this.queue(queue).delete(value.id);
     this.queue(queue).set(value.id, value);
     return value.id;
   }
   async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
-    const jobs = [...this.queue(queue).values()].filter(
-      (job) =>
-        (!name || job.name === name) &&
-        (job.state === "waiting" ||
-          (job.state === "delayed" && job.timestamp + job.delay <= Date.now())),
-    );
-    jobs.sort(
-      (a, b) =>
-        (b.opts.priority ?? 0) - (a.opts.priority ?? 0) ||
-        (a.opts.lifo || b.opts.lifo
-          ? b.timestamp - a.timestamp
-          : a.timestamp - b.timestamp),
-    );
-    const ready = jobs.find((job) =>
-      (job.opts.waitFor ?? []).every(
-        (id) => this.queue(queue).get(id)?.state === "completed",
-      ),
-    );
+    const jobs = this.queue(queue);
+    const now = Date.now();
+    let ready: Job | undefined;
+    // Map iteration is insertion ordered even when clocks tie or move backwards.
+    // Priority wins, then LIFO entries precede FIFO (as in the Redis adapter).
+    // Among equal classes, keep the first FIFO or replace with the last LIFO.
+    for (const job of jobs.values()) {
+      if ((name && job.name !== name) ||
+          !(job.state === "waiting" || (job.state === "delayed" && job.timestamp + job.delay <= now)) ||
+          !(job.opts.waitFor ?? []).every(id => jobs.get(id)?.state === "completed")) continue;
+      const priority = job.opts.priority ?? 0;
+      const selectedPriority = ready?.opts.priority ?? 0;
+      if (!ready || priority > selectedPriority ||
+          (priority === selectedPriority && job.opts.lifo)) ready = job;
+    }
     if (!ready) return null;
     ready.lease = { token: randomUUID(), expiresAt: Date.now() + leaseDuration };
     ready.state = "active";

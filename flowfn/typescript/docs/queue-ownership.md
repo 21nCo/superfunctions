@@ -129,3 +129,11 @@ October 23 paired measurements improve enqueue latency but still fail Redis's
 original throughput and enqueue p99 gates; full records and unchanged limits are
 in `flowfn/.conduct/queue-claim-performance-readiness.md`. To run only native Redis
 contracts locally, use `node flowfn/typescript/scripts/provider-acceptance.mjs --redis-only`.
+
+
+The TypeScript memory queue orders equal-priority jobs by insertion, not wall-clock
+timestamps: LIFO jobs precede FIFO jobs; LIFO selects the newest insertion and FIFO
+selects the oldest. Explicit enqueue/retry creates a new insertion position, while
+saving progress or renewing a lease preserves it. Delays still use the adapter clock.
+This matches Redis mixed FIFO/LIFO grouping; it does not establish PostgreSQL
+same-timestamp ordering or add a Python LIFO option.
