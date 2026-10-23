@@ -1,0 +1,33 @@
+sendfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_8ffd5f2e2091a0 224-261
+sendfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_28293cff0735eb 43-47,55-56
+sendfn/typescript/scripts/verify-ses-package.mjs
+  s_e1c5fc1a65c0cf::t_b77f56bf2e3596 1-47
+sendfn/typescript/src/email/address.ts
+  s_e1c5fc1a65c0cf::t_d798f06d6d4fb8 1-17
+sendfn/typescript/src/email/aws-ses-adapter.ts
+  s_e1c5fc1a65c0cf::t_a5dbb463f57ae1 15-57,72-76,79-87,89-90,97-126,133-150,152-155,158,160,175,178,180,189,192,194,206,211,218,225,229,234,236,239-243,248,256,259,261,279,290-300,303-304,313,323,334-341
+sendfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_d14d522039577d 37-42
+sendfn/typescript/tests/aws-ses-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_db9cf2613c24d9 1-96
+sendfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_c44de9d844b641 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cb3ab4f6d8cd306b6df46059f4294b67fdc3839",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
