@@ -201,3 +201,36 @@ SDKs check expiry immediately before presentation/handoff. Their clocks must be
 synchronized too; this is an admission and handoff policy, not remote cancellation
 of already displayed UI. Offline delivery, dismissal policy, campaign CRUD,
 bootstrap and survey per-time-window caps remain separate unfinished scope.
+
+## Durable survey responses
+
+Apply the additive `userfn_survey_counters` and `userfn_survey_responses` tables
+and indexes returned by `getUserFnSchema()` before enabling `surveys`.
+Configure a trusted `surveys.resolvePolicy(session, surveyId)` to return the
+allowed user's survey questions, `enabled`, `perUser` (default one), and optional
+`window: {limit, durationMs}`. Return null for surveys outside the user's audience.
+The service snapshots this policy at request acceptance; clients cannot provide
+policy, identity, or timestamps. The database adapter must support transactions.
+
+Submit `POST /surveys/:surveyId/responses` with a bearer credential carrying
+`userfn:surveys:write`, a stable `Idempotency-Key`, and
+`{answers: [{questionId: "score", value: 8}]}`. Identity must resolve to a verified
+user and tenant. Answer IDs must be unique and present in the trusted question
+list; required questions, text bounds, configured choice values and integer scale
+bounds are checked. Supported question types match the current SDK: nps, csat,
+text and single choice. Branching and richer templates remain unfinished.
+
+A successful response returns `{id, surveyId, submittedAt, accepted: true}` only
+after the response and counters commit together. Retry identical data with the
+same key after an unknown outcome. Conflicting reuse returns409. A committed
+receipt remains replayable after survey retirement; it does not consume capacity
+again. Lifetime and rolling-window cap denial returns429; disabled returns403.
+The interval is `(now-durationMs, now]`, using the server clock. A backwards clock
+relative to that user's latest acceptance returns503 until time catches up.
+
+Caps count accepted responses, not display impressions. Transactions and a
+counter compare-and-swap coordinate concurrent service instances. Keep historical
+responses when changing rolling policies; deleting them changes rolling-cap
+history. This API has no automatic retention, anonymous submission, response
+listing, SDK transport, display reservation, or WatchFn outbox yet. The existing
+local survey renderer is not connected to this endpoint automatically.

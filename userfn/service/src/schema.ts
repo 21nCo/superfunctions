@@ -2,7 +2,24 @@ import type { TableSchemaMap } from '@superfunctions/db';
 
 /** Apply this migration metadata before serving requests; no schema is required on adapter construction. */
 export function getUserFnSchema(): TableSchemaMap {
-  return { userfn_message_counters: {
+  return { userfn_survey_counters: {
+    modelName: 'userfn_survey_counters', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      count: { type: 'number', required: true },
+      lastSubmittedAt: { type: 'number', required: true },
+    },
+  }, userfn_survey_responses: {
+    modelName: 'userfn_survey_responses', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      fingerprint: { type: 'string', required: true, maxLength: 64 },
+      counterId: { type: 'string', required: true, maxLength: 64 },
+      surveyId: { type: 'string', required: true, maxLength: 100 },
+      tenantId: { type: 'string', required: true, maxLength: 200 },
+      actorId: { type: 'string', required: true, maxLength: 200 },
+      answers: { type: 'json', required: true, jsonStorageType: 'json-text' },
+      submittedAt: { type: 'number', required: true },
+    }, indexes: [{ name: 'userfn_survey_window', fields: ['counterId', 'submittedAt'] }],
+  }, userfn_message_counters: {
     modelName: 'userfn_message_counters', fields: {
       id: { type: 'string', required: true, unique: true, maxLength: 64 },
       count: { type: 'number', required: true },

@@ -1,3 +1,5 @@
+import { surveyRoutes, type SurveyOptions } from './surveys.js';
+export type { SurveyOptions, SurveyPolicy } from './surveys.js';
 import { messagingRoutes, type MessagingOptions } from './messaging.js';
 export type { MessagingOptions, MessagingPolicy } from './messaging.js';
 import { flagConfigRoutes, type FlagConfigSigningOptions } from './flag-config.js';
@@ -16,6 +18,7 @@ export { getUserFnSchema } from './schema.js';
 export interface UserFnServiceOptions {
   database: Adapter;
   messaging?: MessagingOptions;
+  surveys?: SurveyOptions;
   /** Enables signed flag config routes; signing keys are host-managed. */
   flagConfigSigning?: FlagConfigSigningOptions;
   /** Verifies bearer credentials. Cookie authentication is not accepted by this API. */
@@ -113,6 +116,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
     routes: [
       ...flagConfigRoutes(database, authorize, options.flagConfigSigning),
       ...messagingRoutes(database, authorize, options.messaging),
+      ...surveyRoutes(database, authorize, options.surveys),
       { method: 'OPTIONS', path: '/feedback', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id/vote', handler: () => new Response(null, { status: 204 }) },
