@@ -1,8 +1,11 @@
 import { resolveCampaignUrl } from './campaign-url';
-import { Campaign, Survey, SurveyResponse, Question, FeedbackSubmission, FeedbackCategory } from '../types';
+import { Campaign, Survey, SurveyResponse, FeedbackSubmission, FeedbackCategory } from '../types';
 import { injectStyles } from './styles';
 
+type SurveySubmit = (response: SurveyResponse) => void | false | 'local' | 'stored' | Promise<void | false | 'local' | 'stored'>;
+
 export class VanillaRenderer {
+  private readonly surveyNodes = new Set<HTMLElement>();
   private readonly messages = new Set<HTMLElement>();
   private readonly messageTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
   constructor(private readonly messagingAllowed: () => boolean = () => true) {
@@ -11,9 +14,10 @@ export class VanillaRenderer {
     }
   }
 
+  dismissSurveys(): void { for (const node of [...this.surveyNodes]) this.removeMessage(node); }
   dismissMessages(): void { for (const node of [...this.messages]) this.removeMessage(node); }
   private removeMessage(node: HTMLElement): void {
-    node.remove(); this.messages.delete(node);
+    node.remove(); this.messages.delete(node); this.surveyNodes.delete(node);
     const timer = this.messageTimers.get(node); if (timer !== undefined) clearTimeout(timer);
     this.messageTimers.delete(node);
   }
@@ -28,10 +32,10 @@ export class VanillaRenderer {
     }
   }
 
-  renderSurvey(survey: Survey, onSubmit: (response: SurveyResponse) => void, onDismiss: () => void) {
+  renderSurvey(survey: Survey, onSubmit: SurveySubmit, onDismiss: () => void, pending?: SurveyResponse) {
     if (!this.messagingAllowed()) return;
     // Start with first question
-    this.renderQuestion(survey, 0, [], onSubmit, onDismiss);
+    this.renderQuestion(survey, pending ? survey.questions.length : 0, pending?.answers ?? [], onSubmit, onDismiss, pending);
   }
 
   renderFeedbackWidget(onSubmit: (f: FeedbackSubmission) => Promise<void>) {
@@ -125,110 +129,118 @@ export class VanillaRenderer {
   }
 
   private renderQuestion(
-    survey: Survey, 
-    index: number, 
-    answers: { questionId: string; value: any }[],
-    onSubmit: (r: SurveyResponse) => void,
-    onDismiss: () => void
+    survey: Survey,
+    index: number,
+    answers: SurveyResponse['answers'],
+    onSubmit: SurveySubmit,
+    onDismiss: () => void,
+    pending?: SurveyResponse,
   ) {
     if (!this.messagingAllowed()) return;
-    if (index >= survey.questions.length) {
-      // Done
-      onSubmit({
-        surveyId: survey.id,
-        answers,
-        submittedAt: Date.now()
-      });
-      return;
-    }
-
     const question = survey.questions[index];
     const overlay = document.createElement('div');
     overlay.className = 'userfn-overlay';
-
     const modal = document.createElement('div');
     modal.className = 'userfn-modal';
-
-    // Close
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-label', survey.title ?? 'Survey');
     const closeBtn = document.createElement('button');
     closeBtn.className = 'userfn-close';
-    closeBtn.innerHTML = '&times;';
-    closeBtn.onclick = () => {
-      if (!this.active(overlay)) return;
-      this.removeMessage(overlay);
-      onDismiss();
-    };
+    closeBtn.textContent = '×';
+    closeBtn.setAttribute('aria-label', 'Close survey');
+    closeBtn.onclick = () => { if (this.active(overlay)) { this.removeMessage(overlay); onDismiss(); } };
     modal.appendChild(closeBtn);
-
-    // Title
     const title = document.createElement('h3');
     title.className = 'userfn-title';
-    title.innerText = question.title;
+    title.textContent = question?.title ?? survey.title ?? 'Survey response';
     modal.appendChild(title);
-
-    // Input Area
-    const inputContainer = document.createElement('div');
-    inputContainer.style.marginBottom = '1rem';
-    
-    let getValue: () => any;
-
-    if (question.type === 'nps' || question.type === 'csat') {
-      const min = question.min ?? 0;
-      const max = question.max ?? 10;
-      const range = document.createElement('div');
-      range.style.display = 'flex';
-      range.style.gap = '8px';
-      
+    const inputs = document.createElement('div');
+    inputs.style.marginBottom = '1rem';
+    let getValue: () => unknown = () => null;
+    let unsupported = false;
+    if (pending) {
+      const note = document.createElement('p');
+      note.textContent = 'A previous submission has not been confirmed here. Retry sends the same answers.';
+      inputs.appendChild(note);
+      const summary = document.createElement('ul');
+      for (const answer of pending.answers) {
+        const item = document.createElement('li');
+        item.textContent = `${survey.questions.find(q => q.id === answer.questionId)?.title ?? answer.questionId}: ${String(answer.value)}`;
+        summary.appendChild(item);
+      }
+      inputs.appendChild(summary);
+    } else if (question?.type === 'nps' || question?.type === 'csat') {
+      const min = question.min ?? (question.type === 'csat' ? 1 : 0);
+      const max = question.max ?? (question.type === 'csat' ? 5 : 10);
       let selected: number | null = null;
-      const btns: HTMLButtonElement[] = [];
-
-      for (let i = min; i <= max; i++) {
-        const btn = document.createElement('button');
-        btn.innerText = String(i);
-        btn.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;';
-        btn.onclick = () => {
-          if (!this.active(overlay)) return;
-          selected = i;
-          btns.forEach(b => b.style.background = 'white');
-          btn.style.background = '#e5e7eb';
+      const buttons: HTMLButtonElement[] = [];
+      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max || max - min > 100) unsupported = true;
+      else for (let value = min; value <= max; value++) {
+        const button = document.createElement('button');
+        button.textContent = String(value);
+        button.setAttribute('aria-pressed', 'false');
+        button.onclick = () => {
+          if (!this.active(overlay) || button.disabled) return;
+          selected = value;
+          buttons.forEach(other => other.setAttribute('aria-pressed', String(other === button)));
         };
-        btns.push(btn);
-        range.appendChild(btn);
+        buttons.push(button); inputs.appendChild(button);
       }
-      inputContainer.appendChild(range);
       getValue = () => selected;
-    } else if (question.type === 'text') {
-      const area = document.createElement('textarea');
-      area.style.cssText = 'width: 100%; height: 80px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
-      inputContainer.appendChild(area);
-      getValue = () => area.value;
-    } else {
-      // Fallback
-      inputContainer.innerText = 'Unsupported question type';
-      getValue = () => null;
-    }
-
-    modal.appendChild(inputContainer);
-
-    // Next/Submit Button
-    const nextBtn = document.createElement('button');
-    nextBtn.className = 'userfn-cta';
-    nextBtn.innerText = index === survey.questions.length - 1 ? 'Submit' : 'Next';
-    nextBtn.onclick = () => {
-      if (!this.active(overlay)) return;
-      const val = getValue();
-      if (question.required && (val === null || val === '')) {
-        alert('Please answer the question'); // simple validation
-        return;
+    } else if (question?.type === 'choice') {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', question.title);
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Choose an answer'; select.appendChild(empty);
+      for (const [choiceIndex, choice] of (question.choices ?? []).entries()) {
+        const option = document.createElement('option'); option.value = String(choiceIndex); option.textContent = choice.label; select.appendChild(option);
       }
-      this.removeMessage(overlay);
-      this.renderQuestion(survey, index + 1, [...answers, { questionId: question.id, value: val }], onSubmit, onDismiss);
+      inputs.appendChild(select);
+      getValue = () => select.value === '' ? null : question.choices?.[Number(select.value)]?.value;
+    } else if (question?.type === 'text') {
+      const area = document.createElement('textarea');
+      area.setAttribute('aria-label', question.title);
+      area.maxLength = 10000;
+      inputs.appendChild(area); getValue = () => area.value;
+    } else if (question) unsupported = true;
+    if (unsupported) inputs.textContent = 'This question cannot be displayed.';
+    modal.appendChild(inputs);
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    modal.appendChild(status);
+    const next = document.createElement('button'); next.className = 'userfn-cta';
+    const final = index >= survey.questions.length - 1;
+    next.textContent = pending ? 'Retry submission' : final ? 'Submit' : 'Next';
+    next.disabled = unsupported;
+    let frozen = pending;
+    let sending = false;
+    let completed = false;
+    next.onclick = async () => {
+      if (!this.active(overlay) || sending || completed || unsupported) return;
+      if (!frozen) {
+        const value = getValue();
+        const empty = value === null || value === undefined || (typeof value === 'string' && !value.trim());
+        if (question?.required && empty) { status.textContent = 'Please answer the question.'; return; }
+        const collected = question && !empty ? [...answers, { questionId: question.id, value }] : answers;
+        if (!final) { this.removeMessage(overlay); this.renderQuestion(survey, index + 1, collected, onSubmit, onDismiss); return; }
+        frozen = { surveyId: survey.id, answers: collected, submittedAt: Date.now() };
+      }
+      sending = true; next.disabled = true; next.textContent = 'Sending…'; status.textContent = 'Submitting your response…';
+      inputs.querySelectorAll('button,input,textarea,select').forEach(input => { (input as HTMLInputElement).disabled = true; });
+      try {
+        const acknowledgement = await onSubmit(frozen);
+        if (!this.active(overlay)) return;
+        if (acknowledgement === false) { status.textContent = 'This survey is no longer active.'; next.textContent = 'Unavailable'; return; }
+        completed = true;
+        status.textContent = acknowledgement === 'stored' ? 'Response saved.' : 'Response recorded locally.';
+        next.textContent = 'Submitted';
+      } catch {
+        if (!this.active(overlay)) return;
+        status.textContent = 'Submission not confirmed. Retry sends the same answers. Keep this page open to retry.';
+        next.disabled = false; next.textContent = 'Retry submission';
+      } finally { sending = false; }
     };
-    modal.appendChild(nextBtn);
-
-    overlay.appendChild(modal);
-    this.messages.add(overlay);
-    document.body.appendChild(overlay);
+    modal.appendChild(next); overlay.appendChild(modal);
+    this.messages.add(overlay); this.surveyNodes.add(overlay); document.body.appendChild(overlay);
   }
 
   private renderToast(campaign: Campaign, onDismiss: () => void, onAction: () => void) {

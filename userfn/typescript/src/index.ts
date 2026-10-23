@@ -1,3 +1,4 @@
+import { canonicalJson } from './utils/json';
 import { HttpSurveyService, SurveyDeliveryError } from './core/surveys-http';
 export { SurveyDeliveryError } from './core/surveys-http';
 import { HttpMessaging, MessagingDeliveryError } from './core/messaging-http';
@@ -19,7 +20,7 @@ import { SurveyEngine } from './core/surveys';
 import { FeedbackEngine } from './core/feedback';
 import { HttpFeedbackService } from './core/feedback-http';
 import { VanillaRenderer } from './ui/renderer';
-import { UserFnOptions, FlagValue, FlagConfig, Segment, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey } from './types';
+import { UserFnOptions, FlagValue, FlagConfig, Segment, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey, SurveyResponse, SurveyReceipt } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
@@ -29,6 +30,9 @@ export class UserFnClient {
   private durableMessaging?: HttpMessaging;
   private surveys: SurveyEngine;
   private surveyService?: HttpSurveyService;
+  private renderedSurveyService?: HttpSurveyService;
+  private surveyPresentation?: symbol;
+  private readonly surveyAttempts = new Map<string, { key: string; response: SurveyResponse; pending?: Promise<SurveyReceipt>; receipt?: SurveyReceipt }>();
   private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
@@ -58,7 +62,11 @@ export class UserFnClient {
     this.messaging = new MessagingEngine(this.segments);
     this.durableMessaging = options.messaging ? new HttpMessaging(options) : undefined;
     this.surveys = new SurveyEngine(this.segments);
-    if (options.endpoint) this.surveyService = new HttpSurveyService(options);
+    if (options.endpoint) {
+      this.surveyService = new HttpSurveyService(options);
+      // UI retries require a fresh explicit click and a current identity/consent fence.
+      this.renderedSurveyService = new HttpSurveyService({ ...options, surveyMaxAttempts: 1 });
+    }
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
@@ -139,18 +147,46 @@ export class UserFnClient {
     const surveys = this.surveys.getEligibleSurveys(type, context, user);
     if (surveys.length > 0) {
       const survey = surveys[0];
+      const presentation = Symbol('survey');
+      this.surveyPresentation = presentation;
+      this.renderer?.dismissSurveys?.();
+      const owner = JSON.stringify([user!.id, survey.id]);
       let submitted = false;
+      const valid = () => !!user && this.syncConsent().messaging && this.messagingEpoch === epoch && this.identity.getUser() === user && this.surveyPresentation === presentation;
       this.renderer?.renderSurvey(
         survey,
-        (response) => {
-          if (submitted || !user || !this.syncConsent().messaging || this.messagingEpoch !== epoch || this.identity.getUser() !== user || response.surveyId !== survey.id) return;
+        async (response) => {
+          if (submitted || !valid() || response.surveyId !== survey.id) return false;
+          if (!this.renderedSurveyService) {
+            submitted = true;
+            this.surveys.trackResponse(response, user!);
+            return 'local';
+          }
+          let attempt = this.surveyAttempts.get(owner);
+          if (!attempt) {
+            // Never evict an uncertain outcome to admit a fresh response/key.
+            if (this.surveyAttempts.size >= 100) throw new SurveyDeliveryError('Pending survey response capacity reached');
+            const raw = canonicalJson({ answers: response.answers });
+            if (new TextEncoder().encode(raw).byteLength > 65536) throw new SurveyDeliveryError('Survey response exceeds bounds');
+            attempt = { key: crypto.randomUUID(), response: { surveyId: survey.id, answers: JSON.parse(raw).answers, submittedAt: Date.now() } };
+            this.surveyAttempts.set(owner, attempt);
+          }
+          const saved = attempt;
+          if (!saved.receipt) {
+            saved.pending ??= this.renderedSurveyService.submit(survey.id, saved.response.answers, saved.key)
+              .then(receipt => { saved.receipt = receipt; return receipt; })
+              .finally(() => { saved.pending = undefined; });
+            await saved.pending;
+          }
+          // Retain a late receipt for the original owner; do not update stale UI.
+          if (submitted || !valid()) return false;
           submitted = true;
-          this.surveys.trackResponse(response, user);
-          // TODO: emit to watchfn
+          this.surveys.trackResponse({ ...saved.response, submittedAt: saved.receipt!.submittedAt }, user!);
+          this.surveyAttempts.delete(owner);
+          return 'stored';
         },
-        () => {
-           // dismissed survey
-        }
+        () => { if (this.surveyPresentation === presentation) this.surveyPresentation = undefined; },
+        this.surveyAttempts.get(owner)?.response,
       );
     }
   }
@@ -218,6 +254,8 @@ export class UserFnClient {
 
 
   identify(id: string, traits: UserTraits = {}) {
+    this.surveyPresentation = undefined;
+    this.renderer?.dismissSurveys?.();
     this.messagingEpoch++;
     this.identity.identify(id, traits);
     this.publishFlags();
@@ -225,6 +263,8 @@ export class UserFnClient {
   }
 
   reset() {
+    this.surveyPresentation = undefined;
+    this.renderer?.dismissSurveys?.();
     this.messagingEpoch++;
     this.identity.reset();
     this.publishFlags();

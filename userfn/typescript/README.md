@@ -514,5 +514,39 @@ the serialized body and key. Cap denial429 and other permanent4xx errors are
 returned without automatic retries. Redirects and ambient cookies are disabled;
 requests and receipts are bounded to64KiB. Cancellation or timeout cannot undo a
 server commit. Explicit submission is user initiated and does not depend on
-passive messaging consent. The local survey renderer is not yet wired to this
-transport; there is no automatic durable queue or analytics forwarding.
+passive messaging consent. The renderer uses the service when an endpoint is configured, as described below;
+there is no automatic durable queue or analytics forwarding.
+
+### Survey renderer acknowledgements and retries
+
+With `endpoint` configured, the survey's Submit button now awaits a verified
+service receipt before displaying **Response saved** or consuming its local
+response count. It makes one bounded network attempt per click; `surveyMaxAttempts`
+continues to govern the direct `submitSurveyResponse` API, not renderer clicks.
+Pending controls are disabled. A timeout, lost response or denial keeps the form
+open with an explicit Retry submission action and no success claim.
+
+The client retains one immutable answer payload and key per local user/survey
+after its first attempt, including across dismissal and reopen within that client.
+Retries cannot change those answers or silently allocate another key. Up to100
+unresolved attempts are retained; at capacity new submissions fail before sending
+and existing attempts are not evicted. Successful reconciliation removes the entry.
+Identity/reset/consent changes fence stale callbacks and dismiss survey UI. A late
+receipt remains available only to the original local identity in the same client;
+it cannot resurrect the old UI or acknowledge for a different identity. Credentials
+are captured by the HTTP transport at client construction; create a new client for
+a different authenticated server identity. Local `identify()` never changes the
+server credential.
+
+These pending answers live only in memory. **Keep the page open after an unknown
+outcome.** Reloading, closing the tab or replacing the client loses this retry
+state; there is no persistent journal or offline queue. A server commit cannot be
+undone by closing the form, withdrawing consent or timing out an in-flight request.
+The service remains authoritative for accepted-response quotas. A full recoverable
+renderer requires an explicitly owned persistent journal and remains open work.
+
+Without an endpoint, existing local survey behavior remains available; completion
+says **Response recorded locally** and does not imply server acceptance. Empty
+surveys require an explicit Submit click. Optional unanswered questions are omitted,
+CSAT defaults are1–5 (NPS0–10), and choice inputs retain their configured scalar
+values. Branching, richer templates and automatic analytics forwarding remain open.
