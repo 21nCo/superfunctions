@@ -1,0 +1,27 @@
+flowfn/.conduct/heartbeat_diagnostics.py
+  s_e1c5fc1a65c0cf::t_82216e897c06e7 1-120
+flowfn/.conduct/heartbeat_trace_plugin.py
+  s_e1c5fc1a65c0cf::t_b2aa0bcf7cdd11 1-86
+flowfn/.conduct/python-heartbeat-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_31ccde67ba40e3 1-99
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_01301819807ee1 183-186
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_86ae71d188d916 127-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a7e711c091ef1a5264c8167131cc50db5c339f7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
