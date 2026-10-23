@@ -1,3 +1,4 @@
+import { createTeamsChatTracker } from '../src/chat.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TeamsAdapter } from '../src/index.js';
 import type { Page } from 'playwright';
@@ -184,6 +185,10 @@ describe('TeamsAdapter (TV-PLAT-003, PLAT-004)', () => {
     expect(adapter.isConnected()).toBe(false);
   });
 
+  it('rejects chat sends before a session exists', async () => {
+    await expect(adapter.sendChatMessage('Recording')).rejects.toThrow('Chat is unavailable');
+  });
+
   it('sendChatMessage does not throw when chat tracker exists', async () => {
     await adapter.join('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc123', {
       displayName: 'Bot',
@@ -217,5 +222,21 @@ describe('TeamsAdapter (TV-PLAT-003, PLAT-004)', () => {
     });
 
     expect(joined).toBeDefined();
+  });
+});
+
+
+describe('chat send failure reporting', () => {
+  it('rejects missing chat input instead of claiming a send', async () => {
+    const page = createMockPage();
+    vi.mocked(page.$).mockResolvedValue(null);
+    await expect(createTeamsChatTracker(page).send('Recording')).rejects.toThrow('chat input unavailable');
+    expect(page.keyboard.press).not.toHaveBeenCalled();
+  });
+  it('preserves send failures instead of claiming a send', async () => {
+    const page = createMockPage();
+    const failure = new Error('chat send rejected');
+    vi.mocked(page.keyboard.press).mockRejectedValue(failure);
+    await expect(createTeamsChatTracker(page).send('Recording')).rejects.toBe(failure);
   });
 });

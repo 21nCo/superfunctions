@@ -38,10 +38,9 @@ export function createTeamsChatTracker(page: Page): TeamsChatTracker {
       const input = await currentPage.$(
         '[data-tid="chat-input"], [aria-label*="chat"] input, [placeholder*="Type"]',
       );
-      if (input) {
-        await input.fill(text);
-        await currentPage.keyboard.press('Enter');
-      }
+      if (!input) throw new Error('Teams chat input unavailable.');
+      await input.fill(text);
+      await currentPage.keyboard.press('Enter');
     },
   });
 }

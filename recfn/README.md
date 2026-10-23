@@ -245,3 +245,13 @@ default MP4 request; request `audio_only` for that capture path. Live provider
 video support, per-participant tracks, one-hour latency/resource acceptance,
 ASR compatibility with encoded MediaRecorder chunks, and desktop recorder
 container correctness remain separate unfinished requirements.
+
+### Consent announcement failures
+
+Browser adapters reject unavailable chat sessions/inputs and failed send commands.
+The server logs `bot.consent_failed` on rejection rather than reporting a sent
+message. Its current policy continues recording after that warning. The original
+consent requirements and negative test vector conflict on whether failed delivery
+must block recording; see [the exact contract and evidence](.conduct/consent-transport-readiness.md).
+Successful browser submission does not establish provider delivery or participant
+consent.

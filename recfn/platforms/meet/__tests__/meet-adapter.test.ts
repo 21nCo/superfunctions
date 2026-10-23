@@ -1,3 +1,4 @@
+import { createMeetChatTracker } from '../src/chat.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MeetAdapter } from '../src/index.js';
 import type { Page } from 'playwright';
@@ -194,6 +195,10 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
     expect(adapter.isConnected()).toBe(false);
   });
 
+  it('rejects chat sends before a session exists', async () => {
+    await expect(adapter.sendChatMessage('Recording')).rejects.toThrow('Chat is unavailable');
+  });
+
   it('sendChatMessage does not throw when chat tracker exists', async () => {
     await adapter.join('https://meet.google.com/abc-defg-hij', {
       displayName: 'Bot',
@@ -227,5 +232,21 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
     });
 
     expect(joined).toBeDefined();
+  });
+});
+
+
+describe('chat send failure reporting', () => {
+  it('rejects missing chat input instead of claiming a send', async () => {
+    const page = createMockPage();
+    vi.mocked(page.$).mockResolvedValue(null);
+    await expect(createMeetChatTracker(page).send('Recording')).rejects.toThrow('chat input unavailable');
+    expect(page.keyboard.press).not.toHaveBeenCalled();
+  });
+  it('preserves send failures instead of claiming a send', async () => {
+    const page = createMockPage();
+    const failure = new Error('chat send rejected');
+    vi.mocked(page.keyboard.press).mockRejectedValue(failure);
+    await expect(createMeetChatTracker(page).send('Recording')).rejects.toBe(failure);
   });
 });

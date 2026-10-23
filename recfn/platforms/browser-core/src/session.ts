@@ -292,7 +292,8 @@ export class BrowserAutomationAdapter<
   }
 
   async sendChatMessage(text: string): Promise<void> {
-    await this.chatTracker?.send(text);
+    if (!this.chatTracker) throw new Error('Chat is unavailable without an active browser session.');
+    await this.chatTracker.send(text);
   }
 
   async getMetadata(): Promise<MeetingMetadata> {

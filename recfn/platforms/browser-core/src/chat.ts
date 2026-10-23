@@ -43,11 +43,8 @@ export function createBrowserChatTracker(
     },
 
     async send(text: string): Promise<void> {
-      try {
-        await options.sendMessage(options.page, text);
-      } catch {
-        // Non-fatal: some meetings disable chat input.
-      }
+      // Delivery policy belongs to the caller; never report a failed send as success.
+      await options.sendMessage(options.page, text);
     },
 
     async startObserving(): Promise<void> {

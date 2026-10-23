@@ -205,10 +205,9 @@ export function createMeetChatTracker(
       const input = await currentPage.$(
         '[data-idom-class*="chat"], [aria-label*="chat"] input, [placeholder*="message"]',
       );
-      if (input) {
-        await input.fill(text);
-        await currentPage.keyboard.press('Enter');
-      }
+      if (!input) throw new Error('Meet chat input unavailable.');
+      await input.fill(text);
+      await currentPage.keyboard.press('Enter');
     },
   });
 

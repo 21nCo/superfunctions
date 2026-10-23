@@ -212,6 +212,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
     const failedLogs = logger.findByEvent('bot.consent_failed');
     expect(failedLogs.length).toBe(1);
     expect(failedLogs[0].data.botId).toBe(bot.id);
+    expect(logger.findByEvent('bot.consent_sent')).toHaveLength(0);
 
     const updated = await store.getBot(bot.id, 'ns_test');
     expect(updated!.status).toBe('recording');
