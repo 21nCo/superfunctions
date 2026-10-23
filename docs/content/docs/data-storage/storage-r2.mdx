@@ -1,0 +1,110 @@
+---
+title: Storage R2
+description: Use Cloudflare R2 as the storage adapter when your app runs near Workers, edge delivery, or Cloudflare-managed storage.
+---
+
+`@superfunctions/storage-r2` brings the shared storage contract to Cloudflare R2. It is a strong fit when your application already runs on Cloudflare, when you want object storage close to a Workers-based edge architecture, or when you prefer R2's operational model while still keeping your application code portable. The package exports a `StorageAdapter` implementation, so the rest of your service can keep depending on `@superfunctions/storage` rather than on Cloudflare-specific primitives.
+
+The adapter uses S3-compatible semantics under the hood, which means it supports the same high-level workflow shapes many teams already know: signed upload URLs, signed download URLs, multipart uploads, and download streaming. That makes it easy to preserve a browser-upload or export-download flow while choosing Cloudflare instead of AWS.
+
+## What It Is
+
+`@superfunctions/storage-r2` exports `createR2StorageAdapter()`. You configure it with a Cloudflare account ID, bucket name, access key, secret access key, and optional jurisdiction. The adapter then exposes the shared `StorageAdapter` interface for object statistics, upload signing, download signing, multipart operations, and streaming downloads.
+
+The point of the package is not to replace the storage contract. It is to let R2 participate in the same application-level interface as S3, MinIO, GCS, Azure, and local storage.
+
+## When To Use It
+
+Choose this adapter when your app already depends on Cloudflare services, when your team wants object storage aligned with Workers or edge-delivered traffic, or when you want S3-style APIs without making AWS your storage default.
+
+Use this chooser when sibling adapters look similar:
+
+| If your priority is... | Choose |
+| --- | --- |
+| Cloudflare-native storage near Workers and edge traffic | `storage-r2` |
+| AWS-native operations and broader S3 ecosystem tooling | [`storage-s3`](/docs/data-storage/storage-s3) |
+| Self-hosted S3-compatible deployments | [`storage-minio`](/docs/data-storage/storage-minio) |
+| Local-only development and tests | [`storage-local`](/docs/data-storage/storage-local) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-r2
+```
+
+## Quick Start
+
+Create the adapter with your Cloudflare account and bucket details, then inject it anywhere your service expects a `StorageAdapter`.
+
+```ts
+import { createR2StorageAdapter } from "@superfunctions/storage-r2";
+
+export const storage = createR2StorageAdapter({
+  accountId: "your-account-id",
+  bucket: "user-assets",
+  accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+});
+```
+
+Because the adapter exposes the shared contract, signed browser uploads look the same as they would on another provider.
+
+```ts
+import { createR2StorageAdapter } from "@superfunctions/storage-r2";
+
+const storage = createR2StorageAdapter({
+  accountId: "your-account-id",
+  bucket: "user-assets",
+  accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+});
+
+const upload = await storage.signUploadUrl?.({
+  key: "exports/run-2026-03-16.json",
+  expiresInSeconds: 300,
+});
+```
+
+## Core Concepts
+
+The first concept is that R2 keeps the shared storage contract intact. Your service layer can still talk to `StorageAdapter` while the Cloudflare-specific endpoint construction stays inside the adapter.
+
+The second concept is S3-compatible behavior. If your team already understands signed URLs and multipart uploads from S3-style systems, this adapter will feel familiar while still targeting Cloudflare.
+
+The third concept is deployment affinity. Teams often choose R2 because the rest of the application stack already lives in Cloudflare. In that setup, `storage-r2` becomes the provider boundary while the rest of the upload or download flow stays vendor-neutral.
+
+## Real-World Example
+
+A good outside-world example is an edge-heavy app that generates short-lived download links for exports after a Worker-triggered job completes. The business logic can remain unchanged while the adapter points at R2.
+
+```ts
+import { createR2StorageAdapter } from "@superfunctions/storage-r2";
+
+const storage = createR2StorageAdapter({
+  accountId: "your-account-id",
+  bucket: "edge-reports",
+  accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  jurisdiction: "eu",
+});
+
+export async function issueReportLink(key: string) {
+  return storage.signDownloadUrl?.({
+    key,
+    expiresInSeconds: 90,
+    constraints: { responseContentType: "application/json" },
+  });
+}
+```
+
+This keeps the application concerned with authorization and reporting rules, not Cloudflare request-shaping details.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base contract this adapter implements.
+- [`storage-s3`](/docs/data-storage/storage-s3) if you need similar semantics in an AWS environment.
+- [`files`](/docs/data-storage/files) if you are layering file metadata and upload-session concepts on top of stored objects.
+
+## Troubleshooting
+
+If requests fail during signing, confirm the account ID, bucket name, and R2 credentials are all from the same Cloudflare storage account. If downloads work but uploads do not, check whether the calling workflow expects headers or multipart behavior that the client is not honoring. When an R2-specific choice starts leaking into your service code, move it back to the application wiring layer and keep the rest of the system on the shared storage contract.

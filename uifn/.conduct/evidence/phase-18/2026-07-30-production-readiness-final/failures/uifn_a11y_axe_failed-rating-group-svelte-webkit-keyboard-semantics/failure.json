@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "rating-group",
+  "framework": "svelte",
+  "deliveryMode": "package",
+  "browser": "webkit",
+  "version": "26.0",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-framework=\"svelte\" data-uifn-story-id=\"rating-group--keyboard-focus\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><!----><!----><!----><!----><div role=\"radiogroup\" id=\"rating-group-root-rating-group-c1-root\" class=\"uifn-rating-group uifn-rating-group__root\" aria-required=\"false\" aria-disabled=\"false\" aria-labelledby=\"rating-group-label-rating-group-c1-label\" data-uifn-component=\"rating-group\" data-uifn-part=\"root\"><!----><!----><!----><!----><!----><!----><!----><!----><!----><label id=\"rating-group-label-rating-group-c1-label\" class=\"uifn-rating-group uifn-rating-group__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"rating-group\" data-uifn-part=\"label\"><!----><!---->label fixture<!----> <!----><!----><!----> <!----></label><!----><!----><!----><!----><!----><!----><div id=\"rating-group-control-rating-group-c1-control\" class=\"uifn-rating-group uifn-rating-group__control\" data-uifn-story-anatomy=\"control\" data-uifn-component=\"rating-group\" data-uifn-part=\"control\"><!----><!----><!----> <!----><!----><!----><!----><!----><!----><!----><button type=\"button\" role=\"radio\" id=\"rating-group-item-rating-group-c1-item-0\" tabindex=\"0\" class=\"uifn-rating-group uifn-rating-group__item\" aria-checked=\"true\" aria-label=\"0 / 5\" aria-disabled=\"false\" data-state=\"highlighted\" data-uifn-story-anatomy=\"item\" data-uifn-component=\"rating-group\" data-uifn-part=\"item\"><!----><!---->item fixture<!----> <!----><!----><!----><!----><!----><!----><!----><span id=\"rating-group-indicator-rating-group-c1-indicator-0\" class=\"uifn-rating-group uifn-rating-group__itemIndicator\" data-state=\"filled\" data-uifn-story-anatomy=\"itemIndicator\" data-uifn-component=\"rating-group\" data-uifn-part=\"itemIndicator\"><!----><!----><!----> <!---->itemIndicator fixture<!----><!----> <!----></span><!----> <!----><!----><!----> <!----></button><!----> <!----><!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><input type=\"hidden\" value=\"0\" id=\"rating-group-input-rating-group-c1-input\" class=\"uifn-rating-group uifn-rating-group__hiddenInput\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"rating-group\" data-uifn-part=\"hiddenInput\"><!----><!----><!----><!----><!----><!----><span id=\"rating-group-value-text-rating-group-c1-value-text\" class=\"uifn-rating-group uifn-rating-group__valueText\" aria-live=\"polite\" data-value=\"0 / 5\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"rating-group\" data-uifn-part=\"valueText\"><!----><!----><!----> <!---->valueText fixture<!----><!----> <!----></span></div><!----></section>",
+  "semanticTrace": [
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "button",
+      "role": "radio",
+      "aria": [
+        [
+          "aria-checked",
+          "true"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-label",
+          "0 / 5"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "highlighted"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "filled"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "radiogroup",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "rating-group-label-rating-group-c1-label"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": []
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "0 / 5"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "bf30a6cd69c4a49dc2bf3c8a7af0c94c1076161170ec239b843cbff75f467311"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "bf30a6cd69c4a49dc2bf3c8a7af0c94c1076161170ec239b843cbff75f467311"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "0a890b2186b6602f246dae604b8554c600e5a1eb209a06cad990ae4ac014b534"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "bf30a6cd69c4a49dc2bf3c8a7af0c94c1076161170ec239b843cbff75f467311"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "bf30a6cd69c4a49dc2bf3c8a7af0c94c1076161170ec239b843cbff75f467311"
+    }
+  ],
+  "focusPath": [
+    "item",
+    "item",
+    "item",
+    "item",
+    "item",
+    "item"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:36:37.275Z",
+  "expiresAt": "2026-08-06T16:36:37.275Z"
+}

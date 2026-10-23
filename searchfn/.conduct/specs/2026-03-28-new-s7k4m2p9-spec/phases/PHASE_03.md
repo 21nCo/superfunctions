@@ -1,0 +1,28 @@
+- Phase goal: Implement SearchFn-owned SQLite persistence with deterministic index paths, manifest handling, and reopen durability.
+- In scope:
+  - SQLite adapter
+  - deterministic `indexKey` path mapping
+  - manifest file
+  - reopen persistence behavior
+- Out of scope:
+  - docs/examples
+  - companion DataFn integration
+- Deliverables:
+  - `searchfn/swift/Sources/SearchFnSQLiteAdapter/*`
+  - `searchfn/swift/Sources/SearchFnConvenience/SearchFn.swift`
+  - `searchfn/swift/Tests/SearchFnSQLiteAdapterTests/*`
+- Requirements covered:
+  - `SSQL-001`
+  - `SERR-001`
+  - `SDET-001`
+- Implementation tasks:
+  - Implement deterministic slug + hash path mapping for `indexKey`.
+  - Create the SQLite schema and manifest format from this spec.
+  - Persist documents, postings, vocabulary, and metadata.
+  - Reopen the same persisted index and verify equivalent search behavior.
+  - Detect manifest/schema mismatches and throw `SEARCH_INDEX_FORMAT_MISMATCH`.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift --filter SearchFnSQLiteAdapterTests`
+  - Expected outcome: persistence and reopen tests pass, including explicit mismatch failure coverage.
+- Stop condition:
+  - Report the persisted file layout and exact test command result before beginning Phase 04.

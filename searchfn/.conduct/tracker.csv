@@ -1,0 +1,6 @@
+id, desc, status, completedAt, completionDoc
+2026-03-08-new-q4k7m2r8-spec, SearchFn adapter architecture + DataFn search integration, 1, 2026-03-08T12:24:00Z,
+2026-03-08-new-97a4c153-spec, Rewrite SearchFn into adapter-first thin client/server architecture with full adapters docs and production readiness, 1, 2026-03-08T20:12:28Z,
+2026-03-09-r7k4m2x9-full-audit, Resolve unresolved SearchFn full audit findings from 2026-03-09, 1, 2026-03-11T09:58:34Z, 2026-03-11-k9m4x2p7-completion
+2026-03-11-new-h3r9k2m7-spec,Replace monolithic @searchfn/adapters with per-adapter packages and migrate monorepo dependencies,1,2026-03-11T17:33:50Z,
+2026-03-12-change-p7x3k9m2-spec,Add prefix matching and construct-time SearchDefaults to adapter contract and all adapters,1,2026-03-12T12:10:00Z,

@@ -1,0 +1,27 @@
+- Phase goal: Publish standalone docs and examples for the Swift package and finalize public exports.
+- In scope:
+  - README
+  - package export cleanup
+  - standalone examples
+- Out of scope:
+  - DataFn integration docs
+  - server/service docs
+- Deliverables:
+  - `searchfn/swift/README.md`
+  - `searchfn/docs/content/docs/*` additions for Swift local search
+  - `searchfn/swift/Examples/*` or repo-native example fixtures
+  - final `Package.swift` export polish
+- Requirements covered:
+  - `SDOC-001`
+  - `SARCH-001`
+- Implementation tasks:
+  - Document in-memory and SQLite-backed usage from the repo root.
+  - Add example code for initialize/index/search/searchAll/remove/clear/dispose.
+  - Document path ownership and that persisted indexes are SearchFn-owned rather than Core Data-owned.
+  - Verify docs and examples do not contain absolute local filesystem paths.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift`
+  - Run any example compile checks introduced by the implementation from repo root.
+  - Expected outcome: tests still pass and examples/docs are internally consistent.
+- Stop condition:
+  - Report final doc/example files and verification commands before closing the spec.

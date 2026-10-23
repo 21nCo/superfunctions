@@ -1,0 +1,107 @@
+---
+title: OAuth Providers
+description: Reuse curated provider descriptors and policy registry primitives for common OAuth providers.
+---
+
+`@superfunctions/oauth-providers` packages the shared provider knowledge we do not want every app to rediscover on its own: descriptor metadata, default scopes, capability rules, and policy helpers for common providers. It is the place where Superfunctions packages can agree on what “GitHub”, “Google”, or “Apple” means before any specific app wires those providers into routes or lifecycle services.
+
+## What It Is
+
+The package exports:
+
+- provider descriptors such as `getOAuthProviderDescriptor("github")`
+- bundled provider policies
+- `ProviderPolicyRegistry`
+- `createDefaultProviderPolicyRegistry()`
+
+Descriptors feed `oauth-core` and `oauth-flow`. The policy registry adds scope validation, operation checks, consent recording, and policy-audit events on top of those descriptors.
+
+## When To Use It
+
+Use `@superfunctions/oauth-providers` when you want shared provider defaults and policy enforcement:
+
+- apps integrating with common SaaS providers
+- shared packages that should expose a known-good provider inventory
+- platform/compliance layers that need scope and operation policy checks
+
+If you have a private or highly customized provider, you can bypass this package and pass your own descriptor directly to [`oauth-core`](/docs/authentication/oauth-core) or [`oauth-flow`](/docs/authentication/oauth-flow).
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-providers @superfunctions/oauth-core
+```
+
+## Quick Start
+
+```ts
+import {
+  createDefaultProviderPolicyRegistry,
+  getOAuthProviderDescriptor,
+} from "@superfunctions/oauth-providers";
+
+const github = getOAuthProviderDescriptor("github");
+const registry = createDefaultProviderPolicyRegistry();
+
+const consent = await registry.validateScopes({
+  providerId: "github",
+  feature: "profile.basic",
+  requestedScopes: github.defaultScopes,
+  tenantId: "tenant_1",
+  userId: "user_1",
+  purpose: "Connect a GitHub account",
+});
+
+console.log(consent.consentRecord.policyVersion);
+```
+
+## Core Concepts
+
+Descriptors and policies solve different problems. The descriptor is OAuth protocol metadata. The policy layer answers product and compliance questions: are these scopes allowed for this feature, is this operation permitted, and which policy version authorized the consent decision?
+
+The registry is intentionally explicit about persistence now. `createDefaultProviderPolicyRegistry()` gives you an in-memory convenience registry so tests and quickstarts stay small, but durable consent/audit history only exists if you supply explicit `consentStore` and `auditStore` implementations.
+
+## Production Guidance
+
+- Treat `createDefaultProviderPolicyRegistry()` as in-memory convenience, not as your durable audit system.
+- For production consent/audit retention, pass explicit async stores.
+- Registry write APIs are async because persistence is part of the real contract now.
+- If a store write fails, the registry raises `PROVIDER_POLICY_STORE_FAILED` rather than pretending consent or audit state was recorded.
+
+## Real-World Example
+
+This pattern fits a platform that wants both curated descriptors and durable policy evidence.
+
+```ts
+import {
+  ProviderPolicyRegistry,
+  listProviderPolicies,
+} from "@superfunctions/oauth-providers";
+
+const registry = new ProviderPolicyRegistry(listProviderPolicies(), {
+  consentStore,
+  auditStore,
+});
+
+registry.assertOperationAllowed({
+  providerId: "github",
+  operation: "oauth.revoke",
+});
+
+await registry.recordPolicyVersionUpdate({
+  providerId: "github",
+  newVersion: "2026-03-27",
+  actor: "compliance-bot",
+  reason: "restricted scope cleanup",
+});
+```
+
+## Related Packages
+
+- [`oauth-core`](/docs/authentication/oauth-core) for the provider-neutral service layer
+- [`oauth-flow`](/docs/authentication/oauth-flow) for high-level orchestration
+- [`oauth-testing`](/docs/authentication/oauth-testing) for deterministic fixtures
+
+## Troubleshooting
+
+If a provider lookup fails, verify the provider ID matches one of the exported IDs exactly. If scope validation fails, inspect the feature name and requested scopes before assuming the provider is unsupported. If policy persistence is required for your product, do not ship with the default in-memory convenience registry; provide real stores and monitor `PROVIDER_POLICY_STORE_FAILED` as an operational error.

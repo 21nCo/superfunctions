@@ -1,0 +1,353 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "select",
+  "framework": "react",
+  "deliveryMode": "package",
+  "browser": "webkit",
+  "version": "26.0",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-id=\"select--keyboard-focus\" data-uifn-story-framework=\"react\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div class=\"uifn-select uifn-select__root\" data-uifn-component=\"select\" data-uifn-part=\"root\" id=\"select-root-select-r0\" data-state=\"idle\"><label data-uifn-story-anatomy=\"label\" class=\"uifn-select uifn-select__label\" data-uifn-component=\"select\" data-uifn-part=\"label\" id=\"select-label-select-r0\" data-state=\"idle\">label fixture</label><div data-uifn-story-anatomy=\"control\" class=\"uifn-select uifn-select__control\" data-uifn-component=\"select\" data-uifn-part=\"control\" id=\"select-control-select-r0\" data-state=\"idle\"><button data-uifn-story-anatomy=\"trigger\" class=\"uifn-select uifn-select__trigger\" data-uifn-component=\"select\" data-uifn-part=\"trigger\" type=\"button\" role=\"combobox\" id=\"select-trigger-select-r0\" tabindex=\"0\" aria-labelledby=\"select-label-select-r0\" aria-expanded=\"false\" aria-controls=\"select-content-select-r0\" aria-disabled=\"false\" data-state=\"closed\">trigger fixture<span data-uifn-story-anatomy=\"valueText\" class=\"uifn-select uifn-select__valueText\" data-uifn-component=\"select\" data-uifn-part=\"valueText\" id=\"select-valuetext-select-r0\" data-state=\"idle\">valueText fixture</span></button><button data-uifn-story-anatomy=\"clear\" class=\"uifn-select uifn-select__clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\" type=\"button\" role=\"button\" id=\"select-clear-select-r0\" aria-label=\"Clear\" data-state=\"idle\">clear fixture</button></div><!--uifn-portal:select-root-select-r0-portal--><input data-uifn-story-anatomy=\"hiddenInput\" class=\"uifn-select uifn-select__hiddenInput\" data-uifn-component=\"select\" data-uifn-part=\"hiddenInput\" type=\"hidden\" id=\"select-root-select-r0-hiddenInput-item-1\" hidden=\"\" data-state=\"checked\" data-value=\"item-1\" value=\"item-1\"></div></section>",
+  "semanticTrace": [
+    {
+      "part": "clear",
+      "tag": "button",
+      "role": "button",
+      "aria": [
+        [
+          "aria-label",
+          "Clear"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "clear"
+        ]
+      ]
+    },
+    {
+      "part": "content",
+      "tag": "div",
+      "role": "listbox",
+      "aria": [
+        [
+          "aria-labelledby",
+          "select-label-select-r0"
+        ],
+        [
+          "aria-multiselectable",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "content"
+        ]
+      ]
+    },
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "group",
+      "tag": "div",
+      "role": "group",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "group"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "groupLabel",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "groupLabel"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "div",
+      "role": "option",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-selected",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "itemText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemText"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "positioner",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-portal-id",
+          "select-root-select-r0-portal"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "positioner"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    },
+    {
+      "part": "trigger",
+      "tag": "button",
+      "role": "combobox",
+      "aria": [
+        [
+          "aria-controls",
+          "select-content-select-r0"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-expanded",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "select-label-select-r0"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "closed"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "trigger"
+        ]
+      ]
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "00408c021ffe3abcd78def0440f4296ce161e90af184edca56ee4a15ab0a3c97"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "3d3eee2e8d51a631223a2b6ddce45f84838ff6ec05b04b3677abbc7918faea8d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "3d3eee2e8d51a631223a2b6ddce45f84838ff6ec05b04b3677abbc7918faea8d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "f6ee4d857e1953c3f1047b0e7d35859d53428e75a307a8a6426adbe3808d094c"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "6745e475027de471923e3eb16194280320f74f0c627be05ebc4af9770596022a"
+    }
+  ],
+  "focusPath": [
+    "trigger",
+    "trigger",
+    "trigger",
+    "trigger",
+    "trigger",
+    "trigger"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:52:44.452Z",
+  "expiresAt": "2026-08-06T16:52:44.452Z"
+}

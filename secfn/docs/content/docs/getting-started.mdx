@@ -1,0 +1,61 @@
+---
+title: Getting Started
+description: Install the V1 TypeScript packages and wire a minimal SecFn server plus runtime client.
+---
+
+Install the packages you need:
+
+```bash
+npm install @secfn/core @secfn/server @secfn/runtime @secfn/cli
+```
+
+`@secfn/server` requires an `@superfunctions/db` adapter. The adapter is supplied by the host application so SecFn can use the same database layer as other superfunctions.
+
+```ts
+import { createSecFnServer } from "@secfn/server";
+import { createDrizzleAdapter } from "@superfunctions/db/drizzle";
+
+const db = createDrizzleAdapter({ db: drizzleDb });
+
+export const secfn = createSecFnServer({
+  db,
+  encryption: {
+    masterKey: process.env.SECFN_MASTER_KEY!,
+    keyId: "env:main",
+  },
+  authorize: async (ctx, action) => {
+    return ctx.actorId === "admin" || action === "audit-events:list";
+  },
+  namespaceProvider: (ctx) => ctx.namespace ?? "default",
+});
+
+export const router = secfn.router;
+```
+
+Mount the router with an existing shared HTTP adapter. SecFn does not re-export Express, Hono, Fastify, Next.js, or SvelteKit adapters.
+
+```ts
+import { toHonoHandler } from "@superfunctions/http-hono";
+import { Hono } from "hono";
+import { router } from "./secfn";
+
+const app = new Hono();
+app.all("/secfn/*", toHonoHandler(router));
+```
+
+Create secrets through the admin API, then create a runtime token scoped to the exact secrets or sets that a workload needs. Runtime consumers use the hosted endpoint:
+
+```ts
+import { createSecFnRuntime } from "@secfn/runtime";
+
+const secrets = createSecFnRuntime({
+  endpoint: "https://nucleus.example.com/secfn",
+  apiKey: process.env.SECFN_RUNTIME_TOKEN!,
+  tenantId: "acme",
+  environment: "production",
+});
+
+const stripeSecret = await secrets.get("STRIPE_SECRET_KEY");
+```
+
+Never bundle runtime secrets into browser code. `@secfn/runtime` is intended for trusted server, CI, build, and local development processes.

@@ -1,0 +1,115 @@
+---
+title: Storage
+description: Define one object-storage contract for uploads, downloads, multipart transfers, and streams across cloud and local providers.
+---
+
+`@superfunctions/storage` is the base package for object storage in Superfunctions. It does not lock you to Amazon S3, Cloudflare R2, Google Cloud Storage, Azure Blob Storage, MinIO, or the local filesystem. Instead, it defines the shared adapter shape for object-stat lookup, deletion, signed URLs, multipart uploads, and streaming operations. Provider packages implement that contract at the edge.
+
+That makes `storage` the right choice when you want portable object-storage behavior. A reusable library can accept a `StorageAdapter` and remain vendor-neutral. An application can design its upload or download workflow against the contract first, then swap only the adapter when moving from local development to production cloud storage. If your app thinks in terms of blobs and object keys rather than rows and tables, this is the foundation package to start with.
+
+## What It Is
+
+`@superfunctions/storage` exports the `StorageAdapter` interface, capability flags, object-stat types, signed-URL constraints, multipart descriptors, and conformance helpers. The contract is intentionally practical. It covers the operations most teams need when they build user uploads, signed downloads, export delivery, or media-serving pipelines.
+
+The key design choice is that capability differences are explicit. Some adapters support signed URLs, some support proxy streaming, some support multipart uploads, and some support all three. Rather than hiding those differences, the package exposes them through `capabilities` so your higher-level code can choose the right workflow at runtime.
+
+## When To Use It
+
+Use `storage` when you want your business logic to talk about uploads, downloads, and objects without baking cloud-vendor choices into the core of the codebase. It is especially useful for SDKs, reusable services, integration libraries, or applications that need a clean local-development story before committing to one cloud provider.
+
+If your service is mostly about structured records, start with [`db`](/docs/data-storage/db). If your public API is file-oriented and needs upload-session vocabulary, pair `storage` with [`files`](/docs/data-storage/files). When you know the runtime provider, keep `storage` in the dependency graph and add exactly one provider adapter page such as [`storage-s3`](/docs/data-storage/storage-s3) or [`storage-local`](/docs/data-storage/storage-local).
+
+## Install
+
+```bash
+npm install @superfunctions/storage
+```
+
+Add one provider adapter for the runtime you actually deploy:
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-local
+```
+
+## Quick Start
+
+The core package is most useful when you write functions against the shared `StorageAdapter` type.
+
+```ts
+import type { StorageAdapter } from "@superfunctions/storage";
+
+export async function createBrowserUpload(
+  storage: StorageAdapter,
+  key: string,
+) {
+  if (!storage.signUploadUrl) {
+    throw new Error("This adapter does not support signed upload URLs.");
+  }
+
+  return storage.signUploadUrl({
+    key,
+    expiresInSeconds: 300,
+    constraints: { contentType: "image/png" },
+  });
+}
+```
+
+When you need to verify an adapter contract in tests, use the built-in conformance helper.
+
+```ts
+import { runConformanceTests } from "@superfunctions/storage";
+import { createLocalStorageAdapter } from "@superfunctions/storage-local";
+
+const adapter = createLocalStorageAdapter({
+  rootDir: "./tmp/uploads",
+});
+
+const result = await runConformanceTests(adapter);
+console.log(result.ok);
+```
+
+## Core Concepts
+
+The first concept is capabilities. Every adapter declares whether it supports signed upload URLs, signed download URLs, multipart uploads, proxy streaming upload, and proxy streaming download. That means your application can select the right transport pattern instead of assuming every provider behaves the same way.
+
+The second concept is contract-first composition. A library should accept `StorageAdapter` and stay agnostic about whether production runs on S3, R2, GCS, Azure, MinIO, or local disk. The provider-specific package belongs at the application boundary, not inside the domain logic.
+
+The third concept is conformance. Because provider adapters implement one contract, you can validate them consistently and build test coverage around the storage boundary instead of rewriting the same checks for every runtime.
+
+## Real-World Example
+
+A practical outside-world example is a report-export service that issues temporary upload URLs in one environment and streams directly in another. The application code can inspect capabilities and choose the best delivery path while still staying inside one adapter shape.
+
+```ts
+import type { StorageAdapter } from "@superfunctions/storage";
+
+export async function prepareExportDelivery(storage: StorageAdapter, key: string) {
+  if (storage.signDownloadUrl) {
+    return storage.signDownloadUrl({
+      key,
+      expiresInSeconds: 120,
+      constraints: { responseContentType: "application/pdf" },
+    });
+  }
+
+  if (storage.openDownloadStream) {
+    return {
+      stream: await storage.openDownloadStream({ key }),
+    };
+  }
+
+  throw new Error("This adapter cannot provide downloads for exports.");
+}
+```
+
+That is the contract story in practice: keep the delivery workflow stable, then let each runtime provide the concrete capability mix.
+
+## Related Packages
+
+- [`storage-s3`](/docs/data-storage/storage-s3) if you want an AWS-native implementation of this contract.
+- [`storage-local`](/docs/data-storage/storage-local) if you want the same API for tests, local development, or single-host tools.
+- [`files`](/docs/data-storage/files) if your product needs file metadata, upload sessions, or version-aware workflows on top of object storage.
+
+## Troubleshooting
+
+If a workflow fails only on one provider, inspect the adapter's capabilities first and confirm your code is not assuming multipart or signed URLs where they are unavailable. If local development behaves differently from cloud, compare whether one adapter relies on streaming while the other relies on signed URLs. When the storage layer starts leaking vendor-specific details into business code, move those details back to the adapter-wiring boundary and keep the shared logic on `StorageAdapter`.

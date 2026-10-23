@@ -1,0 +1,9 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-14T12:58:00Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec
+2026-03-14T13:14:18Z,unknown,CLI,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_00-2026-03-14-q9m4k2r7-report.md
+2026-03-14T13:31:42Z,unknown (a: gpt-5.3-codex),CLI (Droid),execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_01-2026-03-14-m8k4p2q7-report.md
+2026-03-14T13:47:44Z,unknown,CLI (Droid),execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_02-2026-03-14-k7d2p4m9-report.md
+2026-03-14T14:08:09Z,unknown,CLI (Droid),execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_03-2026-03-14-f2q7m8r1-report.md
+2026-03-14T14:21:26Z,unknown,CLI (Droid),execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_04-2026-03-14-p9m3r6k2-report.md
+2026-03-14T14:49:17Z,unknown,CLI (Droid),execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_05-2026-03-14-t8k4m1q7-report.md
+2026-03-14T18:32:33Z,unknown,CLI (Droid),execute,unknown-agent,PHASE_06,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec/phase-reports/PHASE_06-2026-03-14-n4q7m2p8-report.md

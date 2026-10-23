@@ -1,0 +1,24 @@
+# Fix Log: Real Adapter Conformance For React, Svelte, And Vue
+
+- timestamp: 2026-06-28T03:34:56Z
+- requirements: ADAPT-001, ADAPT-002, ADAPT-003, ADAPT-004, TEST-001
+- trigger: Audits found framework conformance bypassed real adapters through `createMinimalFixtureAdapter`.
+- previous state: React, Svelte, and Vue conformance called core-only fixture controllers and did not exercise public framework APIs.
+- final state: React conformance uses rendered hook APIs; Svelte conformance uses public actions on DOM nodes; Vue conformance uses mounted public composables. The verifier rejects minimal fixtures and runs behavioral adapter tests for these three frameworks.
+- verification:
+  - `npm --workspace @uifn/adapter-kit run typecheck`
+  - `npm --workspace @uifn/adapter-kit run test`
+  - `npm --workspace @uifn/adapter-kit run build`
+  - `npm --workspace @uifn/react run typecheck`
+  - `npm --workspace @uifn/react run test -- src/__tests__/react-core-adapter.test.tsx`
+  - `npm --workspace @uifn/react run build`
+  - `npm --workspace @uifn/svelte run typecheck`
+  - `npm --workspace @uifn/svelte run test -- src/svelte-core-adapter.test.ts`
+  - `npm --workspace @uifn/svelte run build`
+  - `npm --workspace @uifn/vue run typecheck`
+  - `npm --workspace @uifn/vue run test -- src/__tests__/vue-core-adapter.test.ts`
+  - `npm --workspace @uifn/vue run build`
+  - `node scripts/verify-uifn-adapter.mjs --framework react`
+  - `node scripts/verify-uifn-adapter.mjs --framework svelte`
+  - `node scripts/verify-uifn-adapter.mjs --framework vue`
+- honest limitation: Solid and Angular still fail the stricter verifier, and shared vectors still need full primitive coverage beyond dialog and checkbox.

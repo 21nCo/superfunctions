@@ -1,0 +1,190 @@
+[
+  {
+    "resource": "node",
+    "version": 1,
+    "select": ["id", "createdAt", "updatedAt", "parent.*", "file.*"],
+    "filters": {
+      "type": "markdown"
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "search": {
+      "query": "offline sync",
+      "type": "fullText",
+      "fields": ["label", "text", "notes"]
+    },
+    "filters": {
+      "type": ["markdown", "html"]
+    },
+    "sort": ["updatedAt:desc", "id:desc"],
+    "limit": 20,
+    "cursor": {
+      "after": { "updatedAt": "2026-01-17", "id": "node:abc" }
+    },
+    "count": true
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "filters": {
+      "$and": [
+        { "type": ["markdown", "html"] },
+        { "label": { "ilike": "%research%" } },
+        {
+          "$or": [
+            { "notes": { "is_empty": true } },
+            { "notes": { "is_null": true } }
+          ]
+        }
+      ]
+    },
+    "omit": ["text", "notes"],
+    "sort": ["updatedAt:desc", "id:asc"],
+    "limit": 25,
+    "offset": 0,
+    "count": true
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "select": ["id", "label", "createdAt", "updatedAt", "parent"],
+    "filters": {
+      "parent.id": "node:parent-id",
+      "type": ["markdown", "html"]
+    },
+    "sort": ["createdAt:desc", "id:asc"],
+    "limit": 30,
+    "offset": 60
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "select": [
+      "id",
+      "createdAt",
+      "updatedAt",
+      "parent.*",
+      "file.*",
+      "properties",
+      "children.**",
+      "tasks.*",
+      "collections.#",
+      "collections.*#",
+      "collections.properties.*",
+      "links.#"
+    ],
+    "filters": {
+      "id": "goal:some-id",
+      "links.linkTag": ["some", "other"]
+    }
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "select": ["id", "label", "status", "updatedAt"],
+    "filters": {
+      "tasks": { "$all": { "status": "done" } },
+      "isArchived": false
+    },
+    "sort": ["updatedAt:desc", "id:asc"],
+    "limit": 20
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "select": ["id", "label", "status", "type", "updatedAt", "parent.*"],
+    "filters": {
+      "$and": [
+        { "isArchived": false },
+        { "label": { "ilike": "%project%" } },
+        { "$or": [{ "status": "active" }, { "status": "paused" }] },
+        { "updatedAt": { "after": "2026-01-01" } }
+      ]
+    },
+    "sort": ["updatedAt:desc", "id:asc"],
+    "limit": 20,
+    "offset": 0,
+    "count": true
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "select": ["id", "label", "createdAt", "updatedAt"],
+    "filters": {
+      "parent.id": { "is_null": true },
+      "isArchived": false
+    },
+    "sort": ["createdAt:asc", "id:asc"],
+    "limit": 100
+  },
+  {
+    "resource": "task",
+    "version": 1,
+    "select": ["id", "label", "status", "priority", "date", "goal.*"],
+    "filters": {
+      "$and": [
+        { "goalId": "goal:some-id" },
+        { "date": { "between": ["2026-01-17", "2026-02-01"] } },
+        { "status": { "ne": "done" } }
+      ]
+    },
+    "sort": ["date:asc", "priority:desc", "id:asc"],
+    "limit": 50
+  },
+  {
+    "resource": "task",
+    "version": 1,
+    "select": ["id", "label", "status", "priority", "date", "updatedAt"],
+    "filters": {
+      "$or": [
+        { "date": { "before": "2026-01-17" } },
+        {
+          "$and": [{ "date": { "is_null": true } }, { "priority": { "gte": 8 } }]
+        }
+      ]
+    },
+    "sort": ["priority:desc", "updatedAt:desc", "id:asc"],
+    "limit": 50,
+    "offset": 0
+  },
+  {
+    "resource": "task",
+    "version": 1,
+    "filters": { "isArchived": false },
+    "groupBy": ["status"],
+    "aggregations": {
+      "count": { "op": "count" },
+      "avgPriority": { "op": "avg", "field": "priority" },
+      "lastUpdatedAt": { "op": "max", "field": "updatedAt" }
+    },
+    "having": { "count": { "gt": 10 } },
+    "sort": ["count:desc", "status:asc"],
+    "limit": 20
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "filters": { "isArchived": false },
+    "groupBy": ["type"],
+    "aggregations": {
+      "count": { "op": "count" },
+      "distinctParents": { "op": "countDistinct", "field": "parent.id" }
+    },
+    "sort": ["count:desc", "type:asc"],
+    "limit": 20
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "filters": { "isArchived": false },
+    "groupBy": ["status", "type"],
+    "aggregations": {
+      "count": { "op": "count" },
+      "lastUpdatedAt": { "op": "max", "field": "updatedAt" }
+    },
+    "sort": ["lastUpdatedAt:desc", "count:desc"],
+    "limit": 50
+  }
+]

@@ -1,0 +1,46 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-01-29T07:54:36Z,GPT-5.2,CLI,spec,Droid,,/Users/ar/dev/superfunctions/.conduct/specs/2026-01-29-audit-fix-k4j2q7b9-spec
+2026-03-06T06:44:20Z,gpt-5 (Codex),Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-06-q9k4m7x2-full-audit.md
+2026-03-06T06:54:07Z,gpt-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-06-r7m2k9v4-completion.md
+2026-03-06T23:30:00Z,Claude Opus 4.6,VS Code,audit,audit-agent,,.conduct/audits/2026-03-06-r8k3m9v4-full-audit.md
+2026-03-06T18:09:15Z,GPT-5 Codex,CLI,document-issue,unknown-agent,,.conduct/issues/2026-03-06-m8k4x9p2-issue.md
+2026-03-06T18:24:13Z,GPT-5 Codex,CLI,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-06-h7q2m9k4-completion.md
+2026-03-06T23:50:00Z,claude-opus-4-6,VS Code,audit,unknown-agent,,.conduct/audits/2026-03-06-f7k2m9x4-full-audit.md
+2026-03-06T18:42:44Z,GPT-5 Codex,CLI,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-06-v8k3m2p9-completion.md
+2026-03-07T18:32:42Z,GPT-5 Codex,Codex desktop,audit,unknown-agent,,.conduct/audits/2026-03-07-m2q9x7p4-full-audit.md
+2026-03-07T18:47:48Z,gpt-5-codex,Codex Desktop,document-issue,unknown-agent,,.conduct/issues/2026-03-08-k8m3x7r2-issue.md
+2026-03-07T19:20:31Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-08-n4p7k2m9-completion.md
+2026-03-07T19:29:10Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-08-k7p2m9x4-completion.md
+2026-03-08T01:55:36Z,gpt-5-codex,Codex desktop,audit,unknown-agent,,.conduct/audits/2026-03-08-p7m2x9k4-full-audit.md
+2026-03-08T02:12:04Z,gpt-5-codex,Codex desktop,audit-update,unknown-agent,,.conduct/audits/2026-03-08-p7m2x9k4-full-audit.md
+2026-03-08T02:31:07Z,gpt-5-codex,Codex desktop,spec-update,unknown-agent,,searchfn/.conduct/specs/2026-03-08-new-q4k7m2r8-spec
+2026-03-08T07:07:50Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-08-m4v9k2q7-full-audit.md
+2026-03-08T16:07:19Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-08-y8k3m2p6-completion.md
+2026-03-08T18:30:00Z,claude-opus-4-6,CLI,document-issue,unknown-agent,,.conduct/issues/2026-03-08-k7m4x2p9-issue.md
+2026-03-09T06:31:47Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-09-r8m4k2p7-completion.md
+2026-03-11T12:02:27Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-11-m7q2k9p4-completion.md
+2026-03-11T16:12:49Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-11-new-h3r9k2m7-spec
+2026-03-11T16:27:57Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-11-new-h3r9k2m7-spec
+2026-03-12T11:22:33Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec
+2026-03-14T16:00:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,.conduct/audits/2026-03-14-r7k4m9x3-full-audit.md
+2026-03-14T17:30:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,.conduct/audits/2026-03-14-k8v2m7p4-full-audit.md
+2026-03-14T18:00:00Z,gemini-pro,CLI,audit,Antigravity,,.conduct/audits/2026-03-14-u8k4m2p9-full-audit.md
+2026-03-14T16:18:00Z,gemini-2.5-pro,CLI,audit,Gemini CLI,,.conduct/audits/2026-03-14-a1b2c3-full-audit.md
+2026-03-14T18:50:49Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-15-fix-ifnaigab-spec
+2026-03-18T07:03:15Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec
+2026-03-22T08:14:32Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-lfdh4ke1-full-audit.md
+2026-03-22T08:32:03Z,gpt-5-codex,Codex Desktop,audit-update,unknown-agent,,filefn/.conduct/audits/2026-03-22-lfdh4ke1-full-audit.md
+2026-03-22T14:44:32Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
+2026-03-22T14:57:30Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
+2026-03-22T16:24:39Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-22-x4k2m9p7-completion.md
+2026-03-26T18:02:15Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-26-srwfzazr-full-audit.md
+2026-03-27T02:45:32Z,unknown,Codex Desktop,audit-update,audit,,drawfn/.conduct/audits/2026-03-26-srwfzazr-full-audit.md
+2026-03-27T02:48:03Z,unknown,Codex Desktop,spec,spec,,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec
+2026-05-19T13:06:07Z,GPT-5 (Codex),Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-05-19-p7x4k2m9-full-audit.md
+2026-05-19T13:25:18Z,GPT-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-05-19-v9m2k7x4-completion.md
+2026-05-19T13:36:34Z,GPT-5 (Codex),Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-05-19-k9m4x2p7-full-audit.md
+2026-05-19T14:08:46Z,GPT-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-05-19-c8p4m2x9-completion.md
+2026-08-10T17:22:45Z,GPT-5 (Codex),Codex Desktop,audit,audit-agent,,.conduct/audits/2026-08-10-4dea7d06-full-audit.md
+2026-08-10T19:49:56Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-08-11-9f087abf-full-audit.md
+2026-08-11T15:19:16Z,GPT-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-08-11-q7m2x9k4-completion.md
+2026-04-20T10:27:26Z,gpt-5.4,Codex desktop,audit,unknown-agent,,.conduct/audits/2026-04-20-ch2vr2pl-full-audit.md

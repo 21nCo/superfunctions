@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_17",
+  "status": "passed",
+  "requirements": {
+    "STORY-001": "passed",
+    "DOCS-001": "passed"
+  },
+  "checks": [
+    {
+      "command": "/opt/homebrew/bin/node scripts/generate-uifn-phase-17.mjs --check",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-17:check\",\n  \"primitiveCount\": 61,\n  \"frameworkCount\": 3,\n  \"storyCount\": 1914,\n  \"docsPageCount\": 61,\n  \"docsSectionCount\": 793,\n  \"mappedFieldCount\": 11626,\n  \"sampleCount\": 366,\n  \"definitionSha256\": \"b4fb1eed9344928e8c8ceb80809ed185fc6128c02d4d32b64f57d3ad46366953\",\n  \"generatorSha256\": \"21a73a76e53b1405594e4ab8b5de6b03ae893a2f726312794841ad1874a27a4f\"\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/generate-uifn-phase-17.mjs --check",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-17:check\",\n  \"primitiveCount\": 61,\n  \"frameworkCount\": 3,\n  \"storyCount\": 1914,\n  \"docsPageCount\": 61,\n  \"docsSectionCount\": 793,\n  \"mappedFieldCount\": 11626,\n  \"sampleCount\": 366,\n  \"definitionSha256\": \"b4fb1eed9344928e8c8ceb80809ed185fc6128c02d4d32b64f57d3ad46366953\",\n  \"generatorSha256\": \"21a73a76e53b1405594e4ab8b5de6b03ae893a2f726312794841ad1874a27a4f\"\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/storybook run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/storybook@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/storybook run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/storybook@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/storybook\n\n ✓ src/__tests__/storybook.test.ts  (6 tests) 25ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  16:15:05\n   Duration  623ms (transform 400ms, setup 0ms, collect 463ms, tests 25ms, environment 0ms, prepare 49ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/storybook run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/storybook@0.0.1 build\n> tsup src/index.ts src/preset.ts src/preview.ts src/manager.ts --format esm,cjs --dts --external react --external storybook --external storybook/manager-api\n\nCLI Building entry: src/index.ts, src/manager.ts, src/preset.ts, src/preview.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/preview.js 2.73 KB\nCJS dist/manager.js 2.06 KB\nCJS dist/preset.js  2.80 KB\nCJS dist/index.js   2.27 MB\nCJS ⚡️ Build success in 89ms\nESM dist/manager.mjs        856.00 B\nESM dist/preset.mjs         281.00 B\nESM dist/preview.mjs        1.67 KB\nESM dist/chunk-M3TWVSAC.mjs 970.00 B\nESM dist/index.mjs          2.27 MB\nESM ⚡️ Build success in 90ms\nDTS Build start\nDTS ⚡️ Build success in 1527ms\nDTS dist/manager.d.mts 13.00 B\nDTS dist/preset.d.mts  740.00 B\nDTS dist/preview.d.mts 2.68 KB\nDTS dist/index.d.mts   6.32 KB\nDTS dist/manager.d.ts  13.00 B\nDTS dist/preset.d.ts   740.00 B\nDTS dist/preview.d.ts  2.68 KB\nDTS dist/index.d.ts    6.32 KB\n",
+      "stderrTail": "\n WARN  \u001b[33m▲ \u001b[43;33m[\u001b[43;30mWARNING\u001b[43;33m]\u001b[0m \u001b[1m\"import.meta\" is not available with the \"cjs\" output format and will be empty\u001b[0m [empty-import-meta]\n\n    src/preset.ts:26:91:\n\u001b[37m      26 │ ...tring' ? __dirname : path.dirname(fileURLToPath(\u001b[32mimport.meta\u001b[37m.url));\n         ╵                                                    \u001b[32m~~~~~~~~~~~\u001b[0m\n\n  You need to set the output format to \"esm\" for \"import.meta\" to work correctly.\n\n\n\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node --test scripts/verify-uifn-phase-17-contract.test.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "TAP version 13\n# Subtest: TV-STORY-001-P: generated inventory is exact across three framework renderers\nok 1 - TV-STORY-001-P: generated inventory is exact across three framework renderers\n  ---\n  duration_ms: 2.851042\n  ...\n# Subtest: TV-STORY-001-N: removed Solid export is killed with UIFN_STORY_MISSING\nok 2 - TV-STORY-001-N: removed Solid export is killed with UIFN_STORY_MISSING\n  ---\n  duration_ms: 0.086208\n  ...\n# Subtest: TV-STORY-001-N: Dialog static test double is killed with UIFN_STORY_NOT_PUBLIC_COMPONENT\nok 3 - TV-STORY-001-N: Dialog static test double is killed with UIFN_STORY_NOT_PUBLIC_COMPONENT\n  ---\n  duration_ms: 0.079417\n  ...\n# Subtest: TV-DOCS-001-P: every primitive, required section, field, and sample is mapped\nok 4 - TV-DOCS-001-P: every primitive, required section, field, and sample is mapped\n  ---\n  duration_ms: 2.908042\n  ...\n# Subtest: TV-DOCS-001-N: unsupported claims and removed APIs have stable diagnostics\nok 5 - TV-DOCS-001-N: unsupported claims and removed APIs have stable diagnostics\n  ---\n  duration_ms: 0.2395\n  ...\n1..5\n# tests 5\n# suites 0\n# pass 5\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 57.278708\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/storybook pack --dry-run",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": " ✓ src/__tests__/storybook.test.ts  (6 tests) 24ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  16:15:10\n   Duration  602ms (transform 390ms, setup 0ms, collect 458ms, tests 24ms, environment 0ms, prepare 32ms)\n\n\n> @uifn/storybook@0.0.1 build\n> tsup src/index.ts src/preset.ts src/preview.ts src/manager.ts --format esm,cjs --dts --external react --external storybook --external storybook/manager-api\n\nCLI Building entry: src/index.ts, src/manager.ts, src/preset.ts, src/preview.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/preset.js  2.80 KB\nCJS dist/manager.js 2.06 KB\nCJS dist/preview.js 2.73 KB\nCJS dist/index.js   2.27 MB\nCJS ⚡️ Build success in 63ms\nESM dist/preset.mjs         281.00 B\nESM dist/manager.mjs        856.00 B\nESM dist/preview.mjs        1.67 KB\nESM dist/chunk-M3TWVSAC.mjs 970.00 B\nESM dist/index.mjs          2.27 MB\nESM ⚡️ Build success in 64ms\nDTS Build start\nDTS ⚡️ Build success in 1512ms\nDTS dist/manager.d.mts 13.00 B\nDTS dist/preset.d.mts  740.00 B\nDTS dist/preview.d.mts 2.68 KB\nDTS dist/index.d.mts   6.32 KB\nDTS dist/manager.d.ts  13.00 B\nDTS dist/preset.d.ts   740.00 B\nDTS dist/preview.d.ts  2.68 KB\nDTS dist/index.d.ts    6.32 KB\nuifn-storybook-0.0.1.tgz\n",
+      "stderrTail": "         ╵                                                    \u001b[32m~~~~~~~~~~~\u001b[0m\n\n  You need to set the output format to \"esm\" for \"import.meta\" to work correctly.\n\n\n\nnpm notice\nnpm notice 📦  @uifn/storybook@0.0.1\nnpm notice Tarball Contents\nnpm notice 1.7kB README.md\nnpm notice 970B dist/chunk-M3TWVSAC.mjs\nnpm notice 856B dist/chunk-QL6CTBMZ.mjs\nnpm notice 6.5kB dist/index.d.mts\nnpm notice 6.5kB dist/index.d.ts\nnpm notice 2.4MB dist/index.js\nnpm notice 2.4MB dist/index.mjs\nnpm notice 13B dist/manager.d.mts\nnpm notice 13B dist/manager.d.ts\nnpm notice 2.1kB dist/manager.js\nnpm notice 856B dist/manager.mjs\nnpm notice 740B dist/preset.d.mts\nnpm notice 740B dist/preset.d.ts\nnpm notice 2.9kB dist/preset.js\nnpm notice 281B dist/preset.mjs\nnpm notice 2.7kB dist/preview.d.mts\nnpm notice 2.7kB dist/preview.d.ts\nnpm notice 2.8kB dist/preview.js\nnpm notice 1.7kB dist/preview.mjs\nnpm notice 3.2kB package.json\nnpm notice Tarball Details\nnpm notice name: @uifn/storybook\nnpm notice version: 0.0.1\nnpm notice filename: uifn-storybook-0.0.1.tgz\nnpm notice package size: 413.6 kB\nnpm notice unpacked size: 4.8 MB\nnpm notice shasum: cc8ff539aae1d57e3b292dd6624e1441d7082bae\nnpm notice integrity: sha512-CV1XNEhDZ4Kho[...]HBkACS7CPxD9Q==\nnpm notice total files: 20\nnpm notice\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-16.mjs --static-only",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "  \"requirements\": {\n    \"GEN-001\": \"passed\",\n    \"REG-001\": \"passed\"\n  },\n  \"vectors\": {\n    \"TV-GEN-001-P/N\": {\n      \"components\": 61,\n      \"parts\": 419,\n      \"templates\": 602,\n      \"legacyCatalogs\": 0,\n      \"definitionSha256\": \"7aa07aa15267491835d48159776045fb7c092ef42149fefb71344caebaa1ed2d\",\n      \"generatorSha256\": \"3c56e4dd070fbf99dc0204474931c4b20b33ec5459a509cbc9cc8f5e6eba4937\",\n      \"deterministicChecks\": 0\n    },\n    \"TV-REG-001-P/N\": {\n      \"signature\": {\n        \"valid\": true,\n        \"keyId\": \"52bc9d0afaa99b8671b3e463\",\n        \"catalogSha256\": \"12c06c726aef4f742d4babdd7f7af3a9d587f182785f7b444858a55ca3ad21b5\"\n      },\n      \"adversarialCases\": [\n        \"dry-run-no-write\",\n        \"idempotence\",\n        \"traversal\",\n        \"symlink\",\n        \"checksum\",\n        \"cycle\",\n        \"unsupported-framework\",\n        \"dirty-conflict\",\n        \"interruption\",\n        \"rollback\"\n      ]\n    }\n  },\n  \"checkCount\": 0,\n  \"failureCount\": 0,\n  \"failures\": [],\n  \"evidence\": null\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-17-storybook.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"status\": \"passed\",\n  \"counts\": {\n    \"primitives\": 61,\n    \"sourceModules\": 183,\n    \"storiesExpected\": 1914,\n    \"storiesVisited\": 1914,\n    \"storiesPassed\": 1914\n  },\n  \"indexes\": {\n    \"react\": {\n      \"storyCount\": 638,\n      \"docsCount\": 61,\n      \"sha256\": \"d28940f677233e025aaa9fb11a4687bbfd11597f3f7321317fb4da96622414c6\"\n    },\n    \"svelte\": {\n      \"storyCount\": 638,\n      \"docsCount\": 61,\n      \"sha256\": \"28b8c998bc981b08b87398541bdbe92334591579dc61252d19962ff1ad465e22\"\n    },\n    \"solid\": {\n      \"storyCount\": 638,\n      \"docsCount\": 61,\n      \"sha256\": \"38fa61e2a35d7fdf4b776918075c1752f63c1381c7d8cc08aa42bc40caaf3acf\"\n    }\n  },\n  \"failureCount\": 0,\n  \"failures\": [],\n  \"evidence\": \"/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-17/20260724T010655Z-PHASE-17-final/storybook.json\"\n}\n\n",
+      "stderrTail": "[uifn-phase17-storybook] visited 100/1914\n[uifn-phase17-storybook] visited 200/1914\n[uifn-phase17-storybook] visited 300/1914\n[uifn-phase17-storybook] visited 400/1914\n[uifn-phase17-storybook] visited 500/1914\n[uifn-phase17-storybook] visited 600/1914\n[uifn-phase17-storybook] visited 700/1914\n[uifn-phase17-storybook] visited 800/1914\n[uifn-phase17-storybook] visited 900/1914\n[uifn-phase17-storybook] visited 1000/1914\n[uifn-phase17-storybook] visited 1100/1914\n[uifn-phase17-storybook] visited 1200/1914\n[uifn-phase17-storybook] visited 1300/1914\n[uifn-phase17-storybook] visited 1400/1914\n[uifn-phase17-storybook] visited 1500/1914\n[uifn-phase17-storybook] visited 1600/1914\n[uifn-phase17-storybook] visited 1700/1914\n[uifn-phase17-storybook] visited 1800/1914\n[uifn-phase17-storybook] visited 1900/1914\n[uifn-phase17-storybook] visited 1914/1914\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-17-docs.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"status\": \"passed\",\n  \"counts\": {\n    \"primitives\": 61,\n    \"sections\": 793,\n    \"mappedFields\": 11626,\n    \"samples\": 366,\n    \"consumers\": 6\n  },\n  \"mutations\": [\n    {\n      \"mutation\": \"vue-support-claim\",\n      \"expected\": \"UIFN_DOCS_UNSUPPORTED_CLAIM\",\n      \"observed\": \"UIFN_DOCS_UNSUPPORTED_CLAIM\"\n    },\n    {\n      \"mutation\": \"legacy-state-machine-sample\",\n      \"expected\": \"UIFN_DOCS_REMOVED_API\",\n      \"observed\": \"UIFN_DOCS_REMOVED_API\"\n    }\n  ],\n  \"failureCount\": 0,\n  \"failures\": [],\n  \"evidence\": \"/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-17/20260724T010655Z-PHASE-17-final/docs.json\"\n}\n\n",
+      "stderrTail": ""
+    }
+  ],
+  "evidence": {
+    "story": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-17/20260724T010655Z-PHASE-17-final/storybook.json",
+    "docs": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-17/20260724T010655Z-PHASE-17-final/docs.json"
+  },
+  "failures": [],
+  "gateSplit": {
+    "semanticParityAllowsPhase18": true,
+    "signedExternalCompatibilityRequiredBeforePhase19Phase20Release": true
+  },
+  "provisionalUntilSignedPhase14Compatibility": true
+}

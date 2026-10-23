@@ -1,0 +1,153 @@
+export interface Queue<T = any> {
+  name: string;
+
+  // Adding jobs
+  add(name: string, data: T, opts?: JobOptions): Promise<Job<T>>;
+  addBulk(
+    jobs: Array<{ name: string; data: T; opts?: JobOptions }>
+  ): Promise<Job<T>[]>;
+
+  // Processing
+  process(handler: JobHandler<T>): void;
+  process(name: string, handler: JobHandler<T>): void;
+  process(concurrency: number, handler: JobHandler<T>): void;
+  process(name: string, concurrency: number, handler: JobHandler<T>): void;
+
+  // Batch processing
+  processBatch(name: string, batchSize: number, handler: BatchHandler<T>): void;
+  processBatch(
+    name: string,
+    options: BatchOptions,
+    handler: BatchHandler<T>
+  ): void;
+
+  // Management
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  drain(): Promise<void>;
+  clean(grace: number, status: JobStatus): Promise<number>;
+
+  // DLQ methods
+  getDLQ?(): any; // Returns DLQManager if configured
+
+  // Queries
+  getJob(jobId: string): Promise<Job<T> | null>;
+  getJobs(status: JobStatus): Promise<Job<T>[]>;
+  getJobCounts(): Promise<QueueStats>;
+
+  // Events
+  on(event: QueueEvent, handler: (...args: any[]) => void): void;
+
+  // Lifecycle
+  close(): Promise<void>;
+}
+
+export type QueueEvent =
+  | "completed"
+  | "failed"
+  | "stalled"
+  | "progress"
+  | "waiting"
+  | "active";
+
+export interface Job<T = any> {
+  id: string;
+  name: string;
+  data: T;
+  opts: JobOptions;
+
+  // Status
+  state: JobStatus;
+  progress: number;
+  returnvalue?: any;
+
+  // Timing
+  timestamp: number;
+  processedOn?: number;
+  finishedOn?: number;
+  delay: number;
+
+  // Retries
+  attemptsMade: number;
+  failedReason?: string;
+  stacktrace?: string[];
+
+  // Methods
+  update(data: Partial<T>): Promise<void>;
+  log(message: string): Promise<void>;
+  updateProgress(progress: number): Promise<void>;
+  moveToCompleted(returnValue: any): Promise<void>;
+  moveToFailed(error: Error): Promise<void>;
+  retry(): Promise<void>;
+  discard(): Promise<void>;
+  waitUntilFinished(): Promise<any>;
+}
+
+export type JobStatus =
+  | "waiting"
+  | "active"
+  | "completed"
+  | "failed"
+  | "delayed"
+  | "paused";
+
+export interface JobOptions {
+  priority?: number;
+  delay?: number;
+  attempts?: number;
+  backoff?: BackoffOptions;
+  lifo?: boolean;
+  timeout?: number;
+  removeOnComplete?: boolean | number;
+  removeOnFail?: boolean | number;
+  stackTraceLimit?: number;
+  jobId?: string;
+  preventDuplicates?: boolean;
+  deduplicationKey?: string;
+  waitFor?: string[]; // Job IDs dependency
+}
+
+export interface BackoffOptions {
+  type: "fixed" | "exponential" | "custom";
+  delay: number;
+  maxDelay?: number;
+}
+
+export interface QueueOptions {
+  defaultJobOptions?: JobOptions;
+  limiter?: RateLimiterOptions;
+  cache?: CacheOptions;
+  dlq?: {
+    enabled: boolean;
+    maxRetries?: number;
+    queueName?: string;
+  };
+}
+
+export interface RateLimiterOptions {
+  max: number;
+  duration: number;
+}
+
+export interface CacheOptions {
+  enabled: boolean;
+  ttl: number;
+  keyGenerator?: (job: Job) => string;
+}
+
+export interface QueueStats {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  paused: number;
+}
+
+export type JobHandler<T> = (job: Job<T>) => Promise<any>;
+export type BatchHandler<T> = (jobs: Job<T>[]) => Promise<any[]>;
+
+export interface BatchOptions {
+  batchSize: number;
+  maxWait?: number;
+}

@@ -1,0 +1,30 @@
+# Phase 04
+- Phase goal: Replace every placeholder proxy descriptor with real, authorized file/share/artifact download flows.
+- In scope:
+  - file/share/artifact control-plane download descriptors
+  - share proxy data-plane route
+  - artifact proxy data-plane route
+  - artifact read authorization
+  - share download counter semantics
+- Out of scope:
+  - delete cascade and dedupe reference accounting
+- Deliverables:
+  - `filefn/server/src/router.ts`
+  - `filefn/server/src/files/service.ts`
+  - `filefn/server/src/files/routes.ts`
+  - `filefn/server/src/shares/service.ts`
+  - `filefn/server/src/shares/routes.ts`
+  - `filefn/server/src/processing/service.ts`
+  - `filefn/server/src/processing/routes.ts`
+  - `filefn/server/src/__tests__/file-download-proxy.test.ts`
+  - `filefn/server/src/__tests__/shares.test.ts`
+  - `filefn/server/src/__tests__/artifact-authz.test.ts`
+- Requirements covered: AUTH-002, FILE-003, PROCESS-001
+- Implementation tasks:
+  - Add real proxy routes for share and artifact download.
+  - Bind artifact routes to parent file authorization.
+  - Ensure download descriptors are always real HTTP URLs.
+  - Move share download-count increments to after usable descriptor/stream success.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+- Stop condition: no control-plane route returns placeholder URLs and access checks pass.

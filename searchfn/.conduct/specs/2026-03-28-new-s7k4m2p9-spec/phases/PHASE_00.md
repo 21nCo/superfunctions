@@ -1,0 +1,31 @@
+- Phase goal: Create the Swift package skeleton, public contracts, error model, and validating client with parity to current SearchFn client semantics.
+- In scope:
+  - `searchfn/swift/Package.swift`
+  - contract target
+  - client target
+  - validation/error/defaults logic
+- Out of scope:
+  - engine internals
+  - memory adapter behavior
+  - SQLite persistence
+  - docs polish
+- Deliverables:
+  - `searchfn/swift/Package.swift`
+  - `searchfn/swift/Sources/SearchFnAdapterContracts/*`
+  - `searchfn/swift/Sources/SearchFnClient/*`
+  - `searchfn/swift/Tests/SearchFnClientTests/*`
+- Requirements covered:
+  - `SARCH-001`
+  - `SAPI-001`
+  - `SERR-001`
+- Implementation tasks:
+  - Create the Swift package and library product graph.
+  - Define public request/response/config/error types from this spec.
+  - Implement `createSearchClient` defaults merging and validation limits.
+  - Implement `searchAll` fallback in the client when adapter capabilities do not include native `searchAll`.
+  - Add tests for empty query/resource, limits, defaults, and fallback errors.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift --filter SearchFnClientTests`
+  - Expected outcome: all client and contract tests pass with deterministic validation/error assertions.
+- Stop condition:
+  - Report the created package products, contract files, and exact test command result before beginning Phase 01.

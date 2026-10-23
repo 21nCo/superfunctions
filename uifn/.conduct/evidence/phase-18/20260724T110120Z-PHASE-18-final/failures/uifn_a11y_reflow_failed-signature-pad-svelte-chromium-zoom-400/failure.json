@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_REFLOW_FAILED",
+  "primitive": "signature-pad",
+  "framework": "svelte",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "62c58e0555f614a219719504554cf36c5099566f74ce4a0ef22b0ea093f8bfc2",
+  "dom": "<section data-uifn-story-framework=\"svelte\" data-uifn-story-id=\"signature-pad--responsive\" data-uifn-story-scenario=\"responsive\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><!----><!----><!----><!----><div id=\"signature-pad-root-signature-pad-c1-root\" class=\"uifn-signature-pad uifn-signature-pad__root\" data-state=\"empty\" data-uifn-component=\"signature-pad\" data-uifn-part=\"root\"><!----><!----><!----><!----><!----><!----><!----><!----><label id=\"signature-pad-label-signature-pad-c1-label\" class=\"uifn-signature-pad uifn-signature-pad__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"signature-pad\" data-uifn-part=\"label\"><!----><!---->label fixture<!----> <!----><!----></label><!----><!----><!----><!----><!----><canvas role=\"img\" id=\"signature-pad-canvas-signature-pad-c1-canvas\" tabindex=\"0\" class=\"uifn-signature-pad uifn-signature-pad__canvas\" aria-labelledby=\"signature-pad-label-signature-pad-c1-label\" aria-describedby=\"signature-pad-status-signature-pad-c1-status\" aria-disabled=\"false\" data-state=\"empty\" data-uifn-story-anatomy=\"canvas\" data-uifn-component=\"signature-pad\" data-uifn-part=\"canvas\" style=\"touch-action: none;\"><!----><!----><!----> <!---->canvas fixture<!----></canvas><!----><!----><!----><!----><!----><button role=\"button\" id=\"signature-pad-clear-signature-pad-c1-clear\" class=\"uifn-signature-pad uifn-signature-pad__clear\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"signature-pad\" data-uifn-part=\"clear\"><!----><!---->clear fixture<!----> <!----><!----></button><!----><!----><!----><!----><!----><button role=\"button\" id=\"signature-pad-undo-signature-pad-c1-undo\" disabled=\"\" class=\"uifn-signature-pad uifn-signature-pad__undo\" data-uifn-story-anatomy=\"undo\" data-uifn-component=\"signature-pad\" data-uifn-part=\"undo\"><!----><!---->undo fixture<!----> <!----><!----></button><!----><!----><!----><!----><!----><div role=\"status\" id=\"signature-pad-status-signature-pad-c1-status\" class=\"uifn-signature-pad uifn-signature-pad__status\" aria-live=\"polite\" data-message=\"\" data-uifn-story-anatomy=\"status\" data-uifn-component=\"signature-pad\" data-uifn-part=\"status\"><!----><!----><!----> <!---->status fixture<!----></div><!----><!----><!----><!----><!----><input type=\"hidden\" value=\"[]\" id=\"signature-pad-input-signature-pad-c1-input\" class=\"uifn-signature-pad uifn-signature-pad__hiddenInput\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"signature-pad\" data-uifn-part=\"hiddenInput\"></div><!----></section>",
+  "semanticTrace": [
+    {
+      "part": "canvas",
+      "tag": "canvas",
+      "role": "img",
+      "aria": [
+        [
+          "aria-describedby",
+          "signature-pad-status-signature-pad-c1-status"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "signature-pad-label-signature-pad-c1-label"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "empty"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "canvas"
+        ]
+      ]
+    },
+    {
+      "part": "clear",
+      "tag": "button",
+      "role": "button",
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "clear"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "empty"
+        ]
+      ]
+    },
+    {
+      "part": "status",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-message",
+          ""
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "status"
+        ]
+      ]
+    },
+    {
+      "part": "undo",
+      "tag": "button",
+      "role": "button",
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "undo"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "01c9d7b55c30805a7ae33bdf384624fca5cfaaa9245591a2a2c9084af6667916"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "01c9d7b55c30805a7ae33bdf384624fca5cfaaa9245591a2a2c9084af6667916"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "01c9d7b55c30805a7ae33bdf384624fca5cfaaa9245591a2a2c9084af6667916"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "01c9d7b55c30805a7ae33bdf384624fca5cfaaa9245591a2a2c9084af6667916"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "01c9d7b55c30805a7ae33bdf384624fca5cfaaa9245591a2a2c9084af6667916"
+    }
+  ],
+  "focusPath": [
+    "canvas",
+    "body",
+    "canvas",
+    "canvas",
+    "canvas",
+    "canvas"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-24T12:13:23.226Z",
+  "expiresAt": "2026-07-31T12:13:23.226Z"
+}

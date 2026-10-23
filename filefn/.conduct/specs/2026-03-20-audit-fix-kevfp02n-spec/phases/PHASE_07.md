@@ -1,0 +1,27 @@
+# Phase 07
+- Phase goal: Bring Python exports and core configuration surfaces to parity.
+- In scope:
+  - top-level exports
+  - auth config
+  - rate-limit config
+  - dedupe config
+  - processor exports
+  - Python core test harness
+- Out of scope:
+  - full Python upload/download/share behavior parity
+- Deliverables:
+  - `filefn/python/filefn/__init__.py`
+  - `filefn/python/filefn/server/__init__.py`
+  - `filefn/python/filefn/server/core.py`
+  - `filefn/python/filefn/processing/__init__.py`
+  - `filefn/python/tests/test_core.py`
+- Requirements covered: PKG-001, PY-001, PY-003
+- Implementation tasks:
+  - Export canonical Python entry points.
+  - Replace placeholder auth/rate_limit config with real implementations or wiring.
+  - Expose dedupe config in `FileFnConfig`.
+  - Ensure processor exports match README + spec.
+  - Make core Python tests collect and execute.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/python && python3 -m pytest -k core`
+- Stop condition: Python core imports/config tests pass.

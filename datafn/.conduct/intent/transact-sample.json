@@ -1,0 +1,51 @@
+[
+  {
+    "transactionId": "tx-0001",
+    "atomic": true,
+    "steps": [
+      {
+        "query": {
+          "resource": "goal",
+          "version": 1,
+          "filters": { "id": "goal:some-id" },
+          "select": ["id", "label", "status", "updatedAt"]
+        }
+      },
+      {
+        "mutation": {
+          "resource": "goal",
+          "version": 1,
+          "mutationId": "m-tx-0001-01",
+          "clientId": "client:device-1",
+          "operation": "merge",
+          "id": "goal:some-id",
+          "if": { "updatedAt": { "eq": "2021-01-01" } },
+          "record": { "label": "Updated inside transaction", "updatedAt": "2021-01-02" }
+        }
+      },
+      {
+        "mutation": {
+          "resource": "node",
+          "version": 1,
+          "mutationId": "m-tx-0001-02",
+          "clientId": "client:device-1",
+          "operation": "relate",
+          "id": "node:some-id",
+          "relations": {
+            "links": [
+              { "$ref": "goal:some-id", "linkType": "direct", "linkTag": "tag-x" }
+            ]
+          }
+        }
+      },
+      {
+        "query": {
+          "resource": "goal",
+          "version": 1,
+          "filters": { "id": "goal:some-id" },
+          "select": ["id", "label", "updatedAt", "links.#"]
+        }
+      }
+    ]
+  }
+]

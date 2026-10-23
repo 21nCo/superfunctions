@@ -1,0 +1,107 @@
+---
+title: Python SQLAlchemy
+description: Use SQLAlchemy as the concrete adapter behind the shared Superfunctions Python database contract.
+---
+
+`superfunctions-sqlalchemy` is the bridge between SQLAlchemy and the shared Python database contract. It lets Python applications and reusable libraries depend on one adapter interface while still using SQLAlchemy engines underneath. That is valuable when you want repository code, background jobs, or product modules to stay independent from a particular ORM session pattern.
+
+The package is especially relevant for outside-world users building multi-service systems. One team may prefer SQLAlchemy directly, another may expose a reusable package that only wants an adapter boundary, and a third may want to keep persistence interchangeable for tests or future infrastructure changes. This adapter gives those teams a concrete way to plug SQLAlchemy into the shared model without rewriting their application layer.
+
+## What It Is
+
+`superfunctions-sqlalchemy` provides `create_adapter()`, which returns a database adapter that satisfies the shared `superfunctions.db` protocol. The adapter translates create, find, update, delete, count, batch, and transaction-style operations into SQLAlchemy behavior, and it exposes health metadata so calling code can stay on a stable contract.
+
+The package is not a schema modeling framework and it does not replace SQLAlchemy's own engine or model APIs. Instead, it sits one layer above them and makes SQLAlchemy look like the shared persistence interface used by other Superfunctions packages.
+
+## When To Use It
+
+Use this package when you want Python code to depend on the shared adapter contract but your runtime storage engine is SQLAlchemy. It is a strong fit for reusable backend modules, internal SDK servers, and applications that want repository code to be easier to test or move across services.
+
+If you only need the contract types, start with [`python-core`](/docs/python/python-core). If your main task is wiring HTTP routes, pair this package with [`python-fastapi`](/docs/python/python-fastapi) or [`python-flask`](/docs/python/python-flask).
+
+## Install
+
+```bash
+pip install superfunctions-sqlalchemy sfns sqlalchemy
+```
+
+Choose extras only when you need a specific database driver:
+
+```bash
+pip install superfunctions-sqlalchemy[postgres]
+```
+
+## Quick Start
+
+Create a SQLAlchemy engine as usual, then wrap it with `create_adapter()` so your application code can depend on the shared database boundary.
+
+```python
+from sqlalchemy import create_engine
+from superfunctions_sqlalchemy import create_adapter
+
+
+engine = create_engine("postgresql://user:password@localhost/app")
+adapter = create_adapter(engine)
+```
+
+Once you have the adapter, use the shared parameter models from `superfunctions.db` instead of raw SQLAlchemy expressions in higher-level code.
+
+```python
+from superfunctions.db import CreateParams, FindOneParams, WhereClause
+
+
+async def create_customer(adapter, email: str):
+    return await adapter.create(
+        CreateParams(model="customers", data={"email": email, "tier": "team"})
+    )
+
+
+async def find_customer(adapter, customer_id: str):
+    return await adapter.find_one(
+        FindOneParams(
+            model="customers",
+            where=[WhereClause(field="id", value=customer_id)],
+        )
+    )
+```
+
+## Core Concepts
+
+The first concept is adapter injection. Libraries and service modules should accept the shared adapter interface rather than building SQLAlchemy engines internally. That keeps infrastructure choices in the application layer.
+
+The second concept is operation normalization. Instead of passing ORM-specific query expressions around your codebase, the shared models such as `CreateParams`, `FindManyParams`, and `WhereClause` express intent in a portable way. The adapter handles the SQLAlchemy translation.
+
+The third concept is namespacing and portability. Higher-level packages can preserve stable model names and repository contracts while the host application chooses the actual database engine, connection configuration, and deployment details.
+
+## Real-World Example
+
+One practical use case is a Python package that provides account or audit workflows to several services. The package can accept the shared adapter, while each service decides how SQLAlchemy should be configured and where the engine should live.
+
+```python
+from sqlalchemy import create_engine
+from superfunctions.db import CountParams
+from superfunctions_sqlalchemy import create_adapter
+
+
+def build_adapter(database_url: str):
+    engine = create_engine(database_url)
+    return create_adapter(engine)
+
+
+async def count_active_subscriptions(adapter):
+    return await adapter.count(
+        CountParams(model="subscriptions")
+    )
+```
+
+In that model, the shared package owns business behavior and the application owns the concrete engine, credentials, and deployment. That keeps your service code easier to reuse and your infrastructure wiring easier to evolve.
+
+## Related Packages
+
+- [`python-core`](/docs/python/python-core) for the shared adapter protocol and database parameter models.
+- [`db`](/docs/data-storage/db) if you want the TypeScript-side explanation of the same persistence boundary.
+- [`python-fastapi`](/docs/python/python-fastapi) if the same service exposes these repositories over FastAPI routes.
+
+## Troubleshooting
+
+If reflected table access fails, verify that your database actually contains the expected table names and that namespace prefixes match what your application uses. If repositories feel too tied to SQLAlchemy, move engine creation and adapter construction into the application startup layer and keep library code on the shared adapter protocol. If local tests fail while production works, check that your driver extras and connection string match the target database dialect.

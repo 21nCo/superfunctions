@@ -1,0 +1,57 @@
+{
+  "name": "@contentfn/cli",
+  "version": "0.0.3",
+  "description": "ContentFn CLI - schema validation/upsert, dataset export/import, document operations",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "contentfn": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [
+    "contentfn",
+    "cli",
+    "cms"
+  ],
+  "sideEffects": false,
+  "dependencies": {
+    "@contentfn/core": "0.0.2",
+    "@contentfn/client": "0.0.2",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

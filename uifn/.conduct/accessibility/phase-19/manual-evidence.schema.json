@@ -1,0 +1,600 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://uifn.dev/schemas/phase-19/manual-evidence.schema.json",
+  "title": "uifn Phase 19 signed human assistive-technology evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceId",
+    "evidenceClass",
+    "status",
+    "result",
+    "rowId",
+    "matrixRevision",
+    "scriptSha256",
+    "source",
+    "tester",
+    "sessions",
+    "executions",
+    "defects",
+    "retests",
+    "timing",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^EVID-P19-"
+    },
+    "evidenceClass": {
+      "const": "manualAssistiveTechnology"
+    },
+    "status": {
+      "const": "passed"
+    },
+    "result": {
+      "const": "passed"
+    },
+    "rowId": {
+      "type": "string",
+      "pattern": "^P19-"
+    },
+    "matrixRevision": {
+      "const": "uifn-manual-at-matrix-v1"
+    },
+    "scriptSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "dirty",
+        "definitionSha256",
+        "artifactSetSha256",
+        "phase18EvidenceSha256",
+        "matrixDefinitionSha256",
+        "artifacts"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "dirty": {
+          "const": false
+        },
+        "definitionSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifactSetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "phase18EvidenceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "matrixDefinitionSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "package",
+              "filename",
+              "sha256"
+            ],
+            "properties": {
+              "package": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tester": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "participantId",
+        "humanObserved",
+        "automationGenerated"
+      ],
+      "properties": {
+        "participantId": {
+          "type": "string"
+        },
+        "humanObserved": {
+          "const": true
+        },
+        "automationGenerated": {
+          "const": false
+        }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "platform",
+          "osVersion",
+          "deviceName",
+          "deviceModel",
+          "physical",
+          "emulated",
+          "browser",
+          "assistiveTechnology",
+          "locale"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "platform": {
+            "enum": [
+              "macOS",
+              "iOS",
+              "Windows",
+              "Android"
+            ]
+          },
+          "osVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "deviceName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "deviceModel": {
+            "type": "string",
+            "minLength": 1
+          },
+          "physical": {
+            "const": true
+          },
+          "emulated": {
+            "const": false
+          },
+          "browser": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "channel",
+              "version"
+            ],
+            "properties": {
+              "name": {
+                "enum": [
+                  "Safari",
+                  "Firefox",
+                  "Chrome",
+                  "Edge"
+                ]
+              },
+              "channel": {
+                "enum": [
+                  "current",
+                  "previous"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "assistiveTechnology": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "version",
+              "settings"
+            ],
+            "properties": {
+              "name": {
+                "enum": [
+                  "VoiceOver",
+                  "NVDA",
+                  "TalkBack"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "settings": {
+                "type": "string",
+                "minLength": 2
+              }
+            }
+          },
+          "locale": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "executions": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sessionId",
+          "framework",
+          "deliveryMode",
+          "startedAt",
+          "completedAt",
+          "result",
+          "steps",
+          "modeObservations",
+          "stateObservations",
+          "eventObservations"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "framework": {
+            "enum": [
+              "react",
+              "svelte",
+              "solid"
+            ]
+          },
+          "deliveryMode": {
+            "enum": [
+              "package",
+              "source"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "const": "passed"
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stepIndex",
+                "instruction",
+                "expected",
+                "observedSpeech",
+                "observedNavigation",
+                "focusPath",
+                "result",
+                "humanObserved",
+                "automationInferred"
+              ],
+              "properties": {
+                "stepIndex": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "instruction": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "expected": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observedSpeech": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observedNavigation": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "focusPath": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "result": {
+                  "const": "passed"
+                },
+                "humanObserved": {
+                  "const": true
+                },
+                "automationInferred": {
+                  "const": false
+                }
+              }
+            }
+          },
+          "modeObservations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "modeId",
+                "observedSpeech",
+                "observedNavigation",
+                "focusPath",
+                "result",
+                "humanObserved",
+                "automationInferred"
+              ],
+              "properties": {
+                "modeId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observedSpeech": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observedNavigation": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "focusPath": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "result": {
+                  "const": "passed"
+                },
+                "humanObserved": {
+                  "const": true
+                },
+                "automationInferred": {
+                  "const": false
+                }
+              }
+            }
+          },
+          "stateObservations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stateName",
+                "observedSpeech",
+                "observedNavigation",
+                "focusPath",
+                "result",
+                "humanObserved",
+                "automationInferred"
+              ],
+              "properties": {
+                "stateName": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observedSpeech": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observedNavigation": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "focusPath": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "result": {
+                  "const": "passed"
+                },
+                "humanObserved": {
+                  "const": true
+                },
+                "automationInferred": {
+                  "const": false
+                }
+              }
+            }
+          },
+          "eventObservations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "eventType",
+                "observedSpeech",
+                "observedNavigation",
+                "focusPath",
+                "result",
+                "humanObserved",
+                "automationInferred"
+              ],
+              "properties": {
+                "eventType": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observedSpeech": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observedNavigation": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "focusPath": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "result": {
+                  "const": "passed"
+                },
+                "humanObserved": {
+                  "const": true
+                },
+                "automationInferred": {
+                  "const": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "defects": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "retests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "defectId",
+          "result",
+          "completedAt",
+          "humanObserved",
+          "automationInferred"
+        ],
+        "properties": {
+          "defectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "const": "passed"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "humanObserved": {
+            "const": true
+          },
+          "automationInferred": {
+            "const": false
+          }
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAt",
+        "completedAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheme",
+        "keyId",
+        "signedBy",
+        "signedAt",
+        "payloadSha256",
+        "value"
+      ],
+      "properties": {
+        "scheme": {
+          "const": "ed25519"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^ed25519:[a-f0-9]{64}$"
+        },
+        "signedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payloadSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 40
+        }
+      }
+    }
+  }
+}

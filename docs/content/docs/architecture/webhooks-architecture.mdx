@@ -1,0 +1,27 @@
+---
+title: webhooks-architecture
+description: Signing, verification, delivery retries, and failure handling.
+---
+
+## Pipeline
+
+```mermaid
+flowchart LR
+  A[Event] --> B[Build payload]
+  B --> C[Sign payload]
+  C --> D[Deliver HTTP request]
+  D -->|2xx| E[Success]
+  D -->|retryable| F[Backoff + retry]
+  F --> D
+  D -->|non-retryable/exhausted| G[Dead-letter / alert]
+```
+
+## Security Caveats
+
+- Use timing-safe signature verification.
+- Rotate signing keys and support overlap windows.
+
+## Operational Caveats
+
+- Bound retries and backoff to prevent thundering herd.
+- Capture delivery status and response metadata for debugging.

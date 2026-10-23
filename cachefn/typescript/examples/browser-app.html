@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CacheFn Browser Example</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        max-width: 800px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+      button {
+        margin: 5px;
+        padding: 8px 16px;
+        cursor: pointer;
+      }
+      .stats {
+        background: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .log {
+        background: #000;
+        color: #0f0;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: monospace;
+        font-size: 12px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CacheFn Browser Example</h1>
+
+    <div>
+      <h2>Actions</h2>
+      <button onclick="setData()">Set Data</button>
+      <button onclick="getData()">Get Data</button>
+      <button onclick="invalidateByTag()">Invalidate by Tag</button>
+      <button onclick="clearCache()">Clear Cache</button>
+      <button onclick="showStats()">Show Stats</button>
+    </div>
+
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log"></div>
+
+    <script type="module">
+      import { cacheFn } from "../dist/index.js";
+
+      // Create cache with IndexedDB storage
+      const cache = cacheFn({
+        name: "browser-cache",
+        storage: "indexeddb",
+        defaultTTL: 300000, // 5 minutes
+      });
+
+      // Event listeners
+      cache.on("hit", (event) => {
+        log(`✓ Cache hit: ${event.key} (${event.accessTime.toFixed(2)}ms)`);
+      });
+
+      cache.on("miss", (event) => {
+        log(`✗ Cache miss: ${event.key}`);
+      });
+
+      cache.on("set", (event) => {
+        log(`+ Set: ${event.key}`);
+      });
+
+      cache.on("delete", (event) => {
+        log(`- Delete: ${event.key}`);
+      });
+
+      // Helper function to log
+      function log(message) {
+        const logDiv = document.getElementById("log");
+        const timestamp = new Date().toLocaleTimeString();
+        logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+
+      // Set data
+      window.setData = async function () {
+        const key = `user:${Math.floor(Math.random() * 100)}`;
+        const value = {
+          id: key,
+          name: `User ${key}`,
+          timestamp: Date.now(),
+        };
+
+        await cache.set(key, value, {
+          tags: ["users", "demo"],
+        });
+
+        log(`Set ${key}`);
+        await showStats();
+      };
+
+      // Get data
+      window.getData = async function () {
+        const key = `user:${Math.floor(Math.random() * 100)}`;
+        const value = await cache.get(key);
+
+        if (value) {
+          log(`Got ${key}: ${JSON.stringify(value)}`);
+        } else {
+          log(`${key} not found`);
+        }
+
+        await showStats();
+      };
+
+      // Invalidate by tag
+      window.invalidateByTag = async function () {
+        await cache.invalidateByTag("users");
+        log("Invalidated all users");
+        await showStats();
+      };
+
+      // Clear cache
+      window.clearCache = async function () {
+        await cache.clear();
+        log("Cache cleared");
+        await showStats();
+      };
+
+      // Show stats
+      window.showStats = async function () {
+        const stats = await cache.getStats();
+        const statsDiv = document.getElementById("stats");
+        statsDiv.innerHTML = `
+        <h3>Cache Statistics</h3>
+        <p><strong>Size:</strong> ${stats.size} entries</p>
+        <p><strong>Hits:</strong> ${stats.hits}</p>
+        <p><strong>Misses:</strong> ${stats.misses}</p>
+        <p><strong>Hit Rate:</strong> ${stats.hitRate.toFixed(2)}%</p>
+        <p><strong>Sets:</strong> ${stats.sets}</p>
+        <p><strong>Deletes:</strong> ${stats.deletes}</p>
+      `;
+      };
+
+      // Initialize
+      log("CacheFn initialized with IndexedDB storage");
+      await showStats();
+    </script>
+  </body>
+</html>

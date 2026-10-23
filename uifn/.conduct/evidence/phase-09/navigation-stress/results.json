@@ -1,0 +1,824 @@
+{
+  "config": {
+    "configFile": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/playwright.config.ts",
+    "rootDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+    "forbidOnly": true,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts",
+        "repeatEach": 3,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts",
+        "repeatEach": 3,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "firefox",
+        "name": "firefox",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts",
+        "repeatEach": 3,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "webkit",
+        "name": "webkit",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts",
+        "repeatEach": 3,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-chromium",
+        "name": "mobile-chromium",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "/(?:overlay|navigation|input)-primitives\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts",
+        "repeatEach": 3,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-webkit",
+        "name": "mobile-webkit",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "/(?:overlay|navigation|input)-primitives\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.57.0",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite --host 127.0.0.1 --port 4175 --strictPort",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom",
+      "url": "http://127.0.0.1:4175/browser/index.html",
+      "reuseExistingServer": false,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "navigation-primitives.spec.ts",
+      "file": "navigation-primitives.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 792,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:11.495Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-e7878a930c78f0af5907",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 562,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:12.985Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-chromium-repeat1/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-e55e99f6d6d081f7e2d0",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 563,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:14.081Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-chromium-repeat2/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-172c9f76580ec3fcbc5f",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 3,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1321,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:15.176Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-3ba450925721bc73019a",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 4,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1209,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:17.867Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-firefox-repeat1/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-7fbfbe3232bec0a73c76",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 5,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1275,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:20.386Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-firefox-repeat2/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-32b13afb79d9cdf28651",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 6,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1088,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:23.004Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-c8f7e1455423ac3f2d20",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 7,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 898,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:24.738Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-webkit-repeat1/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-7839801e0cdf46990f9b",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 8,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 863,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:26.244Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-webkit-repeat2/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-7c0a1a6304cda4148e49",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chromium",
+              "projectName": "mobile-chromium",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 742,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:27.714Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-e1a1ef9e2a4ea4e81b4a",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chromium",
+              "projectName": "mobile-chromium",
+              "results": [
+                {
+                  "workerIndex": 10,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 741,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:29.017Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-chromium-repeat1/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-00c3d47e772a7890c0ee",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chromium",
+              "projectName": "mobile-chromium",
+              "results": [
+                {
+                  "workerIndex": 11,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 742,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:30.295Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIlxuICAgIEB1aWZuL2RvbSBicm93c2VyIHZlY3RvcnNcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgICBcbiAgXG5cblRyZWVWaWV3RmlsZXNEb2NzSW50cm8iCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-chromium-repeat2/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-05798e5ba2edde0d93df",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-webkit",
+              "projectName": "mobile-webkit",
+              "results": [
+                {
+                  "workerIndex": 12,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 883,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:31.592Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-971a0e001e4b01548a50",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-webkit",
+              "projectName": "mobile-webkit",
+              "results": [
+                {
+                  "workerIndex": 13,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 890,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:33.066Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-webkit-repeat1/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-58428bcd921dd66799b1",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-003-P/N navigation browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-webkit",
+              "projectName": "mobile-webkit",
+              "results": [
+                {
+                  "workerIndex": 14,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 954,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T12:40:34.534Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMy1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkNvbnRleHRNZW51IiwKICAgICJNZW51IiwKICAgICJNZW51YmFyIiwKICAgICJOYXZpZ2F0aW9uTWVudSIsCiAgICAiUGFnaW5hdGlvbiIsCiAgICAiVGFicyIsCiAgICAiVHJlZVZpZXciCiAgXSwKICAia2V5Ym9hcmQiOiB7CiAgICAiTWVudWJhciI6IHsKICAgICAgInJ0bEFycm93RG93biI6ICJvcGVuLWZpcnN0IiwKICAgICAgInZhbHVlIjogImZpbGUiLAogICAgICAiYWN0aXZlSXRlbSI6ICJuZXciCiAgICB9LAogICAgIk5hdmlnYXRpb25NZW51IjogewogICAgICAiZGVsYXkiOiAyNSwKICAgICAgInZhbHVlIjogImRvY3MiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJlbmQiOiAxMCwKICAgICAgInJlcGFpcmVkIjogMgogICAgfSwKICAgICJUYWJzIjogewogICAgICAicnRsQXJyb3dMZWZ0IjogImMiCiAgICB9LAogICAgIlRyZWVWaWV3IjogewogICAgICAiZXhwYW5kZWQiOiBbCiAgICAgICAgImRvY3MiCiAgICAgIF0sCiAgICAgICJjaGlsZCI6ICJpbnRybyIKICAgIH0sCiAgICAiQ29udGV4dE1lbnUiOiB7CiAgICAgICJsb25nUHJlc3MiOiAib3BlbiIKICAgIH0sCiAgICAiTWVudSI6IHsKICAgICAgImRpc2FibGVkU2tpcCI6ICJtb3JlIiwKICAgICAgInR5cGVhaGVhZCI6ICJjYW5vbmljYWwiCiAgICB9CiAgfSwKICAiZm9jdXMiOiB7CiAgICAiTWVudSI6ICJtZW51LXJvb3QtdWlmbi1yb290LW1lbnUtMS1zdWJtZW51LXRyaWdnZXItbW9yZSIsCiAgICAiTWVudWJhciI6ICJFZGl0IiwKICAgICJUYWJzIjogIkMiLAogICAgIlRyZWVWaWV3IjogIkRvY3MiCiAgfSwKICAiYXJpYSI6IHsKICAgICJNZW51IjogewogICAgICAicm9sZSI6ICJtZW51IiwKICAgICAgIm9yaWVudGF0aW9uIjogInZlcnRpY2FsIiwKICAgICAgImRpc2FibGVkIjogInRydWUiCiAgICB9LAogICAgIlBhZ2luYXRpb24iOiB7CiAgICAgICJyb290IjogIlJlc3VsdHMiLAogICAgICAiY3VycmVudCI6ICJwYWdlIiwKICAgICAgImxhYmVsIjogIkN1cnJlbnQgUGFnZSAyIgogICAgfSwKICAgICJUYWJzIjogewogICAgICAic2VsZWN0ZWQiOiAidHJ1ZSIsCiAgICAgICJkaXNhYmxlZCI6ICJ0cnVlIgogICAgfSwKICAgICJUcmVlVmlldyI6IHsKICAgICAgInJvbGUiOiAidHJlZSIsCiAgICAgICJsZXZlbCI6ICIxIiwKICAgICAgImV4cGFuZGVkIjogInRydWUiCiAgICB9CiAgfSwKICAic3VibWVudSI6IFsKICAgICJrZXlib2FyZC1vcGVuIiwKICAgICJrZXlib2FyZC1yZXR1cm4iLAogICAgInBvaW50ZXItZ3JhY2UtcHJlc2VydmVkIiwKICAgICJwb2ludGVyLWdyYWNlLWNsb3NlZCIKICBdLAogICJ0b3VjaCI6IFsKICAgICJsb25nLXByZXNzLW9wZW4iCiAgXSwKICAiZHluYW1pY1JlcGFpciI6IHsKICAgICJNZW51YmFyIjogImZpbGUiLAogICAgIlBhZ2luYXRpb24iOiAiMiIsCiAgICAiVGFicyI6ICJhIiwKICAgICJUcmVlVmlldyI6ICJibG9nIgogIH0sCiAgIm5lZ2F0aXZlQ29kZXMiOiBbCiAgICAiVUlGTl9LRVlCT0FSRF9NT0RFTF9ESVZFUkdFRCIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMAogIF0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-09/navigation-stress/artifacts/navigation-primitives-TV-P-4c0b6-N-navigation-browser-matrix-mobile-webkit-repeat2/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "507ebad959f3bfbb4f38-295e2c074fce5f15e27c",
+          "file": "navigation-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-18T12:40:10.224Z",
+    "duration": 25501.275,
+    "expected": 15,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

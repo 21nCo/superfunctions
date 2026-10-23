@@ -1,0 +1,2 @@
+id, desc, status, completedAt, completionDoc
+SFN-17-issue,Build MailFn as a reusable programmable mailbox function across all phases,1,2026-08-10T20:15:41Z,2026-08-10-r7k4m2x9-completion

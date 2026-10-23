@@ -1,0 +1,44 @@
+---
+title: Python Integrations
+description: Learn how the Python packages map the shared HTTP and data concepts into FastAPI, Flask, and SQLAlchemy projects.
+---
+
+The Python category exists for teams that like the shared Superfunctions concepts but build their production services in Python instead of TypeScript. The important mental model is that the Python packages do not invent a second ecosystem. They carry the same ideas into Python: framework-neutral HTTP types, database adapter boundaries, and thin framework integrations that let application code stay portable. That means a team can discuss the same concepts across stacks even when one service uses Node.js and another uses FastAPI or Flask.
+
+The usual starting question is not "Which Python package has the most features?" It is "Which layer do I want to own?" [`python-core`](/docs/python/python-core) gives you the shared HTTP and database primitives. [`python-fastapi`](/docs/python/python-fastapi) and [`python-flask`](/docs/python/python-flask) adapt those HTTP concepts to popular web frameworks. [`python-sqlalchemy`](/docs/python/python-sqlalchemy) adapts the shared database contract to SQLAlchemy so your higher-level code can work with one persistence interface instead of a framework-specific client shape.
+
+## What This Category Covers
+
+Use this category when you want the same architecture boundaries that appear elsewhere in the root docs, but in a Python backend. The shared concepts line up cleanly:
+
+- `python-core` maps to the same role that [`http`](/docs/http/http) and [`db`](/docs/data-storage/db) play in TypeScript: common request, response, route, and persistence contracts.
+- `python-fastapi` and `python-flask` map to the same adapter story documented in [HTTP & Framework Adapters](/docs/http): keep handlers portable, then bind them to a framework at the edge.
+- `python-sqlalchemy` maps to the same persistence-boundary story documented in [Data & Storage](/docs/data-storage): business logic depends on an adapter contract, while the application chooses the concrete database implementation.
+
+That shared vocabulary matters for external library authors. A reusable Python package can accept the Superfunctions adapter types without forcing every application onto one framework or ORM. An application team can also start with a direct framework integration today and still preserve room to move shared business logic into a reusable package later.
+
+## Package Map
+
+| Package | Role | Start here when |
+| --- | --- | --- |
+| [`python-core`](/docs/python/python-core) | Shared Python HTTP and database contracts | You want portable request, response, route, and adapter types |
+| [`python-fastapi`](/docs/python/python-fastapi) | FastAPI adapter for the shared HTTP layer | Your app uses FastAPI and you want framework-neutral handlers |
+| [`python-flask`](/docs/python/python-flask) | Flask adapter for the shared HTTP layer | Your app uses Flask or Blueprints and wants the same handler contract |
+| [`python-sqlalchemy`](/docs/python/python-sqlalchemy) | SQLAlchemy adapter for the shared DB layer | You want SQLAlchemy to satisfy the shared persistence interface |
+
+## How To Choose
+
+Start with `python-core` whenever you are designing shared business logic, internal platform code, or a reusable library. Add `python-fastapi` or `python-flask` only when you are wiring HTTP routes to a concrete framework. Add `python-sqlalchemy` when your persistence layer should satisfy the shared adapter interface instead of exposing raw SQLAlchemy sessions everywhere.
+
+If you already know your application will stay entirely inside one FastAPI service and you only need request conversion, `python-fastapi` plus `python-core` is usually enough. If your package must support more than one Python web framework, keep the framework-neutral handlers in `python-core` terms and let each app choose either `python-fastapi` or `python-flask`. If your package stores records, pair the HTTP layer with `python-sqlalchemy` so the persistence boundary is just as portable as the routing boundary.
+
+## Common Compositions
+
+- [`python-core`](/docs/python/python-core) + [`python-fastapi`](/docs/python/python-fastapi) for FastAPI services that want portable handlers and response types.
+- [`python-core`](/docs/python/python-core) + [`python-flask`](/docs/python/python-flask) for Flask apps that want the same route contract without rewriting domain code.
+- [`python-core`](/docs/python/python-core) + [`python-sqlalchemy`](/docs/python/python-sqlalchemy) for Python libraries that need a stable persistence interface behind SQLAlchemy.
+- [`python-fastapi`](/docs/python/python-fastapi) or [`python-flask`](/docs/python/python-flask) + [`python-sqlalchemy`](/docs/python/python-sqlalchemy) when one service owns both HTTP entrypoints and database access.
+
+## Related Categories
+
+If you are comparing the Python integrations to their TypeScript counterparts, continue into [HTTP & Framework Adapters](/docs/http) to see the shared routing model and into [Data & Storage](/docs/data-storage) to compare persistence patterns. If you are still deciding whether you need Python-specific adapters or only the ecosystem overview, go back to [Choosing Packages](/docs/choosing-packages).

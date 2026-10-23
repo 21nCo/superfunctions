@@ -1,0 +1,42 @@
+{
+  "role_19bb1579af324cc704": {
+    "id": "role_19bb1579af324cc704",
+    "name": "admin",
+    "description": "Full system access",
+    "permissions": [
+      "*:*"
+    ],
+    "inherits": null,
+    "metadata": null,
+    "createdAt": 1768206867187,
+    "updatedAt": 1768206867187
+  },
+  "role_19bb1579af38f33ef9": {
+    "id": "role_19bb1579af38f33ef9",
+    "name": "editor",
+    "description": "Can edit projects and files",
+    "permissions": [
+      "project:read",
+      "project:write",
+      "file:read",
+      "file:write"
+    ],
+    "inherits": null,
+    "metadata": null,
+    "createdAt": 1768206867187,
+    "updatedAt": 1768206867187
+  },
+  "role_19bb1579af4f94f22d": {
+    "id": "role_19bb1579af4f94f22d",
+    "name": "viewer",
+    "description": "Read-only access",
+    "permissions": [
+      "project:read",
+      "file:read"
+    ],
+    "inherits": null,
+    "metadata": null,
+    "createdAt": 1768206867188,
+    "updatedAt": 1768206867188
+  }
+}

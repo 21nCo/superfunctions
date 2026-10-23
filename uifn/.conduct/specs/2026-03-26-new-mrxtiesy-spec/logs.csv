@@ -1,0 +1,8 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-26T05:48:27Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-26-new-mrxtiesy-spec
+2026-03-26T06:40:25Z,unknown,Codex Desktop,execute,execute-phase,PHASE_00,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_00-2026-03-26-batygnj1-report.md
+2026-03-26T07:10:41Z,unknown,Codex Desktop,execute,execute-phase,PHASE_01,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_01-2026-03-26-g4d20rxf-report.md
+2026-03-26T07:33:22Z,unknown,Codex Desktop,execute,execute-phase,PHASE_02,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_02-2026-03-26-cmpdygju-report.md
+2026-03-26T08:13:25Z,unknown,Codex Desktop,execute,execute-phase,PHASE_03,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_03-2026-03-26-a8fpd6mc-report.md
+2026-03-26T09:12:51Z,unknown,Codex Desktop,execute,execute-phase,PHASE_04,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_04-2026-03-26-v8c2m4qz-report.md
+2026-03-26T09:28:16Z,unknown,Codex Desktop,execute,execute-phase,PHASE_05,.conduct/specs/2026-03-26-new-mrxtiesy-spec/phase-reports/PHASE_05-2026-03-26-q4n8z1pk-report.md

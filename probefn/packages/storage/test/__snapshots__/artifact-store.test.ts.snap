@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ArtifactStore > plans repository-relative run paths and writes grouped artifacts 1`] = `
+{
+  "checkpointPaths": {
+    "axPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/ax.json",
+    "domPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/dom.json",
+    "layoutPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/layout.json",
+    "manifestPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/checkpoint.json",
+    "root": ".artifacts/runs/run_healthy/checkpoints/landing-page",
+    "screenshotPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/screenshot.png",
+    "stylesPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/styles.json",
+  },
+  "manifestContents": {
+    "artifactRoot": ".artifacts/runs/run_healthy",
+    "browser": "chromium",
+    "deterministic": {
+      "animationPolicy": "freeze",
+      "colorScheme": "light",
+      "enabled": true,
+      "locale": "en-US",
+      "networkIdleMs": 500,
+      "reducedMotion": "reduce",
+      "timezone": "UTC",
+      "viewport": {
+        "height": 900,
+        "width": 1440,
+      },
+    },
+    "mode": "mixed",
+    "runId": "run_healthy",
+    "schemaVersion": "1.0",
+    "sessionId": "sess_healthy",
+    "startedAt": "2026-04-15T12:43:55Z",
+    "status": "running",
+  },
+  "reportContents": {
+    "checkpointRoot": ".artifacts/runs/run_healthy/checkpoints",
+    "reportPath": ".artifacts/runs/run_healthy/report.json",
+  },
+  "runPaths": {
+    "checkpointRoot": ".artifacts/runs/run_healthy/checkpoints",
+    "devServerRoot": ".artifacts/runs/run_healthy/devserver",
+    "diffRoot": ".artifacts/runs/run_healthy/diffs",
+    "eventRoot": ".artifacts/runs/run_healthy/events",
+    "reportJsonPath": ".artifacts/runs/run_healthy/report.json",
+    "reportMarkdownPath": ".artifacts/runs/run_healthy/report.md",
+    "runRoot": ".artifacts/runs/run_healthy",
+    "sessionManifestPath": ".artifacts/runs/run_healthy/session.json",
+    "tracePath": ".artifacts/runs/run_healthy/browser.trace.zip",
+  },
+}
+`;

@@ -1,0 +1,10 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-08T12:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-08-new-q4k7m2r8-spec
+2026-03-08T14:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-08-new-q4k7m2r8-spec
+2026-03-08T17:35:05Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-08-new-97a4c153-spec
+2026-03-09T12:00:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,searchfn/.conduct/audits/2026-03-09-r7k4m2x9-full-audit.md
+2026-03-11T09:58:34Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,searchfn/.conduct/issue-completions/2026-03-11-k9m4x2p7-completion.md
+2026-03-11T16:27:57Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-11-new-h3r9k2m7-spec
+2026-03-11T23:45:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,searchfn/.conduct/audits/2026-03-11-r4k7m2q9-full-audit.md
+2026-03-12T06:30:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec
+2026-03-14T19:45:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,searchfn/.conduct/audits/2026-03-14-m7k4x9r3-full-audit.md

@@ -1,0 +1,152 @@
+Metadata-Version: 2.4
+Name: flowfn
+Version: 0.0.1
+Summary: Distributed job queues, event streams, and workflow orchestration for Python
+Author: 21n
+License: MIT
+Project-URL: Repository, https://github.com/21nCo/super-functions
+Project-URL: Issues, https://github.com/21nCo/super-functions/issues
+Keywords: queue,stream,workflow,jobs,async,distributed
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: System :: Distributed Computing
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: typing-extensions>=4.0.0
+Provides-Extra: redis
+Requires-Dist: redis>=5.0.0; extra == "redis"
+Provides-Extra: postgres
+Requires-Dist: asyncpg>=0.29.0; extra == "postgres"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Provides-Extra: all
+Requires-Dist: flowfn[postgres,redis]; extra == "all"
+
+# FlowFn Python SDK
+
+Distributed job queues, event streams, and workflow orchestration for Python.
+
+## Features
+
+- **Queues**: Background job processing with retries, priorities, and batch processing
+- **Streams**: Pub/sub event streaming with consumer groups and replay
+- **Workflows**: Multi-step orchestration with state management and compensation
+- **Patterns**: Rate limiting, batching, priority queues, circuit breakers
+- **Storage**: Pluggable storage backends (Memory, Redis, PostgreSQL)
+- **Monitoring**: Health checks, metrics, and event tracking
+
+## Installation
+
+```bash
+pip install flowfn
+```
+
+With optional adapters:
+
+```bash
+pip install flowfn[redis]     # Redis adapter
+pip install flowfn[postgres]  # PostgreSQL adapter
+pip install flowfn[all]       # All adapters
+```
+
+## Quick Start
+
+### Queue Example
+
+```python
+from flowfn import create_flow
+
+flow = create_flow(adapter='memory')
+
+# Create a queue
+queue = flow.queue('emails')
+
+# Add jobs
+await queue.add('send-welcome', {
+    'to': 'user@example.com',
+    'template': 'welcome'
+})
+
+# Process jobs
+@queue.process()
+async def process_email(job):
+    await send_email(job.data['to'], job.data['template'])
+    return {'sent': True}
+```
+
+### Stream Example
+
+```python
+# Create a stream
+stream = flow.stream('events')
+
+# Publish events
+await stream.publish({
+    'type': 'user.created',
+    'user_id': '123'
+})
+
+# Subscribe to events
+@stream.subscribe()
+async def handle_event(message):
+    print(f"Received: {message.data}")
+    await message.ack()
+```
+
+### Workflow Example
+
+```python
+# Define a workflow
+workflow = (
+    flow.workflow('process-order')
+    .step('validate', validate_order)
+    .step('charge', charge_payment)
+    .step('fulfill', fulfill_order)
+    .build()
+)
+
+# Execute workflow
+execution = await workflow.execute({
+    'order_id': '123',
+    'amount': 99.99
+})
+```
+
+## Documentation
+
+- [API Reference](docs/API.md)
+- [Usage Guide](docs/USAGE.md)
+- [Examples](examples/)
+
+## Development
+
+```bash
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Format code
+black flowfn tests
+
+# Type checking
+mypy flowfn
+```
+
+## License
+
+MIT

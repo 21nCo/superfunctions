@@ -1,0 +1,101 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  discoverSuperfunctionsPackages,
+  findNearestNodeModulesPath
+} from "../utils/discover-packages.js";
+
+const TEST_DIR = path.join(__dirname, "discover-test-env");
+
+describe("discoverSuperfunctionsPackages", () => {
+  beforeEach(() => {
+    if (fs.existsSync(TEST_DIR)) {
+      fs.rmSync(TEST_DIR, { recursive: true, force: true });
+    }
+    fs.mkdirSync(TEST_DIR);
+    fs.mkdirSync(path.join(TEST_DIR, "node_modules"));
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(TEST_DIR)) {
+      fs.rmSync(TEST_DIR, { recursive: true, force: true });
+    }
+  });
+
+  it("should discover regular packages", () => {
+    const pkgPath = path.join(TEST_DIR, "node_modules/my-lib");
+    fs.mkdirSync(pkgPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgPath, "package.json"),
+      JSON.stringify({
+        name: "my-lib",
+        superfunctions: { initFunction: "init" },
+      })
+    );
+
+    const result = discoverSuperfunctionsPackages(TEST_DIR);
+    expect(result).toContainEqual(expect.objectContaining({
+      packageName: "my-lib"
+    }));
+  });
+
+  it("should discover symlinked packages", () => {
+    // Create package outside node_modules
+    const libPath = path.join(TEST_DIR, "lib");
+    fs.mkdirSync(libPath);
+    fs.writeFileSync(
+      path.join(libPath, "package.json"),
+      JSON.stringify({
+        name: "linked-lib",
+        superfunctions: { initFunction: "initLinked" },
+      })
+    );
+
+    // Symlink it
+    const linkPath = path.join(TEST_DIR, "node_modules/linked-lib");
+    try {
+      fs.symlinkSync(libPath, linkPath, "dir");
+    } catch (e) {
+      console.warn(
+        "Symlink creation might fail depending on permissions/OS",
+        e
+      );
+      return; // Skip if can't symlink
+    }
+
+    const result = discoverSuperfunctionsPackages(TEST_DIR);
+    expect(result).toContainEqual(expect.objectContaining({
+      packageName: "linked-lib"
+    }));
+  });
+
+  it("should discover packages from the nearest parent node_modules", () => {
+    const nestedDir = path.join(TEST_DIR, "apps/example/server");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    const pkgPath = path.join(TEST_DIR, "node_modules/parent-lib");
+    fs.mkdirSync(pkgPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgPath, "package.json"),
+      JSON.stringify({
+        name: "parent-lib",
+        superfunctions: { initFunction: "initFromParent" },
+      })
+    );
+
+    const result = discoverSuperfunctionsPackages(nestedDir);
+    expect(result).toContainEqual(expect.objectContaining({
+      packageName: "parent-lib"
+    }));
+  });
+
+  it("should expose the nearest parent node_modules path for nested workspaces", () => {
+    const nestedDir = path.join(TEST_DIR, "apps/example/server");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    expect(findNearestNodeModulesPath(nestedDir)).toBe(
+      path.join(TEST_DIR, "node_modules")
+    );
+  });
+});

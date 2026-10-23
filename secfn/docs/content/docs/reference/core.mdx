@@ -1,0 +1,39 @@
+---
+title: Core Reference
+description: Contracts exported by @secfn/core.
+---
+
+`@secfn/core` exports pure types and utilities:
+
+- `getSecFnSchema()`
+- `SecFnError` variants
+- `KeyProvider`
+- `encryptSecret`
+- `decryptSecret`
+- `createStaticKeyProvider`
+- `hashToken`
+- `verifyTokenHash`
+- scanner interfaces and default rule pack
+- table record types
+- audit event and RBAC types
+
+```ts
+import {
+  createStaticKeyProvider,
+  encryptSecret,
+  decryptSecret,
+  buildSecretAad,
+} from "@secfn/core";
+
+const keyProvider = createStaticKeyProvider(process.env.SECFN_MASTER_KEY!, "local");
+
+const aad = buildSecretAad({
+  tenantId: "acme",
+  namespace: "web",
+  secretId: "secret_123",
+  version: 1,
+});
+
+const encrypted = await encryptSecret("plain", keyProvider, aad);
+const plain = await decryptSecret(encrypted, keyProvider, aad);
+```

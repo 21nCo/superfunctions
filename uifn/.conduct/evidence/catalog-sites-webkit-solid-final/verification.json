@@ -1,0 +1,2035 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "webkit",
+  "baseUrl": "http://127.0.0.1:6324",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 902,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5764,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 3313,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 470.5,
+          "width": 316,
+          "height": 183
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 3183,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Delete this project?"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 130.90625,
+          "y": 570,
+          "width": 128.171875,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 2259,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 387.25,
+          "width": 600,
+          "height": 337.5
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 501.125,
+          "width": 316,
+          "height": 177.75
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2235,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 157,
+          "y": 552,
+          "width": 76,
+          "height": 76
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 2258,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 154.203125,
+          "y": 575,
+          "width": 81.59375,
+          "height": 30
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 3298,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 61.28125,
+          "y": 580,
+          "width": 267.421875,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2778,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 106.078125,
+          "y": 555.5,
+          "width": 165.828125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 2661,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 442,
+          "width": 316,
+          "height": 338
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 2630,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 458,
+          "width": 316,
+          "height": 264
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 3107,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 93.78125,
+          "y": 552,
+          "width": 202.421875,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 3154,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 539.5,
+          "width": 316,
+          "height": 101
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 2792,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 490.125,
+          "width": 316,
+          "height": 143.75
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3253,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 3,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 41.140625,
+          "y": 500,
+          "width": 307.703125,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 2759,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 515,
+          "width": 316,
+          "height": 150
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 2613,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 75,
+          "y": 569,
+          "width": 240,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 3098,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 141.796875,
+          "y": -1917,
+          "width": 106.40625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 3233,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 144.96875,
+          "y": 570,
+          "width": 100.046875,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 3318,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 445.5,
+          "width": 316,
+          "height": 289
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 2986,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.171875,
+          "y": 580,
+          "width": 93.65625,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 3122,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 541,
+          "width": 316,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 3257,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 538.5,
+          "width": 316,
+          "height": 103
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 2354,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 141.5,
+          "y": 580,
+          "width": 107,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3310,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 110.03125,
+          "y": 567,
+          "width": 169.921875,
+          "height": 46
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 3341,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 38.578125,
+          "y": 571,
+          "width": 312.828125,
+          "height": 38
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 3105,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 118.4375,
+          "y": 570,
+          "width": 153.125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 2381,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199728260869566,
+        "trackBox": {
+          "x": 626,
+          "y": 583.5,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 583.5,
+          "width": 331.1875,
+          "height": 9
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 587.5,
+          "width": 316,
+          "height": 5
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 3266,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 55.296875,
+          "y": 577,
+          "width": 279.40625,
+          "height": 26
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 2579,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 450,
+          "width": 316,
+          "height": 280
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 4282,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1468,
+        "scrollTop": 1200
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 455,
+          "width": 316,
+          "height": 270
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 3583,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 9
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "portalled": true,
+        "optionFocused": true,
+        "focusReturned": true,
+        "triggerText": "Administrator⌄"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 75,
+          "y": 570,
+          "width": 240,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 2054,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 555.5,
+          "width": 560,
+          "height": 1
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 589.5,
+          "width": 316,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 3094,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-modal-keyboard",
+        "portalled": true,
+        "edgeAligned": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "box": {
+          "x": 1000,
+          "y": 0,
+          "width": 440,
+          "height": 1000
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 131.1875,
+          "y": -1889,
+          "width": 127.625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 2793,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 160,
+          "y": 442,
+          "width": 70,
+          "height": 390
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 2147,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 521,
+          "width": 316,
+          "height": 138
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 3230,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 558,
+          "width": 316,
+          "height": 64
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 2245,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeChanges savedUndo×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 115.515625,
+          "y": 570,
+          "width": 158.96875,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 3162,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 543.5,
+          "width": 316,
+          "height": 93
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 2594,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 450.5,
+          "width": 316,
+          "height": 279
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 3281,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 494,
+          "width": 316,
+          "height": 136
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 3048,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 525,
+          "width": 316,
+          "height": 130
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2458,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedProject createdUndo×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 140.953125,
+          "y": 570,
+          "width": 108.09375,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 2951,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 174,
+          "y": 568,
+          "width": 42,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 3119,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 127,
+          "y": 564,
+          "width": 136,
+          "height": 52
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2957,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 2233,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 484,
+          "width": 680,
+          "height": 144
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 500.5,
+          "width": 316,
+          "height": 179
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 430,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 389,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 490,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 518,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-webkit-solid-final"
+}

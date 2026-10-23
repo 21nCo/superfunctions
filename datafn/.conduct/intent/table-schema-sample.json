@@ -1,0 +1,297 @@
+{
+  "resources": [
+    {
+      "name": "node",
+      "version": 1,
+      "idPrefix": "node:",
+      "isRemoteOnly": false,
+      "permissions": {
+        "read": "authenticated",
+        "write": "authenticated"
+      },
+      "fields": [
+        {
+          "name": "type",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "contentType",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "metaType",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": true,
+          "minLength": 1
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "encrypt": true
+        },
+        {
+          "name": "notes",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "indices": {
+        "base": ["type", "contentType", "metaType", "parent"],
+        "search": ["label", "text", "notes"],
+        "vector": ["label", "text"]
+      }
+    },
+    {
+      "name": "goal",
+      "version": 1,
+      "idPrefix": "goal:",
+      "isRemoteOnly": false,
+      "permissions": {
+        "read": "authenticated",
+        "write": "authenticated"
+      },
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "encrypt": true,
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "default": "active",
+          "enum": ["active", "paused", "done"]
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "indices": {
+        "base": ["status", "type"],
+        "search": ["label", "description"],
+        "vector": ["label"]
+      }
+    },
+    {
+      "name": "task",
+      "version": 1,
+      "idPrefix": "task:",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "default": "todo",
+          "enum": ["todo", "doing", "done"]
+        },
+        {
+          "name": "priority",
+          "type": "number",
+          "required": false,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "name": "date",
+          "type": "date",
+          "required": false
+        }
+      ],
+      "indices": {
+        "base": ["status", "date"],
+        "search": ["label"],
+        "vector": ["label"]
+      }
+    },
+    {
+      "name": "collection",
+      "version": 1,
+      "idPrefix": "collection:",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "indices": {
+        "base": ["label"],
+        "search": ["label", "type"],
+        "vector": ["label"]
+      }
+    },
+    {
+      "name": "event",
+      "version": 1,
+      "idPrefix": "event:",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "indices": {
+        "base": ["label"],
+        "search": ["label"],
+        "vector": ["label"]
+      }
+    },
+    {
+      "name": "view",
+      "version": 1,
+      "idPrefix": "view:",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "indices": ["label"]
+    },
+    {
+      "name": "property",
+      "version": 1,
+      "idPrefix": "property:",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "config",
+          "type": "object"
+        }
+      ],
+      "indices": ["label"]
+    }
+  ],
+  "relations": [
+    {
+      "from": "node",
+      "to": "node",
+      "type": "many-one",
+      "relation": "parent",
+      "inverse": "children"
+    },
+    {
+      "from": ["node", "task", "goal", "event"],
+      "to": "property",
+      "type": "many-many",
+      "relation": "properties",
+      "cache": true,
+      "indices": ["value"],
+      "metadata": [
+        {
+          "name": "value",
+          "type": "any"
+        }
+      ]
+    },
+    {
+      "from": "collection",
+      "to": ["node", "goal", "event", "task"],
+      "type": "many-many",
+      "cache": true,
+      "relation": "items",
+      "metadata": [
+        {
+          "name": "addedToCollectionAt",
+          "type": "date",
+          "required": true
+        },
+        {
+          "name": "order",
+          "type": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "from": "goal",
+      "to": "task",
+      "type": "one-many",
+      "relation": "tasks",
+      "inverse": "goal"
+    },
+    {
+      "from": "goal",
+      "to": "goal",
+      "type": "htree",
+      "relation": "parent",
+      "inverse": "children"
+    },
+    {
+      "from": "task",
+      "to": "task",
+      "type": "one-many",
+      "relation": "subtasks",
+      "inverse": "parent"
+    },
+    {
+      "from": "collection",
+      "to": "view",
+      "type": "one-many",
+      "relation": "views",
+      "metadata": [
+        {
+          "name": "order",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "from": "collection",
+      "to": "collection",
+      "type": "one-many",
+      "relation": "derivations",
+      "inverse": "base"
+    },
+    {
+      "from": "collection",
+      "to": "property",
+      "type": "many-many"
+    },
+    {
+      "from": ["node", "goal", "task", "event"],
+      "to": ["node", "goal", "task", "event"],
+      "type": "many-many",
+      "relation": "links",
+      "metadata": [
+        {
+          "name": "linkTags",
+          "type": "array"
+        }
+      ]
+    }
+  ]
+}

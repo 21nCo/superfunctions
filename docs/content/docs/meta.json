@@ -1,0 +1,15 @@
+{
+  "title": "Start Here",
+  "pages": [
+    "index",
+    "getting-started",
+    "choosing-packages",
+    "ecosystem",
+    "authentication",
+    "http",
+    "middleware-runtime",
+    "data-storage",
+    "python",
+    "tooling"
+  ]
+}

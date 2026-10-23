@@ -1,0 +1,23 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-28T14:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec
+2026-02-28T19:01:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_00,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_00-2026-02-28-f3k9m2x7-report.md
+2026-02-28T19:23:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_01,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_01-2026-02-28-q8w3n5v2-report.md
+2026-03-01T12:02:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_02,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_02-2026-03-01-k4p7m9x3-report.md
+2026-03-01T07:34:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_03,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_03-2026-03-01-r5t2w8q4-report.md
+2026-03-01T07:51:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_04,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_04-2026-03-01-m7n3v6k8-report.md
+2026-03-01T08:09:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_05,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_05-2026-03-01-j8x4w2p6-report.md
+2026-03-01T13:46:00Z,unknown,CLI,execute,unknown-agent,PHASE_06,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_06-2026-03-01-ws00abc12-report.md
+2026-03-01T18:38:00Z,unknown,Cursor,execute,unknown-agent,PHASE_07,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_07-2026-03-01-x9k2m5v7-report.md
+2026-03-01T18:44:00Z,unknown,Cursor,execute,unknown-agent,PHASE_08,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_08-2026-03-01-k7m2x9p4-report.md
+2026-03-01T18:52:00Z,unknown,Cursor,execute,unknown-agent,PHASE_09,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_09-2026-03-01-z8k3m2v9-report.md
+2026-03-01T18:55:00Z,unknown,Cursor,execute,unknown-agent,PHASE_10,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_10-2026-03-01-n4k8m2w7-report.md
+2026-03-01T18:59:00Z,unknown,Cursor,execute,unknown-agent,PHASE_11,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_11-2026-03-01-p9k2w5m3-report.md
+2026-03-01T19:04:00Z,unknown,Cursor,execute,unknown-agent,PHASE_12,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_12-2026-03-01-r2k9m4w8-report.md
+2026-03-01T19:10:00Z,unknown,Cursor,execute,unknown-agent,PHASE_13,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_13-2026-03-01-v3k7m2x9-report.md
+2026-03-01T19:21:00Z,unknown,Cursor,execute,unknown-agent,PHASE_14,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_14-2026-03-01-m4k8x2v7-report.md
+2026-03-01T19:30:00Z,unknown,Cursor,execute,unknown-agent,PHASE_15,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_15-2026-03-01-n5k9x3w8-report.md
+2026-03-01T19:34:00Z,unknown,Cursor,execute,unknown-agent,PHASE_16,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_16-2026-03-01-p6k2x9w4-report.md
+2026-03-01T20:15:00Z,unknown,Cursor,execute,unknown-agent,PHASE_17,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_17-2026-03-01-z9k4m7x2-report.md
+2026-03-01T20:52:00Z,unknown,Cursor,execute,unknown-agent,PHASE_18,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_18-2026-03-01-p8k4m9x3-report.md
+2026-03-01T20:25:00Z,unknown,Cursor,execute,unknown-agent,PHASE_19,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_19-2026-03-01-q9k5m8x4-report.md
+2026-03-01T21:25:00Z,unknown,Cursor,execute,unknown-agent,PHASE_20,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_20-2026-03-01-y5k9m3w2-report.md

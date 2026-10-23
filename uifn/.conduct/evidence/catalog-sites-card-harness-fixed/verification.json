@@ -1,0 +1,486 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5783,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1060,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 428,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1047,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 434,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5758,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1045,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 418,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 379,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 521,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1072,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 434,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5743,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1088,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 412,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 370,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 515,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-card-harness-fixed"
+}

@@ -1,0 +1,56 @@
+---
+title: HTTP & Framework Adapters
+description: Choose between the framework-agnostic HTTP core and the adapter packages for Express, Fastify, Hono, Next.js, and SvelteKit.
+---
+
+The HTTP category is where Superfunctions separates your request-handling logic from the framework that happens to deliver the request. That split matters for two audiences. Application teams can keep their routing rules portable while still using the framework they already deploy. Library authors can publish reusable routers, middleware stacks, or handler factories without forcing downstream users onto Express, Fastify, Hono, Next.js, or SvelteKit.
+
+At the center is [`http`](/docs/http/http), the framework-neutral package. It models routes, handlers, middleware, path params, and Web `Request` or `Response` lifecycles in a way that is not tied to one runtime. The adapter packages exist to connect that core contract to the edge of your application: [`http-express`](/docs/http/http-express), [`http-fastify`](/docs/http/http-fastify), [`http-hono`](/docs/http/http-hono), [`http-next`](/docs/http/http-next), and [`http-sveltekit`](/docs/http/http-sveltekit).
+
+If you are starting fresh, read this page as a chooser. If you already know your runtime, jump straight to the adapter page that matches it. Either way, the important mental model is the same: write portable request logic once, then keep framework decisions at the boundary.
+
+## What This Category Covers
+
+These packages cover two related but distinct jobs. The first job is defining HTTP behavior in a portable way: routes, middleware order, request parsing, error handling, and response generation. The second job is adapting that behavior into the runtime you actually deploy. Superfunctions keeps those jobs separate so that a router built for one project can often move into another framework with minimal churn.
+
+That design is especially useful when you expect change over time. A team may begin in Express, move a new service to Fastify, and later ship edge endpoints in Hono or Next.js. With the Superfunctions HTTP stack, those decisions change the adapter layer instead of forcing a rewrite of every handler.
+
+## Package Map
+
+| Package | Role | Choose it when |
+| --- | --- | --- |
+| [`http`](/docs/http/http) | Framework-agnostic router and middleware contract | You want portable handlers, typed route context, or reusable library-facing HTTP primitives |
+| [`http-express`](/docs/http/http-express) | Express adapter | You are deploying in an Express app and want to mount a shared router with familiar middleware |
+| [`http-fastify`](/docs/http/http-fastify) | Fastify adapter | You want Fastify plugins, prefixes, and its performance-focused runtime model |
+| [`http-hono`](/docs/http/http-hono) | Hono adapter | You are targeting Hono or other fetch-first, edge-friendly environments |
+| [`http-next`](/docs/http/http-next) | Next.js App Router adapter | You want shared routing logic inside `app/api/.../route.ts` handlers |
+| [`http-sveltekit`](/docs/http/http-sveltekit) | SvelteKit endpoint adapter | You want shared handlers behind `+server.ts` routes in a SvelteKit app |
+
+## How To Choose
+
+Use the matrix below when more than one package seems plausible:
+
+| Your situation | Start with | Add next |
+| --- | --- | --- |
+| You are building a reusable package or SDK and do not want to commit consumers to one framework | [`http`](/docs/http/http) | One adapter in the consuming app, not in the library |
+| You already run an Express API and want a low-friction adoption path | [`http`](/docs/http/http) | [`http-express`](/docs/http/http-express) |
+| You prefer plugin registration, prefixes, and Fastify testing with `inject()` | [`http`](/docs/http/http) | [`http-fastify`](/docs/http/http-fastify) |
+| You are working in edge-friendly, fetch-native runtimes | [`http`](/docs/http/http) | [`http-hono`](/docs/http/http-hono) |
+| You want to share logic across Next.js App Router handlers | [`http`](/docs/http/http) | [`http-next`](/docs/http/http-next) |
+| You are authoring SvelteKit endpoints and want one exported handler set | [`http`](/docs/http/http) | [`http-sveltekit`](/docs/http/http-sveltekit) |
+
+A practical rule of thumb is simple: always choose `http` first when you want portability, then add exactly one adapter for the framework that receives the request. The only time you can skip that mindset is when you truly do not need shared routing logic and are happier staying inside framework-native primitives.
+
+## Common Compositions
+
+- [`http`](/docs/http/http) + [`http-express`](/docs/http/http-express) for an existing Express API that wants framework-independent handler logic.
+- [`http`](/docs/http/http) + [`http-fastify`](/docs/http/http-fastify) for services that already use Fastify plugins and prefixes.
+- [`http`](/docs/http/http) + [`http-hono`](/docs/http/http-hono) for fetch-native deployments, lightweight APIs, and edge runtimes.
+- [`http`](/docs/http/http) + [`http-next`](/docs/http/http-next) for Next.js App Router endpoints that should share one router definition across many HTTP methods.
+- [`http`](/docs/http/http) + [`http-sveltekit`](/docs/http/http-sveltekit) for SvelteKit `+server.ts` endpoints that need a catch-all handler set.
+
+Teams commonly combine this category with authentication and middleware utilities as the next layer up the stack. The HTTP packages answer, "How does a request get handled?" while adjacent packages answer, "Who is calling?" and "What cross-cutting behavior should wrap the request?"
+
+## Related Categories
+
+After choosing an HTTP adapter, most readers next decide how to authenticate callers or attach reusable request policies. Use [Authentication & OAuth](/docs/authentication) when routing decisions need identity or OAuth-aware session handling. If you are still comparing several package families, go back to [Choosing Packages](/docs/choosing-packages) for a broader beginner-first decision guide. The next most common follow-up pages are [Middleware](/docs/middleware-runtime/middleware) and [Webhooks](/docs/middleware-runtime/webhooks), which cover portable request policy and delivery patterns.

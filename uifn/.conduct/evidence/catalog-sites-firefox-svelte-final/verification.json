@@ -1,0 +1,2035 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "firefox",
+  "baseUrl": "http://127.0.0.1:6322",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 3326,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 499.54998779296875,
+          "width": 316,
+          "height": 183.59999084472656
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 3205,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Delete this project?"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 130.85000610351562,
+          "y": 571.3499755859375,
+          "width": 128.29998779296875,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 2271,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 389.1166687011719,
+          "width": 600,
+          "height": 337.5000305175781
+        },
+        "ratio": 1.7777776170267634,
+        "contentCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 502.4666748046875,
+          "width": 316,
+          "height": 177.75
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2248,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 491.8166809082031,
+          "width": 76,
+          "height": 75.99996948242188
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 157,
+          "y": 553.3499755859375,
+          "width": 76,
+          "height": 76
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 2270,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 154.21665954589844,
+          "y": 576.3499755859375,
+          "width": 81.55000305175781,
+          "height": 30
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 3318,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 61.23333740234375,
+          "y": 581.2000122070312,
+          "width": 267.5333251953125,
+          "height": 20.300003051757812
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2793,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes saved Your changes are now live.  Undo ×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 105.94999694824219,
+          "y": 557.8499755859375,
+          "width": 166.08334350585938,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 2677,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 443.3500061035156,
+          "width": 316,
+          "height": 338
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 2652,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 457.3833312988281,
+          "width": 316,
+          "height": 267.933349609375
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 3122,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 93.56666564941406,
+          "y": 552.566650390625,
+          "width": 202.85000610351562,
+          "height": 21.449996948242188
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 3167,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 541.0499877929688,
+          "width": 316,
+          "height": 100.59999084472656
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 2806,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 490.95001220703125,
+          "width": 316,
+          "height": 144.6999969482422
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3273,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 3,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 40.75,
+          "y": 501.3500061035156,
+          "width": 308.5,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 2779,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 515.5499877929688,
+          "width": 316,
+          "height": 151.59999084472656
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 2628,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 75,
+          "y": 570.3499755859375,
+          "width": 240,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 3118,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 141.73333740234375,
+          "y": 571.3499755859375,
+          "width": 106.5333251953125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 3252,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 145.64999389648438,
+          "y": 571.3499755859375,
+          "width": 98.68333435058594,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 3335,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 443.3500061035156,
+          "width": 316,
+          "height": 310.7166748046875
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3002,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.1666717529297,
+          "y": 581.2000122070312,
+          "width": 93.64999389648438,
+          "height": 20.300003051757812
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 3137,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 542.2999877929688,
+          "width": 316,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 3274,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 539.183349609375,
+          "width": 316,
+          "height": 104.31666564941406
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 2368,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 141.4166717529297,
+          "y": 581.2000122070312,
+          "width": 107.16665649414062,
+          "height": 20.300003051757812
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3328,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 110.06666564941406,
+          "y": 568.3499755859375,
+          "width": 169.86666870117188,
+          "height": 46
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 3363,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 38.58332824707031,
+          "y": 572.3499755859375,
+          "width": 312.816650390625,
+          "height": 38
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 3124,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 119.05000305175781,
+          "y": 571.3499755859375,
+          "width": 151.89999389648438,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 2397,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7200000265370244,
+        "trackBox": {
+          "x": 626,
+          "y": 585.6666870117188,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 585.6666870117188,
+          "width": 331.20001220703125,
+          "height": 9
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 588.8499755859375,
+          "width": 316,
+          "height": 5
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 3279,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 55.31666564941406,
+          "y": 578.2000122070312,
+          "width": 279.3500061035156,
+          "height": 26.300003051757812
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 2594,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 451.3500061035156,
+          "width": 316,
+          "height": 280
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 4332,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 456.3500061035156,
+          "width": 316,
+          "height": 270
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 3608,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 9
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "portalled": true,
+        "optionFocused": true,
+        "focusReturned": true,
+        "triggerText": "Administrator⌄"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 59,
+          "y": 571.3499755859375,
+          "width": 272,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 2064,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 557.3666381835938,
+          "width": 560,
+          "height": 1
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 590.8499755859375,
+          "width": 316,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 3114,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-modal-keyboard",
+        "portalled": true,
+        "edgeAligned": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "box": {
+          "x": 960,
+          "y": 0,
+          "width": 480,
+          "height": 1000
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 131.11666870117188,
+          "y": 571.3499755859375,
+          "width": 127.76666259765625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 2811,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 160,
+          "y": 443.3500061035156,
+          "width": 70,
+          "height": 390
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 2157,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 522.3499755859375,
+          "width": 316,
+          "height": 138
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 3247,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 559.2000122070312,
+          "width": 316,
+          "height": 64.30000305175781
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 2259,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment complete Changes saved  Undo ×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 115.44999694824219,
+          "y": 571.3499755859375,
+          "width": 159.08334350585938,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 3175,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 543.7833251953125,
+          "width": 316,
+          "height": 95.13333129882812
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 2616,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 36.649993896484375,
+          "y": 466.566650390625,
+          "width": 316.7166748046875,
+          "height": 249.5500030517578
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 3297,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 495,
+          "width": 316,
+          "height": 136.60000610351562
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 3059,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 526.3499755859375,
+          "width": 316,
+          "height": 130
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2476,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes saved Project created  Undo ×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 140.88333129882812,
+          "y": 571.3499755859375,
+          "width": 108.23333740234375,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 2960,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 174,
+          "y": 570.3499755859375,
+          "width": 42,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 3131,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 127,
+          "y": 565.3499755859375,
+          "width": 136,
+          "height": 52
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2973,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.31666564941406,
+          "y": 542.2999877929688,
+          "width": 19.350006103515625,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 2246,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 484.3333435058594,
+          "width": 680,
+          "height": 147.06668090820312
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 500.1000061035156,
+          "width": 316,
+          "height": 182.4833221435547
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 439,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-firefox-svelte-final"
+}

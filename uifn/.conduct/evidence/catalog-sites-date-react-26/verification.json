@@ -1,0 +1,620 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6314",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-29T09:53:22.575Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png",
+            "/components/crop-landscape.svg"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        },
+        "security": {}
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2832,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 8413,
+      "componentCount": 99,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 12,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "open",
+          "defaultOpen",
+          "locale",
+          "timeZone",
+          "min",
+          "max",
+          "unavailable",
+          "name"
+        ],
+        "anatomyParts": 15,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nExpose structured locale-aware segments, grids, or channels rather than display-string identity.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Escape\n\nFOCUS\n\nSegment Focus, Grid Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Date Picker catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DatePickerRoot,\n  DatePickerLabel,\n  DatePickerInput,\n  DatePickerSegment,\n  DatePickerTrigger,\n  DatePickerPositioner,\n  DatePickerContent,\n  DatePickerHeader,\n  DatePickerPrevious,\n  DatePickerNext,\n  DatePickerGrid,\n  DatePickerGridLabel,\n  DatePickerCell,\n  DatePickerCellTrigger,\n  DatePickerHiddenInput,\n} from '@uifn/components-react/date-picker'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DatePickerRoot defaultValue={{\"year\":2026,\"month\":7,\"day\":22}} locale=\"en-US\" timeZone=\"UTC\" name=\"due-date\">\n      <DatePickerLabel>Due date</DatePickerLabel>\n      <DatePickerInput>\n        <DatePickerSegment value=\"month\">07</DatePickerSegment>\n        <DatePickerSegment value=\"day\">22</DatePickerSegment>\n        <DatePickerSegment value=\"year\">2026</DatePickerSegment>\n      </DatePickerInput>\n      <DatePickerTrigger type=\"button\">Open calendar</DatePickerTrigger>\n      <DatePickerPositioner>\n        <DatePickerContent>\n          <DatePickerHeader>\n            <DatePickerPrevious type=\"button\">Previous month</DatePickerPrevious>\n            <DatePickerNext type=\"button\">Next month</DatePickerNext>\n          </DatePickerHeader>\n          <DatePickerGrid>\n            <DatePickerGridLabel>July 2026</DatePickerGridLabel>\n            <tbody>\n              <tr>\n                <DatePickerCell value=\"2026-07-19\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-19\">19</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-20\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-20\">20</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-21\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-21\">21</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-22\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-22\">22</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-23\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-23\">23</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-24\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-24\">24</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-25\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-25\">25</DatePickerCellTrigger>\n                </DatePickerCell>\n              </tr>\n            </tbody>\n          </DatePickerGrid>\n        </DatePickerContent>\n      </DatePickerPositioner>\n      <DatePickerHiddenInput />\n    </DatePickerRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "segment": 3,
+          "trigger": 1,
+          "hiddenInput": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "previous": 1,
+          "next": 1,
+          "grid": 1,
+          "gridLabel": 1,
+          "cell": 42,
+          "cellTrigger": 42
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 528,
+            "y": 556.421875,
+            "width": 680,
+            "height": 126.84375
+          },
+          "visibleText": "Due date 07 / 22 / 2026 Calendar",
+          "placeholderMatches": [],
+          "visibleParts": 7
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 549,
+            "y": 244.265625,
+            "width": 310,
+            "height": 354
+          },
+          "minimumSize": [
+            280,
+            240
+          ],
+          "viewportInset": {
+            "left": 549,
+            "top": 244.265625,
+            "right": 581,
+            "bottom": 401.734375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "‹July 2026›July 2026SunMonTueWedThuFriSat2829301234567891011121314151617181920212223242526272829303112345678",
+          "accessibleLabelText": "Previous month Next month June 28, 2026 June 29, 2026 June 30, 2026 July 1, 2026 July 2, 2026 July 3, 2026 July 4, 2026 July 5, 2026 July 6, 2026 July 7, 2026 July 8, 2026 July 9, 2026 July 10, 2026 July 11, 2026 July 12, 2026 July 13, 2026 July 14, 2026 July 15, 2026 July 16, 2026 July 17, 2026 July 18, 2026 July 19, 2026 July 20, 2026 July 21, 2026 July 22, 2026 July 23, 2026 July 24, 2026 July 25, 2026 July 26, 2026 July 27, 2026 July 28, 2026 July 29, 2026 July 30, 2026 July 31, 2026 August 1, 2026 August 2, 2026 August 3, 2026 August 4, 2026 August 5, 2026 August 6, 2026 August 7, 2026 August 8, 2026",
+          "placeholderMatches": [],
+          "interactiveCount": 44,
+          "minimumInteractiveCount": 20,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 549,
+            "y": 604.265625,
+            "width": 546.078125,
+            "height": 58
+          },
+          "horizontalIntersection": 310,
+          "verticalGap": 6,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-date-react-26/react-date-picker-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-22"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 493.859375,
+          "width": 320,
+          "height": 126.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1414,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "navigationRetries": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-date-react-26"
+}

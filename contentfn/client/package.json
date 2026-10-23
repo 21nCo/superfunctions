@@ -1,0 +1,56 @@
+{
+  "name": "@contentfn/client",
+  "version": "0.0.2",
+  "description": "ContentFn client - types and API surface (types-only in initial phase)",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/client"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log('No tests configured')\""
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [
+    "contentfn",
+    "client"
+  ],
+  "sideEffects": false,
+  "dependencies": {
+    "@contentfn/core": "0.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
+  }
+}

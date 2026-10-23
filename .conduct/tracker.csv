@@ -1,0 +1,15 @@
+id, desc, status, completedAt, completionDoc
+2026-01-29-audit-fix-k4j2q7b9-spec,Add Datafn clone up local-to-cloud upload to prevent data loss on signup,0,,
+2026-03-06-r7m2k9v4-issue,Fix remaining datafn audit findings (SEC-008 REL-002 SRV-005),1,2026-03-06T06:54:07Z,2026-03-06-r7m2k9v4-completion
+2026-03-06-m8k4x9p2-issue,Resolve datafn/server TypeScript compile break (TS2709 TS2554 TS18046 TS7006 TS1016),1,2026-03-06T18:42:44Z,2026-03-06-v8k3m2p9-completion
+2026-03-08-k8m3x7r2-issue,Remove active soft-delete plugin and stale soft-delete docs from datafn,1,2026-03-07T19:20:31Z,2026-03-08-n4p7k2m9-completion
+2026-03-07-m2q9x7p4-full-audit,Execute and resolve documentation parity findings from full DataFn docs audit,1,2026-03-07T19:29:10Z,2026-03-08-k7p2m9x4-completion
+2026-03-08-z4p7k2m9-issue,Fix SearchFn/DataFn audit findings from 2026-03-08-m4v9k2q7 full audit,1,2026-03-08T16:07:19Z,2026-03-08-y8k3m2p6-completion
+2026-03-08-k7m4x2p9-issue,Add search and searchfn plugin integration to example todo app (client + server),1,2026-03-09T06:31:47Z,2026-03-09-r8m4k2p7-completion
+2026-03-11-m7q2k9p4-issue,Fix @datafn/docs Vercel build failure after shared docs-theme styling reuse,1,2026-03-11T12:02:27Z,2026-03-11-m7q2k9p4-completion
+2026-03-12-audit-fix-o4u9k2m7-spec,Consolidate OAuth and reusable shared infrastructure and publish complete root shared-package docs,1,2026-03-12T19:11:53Z,
+2026-03-15-fix-ifnaigab-spec,Rebuild root Superfunctions docs into a beginner-first category-organized external docs site for the ecosystem and shared packages,0,,
+2026-03-18-change-3dhqe3l2-spec,Deliver the Superfunctions package and provider work required by Conduct v0.3.0,1,2026-03-18T10:06:09Z,
+2026-03-22-authfn-audit-fixes-issue,Fix authfn gaps from the March 22 audit pair,1,2026-03-22T16:24:39Z,2026-03-22-x4k2m9p7-completion
+2026-05-19-plugfn-production-readiness-issue,Fix remaining PlugFn production-readiness audit blockers,1,2026-05-19T14:08:46Z,2026-05-19-c8p4m2x9-completion
+2026-08-11-mcpfn-push-blockers-issue,Fix all identified McpFn push blockers without pushing,1,2026-08-11T15:19:16Z,2026-08-11-q7m2x9k4-completion

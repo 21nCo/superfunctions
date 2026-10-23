@@ -1,0 +1,8 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-18T07:03:15Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec
+2026-03-18T07:24:50Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_00,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_00-2026-03-18-p8k4m2x9-report.md
+2026-03-18T08:49:57Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_01,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_01-2026-03-18-n7k4p2q8-report.md
+2026-03-18T09:45:31Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_02,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_02-2026-03-18-q9m4k2r7-report.md
+2026-03-18T09:48:47Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_03,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_03-2026-03-18-r8m4k2p7-report.md
+2026-03-18T10:01:14Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_04,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_04-2026-03-18-k7m4p2r9-report.md
+2026-03-18T10:06:09Z,gpt-5.3-codex,Cursor,execute,unknown-agent,PHASE_05,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec/phase-reports/PHASE_05-2026-03-18-m4k7p2q9-report.md

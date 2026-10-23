@@ -1,0 +1,113 @@
+---
+title: HTTP Express
+description: Mount a shared Superfunctions router inside an Express app without rewriting your handlers for Express-specific request objects.
+---
+
+`@superfunctions/http-express` is the adapter to choose when your application already lives in Express but you want your route logic to stay framework-agnostic. The package takes a router created with [`@superfunctions/http`](/docs/http/http) and exposes it as an Express `RequestHandler`, which means you can mount it with the same `app.use()` patterns your team already knows.
+
+This is usually the easiest adoption path for existing Node APIs. You do not have to rewrite the whole service into a new framework to get the benefits of portable route definitions. Instead, you move the business logic into the shared router and let Express keep doing the jobs it is good at: middleware ordering, app composition, and operational familiarity.
+
+## What It Is
+
+`@superfunctions/http-express` adapts the shared router contract into Express request and response handling. It converts the incoming Express request into a Web `Request`, delegates routing and handler execution to the core router, then writes the resulting Web `Response` back to Express.
+
+That conversion is the entire point of the package. Your handlers can work with the shared HTTP model while the outer app can continue using Express features such as middleware registration, mount points, and deployment practices that are already standard in your stack.
+
+## When To Use It
+
+Use this adapter when Express is the runtime you deploy today and you want a low-friction route into portable HTTP logic. It is a strong fit for mature Node services, internal APIs, and teams that already have Express middleware around logging, rate limiting, or session handling.
+
+The comparison table below is a quick sanity check:
+
+| Choose this adapter when | Consider another adapter when |
+| --- | --- |
+| Your service already uses `express()` and `app.use()` | You want Fastify plugins and `inject()` testing, which points to [`http-fastify`](/docs/http/http-fastify) |
+| You need a stable Node server migration path without changing framework today | You are targeting edge-first or fetch-native runtimes, which points to [`http-hono`](/docs/http/http-hono) |
+| You want to keep Express middleware at the edge and shared handlers in the middle | You are working in route-file frameworks such as Next.js or SvelteKit |
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-express express
+```
+
+## Quick Start
+
+Start by defining your shared router with `@superfunctions/http`, then mount it in Express with `toExpress()`.
+
+```ts
+import express from "express";
+import { createRouter } from "@superfunctions/http";
+import { toExpress } from "@superfunctions/http-express";
+
+const app = express();
+app.use(express.json());
+
+const apiRouter = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/users/:id",
+      handler: async (_request, context) =>
+        Response.json({ userId: context.params.id }),
+    },
+  ],
+});
+
+app.use("/api", toExpress(apiRouter));
+app.listen(3000);
+```
+
+## Core Concepts
+
+The most important Express-specific concept is body parsing. Express often expects you to opt into `express.json()` or `express.urlencoded()` before downstream handlers can consume the body. Because this adapter converts the Express request into a standard `Request`, you should make sure body parsing happens before the adapter when your routes expect parsed JSON input.
+
+The second concept is mount paths. When you use `app.use("/api", toExpress(router))`, your router paths should usually be written relative to that mount point. For example, define `"/users/:id"` in the router if Express is already mounting the whole router at `"/api"`. That keeps the routing surface easy to read and prevents accidental double-prefixing.
+
+The third concept is separation of concerns. Express middleware can still handle concerns that are specific to your deployment or server process, while the shared router handles request matching and business logic. That combination is often the smoothest migration strategy.
+
+## Real-World Example
+
+Imagine you maintain an Express API today but want to extract a reusable package that several services can share. The package can export the router, while each service decides where to mount it and which Express middleware surrounds it.
+
+```ts
+import express from "express";
+import { createRouter } from "@superfunctions/http";
+import { toExpress } from "@superfunctions/http-express";
+
+function createOrdersRouter() {
+  return createRouter({
+    routes: [
+      {
+        method: "POST",
+        path: "/orders",
+        handler: async (_request, context) => {
+          const body = await context.json<{ sku: string; quantity: number }>();
+
+          return Response.json(
+            { orderId: "ord_demo_123", ...body },
+            { status: 201 },
+          );
+        },
+      },
+    ],
+  });
+}
+
+const app = express();
+app.use(express.json());
+app.use("/v1", toExpress(createOrdersRouter()));
+```
+
+This keeps the order-creation logic portable. If another team later wants the same router in Fastify, they can keep the router and swap adapters without rewriting the route itself.
+
+## Related Packages
+
+- [`http`](/docs/http/http) for the framework-agnostic router that this adapter mounts.
+- [`http-fastify`](/docs/http/http-fastify) if you are comparing Express with another Node server runtime.
+- [`auth`](/docs/authentication/auth) if request authentication should wrap the shared router.
+- [Middleware](/docs/middleware-runtime/middleware) if you want additional portable request pipeline behavior.
+
+## Troubleshooting
+
+If request bodies are missing, confirm that `express.json()` is registered before `toExpress(router)`. If routes return unexpected 404s, check whether you accidentally encoded the same path segment in both `app.use("/prefix", ...)` and the router path itself. If errors seem to bypass Express error handlers, verify whether the failure is happening inside Express middleware before the adapter or inside the shared router after handoff. Keeping those layers distinct makes it much easier to see whether the bug belongs to the adapter boundary or to the shared route logic.

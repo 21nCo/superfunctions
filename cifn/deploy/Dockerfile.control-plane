@@ -1,0 +1,28 @@
+FROM node:20-slim AS builder
+
+WORKDIR /build
+COPY ../typescript/control-plane/package.json ./control-plane/package.json
+COPY ../typescript/control-plane/tsconfig.json ./control-plane/tsconfig.json
+COPY ../typescript/control-plane/tsup.config.ts ./control-plane/tsup.config.ts
+COPY ../typescript/control-plane/src ./control-plane/src
+
+WORKDIR /build/control-plane
+RUN npm install --ignore-scripts
+RUN npm run build
+
+FROM node:20-slim
+
+WORKDIR /app
+COPY --from=builder /build/control-plane/dist ./dist
+COPY --from=builder /build/control-plane/package.json ./package.json
+COPY --from=builder /build/control-plane/node_modules ./node_modules
+
+ENV PORT=3100
+ENV NODE_ENV=production
+
+EXPOSE 3100
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:3100/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"
+
+CMD ["node", "dist/server.js"]

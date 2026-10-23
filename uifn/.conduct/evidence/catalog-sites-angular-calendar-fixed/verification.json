@@ -1,0 +1,114 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "http://127.0.0.1:6312",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5743,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1086,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 577,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 370,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 626,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-angular-calendar-fixed"
+}

@@ -1,0 +1,110 @@
+---
+title: OAuth Storage
+description: Persist OAuth state and tokens with shared contracts, durable adapters, and encrypted token vault helpers.
+---
+
+`@superfunctions/oauth-storage` is the persistence layer for the shared OAuth stack. It owns redirect state, token persistence, consent records, revocation-failure records, and encryption helpers, while leaving flow orchestration and HTTP transport to neighboring packages. That makes it the place where production data-safety choices become concrete: state should be single-use and short-lived, while tokens should be durable, indexed by connection, and encrypted before they become long-lived records.
+
+## What It Is
+
+The package exports `OAuthStateStore`, `TokenVault`, consent/revocation-failure store contracts, in-memory adapters, SQL adapters, a `@superfunctions/db` bridge, and token-encryption helpers such as `EncryptedTokenVault` and `AesGcmTokenCipher`. It intentionally stays below the orchestration layer. It does not decide when installs start or how callbacks are exposed over HTTP.
+
+## When To Use It
+
+Use `@superfunctions/oauth-storage` whenever OAuth state or token material must survive the current request:
+
+- production OAuth installs
+- background refresh workers
+- provider disconnect cleanup
+- test harnesses that should exercise real storage contracts
+
+If you want a higher-level lifecycle service, pair it with [`oauth-flow`](/docs/authentication/oauth-flow). If you only need testing helpers, [`oauth-testing`](/docs/authentication/oauth-testing) re-exports the in-memory fixtures.
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-storage @superfunctions/db
+```
+
+## Quick Start
+
+For production persistence, wrap your `TokenVault` in `EncryptedTokenVault`.
+
+```ts
+import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
+  MemoryOAuthStateStore,
+  MemoryTokenVault,
+} from "@superfunctions/oauth-storage";
+
+const stateStore = new MemoryOAuthStateStore();
+const cipher = new AesGcmTokenCipher((keyRef) => {
+  if (keyRef !== "oauth-default") {
+    throw new Error("unknown keyRef");
+  }
+
+  return Buffer.alloc(32, 7);
+});
+
+const tokenVault = new EncryptedTokenVault(new MemoryTokenVault(), cipher);
+```
+
+If you want the shared database abstraction, `createOAuthDbStorage(...)` resolves the canonical model names for you.
+
+```ts
+import {
+  createOAuthDbStorage,
+  getOAuthStorageSchema,
+} from "@superfunctions/oauth-storage";
+
+const schema = getOAuthStorageSchema();
+const { stateStore, tokenVault, models } = createOAuthDbStorage({
+  adapter: dbAdapter,
+});
+
+console.log(schema);
+console.log(models.oauthStates); // oauth_states
+console.log(models.oauthTokenVault); // oauth_tokens
+```
+
+## Core Concepts
+
+`OAuthStateStore` and `TokenVault` solve different lifecycle problems. State records exist to bind the authorization redirect to the callback and should be consumed exactly once. Token records live longer, are keyed by `connectionId`, and must support later refresh, revoke, and deletion workflows. Keeping those interfaces separate is what allows the higher-level stack to enforce replay protection without coupling long-lived tokens to short-lived redirect state.
+
+The second important concept is encrypted-at-rest token persistence. `EncryptedTokenVault` wraps any `TokenVault` implementation and delegates encryption/decryption to a `TokenCipher`, typically `AesGcmTokenCipher`. That keeps database adapters generic while making ciphertext the durable record format instead of plaintext JSON.
+
+## Production Guidance
+
+- The default token table/model name is `oauth_tokens`.
+- `MemoryOAuthStateStore` and `MemoryTokenVault` are convenience tools for tests and local prototypes, not horizontally scaled production storage.
+- Prefer `EncryptedTokenVault` whenever tokens leave process memory.
+- If you already use a custom token table/model name, keep passing `models.oauthTokenVault` while your schema migration catches up.
+
+## Real-World Example
+
+The pattern below is a good fit for a multi-tenant integration service that wants portable DB adapters but still requires encrypted token payloads.
+
+```ts
+import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
+  createOAuthDbStorage,
+} from "@superfunctions/oauth-storage";
+
+const stores = createOAuthDbStorage({ adapter: dbAdapter });
+const cipher = new AesGcmTokenCipher(() => Buffer.alloc(32, 7));
+const tokenVault = new EncryptedTokenVault(stores.tokenVault, cipher);
+```
+
+That separation is especially useful in the Superfunctions ecosystem because packages such as `plugfn` or `authfn` can reuse the same persistence boundary without embedding a framework-specific database implementation.
+
+## Related Packages
+
+- [`oauth-core`](/docs/authentication/oauth-core) for redirect/state invariants above the storage layer
+- [`oauth-flow`](/docs/authentication/oauth-flow) for lifecycle orchestration
+- [`oauth-testing`](/docs/authentication/oauth-testing) for deterministic in-memory fixtures
+
+## Troubleshooting
+
+If callback handling reports missing or invalid state, check expiry and one-time consumption semantics before you inspect provider transport. If refresh or disconnect cannot find a token, verify the same `connectionId` is preserved across callback, refresh, and disconnect paths. If encrypted token reads fail after a deployment, inspect key resolution and key length first; `AesGcmTokenCipher` expects stable 32-byte key material for the referenced `keyRef`.

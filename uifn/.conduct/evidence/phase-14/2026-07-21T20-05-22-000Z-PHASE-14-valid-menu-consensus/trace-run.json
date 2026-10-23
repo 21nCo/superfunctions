@@ -1,0 +1,406 @@
+{
+  "ok": true,
+  "generatedAt": "2026-07-21T20:09:11.879Z",
+  "command": "run-uifn-phase-14-traces",
+  "requirements": [
+    "PARITY-001",
+    "COMPAT-001"
+  ],
+  "vectors": [
+    "TV-PARITY-001-P"
+  ],
+  "outputRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus",
+  "temporaryConsumer": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+  "counts": {
+    "primitives": 61,
+    "frameworks": 3,
+    "installModes": 2,
+    "traces": 366
+  },
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "snapshotSha256": "622a9af7e3258d332b942492626aef432ee8fef5e9da3e569f975817cb0be9ec"
+  },
+  "packages": [
+    {
+      "package": "@uifn/core",
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "10152e19d974347ee260a410aefe813828cd3dcecfa8591588b94d6432a9d60f"
+    },
+    {
+      "package": "@uifn/dom",
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148"
+    },
+    {
+      "package": "@uifn/adapter-kit",
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a"
+    },
+    {
+      "package": "@uifn/react",
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "3d9ee4b4b0bd8dc4062d68e2de562305033c31d3dcd5bcfb4244a82cb3627594"
+    },
+    {
+      "package": "@uifn/svelte",
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9"
+    },
+    {
+      "package": "@uifn/solid",
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0"
+    }
+  ],
+  "artifactSetSha256": "0a5b3d6d0277833c5d5aef872660b5fd70fef492cf156a3f24e2d3545e7dc57a",
+  "consumerKit": {
+    "version": 1,
+    "files": [
+      "package.json",
+      "vectors.json",
+      "trace.mjs",
+      "react.test.tsx",
+      "svelte.test.ts",
+      "solid.test.tsx",
+      "node-smoke.mjs"
+    ]
+  },
+  "compatibility": {
+    "react": [
+      "18.3.1",
+      "19.2.3"
+    ],
+    "svelte": [
+      "5.46.4"
+    ],
+    "solid": [
+      "1.9.13"
+    ],
+    "node": [
+      {
+        "major": 20,
+        "version": "v20.20.2",
+        "ok": true,
+        "packages": [
+          "@uifn/core",
+          "@uifn/dom",
+          "@uifn/adapter-kit"
+        ]
+      },
+      {
+        "major": 22,
+        "version": "v22.23.1",
+        "ok": true,
+        "packages": [
+          "@uifn/core",
+          "@uifn/dom",
+          "@uifn/adapter-kit"
+        ]
+      },
+      {
+        "major": 24,
+        "version": "v24.18.0",
+        "ok": true,
+        "packages": [
+          "@uifn/core",
+          "@uifn/dom",
+          "@uifn/adapter-kit"
+        ]
+      }
+    ],
+    "frameworkRuns": [
+      {
+        "cellId": "react-18.3-client",
+        "framework": "react",
+        "version": "18.3.1",
+        "mode": "client",
+        "traceFile": "package-react.json",
+        "traceSha256": "089b73d288d9d52edfb255447bedcebf35603be8136538bd362aff1604d7abac",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs"
+      },
+      {
+        "cellId": "svelte-5-csr",
+        "framework": "svelte",
+        "version": "5.46.4",
+        "mode": "csr",
+        "traceFile": "package-svelte.json",
+        "traceSha256": "67e0946b41b0fd8952fcd5fdb6a373131542a31f84a20f9b710ab5968a528ee7",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config svelte.vitest.mjs"
+      },
+      {
+        "cellId": "solid-1-csr",
+        "framework": "solid",
+        "version": "1.9.13",
+        "mode": "csr",
+        "traceFile": "package-solid.json",
+        "traceSha256": "fe39db2b20ebc66f750bd81d851caed47bd815ffa33f0fbe8657538a98ebe4d4",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config solid.vitest.mjs"
+      },
+      {
+        "cellId": "svelte-5-ssr-hydration",
+        "framework": "svelte",
+        "version": "5.46.4",
+        "mode": "ssr-hydration",
+        "traceFile": "compat-svelte-5-ssr-hydration-package.json",
+        "traceSha256": "0590dc522d4cd6a6d1448ddbdf41e73884c3bed465a15579f625f33f0f11b9a3",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node svelte-ssr-hydration.mjs --root . --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-svelte-5-ssr-hydration-package.json --install-mode package"
+      },
+      {
+        "cellId": "solid-1-ssr-hydration",
+        "framework": "solid",
+        "version": "1.9.13",
+        "mode": "ssr-hydration",
+        "traceFile": "compat-solid-1-ssr-hydration-package.json",
+        "traceSha256": "3eecff8f9266e84a4d4d07ffb916407311bee56d2268d41254e3722fcc11d374",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node solid-ssr-hydration.mjs --root . --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-solid-1-ssr-hydration-package.json --install-mode package"
+      },
+      {
+        "cellId": "react-18.3-strictmode",
+        "framework": "react",
+        "version": "18.3.1",
+        "mode": "strictmode",
+        "traceFile": "compat-react-18-strictmode-package.json",
+        "traceSha256": "4ca132ba19738a132c723b6296766bc5b6a093184cbf83c57f14edcce8d78b67",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs"
+      },
+      {
+        "cellId": "react-18.3-ssr-hydration",
+        "framework": "react",
+        "version": "18.3.1",
+        "mode": "ssr-hydration",
+        "traceFile": "compat-react-18-ssr-hydration-package.json",
+        "traceSha256": "604c764e3f831376d0ebfc6e01b85fd9909e75555cc04f7fc9585326b5d8ce12",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs"
+      },
+      {
+        "cellId": "react-18.3-rsc-import",
+        "framework": "react",
+        "version": "18.3.1",
+        "mode": "rsc-import",
+        "traceFile": "compat-react-18-rsc-import-package.json",
+        "traceSha256": "7686062893a6e66676620bc9ca9fd87b4dfa753891da72b05c1695965e22bb60",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-18.3-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-react-18-rsc-import-package.json"
+      },
+      {
+        "cellId": "react-19-client",
+        "framework": "react",
+        "version": "19.2.3",
+        "mode": "client",
+        "traceFile": "compat-react-19-package.json",
+        "traceSha256": "152d0ac8e8b6fe3aa7750783118a4dcd951591ac4f17d4de0d52b63f1c8e202f",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs"
+      },
+      {
+        "cellId": "react-19-strictmode",
+        "framework": "react",
+        "version": "19.2.3",
+        "mode": "strictmode",
+        "traceFile": "compat-react-19-strictmode-package.json",
+        "traceSha256": "152d0ac8e8b6fe3aa7750783118a4dcd951591ac4f17d4de0d52b63f1c8e202f",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs"
+      },
+      {
+        "cellId": "react-19-ssr-hydration",
+        "framework": "react",
+        "version": "19.2.3",
+        "mode": "ssr-hydration",
+        "traceFile": "compat-react-19-ssr-hydration-package.json",
+        "traceSha256": "de25d35c3cfc8bda93211dbebeb8a295f410ff0c49ab10e2b3fc9bfa82f0363d",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs"
+      },
+      {
+        "cellId": "react-19-rsc-import",
+        "framework": "react",
+        "version": "19.2.3",
+        "mode": "rsc-import",
+        "traceFile": "compat-react-19-rsc-import-package.json",
+        "traceSha256": "a98b2f10a7a494cc1882a16b11f74d3f3be2d882a5e24fef4f24d464d768c395",
+        "publicTreeCount": 61,
+        "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-19-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-react-19-rsc-import-package.json"
+      }
+    ]
+  },
+  "commands": [
+    {
+      "command": "/opt/homebrew/bin/npm test --workspace=@uifn/react -- --run src/__tests__/phase-14-public-parity.test.tsx",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/react@0.0.1 test\n> vitest run --run src/__tests__/phase-14-public-parity.test.tsx\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/react\n\n ✓ src/__tests__/phase-14-public-parity.test.tsx  (1 test) 1200ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:35:28\n   Duration  3.65s (transform 736ms, setup 204ms, collect 973ms, tests 1.20s, environment 853ms, prepare 203ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm test --workspace=@uifn/svelte -- --run tests/phase-14-public-parity.test.ts",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/svelte@0.0.1 test\n> vitest run --config vitest.config.mts --run tests/phase-14-public-parity.test.ts\n\n1:35:33 AM [vite-plugin-svelte] no Svelte config found at /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/svelte - using default configuration.\n\n RUN  v4.1.10 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/svelte\n\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:35:33\n   Duration  8.66s (transform 5.30s, setup 0ms, import 6.15s, tests 1.89s, environment 464ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm exec --workspace=@uifn/solid -- vitest run --config vitest.config.ts src/__tests__/phase-14-public-parity.test.tsx",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.6 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/solid\n\n ✓ src/__tests__/phase-14-public-parity.test.tsx (1 test) 1252ms\n   ✓ TV-PARITY-001-P: actual Solid public compound traces > mounts, operates, traces, and cleans every catalog public tree  1251ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:35:43\n   Duration  4.34s (transform 1.80s, setup 72ms, collect 2.18s, tests 1.25s, environment 602ms, prepare 64ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm install --ignore-scripts --no-audit --no-fund",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "added 203 packages in 20s",
+      "stderr": "npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation"
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer\n\n ✓ react.test.tsx (1 test) 1092ms\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  1091ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:37:02\n   Duration  2.73s (transform 96ms, setup 0ms, collect 375ms, tests 1.09s, environment 584ms, prepare 167ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config svelte.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer\n\n ✓ svelte.test.ts (1 test) 1910ms\n   ✓ TV-PARITY-001-P: actual Svelte public compound traces > mounts, operates, traces, and cleans every catalog public tree  1909ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:37:05\n   Duration  6.11s (transform 2.06s, setup 0ms, collect 3.14s, tests 1.91s, environment 465ms, prepare 189ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config solid.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer\n\n ✓ solid.test.tsx (1 test) 1176ms\n   ✓ TV-PARITY-001-P: actual Solid public compound traces > mounts, operates, traces, and cleans every catalog public tree  1175ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:37:12\n   Duration  3.64s (transform 1.08s, setup 0ms, collect 1.28s, tests 1.18s, environment 560ms, prepare 185ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm install --ignore-scripts --no-audit --no-fund",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/svelte-ssr-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "added 50 packages in 7s",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node svelte-ssr-hydration.mjs --root . --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-svelte-5-ssr-hydration-package.json --install-mode package",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/svelte-ssr-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Steps\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Switch\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Switch\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tabs\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tabs\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"TagsInput\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"TagsInput\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Timer\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Timer\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toast\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toast\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toggle\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toggle\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"ToggleGroup\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"ToggleGroup\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toolbar\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toolbar\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tooltip\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tooltip\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tour\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tour\",\"status\":\"passed\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"TreeView\",\"status\":\"running\"}\n{\"framework\":\"svelte\",\"mode\":\"ssr-hydration\",\"primitive\":\"TreeView\",\"status\":\"passed\"}\n{\"ok\":true,\"framework\":\"svelte\",\"frameworkVersion\":\"5.46.4\",\"installMode\":\"package\",\"mode\":\"ssr-hydration\",\"publicTreeCount\":61}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node solid-ssr-hydration.mjs --root . --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-solid-1-ssr-hydration-package.json --install-mode package",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Steps\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Switch\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Switch\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tabs\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tabs\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"TagsInput\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"TagsInput\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Timer\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Timer\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toast\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toast\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toggle\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toggle\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"ToggleGroup\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"ToggleGroup\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toolbar\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Toolbar\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tooltip\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tooltip\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tour\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"Tour\",\"status\":\"passed\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"TreeView\",\"status\":\"running\"}\n{\"framework\":\"solid\",\"mode\":\"ssr-hydration\",\"primitive\":\"TreeView\",\"status\":\"passed\"}\n{\"ok\":true,\"framework\":\"solid\",\"frameworkVersion\":\"1.9.13\",\"installMode\":\"package\",\"mode\":\"ssr-hydration\",\"publicTreeCount\":61}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer\n\n ✓ react.test.tsx (1 test) 1114ms\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  1113ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:38:28\n   Duration  2.82s (transform 126ms, setup 0ms, collect 393ms, tests 1.11s, environment 663ms, prepare 98ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer\n\n ✓ react-ssr.test.tsx (1 test) 735ms\n   ✓ TV-REACT-001-P: packed all-compound SSR and hydration > server-renders and hydrates every public compound without mismatch or duplicate IDs  733ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:38:32\n   Duration  2.09s (transform 103ms, setup 0ms, collect 282ms, tests 735ms, environment 490ms, prepare 214ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-18.3-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-react-18-rsc-import-package.json",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true,\"cellId\":\"react-18.3-rsc-import\",\"framework\":\"react\",\"frameworkVersion\":\"18.3.1\",\"mode\":\"rsc-import\",\"publicTreeCount\":61,\"clientBoundaryEntrypoints\":62}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm install --ignore-scripts --no-audit --no-fund",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "added 123 packages in 5s",
+      "stderr": "npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation"
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer\n\n ✓ react.test.tsx (1 test) 1037ms\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  1036ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:38:40\n   Duration  2.31s (transform 121ms, setup 0ms, collect 260ms, tests 1.04s, environment 523ms, prepare 152ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer\n\n ✓ react.test.tsx (1 test) 1166ms\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  1165ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:38:43\n   Duration  2.61s (transform 118ms, setup 0ms, collect 264ms, tests 1.17s, environment 533ms, prepare 161ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer\n\n ✓ react-ssr.test.tsx (1 test) 809ms\n   ✓ TV-REACT-001-P: packed all-compound SSR and hydration > server-renders and hydrates every public compound without mismatch or duplicate IDs  808ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  01:38:46\n   Duration  2.20s (transform 105ms, setup 0ms, collect 258ms, tests 809ms, environment 590ms, prepare 132ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-19-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/react19-consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-21T20-05-22-000Z-PHASE-14-valid-menu-consensus/compat-react-19-rsc-import-package.json",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true,\"cellId\":\"react-19-rsc-import\",\"framework\":\"react\",\"frameworkVersion\":\"19.2.3\",\"mode\":\"rsc-import\",\"publicTreeCount\":61,\"clientBoundaryEntrypoints\":62}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm exec --yes --package=node@20 -- node node-smoke.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true,\"node\":\"v20.20.2\",\"packages\":[\"@uifn/core\",\"@uifn/dom\",\"@uifn/adapter-kit\"]}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm exec --yes --package=node@22 -- node node-smoke.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true,\"node\":\"v22.23.1\",\"packages\":[\"@uifn/core\",\"@uifn/dom\",\"@uifn/adapter-kit\"]}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm exec --yes --package=node@24 -- node node-smoke.mjs",
+      "cwd": "/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-K32F6b/consumer",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true,\"node\":\"v24.18.0\",\"packages\":[\"@uifn/core\",\"@uifn/dom\",\"@uifn/adapter-kit\"]}",
+      "stderr": ""
+    }
+  ]
+}

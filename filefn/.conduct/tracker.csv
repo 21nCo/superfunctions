@@ -1,0 +1,4 @@
+id, desc, status, completedAt, completionDoc
+2026-03-20-audit-fix-kevfp02n-spec,Make FileFn production-ready by closing the remaining audit gaps across TypeScript and Python surfaces,1,2026-03-20T17:48:32Z,
+2026-03-22-audit-fix-v6c5hi7c-spec,Make FileFn the canonical file platform for Nucleus by fixing audit failures and shipping migration/runtime gaps,0,,
+2026-03-27-new-9la9xuqn-spec,Add a native Swift Package Manager FileFn client for SwiftUI apps with background-capable uploads and contract parity,1,2026-03-29T12:41:40Z,

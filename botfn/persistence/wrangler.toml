@@ -1,0 +1,15 @@
+name = "botfn-persistence-service"
+main = "src/index.cloudflare.ts"
+compatibility_date = "2024-01-01"
+
+# Set DATABASE_URL as a Wrangler secret before deploying:
+# wrangler secret put DATABASE_URL
+
+[vars]
+# Add non-secret variables here if needed.
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true

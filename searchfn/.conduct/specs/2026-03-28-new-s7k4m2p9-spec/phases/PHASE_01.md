@@ -1,0 +1,28 @@
+- Phase goal: Implement the built-in Swift search engine with deterministic text pipeline, scoring, prefix support, fuzzy support, and field boosts.
+- In scope:
+  - core tokenization/pipeline
+  - postings/index structures
+  - BM25-style ranking helpers
+  - fuzzy expansion and deterministic sort helpers
+- Out of scope:
+  - adapter packaging
+  - SQLite persistence
+  - docs/examples
+- Deliverables:
+  - `searchfn/swift/Sources/SearchFnCore/*`
+  - `searchfn/swift/Tests/SearchFnCoreTests/*`
+- Requirements covered:
+  - `SENG-001`
+  - `SDET-001`
+- Implementation tasks:
+  - Implement Unicode-aware tokenization and lowercase normalization.
+  - Add stop-word tables for English, Spanish, and French.
+  - Implement optional stemming and prefix token generation.
+  - Implement fuzzy expansion with distance cap `3`.
+  - Implement BM25-style ranking and deterministic tie-break helpers.
+  - Add tests for exact vs prefix ranking, fuzzy expansion, boosts, and deterministic order.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift --filter SearchFnCoreTests`
+  - Expected outcome: core engine semantics tests pass and deterministic ranking assertions are stable.
+- Stop condition:
+  - Report the engine modules added and the passing test groups before beginning Phase 02.

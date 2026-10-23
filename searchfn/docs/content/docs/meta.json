@@ -1,0 +1,18 @@
+{
+  "title": "SearchFn",
+  "pages": [
+    "index",
+    "quickstart",
+    "getting-started",
+    "getting-started-swift",
+    "architecture",
+    "comparison",
+    "documentation",
+    "recipes",
+    "reference",
+    "integrations",
+    "operations",
+    "examples",
+    "ai-resources"
+  ]
+}

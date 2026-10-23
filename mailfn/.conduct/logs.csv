@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-08-10T17:10:46Z,GPT-5,Codex Desktop,execute-issue,Codex,0-4,mailfn/.conduct/issue-completions/2026-08-10-m7q2x9p4-completion.md
+2026-08-10T18:17:48Z,GPT-5,Codex Desktop,execute-issue-remediation,Codex,0-4,mailfn/.conduct/issue-completions/2026-08-10-q8v3n6r2-remediation-completion.md
+2026-08-10T20:15:41Z,GPT-5 Codex,Codex Desktop,execute-issue,unknown-agent,,mailfn/.conduct/issue-completions/2026-08-10-r7k4m2x9-completion.md

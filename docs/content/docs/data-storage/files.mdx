@@ -1,0 +1,117 @@
+---
+title: Files
+description: Model file-facing upload workflows, metadata, and provider contracts without tying your app to one storage backend.
+---
+
+`@superfunctions/files` is the file-domain layer in the Data & Storage category. Where `storage` is concerned with raw object operations such as signing URLs, multipart parts, and streams, `files` is concerned with file-facing workflows: upload sessions, file metadata, completion, deletion, and file-provider contracts. That distinction matters when your product talks about documents, images, attachments, or versions instead of raw object keys.
+
+The package is intentionally small and type-focused. It does not force one persistence model or one storage provider. Instead, it gives you the vocabulary to define a portable file service that can sit above `@superfunctions/storage` and often alongside `@superfunctions/db`. If you are building a reusable file workflow for outside consumers, this package keeps that workflow stable while the host application decides how and where files are actually stored.
+
+## What It Is
+
+`@superfunctions/files` exports types such as `FileProvider`, `FileProviderContext`, `FileMetadata`, and `FileUpload`. These types let you define an upload-session lifecycle and file-management API without embedding vendor details into your service interface.
+
+That makes the package complementary to the rest of this category rather than competitive with it. `db` stores structured file metadata. `storage` stores bytes and exposes object operations. `files` describes the product-facing boundary that coordinates those lower-level layers into a file experience.
+
+## When To Use It
+
+Use this package when your application or library needs to expose file workflows that should remain portable across storage providers and persistence implementations. It is a good fit for collaboration tools, document products, media pipelines, admin consoles, and SDKs that talk about files as first-class entities.
+
+If you only need object URLs or simple blob transfers, start with [`storage`](/docs/data-storage/storage). If you need upload sessions, version IDs, and file metadata in your public interface, add `files` and usually combine it with [`db`](/docs/data-storage/db) and one storage adapter.
+
+## Install
+
+```bash
+npm install @superfunctions/files
+```
+
+In most real applications you will pair it with storage and sometimes structured persistence:
+
+```bash
+npm install @superfunctions/files @superfunctions/storage @superfunctions/storage-local
+```
+
+## Quick Start
+
+For browser-facing or SDK-facing code, `FileUpload` is useful as a portable input shape for uploads.
+
+```ts
+import type { FileUpload } from "@superfunctions/files";
+
+export function normalizeUpload(file: File): FileUpload {
+  return {
+    file,
+    name: file.name,
+    mimeType: file.type || "application/octet-stream",
+  };
+}
+```
+
+For service code, the main abstraction is `FileProvider`, which lets you define a storage-agnostic file workflow.
+
+```ts
+import type { FileProvider, FileProviderContext } from "@superfunctions/files";
+
+export async function createDraftUpload(
+  provider: FileProvider,
+  ctx: FileProviderContext,
+) {
+  return provider.createUploadSession(
+    {
+      policy: "images",
+      fileName: "avatar.png",
+      size: 128_000,
+      mimeType: "image/png",
+    },
+    ctx,
+  );
+}
+```
+
+## Core Concepts
+
+The first concept is that a file workflow is not the same as an object store. Your app may need policy names, session IDs, version IDs, and metadata rules that sit above raw object keys. `files` gives you a shared shape for that layer.
+
+The second concept is separation of concerns. A typical implementation will use `storage` for byte transfer and `db` for metadata or upload-state persistence, but it should expose a file-oriented API to the rest of the product. That keeps the domain language aligned with what users and integrators actually care about.
+
+The third concept is portability. Because `FileProvider` is a contract, you can create one implementation for local development, another for cloud production, or several provider-backed versions for different tenants without changing the consumer-facing file workflow.
+
+## Real-World Example
+
+A practical outside-world example is a product that lets users upload project attachments. The public API talks about creating an upload session and completing it, while the implementation can store session metadata in a database and the bytes in any storage provider.
+
+```ts
+import type { FileProvider } from "@superfunctions/files";
+import type { StorageAdapter } from "@superfunctions/storage";
+
+export function createAttachmentService(
+  provider: FileProvider,
+  _storage: StorageAdapter,
+) {
+  return {
+    async startAttachmentUpload(projectId: string) {
+      return provider.createUploadSession(
+        {
+          policy: `project:${projectId}:attachments`,
+          fileName: "brief.pdf",
+          size: 2_000_000,
+          mimeType: "application/pdf",
+        },
+        { requestId: "req_demo_1" },
+      );
+    },
+  };
+}
+```
+
+In that model, the service surface remains file-centric while the lower layers stay replaceable.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base object-storage contract used beneath most file workflows.
+- [`db`](/docs/data-storage/db) if you need durable metadata, upload-session state, or file indexes.
+- [`storage-local`](/docs/data-storage/storage-local) if you want to prototype or test a file workflow without cloud infrastructure.
+
+## Troubleshooting
+
+If a file workflow feels too tied to one vendor, move provider-specific behavior down into the storage or persistence implementation and keep the public surface on `FileProvider`. If an upload API leaks raw object keys to consumers, consider whether the file layer should own session IDs and metadata instead. When tests become hard to reason about, define the workflow around `FileProvider` and inject fake or local implementations rather than coupling tests to one cloud service.

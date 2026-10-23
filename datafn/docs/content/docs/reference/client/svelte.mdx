@@ -1,0 +1,180 @@
+---
+title: "@datafn/svelte"
+description: "API reference for the DataFn Svelte adapter package."
+audience: reference
+applies_to: typescript
+---
+
+## Package
+
+```bash
+npm install @datafn/svelte
+```
+
+**Peer dependencies**: `svelte ^3.0.0 || ^4.0.0 || ^5.0.0`
+
+---
+
+## `toSvelteStore<T>(signal, options?)`
+
+Converts a `DatafnSignal<T>` to a Svelte `Readable` store that emits the full signal state (`data`, `loading`, `error`, `refreshing`, `nextCursor`).
+
+```typescript
+function toSvelteStore<T>(
+  signal: DatafnSignal<T>,
+  options?: ToSvelteStoreOptions<T>,
+): DatafnSvelteStore<T>;
+
+// With initialData, the store is "ready" (data is always T):
+function toSvelteStore<T>(
+  signal: DatafnSignal<T | undefined>,
+  options: ToSvelteStoreOptions<T> & { initialData: T },
+): DatafnSvelteReadyStore<T>;
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `signal` | `DatafnSignal<T>` | A signal from a table handle, e.g. `client.todos.signal({ ... })`. |
+| `options` | `ToSvelteStoreOptions<T>` | Optional. See [options](#tosveltestoreoptionst). |
+
+### Example
+
+```typescript
+import { toSvelteStore } from "@datafn/svelte";
+
+const todosStore = toSvelteStore(
+  client.todos.signal({ sort: ["-createdAt"] }),
+  { initialData: [] }, // data is never undefined
+);
+```
+
+```svelte
+{#if $todosStore.loading}
+  <p>Loading...</p>
+{:else}
+  {#each $todosStore.data as todo}
+    <p>{todo.title}</p>
+  {/each}
+{/if}
+```
+
+---
+
+## `ToSvelteStoreOptions<T>`
+
+```typescript
+type ToSvelteStoreOptions<T> = {
+  initialData?: T;
+  defer?: DeferredSubscription;
+  equals?: (previous: T | undefined, next: T | undefined) => boolean;
+};
+```
+
+| Option | Description |
+|---|---|
+| `initialData` | Fallback used when the signal value is `null`/`undefined`. Arrays are shallow-copied. When provided, the return type narrows to the `*Ready*` variant (`data` is always `T`). |
+| `defer` | Delay signal creation/subscription. Only valid on the factory overloads. See [`DeferredSubscription`](#deferredsubscription). |
+| `equals` | Custom equality on `data`. Suppresses store updates (and duplicate synchronous emissions) when the value is unchanged. |
+
+Even without `equals`, the store suppresses a duplicate **synchronous** emission so subscribers receive a single initial value.
+
+---
+
+## `DeferredSubscription`
+
+```typescript
+type DeferredSubscription =
+  | number                                   // setTimeout(start, delayMs)
+  | "idle"                                    // requestIdleCallback(start)
+  | { delayMs?: number; strategy?: "timeout" | "idle" };
+```
+
+Defers creating the underlying signal until the delay/idle callback fires. If the store is unsubscribed before then, the signal is never created. The default `strategy` is `"timeout"`.
+
+---
+
+## `toSvelteDataStore<T>(signal, options?)`
+
+Like `toSvelteStore`, but the store emits **only the data** (`T | undefined`, or `T` with `initialData`) instead of the full state object. Ideal for `{#each}` blocks where you do not need `loading`/`error`.
+
+```typescript
+function toSvelteDataStore<T>(
+  signal: DatafnSignal<T | undefined>,
+): DatafnSvelteDataStore<T>;
+
+function toSvelteDataStore<T>(
+  signal: DatafnSignal<T | undefined>,
+  options: ToSvelteStoreOptions<T> & { initialData: T },
+): DatafnSvelteReadyDataStore<T>;
+```
+
+```typescript
+import { toSvelteDataStore } from "@datafn/svelte";
+
+const items = toSvelteDataStore(
+  client.todos.signal({ sort: ["-createdAt"] }),
+  { initialData: [] },
+);
+```
+
+```svelte
+{#each $items as todo}
+  <p>{todo.title}</p>
+{/each}
+```
+
+`toSvelteDataStore` supports the same direct-signal, signal-factory, and `clientRef` overloads as `toSvelteStore`.
+
+---
+
+## Store Types
+
+```typescript
+type DatafnSvelteValue<T> = {
+  data: T | undefined;
+  loading: boolean;
+  error: DatafnError | null;
+  refreshing: boolean;
+  nextCursor: string | null;
+};
+type DatafnSvelteReadyValue<T> = Omit<DatafnSvelteValue<T>, "data"> & { data: T };
+
+type DatafnSvelteStore<T> = Readable<DatafnSvelteValue<T>>;
+type DatafnSvelteReadyStore<T> = Readable<DatafnSvelteReadyValue<T>>;
+type DatafnSvelteDataStore<T> = Readable<T | undefined>;
+type DatafnSvelteReadyDataStore<T> = Readable<T>;
+```
+
+| Property | Type | Description |
+|---|---|---|
+| `data` | `T \| undefined` (or `T` when ready) | Current query result value. |
+| `loading` | `boolean` | `true` during initial fetch. |
+| `error` | `DatafnError \| null` | Non-null if the last fetch failed. |
+| `refreshing` | `boolean` | `true` while refreshing after mutation/sync changes. |
+| `nextCursor` | `string \| null` | Cursor for next page, or `null`. |
+
+---
+
+## Factory Overloads
+
+Both `toSvelteStore` and `toSvelteDataStore` accept a zero-arg signal factory or a `clientRef` + factory, each with optional `options`:
+
+```typescript
+// Zero-arg factory (supports `defer`)
+toSvelteStore(() => client.todos.signal({ ... }), { initialData: [], defer: "idle" });
+
+// Client-reference driven creation
+toSvelteStore(clientRef, (client) => client.todos.signal({ ... }), options?);
+```
+
+```typescript
+type DatafnSignalFactory<T> = () => DatafnSignal<T>;
+
+type ClientRef<C> = {
+  subscribe(fn: (client: C) => void): () => void;
+};
+```
+
+Use the direct signal form when you already have a stable signal. Use a factory with `defer` to delay creation until idle/after a timeout, and use the `clientRef` overload when signal creation depends on a client reference that can change.

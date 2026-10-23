@@ -1,0 +1,118 @@
+{
+  "name": "@superfunctions/db",
+  "version": "0.1.4",
+  "description": "Shared database adapter system for building useful backend libraries",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "default": "./dist/adapters/index.js"
+    },
+    "./adapters/drizzle": {
+      "types": "./dist/adapters/drizzle/index.d.ts",
+      "default": "./dist/adapters/drizzle/index.js"
+    },
+    "./adapters/memory": {
+      "types": "./dist/adapters/memory/index.d.ts",
+      "default": "./dist/adapters/memory/index.js"
+    },
+    "./adapters/cloudflare-kv": {
+      "types": "./dist/adapters/cloudflare-kv/index.d.ts",
+      "default": "./dist/adapters/cloudflare-kv/index.js"
+    },
+    "./adapters/cloudflare-do": {
+      "types": "./dist/adapters/cloudflare-do/index.d.ts",
+      "default": "./dist/adapters/cloudflare-do/index.js"
+    },
+    "./adapters/redis": {
+      "types": "./dist/adapters/redis/index.d.ts",
+      "default": "./dist/adapters/redis/index.js"
+    },
+    "./adapters/dynamodb": {
+      "types": "./dist/adapters/dynamodb/index.d.ts",
+      "default": "./dist/adapters/dynamodb/index.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "default": "./dist/observability.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    },
+    "./types": {
+      "types": "./dist/adapter/types.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "lint": "echo 'lint not configured'",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@prisma/client": ">=6.0.0",
+    "drizzle-orm": ">=0.35.0",
+    "kysely": ">=0.28.0",
+    "mongodb": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "kysely": {
+      "optional": true
+    },
+    "@prisma/client": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.800.0",
+    "@aws-sdk/lib-dynamodb": "^3.800.0",
+    "@superfunctions/observability": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.35.0",
+    "kysely": "^0.28.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "database",
+    "adapter",
+    "orm",
+    "drizzle",
+    "prisma",
+    "kysely",
+    "mongodb",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "packages/db"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

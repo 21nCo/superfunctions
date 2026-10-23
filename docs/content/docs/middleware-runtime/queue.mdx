@@ -1,0 +1,115 @@
+---
+title: Queue
+description: Abstract background jobs behind queue adapters so apps and libraries can choose memory or FlowFn-backed execution later.
+---
+
+`@superfunctions/queue` is the package for moving runtime work out of the immediate request path without hard-coding one queue vendor into your code. It defines a small `QueueAdapter` contract plus two concrete implementations: `MemoryQueueAdapter` for tests or local development and `FlowFnQueueAdapter` for remote queue operations over HTTP.
+
+That split is useful for both application teams and package authors. An application can start with an in-memory queue during local development, then switch to a hosted queue adapter when the service needs durable background execution. A library can accept any `QueueAdapter<T>` and leave the deployment choice to the consuming app.
+
+## What It Is
+
+`@superfunctions/queue` models queue behavior as a typed adapter. The contract supports `enqueue()`, `dequeue()`, and `dequeueMatching()` for removing work, plus `peek()` and `size()` for simple visibility. The in-memory adapter gives you a concrete FIFO implementation that is deterministic and fast for tests. The FlowFn adapter translates the same conceptual operations into authenticated HTTP calls against a FlowFn service.
+
+The package does not schedule jobs, guarantee persistence on its own, or tell you how a worker should process payloads. It solves the narrower problem of keeping job producers and consumers behind a stable interface.
+
+## When To Use It
+
+Use this package when work should happen eventually rather than synchronously in the original request. Examples include webhook redelivery, image processing, report generation, outbound email, cache warming, or any integration call that should not keep an API client waiting.
+
+If your service only needs one local array and no one else will ever depend on that interface, a queue package may be unnecessary. Its value shows up when you want a typed seam between "something produced a job" and "something else executes it later."
+
+## Install
+
+```bash
+npm install @superfunctions/queue
+```
+
+Use the same package for both local and remote queue adapters:
+
+```bash
+npm install @superfunctions/queue
+```
+
+## Quick Start
+
+The fastest way to learn the package is with the in-memory adapter.
+
+```ts
+import { MemoryQueueAdapter } from "@superfunctions/queue";
+
+type WebhookJob = {
+  eventId: string;
+  destination: string;
+};
+
+const queue = new MemoryQueueAdapter<WebhookJob>();
+
+await queue.enqueue("webhook-delivery", {
+  eventId: "evt_123",
+  destination: "https://example.com/hooks/orders",
+});
+
+const nextJob = await queue.dequeue("webhook-delivery");
+```
+
+If you are building a reusable module, depend on the adapter interface instead of constructing a queue internally.
+
+```ts
+import type { QueueAdapter } from "@superfunctions/queue";
+
+type ExportJob = { exportId: string; accountId: string };
+
+export function createExportScheduler(queue: QueueAdapter<ExportJob>) {
+  return {
+    async schedule(job: ExportJob) {
+      await queue.enqueue("exports", job);
+    },
+  };
+}
+```
+
+## Core Concepts
+
+The first concept is payload ownership. The queue package does not impose a message envelope on you; the generic type parameter lets each producer or library decide what a job payload should contain. That makes it easy to keep domain types close to the feature that owns them.
+
+The second concept is environment fit. `MemoryQueueAdapter` is ideal for unit tests, local development, and simple demos because it is deterministic and has immediate visibility through `peek()` and `size()`. `FlowFnQueueAdapter` is the path to a remote queue service when you want authenticated enqueue and dequeue operations over the network.
+
+The third concept is explicit queue names. Queue names such as `webhook-delivery`, `report-exports`, or `email-send` are part of the runtime contract. Treat them as stable identifiers, not random strings scattered through the codebase.
+
+## Real-World Example
+
+One practical pattern is using a remote queue to decouple webhook delivery from the HTTP request that created the event. The request can record the event and enqueue a delivery job immediately, while a worker later dequeues and processes it.
+
+```ts
+import { FlowFnQueueAdapter } from "@superfunctions/queue";
+
+type DeliveryJob = {
+  eventId: string;
+  destination: string;
+  attempt: number;
+};
+
+const deliveryQueue = new FlowFnQueueAdapter<DeliveryJob>({
+  baseUrl: "https://flowfn.example.com",
+  apiKey: "flowfn-api-key",
+});
+
+await deliveryQueue.enqueue("webhook-delivery", {
+  eventId: "evt_456",
+  destination: "https://customer.example.com/hooks",
+  attempt: 1,
+});
+```
+
+That producer code stays small and portable because the queue boundary is explicit. A worker can later combine the dequeued job with [`webhooks`](/docs/middleware-runtime/webhooks) for actual delivery and [`metrics`](/docs/middleware-runtime/metrics) for runtime visibility.
+
+## Related Packages
+
+- [`webhooks`](/docs/middleware-runtime/webhooks) if queue jobs represent outbound webhook deliveries or replay attempts.
+- [`config`](/docs/middleware-runtime/config) if queue base URLs, API keys, or retry limits come from environment variables.
+- [`metrics`](/docs/middleware-runtime/metrics) if enqueue and dequeue behavior should emit telemetry for operations teams.
+
+## Troubleshooting
+
+If a queue appears empty unexpectedly, check whether producers and consumers are using the exact same queue name. Small naming mismatches are a common cause of "missing" jobs. When moving from memory to a remote adapter, remember that `peek()` and `size()` on the FlowFn adapter do not provide local queue inspection, so design worker logic around `enqueue()` and `dequeue()` instead of local introspection. If remote operations fail, inspect the queue service URL and API key first because the adapter uses authenticated HTTP calls under the hood.

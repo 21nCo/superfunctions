@@ -1,0 +1,12 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-27T07:16:42Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,.conduct/specs/2026-03-27-new-9la9xuqn-spec
+2026-03-27T07:32:44Z,gpt-5-codex,Codex Desktop,spec-update,unknown-agent,,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec
+2026-03-29T06:08:07Z,gpt-5-codex,Codex Desktop,spec-update,unknown-agent,,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec
+2026-03-29T09:37:47Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_00,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_00-2026-03-29-0pjujkv2-report.md
+2026-03-29T09:46:53Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_01,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_01-2026-03-29-w22oje0v-report.md
+2026-03-29T09:54:59Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_02,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_02-2026-03-29-rxshno8j-report.md
+2026-03-29T11:27:07Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_03,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_03-2026-03-29-8ouc3fv3-report.md
+2026-03-29T11:38:32Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_04,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_04-2026-03-29-nn5qofyb-report.md
+2026-03-29T11:57:20Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_05,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_05-2026-03-29-k3x8q1md-report.md
+2026-03-29T12:16:54Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_06,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_06-2026-03-29-m7p4x2kr-report.md
+2026-03-29T12:41:40Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_07,filefn/.conduct/specs/2026-03-27-new-9la9xuqn-spec/phase-reports/PHASE_07-2026-03-29-t3j6o9nc-report.md

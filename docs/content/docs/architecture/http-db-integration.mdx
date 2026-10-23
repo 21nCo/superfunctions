@@ -1,0 +1,26 @@
+---
+title: http-db-integration
+description: HTTP router abstractions and DB adapter contracts in shared package integrations.
+---
+
+`@superfunctions/http` exposes framework-agnostic routes.
+
+`@superfunctions/db` exposes adapter contracts used by function packages.
+
+## Integration Pattern
+
+```mermaid
+flowchart TD
+  A[HTTP Adapter] --> B[@superfunctions/http Router]
+  B --> C[Function Service]
+  C --> D[@superfunctions/db Adapter]
+  D --> E[(Database)]
+```
+
+## Security Caveats
+
+- Validate auth context before persistence operations.
+
+## Operational Caveats
+
+- Centralize retry/timeout policy in adapter layer.

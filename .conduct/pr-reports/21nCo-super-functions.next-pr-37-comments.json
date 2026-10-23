@@ -1,0 +1,276 @@
+{
+  "repository": "21nCo/super-functions.next",
+  "pull_request": {
+    "number": 37,
+    "title": "feat(uifn): add stable component system and framework catalogs",
+    "url": "https://github.com/21nCo/super-functions.next/pull/37",
+    "head": "codex/SFN-15-uifn-pr",
+    "base": "next",
+    "head_oid": "0486cc664820a9a57f93b0a49b084be4655628c5",
+    "state": "OPEN",
+    "changed_files": 0,
+    "additions": 0,
+    "deletions": 0
+  },
+  "fetched_at": "2026-08-11T21:21:44+05:30",
+  "surfaces": {
+    "inline_review_comments": { "status": "complete", "pages": 1, "count": 10 },
+    "submitted_reviews": { "status": "complete", "pages": 1, "count": 2 },
+    "issue_comments_with_automated_findings": { "status": "complete", "pages": 1, "count": 2 }
+  },
+  "inline_review_comments": [
+    {
+      "type": "inline_review_comment",
+      "id": 3758777792,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXA",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777792",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/uifn-phase-19-contract.mjs",
+      "line": 577,
+      "original_line": 577,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: A relevant defect with an unrecognized severity can currently pass the release-blocking check; include `UIFN_DEFECT_SEVERITY_INVALID` in the blocking codes or reject malformed defects before evaluation so invalid defect metadata cannot bypass the gate."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777798,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXG",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777798",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/generate-uifn-phase-09.mjs",
+      "line": 50,
+      "original_line": 50,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: Phase-09 verification fails on every clean clone because this output is ignored and never checked in; either track the declaration explicitly or exclude it from the checked-in generator outputs."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777804,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXM",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777804",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/generate-uifn-phase-07.mjs",
+      "line": 40,
+      "original_line": 40,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: `--check` always fails because this declared output is not checked in; add generated `phase-07-types.d.ts` (or stop declaring it) so the Phase 07 verification gate can pass."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777809,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXR",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777809",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/generate-uifn-phase-10.mjs",
+      "line": 347,
+      "original_line": 347,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: Phase 10 verification cannot pass from a clean checkout because `--check` requires this generated `.d.ts`, but the repository ignores and does not track it. Please whitelist and commit the generated type artifact, or remove it from the checked outputs."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777817,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXZ",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777817",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/generate-uifn-phase-08.mjs",
+      "line": 36,
+      "original_line": 36,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: The phase-08 verification gate always fails because this new output is required by `--check` but `phase-08-types.d.ts` is not tracked or otherwise created before verification. Committing the generated declaration (overriding the repository ignore) or removing it from the checked outputs would make the gate reproducible."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777822,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXe",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777822",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/generate-uifn-phase-16.mjs",
+      "line": 48,
+      "original_line": 48,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: Source installs can fail typechecking or module resolution for every styled framework because the registry dependency plan omits the direct `@uifn/recipes` dependency; adding `@uifn/recipes` to `dependencies(framework)` keeps the copied imports valid. The generated published framework packages already declare this dependency, so the registry metadata should match them."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777830,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXm",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777830",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/verify-uifn-examples.mjs",
+      "line": 105,
+      "original_line": 105,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: The contracts gate is pinned to the obsolete 45-component count while the Workbench catalog now contains 69 components, so the verifier cannot pass for the current catalog. Updating this expectation to 69 (or deriving it from the canonical catalog) keeps the gate aligned with its source of truth."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777835,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXr",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777835",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/verify-uifn-governance.mjs",
+      "line": 366,
+      "original_line": 366,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: Evidence can remain accepted far beyond its class policy window; enforce `policy.evidenceExpiryHours[evidence.evidenceClass]` from completion time, not only a future timestamp. Current governance fixture demonstrates a 2099 expiry passing despite governance's 90-day limit."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777839,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXv",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777839",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/verify-uifn-controller-contract.mjs",
+      "line": 45,
+      "original_line": 45,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: The positive contract check always rejects the checked-in core package because `ALLOWED_EXPORTS` omits the real `./utils/id` and `./primitives/overlay` entrypoints. Include those entries or derive the allowlist from the package's reviewed exports so the positive contract test can pass."
+    },
+    {
+      "type": "inline_review_comment",
+      "id": 3758777843,
+      "node_id": "PRRC_kwDOQ4ERBM7gCmXz",
+      "pull_request_review_id": 4907226821,
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#discussion_r3758777843",
+      "user": "cubic-dev-ai[bot]",
+      "path": "scripts/verify-uifn-controller-contract.mjs",
+      "line": 75,
+      "original_line": 75,
+      "side": "RIGHT",
+      "created_at": "2026-08-11T14:20:21Z",
+      "updated_at": "2026-08-11T14:20:22Z",
+      "body_excerpt": "P1: The current-surface scan classifies migration documentation and verification fixtures as production surfaces, so intentional legacy-name examples make the positive contract test fail. Limit this scan to runtime source/manifest extensions or explicitly exclude non-consumer docs and test scripts."
+    }
+  ],
+  "submitted_reviews": [
+    {
+      "type": "submitted_review",
+      "id": 4907015776,
+      "node_id": "PRR_kwDOQ4ERBM8AAAABJHseYA",
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#pullrequestreview-4907015776",
+      "user": "sourcery-ai[bot]",
+      "state": "COMMENTED",
+      "submitted_at": "2026-08-11T13:59:25Z",
+      "commit_id": "597393698e83d254507782180f3eb8abfd58cf60",
+      "body": "Hi @thyaravind! 👋\n\nYour private repo does not have access to Sourcery.\n\nPlease upgrade to continue using Sourcery ✨"
+    },
+    {
+      "type": "submitted_review",
+      "id": 4907226821,
+      "node_id": "PRR_kwDOQ4ERBM8AAAABJH5WxQ",
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#pullrequestreview-4907226821",
+      "user": "cubic-dev-ai[bot]",
+      "state": "COMMENTED",
+      "submitted_at": "2026-08-11T14:20:21Z",
+      "commit_id": "0486cc664820a9a57f93b0a49b084be4655628c5",
+      "body_excerpt": "10 issues found and verified against the latest diff. The review summary duplicates the ten inline comments exported above."
+    }
+  ],
+  "issue_comments_with_automated_findings": [
+    {
+      "type": "issue_comment",
+      "id": 5254310158,
+      "node_id": "IC_kwDOQ4ERBM8AAAABOS5pDg",
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#issuecomment-5254310158",
+      "user": "chatgpt-codex-connector[bot]",
+      "created_at": "2026-08-11T14:11:12Z",
+      "updated_at": "2026-08-11T14:11:12Z",
+      "findings": [
+        {
+          "source_severity": "P1",
+          "path": "uifn/react/src/portal.tsx",
+          "line": 25,
+          "title": "Avoid remounting portal contents after hydration",
+          "body_excerpt": "When a portal first mounts in the browser, this branch renders children as an ordinary fragment, but the effect immediately replaces that subtree with a React portal. React cannot reconcile the fragment fiber with a portal fiber, so descendants unmount and mount again."
+        },
+        {
+          "source_severity": "P2",
+          "path": "uifn/theme/src/provider.ts",
+          "line": 53,
+          "title": "Validate a candidate theme before storing it",
+          "body_excerpt": "If a caller passes an invalid custom theme, validation throws only after currentTheme has already been replaced, leaving the provider exposing the invalid theme."
+        },
+        {
+          "source_severity": "P2",
+          "path": "uifn/theme/src/mount.ts",
+          "line": 123,
+          "title": "Restore existing theme values when unmounting",
+          "body_excerpt": "Unmount deletes pre-existing theme variables and data-uifn-theme instead of restoring values that existed before the temporary mount."
+        },
+        {
+          "source_severity": "P2",
+          "path": "uifn/tokens/src/oklch.ts",
+          "line": 35,
+          "title": "Preserve unitless OKLCH lightness values",
+          "body_excerpt": "The parser accepts percentage and unitless lightness but always divides the parsed value by 100, turning valid unitless 0.5 into 0.005."
+        }
+      ]
+    },
+    {
+      "type": "issue_comment",
+      "id": 5254255083,
+      "node_id": "IC_kwDOQ4ERBM8AAAABOS2R6w",
+      "url": "https://github.com/21nCo/super-functions.next/pull/37#issuecomment-5254255083",
+      "user": "socket-security[bot]",
+      "created_at": "2026-08-11T14:06:27Z",
+      "updated_at": "2026-08-11T14:06:27Z",
+      "findings": [
+        {
+          "source_severity": "High",
+          "action": "Warn",
+          "path": "package-lock.json",
+          "package": "@esbuild/aix-ppc64@0.20.2",
+          "dependency_path": "vinxi@0.4.3 -> @esbuild/aix-ppc64@0.20.2",
+          "title": "Obfuscated code",
+          "confidence": 0.9
+        },
+        {
+          "source_severity": "High",
+          "action": "Warn",
+          "path": "package-lock.json",
+          "package": "acorn-typescript@1.4.13",
+          "dependency_path": "@solidjs/start@1.0.11 -> acorn-typescript@1.4.13",
+          "title": "Obfuscated code",
+          "confidence": 0.9
+        },
+        {
+          "source_severity": "High",
+          "action": "Warn",
+          "path": "package-lock.json",
+          "package": "seroval@1.5.6",
+          "dependency_path": "solid-js@1.9.13 -> solid-js@1.9.14 -> seroval@1.5.6",
+          "title": "Obfuscated code",
+          "confidence": 0.9
+        }
+      ]
+    }
+  ]
+}

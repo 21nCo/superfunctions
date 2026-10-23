@@ -1,0 +1,5 @@
+
+> superconsole@0.1.0 preview
+> vite preview --host <local-probe-host> --port <local-probe-port>
+
+  ➜  Local:   <local-probe-url>/

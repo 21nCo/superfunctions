@@ -1,0 +1,21 @@
+{
+  "name": "@probefn/dev-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/analyzers": "*",
+    "@probefn/browser-runner": "*",
+    "@probefn/contracts": "*",
+    "@probefn/core": "*",
+    "@probefn/storage": "*",
+    "@probefn/visual-baselines": "*"
+  }
+}

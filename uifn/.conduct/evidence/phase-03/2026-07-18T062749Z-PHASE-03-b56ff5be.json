@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "PHASE-03-2026-07-18-b56ff5be",
+  "evidenceClass": "automated-unit-contract",
+  "requirementIds": ["ARCH-001", "CORE-001", "CORE-002", "CORE-003", "CORE-004"],
+  "vectorIds": [
+    "TV-ARCH-001-P",
+    "TV-ARCH-001-N",
+    "TV-CORE-001-P",
+    "TV-CORE-001-N",
+    "TV-CORE-002-P",
+    "TV-CORE-002-N",
+    "TV-CORE-003-P",
+    "TV-CORE-003-N",
+    "TV-CORE-004-P",
+    "TV-CORE-004-N"
+  ],
+  "status": "passed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "PHASE_03 and earlier phase work are present in an uncommitted working tree; this is phase evidence and not immutable release-candidate evidence.",
+    "lockfileSha256": "c7c392d5f1b5da44fecf87486b7c19bdf42097a9c124a9d8541e1e49df413315",
+    "definitionSha256": "078dfda1a8174c6ec8feb37dfb8434dcd994a8fd0a39d57ad4041b6f8ecbc526",
+    "artifactHashes": [
+      { "path": "uifn/core/src/internal/runtime/service.ts", "sha256": "87606564423804a86b82789fea3346d9b267bf353ac0c610620eea730c0e3569" },
+      { "path": "uifn/core/src/internal/runtime/types.ts", "sha256": "d7f4195ed61fb8147b0ba449c9584a8957c5a5efdae5082e52cb3f99ec432f95" },
+      { "path": "uifn/core/src/internal/runtime/scheduler.ts", "sha256": "2c9ed3954d5b65518439a9dee852689bd844dff1b7976905d297a4a1a0393912" },
+      { "path": "uifn/core/src/internal/runtime/scope.ts", "sha256": "72e8bacba65a0fc8a2950bf6ee5b69f70ea05876af3c84a0ff03f7bafe392cb9" },
+      { "path": "uifn/core/src/internal/runtime/trace.ts", "sha256": "208c29550b9ed69c73c8ce7356f06b5ba4b2162aa0f59562272e61fd80172d87" },
+      { "path": "uifn/core/src/internal/runtime/immutable.ts", "sha256": "2fd827a65b29093ce9153991af72d2c07670cd9d0843ac721ab2e6b361c2d663" },
+      { "path": "uifn/core/src/internal/runtime/service.test.ts", "sha256": "0a2f1a7bfb729e988dc93ab9aa485ec7853607c16e153ca67deb341dc149885f" },
+      { "path": "scripts/verify-uifn-runtime-architecture.mjs", "sha256": "1bbaf892ef603bc5b7edf46a36811b29e1f5bff0d6211b02573fb2a168f18117" },
+      { "path": "scripts/verify-uifn-runtime-architecture.test.mjs", "sha256": "35b1a6ef2c8535e28e1c5c7685091f95f7750a88f68bf4f141a7ec71e726a8f0" },
+      { "path": "scripts/verify-uifn-core-node-matrix.mjs", "sha256": "738e530800628a591f96df42797a224c106af185d06d2b09be05817dbbafc10a" },
+      { "path": "scripts/verify-uifn-core-node-import.mjs", "sha256": "f550716996b0b311f6a732b26dfa834a2440df198e9361f18c235dd801e76172" },
+      { "path": "scripts/benchmark-uifn-core-runtime.mjs", "sha256": "e3bb6be260fc3cafd532145a423bfba1ab3aeaa589039bd23b823a6a6f1f2283" },
+      { "path": "scripts/verify-uifn-phase-03.mjs", "sha256": "c7d2fd21dccc3388484f6531842ad6a23677d1d9b1d61493950ea714d1afc899" },
+      { "path": "uifn/core/src/primitives/shared.ts", "sha256": "a09d4e38fcc621172614a32af95b022ecdbbbb021dc0bd3393d3fa227f5c3d0a" },
+      { "path": "uifn/core/src/primitives/toast.ts", "sha256": "13e482607241ed9309722d414532cd1f16842f25aceafd69170b4cdc6bb07b5a" },
+      { "path": "uifn/core/src/state/machine.ts", "sha256": "e85a9373cea398024d4c0f2af08f66d19515cfcd97691adf5c0631831d780717" },
+      { "path": "uifn/core/src/utils/presence.ts", "sha256": "e0d0b2d8b890b9e46242733639c55527f4eb212cc2c0bea8e9995d2828e34928" },
+      { "path": "uifn/core/tsup.config.ts", "sha256": "f42c9ff8864e55a1cfdeac836769de2bb5197b76559e0f8a1b9e6aae3ef0a119" }
+    ]
+  },
+  "environment": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "runtime": "Node v20.20.0",
+    "tools": {
+      "npm": "10.8.2",
+      "vitest": "1.6.1",
+      "tsup": "8.5.1",
+      "nodeMatrix": "20.20.2,22.23.1,24.18.0",
+      "phaseGate": "3"
+    },
+    "framework": "framework-agnostic core",
+    "browser": null,
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-18T05:50:00Z",
+    "completedAt": "2026-07-18T06:27:49Z",
+    "durationMs": 2269000
+  },
+  "counts": {
+    "total": 10,
+    "executed": 10,
+    "passed": 10,
+    "failed": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/core/src/internal/runtime/types.ts",
+    "uifn/core/src/internal/runtime/immutable.ts",
+    "uifn/core/src/internal/runtime/scheduler.ts",
+    "uifn/core/src/internal/runtime/scope.ts",
+    "uifn/core/src/internal/runtime/trace.ts",
+    "uifn/core/src/internal/runtime/service.ts",
+    "uifn/core/src/internal/runtime/service.test.ts",
+    "uifn/core/src/errors.ts",
+    "uifn/core/src/primitives/shared.ts",
+    "uifn/core/src/primitives/avatar.ts",
+    "uifn/core/src/primitives/toast.ts",
+    "uifn/core/src/state/machine.ts",
+    "uifn/core/src/utils/presence.ts",
+    "uifn/core/tsup.config.ts",
+    "scripts/verify-uifn-runtime-architecture.mjs",
+    "scripts/verify-uifn-runtime-architecture.test.mjs",
+    "scripts/verify-uifn-core-node-import.mjs",
+    "scripts/verify-uifn-core-node-matrix.mjs",
+    "scripts/benchmark-uifn-core-runtime.mjs",
+    "scripts/verify-uifn-phase-03.mjs"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-phase-03.mjs",
+      "signedAt": "2026-07-18T06:27:49Z",
+      "attestation": "ARCH-001 and CORE-001 through CORE-004 positive and mutation-negative vectors passed; all runtime-owned resources reached zero, packed declarations remained private, Node 20/22/24 executed without DOM reads, and the complete stable lane passed."
+    }
+  ],
+  "expiresAt": "2026-08-17T06:27:49Z",
+  "supersedes": null
+}

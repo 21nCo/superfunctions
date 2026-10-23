@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://uifn.dev/schemas/phase-19/participants.schema.json",
+  "title": "Externally trust-root-signed human participant registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "registryId",
+    "status",
+    "issuedBy",
+    "issuedAt",
+    "expiresAt",
+    "participants",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "registryId": {
+      "const": "uifn-phase-19-human-trust-v1"
+    },
+    "status": {
+      "const": "active"
+    },
+    "issuedBy": {
+      "const": "uifn-accessibility-program-authority"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "displayName",
+          "kind",
+          "automation",
+          "roles",
+          "qualifiedAtProfiles",
+          "independentOfImplementation",
+          "implementationPrincipalIds",
+          "identityEvidence",
+          "keyId",
+          "publicKeyPem",
+          "qualifications"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "human"
+          },
+          "automation": {
+            "const": false
+          },
+          "roles": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "manual-at-tester",
+                "independent-accessibility-reviewer"
+              ]
+            }
+          },
+          "qualifiedAtProfiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "voiceover-macos",
+                "voiceover-ios",
+                "nvda-windows",
+                "talkback-android"
+              ]
+            }
+          },
+          "independentOfImplementation": {
+            "type": "boolean"
+          },
+          "implementationPrincipalIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "identityEvidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "reference",
+              "verifiedBy",
+              "verifiedAt"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verifiedBy": {
+                "const": "uifn-accessibility-program-authority"
+              },
+              "verifiedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "keyId": {
+            "type": "string",
+            "pattern": "^ed25519:[a-f0-9]{64}$"
+          },
+          "publicKeyPem": {
+            "type": "string",
+            "pattern": "^-----BEGIN PUBLIC KEY-----"
+          },
+          "qualifications": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "issuer",
+                "subject",
+                "evidence",
+                "validUntil"
+              ],
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "validUntil": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheme",
+        "keyId",
+        "signedBy",
+        "signedAt",
+        "payloadSha256",
+        "value"
+      ],
+      "properties": {
+        "scheme": {
+          "const": "ed25519"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^ed25519:[a-f0-9]{64}$"
+        },
+        "signedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payloadSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 40
+        }
+      }
+    }
+  }
+}

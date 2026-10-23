@@ -1,0 +1,44 @@
+{
+  "path": [
+    "packages",
+    "authfn",
+    "plugfn",
+    "recfn",
+    "cifn",
+    "searchfn"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.next/**",
+    "**/.turbo/**",
+    "**/coverage/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/site-packages/**",
+    "**/*.snap",
+    "**/__tests__/fixtures/**",
+    "**/tests/fixtures/**",
+    "**/fixtures/**",
+    "**/vendor/**"
+  ],
+  "absolute": true,
+  "silent": false,
+  "reporters": [
+    "console",
+    "json"
+  ],
+  "output": ".tmp/jscpd",
+  "format": [
+    "typescript",
+    "javascript",
+    "tsx",
+    "jsx",
+    "python"
+  ],
+  "minLines": 16,
+  "minTokens": 70,
+  "threshold": 100
+}

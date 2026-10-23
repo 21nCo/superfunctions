@@ -1,0 +1,106 @@
+---
+title: Storage Azure
+description: Use Azure Blob Storage through the shared storage contract when your platform standard is Azure.
+---
+
+`@superfunctions/storage-azure` adapts the shared storage contract to Azure Blob Storage. It is the right provider package when your application already runs on Azure, when Blob Storage is the operational standard for your team, or when you need SAS-based signed URLs and Blob-native multipart behavior while still keeping the rest of your code on the common `StorageAdapter` interface.
+
+This adapter is a good production choice for Azure-centric systems because it supports signed upload URLs, signed download URLs, multipart uploads, proxy-streaming upload, and proxy-streaming download. That capability mix lets one service support browser uploads, direct downloads, and server-mediated transfer workflows without changing the application-level contract.
+
+## What It Is
+
+`@superfunctions/storage-azure` exports `createAzureStorageAdapter()`. You configure it with a container name and one of several supported credential strategies: connection string, account name plus account key, or account name plus SAS token. The resulting adapter implements the shared storage contract for object metadata, deletion, signed URLs, multipart uploads, and streams.
+
+The important boundary is that Blob-specific details stay in the adapter. The rest of your code should keep depending on [`storage`](/docs/data-storage/storage) and its `StorageAdapter` shape.
+
+## When To Use It
+
+Choose this adapter when Azure Blob Storage is already part of your runtime platform, when your team prefers SAS-based distribution patterns, or when your object workflows need both signed URLs and server-side streaming.
+
+Use this chooser when comparing provider pages:
+
+| If your priority is... | Choose |
+| --- | --- |
+| Azure-native Blob storage with SAS links and multipart support | `storage-azure` |
+| Google Cloud-native storage with signed URLs and streams | [`storage-gcs`](/docs/data-storage/storage-gcs) |
+| AWS-native S3 workflows | [`storage-s3`](/docs/data-storage/storage-s3) |
+| Lightweight local development without cloud credentials | [`storage-local`](/docs/data-storage/storage-local) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-azure
+```
+
+## Quick Start
+
+Create the adapter using the credential style that already matches your Azure environment.
+
+```ts
+import { createAzureStorageAdapter } from "@superfunctions/storage-azure";
+
+export const storage = createAzureStorageAdapter({
+  containerName: "user-assets",
+  connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
+});
+```
+
+If your app needs signed browser uploads, the adapter exposes that through the shared contract.
+
+```ts
+import { createAzureStorageAdapter } from "@superfunctions/storage-azure";
+
+const storage = createAzureStorageAdapter({
+  containerName: "user-assets",
+  accountName: "your-account-name",
+  accountKey: process.env.AZURE_STORAGE_ACCOUNT_KEY,
+});
+
+const upload = await storage.signUploadUrl?.({
+  key: "avatars/usr_42.png",
+  expiresInSeconds: 300,
+  constraints: { contentType: "image/png" },
+});
+```
+
+## Core Concepts
+
+The first concept is credential flexibility. Different Azure environments prefer different authentication modes, so the adapter supports connection strings, shared-key credentials, and SAS-token-oriented setups.
+
+The second concept is Blob-specific multipart semantics behind a shared contract. Azure uses block-blob mechanics, but the adapter maps those details into the common multipart methods so your higher-level code can stay on `StorageAdapter`.
+
+The third concept is capability coverage. Because the adapter supports both signed URLs and proxy streams, it works well for services that need a mix of direct browser transfer and application-mediated streaming.
+
+## Real-World Example
+
+A practical outside-world example is a back-office application that lets users upload audit exports directly to Azure Blob Storage and later retrieve short-lived SAS links for secure download. The app can keep authorization, metadata, and workflow timing in one place while Azure handles the object storage edge.
+
+```ts
+import { createAzureStorageAdapter } from "@superfunctions/storage-azure";
+
+const storage = createAzureStorageAdapter({
+  containerName: "audit-exports",
+  accountName: "your-account-name",
+  accountKey: process.env.AZURE_STORAGE_ACCOUNT_KEY,
+});
+
+export async function issueAuditExportLink(key: string) {
+  return storage.signDownloadUrl?.({
+    key,
+    expiresInSeconds: 120,
+    constraints: { responseContentType: "application/zip" },
+  });
+}
+```
+
+That keeps the application logic focused on who can see the export and when, not on Blob client details.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base contract that your application code should target.
+- [`storage-gcs`](/docs/data-storage/storage-gcs) if you need a similar managed-cloud object-storage story on Google Cloud.
+- [`files`](/docs/data-storage/files) if you want file-session and metadata concepts layered above the raw object store.
+
+## Troubleshooting
+
+If SAS generation fails, confirm the chosen credential mode includes the information required to sign URLs, especially account name plus key when shared-key signing is expected. If multipart completion behaves unexpectedly, verify the client is preserving part numbers and ETags consistently across the upload flow. When Azure-specific connection logic begins to spread into handlers or services, pull it back into startup configuration and keep the rest of the system on the shared storage abstraction.

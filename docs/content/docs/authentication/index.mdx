@@ -1,0 +1,49 @@
+---
+title: Authentication & OAuth
+description: Learn how the shared auth abstraction and layered OAuth packages fit together for apps and reusable libraries.
+---
+
+This category covers the shared packages you reach for when your application needs identity, authorization context, or a reusable OAuth installation flow. The key idea is that Superfunctions separates the generic authentication contract from the OAuth-specific layers. That separation lets library authors accept any conforming auth provider, while application teams can choose how much OAuth machinery they actually want to own.
+
+If you only need a framework-neutral way to authenticate requests and attach a session to context, start with [`auth`](/docs/authentication/auth). If you are building a full OAuth integration, move down the stack: [`oauth-core`](/docs/authentication/oauth-core) defines provider descriptors, PKCE, state handling, and callback invariants; [`oauth-http`](/docs/authentication/oauth-http) talks to token and revocation endpoints; [`oauth-storage`](/docs/authentication/oauth-storage) persists state and encrypted token records; [`oauth-providers`](/docs/authentication/oauth-providers) gives you curated provider descriptors and policy helpers; [`oauth-flow`](/docs/authentication/oauth-flow) assembles those layers into an end-to-end lifecycle; and [`oauth-testing`](/docs/authentication/oauth-testing) gives you test fixtures for that stack.
+
+## What This Category Covers
+
+Authentication and OAuth often get bundled together in product conversations, but they solve different jobs. `@superfunctions/auth` is the generic boundary: it standardizes how code asks “who is this request acting as?” and “can that subject access this resource?” The OAuth packages are lower-level and more specialized. They handle redirect URLs, code exchanges, refresh tokens, provider quirks, and token persistence.
+
+That split is useful when you are shipping a package for outside consumers. A library can depend only on `@superfunctions/auth` and remain provider-agnostic. An app or platform team can then decide whether its auth story is API keys, sessions, JWTs, or a layered OAuth flow built on the packages in this category.
+
+## Package Map
+
+| Package | Role | Start here when |
+| --- | --- | --- |
+| [`auth`](/docs/authentication/auth) | Generic auth abstraction and middleware helpers | You want request authentication without committing to OAuth internals |
+| [`oauth-core`](/docs/authentication/oauth-core) | Provider descriptors, PKCE, state, callback rules | You need low-level OAuth service primitives |
+| [`oauth-http`](/docs/authentication/oauth-http) | Token exchange and revocation transport | You already model OAuth state and need HTTP endpoint calls |
+| [`oauth-providers`](/docs/authentication/oauth-providers) | Curated provider descriptors and policies | You want shared defaults for GitHub, Google, Microsoft, Yahoo, or Apple |
+| [`oauth-storage`](/docs/authentication/oauth-storage) | State stores, token vaults, DB and SQL adapters | You need durable storage for OAuth state and token records |
+| [`oauth-flow`](/docs/authentication/oauth-flow) | High-level start, callback, refresh, and disconnect orchestration | You want the full OAuth lifecycle in one service |
+| [`oauth-testing`](/docs/authentication/oauth-testing) | In-memory helpers and mock provider descriptors | You need deterministic tests for OAuth integrations |
+
+## How To Choose
+
+Use this chooser when sibling packages look similar:
+
+- Start with `auth` if your public API should accept any authentication provider and you do not want OAuth to leak into your abstractions.
+- Choose the low-level path (`oauth-core` + `oauth-http` + `oauth-storage`) when you need custom flow orchestration, custom provider policy logic, or a storage model that does not match the default lifecycle.
+- Choose the high-level path (`oauth-flow`) when you want one service that starts installs, handles callbacks, refreshes tokens, disconnects providers, and emits consistent events.
+- Add `oauth-providers` when curated provider descriptors are good enough and you do not want to model every authorization URL or scope policy from scratch.
+- Add `oauth-testing` whenever OAuth behavior is part of your test surface, especially if you want to simulate replayed state, refresh-token retention, or disconnection cleanup.
+
+In practice, most external app teams either pick `auth` alone or pair `oauth-flow` with `oauth-providers` and `oauth-storage`. Teams building reusable infrastructure usually drop lower in the stack and compose `oauth-core`, `oauth-http`, and `oauth-storage` directly.
+
+## Common Compositions
+
+- `auth` + your own provider implementation for API keys, session cookies, or JWTs.
+- `oauth-flow` + `oauth-providers` + `oauth-storage` for SaaS installation flows that must handle callback, refresh, and disconnect.
+- `oauth-core` + `oauth-http` + `oauth-storage` when you need a custom orchestrator but still want shared PKCE, transport, and persistence contracts.
+- `oauth-testing` alongside any of the above when you want deterministic in-memory fixtures in Vitest or another test runner.
+
+## Related Categories
+
+After you choose the auth layer, the next decision is usually where requests enter your system and where tokens live. Pair this category with the [HTTP package pages](/docs/http/http) when you need framework adapters, and with the [DB package page](/docs/data-storage/db) when you need persistent OAuth state or token storage backed by a database adapter. If you are still comparing multiple stacks, go back to [Choosing Packages](/docs/choosing-packages) for a broader ecosystem chooser.

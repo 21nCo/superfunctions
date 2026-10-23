@@ -1,0 +1,7 @@
+using my composio - read product hunt archives in my tron notion workspace and pull products or dev tools similar to any of super functions - create a mapping, also create where each of the super functions can be enhanced from looking at the contemporary ideas or tools
+
+---
+
+<send_user_message_question_reply>
+[{"answer":"Local research report in Superfunctions","question":"Where would you like the finished mapping saved? I’ll include a concise summary here either way.","questionItemId":"[\"request_user_input_async\",\"call_3fc734aec600429e8af0947495b36e1d\",0]"}]
+</send_user_message_question_reply>

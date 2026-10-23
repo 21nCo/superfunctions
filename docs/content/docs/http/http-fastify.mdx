@@ -1,0 +1,108 @@
+---
+title: HTTP Fastify
+description: Register a shared Superfunctions router as a Fastify plugin while keeping handler logic independent from Fastify request and reply objects.
+---
+
+`@superfunctions/http-fastify` is the adapter for teams that want the Fastify runtime model but do not want their route logic tightly coupled to Fastify APIs. It takes a router from [`@superfunctions/http`](/docs/http/http) and exposes it as a Fastify plugin, so you can keep using familiar plugin registration, prefixes, and testing patterns while moving business logic into the shared HTTP layer.
+
+This package is especially useful for service teams that care about Fastify's plugin system and operational profile but also want to share route behavior with other projects. Instead of rewriting handlers around `FastifyRequest` and `FastifyReply`, you can centralize the logic in the shared router and keep Fastify-specific details at the edge.
+
+## What It Is
+
+`@superfunctions/http-fastify` adapts the framework-neutral router into a Fastify plugin. Under the hood, it registers a catch-all route, converts the Fastify request into a Web `Request`, hands control to the shared router, and then translates the resulting Web `Response` back into a Fastify reply.
+
+That means your portable routing layer stays in one place, while Fastify remains responsible for server startup, plugin composition, and framework-native testing utilities such as `inject()`.
+
+## When To Use It
+
+Choose this adapter when Fastify is your deployment runtime or when you specifically want Fastify features such as prefix-based plugin registration and the plugin ecosystem. It is the most natural choice for Fastify-first service teams that still want the flexibility to share or reuse routing behavior elsewhere.
+
+Use this comparison as a quick chooser:
+
+| Choose this adapter when | Consider another adapter when |
+| --- | --- |
+| You want `fastify.register()` and plugin prefixes | You already standardize on Express middleware, which points to [`http-express`](/docs/http/http-express) |
+| You prefer Fastify's built-in testing with `inject()` | You need route-file exports in Next.js or SvelteKit |
+| You want a Node server with a shared portable router underneath | You are deploying in fetch-native edge runtimes, which points to [`http-hono`](/docs/http/http-hono) |
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-fastify fastify
+```
+
+## Quick Start
+
+Create the shared router once, then register it with Fastify using `toFastify()`.
+
+```ts
+import Fastify from "fastify";
+import { createRouter } from "@superfunctions/http";
+import { toFastify } from "@superfunctions/http-fastify";
+
+const fastify = Fastify();
+const router = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () => Response.json({ ok: true }),
+    },
+  ],
+});
+
+await fastify.register(toFastify(router), { prefix: "/api" });
+await fastify.listen({ port: 3000 });
+```
+
+## Core Concepts
+
+The first Fastify-specific concept is plugin registration. This adapter returns a Fastify plugin, not a raw request handler. That means you should register it with `await fastify.register(...)`, optionally with a `prefix`, just as you would any other Fastify plugin. This is the cleanest way to keep routing boundaries obvious.
+
+The second concept is path ownership. If you use a Fastify prefix such as `"/api"`, define your router paths relative to that prefix. In other words, prefer `"/health"` inside the shared router when the plugin is already mounted at `"/api"`. That keeps the portable router readable and avoids duplicate path segments.
+
+The third concept is testing. Because the shared router is mounted through a Fastify plugin, you can still use `fastify.inject()` to verify the integration surface while separately unit-testing the shared route behavior where needed.
+
+## Real-World Example
+
+Suppose a platform team publishes a shared router package for internal product services. One service wants Fastify because it relies on plugin-based server composition and easy integration tests. The service can register the router as a plugin while keeping business logic shared with other runtimes.
+
+```ts
+import Fastify from "fastify";
+import { createRouter } from "@superfunctions/http";
+import { toFastify } from "@superfunctions/http-fastify";
+
+const ordersRouter = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/orders/:id",
+      handler: async (_request, context) =>
+        Response.json({ orderId: context.params.id, source: "fastify" }),
+    },
+  ],
+});
+
+const app = Fastify();
+await app.register(toFastify(ordersRouter), { prefix: "/v1" });
+
+const response = await app.inject({
+  method: "GET",
+  url: "/v1/orders/ord_123",
+});
+
+console.log(response.json());
+```
+
+That example shows why the adapter matters: you keep the Fastify integration experience, but the order route itself is still portable enough to be mounted elsewhere later.
+
+## Related Packages
+
+- [`http`](/docs/http/http) for the framework-neutral router this adapter exposes.
+- [`http-express`](/docs/http/http-express) if you are comparing Node framework adapters.
+- [`http-hono`](/docs/http/http-hono) if you may later move some endpoints to fetch-native runtimes.
+- [Middleware](/docs/middleware-runtime/middleware) if you want shared cross-cutting behavior around the router.
+
+## Troubleshooting
+
+If the adapter appears not to mount any routes, first confirm you actually awaited `fastify.register()`. If request paths are off by one segment, inspect whether you duplicated the Fastify `prefix` in the shared router paths. If JSON bodies are not behaving as expected, remember that Fastify may already have parsed the body before the adapter converts the request into a Web `Request`. Keeping the router focused on shared HTTP concerns and letting Fastify own plugin registration, startup, and test harnesses usually makes these issues straightforward to isolate.

@@ -1,0 +1,410 @@
+{
+  "generatedAt": "2026-04-22T11:38:44.999Z",
+  "specFolder": "2026-03-13-new-bhszlzcn-spec",
+  "reportVersion": 1,
+  "requiredPriority": "P0",
+  "allVectorsCount": 64,
+  "vectors": [
+    {
+      "id": "TV-ARCH-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-002-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-002-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-003-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-003-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-005-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-ARCH-005-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/archive.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/validation/__tests__/validation.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/validation/__tests__/validation.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-002-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/validation/__tests__/validation.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-002-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/validation/__tests__/validation.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-003-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/routes/__tests__/execution-errors.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-API-003-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/routes/__tests__/execution-errors.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-AUTH-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-002-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-002-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-AUTH-003-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-003-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-004-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-004-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-AUTH-005-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-AUTH-005-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/integration/spv2-parity.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-REL-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/relation-inheritance-spv2.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-REL-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/mutation/__tests__/relation-inheritance-spv2.test.ts",
+        "datafn/server/src/execution/query/__tests__/relation-inheritance-query.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-SYNC-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-SYNC-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-SYNC-003-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-SYNC-003-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/sync/__tests__/spv2-sync-visibility.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-COMP-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-COMP-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-COMP-002-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-COMP-002-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts",
+        "datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-SEC-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/python/tests/test_spv2_parity.py",
+        "datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-SEC-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/python/tests/test_spv2_parity.py"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-USE-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/execution/query/__tests__/relation-inheritance-query.test.ts"
+      ],
+      "source": "literal"
+    },
+    {
+      "id": "TV-USE-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/conformance/spv2-conformance.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-TEST-001-P",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/conformance/spv2-conformance.test.ts"
+      ],
+      "source": "equivalent"
+    },
+    {
+      "id": "TV-TEST-001-N",
+      "priority": "P0",
+      "status": "pass",
+      "evidence": [
+        "datafn/server/src/__tests__/conformance/spv2-conformance.test.ts"
+      ],
+      "source": "equivalent"
+    }
+  ],
+  "docs": {
+    "files": [
+      "datafn/docs/content/docs/documentation/concepts/sharing-v2.mdx",
+      "datafn/docs/content/docs/documentation/sync/sharing-sync-lifecycle.mdx",
+      "datafn/docs/content/docs/documentation/migrations/spv2.mdx",
+      "datafn/docs/content/docs/documentation/use-cases/sharing-patterns.mdx"
+    ],
+    "glossaryCoverage": true,
+    "hasSyncSequenceDiagram": true,
+    "hasHappyAndForbiddenExamples": true,
+    "docsCoverageComplete": true
+  },
+  "useCases": {
+    "domains": [
+      "Collections",
+      "Memotron",
+      "Selftron",
+      "Pointron",
+      "Finatron",
+      "Feedtron",
+      "Compoundum"
+    ],
+    "mapped": true
+  },
+  "summary": {
+    "p0Total": 40,
+    "p0Passed": true,
+    "p0FailedVectors": []
+  },
+  "releaseGate": {
+    "ok": true,
+    "result": {
+      "report": {
+        "p0Passed": true,
+        "reportPath": ".conduct/reports/spv2-conformance.json"
+      }
+    }
+  }
+}

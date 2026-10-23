@@ -1,0 +1,56 @@
+---
+title: Choosing Packages
+description: Decide which Superfunctions shared packages fit your job to be done.
+---
+
+This page helps you choose the right starting point without assuming you already know the package names. The root docs focus on shared packages and ecosystem orientation, so the guidance here is organized around the problems external developers usually bring to Superfunctions first: auth, HTTP routing, persistence, and reusable library design.
+
+## If You Need Authentication
+
+Start with `@superfunctions/auth` when you need a clean authentication abstraction that can sit underneath your own application or library code. It is the best entry point when you want to standardize user or API-key identity handling without committing to OAuth orchestration immediately.
+
+Move into the OAuth packages when your problem is specifically installation flows, provider integration, or token lifecycle management:
+
+- [`oauth-core`](/docs/authentication/oauth-core) defines the low-level provider-neutral model.
+- [`oauth-http`](/docs/authentication/oauth-http) handles request and response concerns.
+- [`oauth-storage`](/docs/authentication/oauth-storage) persists installations, tokens, and state.
+- [`oauth-providers`](/docs/authentication/oauth-providers) gives you reusable provider descriptors.
+- [`oauth-flow`](/docs/authentication/oauth-flow) is the higher-level choice when you want those pieces composed for you.
+- [`oauth-testing`](/docs/authentication/oauth-testing) helps you test that integration surface with confidence.
+
+Choose the lower-level packages when you are building a framework, SDK, or custom auth product. Choose `oauth-flow` first when you want the higher-level orchestration package and only need to customize around the edges.
+
+## If You Need HTTP Routing
+
+Start with [`http`](/docs/http/http) whenever you want your routing and handler model to stay independent from a specific web framework. That package is the foundation. After that, add exactly one framework adapter for the runtime you are actually deploying.
+
+- [`http-express`](/docs/http/http-express) for Express services.
+- [`http-fastify`](/docs/http/http-fastify) for Fastify apps.
+- [`http-hono`](/docs/http/http-hono) for Hono and edge-friendly runtimes.
+- [`http-next`](/docs/http/http-next) for Next.js App Router handlers.
+- [`http-sveltekit`](/docs/http/http-sveltekit) for SvelteKit endpoints.
+
+If you expect your application to move between frameworks, keep your business logic at the `http` layer and treat adapters as replaceable edges. If you know you are staying inside one framework and want the fastest path to a running service, install the foundation package plus one adapter and ignore the rest for now.
+
+## If You Need Storage or Persistence
+
+Choose [`db`](/docs/data-storage/db) when your main question is structured persistence and query access. Choose [`storage`](/docs/data-storage/storage) when your main question is object storage across providers. Choose [`files`](/docs/data-storage/files) when your application needs file-facing utilities or metadata workflows on top of those lower layers.
+
+The provider packages exist so you can keep the shared storage contract while changing where bytes actually live:
+
+- [`storage-s3`](/docs/data-storage/storage-s3)
+- [`storage-r2`](/docs/data-storage/storage-r2)
+- [`storage-minio`](/docs/data-storage/storage-minio)
+- [`storage-gcs`](/docs/data-storage/storage-gcs)
+- [`storage-azure`](/docs/data-storage/storage-azure)
+- [`storage-local`](/docs/data-storage/storage-local)
+
+Pick `storage-local` or `storage-minio` when you want fast local development or self-hosted testing. Pick a cloud adapter when your deployment target is already fixed. Pair `db` with `storage` when you need both record-level persistence and blob storage in the same product.
+
+## If You Are Building a Library
+
+Library authors usually get the most value from the lowest stable layer that still matches the problem they are solving. That often means starting with primitives such as [`auth`](/docs/authentication/auth), [`http`](/docs/http/http), [`envelope`](/docs/middleware-runtime/envelope), [`errors`](/docs/middleware-runtime/errors), or [`config`](/docs/middleware-runtime/config) instead of jumping straight to the most opinionated orchestration package.
+
+That approach keeps your own public API portable. You can expose a clean adapter surface to your users while still benefiting from Superfunctions contracts underneath. Then, if your library grows into a fuller application surface later, you can layer in packages such as `oauth-flow`, `webhooks`, `queue`, or storage providers without undoing the foundation.
+
+If you are working in Python, start from [`python-core`](/docs/python/python-core) and then add the framework-specific package that matches the runtime you support. If you are still deciding whether you need shared packages or a higher-level function workspace, use the [Ecosystem](/docs/ecosystem) page next.

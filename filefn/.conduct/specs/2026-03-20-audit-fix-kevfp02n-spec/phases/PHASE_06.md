@@ -1,0 +1,29 @@
+# Phase 06
+- Phase goal: Finish shared package conformance, route-category rate limits, and secret-safe observability.
+- In scope:
+  - route-category `rateLimit` config
+  - shared package conformance in `packages/files`
+  - event/log redaction invariants including upload-session tokens
+- Out of scope:
+  - Python parity
+- Deliverables:
+  - `filefn/server/src/index.ts`
+  - `filefn/server/src/upload-sessions/routes.ts`
+  - `filefn/server/src/files/routes.ts`
+  - `filefn/server/src/shares/routes.ts`
+  - `filefn/server/src/processing/routes.ts`
+  - `filefn/server/src/observability/logger.ts`
+  - `filefn/server/src/events.ts`
+  - `packages/files/src/__tests__/file-provider-conformance.test.ts`
+  - `packages/middleware/src/rate-limit.ts` (only if route-category support requires shared API refinement)
+- Requirements covered: BUILD-001, RATE-001, OBS-001, PROCESS-001
+- Implementation tasks:
+  - Implement per-route category lookup for rate-limit config.
+  - Preserve ISO reset timestamps.
+  - Extend redaction to upload-session tokens and any new secret-bearing fields.
+  - Finalize FileProvider conformance tests.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/packages/files && npm test -- --run && npm run typecheck && npm run build`
+  - `cd /Users/serro/Documents/dev/n/superfunctions/packages/middleware && npm test -- --run && npm run typecheck && npm run build`
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+- Stop condition: shared package tests exist and rate-limit/observability vectors pass.

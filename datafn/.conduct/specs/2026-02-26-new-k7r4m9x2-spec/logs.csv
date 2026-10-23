@@ -1,0 +1,13 @@
+timestamp,event,agent,details
+2026-02-26T09:00:00Z,spec-created,Oz (Warp),Created SPEC.md with full specification for row-level namespace isolation
+2026-02-26T09:05:00Z,requirements-created,Oz (Warp),Created REQUIREMENTS.md with 27 requirements (RLN/DFN/SCH/MIG/TST)
+2026-02-26T09:10:00Z,test-vectors-created,Oz (Warp),Created TEST_VECTORS.md with 30+ test vectors
+2026-02-26T09:15:00Z,plan-created,Oz (Warp),Created PLAN.md with architecture sketch and 6 phases
+2026-02-26T09:20:00Z,phases-created,Oz (Warp),Created PHASE_00 through PHASE_05 in phases/
+2026-02-26T09:25:00Z,intent-audit-created,Oz (Warp),Created INTENT_AUDIT.md mapping 18 intents to spec coverage (100%)
+2026-02-26T17:27:30Z,claude-opus-4-6[1m],Warp (a: Claude Code CLI in Warp),execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_00-2026-02-26-r7k4m2x9-report.md
+2026-02-26T17:43:00Z,claude-opus-4-6[1m],Warp (a: Claude Code CLI in Warp),execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_01-2026-02-26-m4k9x7r2-report.md
+2026-02-26T17:49:30Z,claude-opus-4-6[1m],Warp (a: Claude Code CLI in Warp),execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_02-2026-02-26-k7r9m4x3-report.md
+2026-02-26T17:54:00Z,claude-opus-4-6[1m],Warp (a: Claude Code CLI in Warp),execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_03-2026-02-26-r4m7k9x2-report.md
+2026-02-26T18:12:00Z,claude-opus-4-6[1m],Warp (a: Claude Code CLI in Warp),execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_04-2026-02-26-m9k4r7x2-report.md
+2026-02-26T18:22:30Z,claude-sonnet-4-6,Warp,execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec/phase-reports/PHASE_05-2026-02-26-k5r9m3x7-report.md

@@ -1,0 +1,61 @@
+{
+  "name": "@cachefn/core",
+  "version": "0.0.2",
+  "description": "Self-hosted caching solution with multi-tier storage and function memoization",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "lint": "echo 'lint not configured'",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "cache",
+    "caching",
+    "memoization",
+    "indexeddb",
+    "lru",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cachefn/ts-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cacheFn",
+    "schemaVersion": 1,
+    "namespace": "cachefn"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fake-indexeddb": "^6.2.4",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

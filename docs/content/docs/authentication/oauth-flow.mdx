@@ -1,0 +1,148 @@
+---
+title: OAuth Flow
+description: Orchestrate OAuth start, callback, refresh, and disconnect workflows with the shared production-safe lifecycle service.
+---
+
+`@superfunctions/oauth-flow` is the highest-level package in the shared OAuth family. It composes `oauth-core`, `oauth-http`, and `oauth-storage` into one service that can start installs, validate callbacks, persist tokens, refresh them later, and disconnect providers when a user or worker asks for cleanup. For most external apps and Superfunctions packages, this is the right default abstraction because it centralizes the lifecycle rules without forcing a specific framework adapter.
+
+## What It Is
+
+The package exports `createOAuthFlowService()` plus the service and hook types around it. A configured `OAuthFlowService` supports:
+
+- `start()`
+- `handleCallback()`
+- `refresh()`
+- `disconnect()`
+
+It is orchestration, not routing. If you want reusable HTTP endpoints on top of the flow service, add [`oauth-router`](/docs/authentication/oauth-router).
+
+## When To Use It
+
+Use `@superfunctions/oauth-flow` when your application or shared function needs a real OAuth lifecycle:
+
+- customer-managed SaaS integrations
+- marketplace/provider installs
+- background refresh workers
+- explicit disconnect and local cleanup workflows
+
+If you need lower-level control over state handling and token exchange, start from [`oauth-core`](/docs/authentication/oauth-core) and [`oauth-http`](/docs/authentication/oauth-http) instead.
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-flow @superfunctions/oauth-providers @superfunctions/oauth-storage
+```
+
+## Quick Start
+
+The production-safe default is encrypted token persistence.
+
+```ts
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
+import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
+  MemoryOAuthStateStore,
+  MemoryTokenVault,
+} from "@superfunctions/oauth-storage";
+
+const encryptionKeyHex = process.env.OAUTH_TOKEN_ENCRYPTION_KEY_HEX!;
+const tokenVault = new EncryptedTokenVault(
+  new MemoryTokenVault(),
+  new AesGcmTokenCipher(() => Buffer.from(encryptionKeyHex, "hex")),
+);
+
+const flow = createOAuthFlowService({
+  providers: {
+    github: getOAuthProviderDescriptor("github"),
+  },
+  providerRuntimeConfig: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      allowlistedRedirectUris: ["https://app.example/oauth/github/callback"],
+    },
+  },
+  stateStore: new MemoryOAuthStateStore(),
+  tokenVault,
+});
+```
+
+Keep `OAUTH_TOKEN_ENCRYPTION_KEY_HEX` as a deployment secret with 32 random bytes encoded as hex.
+
+From there you can issue the authorization redirect and later complete the callback with the same service.
+
+```ts
+const started = await flow.start({
+  providerId: "github",
+  tenantId: "tenant_1",
+  userId: "user_1",
+  connectionId: "github-primary",
+  redirectUri: "https://app.example/oauth/github/callback",
+});
+
+const connected = await flow.handleCallback({
+  code: "oauth-code",
+  state: started.stateId,
+  redirectUri: "https://app.example/oauth/github/callback",
+});
+```
+
+## Core Concepts
+
+The first concept is connection-centric lifecycle management. `start()` captures the provider choice, redirect URI, and subject. `handleCallback()` consumes state and writes the token record. `refresh()` and `disconnect()` then act on the long-lived connection record over time. That lets apps such as `plugfn` or `authfn` reuse one service in routes, workers, and background cleanup tasks.
+
+The second concept is security posture around token persistence. `EncryptedTokenVault` defaults `tokenStorageMode` to `encrypted-required`, while legacy plain `TokenVault` wiring remains writable by default for backward compatibility. That keeps upgrades from breaking established integrations while still making encrypted storage the recommended production contract.
+
+## Compatibility Notes
+
+- `EncryptedTokenVault` defaults to `tokenStorageMode: "encrypted-required"`.
+- Legacy plain `TokenVault` wiring stays writable by default for backward compatibility.
+- Set `tokenStorageMode: "encrypted-required"` explicitly if you want upgrades to fail closed on plaintext persistence.
+- `plaintext-unsafe` exists only for tests, local prototypes, and controlled migration windows.
+- `disconnect()` returns `connectionCleanup` as the canonical cleanup signal.
+- `connectionDeleted` remains as a deprecated alias of `connectionCleanup.deleted` for compatibility.
+
+## Real-World Example
+
+This is the shape we expect most Superfunctions integrations to use: one flow service, optional identity hooks, and route exposure through `oauth-router`.
+
+```ts
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+import { createOAuthConnectionRoutes } from "@superfunctions/oauth-router";
+
+const flow = createOAuthFlowService({
+  providers,
+  resolveProviderRuntimeConfig,
+  stateStore,
+  tokenVault,
+  identityHooks: {
+    async onDisconnected(input) {
+      return {
+        attempted: true,
+        deleted: true,
+        reason: "deleted",
+      };
+    },
+  },
+});
+
+const routes = createOAuthConnectionRoutes({
+  basePath: "/oauth/connections",
+  flowService: flow,
+  async resolveStartInput(request) {
+    return (await request.json()) as never;
+  },
+});
+```
+
+## Related Packages
+
+- [`oauth-router`](/docs/authentication/oauth-router) for reusable route factories
+- [`oauth-storage`](/docs/authentication/oauth-storage) for state/token persistence and `EncryptedTokenVault`
+- [`oauth-providers`](/docs/authentication/oauth-providers) for curated provider descriptors and policy helpers
+
+## Troubleshooting
+
+If `start()` fails before producing a redirect URL, inspect provider IDs, runtime config resolution, and redirect allowlists first. If callback writes fail with `OAUTH_TOKEN_STORAGE_UNSAFE`, switch to `EncryptedTokenVault` or explicitly choose `plaintext-unsafe` for a non-production harness. If disconnect behavior is surprising, inspect `connectionCleanup` instead of the deprecated `connectionDeleted` alias to understand whether local connection cleanup was attempted and whether it actually deleted anything.

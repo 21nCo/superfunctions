@@ -1,0 +1,108 @@
+---
+title: Envelope
+description: Standardize success and error response shapes so clients and services can rely on one canonical payload contract.
+---
+
+`@superfunctions/envelope` gives you a small but important runtime guarantee: every success and every failure can share one predictable shape. Instead of returning a different JSON structure from every endpoint or trying to normalize ad hoc legacy responses in the client, you can use `ok()` and `err()` to produce canonical envelopes with metadata attached.
+
+That consistency is especially helpful for teams maintaining several services or SDK consumers that talk to more than one endpoint. A client can check `ok`, then read either `data` or `error` plus `meta.timestamp`, without guessing which handler or framework generated the payload. For library authors, the package also provides helpers for normalizing older response styles so you can modernize runtime contracts incrementally.
+
+## What It Is
+
+`@superfunctions/envelope` exports a canonical `Envelope<T>` union plus convenience helpers. `ok()` creates a success response containing `data` and `meta.timestamp`. `err()` creates an error response containing `code`, `message`, `status`, `retryable`, optional `details`, and metadata. The package also includes `normalizeLegacyEnvelope()`, `toLegacyDataEnvelope()`, and `toLegacyResultEnvelope()` so you can convert between the canonical shape and older `{ ok, data }` or `{ ok, result }` variants.
+
+The package is intentionally transport-agnostic. It does not send HTTP responses itself. Instead, it gives you a shared payload shape you can return from an API route, a worker result, or even a library boundary that wants stable machine-readable outcomes.
+
+## When To Use It
+
+Use this package when downstream consumers should not have to learn a different success and error shape for every endpoint. Typical fits include public APIs, internal platform services, background job results, and wrapper libraries that mediate several backends but want to expose one response contract.
+
+If your application already uses one stable payload convention everywhere, you may not need a dedicated envelope helper. The package becomes valuable when you want that convention to be explicit, typed, and easy to reuse across services.
+
+## Install
+
+```bash
+npm install @superfunctions/envelope
+```
+
+## Quick Start
+
+Start by wrapping successful and failed outcomes in the canonical helpers.
+
+```ts
+import { err, ok } from "@superfunctions/envelope";
+
+export function getProjectEnvelope(projectId: string) {
+  if (!projectId) {
+    return err({
+      code: "PROJECT_ID_REQUIRED",
+      message: "A project identifier is required.",
+      status: 400,
+      retryable: false,
+    });
+  }
+
+  return ok({
+    projectId,
+    status: "active",
+  });
+}
+```
+
+If you are publishing a library that still consumes older result shapes, normalize them before they leak out to new callers.
+
+```ts
+import { normalizeLegacyEnvelope } from "@superfunctions/envelope";
+
+const legacyResult = { ok: true, result: { synced: true } };
+
+const canonical = normalizeLegacyEnvelope(legacyResult, {
+  timestamp: "2026-03-16T00:00:00.000Z",
+});
+```
+
+## Core Concepts
+
+The first concept is canonical shape. Every success result becomes `{ ok: true, data, meta }`. Every failure becomes `{ ok: false, error, meta }`. That stable contract is easier to document, easier to type-check, and easier for clients to consume than a mixture of `result`, `payload`, or custom error objects.
+
+The second concept is runtime metadata. The built-in timestamp is useful for tracing client logs, comparing retries, or correlating several services without requiring every handler author to remember to add metadata by hand.
+
+The third concept is normalization rather than flag days. Legacy conversions let teams modernize without breaking every consumer at once. You can normalize older responses internally and return a consistent public contract immediately.
+
+## Real-World Example
+
+One practical outside-world use case is a service layer that wraps a mixture of old and new integrations but wants every API response to look the same to frontend clients.
+
+```ts
+import { err, normalizeLegacyEnvelope, ok } from "@superfunctions/envelope";
+
+export async function loadBillingSummary(accountId: string) {
+  if (!accountId) {
+    return err({
+      code: "ACCOUNT_REQUIRED",
+      message: "An account id is required.",
+      status: 400,
+      retryable: false,
+    });
+  }
+
+  const legacySummary = { ok: true, data: { invoicesOpen: 2 } };
+  const normalized = normalizeLegacyEnvelope(legacySummary);
+
+  return normalized.ok
+    ? ok({ ...normalized.data, accountId })
+    : normalized;
+}
+```
+
+That response contract becomes even more useful when paired with [`errors`](/docs/middleware-runtime/errors), which can define the canonical error metadata before the envelope renders it for clients. In HTTP services, the same pattern often sits behind [`http`](/docs/http/http) handlers or middleware pipelines.
+
+## Related Packages
+
+- [`errors`](/docs/middleware-runtime/errors) if you want canonical error codes, statuses, and retryability metadata before building error envelopes.
+- [`http`](/docs/http/http) if you want to return stable payload shapes from portable HTTP handlers.
+- [`middleware`](/docs/middleware-runtime/middleware) if request policies should fail in a way that still reaches clients through one consistent envelope format.
+
+## Troubleshooting
+
+If `err()` returns `INVALID_ENVELOPE_ERROR_SHAPE`, check that you supplied both `status` and `retryable`; the package requires those fields so failures stay machine-readable. If clients still see mixed shapes, audit older handlers for direct JSON responses that bypass the envelope helpers. When normalizing legacy data, also decide which default status and retryability values make sense for older errors that were never explicit about those semantics.

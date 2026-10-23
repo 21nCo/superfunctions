@@ -1,0 +1,541 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6311",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-28T18:37:45.013Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        }
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2873,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5401,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Open example</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            Component content\n            <DialogTitle>Example title</DialogTitle>\n            <DialogDescription>A production composition rendered from the public styled package.</DialogDescription>\n            <DialogClose type=\"button\">Close</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework react --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 417.28125,
+          "width": 118.703125,
+          "height": 40
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1645,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-smoke"
+}

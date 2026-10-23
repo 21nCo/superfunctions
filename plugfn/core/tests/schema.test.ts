@@ -1,0 +1,47 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { getSchema, PLUGFN_SCHEMA_VERSION } from '../src/schema.js';
+
+describe('PlugFn schema metadata', () => {
+  it('versions and exposes the webhook idempotency uniqueness constraint', () => {
+    const schema = getSchema();
+    const receipts = schema.schemas.find(
+      (table) => table.modelName === 'plugfn_webhook_receipts'
+    );
+
+    expect(PLUGFN_SCHEMA_VERSION).toBe(7);
+    expect(schema.version).toBe(7);
+    expect(receipts?.indexes).toContainEqual({
+      name: 'idx_plugfn_webhook_receipts_idempotency',
+      fields: ['provider', 'idempotencyKey'],
+      unique: true,
+    });
+
+    const connections = schema.schemas.find(
+      (table) => table.modelName === 'plugfn_connections'
+    );
+    const syncJobs = schema.schemas.find(
+      (table) => table.modelName === 'plugfn_sync_jobs'
+    );
+    expect(connections).toBeDefined();
+    expect(connections!.fields.claimToken).toBeUndefined();
+    expect(syncJobs).toBeDefined();
+    expect(syncJobs!.fields.claimToken).toMatchObject({
+      fieldName: 'claim_token',
+      maxLength: 768,
+    });
+    expect(syncJobs!.indexes).toContainEqual({
+      name: 'idx_plugfn_sync_jobs_claim_token',
+      fields: ['claimToken'],
+      unique: true,
+    });
+  });
+
+  it('keeps package discovery metadata aligned with the runtime schema', () => {
+    const packageMetadata = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    ) as { superfunctions?: { schemaVersion?: number } };
+
+    expect(packageMetadata.superfunctions?.schemaVersion).toBe(PLUGFN_SCHEMA_VERSION);
+  });
+});

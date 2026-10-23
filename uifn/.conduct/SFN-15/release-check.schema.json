@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "uifn-release-check.schema.json",
+  "title": "uifn Release Check Evidence",
+  "type": "object",
+  "required": ["id", "category", "command", "status", "blocking"],
+  "properties": {
+    "id": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": [
+        "package",
+        "build",
+        "lint",
+        "typecheck",
+        "test",
+        "conformance",
+        "a11y",
+        "visual",
+        "ssr",
+        "pack",
+        "exports",
+        "manifest",
+        "docs",
+        "tokens",
+        "secrets",
+        "storybook",
+        "release"
+      ]
+    },
+    "command": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["planned", "passed", "failed"]
+    },
+    "blocking": { "type": "boolean" },
+    "durationMs": { "type": "number" },
+    "evidence": { "type": "object" },
+    "failure": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "stdoutTail": { "type": "string" },
+        "stderrTail": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+---
+title: Migrations, Rotation, Token Revocation, Incident Review
+description: Operational runbooks for production SecFn deployments.
+---
+
+## Migrations
+
+SecFn exports schemas and expects the host migration process to apply them:
+
+```ts
+import { getSecFnSchema } from "@secfn/core";
+
+await schemaManager.apply(getSecFnSchema());
+```
+
+Run migrations before mounting the server. If required tables are missing, the adapter should fail clearly at first write/read.
+
+## Rotation
+
+Rotate a secret through the admin API or vault service:
+
+```ts
+await secfn.vault.rotateSecret(secretId, {
+  value: process.env.NEW_SECRET_VALUE!,
+  actorId: "admin",
+});
+```
+
+Rotation creates a new encrypted version and moves the secret metadata row to the new current version. Old plaintext is never persisted.
+
+## Token Revocation
+
+Runtime tokens are hashed at rest and can be revoked without deleting audit history:
+
+```ts
+await secfn.vault.revokeServiceToken(tokenId, "admin");
+```
+
+Revoked tokens fail runtime verification even if the raw token is still known by a workload.
+
+## Incident Review
+
+Use security monitoring APIs to triage durable events:
+
+```ts
+const critical = await secfn.audit.getCriticalEvents();
+const unresolved = await secfn.audit.getUnresolvedEvents();
+
+await secfn.audit.resolveEvent(unresolved[0].id, {
+  resolvedBy: "secops",
+  notes: "Rotated token and confirmed no further access.",
+});
+```
+
+Mirror summaries into LogFn for operational visibility, but use SecFn as the source of truth for incident state and typed security metrics.

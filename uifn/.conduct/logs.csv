@@ -1,0 +1,32 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-20T09:35:26Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-20-er70p4kq-full-audit.md
+2026-03-20T10:57:27Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-20-audit-fix-dhrtycgi-spec
+2026-03-25T06:08:18Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-25-ptnwmntx-full-audit.md
+2026-03-25T06:20:11Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec
+2026-03-26T05:48:27Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-26-new-mrxtiesy-spec
+2026-06-27T14:49:46Z,GPT-5 Codex,Codex Desktop,spec,Codex,,uifn/.conduct/SFN-15
+2026-06-28T02:48:51Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-06-28-k8p4s2nq-full-audit.md
+2026-06-28T03:10:48Z,Claude Opus 4.8,Factory CLI,audit,Droid,,.conduct/audits/2026-06-28-m3v7q9xk-full-audit.md
+2026-06-28T09:26:56Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-06-28-r7p6n4qw-full-audit.md
+2026-06-28T12:09:06Z,GPT-5 Codex,Codex Desktop,execute-issue,Codex,,.conduct/issue-completions/2026-06-28-reaudit-r7p6n4qw-completion.md
+2026-06-28T13:09:35Z,GPT-5 Codex,Codex Desktop,spec,Codex,,uifn/.conduct/issues/2026-06-28-new-wkbqa7m2-spec
+2026-06-30T07:01:14Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-06-30-45c676d1-full-audit.md
+2026-07-10T18:06:49Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-07-10-0def6855-full-audit.md
+2026-07-17T12:39:32Z,GPT-5 Codex,Codex Desktop,audit,Codex,,.conduct/audits/2026-07-17-ee1f9d6c-full-audit.md
+2026-07-17T12:57:54Z,GPT-5 Codex,Codex Desktop,spec,Codex,,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec
+2026-07-17T13:22:47Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_00,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_00-2026-07-17-4c4ea1bc-report.md
+2026-07-18T05:19:19Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_01,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_01-2026-07-18-7e39c1ab-report.md
+2026-07-18T05:49:58Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_02,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_02-2026-07-18-e03d70cd-report.md
+2026-07-18T06:27:49Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_03,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_03-2026-07-18-b56ff5be-report.md
+2026-07-18T07:49:23Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_04,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_04-2026-07-18-a528f956-report.md
+2026-07-18T09:06:27Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_05,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_05-2026-07-18-818edec2-report.md
+2026-07-18T09:54:32Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_06,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_06-2026-07-18-b9a41bc3-report.md
+2026-07-18T10:34:33Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_07,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_07-2026-07-18-15d0984d-report.md
+2026-07-18T11:33:33Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_08,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_08-2026-07-18-2d2684ab-report.md
+2026-07-22T12:10:58Z,GPT-5 Codex,Codex Desktop,spec,Codex,PHASE_14-20,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec
+2026-07-22T12:38:10Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_15,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_15-2026-07-22-df523ac7-report.md
+2026-07-22T13:27:34Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_16,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_16-2026-07-22-6e2a1c9f-report.md
+2026-07-24T10:48:25Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_17,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_17-2026-07-24-edf1e5ae-report.md
+2026-07-26T04:36:38Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_18,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_18-2026-07-26-4a831932-report.md
+2026-07-26T04:51:24Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_19,.conduct/specs/2026-07-17-audit-fix-fb19ad09-spec/phase-reports/PHASE_19-2026-07-26-a5d2b285-report.md
+2026-07-30T12:11:42Z,GPT-5,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-07-30-47c1e8e4-full-audit.md

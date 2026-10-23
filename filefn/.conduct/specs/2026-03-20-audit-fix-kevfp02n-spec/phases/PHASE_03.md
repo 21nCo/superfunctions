@@ -1,0 +1,25 @@
+# Phase 03
+- Phase goal: Make file reads deterministic, paginated, and version-aware across provider and HTTP surfaces.
+- In scope:
+  - deterministic `listFiles`
+  - provider `getFile({ versionId })`
+  - version metadata/download binding behavior
+- Out of scope:
+  - share and artifact proxy routes
+- Deliverables:
+  - `filefn/server/src/files/service.ts`
+  - `filefn/server/src/files/routes.ts`
+  - `filefn/server/src/index.ts`
+  - `filefn/server/src/__tests__/files-list-accessible.test.ts`
+  - `filefn/server/src/__tests__/versions-metadata.test.ts`
+  - `packages/files/src/__tests__/file-provider-conformance.test.ts`
+- Requirements covered: FILE-001, FILE-002, AUTH-002
+- Implementation tasks:
+  - Replace unsorted prefetch listing with deterministic query semantics.
+  - Implement canonical cursor handling.
+  - Honor `versionId` in provider `getFile` and all relevant routes.
+  - Preserve 404-on-binding-mismatch behavior.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+  - `cd /Users/serro/Documents/dev/n/superfunctions/packages/files && npm test -- --run`
+- Stop condition: deterministic list and version-binding vectors pass.

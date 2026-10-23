@@ -1,0 +1,106 @@
+---
+title: Storage S3
+description: Use Amazon S3 as the production adapter for the shared storage contract.
+---
+
+`@superfunctions/storage-s3` connects the base `@superfunctions/storage` contract to Amazon S3. It is the right adapter when your deployment already lives on AWS, your team wants S3-native semantics, or you need a widely supported object-storage target for browser uploads, multipart transfers, and temporary download links. The package keeps the application-facing API aligned with the shared storage contract, so the rest of your code can stay provider-neutral.
+
+This adapter is a strong default for production systems because it supports signed upload URLs, signed download URLs, multipart uploads, and download streaming. That means it fits common outside-world workloads such as direct browser uploads, large media uploads, export downloads, and partner file delivery.
+
+## What It Is
+
+`@superfunctions/storage-s3` exports `createS3StorageAdapter()`, which creates a `StorageAdapter` backed by the AWS SDK S3 client. The adapter accepts a bucket, region, optional credentials, and optional endpoint overrides. Because it targets the shared contract, higher-level code can keep talking to `StorageAdapter` while the application chooses S3 at runtime.
+
+The package is intentionally an adapter, not the abstraction. Keep [`storage`](/docs/data-storage/storage) in your mental model as the contract and use this page when you have already decided that Amazon S3 is the right provider.
+
+## When To Use It
+
+Choose this adapter when AWS is already your operational home, when you want first-class multipart upload support, or when browser clients should upload directly to S3 using signed URLs. It is also a good fit when your team values mature tooling and broad ecosystem familiarity.
+
+Use this chooser when you are comparing sibling adapters:
+
+| If your priority is... | Choose |
+| --- | --- |
+| AWS-native storage with standard S3 semantics | `storage-s3` |
+| Cloudflare-first edge storage | [`storage-r2`](/docs/data-storage/storage-r2) |
+| Self-hosted S3-compatible storage | [`storage-minio`](/docs/data-storage/storage-minio) |
+| Simple local development on one machine | [`storage-local`](/docs/data-storage/storage-local) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-s3
+```
+
+## Quick Start
+
+Create the adapter once at application startup and inject it wherever your upload or download workflow needs a `StorageAdapter`.
+
+```ts
+import { createS3StorageAdapter } from "@superfunctions/storage-s3";
+
+export const storage = createS3StorageAdapter({
+  bucket: "app-uploads",
+  region: "us-east-1",
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+});
+```
+
+Once created, you can issue direct browser-upload URLs through the shared contract.
+
+```ts
+import { createS3StorageAdapter } from "@superfunctions/storage-s3";
+
+const storage = createS3StorageAdapter({
+  bucket: "app-uploads",
+  region: "us-east-1",
+});
+
+const signedUpload = await storage.signUploadUrl?.({
+  key: "avatars/usr_42.png",
+  expiresInSeconds: 300,
+  constraints: { contentType: "image/png" },
+});
+```
+
+## Core Concepts
+
+The first concept is that S3 is one implementation of the storage contract, not a special-case API that should leak upward into your service layer. Your handlers and services should still depend on `StorageAdapter` whenever possible.
+
+The second concept is capability coverage. This adapter supports signed upload URLs, signed download URLs, multipart uploads, and download streams. That makes it suitable for both direct-to-bucket browser uploads and server-mediated download flows.
+
+The third concept is endpoint flexibility. The adapter accepts an optional custom endpoint and `forcePathStyle`, which makes it useful for compatible environments and controlled networking setups while preserving the same S3-driven behavior.
+
+## Real-World Example
+
+A typical product example is a document platform that lets browsers upload large PDFs directly to S3, then later issues short-lived download links to teammates. The app keeps the workflow on the shared contract and lets S3 handle the object-transfer edge.
+
+```ts
+import { createS3StorageAdapter } from "@superfunctions/storage-s3";
+
+const storage = createS3StorageAdapter({
+  bucket: "project-documents",
+  region: "us-west-2",
+});
+
+export async function createDownloadLink(key: string) {
+  return storage.signDownloadUrl?.({
+    key,
+    expiresInSeconds: 120,
+    constraints: { responseContentType: "application/pdf" },
+  });
+}
+```
+
+That approach works well when you want application code to stay focused on authorization and metadata while S3 handles the bytes.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base contract and capability model this adapter implements.
+- [`storage-r2`](/docs/data-storage/storage-r2) if you want a similar S3-style workflow on Cloudflare.
+- [`files`](/docs/data-storage/files) if your public API needs upload-session or file-metadata concepts on top of raw object keys.
+
+## Troubleshooting
+
+If signed URLs work in one environment but not another, confirm the bucket region, credentials, and any custom endpoint or path-style settings match the target deployment. If multipart uploads fail, verify the client is returning part numbers and ETags in order before calling completion. When the rest of your code starts depending on S3-specific assumptions, move that logic back behind the shared storage boundary so another adapter can still be swapped in later.

@@ -1,0 +1,26 @@
+{
+  "user_alice:role_19bb1579af324cc704": {
+    "userId": "user_alice",
+    "roleId": "role_19bb1579af324cc704",
+    "resourceIds": null,
+    "expiresAt": null,
+    "assignedAt": 1768206867189
+  },
+  "user_bob:role_19bb1579af38f33ef9": {
+    "userId": "user_bob",
+    "roleId": "role_19bb1579af38f33ef9",
+    "resourceIds": [
+      "project_1",
+      "project_2"
+    ],
+    "expiresAt": null,
+    "assignedAt": 1768206867189
+  },
+  "user_charlie:role_19bb1579af4f94f22d": {
+    "userId": "user_charlie",
+    "roleId": "role_19bb1579af4f94f22d",
+    "resourceIds": null,
+    "expiresAt": null,
+    "assignedAt": 1768206867189
+  }
+}

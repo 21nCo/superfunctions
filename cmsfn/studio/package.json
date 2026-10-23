@@ -1,0 +1,67 @@
+{
+  "name": "@cmsfn/studio",
+  "version": "0.0.2",
+  "description": "cmsfn Studio — self-hosted CMS authoring UI (boot skeleton in this phase)",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cmsfn/studio"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cmsFn",
+    "schemaVersion": 1,
+    "namespace": "cmsfn"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "dependencies": {
+    "@mdfn/components-react": "0.1.0",
+    "@mdfn/core": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
+    "@mdfn/extensions": "0.1.0",
+    "cmsfn": "0.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@contentfn/core": "0.0.2",
+    "@cmsfn/server": "0.0.2",
+    "mdfn": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "jsdom": "^25.0.0",
+    "vitest": "^3.2.4"
+  }
+}

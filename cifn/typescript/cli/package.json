@@ -1,0 +1,40 @@
+{
+  "name": "@cifn/cli",
+  "version": "0.0.2",
+  "description": "CLI for CiFn",
+  "type": "module",
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cifn/typescript/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cifn",
+    "schemaVersion": 1,
+    "namespace": "cifn"
+  },
+  "bin": {
+    "cifn": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cifn/control-plane": "0.0.2",
+    "commander": "^11.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}

@@ -1,0 +1,953 @@
+{
+  "metadata": {
+    "research_date": "2026-10-23",
+    "connection_alias": "tron",
+    "connection_word_id": "notion_drake-chint",
+    "archive_parent_id": "3edc4524-d52e-814e-92dc-f7b1a29a7ff8",
+    "archive_parent_url": "https://www.notion.so/3edc4524d52e814e92dcf7b1a29a7ff8",
+    "repo_head": "523c66ae8",
+    "archive_days": 18,
+    "records": 15964,
+    "unique_post_urls": 15963,
+    "unique_nonempty_product_urls": 15747,
+    "functions": 37,
+    "additional_surfaces": [
+      "superconsole"
+    ],
+    "mapped_products": 81,
+    "official_pages_read": 19,
+    "official_pages_unavailable": 2,
+    "method": "Composio Notion title search and complete parent enumeration; full page markdown; all 18 attached JSON archives; attachment hashes/count checks; corpus-wide keyword screening across name/tagline/summary/tags followed by manual candidate selection and function mapping; targeted official-site checks; repository documentation and selected public contract inspection.",
+    "limits": [
+      "Archive coverage is 2026-10-02 through 2026-10-19, not current-day Product Hunt coverage.",
+      "15,964 records were mechanically screened; selected candidates and mappings were read and synthesized. This is not a manual deep read of every product.",
+      "Product descriptions, prices and performance claims remain archival unless a specific live-check note says otherwise. Official marketing claims are not independently benchmarked.",
+      "Repository baseline is documentation and selected public contract inspection at the local checkout, not a comprehensive implementation-gap audit or release/deployment verification.",
+      "Enhancements and priorities are proposals, not confirmed missing features or a delivery commitment.",
+      "One post URL, ChickyTutor, occurs on two archive days. Product page URLs can repeat across distinct launches."
+    ]
+  },
+  "archives": [
+    {
+      "day": "2026-10-02",
+      "captured_at": "2026-10-02T19:49:04.298Z",
+      "records": 763,
+      "sha256": "3fcd7a617ccb0a03a8fc7fae091607e2812669ce3ec2bd54d7afcdadedafb8fe",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "missingOfficialWebsiteUrl": 1,
+        "websiteOpenFailures": 6,
+        "duplicatePostUrls": 0,
+        "duplicateProductUrlsAcrossDistinctPosts": 1,
+        "notes": [
+          "Index 684 \"Health\": PH listing has no genuine official external link (Visit website resolves to an ad-network JS redirect host). Preserved with websiteUrl null and full caveat per skill; missing-URL gate exception documented.",
+          "Duplicate normalized product URL: /products/carpets-online appears under two distinct post slugs (carpets-online-107 at index 577 and carpets-online-108 at index 576) \u2014 two PH posts sharing one product page; both preserved as distinct launches.",
+          "Website open failures (5): indices 168 Bokful, 358 AI Suits, 552 Kinoify, 634 Adhkar Islamia, 757 Palytt \u2014 each retains its attempted official websiteUrl and an extraction note."
+        ]
+      },
+      "notion_page_id": "3edc4524-d52e-8111-8ed4-c79f4c6a18e1",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-02-2026-10-02T19-52-00Z-3edc4524d52e81118ed4c79f4c6a18e1",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/2/all (dated daily leaderboard, All filter; frozen list pulled via the page's own GraphQL homefeedItems pagination, 915 feed entries incl. 152 ad slots, 763 Post items)"
+    },
+    {
+      "day": "2026-10-03",
+      "captured_at": "2026-10-10T09:07:43.460Z",
+      "records": 723,
+      "sha256": "0c5d41035f138372004192ece7270cdd88846e9e4577852544e1af64cf0f7c01",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "missingOfficialWebsiteUrl": 0,
+        "websiteOpenFailures": 4,
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/shopuskart": [
+            538,
+            539
+          ],
+          "https://www.producthunt.com/products/carpets-online": [
+            655,
+            656
+          ]
+        }
+      },
+      "notion_page_id": "3f5c4524-d52e-81e8-b9d2-ffafc69be65f",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-03-2026-10-10T09-07-43-460Z-3f5c4524d52e81e8b9d2ffafc69be65f",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/3/all"
+    },
+    {
+      "day": "2026-10-04",
+      "captured_at": "2026-10-10T09:37:38.120Z",
+      "records": 593,
+      "sha256": "7f8ad563708c036357be512b7805ae724c5256f837061c28d18554f9a48b7eb5",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 593,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 6,
+        "websiteOpenFailureIndices": [
+          199,
+          208,
+          232,
+          446,
+          527,
+          552
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/zipprr": [
+            263,
+            593
+          ],
+          "https://www.producthunt.com/products/finitequest": [
+            439,
+            592
+          ]
+        },
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/finitequest', 'producthunt.com/products/zipprr']"
+        ]
+      },
+      "notion_page_id": "3f5c4524-d52e-8198-a750-e27e76116b3f",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-04-2026-10-10T09-37-38-120Z-3f5c4524d52e8198a750e27e76116b3f",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/4/all"
+    },
+    {
+      "day": "2026-10-05",
+      "captured_at": "2026-10-10T09:38:01.040Z",
+      "records": 831,
+      "sha256": "f5a89f70252ee6dae1b3ddd0fbcaa0edd1a3cf4939aef055cb2d79b3e01e31ed",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 831,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 16,
+        "websiteOpenFailureIndices": [
+          38,
+          135,
+          203,
+          255,
+          326,
+          470,
+          487,
+          562,
+          567,
+          595,
+          659,
+          739,
+          756,
+          760,
+          778,
+          779
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/finitequest": [
+            603,
+            736
+          ]
+        },
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/finitequest']"
+        ]
+      },
+      "notion_page_id": "3f5c4524-d52e-81cd-877c-c04f1d62ffbd",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-05-2026-10-10T09-38-01-040Z-3f5c4524d52e81cd877cc04f1d62ffbd",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/5/all"
+    },
+    {
+      "day": "2026-10-06",
+      "captured_at": "2026-10-10T09:41:35.582Z",
+      "records": 1293,
+      "sha256": "3237fd55a4e5c4f2305e9aee82cf7d8b5b800aef0b5aea0582bbbd0a48038780",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 1293,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 32,
+        "websiteOpenFailureIndices": [
+          38,
+          63,
+          95,
+          132,
+          199,
+          282,
+          421,
+          557,
+          591,
+          676,
+          697,
+          746,
+          767,
+          820,
+          823,
+          867,
+          925,
+          1000,
+          1009,
+          1082,
+          1106,
+          1109,
+          1110,
+          1114,
+          1126,
+          1196,
+          1203,
+          1209,
+          1238,
+          1253,
+          1275,
+          1276
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/finitequest": [
+            1105,
+            1293
+          ]
+        },
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/finitequest']"
+        ]
+      },
+      "notion_page_id": "3f5c4524-d52e-8166-a403-e1111e82d3fc",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-06-2026-10-10T09-41-35-582Z-3f5c4524d52e8166a403e1111e82d3fc",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/6/all"
+    },
+    {
+      "day": "2026-10-07",
+      "captured_at": "2026-10-10T09:40:04.193Z",
+      "records": 936,
+      "sha256": "1a0cb798d8e2415b94ced0cbb48e453891f3e705814359ded3c41dd40280e0d7",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 936,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 17,
+        "websiteOpenFailureIndices": [
+          94,
+          432,
+          481,
+          487,
+          515,
+          589,
+          642,
+          669,
+          683,
+          718,
+          723,
+          750,
+          848,
+          870,
+          899,
+          901,
+          915
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/finitequest": [
+            838,
+            839
+          ]
+        },
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/finitequest']"
+        ]
+      },
+      "notion_page_id": "3f5c4524-d52e-813c-8c31-de9e967ee238",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-07-2026-10-10T09-40-04-193Z-3f5c4524d52e813c8c31de9e967ee238",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/7/all"
+    },
+    {
+      "day": "2026-10-08",
+      "captured_at": "2026-10-10T09:40:31.245Z",
+      "records": 876,
+      "sha256": "54b0caf07c1d110b18863f4892aca2fe8c1ecdaf337f02d40054c6a4932b7727",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 876,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 19,
+        "websiteOpenFailureIndices": [
+          26,
+          58,
+          294,
+          330,
+          345,
+          403,
+          462,
+          513,
+          554,
+          595,
+          600,
+          602,
+          622,
+          632,
+          735,
+          780,
+          806,
+          841,
+          844
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {
+          "https://www.producthunt.com/products/carpets-online": [
+            721,
+            874
+          ],
+          "https://www.producthunt.com/products/finitequest": [
+            803,
+            875
+          ]
+        },
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/carpets-online', 'producthunt.com/products/finitequest']"
+        ]
+      },
+      "notion_page_id": "3f5c4524-d52e-81c9-8030-def12ea5b964",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-08-2026-10-10T09-40-31-245Z-3f5c4524d52e81c98030def12ea5b964",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/8/all"
+    },
+    {
+      "day": "2026-10-09",
+      "captured_at": "2026-10-10T09:40:56.456Z",
+      "records": 824,
+      "sha256": "112a4a9c3bbdb33eb6fb2d47457aa8e7918c4896f1738163dff8080faf10688e",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 824,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 20,
+        "websiteOpenFailureIndices": [
+          140,
+          164,
+          279,
+          283,
+          297,
+          449,
+          502,
+          506,
+          525,
+          538,
+          588,
+          647,
+          672,
+          693,
+          743,
+          756,
+          763,
+          775,
+          801,
+          822
+        ],
+        "duplicatePostUrls": 0,
+        "sharedProductUrlsAcrossDistinctPosts": {},
+        "warnings": []
+      },
+      "notion_page_id": "3f5c4524-d52e-81cf-a23e-c4f8c8b3dda2",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-09-2026-10-10T09-40-56-456Z-3f5c4524d52e81cfa23ec4f8c8b3dda2",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/9/all"
+    },
+    {
+      "day": "2026-10-10",
+      "captured_at": "2026-10-11T10:29:50.020Z",
+      "records": 832,
+      "sha256": "2c1f16b0796d91f8685779ebf7b55e59022d0a437b543792f623ccdf4c56dae2",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 832,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [],
+        "websiteOpenFailures": 8,
+        "websiteOpenFailureIndices": [
+          134,
+          270,
+          307,
+          309,
+          367,
+          437,
+          661,
+          792
+        ],
+        "duplicatePostUrls": 0,
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/2837675-12v-turbocharger-actuator-kit', 'producthunt.com/products/carpets-online']"
+        ]
+      },
+      "notion_page_id": "3f6c4524-d52e-817c-9f84-cd2d5d749c43",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-10-2026-10-11T10-29-50-020Z-3f6c4524d52e817c9f84cd2d5d749c43",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/10/all"
+    },
+    {
+      "day": "2026-10-11",
+      "captured_at": "2026-10-13T00:35:41.243Z",
+      "records": 615,
+      "sha256": "18bc4701d90ecf79839303689cc29183964dd982b76727245dad6a17a42dc20a",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "gatesPassed": true,
+        "validator": "scripts/validate.py",
+        "frozenListMatch": true,
+        "products": 615,
+        "missingOfficialWebsiteUrl": 0,
+        "missingWebsiteExceptionIndices": [
+          191,
+          377,
+          378,
+          384,
+          407,
+          460,
+          513,
+          514,
+          586
+        ],
+        "websiteOpenFailures": 7,
+        "websiteOpenFailureIndices": [
+          16,
+          60,
+          72,
+          198,
+          434,
+          508,
+          614
+        ],
+        "duplicatePostUrls": 0,
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/hp', 'producthunt.com/products/zipprr']"
+        ]
+      },
+      "notion_page_id": "3f8c4524-d52e-8106-bdff-dfd35737117f",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-11-2026-10-13T00-35-41-243Z-3f8c4524d52e8106bdffdfd35737117f",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/11/all"
+    },
+    {
+      "day": "2026-10-12",
+      "captured_at": "2026-10-14T01:24:00.000Z",
+      "records": 774,
+      "sha256": "6178904c581216d17c73cdb5c2ac14e9f4dddcb7d78dcfb38d354cdf2b8456f6",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-12",
+        "products": 774,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/ai-lead-generation-os', 'producthunt.com/products/autoblog-4', 'producthunt.com/products/carpets-online', 'producthunt.com/products/integral-showings', 'producthunt.com/products/myumrah-ug']"
+        ],
+        "websiteOpenFailures": 15,
+        "websiteOpenFailureIndices": [
+          71,
+          124,
+          191,
+          197,
+          200,
+          215,
+          222,
+          366,
+          423,
+          513,
+          530,
+          568,
+          624,
+          642,
+          706
+        ],
+        "missingWebsiteExceptions": [
+          416,
+          426,
+          456,
+          457,
+          458,
+          459,
+          460,
+          462,
+          464,
+          465,
+          466,
+          467,
+          468,
+          470,
+          471,
+          472,
+          473,
+          474,
+          475,
+          477,
+          563,
+          613,
+          691,
+          700,
+          710,
+          718,
+          719
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-12/frozen-list.json"
+      },
+      "notion_page_id": "3f9c4524-d52e-8193-b009-f9da64931ee6",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-12-2026-10-14T01-24-00-000Z-3f9c4524d52e8193b009f9da64931ee6",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/12/all"
+    },
+    {
+      "day": "2026-10-13",
+      "captured_at": "2026-10-15T01:23:42.265Z",
+      "records": 1298,
+      "sha256": "1c68680e6b5d7ec0c5aa76e6f4813630732635f315dfe8c26d5b9805353f783e",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-13",
+        "products": 1298,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/developer-on-wheels', 'producthunt.com/products/tinypomo']"
+        ],
+        "websiteOpenFailures": 19,
+        "websiteOpenFailureIndices": [
+          27,
+          78,
+          93,
+          192,
+          266,
+          292,
+          346,
+          360,
+          479,
+          731,
+          750,
+          807,
+          878,
+          921,
+          954,
+          1047,
+          1059,
+          1252,
+          1292
+        ],
+        "missingWebsiteExceptions": [
+          305,
+          460,
+          725,
+          727,
+          729,
+          834,
+          836,
+          838,
+          839,
+          841,
+          842,
+          843,
+          845,
+          847,
+          849,
+          851,
+          852,
+          854,
+          855,
+          856,
+          857,
+          859,
+          860,
+          866,
+          875,
+          946,
+          1146,
+          1185
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-13/frozen-list.json"
+      },
+      "notion_page_id": "3fac4524-d52e-81ce-b50f-f3078e0d64b6",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-13-2026-10-15T01-23-42-265Z-3fac4524d52e81ceb50ff3078e0d64b6",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/13/all"
+    },
+    {
+      "day": "2026-10-14",
+      "captured_at": "2026-10-16T00:34:40.769Z",
+      "records": 1072,
+      "sha256": "aee7b0b89965a863a39f63f985100316115d8ca04e89846abeb392d90ab1a17c",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-14",
+        "products": 1072,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/mct-retail-os', 'producthunt.com/products/tilltech-uk-with-nearbies']"
+        ],
+        "websiteOpenFailures": 10,
+        "websiteOpenFailureIndices": [
+          201,
+          209,
+          225,
+          574,
+          725,
+          733,
+          785,
+          874,
+          910,
+          939
+        ],
+        "missingWebsiteExceptions": [
+          185,
+          357,
+          404,
+          506,
+          595,
+          600,
+          1042
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-14/frozen-list.json"
+      },
+      "notion_page_id": "3fbc4524-d52e-817e-8f62-f723675958b5",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-14-2026-10-16T00-34-40-769Z-3fbc4524d52e817e8f62f723675958b5",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/14/all"
+    },
+    {
+      "day": "2026-10-15",
+      "captured_at": "2026-10-18T00:34:47.013Z",
+      "records": 1300,
+      "sha256": "f7ac121bad15362113aa80293fe501afa2d2eaf06d8c9efc35e2f6d1f8356090",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-15",
+        "products": 1300,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/gift-card-2256', 'producthunt.com/products/multimodal-ai-explained', 'producthunt.com/products/toolaska', 'producthunt.com/products/trip-with-the-best-mumbai-to-barcelona']"
+        ],
+        "websiteOpenFailures": 18,
+        "websiteOpenFailureIndices": [
+          66,
+          107,
+          275,
+          384,
+          444,
+          515,
+          623,
+          650,
+          710,
+          883,
+          896,
+          915,
+          998,
+          1102,
+          1138,
+          1152,
+          1188,
+          1283
+        ],
+        "missingWebsiteExceptions": [
+          747,
+          749,
+          782,
+          783,
+          785,
+          786,
+          787,
+          789,
+          791,
+          793,
+          794,
+          796,
+          797,
+          799,
+          800,
+          801,
+          802,
+          803,
+          804,
+          805,
+          834,
+          847,
+          913,
+          1021,
+          1026,
+          1166,
+          1230,
+          1290
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-15/frozen-list.json"
+      },
+      "notion_page_id": "3fdc4524-d52e-81ab-b830-d9ad7f2b03f6",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-15-2026-10-18T00-34-47-013Z-3fdc4524d52e81abb830d9ad7f2b03f6",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/15/all"
+    },
+    {
+      "day": "2026-10-16",
+      "captured_at": "2026-10-18T01:30:18.568Z",
+      "records": 884,
+      "sha256": "a8b18544f5048eab9acdafa92eb72224e352c84d27e0f1325cf53fc97fc57e9a",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-16",
+        "products": 884,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/life-scheduler', 'producthunt.com/products/nvidia', 'producthunt.com/products/toolaska']"
+        ],
+        "websiteOpenFailures": 16,
+        "websiteOpenFailureIndices": [
+          30,
+          192,
+          252,
+          305,
+          350,
+          459,
+          479,
+          482,
+          526,
+          540,
+          565,
+          606,
+          715,
+          748,
+          852,
+          859
+        ],
+        "missingWebsiteExceptions": [
+          157,
+          392,
+          492,
+          495,
+          496,
+          497,
+          498,
+          499,
+          500,
+          501,
+          504,
+          505,
+          506,
+          507,
+          510,
+          511,
+          512,
+          513,
+          514,
+          515,
+          533,
+          631,
+          638,
+          802,
+          864
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-16/frozen-list.json"
+      },
+      "notion_page_id": "3fdc4524-d52e-81ee-b14c-e8ad4d01916b",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-16-2026-10-18T01-30-18-568Z-3fdc4524d52e81eeb14ce8ad4d01916b",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/16/all"
+    },
+    {
+      "day": "2026-10-17",
+      "captured_at": "2026-10-19T00:33:14.205Z",
+      "records": 811,
+      "sha256": "de49d16219408a91e3380324b9d96ade20460acc04565845b6b580df90296643",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-17",
+        "products": 811,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/toolaska', 'producthunt.com/products/united-auto-film']"
+        ],
+        "websiteOpenFailures": 17,
+        "websiteOpenFailureIndices": [
+          56,
+          61,
+          76,
+          159,
+          206,
+          208,
+          412,
+          563,
+          582,
+          597,
+          608,
+          674,
+          734,
+          743,
+          770,
+          771,
+          803
+        ],
+        "missingWebsiteExceptions": [
+          490,
+          491,
+          492,
+          493,
+          494,
+          495,
+          498,
+          499,
+          500,
+          501,
+          502,
+          507,
+          508,
+          509,
+          510,
+          512,
+          514,
+          515,
+          566,
+          628
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-17/frozen-list.json"
+      },
+      "notion_page_id": "3fec4524-d52e-8132-98b0-de289a8b553d",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-17-2026-10-19T00-33-14-205Z-3fec4524d52e813298b0de289a8b553d",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/17/all"
+    },
+    {
+      "day": "2026-10-18",
+      "captured_at": "2026-10-20T00:33:34.962Z",
+      "records": 672,
+      "sha256": "d6cc543726fb98ed3e6cdd97ae2e97735375b2b97212a85033e6c06432bb16b0",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-18",
+        "products": 672,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/toolaska', 'producthunt.com/products/zipprr']"
+        ],
+        "websiteOpenFailures": 16,
+        "websiteOpenFailureIndices": [
+          6,
+          87,
+          120,
+          131,
+          194,
+          250,
+          259,
+          358,
+          413,
+          446,
+          474,
+          499,
+          508,
+          551,
+          565,
+          600
+        ],
+        "missingWebsiteExceptions": [
+          113,
+          133,
+          353,
+          368,
+          369,
+          370,
+          372,
+          374,
+          375,
+          376,
+          377,
+          378,
+          380,
+          381,
+          383,
+          384,
+          386,
+          387,
+          388,
+          389,
+          492,
+          557,
+          590
+        ],
+        "validator": "scripts/validate.py (skill v1.1.1) --frozen tmp/2026-10-18/frozen-list.json"
+      },
+      "notion_page_id": "3ffc4524-d52e-81e8-8a54-e7f7bb5944ac",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-18-2026-10-20T00-33-34-962Z-3ffc4524d52e81e88a54e7f7bb5944ac",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/18/all"
+    },
+    {
+      "day": "2026-10-19",
+      "captured_at": "2026-10-21T00:33:05.555Z",
+      "records": 867,
+      "sha256": "ee1fe1b06bbbb6b1a1a1877f6a8c56776149a1b128b2f70e4203310c1b440d63",
+      "checksum_matches_notion": true,
+      "archive_validation": {
+        "productHuntDay": "2026-10-19",
+        "products": 867,
+        "passed": true,
+        "failures": [],
+        "warnings": [
+          "distinct posts sharing one product URL (allowed, verify): ['producthunt.com/products/ybk-enterprise-ai-asset-governance']"
+        ],
+        "websiteOpenFailures": 14,
+        "websiteOpenFailureIndices": [
+          54,
+          153,
+          155,
+          168,
+          213,
+          326,
+          537,
+          691,
+          756,
+          780,
+          801,
+          810,
+          814,
+          854
+        ],
+        "missingWebsiteExceptions": [
+          539,
+          540,
+          541,
+          543,
+          544,
+          546,
+          550,
+          554,
+          555,
+          556,
+          558,
+          561,
+          562,
+          563,
+          564,
+          565,
+          566,
+          685,
+          779
+        ]
+      },
+      "notion_page_id": "400c4524-d52e-818e-81ca-e64fdb03aab0",
+      "notion_url": "https://app.notion.com/p/Product-Hunt-2026-10-19-2026-10-21T00-33-05-555Z-400c4524d52e818e81cae64fdb03aab0",
+      "source": "https://www.producthunt.com/leaderboard/daily/2026/10/19/all"
+    }
+  ]
+}

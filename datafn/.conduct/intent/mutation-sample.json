@@ -1,0 +1,264 @@
+[
+  {
+    "resource": "accessLog",
+    "version": 1,
+    "mutationId": "m-0001",
+    "clientId": "client:device-1",
+    "timestamp": "2026-01-17T00:00:00Z",
+    "context": { "source": "seed" },
+    "operation": "insert",
+    "id": "accessLog:some-id",
+    "record": {
+      "createdAt": "2021-01-01",
+      "updatedAt": "2021-01-01"
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "insert",
+    "records": [
+      {
+        "id": "node:id-1",
+        "type": "markdown",
+        "createdAt": "2021-01-01",
+        "updatedAt": "2021-01-01"
+      },
+      {
+        "id": "node:id-2",
+        "type": "html",
+        "createdAt": "2021-01-01",
+        "updatedAt": "2021-01-01"
+      },
+      {
+        "id": "node:id-3",
+        "type": "markdown",
+        "createdAt": "2021-01-01",
+        "updatedAt": "2021-01-01"
+      }
+    ]
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "merge",
+    "id": "node:some-id",
+    "if": { "updatedAt": { "eq": "2021-01-01" } },
+    "record": {
+      "notes": "some modified notes",
+      "updatedAt": "2021-01-01"
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "replace",
+    "id": "node:some-id",
+    "record": {
+      "id": "node:some-id",
+      "type": "markdown",
+      "label": "New label after replace",
+      "text": "New full text after replace",
+      "updatedAt": "2021-01-02"
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "merge",
+    "id": ["node:id-1", "node:id-2", "node:id-3"],
+    "record": {
+      "notes": "some modified notes",
+      "updatedAt": "2021-01-01"
+    }
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "operation": "delete",
+    "id": "goal:some-id",
+    "cascade": { "tasks": "delete", "children": "delete" }
+  },
+  {
+    "resource": "goal",
+    "version": 1,
+    "operation": "delete",
+    "id": ["goal:id-1", "goal:id-2", "goal:id-3"],
+    "cascade": { "tasks": "delete", "children": "unrelate" }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "parent": {
+        "$ref": "node:to-id"
+      }
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "parent": "node:to-id"
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "property": {
+        "$ref": "property:prop-id-1",
+        "value": "value-1",
+        "createdAt": "2021-01-01",
+        "updatedAt": "2021-01-01"
+      }
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "property": {
+        "$ref": ["property:prop-id-2", "property:prop-id-3"],
+        "value": "value",
+        "createdAt": "2021-01-01",
+        "updatedAt": "2021-01-01"
+      }
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "property": [
+        {
+          "$ref": "property:prop-id-1",
+          "value": "value-1",
+          "createdAt": "2021-01-01",
+          "updatedAt": "2021-01-01"
+        },
+        {
+          "$ref": ["property:prop-id-2", "property:prop-id-3"],
+          "value": "value",
+          "createdAt": "2021-01-01",
+          "updatedAt": "2021-01-01"
+        }
+      ]
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "modifyRelation",
+    "id": "node:some-id",
+    "relations": {
+      "links": {
+        "$ref": ["node:id-1", "node:id-2"],
+        "op": "mergeMeta",
+        "where": { "linkType": "direct" },
+        "linkType": "other-link-type"
+      },
+      "property": {
+        "$ref": "property:prop-id",
+        "value": "new-value"
+      }
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "relate",
+    "id": "node:some-id",
+    "relations": {
+      "links": [
+        {
+          "$ref": "node:id-x",
+          "linkTag": "tag-x"
+        }
+      ],
+      "collection": ["collection:col-1"],
+      "property": [
+        {
+          "$ref": "property:prop-id",
+          "value": "prop-value"
+        }
+      ]
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "modifyRelation",
+    "id": "node:some-id",
+    "relations": {
+      "links": [
+        {
+          "$ref": "node:id-1",
+          "linkType": "other-link-type"
+        }
+      ]
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "modifyRelation",
+    "id": "node:some-id",
+    "relations": {
+      "links": [
+        {
+          "$ref": "node:id-1",
+          "linkType": "other-link-type"
+        },
+        {
+          "$ref": "node:id-2",
+          "linkType": "other-link-type"
+        }
+      ]
+    }
+  },
+  {
+    "resource": "node",
+    "version": 1,
+    "operation": "modifyRelation",
+    "id": "node:some-id",
+    "relations": {
+      "links": {
+        "$ref": ["node:id-1", "node:id-2"],
+        "linkType": "other-link-type"
+      },
+      "property": {
+        "$ref": "property:prop-id",
+        "value": "new-value"
+      }
+    }
+  },
+  {
+    "resource": "task",
+    "version": 1,
+    "operation": "unrelate",
+    "id": "task:some-id",
+    "relations": {
+      "goal": { "$ref": "goal:some-parent-id" }
+    }
+  },
+  {
+    "resource": "task",
+    "version": 1,
+    "operation": "unrelate",
+    "id": "task:some-id",
+    "relations": {
+      "goal": "goal:some-parent-id"
+    }
+  }
+]

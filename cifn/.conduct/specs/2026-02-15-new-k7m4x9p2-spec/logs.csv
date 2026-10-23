@@ -1,0 +1,6 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-15T19:45:00Z,Claude Sonnet 4.5,Cursor,spec,unknown-agent,,cifn/.conduct/specs/2026-02-15-new-k7m4x9p2-spec
+2026-02-15T17:49:30Z,unknown,Cursor,execute,unknown-agent,PHASE_00,cifn/.conduct/specs/2026-02-15-new-k7m4x9p2-spec/phase-reports/PHASE_00-2026-02-15-ph00a1b2c3-report.md
+2026-02-15T18:15:00Z,unknown,Cursor,execute,unknown-agent,PHASE_01,cifn/.conduct/specs/2026-02-15-new-k7m4x9p2-spec/phase-reports/PHASE_01-2026-02-15-p1b3c9x7-report.md
+2026-02-15T18:45:00Z,unknown,Cursor,execute,unknown-agent,PHASE_02,cifn/.conduct/specs/2026-02-15-new-k7m4x9p2-spec/phase-reports/PHASE_02-2026-02-15-p2x9k4m7-report.md
+2026-02-15T19:10:00Z,unknown,Cursor,execute,unknown-agent,PHASE_03,cifn/.conduct/specs/2026-02-15-new-k7m4x9p2-spec/phase-reports/PHASE_03-2026-02-15-p3k9m2x7-report.md

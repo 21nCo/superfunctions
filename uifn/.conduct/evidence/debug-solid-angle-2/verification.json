@@ -1,0 +1,258 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7593,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Angle Slider",
+      "bodyLength": 3007,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "track": 1,
+          "thumb": 1,
+          "valueText": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 2,
+      "behavior": {
+        "action": "angle-slider-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "angle-slider",
+          "part": "thumb",
+          "id": "angle-slider-thumb-angle-slider-uifn-cl-0-thumb"
+        },
+        "accessibleName": "Angle",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "0"
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "1"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 151.609375,
+          "y": 500.171875,
+          "width": 86.78125,
+          "height": 180.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 778,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 3,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "medium",
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "code": "UIFN_CATALOG_RUNTIME_CONSOLE_ERROR",
+      "evidence": [
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec."
+      ]
+    },
+    {
+      "severity": "medium",
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "code": "UIFN_CATALOG_RUNTIME_CONSOLE_ERROR",
+      "evidence": [
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec."
+      ]
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "medium",
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "code": "UIFN_CATALOG_RUNTIME_CONSOLE_ERROR",
+      "evidence": [
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec."
+      ]
+    },
+    {
+      "severity": "medium",
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "code": "UIFN_CATALOG_RUNTIME_CONSOLE_ERROR",
+      "evidence": [
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+        "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec."
+      ]
+    }
+  ],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/debug-solid-angle-2"
+}

@@ -1,0 +1,23 @@
+{
+  "global": {
+    "key": "global",
+    "count": 1,
+    "resetAt": 1768206927190,
+    "blocked": false,
+    "blockedUntil": null
+  },
+  "user:user_alice": {
+    "key": "user:user_alice",
+    "count": 1,
+    "resetAt": 1768206927190,
+    "blocked": false,
+    "blockedUntil": null
+  },
+  "ip:192.168.1.1": {
+    "key": "ip:192.168.1.1",
+    "count": 1,
+    "resetAt": 1768206927190,
+    "blocked": false,
+    "blockedUntil": null
+  }
+}

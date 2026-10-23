@@ -1,0 +1,96 @@
+---
+title: Storage Local
+description: Use the local filesystem as a storage adapter for development, tests, and single-host deployments.
+---
+
+`@superfunctions/storage-local` adapts the shared storage contract to the local filesystem. It is the simplest way to use the same object-storage interface in local development, test suites, CLIs, and single-host tools without bringing in a cloud provider. That makes it especially useful when you want application code to depend on `StorageAdapter` from day one, but you are not ready to wire AWS, Cloudflare, Google Cloud, or Azure into every local workflow.
+
+The local adapter differs from the cloud-oriented providers in one important way: it exposes streaming upload and download, but it does not provide signed upload URLs, signed download URLs, or multipart uploads. That makes it a great fit for server-mediated development flows and automated tests, but not for browser-direct upload patterns that require presigned links.
+
+## What It Is
+
+`@superfunctions/storage-local` exports `createLocalStorageAdapter()`. You configure it with a `rootDir`, and the adapter exposes object-stat, deletion, upload-stream, and download-stream behavior behind the shared `StorageAdapter` contract.
+
+The adapter also performs path-safety checks. It validates keys, blocks absolute paths, prevents traversal attempts, and guards against symlink escapes outside the configured root. That safety model is part of why it is useful as a serious local adapter instead of only a quick demo helper.
+
+## When To Use It
+
+Choose this adapter when you need the storage contract in tests, local developer environments, or internal tools that run on one host and can stream bytes through the application itself. It is also a good fit when you want to prototype the storage boundary before deciding which cloud provider to adopt in production.
+
+Use this chooser when you are selecting a provider:
+
+| If your priority is... | Choose |
+| --- | --- |
+| Fast local development and tests with no cloud dependency | `storage-local` |
+| Self-hosted S3-compatible behavior | [`storage-minio`](/docs/data-storage/storage-minio) |
+| Browser-direct cloud uploads with signed URLs | [`storage-s3`](/docs/data-storage/storage-s3) or [`storage-r2`](/docs/data-storage/storage-r2) |
+| Managed cloud storage with service credentials | [`storage-gcs`](/docs/data-storage/storage-gcs) or [`storage-azure`](/docs/data-storage/storage-azure) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-local
+```
+
+## Quick Start
+
+Create the adapter with a directory that the application owns.
+
+```ts
+import { createLocalStorageAdapter } from "@superfunctions/storage-local";
+
+export const storage = createLocalStorageAdapter({
+  rootDir: "./tmp/uploads",
+});
+```
+
+The adapter is especially useful when you want a stream-based local workflow.
+
+```ts
+import { createLocalStorageAdapter } from "@superfunctions/storage-local";
+
+const storage = createLocalStorageAdapter({
+  rootDir: "./tmp/uploads",
+});
+
+const stream = await storage.openUploadStream?.({
+  key: "reports/daily.json",
+  contentType: "application/json",
+});
+```
+
+## Core Concepts
+
+The first concept is capability difference. This adapter is intentionally stream-first, not signed-URL-first. If your application depends on browser-direct uploads or presigned downloads, use a cloud adapter in production and treat local storage as a development substitute only where that tradeoff is acceptable.
+
+The second concept is path safety. The adapter validates keys, rejects traversal, and keeps file access inside the configured root directory. That helps local usage stay predictable and avoids turning the storage boundary into a raw filesystem escape hatch.
+
+The third concept is portability. If your app depends on `StorageAdapter`, you can start with local storage in tests or early development and later replace only the adapter wiring when production needs a cloud backend.
+
+## Real-World Example
+
+A practical outside-world example is a desktop-style admin tool or internal service that generates exports on the server and stores them in a local working directory before returning them through a download route. The service can use the same storage-facing API it would use elsewhere, but without introducing cloud infrastructure.
+
+```ts
+import { createLocalStorageAdapter } from "@superfunctions/storage-local";
+
+const storage = createLocalStorageAdapter({
+  rootDir: "./var/generated-exports",
+});
+
+export async function openExport(key: string) {
+  return storage.openDownloadStream?.({ key });
+}
+```
+
+That same service can later move to a cloud adapter if requirements change, because the application code already depends on the shared contract.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base contract and capability model.
+- [`storage-minio`](/docs/data-storage/storage-minio) if you want a more production-like local environment with S3-compatible behavior.
+- [`files`](/docs/data-storage/files) if you want file-session or file-metadata concepts layered above local object storage.
+
+## Troubleshooting
+
+If uploads fail locally, verify the configured `rootDir` is writable by the running process. If a key is rejected, check for traversal attempts, absolute paths, or forbidden characters in the generated path. When local development uses this adapter but production uses a signed-URL provider, keep your service logic capability-aware so the transport method can change without rewriting the workflow itself.

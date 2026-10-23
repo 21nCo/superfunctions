@@ -1,0 +1,16 @@
+{
+  "title": "Reference",
+  "pages": [
+    "client",
+    "server",
+    "swift",
+    "python",
+    "adapters",
+    "configuration",
+    "capabilities",
+    "envelopes",
+    "errors",
+    "events",
+    "changelog"
+  ]
+}

@@ -1,0 +1,467 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_16",
+  "vector": "TV-GEN-001-P",
+  "status": "passed",
+  "tarballs": {
+    "@uifn/core": {
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "10152e19d974347ee260a410aefe813828cd3dcecfa8591588b94d6432a9d60f",
+      "fileCount": 135
+    },
+    "@uifn/dom": {
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148",
+      "fileCount": 9
+    },
+    "@uifn/adapter-kit": {
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a",
+      "fileCount": 6
+    },
+    "@uifn/tokens": {
+      "filename": "uifn-tokens-0.0.1.tgz",
+      "sha256": "c011ee2d5ef4276800c3f0a06942a7e3136437885f5c0b43c3ab183f0680a3b6",
+      "fileCount": 6
+    },
+    "@uifn/theme": {
+      "filename": "uifn-theme-0.0.1.tgz",
+      "sha256": "81a83ff3569b7e1e1c1862d67371cb295ba83828ff06cfe6f6c835a68a4020d7",
+      "fileCount": 6
+    },
+    "@uifn/recipes": {
+      "filename": "uifn-recipes-0.0.1.tgz",
+      "sha256": "33a3477be240a03b6d79e65c3c42e135ca03c04a2406f00353c093cd393f5d24",
+      "fileCount": 6
+    },
+    "@uifn/components": {
+      "filename": "uifn-components-0.0.1.tgz",
+      "sha256": "e70ca898166018567f064b26fa5f8d08f311109d795355b8f76726a505d15817",
+      "fileCount": 7
+    },
+    "@uifn/react": {
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "df2bb66edd34aff6876e71552bb2becbe6387775bcbac7417b0dca1cecbfeef7",
+      "fileCount": 701
+    },
+    "@uifn/components-react": {
+      "filename": "uifn-components-react-0.0.1.tgz",
+      "sha256": "e48332643d1404d47b16a5c6b1ac22890aea051ec8d4bfcf420a0cf38ba2aa50",
+      "fileCount": 311
+    },
+    "@uifn/svelte": {
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9",
+      "fileCount": 1656
+    },
+    "@uifn/components-svelte": {
+      "filename": "uifn-components-svelte-0.0.1.tgz",
+      "sha256": "e7c65cc0df4bdf352707c47cbb82a3aa0ddefa04ad1f876e8421e9227ee8f887",
+      "fileCount": 964
+    },
+    "@uifn/solid": {
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0",
+      "fileCount": 275
+    },
+    "@uifn/components-solid": {
+      "filename": "uifn-components-solid-0.0.1.tgz",
+      "sha256": "533e904676737e982a9b13e5851934d7dfecdd3c486181b4ec84bc91a56934fa",
+      "fileCount": 311
+    },
+    "@uifn/registry": {
+      "filename": "uifn-registry-0.0.1.tgz",
+      "sha256": "4e308083373a625a05c013d87c5948c83c516eae909d9fc3afbfc9fcca4a9e57",
+      "fileCount": 8
+    }
+  },
+  "consumers": [
+    {
+      "framework": "react",
+      "mode": "package",
+      "status": "passed",
+      "packageLockSha256": "0bdca9f72470dbf9fe816c2dd34d9e60d92af8fda78ab6006e11a91e30fac224",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "be97cf51694b4a3f12c88832c7ce74ad6b27373e7d1f71bfb2f083c0ca0d9aa0",
+        "bytes": 240
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": null
+    },
+    {
+      "framework": "react",
+      "mode": "source",
+      "status": "passed",
+      "packageLockSha256": "1a467ec638b95b2649740d86cc8c503fc39dc0ae7340933fd57e1e11792235ea",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "be97cf51694b4a3f12c88832c7ce74ad6b27373e7d1f71bfb2f083c0ca0d9aa0",
+        "bytes": 240
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": {
+        "beforeSha256": "1cf403d925015402c71a1b892f69d00e04eb53e0248efa9f22bf09094bf309ae",
+        "afterSha256": "d1c484bff62ff423c2fb119c565b2bcde2cc1f158259f7a984de51ea4f001f29",
+        "written": [
+          "components/uifn/react/button.ts",
+          "package.json"
+        ],
+        "lock": {
+          "schemaVersion": 2,
+          "catalogSha256": "f3efae51b95d1aaa1f7b9cc195a64519b68b6784a2da60ca6c327b26db2d1868",
+          "signatureKeyId": "d5e16295e5e7a35bc1e2ed39",
+          "canonicalVersion": "1.0.0",
+          "generatorVersion": "16.0.0",
+          "provenance": {
+            "source": "uifn/catalog/generated/anatomy-types.json",
+            "sourcePolicy": "clean-room",
+            "definitionSha256": "3551faf58e62adf4495d0e1e5b124bab4ddd9f9b21db99f27aa901204a8e726a",
+            "generatorSha256": "df7d5b101209a737e02008a235e39d18b2b5b69454921ce9c97b9c103066606c",
+            "templateSha256": "7d043929d8934bc3654c61b8eb3bb87cc54a1be7a4f750fa403875bf71f35288"
+          }
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "mode": "package",
+      "status": "passed",
+      "packageLockSha256": "586837a9b1ff2d138a429b8ad3c8df71ff4e7c8bc2a0198f832c0ed6a46eb15f",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "37197070b5e83eddc92490aef74b4d4ce2eb2409a888c60316c7b7647c01086b",
+        "bytes": 356
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": null
+    },
+    {
+      "framework": "svelte",
+      "mode": "source",
+      "status": "passed",
+      "packageLockSha256": "610a2ba52b559e846d146b8d6b23804661c28341082e83ccea4576c9655ee0c3",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "37197070b5e83eddc92490aef74b4d4ce2eb2409a888c60316c7b7647c01086b",
+        "bytes": 356
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": {
+        "beforeSha256": "2699b47f2eceb8646ab88da95b0cf3f88e63a3a707c0acc17cb2fa1ffc855f74",
+        "afterSha256": "2c4dac669f7f87b09c61720bdd64a5bff25f85256cbabc3465659bddd7cbdfb6",
+        "written": [
+          "components/uifn/svelte/button/ButtonIcon.svelte",
+          "components/uifn/svelte/button/ButtonLabel.svelte",
+          "components/uifn/svelte/button/ButtonRoot.svelte",
+          "components/uifn/svelte/button/ButtonSpinner.svelte",
+          "components/uifn/svelte/button/index.ts",
+          "package.json"
+        ],
+        "lock": {
+          "schemaVersion": 2,
+          "catalogSha256": "f3efae51b95d1aaa1f7b9cc195a64519b68b6784a2da60ca6c327b26db2d1868",
+          "signatureKeyId": "d5e16295e5e7a35bc1e2ed39",
+          "canonicalVersion": "1.0.0",
+          "generatorVersion": "16.0.0",
+          "provenance": {
+            "source": "uifn/catalog/generated/anatomy-types.json",
+            "sourcePolicy": "clean-room",
+            "definitionSha256": "3551faf58e62adf4495d0e1e5b124bab4ddd9f9b21db99f27aa901204a8e726a",
+            "generatorSha256": "df7d5b101209a737e02008a235e39d18b2b5b69454921ce9c97b9c103066606c",
+            "templateSha256": "422b156ea2af7b8f779530618ab666b7167dbaab2a0feeee23769d1a3ef6892b"
+          }
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "mode": "package",
+      "status": "passed",
+      "packageLockSha256": "546fd7b3f3f83efbcd8f2da6f243e990eff385d9dffb34ad1750339a81518cbd",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "e52947952422d2230ec61e9f52cf6f6010de994dbb3199ade808ddc13a02a78c",
+        "bytes": 266
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": null
+    },
+    {
+      "framework": "solid",
+      "mode": "source",
+      "status": "passed",
+      "packageLockSha256": "899de8e3aed4cd69489b9ee2a807ebd25a272215e87e0298029f124c28d377ab",
+      "typecheck": {
+        "status": "passed",
+        "command": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "output": "dist"
+      },
+      "ssr": {
+        "status": "passed",
+        "sha256": "e52947952422d2230ec61e9f52cf6f6010de994dbb3199ade808ddc13a02a78c",
+        "bytes": 266
+      },
+      "hydration": {
+        "status": "passed",
+        "errors": []
+      },
+      "browser": {
+        "status": "passed",
+        "trace": {
+          "tag": "button",
+          "component": "button",
+          "part": "root",
+          "role": null,
+          "ariaLabel": "Delivery action",
+          "className": "uifn-button uifn-button__root",
+          "text": "Action",
+          "disabled": false
+        }
+      },
+      "accessibility": {
+        "status": "passed",
+        "seriousCritical": []
+      },
+      "sourceInstall": {
+        "beforeSha256": "0788d4b817ac852718d5e4cd21d98724df6f1a814c77e1a063b038378cf7d598",
+        "afterSha256": "d826aa8cca633a87e6f8bcae47ff7213dda3a234eb0f2ec00e6479808fb22645",
+        "written": [
+          "components/uifn/solid/button.ts",
+          "package.json"
+        ],
+        "lock": {
+          "schemaVersion": 2,
+          "catalogSha256": "f3efae51b95d1aaa1f7b9cc195a64519b68b6784a2da60ca6c327b26db2d1868",
+          "signatureKeyId": "d5e16295e5e7a35bc1e2ed39",
+          "canonicalVersion": "1.0.0",
+          "generatorVersion": "16.0.0",
+          "provenance": {
+            "source": "uifn/catalog/generated/anatomy-types.json",
+            "sourcePolicy": "clean-room",
+            "definitionSha256": "3551faf58e62adf4495d0e1e5b124bab4ddd9f9b21db99f27aa901204a8e726a",
+            "generatorSha256": "df7d5b101209a737e02008a235e39d18b2b5b69454921ce9c97b9c103066606c",
+            "templateSha256": "b96b0e44fc1ba9b083ef7564ffaa34adda26f039ba18e6e2193b83066b03e42a"
+          }
+        }
+      }
+    }
+  ],
+  "equivalence": [
+    {
+      "framework": "react",
+      "equivalent": true,
+      "packageTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      },
+      "sourceTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      }
+    },
+    {
+      "framework": "svelte",
+      "equivalent": true,
+      "packageTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      },
+      "sourceTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      }
+    },
+    {
+      "framework": "solid",
+      "equivalent": true,
+      "packageTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      },
+      "sourceTrace": {
+        "tag": "button",
+        "component": "button",
+        "part": "root",
+        "role": null,
+        "ariaLabel": "Delivery action",
+        "className": "uifn-button uifn-button__root",
+        "text": "Action",
+        "disabled": false
+      }
+    }
+  ]
+}

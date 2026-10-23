@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "uifn-release-evidence.schema.json",
+  "title": "uifn Release Gate Evidence",
+  "type": "object",
+  "required": ["ok", "command", "schemaVersion", "mode", "checks", "failures", "summary", "coverage"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "command": { "const": "verify:uifn-release" },
+    "schemaVersion": { "const": 1 },
+    "mode": {
+      "type": "string",
+      "enum": ["dry-run", "full"]
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "uifn-release-check.schema.json" }
+    },
+    "failures": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "blockingFailures"],
+      "properties": {
+        "total": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "blockingFailures": { "type": "integer" }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["packages", "frameworks", "checks", "storyMatrix"],
+      "properties": {
+        "packages": { "type": "array", "items": { "type": "string" } },
+        "frameworks": { "type": "array", "items": { "type": "string" } },
+        "checks": { "type": "array", "items": { "type": "string" } },
+        "storyMatrix": { "type": "object" }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+---
+title: Rate Limiting
+description: SecFn wraps shared middleware algorithms with security-aware keys and audit events.
+---
+
+SecFn does not implement a second production rate-limit algorithm. It delegates fixed-window, sliding-window, token-bucket, and persistence behavior to `@superfunctions/middleware/rate-limit`.
+
+SecFn adds semantic keys:
+
+- `ip:${ip}`
+- `user:${userId}`
+- `endpoint:${endpoint}:ip:${ip}`
+
+Checks run in deterministic order: IP, user, endpoint. Denials emit `rate_limit_exceeded` audit events and can be mirrored to a compatible logger.
+
+```ts
+const secfn = createSecFnServer({
+  db,
+  encryption: { masterKey: process.env.SECFN_MASTER_KEY! },
+  rateLimit: {
+    enabled: true,
+    windowMs: 60_000,
+    algorithm: "token-bucket",
+    persistence: redisKvStore,
+    limits: {
+      perIP: 120,
+      perUser: 300,
+      perEndpoint: 60,
+    },
+  },
+});
+```
+
+Use shared middleware persistence and SecFn key prefixes such as `secfn:ratelimit:`. SecFn does not add a separate persistent rate-limit table.

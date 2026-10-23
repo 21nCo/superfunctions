@@ -1,0 +1,103 @@
+---
+title: CLI
+description: Initialize config and run schema-management workflows for Superfunctions libraries from the command line.
+---
+
+`@superfunctions/cli` is the package for teams that want a command-line entry point into schema-related Superfunctions workflows. It helps you define project configuration, validate that configuration, and run generation commands without baking those steps into custom scripts for every application. For external users, the value is consistency: one package exposes a common config shape and a small set of commands for projects that build on the shared database tooling.
+
+The CLI is especially relevant when your codebase includes libraries that expose schema information or rely on database-backed installation flows. Instead of teaching every app team a slightly different setup process, you can document one `superfunctions.config.js` pattern and one set of commands. That shortens onboarding for application developers and gives library authors a clearer contract for how consumers are expected to operate their packages.
+
+## What It Is
+
+`@superfunctions/cli` exports a small configuration helper for code and a terminal binary for runtime use. The code side centers on `defineConfig()`, which gives your project a typed config shape describing the adapter type, migrations directory, explicitly listed library files, or auto-discovery settings. The terminal side exposes commands such as `init`, `validate`, `generate-migration`, `generate-schema`, and `how-to-migrate`.
+
+The package does not replace your ORM's own migration runner. Instead, it helps discover library configuration, generate outputs, and point you to the right ORM-native apply step. That keeps the CLI focused on Superfunctions-specific setup while letting Drizzle, Prisma, or Kysely stay in charge of their own execution model.
+
+## When To Use It
+
+Use this package when your project needs a repeatable, documented command-line workflow around shared library schemas. It is a strong fit for application developers wiring multiple Superfunctions-backed libraries into one service, and for library authors who want to support downstream users with a standard config file and generation flow.
+
+If your main problem is request handling or persistence abstractions themselves, start with the package categories those concerns live in. Use the CLI when you are ready to operationalize that setup from the terminal.
+
+## Install
+
+```bash
+npm install -D @superfunctions/cli
+```
+
+Add your actual adapter stack separately:
+
+```bash
+npm install @superfunctions/db drizzle-orm
+```
+
+## Quick Start
+
+Create a config file with `defineConfig()` so the CLI knows which adapter to target and where to look for library initialization.
+
+```ts
+import { defineConfig } from "@superfunctions/cli";
+
+export default defineConfig({
+  adapter: {
+    type: "drizzle",
+    drizzle: {
+      dialect: "postgres",
+      connectionString: process.env.DATABASE_URL,
+    },
+  },
+  libraries: ["./src/auth.ts", "./src/billing.ts"],
+  migrationsDir: "./migrations",
+});
+```
+
+Then use the terminal commands to initialize or validate the project workflow.
+
+```bash
+npx superfunctions init
+npx superfunctions validate
+npx superfunctions generate-migration
+```
+
+## Core Concepts
+
+The first concept is typed configuration. `defineConfig()` gives your project one place to describe the adapter, migration output path, and how the CLI should discover library initialization files. That reduces drift between team members and makes the terminal workflow easier to document.
+
+The second concept is explicit versus discovered libraries. Small projects may prefer `autoDiscover`, while larger applications often get more predictable behavior from an explicit `libraries` array. The CLI supports both paths so teams can trade off convenience against determinism.
+
+The third concept is division of responsibility. The CLI helps generate and validate Superfunctions-specific schema workflows, but it still expects you to apply migrations with the adapter ecosystem's own tool. That keeps the boundary clean and lowers the risk of a custom migration runner diverging from your ORM.
+
+## Real-World Example
+
+A realistic outside-world scenario is a product team shipping several reusable backend modules that all expose schema data. The application wants one config file, one generation command, and clear next steps for the chosen adapter stack.
+
+```ts
+import { defineConfig } from "@superfunctions/cli";
+
+export default defineConfig({
+  adapter: {
+    type: "kysely",
+    kysely: {
+      dialect: "postgres",
+      connectionString: process.env.DATABASE_URL,
+    },
+  },
+  autoDiscover: {
+    patterns: ["src/**/*.ts"],
+    exclude: ["**/*.test.ts", "**/*.spec.ts"],
+  },
+  migrationsDir: "./db/migrations",
+});
+```
+
+With that in place, the team can run `npx superfunctions generate-migration` during development, review the generated files, and then apply them using the adapter-specific tool recommended by `npx superfunctions how-to-migrate`. That creates a clearer handoff between library setup and production database operations.
+
+## Related Packages
+
+- [`db`](/docs/data-storage/db) if your CLI workflow is centered on the shared persistence abstraction.
+- [`config`](/docs/middleware-runtime/config) if adapter connection details and environment loading are part of the same setup story.
+- [`docs-theme`](/docs/tooling/docs-theme) if you also maintain the docs surface around your package ecosystem.
+
+## Troubleshooting
+
+If the CLI cannot find configuration, make sure the config file lives where your command expects or pass an explicit `--config` path. If validation fails, check that `adapter.type` and `migrationsDir` are present before debugging anything else. If generation commands do not discover your libraries, switch temporarily from `autoDiscover` to an explicit `libraries` array so you can confirm the expected files are being parsed.

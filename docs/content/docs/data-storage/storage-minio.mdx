@@ -1,0 +1,106 @@
+---
+title: Storage MinIO
+description: Use MinIO when you want an S3-compatible storage adapter for self-hosted or local infrastructure.
+---
+
+`@superfunctions/storage-minio` implements the shared storage contract on top of MinIO. It is the adapter to choose when you want S3-compatible behavior without making AWS the runtime dependency. Many teams use it for self-hosted environments, on-prem deployments, integration tests that need realistic object-storage behavior, or local stacks that should behave more like production than a simple filesystem folder.
+
+Because the adapter targets the same `StorageAdapter` contract as the other providers, your application can keep one upload or download workflow while choosing MinIO only at the deployment edge. That is especially valuable when you want to prototype locally with an S3-compatible service and later decide whether production should stay self-hosted or move to AWS or another provider.
+
+## What It Is
+
+`@superfunctions/storage-minio` exports `createMinIOStorageAdapter()`. You configure it with an endpoint, bucket, access key, secret key, and optional region or transport settings. The adapter exposes the shared storage operations for object metadata, signed URLs, multipart uploads, and streaming downloads.
+
+This package is not a replacement for the base contract. Keep [`storage`](/docs/data-storage/storage) as the abstraction you design around, and use this adapter when the runtime target is MinIO.
+
+## When To Use It
+
+Choose this adapter when you need S3-style uploads and downloads in a self-hosted environment, when your local developer stack should resemble an S3 workflow, or when compliance or operational constraints make self-managed object storage the better choice.
+
+Use this chooser when comparing nearby options:
+
+| If your priority is... | Choose |
+| --- | --- |
+| Self-hosted S3-compatible infrastructure | `storage-minio` |
+| AWS-managed object storage | [`storage-s3`](/docs/data-storage/storage-s3) |
+| Cloudflare-managed object storage | [`storage-r2`](/docs/data-storage/storage-r2) |
+| Simplest single-host development setup | [`storage-local`](/docs/data-storage/storage-local) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-minio
+```
+
+## Quick Start
+
+Create the adapter with your MinIO endpoint and credentials.
+
+```ts
+import { createMinIOStorageAdapter } from "@superfunctions/storage-minio";
+
+export const storage = createMinIOStorageAdapter({
+  endpoint: "http://127.0.0.1",
+  port: 9000,
+  useSSL: false,
+  bucket: "uploads",
+  accessKeyId: process.env.MINIO_ACCESS_KEY!,
+  secretAccessKey: process.env.MINIO_SECRET_KEY!,
+});
+```
+
+After that, your application can issue signed URLs through the shared contract just as it would with another provider.
+
+```ts
+import { createMinIOStorageAdapter } from "@superfunctions/storage-minio";
+
+const storage = createMinIOStorageAdapter({
+  endpoint: "minio.internal.example.com",
+  bucket: "product-assets",
+  accessKeyId: process.env.MINIO_ACCESS_KEY!,
+  secretAccessKey: process.env.MINIO_SECRET_KEY!,
+});
+
+const download = await storage.signDownloadUrl?.({
+  key: "manuals/device-a.pdf",
+  expiresInSeconds: 180,
+});
+```
+
+## Core Concepts
+
+The first concept is S3 compatibility. This adapter is a good fit when you want S3-style semantics, signed URLs, and multipart uploads, but the infrastructure target is not AWS.
+
+The second concept is deployment portability. If your service depends on `StorageAdapter` instead of MinIO-specific APIs, you can move between MinIO and another S3-style provider with far less application churn.
+
+The third concept is local realism. Compared with a plain filesystem directory, MinIO lets local and test environments exercise object-storage workflows that look much closer to real cloud behavior.
+
+## Real-World Example
+
+A practical outside-world example is a customer-managed deployment where each tenant runs the application inside its own environment and expects storage to stay under its control. The app can still keep one upload flow and simply instantiate the MinIO adapter from tenant-specific configuration.
+
+```ts
+import { createMinIOStorageAdapter } from "@superfunctions/storage-minio";
+
+export function createTenantStorage(endpoint: string, bucket: string) {
+  return createMinIOStorageAdapter({
+    endpoint,
+    bucket,
+    accessKeyId: process.env.MINIO_ACCESS_KEY!,
+    secretAccessKey: process.env.MINIO_SECRET_KEY!,
+    useSSL: true,
+  });
+}
+```
+
+That keeps tenant routing and authorization in your app while the storage contract remains the same everywhere else.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base contract and capability model.
+- [`storage-s3`](/docs/data-storage/storage-s3) if you later move the same workflow to AWS-managed storage.
+- [`storage-local`](/docs/data-storage/storage-local) if you only need a lightweight local adapter without S3-style behavior.
+
+## Troubleshooting
+
+If requests fail unexpectedly, verify the endpoint protocol, port, and `useSSL` settings match the MinIO deployment. If multipart uploads behave differently from cloud production, confirm the client is following the same part-number and completion semantics across both environments. When you notice MinIO-specific connection details creeping into the service layer, move them back into configuration and keep the rest of the application on `StorageAdapter`.

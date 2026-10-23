@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "combobox",
+  "framework": "svelte",
+  "deliveryMode": "package",
+  "browser": "firefox",
+  "version": "144.0.2",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-framework=\"svelte\" data-uifn-story-id=\"combobox--keyboard-focus\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><!----><!----><!----><!----><div id=\"combobox-root-combobox-c1\" class=\"uifn-combobox uifn-combobox__root\" data-state=\"idle\" data-uifn-component=\"combobox\" data-uifn-part=\"root\"><!----><!----><!----><!----><!----><!----><!----><!----><!----><label id=\"combobox-label-combobox-c1\" class=\"uifn-combobox uifn-combobox__label\" data-state=\"idle\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"combobox\" data-uifn-part=\"label\"><!----><!---->label fixture<!----> <!----><!----><!----> <!----></label><!----><!----><!----><!----><!----><!----><div id=\"combobox-control-combobox-c1\" class=\"uifn-combobox uifn-combobox__control\" data-state=\"idle\" data-uifn-story-anatomy=\"control\" data-uifn-component=\"combobox\" data-uifn-part=\"control\"><!----><!----><!----> <!----><!----><!----><!----><!----><!----><!----><input autocomplete=\"off\" role=\"combobox\" id=\"combobox-input-combobox-c1\" tabindex=\"0\" class=\"uifn-combobox uifn-combobox__input\" aria-labelledby=\"combobox-label-combobox-c1\" aria-expanded=\"false\" aria-controls=\"combobox-content-combobox-c1\" aria-activedescendant=\"combobox-root-combobox-c1-item-item-1\" aria-autocomplete=\"list\" aria-invalid=\"false\" aria-required=\"false\" data-state=\"idle\" data-uifn-story-anatomy=\"input\" data-uifn-component=\"combobox\" data-uifn-part=\"input\" value=\"\"><!----><!----><!----><!----><!----><!----><button type=\"button\" role=\"button\" id=\"combobox-trigger-combobox-c1\" tabindex=\"0\" class=\"uifn-combobox uifn-combobox__trigger\" aria-expanded=\"false\" aria-controls=\"combobox-content-combobox-c1\" aria-disabled=\"false\" data-state=\"closed\" data-uifn-story-anatomy=\"trigger\" data-uifn-component=\"combobox\" data-uifn-part=\"trigger\"><!----><!---->trigger fixture<!----> <!----><!----><!----> <!----></button><!----><!----><!----><!----><!----><!----><button type=\"button\" role=\"button\" id=\"combobox-clear-combobox-c1\" class=\"uifn-combobox uifn-combobox__clear\" aria-label=\"Clear\" data-state=\"idle\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"combobox\" data-uifn-part=\"clear\"><!----><!---->clear fixture<!----> <!----><!----><!----> <!----></button><!----> <!----><!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><!--uifn-portal:combobox-root-combobox-c1-portal--><!----><!----><!----><!----><!----><!----><input type=\"hidden\" value=\"item-1\" id=\"combobox-hiddeninput-combobox-c1\" hidden=\"\" class=\"uifn-combobox uifn-combobox__hiddenInput\" data-state=\"idle\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"combobox\" data-uifn-part=\"hiddenInput\"></div><!----></section>",
+  "semanticTrace": [
+    {
+      "part": "clear",
+      "tag": "button",
+      "role": "button",
+      "aria": [
+        [
+          "aria-label",
+          "Clear"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "clear"
+        ]
+      ]
+    },
+    {
+      "part": "content",
+      "tag": "div",
+      "role": "listbox",
+      "aria": [
+        [
+          "aria-labelledby",
+          "combobox-label-combobox-c1"
+        ],
+        [
+          "aria-multiselectable",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "content"
+        ]
+      ]
+    },
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "empty",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "empty"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "input",
+      "tag": "input",
+      "role": "combobox",
+      "aria": [
+        [
+          "aria-activedescendant",
+          "combobox-root-combobox-c1-item-item-1"
+        ],
+        [
+          "aria-autocomplete",
+          "list"
+        ],
+        [
+          "aria-controls",
+          "combobox-content-combobox-c1"
+        ],
+        [
+          "aria-expanded",
+          "false"
+        ],
+        [
+          "aria-invalid",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "combobox-label-combobox-c1"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "input"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "div",
+      "role": "option",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-selected",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "positioner",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-portal-id",
+          "combobox-root-combobox-c1-portal"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "positioner"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    },
+    {
+      "part": "trigger",
+      "tag": "button",
+      "role": "button",
+      "aria": [
+        [
+          "aria-controls",
+          "combobox-content-combobox-c1"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-expanded",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "closed"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "trigger"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "16a2c1940aa678da178786d060ff9aebcf9b50beaf5dcf8b9f8e93ec8307a86c"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "211cff78245078dbba67b53c9788b408a8ce403b4d65bc2eff536f2adaba59b8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "211cff78245078dbba67b53c9788b408a8ce403b4d65bc2eff536f2adaba59b8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "8598d9ee825dd628caea3796a39cfe67ec800049926baa3cc1d747d9fea89549"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "49ff020605be05115dbf23f8bd70a3ed874cec07be584bcac0ce81d4b9435dd6"
+    }
+  ],
+  "focusPath": [
+    "input",
+    "input",
+    "input",
+    "input",
+    "input",
+    "input"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:41:31.034Z",
+  "expiresAt": "2026-08-06T16:41:31.034Z"
+}

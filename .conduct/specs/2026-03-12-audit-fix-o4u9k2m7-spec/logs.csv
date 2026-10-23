@@ -1,0 +1,20 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-12T11:22:33Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec
+2026-03-12T11:34:24Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_00,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_00-2026-03-12-k7n2p9a-report.md
+2026-03-12T11:56:33Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_01,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_01-2026-03-12-b9q2m7c-report.md
+2026-03-12T12:01:57Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_02,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_02-2026-03-12-m8r3k1p-report.md
+2026-03-12T12:09:20Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_03,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_03-2026-03-12-v4p8k2m-report.md
+2026-03-12T12:20:27Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_04,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_04-2026-03-12-r2m8q4k-report.md
+2026-03-12T12:29:21Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_05,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_05-2026-03-12-h7k3m2q-report.md
+2026-03-12T12:39:40Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_06,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_06-2026-03-12-m4p9k2q-report.md
+2026-03-12T12:55:00Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_07,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_07-2026-03-12-q8n4m2p-report.md
+2026-03-12T13:20:11Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_08,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_08-2026-03-12-p3m8k4q-report.md
+2026-03-12T13:31:15Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_09,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_09-2026-03-12-r7k2m9p-report.md
+2026-03-12T13:46:54Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_10,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_10-2026-03-12-s9k2m4q-report.md
+2026-03-12T13:54:16Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_11,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_11-2026-03-12-t6m3k8p-report.md
+2026-03-12T14:21:17Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_12,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_12-2026-03-12-k4n8q2m-report.md
+2026-03-12T15:31:40Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_13,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_13-2026-03-12-n7k3p4m-report.md
+2026-03-12T17:30:52Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_14,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_14-2026-03-12-q8m2k4n-report.md
+2026-03-12T17:45:08Z,gpt-5-codex,Codex,execute,unknown-agent,PHASE_16,.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_16-2026-03-12-v8p3m7q-report.md
+2026-03-12T18:58:14Z,gpt-5-codex,Codex,execute,unknown-agent,PHASE_17,.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_17-2026-03-13-k6m9p2q-report.md
+2026-03-12T19:11:53Z,gpt-5-codex,Codex,execute,unknown-agent,PHASE_18,.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec/phase-reports/PHASE_18-2026-03-13-r8k4m2p-report.md

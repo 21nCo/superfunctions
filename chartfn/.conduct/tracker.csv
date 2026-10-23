@@ -1,0 +1,2 @@
+id, desc, status, completedAt, completionDoc
+2026-01-29-new-cf7k2m9x-spec, Unified chart API with pluggable adapters (ECharts, Carbon, Chart.js) so users can switch or combine chart libraries., 1, 2026-02-05T08:17:30Z, 

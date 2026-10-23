@@ -1,0 +1,261 @@
+---
+title: "Client Setup"
+description: "Create and configure a DataFn client instance."
+audience: guide
+applies_to: typescript
+---
+
+## Creating a Client
+
+Use `createDatafnClient()` to initialize a DataFn client. The client validates your schema at creation time and sets up table handles, event bus, sync engine, and KV store.
+
+```typescript
+import { createDatafnClient } from "@datafn/client";
+import { IndexedDbStorageAdapter } from "@datafn/client";
+import { defineSchema } from "@datafn/core";
+
+const schema = defineSchema({
+  resources: [
+    {
+      name: "todos",
+      version: 1,
+      idPrefix: "td",
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "completed", type: "boolean", required: true },
+      ],
+    },
+  ],
+});
+
+const client = createDatafnClient({
+  schema,
+  clientId: "device-abc-123",
+  storage: new IndexedDbStorageAdapter("my-app-db"),
+  sync: {
+    remote: "https://api.example.com/datafn",
+    ws: true,
+    offlinability: true,
+    mode: "sync",
+    hydration: {
+      bootResources: ["todos"],
+      clonePageSize: 500,
+    },
+  },
+});
+```
+
+## Topology Matrix
+
+The same app can now run in three supported topologies:
+
+| Topology | Local persistence | Remote persistence | Sync owner |
+|---|---|---|---|
+| Browser-owned | IndexedDB | DataFn server | JavaScript |
+| Native-backed DataFn-server | Core Data | DataFn server | Swift |
+| Native-backed CloudKit | Core Data | CloudKit private database | Swift |
+
+Browser-owned mode remains unchanged. Native-backed mode is explicit and must fail fast if the native bridge is unavailable.
+
+## Native-backed Apple WebView Setup
+
+Use this when your app runs inside `WKWebView` in a SwiftUI host and the Swift side owns persistence plus sync:
+
+```typescript
+import { createDatafnClient } from "@datafn/client";
+import {
+  createNativeBackedRemoteAdapter,
+  createNativeBackedSearchProvider,
+  createNativeBackedStorageAdapter,
+  createNativeSyncController,
+  createWKWebViewBridgeBus,
+} from "@datafn/swift-bridge";
+
+const bus = createWKWebViewBridgeBus({ handlerName: "datafn" });
+
+const client = createDatafnClient({
+  schema,
+  clientId: "apple-webview-device",
+  namespace: "org-1:user-1",
+  storage: createNativeBackedStorageAdapter(bus),
+  searchProvider: createNativeBackedSearchProvider(bus),
+  sync: {
+    owner: "native",
+    mode: "sync",
+    offlinability: true,
+    remoteAdapter: createNativeBackedRemoteAdapter(bus),
+    native: {
+      syncController: createNativeSyncController(bus),
+      remoteMode: "datafn-server",
+      expectedSchemaHash: "todo-app-example-v1",
+      failIfUnavailable: true,
+      remoteProfile: "default",
+    },
+  },
+});
+```
+
+Switch `remoteMode` to `"icloud"` when the Swift host uses `NSPersistentCloudKitContainer` instead of the DataFn server.
+
+In native-backed mode:
+
+- `storage` must be native-backed.
+- `searchProvider` should be native-backed so Swift owns the SearchFn index.
+- `sync.owner` must be `"native"`.
+- `sync.remoteAdapter` must also be native-backed.
+- IndexedDB must not be used as a fallback persistence layer.
+- If the bridge is missing, the client must fail before it starts local persistence.
+
+When `remoteMode` is `"icloud"`, CloudKit syncs the Core Data records only. The SearchFn index stays derived local state under the native support directory and is rebuilt or updated locally on each device.
+
+Also note that `remoteMode: "icloud"` is incompatible with `isRemoteOnly: true` resources. In CloudKit mode, the native-backed client rejects remote-only resources because CloudKit syncs the local Core Data store rather than a server-only dataset.
+
+## Configuration Reference
+
+### Top-Level Options
+
+| Option | Type | Description |
+|---|---|---|
+| `schema` | `DatafnSchema` | Required. Your application schema created with `defineSchema()`. |
+| `clientId` | `string` | Required. Stable device/client identifier used for idempotency and offline changelogs. |
+| `storage` | `DatafnStorageAdapter \| DatafnStorageFactory` | Local persistence adapter. Pass an instance directly or a factory function `(namespace: string) => DatafnStorageAdapter` for multi-namespace isolation. |
+| `namespace` | `string` | Namespace string for data isolation. Required when `storage` is a factory function. Use the `ns()` helper to compose from segments. |
+| `sync` | `DatafnSyncConfig` | Sync and connectivity configuration. See below. |
+| `plugins` | `DatafnPlugin[]` | Client-side plugins for hook execution (beforeQuery, afterMutation, etc.). |
+| `generateId` | `(params: { resource: string; idPrefix?: string }) => string` | Custom ID generator for insert operations. Defaults to `crypto.randomUUID()` with resource prefix. |
+| `searchProvider` | `SearchProvider` | Optional local-first search provider. See [Search](/docs/dfql/search). |
+| `temporal` | `DatafnTemporalConfig & { detectTimezone? }` | Default timezone resolution for [temporal](/docs/dfql/temporal) queries and the [`client.temporal`](/docs/reference/client/temporal) API. |
+
+### Sync Configuration
+
+The `sync` object controls how the client communicates with the server and handles offline scenarios.
+
+```typescript
+sync: {
+  owner: "javascript",     // default; use "native" in Apple WebView mode
+
+  // Connection
+  remote: "https://api.example.com/datafn",
+  ws: true,
+  wsUrl: "wss://api.example.com/datafn/ws",   // optional, derived from remote
+
+  // Mode
+  mode: "sync",            // "sync" (default) or "local-only"
+  offlinability: true,     // enable offline mutation queue
+
+  // Push tuning
+  pushInterval: 5000,      // ms between push cycles
+  pushBatchSize: 100,      // mutations per push batch
+  pushMaxRetries: 3,       // max retries per push round
+
+  // Hydration
+  hydration: {
+    bootResources: ["todos", "users"],     // must clone before app is ready
+    backgroundResources: ["analytics"],     // clone in background after boot
+    clonePageSize: 500,                     // page size for paginated clone
+  },
+
+  // WebSocket reconnection
+  wsReconnect: {
+    enabled: true,
+    baseDelayMs: 1000,
+    maxDelayMs: 60000,
+    multiplier: 2,
+    jitterMs: 500,
+  },
+
+  // Cross-tab coordination
+  crossTab: true,
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `remote` | -- | Server URL. Required in `"sync"` mode unless `remoteAdapter` is provided. |
+| `remoteAdapter` | -- | Injected remote adapter, used instead of the built-in HTTP transport. |
+| `owner` | `"javascript"` | `"javascript"` keeps the existing browser-owned sync engine. `"native"` delegates sync lifecycle to the Apple host. |
+| `native` | -- | Required when `owner` is `"native"`. Defines the native sync controller, remote mode, schema hash, and fail-fast bridge behavior. |
+| `ws` | `false` | Enable WebSocket for real-time server push. |
+| `wsUrl` | derived | WebSocket URL. Auto-derived from `remote` when `ws` is enabled. |
+| `mode` | `"sync"` | `"sync"` requires a remote. `"local-only"` marks all tables as ready immediately with no server. |
+| `offlinability` | `false` | Queue mutations locally when offline and push when reconnected. Requires `storage`. |
+| `pushInterval` | -- | Milliseconds between automatic push cycles. |
+| `pushBatchSize` | `100` | Max mutations sent per push batch. |
+| `pushMaxRetries` | `3` | Max retry attempts per push round. |
+| `hydration` | -- | Controls initial data clone strategy. See below. |
+| `wsReconnect` | enabled | Exponential backoff config for WebSocket reconnection. |
+| `crossTab` | `false` | Relay mutation events to other same-origin browser tabs via BroadcastChannel. |
+
+### Hydration
+
+Hydration controls how the client populates local storage from the server on first load.
+
+- **`bootResources`** -- Resources that must finish cloning before the app is considered hydrated. The client blocks on these during `sync.start()`.
+- **`backgroundResources`** -- Resources that clone in the background after boot resources are ready.
+- **`clonePageSize`** -- Page size for paginated clone requests. Can be a single number or a per-resource map: `{ todos: 500, users: 200 }`.
+
+### Storage Adapters
+
+DataFn ships two built-in storage adapters:
+
+```typescript
+import { MemoryStorageAdapter, IndexedDbStorageAdapter } from "@datafn/client";
+
+// In-memory (useful for tests)
+const memory = new MemoryStorageAdapter();
+
+// IndexedDB (browser persistence)
+const idb = new IndexedDbStorageAdapter("my-app-db");
+```
+
+For native-backed Apple hosts, use `@datafn/swift-bridge` instead of IndexedDB:
+
+```typescript
+import {
+  createNativeBackedStorageAdapter,
+  createWKWebViewBridgeBus,
+} from "@datafn/swift-bridge";
+
+const bus = createWKWebViewBridgeBus({ handlerName: "datafn" });
+const storage = createNativeBackedStorageAdapter(bus);
+```
+
+For multi-namespace isolation, pass a factory function with a `namespace`:
+
+```typescript
+import { ns } from "@datafn/client";
+
+const client = createDatafnClient({
+  schema,
+  clientId: "device-abc",
+  namespace: ns("tenant-456", "user-123"),
+  storage: (namespace) =>
+    IndexedDbStorageAdapter.createForNamespace("my-app", namespace),
+  sync: { remote: "https://api.example.com/datafn" },
+});
+```
+
+The `ns()` helper composes namespace segments with `:` separators. See [Namespaces](/docs/documentation/namespaces) for details.
+
+## Framework Integration
+
+DataFn provides framework-specific adapter packages that convert signals into native reactive primitives:
+
+- **Svelte**: `@datafn/svelte` — converts signals to Svelte readable stores via `toSvelteStore()`
+- **React, Vue, Solid, Angular**: Coming soon
+
+See [Framework Adapters](/docs/documentation/client/frameworks) for setup and usage.
+
+## Destroying the Client
+
+Call `destroy()` to tear down the client. This stops the sync engine, closes WebSocket connections, unsubscribes all event listeners, and releases resources.
+
+```typescript
+await client.destroy();
+```
+
+Call `clear()` to wipe all local data (IndexedDB stores, cursors, changelog, hydration state) without destroying the client:
+
+```typescript
+await client.clear();
+```

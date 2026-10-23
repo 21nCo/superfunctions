@@ -1,0 +1,27 @@
+---
+title: envelope-errors
+description: Canonical success/error envelopes and typed error registries.
+---
+
+Canonical envelope stack:
+
+- `@superfunctions/envelope`
+- `@superfunctions/errors`
+
+## Workflow
+
+```mermaid
+flowchart TD
+  A[Domain Error] --> B[Error Registry lookup]
+  B --> C[code/status/retryable/details]
+  C --> D[Canonical err envelope]
+  D --> E[HTTP response]
+```
+
+## Security Caveats
+
+- Never expose internal stack traces in public envelope payloads.
+
+## Operational Caveats
+
+- Keep code->status mapping stable across services.

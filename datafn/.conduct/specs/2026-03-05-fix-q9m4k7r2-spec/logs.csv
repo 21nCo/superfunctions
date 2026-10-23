@@ -1,0 +1,6 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-05T07:18:42Z,gpt-5,CLI,spec,unknown-agent,,datafn/.conduct/specs/2026-03-05-fix-q9m4k7r2-spec
+2026-03-05T07:42:15Z,gpt-5,CLI,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-05-fix-q9m4k7r2-spec/phase-reports/PHASE_00-2026-03-05-f7faf2f2-report.md
+2026-03-05T07:50:14Z,gpt-5,CLI,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-05-fix-q9m4k7r2-spec/phase-reports/PHASE_01-2026-03-05-66ad7227-report.md
+2026-03-05T07:58:52Z,gpt-5,CLI,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-03-05-fix-q9m4k7r2-spec/phase-reports/PHASE_02-2026-03-05-904099c8-report.md
+2026-03-05T08:07:39Z,gpt-5,CLI,execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-03-05-fix-q9m4k7r2-spec/phase-reports/PHASE_03-2026-03-05-9b2d1253-report.md

@@ -1,0 +1,7 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-25T18:30:00Z,Claude Opus 4.6,VS Code,spec,claude-code,,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec
+2026-02-25T06:05:00Z,claude-opus-4-5,CLI,execute,unknown-agent (m: Droid),PHASE_00,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_00-2026-02-25-k4m9x7r2-report.md
+2026-02-25T06:10:00Z,claude-opus-4-5,CLI,execute,unknown-agent (m: Droid),PHASE_01,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_01-2026-02-25-m3x9k7r4-report.md
+2026-02-25T06:22:00Z,Claude Sonnet 4.6,CLI,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_02-2026-02-25-k7r4m9x2-report.md
+2026-02-25T07:45:00Z,Claude Sonnet 4.6,CLI,execute,Droid,PHASE_03,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_03-2026-02-25-p9x3k7m4-report.md
+2026-02-25T12:45:00Z,Claude Sonnet 4.6,CLI,execute,Droid,PHASE_04,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_04-2026-02-25-x4k7r9m2-report.md

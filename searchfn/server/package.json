@@ -1,0 +1,38 @@
+{
+  "name": "@searchfn/server",
+  "version": "0.1.0",
+  "description": "Server SDK for SearchFn - Thin HTTP transport over SearchAdapter",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@superfunctions/http": "0.1.3",
+    "@superfunctions/observability": "0.0.1",
+    "@searchfn/adapter-contracts": "0.3.0"
+  },
+  "devDependencies": {
+    "@searchfn/adapter-memory": "0.1.0",
+    "typescript": "^5.0.0",
+    "tsup": "^8.0.0",
+    "vitest": "^1.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

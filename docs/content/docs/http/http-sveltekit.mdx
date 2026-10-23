@@ -1,0 +1,102 @@
+---
+title: HTTP SvelteKit
+description: Export shared Superfunctions route handlers from SvelteKit +server.ts files so endpoint logic can stay portable across runtimes.
+---
+
+`@superfunctions/http-sveltekit` is the adapter for teams building endpoints in SvelteKit who still want their request logic to live in a shared, framework-neutral router. SvelteKit already gives you a clear route-file model through `+server.ts`, but if every endpoint is written directly against SvelteKit-specific handler conventions, it can be difficult to reuse that behavior anywhere else. This adapter keeps the route file thin and lets the shared router do the real request handling.
+
+For application teams, that means one router can back several endpoint files or be moved into another runtime later. For library authors, it means a package can expose portable HTTP behavior while a SvelteKit app chooses when and where to mount it.
+
+## What It Is
+
+`@superfunctions/http-sveltekit` turns a router from [`@superfunctions/http`](/docs/http/http) into one or more SvelteKit request handlers. You can export a single method handler with `toSvelteKitHandler(router)` or export the common set of HTTP methods at once with `toSvelteKitHandlers(router)`.
+
+The shared router remains responsible for matching paths and returning `Response` objects. SvelteKit remains responsible for file-based endpoint discovery and framework runtime behavior.
+
+## When To Use It
+
+Choose this adapter when you are writing SvelteKit endpoints and want to keep the handler logic reusable outside one `+server.ts` file. It is a good fit for apps that share APIs across several SvelteKit routes or that may later move parts of their HTTP surface into another environment.
+
+Use this quick chooser:
+
+| Choose this adapter when | Consider another adapter when |
+| --- | --- |
+| Your API lives in `+server.ts` files | You are using Next.js App Router `route.ts` files instead, which points to [`http-next`](/docs/http/http-next) |
+| You want one shared router behind multiple exported methods | You are operating a long-lived Node server in Express or Fastify |
+| You want SvelteKit file conventions with portable request logic | You want a more direct fetch-native framework outside SvelteKit |
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-sveltekit @sveltejs/kit
+```
+
+## Quick Start
+
+In a catch-all or dedicated endpoint file, export the method handlers produced by the adapter.
+
+```ts
+import { createRouter } from "@superfunctions/http";
+import { toSvelteKitHandlers } from "@superfunctions/http-sveltekit";
+
+const router = createRouter({
+  basePath: "/api",
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () => Response.json({ ok: true }),
+    },
+  ],
+});
+
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } =
+  toSvelteKitHandlers(router);
+```
+
+## Core Concepts
+
+The first SvelteKit-specific concept is route-file scope. SvelteKit discovers handlers from `+server.ts`, so the adapter is best used when you want the route file to remain a small export surface rather than the place where all business logic lives. That separation mirrors the same pattern used by the other adapters.
+
+The second concept is path alignment. In catch-all routes such as `src/routes/api/[...path]/+server.ts`, a shared router often works best with `basePath: "/api"` so the router sees the same public path structure that callers use. Keeping that configuration explicit reduces surprises when paths grow more complex.
+
+The third concept is framework-specific context. The adapter hands the raw request to the shared router. If you need SvelteKit-only features such as `locals`, cookies, or other event details, it is often cleaner to add a thin wrapper in the route file and keep the shared router focused on portable request handling.
+
+## Real-World Example
+
+Suppose a product team has a SvelteKit front end but wants its API endpoints to be reusable in another environment later, perhaps in a worker or Node service. The team can keep the main logic in the shared router and let SvelteKit simply export the handlers.
+
+```ts
+import type { RequestEvent } from "@sveltejs/kit";
+import { createRouter } from "@superfunctions/http";
+import { toSvelteKitHandler } from "@superfunctions/http-sveltekit";
+
+const accountRouter = createRouter({
+  basePath: "/api",
+  routes: [
+    {
+      method: "GET",
+      path: "/accounts/:id",
+      handler: async (_request, context) =>
+        Response.json({ accountId: context.params.id }),
+    },
+  ],
+});
+
+const handler = toSvelteKitHandler(accountRouter);
+
+export const GET = async (event: RequestEvent) => handler(event);
+```
+
+This keeps the account route portable. If another runtime later needs the same behavior, the router stays intact and only the outer adapter changes.
+
+## Related Packages
+
+- [`http`](/docs/http/http) for the portable router that powers the adapter.
+- [`http-next`](/docs/http/http-next) if you are comparing route-file adapters across frontend frameworks.
+- [`http-hono`](/docs/http/http-hono) if some of the same handlers may move into a fetch-native service.
+- [Webhooks](/docs/middleware-runtime/webhooks) if your SvelteKit endpoints also need webhook-oriented request flows.
+
+## Troubleshooting
+
+If paths are not matching as expected, inspect whether the `basePath` and the SvelteKit route location agree on the public URL structure. If you need access to `event.locals` or cookies and the shared router does not see that information, add a small wrapper in the route file rather than pulling SvelteKit-specific assumptions into every handler. The adapter works best when the route file owns framework details and the shared router owns portable HTTP behavior.

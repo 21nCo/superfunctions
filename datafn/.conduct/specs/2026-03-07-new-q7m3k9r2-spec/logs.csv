@@ -1,0 +1,9 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-07T07:09:10Z,unknown,CLI,spec,unknown-agent,,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec
+2026-03-07T12:53:30Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_00-2026-03-07-m4r9k2x7-report.md
+2026-03-07T13:07:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_01-2026-03-07-k9x4r2m7-report.md
+2026-03-07T13:26:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_02-2026-03-07-r5k8m2x4-report.md
+2026-03-07T15:03:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_03-2026-03-07-k4n9m2x7-report.md
+2026-03-07T15:46:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_04-2026-03-07-p7n3k5q2-report.md
+2026-03-07T16:20:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_05-2026-03-07-n2k8r4q9-report.md
+2026-03-07T16:45:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_06,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_06-2026-03-07-q9r5k2m7-report.md

@@ -1,0 +1,11 @@
+{
+  "title": "Architecture",
+  "pages": [
+    "index",
+    "oauth-flow-architecture",
+    "webhooks-architecture",
+    "envelope-errors",
+    "queue-rate-limit",
+    "http-db-integration"
+  ]
+}

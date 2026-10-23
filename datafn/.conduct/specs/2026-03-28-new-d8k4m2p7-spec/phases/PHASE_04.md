@@ -1,0 +1,29 @@
+- Phase goal: Keep the native search backend synchronized with local writes, server sync, and CloudKit changes, and expose those capabilities through the bridge host.
+- In scope:
+  - local mutation indexing
+  - server sync indexing
+  - CloudKit merge indexing
+  - bridge host search handlers
+- Out of scope:
+  - docs/examples polish
+- Deliverables:
+  - updates to `datafn/swift/Sources/DatafnAppleRuntime/*`
+  - updates to `datafn/swift/Sources/DatafnWebViewBridgeHost/*`
+  - updates to server-sync and CloudKit modules
+  - `datafn/swift/Tests/DatafnNativeSearchLifecycleTests/*`
+- Requirements covered:
+  - `DAPI-001`
+  - `DIDX-001`
+  - `DPST-001`
+- Implementation tasks:
+  - Hook native search updates into local storage writes.
+  - Hook native search updates into DataFn-server clone/pull/reconcile flows.
+  - Hook native search updates into CloudKit import/merge notifications.
+  - Implement `search.initialize`, `search.search`, `search.searchAll`, and `search.dispose` handlers in the bridge host.
+  - Add lifecycle tests for both `datafn-server` and `icloud` modes.
+- Verification steps:
+  - Run `swift test --package-path datafn/swift`
+  - Run `npm --prefix datafn/swift-bridge test`
+  - Expected outcome: native search lifecycle and bridge tests pass.
+- Stop condition:
+  - Report server-sync and CloudKit propagation coverage before beginning Phase 05.

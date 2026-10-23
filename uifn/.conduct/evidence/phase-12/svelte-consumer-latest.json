@@ -1,0 +1,192 @@
+{
+  "ok": true,
+  "command": "verify-uifn-svelte-consumer",
+  "requirement": "SVELTE-001",
+  "vector": "TV-SVELTE-001-P",
+  "packageMode": {
+    "mode": "package",
+    "html": "<!--[--><!----><!--$s1--><!--[!--><!--[!--><!----><div id=\"accordion-root-accordion-s1\" data-orientation=\"vertical\" data-type=\"multiple\"><!----><!--[!--><!--[!--><!----><div id=\"accordion-root-accordion-s1-item-one\" data-state=\"closed\" data-value=\"one\"><!----><!--[!--><!--[!--><!----><h2 role=\"heading\" id=\"accordion-root-accordion-s1-header-one\" aria-level=\"3\" data-value=\"one\"><!----><!--[!--><!--[!--><!----><button type=\"button\" role=\"button\" id=\"accordion-root-accordion-s1-trigger-one\" tabindex=\"-1\" aria-expanded=\"false\" aria-controls=\"accordion-root-accordion-s1-content-one\" aria-disabled=\"false\" data-state=\"closed\" data-orientation=\"vertical\" data-value=\"one\"><!---->First section<!----><!----></button><!----><!--]--><!--]--><!----><!----><!----></h2><!----><!--]--><!--]--><!----> <!----><!--[!--><!--[!--><!----><div role=\"region\" id=\"accordion-root-accordion-s1-content-one\" hidden aria-labelledby=\"accordion-root-accordion-s1-trigger-one\" data-state=\"closed\" data-value=\"one\"><!---->First content<!----><!----></div><!----><!--]--><!--]--><!----><!----><!----></div><!----><!--]--><!--]--><!----><!----><!----></div><!----><!--]--><!--]--><!----> <output data-testid=\"value\">[]</output><!--]-->",
+    "browserResults": [
+      {
+        "name": "chromium",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      },
+      {
+        "name": "firefox",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      },
+      {
+        "name": "webkit",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      }
+    ],
+    "ok": true
+  },
+  "sourceMode": {
+    "mode": "source",
+    "html": "<!--[--><!----><!--$s1--><!--[!--><!--[!--><!----><div id=\"accordion-root-accordion-s1\" data-orientation=\"vertical\" data-type=\"multiple\"><!----><!--[!--><!--[!--><!----><div id=\"accordion-root-accordion-s1-item-one\" data-state=\"closed\" data-value=\"one\"><!----><!--[!--><!--[!--><!----><h2 role=\"heading\" id=\"accordion-root-accordion-s1-header-one\" aria-level=\"3\" data-value=\"one\"><!----><!--[!--><!--[!--><!----><button type=\"button\" role=\"button\" id=\"accordion-root-accordion-s1-trigger-one\" tabindex=\"-1\" aria-expanded=\"false\" aria-controls=\"accordion-root-accordion-s1-content-one\" aria-disabled=\"false\" data-state=\"closed\" data-orientation=\"vertical\" data-value=\"one\"><!---->First section<!----><!----></button><!----><!--]--><!--]--><!----><!----><!----></h2><!----><!--]--><!--]--><!----> <!----><!--[!--><!--[!--><!----><div role=\"region\" id=\"accordion-root-accordion-s1-content-one\" hidden aria-labelledby=\"accordion-root-accordion-s1-trigger-one\" data-state=\"closed\" data-value=\"one\"><!---->First content<!----><!----></div><!----><!--]--><!--]--><!----><!----><!----></div><!----><!--]--><!--]--><!----><!----><!----></div><!----><!--]--><!--]--><!----> <output data-testid=\"value\">[]</output><!--]-->",
+    "browserResults": [
+      {
+        "name": "chromium",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      },
+      {
+        "name": "firefox",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      },
+      {
+        "name": "webkit",
+        "diagnostics": [],
+        "ssrIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "clientIds": [
+          "accordion-root-accordion-s1",
+          "accordion-root-accordion-s1-item-one",
+          "accordion-root-accordion-s1-header-one",
+          "accordion-root-accordion-s1-trigger-one",
+          "accordion-root-accordion-s1-content-one"
+        ],
+        "expanded": "true",
+        "value": "[\"one\"]"
+      }
+    ],
+    "ok": true
+  },
+  "equivalent": true,
+  "checks": [
+    {
+      "command": "npm pack --workspace @uifn/adapter-kit --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/index.d.mts\",\n        \"size\": 10515,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.d.ts\",\n        \"size\": 10515,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.js\",\n        \"size\": 39705,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs\",\n        \"size\": 37737,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1371,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 6,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/adapter-kit@0.0.1 prepack\n> npm run build\n\n\n> @uifn/adapter-kit@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts\n\nnpm notice\nnpm notice New major version of npm available! 10.8.2 -> 12.0.1\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1\nnpm notice To update run: npm install -g npm@12.0.1\nnpm notice"
+    },
+    {
+      "command": "npm pack --workspace @uifn/core --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"generated/phase-10-golden-corpus.json\",\n        \"size\": 8609,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"generated/phase-10-test-manifest.json\",\n        \"size\": 986,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"generated/phase-10-types.d.ts\",\n        \"size\": 859,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"migrations/removed-apis.json\",\n        \"size\": 3188,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 3514,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 135,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/core@0.0.1 prepack\n> npm run build\n\n\n> @uifn/core@0.0.1 build\n> tsup"
+    },
+    {
+      "command": "npm pack --workspace @uifn/dom --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/index.js\",\n        \"size\": 124244,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.js.map\",\n        \"size\": 237336,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs\",\n        \"size\": 120626,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs.map\",\n        \"size\": 237285,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1485,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 9,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/dom@0.0.1 prepack\n> npm run build\n\n\n> @uifn/dom@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --sourcemap"
+    },
+    {
+      "command": "npm pack --workspace @uifn/svelte --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/internal/PrimitiveRoot.svelte.d.ts.map\",\n        \"size\": 642,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/internal/props.d.ts\",\n        \"size\": 629,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/internal/props.d.ts.map\",\n        \"size\": 589,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/internal/props.js\",\n        \"size\": 8020,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 2522,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 1656,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/svelte@0.0.1 prepack\n> npm run generate:check && npm run build\n\n\n> @uifn/svelte@0.0.1 generate:check\n> node ../../scripts/generate-uifn-phase-12.mjs --check\n\n\n> @uifn/svelte@0.0.1 build\n> svelte-package -i lib -o dist --tsconfig ./tsconfig.json"
+    },
+    {
+      "command": "npm install --ignore-scripts --no-audit --no-fund /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs/uifn-adapter-kit-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs/uifn-core-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs/uifn-dom-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-iISaqb/tarballs/uifn-svelte-0.0.1.tgz svelte@5.46.4 vite@5.4.21 @sveltejs/vite-plugin-svelte@4.0.4",
+      "ok": true,
+      "status": 0,
+      "stdout": "added 44 packages in 6s",
+      "stderr": ""
+    },
+    {
+      "command": "vite build (package)",
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "vite build (source)",
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-05T12:00:00Z,unknown,Cursor,spec,unknown-agent,,compfn/.conduct/specs/2026-02-05-new-cp2m5k9x-spec
+2026-02-08T06:51:34Z,unknown,Cursor,execute,unknown-agent,PHASE_00,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_00-2026-02-08-k9x7m2p-report.md
+2026-02-08T16:16:30Z,unknown,Cursor,execute,unknown-agent,PHASE_01,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_01-2026-02-08-p1a2b3c4-report.md
+2026-02-08T15:26:00Z,unknown,Cursor,execute,unknown-agent,PHASE_02,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_02-2026-02-08-p2x9k7m-report.md
+2026-02-09T10:47:00Z,unknown,Cursor,execute,unknown-agent,PHASE_03,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_03-2026-02-09-p3k9x2m-report.md
+2026-02-09T13:02:00Z,unknown,Cursor,execute,unknown-agent,PHASE_04,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_04-2026-02-09-a7k2m9x-report.md
+2026-02-09T13:12:00Z,unknown,Cursor,execute,unknown-agent,PHASE_05,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_05-2026-02-09-p5k9x2m-report.md
+2026-02-09T19:57:00Z,unknown,Cursor,execute,unknown-agent,PHASE_06,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_06-2026-02-09-p6x9k2m-report.md
+2026-02-09T20:10:00Z,unknown,Cursor,execute,unknown-agent,PHASE_07,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_07-2026-02-09-p7k2m9x-report.md
+2026-02-09T15:19:05Z,claude-4.5-sonnet,Warp,execute,unknown-agent,PHASE_08,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_08-2026-02-09-p8k2m9x-report.md
+2026-02-10T05:37:24Z,claude-4.5-sonnet,Warp,execute,unknown-agent,PHASE_09,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_09-2026-02-10-p9k2m9x-report.md
+2026-02-10T05:50:52Z,claude-4.5-sonnet,Warp,execute,unknown-agent,PHASE_10,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_10-2026-02-10-8x9k2pm5a-report.md
+2026-02-10T06:23:00Z,claude-4.5-sonnet-thinking,Warp,execute,warp-agent,PHASE_11,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_11-2026-02-10-cli8a9f2b-report.md
+2026-02-10T06:30:00Z,claude-4.5-sonnet-thinking,Warp,execute,warp-agent,PHASE_12,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_12-2026-02-10-p12prov9x-report.md

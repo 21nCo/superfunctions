@@ -1,0 +1,14 @@
+{
+  "title": "Authentication & OAuth",
+  "pages": [
+    "index",
+    "auth",
+    "oauth-core",
+    "oauth-http",
+    "oauth-providers",
+    "oauth-storage",
+    "oauth-flow",
+    "oauth-router",
+    "oauth-testing"
+  ]
+}

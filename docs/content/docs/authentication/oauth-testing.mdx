@@ -1,0 +1,142 @@
+---
+title: OAuth Testing
+description: Test OAuth lifecycle behavior with mock provider descriptors and in-memory storage helpers.
+---
+
+`@superfunctions/oauth-testing` exists so you can test OAuth behavior without standing up a real provider, a real token store, or a real callback environment. OAuth integrations are usually easy to demo once and surprisingly hard to test well: you need a deterministic provider descriptor, a state store that can be inspected, and a token vault that behaves like production storage without making your tests expensive or flaky. This package gives you that thin but useful test surface.
+
+The package is intentionally small. It does not try to replace your test runner or fake an entire OAuth server. Instead, it re-exports the in-memory storage helpers from [`oauth-storage`](/docs/authentication/oauth-storage) and adds `createMockOAuthProviderDescriptor()` so your tests can express provider behavior clearly. That design works well for both library authors writing unit tests and application developers building integration-style tests around [`oauth-flow`](/docs/authentication/oauth-flow).
+
+## What It Is
+
+`@superfunctions/oauth-testing` exports three main things: `InMemoryOAuthStateStore`, `InMemoryTokenVault`, and `createMockOAuthProviderDescriptor()`. The state and token helpers are aliases of the shared in-memory implementations from `oauth-storage`, which means they behave the same way your real lifecycle code expects. The mock provider descriptor gives you a valid OAuth provider shape with defaults that are easy to override per test.
+
+## When To Use It
+
+Use this package whenever OAuth behavior is part of the contract you want to verify. Good fits include unit tests for callback mismatch handling, refresh-token retention, revocation cleanup, and provider-specific policy wiring. It is especially handy when you want to test your own orchestration code without coupling the tests to an external sandbox provider or a network-mocking framework.
+
+## Install
+
+```bash
+npm install -D @superfunctions/oauth-testing vitest
+```
+
+## Quick Start
+
+You can create a valid descriptor and durable in-memory fixtures in just a few lines.
+
+```ts
+import {
+  InMemoryOAuthStateStore,
+  InMemoryTokenVault,
+  createMockOAuthProviderDescriptor,
+} from "@superfunctions/oauth-testing";
+
+const provider = createMockOAuthProviderDescriptor({
+  id: "github-mock",
+  defaultScopes: ["read:user"],
+});
+
+const stateStore = new InMemoryOAuthStateStore();
+const tokenVault = new InMemoryTokenVault();
+```
+
+That is usually enough to build a harness around the higher-level flow service.
+
+```ts
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+
+const flow = createOAuthFlowService({
+  providers: { [provider.id]: provider },
+  providerRuntimeConfig: {
+    [provider.id]: {
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      allowlistedRedirectUris: ["https://app.example/oauth/callback"],
+    },
+  },
+  stateStore,
+  tokenVault,
+  tokenHttpClient: {
+    async exchangeToken() {
+      return { accessToken: "access", refreshToken: "refresh", expiresIn: 3600 };
+    },
+    async revokeToken() {
+      return;
+    },
+  },
+});
+```
+
+## Core Concepts
+
+The most important idea is determinism. Tests should be able to inspect the state record written during `start()`, the token record written during `handleCallback()`, and the cleanup behavior during `disconnect()` without waiting on network I/O or real secrets. Because the in-memory stores implement the same interfaces as production adapters, your tests exercise the same core logic as the app, not a special “testing only” code path.
+
+The mock provider descriptor is the other useful primitive. It gives you a fully valid OAuth provider object with sensible defaults, then lets you override the pieces that matter for a specific test. That means a replay-state test can stay focused on callback handling while a refresh-path test can override `supportsRefreshToken` or endpoint URLs without rewriting the entire descriptor.
+
+## Real-World Example
+
+The pattern below is a good fit for an application team that wants to verify callback success and replay protection without calling any real provider endpoints.
+
+```ts
+import { describe, expect, it } from "vitest";
+import {
+  InMemoryOAuthStateStore,
+  InMemoryTokenVault,
+  createMockOAuthProviderDescriptor,
+} from "@superfunctions/oauth-testing";
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+
+describe("oauth callback lifecycle", () => {
+  it("accepts the first callback and rejects replay", async () => {
+    const provider = createMockOAuthProviderDescriptor();
+    const flow = createOAuthFlowService({
+      providers: { mock: provider },
+      providerRuntimeConfig: {
+        mock: {
+          clientId: "client",
+          clientSecret: "secret",
+          allowlistedRedirectUris: ["https://app.example/oauth/callback"],
+        },
+      },
+      stateStore: new InMemoryOAuthStateStore(),
+      tokenVault: new InMemoryTokenVault(),
+      tokenHttpClient: {
+        async exchangeToken() {
+          return { accessToken: "access-token", refreshToken: "refresh-token" };
+        },
+        async revokeToken() {
+          return;
+        },
+      },
+    });
+
+    const started = await flow.start({
+      providerId: "mock",
+      tenantId: "tenant_1",
+      userId: "user_1",
+      redirectUri: "https://app.example/oauth/callback",
+    });
+
+    await expect(
+      flow.handleCallback({
+        code: "oauth-code",
+        state: started.stateId,
+        redirectUri: "https://app.example/oauth/callback",
+      }),
+    ).resolves.toMatchObject({ providerId: "mock" });
+  });
+});
+```
+
+Once you have that harness, it is straightforward to add tests for refresh-token retention, disconnection cleanup, or hook failures by changing only the fake token client behavior. That keeps your test suite focused on the product behavior you care about instead of the mechanics of talking to a real OAuth provider.
+
+## Related Packages
+
+- [`oauth-flow`](/docs/authentication/oauth-flow) for the high-level lifecycle service most teams test with these helpers.
+- [`oauth-storage`](/docs/authentication/oauth-storage) for the underlying in-memory and durable storage contracts.
+- [`oauth-providers`](/docs/authentication/oauth-providers) when you want tests that use curated real-provider descriptors instead of a mock one.
+
+## Troubleshooting
+
+If a test passes with the mock descriptor but fails in production, compare the provider-specific descriptor fields such as `supportsRefreshToken`, default scopes, and token authentication method. If state assertions seem inconsistent across tests, create fresh in-memory store instances for each test instead of sharing them between cases. When your flow tests need to verify upstream failure behavior, prefer swapping the fake `tokenHttpClient` implementation over adding network mocks around `fetch`; it keeps failure handling explicit and easier to understand.

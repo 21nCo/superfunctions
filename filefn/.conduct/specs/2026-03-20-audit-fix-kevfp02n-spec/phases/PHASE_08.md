@@ -1,0 +1,33 @@
+# Phase 08
+- Phase goal: Bring Python behavioral semantics to parity with the canonical TypeScript semantics.
+- In scope:
+  - Python upload mode selection
+  - upload status shape
+  - upload-session binding semantics
+  - version-aware reads
+  - share/artifact download descriptors
+  - processing/storage protocol correctness
+  - dedupe behavior
+- Out of scope:
+  - demo smoke verification
+- Deliverables:
+  - `filefn/python/filefn/server/upload_sessions/service.py`
+  - `filefn/python/filefn/server/files/service.py`
+  - `filefn/python/filefn/server/shares/service.py`
+  - `filefn/python/filefn/server/processing/service.py`
+  - `filefn/python/filefn/server/protocols.py`
+  - `filefn/python/tests/test_upload_flow.py`
+  - `filefn/python/tests/test_downloads.py`
+  - `filefn/python/tests/test_processing.py`
+- Requirements covered: AUTH-001, AUTH-002, UPLOAD-001, UPLOAD-002, UPLOAD-003, UPLOAD-004, UPLOAD-005, FILE-002, FILE-003, DEDUPE-001, PROCESS-001, PY-002, PY-003
+- Implementation tasks:
+  - Remove bare `signed-url` mode from Python.
+  - Match canonical upload status fields.
+  - Implement session-binding semantics.
+  - Ensure version-aware provider behavior.
+  - Replace placeholder proxy descriptors with real HTTP routes/descriptors.
+  - Align storage protocol method names and processing behavior.
+  - Add behavioral tests for parity.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/python && python3 -m pytest`
+- Stop condition: Python parity vectors pass and no placeholder behaviors remain.

@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-15T12:43:27Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-15-new-ug0uwash-spec
+2026-03-16T06:59:47Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-15-new-ug0uwash-spec/phase-reports/PHASE_00-2026-03-16-dk6ijdkq-report.md
+2026-03-16T07:16:39Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-15-new-ug0uwash-spec/phase-reports/PHASE_01-2026-03-16-d0twb7rq-report.md

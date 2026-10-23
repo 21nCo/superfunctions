@@ -1,0 +1,8 @@
+id, desc, status, completedAt, completionDoc
+2026-03-20-audit-fix-dhrtycgi-spec,Define the work to make uifn core react and svelte production-ready and release-hygienic,1,2026-03-20T18:21:46Z,
+2026-03-25-audit-fix-zl6gfhpb-spec,Define the remaining work to make uifn truly production-ready for GA React and Svelte adapters,0,,
+2026-03-26-new-mrxtiesy-spec,Define the work to add deterministic private example apps for uifn across React Svelte and experimental Vue,1,2026-03-26T09:28:16Z,
+SFN-15,Define the work to make uifn production-ready across primitives adapters styled components patterns registry Storybook and Superfunction-backed panels,1,2026-06-27T17:49:40Z,
+SFN-15-r7p6n4qw-reaudit-fix,Fix valid findings from the 2026-06-28 r7p6n4qw uifn full audit,1,2026-06-28T12:09:06Z,.conduct/issue-completions/2026-06-28-reaudit-r7p6n4qw-completion.md
+2026-06-28-new-wkbqa7m2-spec,Define a catalog-driven uifn Workbench where every framework example app renders every component and drives full real-browser product QA,0,,
+2026-07-17-audit-fix-fb19ad09-spec,Replace uifn's competing behavior paths with one private runtime and DOM platform then reach evidence-backed accessibility and production maturity 10/10 across React Svelte and Solid,0,,

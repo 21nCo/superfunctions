@@ -1,0 +1,25 @@
+- Phase goal: Finish conformance coverage, deterministic sorting guarantees, and opt-in diagnostics across adapters.
+- In scope:
+  - cross-adapter conformance tests
+  - deterministic sort tests
+  - diagnostics sink
+- Out of scope:
+  - README/docs examples
+- Deliverables:
+  - `searchfn/swift/Sources/SearchFnClient/Diagnostics.swift`
+  - `searchfn/swift/Tests/SearchFnConformanceTests/*`
+  - updates to memory and SQLite adapter tests
+- Requirements covered:
+  - `SAPI-001`
+  - `SDET-001`
+  - `SOBS-001`
+- Implementation tasks:
+  - Add a diagnostics sink surface and event definitions.
+  - Emit diagnostics for index/search/persistence lifecycle without leaking field bodies.
+  - Add shared conformance suites for memory and SQLite adapters.
+  - Add deterministic `searchAll` sorting tests for native and fallback cases.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift`
+  - Expected outcome: full Swift package suite passes, including conformance and diagnostics tests.
+- Stop condition:
+  - Report total passing test groups and any remaining documentation work before beginning Phase 05.

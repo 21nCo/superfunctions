@@ -1,0 +1,127 @@
+{
+  "templateStatus": "template-not-evidence",
+  "warning": "This file is not accepted as evidence. A trusted qualified human must execute every exact row/browser/framework/delivery combination, replace all placeholders, and sign the canonical JSON with their externally registered Ed25519 key.",
+  "schemaVersion": 1,
+  "evidenceId": "<from matrix row>",
+  "evidenceClass": "manualAssistiveTechnology",
+  "status": "passed",
+  "result": "passed",
+  "rowId": "<from matrix row>",
+  "matrixRevision": "uifn-manual-at-matrix-v1",
+  "scriptSha256": "<from matrix row>",
+  "source": {
+    "commit": "<clean 40-char release-candidate commit>",
+    "dirty": false,
+    "definitionSha256": "<Phase 18 definition SHA-256>",
+    "artifactSetSha256": "<Phase 14 tarball-set SHA-256>",
+    "phase18EvidenceSha256": "<Phase 18 evidence SHA-256>",
+    "matrixDefinitionSha256": "538887bdf6529a846de228c4bf62cd5257eaf30b0caec27a8918843b624f9f15",
+    "artifacts": []
+  },
+  "tester": {
+    "participantId": "<trusted human participant id>",
+    "humanObserved": true,
+    "automationGenerated": false
+  },
+  "sessions": [
+    {
+      "id": "<unique physical session id>",
+      "platform": "<macOS|iOS|Windows|Android>",
+      "osVersion": "<exact version>",
+      "deviceName": "<exact device name>",
+      "deviceModel": "<exact model>",
+      "physical": true,
+      "emulated": false,
+      "browser": {
+        "name": "<Safari|Firefox|Chrome|Edge>",
+        "channel": "<current|previous>",
+        "version": "<exact version>"
+      },
+      "assistiveTechnology": {
+        "name": "<VoiceOver|NVDA|TalkBack>",
+        "version": "<exact version>",
+        "settings": "<exact verbosity/input settings>"
+      },
+      "locale": "<exact locale>"
+    }
+  ],
+  "executions": [
+    {
+      "sessionId": "<matching session id>",
+      "framework": "<react|svelte|solid>",
+      "deliveryMode": "<package|source>",
+      "startedAt": "<ISO-8601>",
+      "completedAt": "<ISO-8601>",
+      "result": "passed",
+      "steps": [
+        {
+          "stepIndex": 1,
+          "instruction": "<exact matrix instruction>",
+          "expected": "<exact matrix outcome>",
+          "observedSpeech": "<literal human-observed speech or explicit no-speech observation>",
+          "observedNavigation": "<literal human-observed navigation/state>",
+          "focusPath": [
+            "<ordered focus path>"
+          ],
+          "result": "passed",
+          "humanObserved": true,
+          "automationInferred": false
+        }
+      ],
+      "modeObservations": [
+        {
+          "modeId": "<every exact matrix requiredModes id>",
+          "observedSpeech": "<literal human observation>",
+          "observedNavigation": "<literal human observation>",
+          "focusPath": [
+            "<ordered focus path>"
+          ],
+          "result": "passed",
+          "humanObserved": true,
+          "automationInferred": false
+        }
+      ],
+      "stateObservations": [
+        {
+          "stateName": "<every exact matrix requiredStates name>",
+          "observedSpeech": "<literal human observation>",
+          "observedNavigation": "<literal human observation>",
+          "focusPath": [
+            "<ordered focus path>"
+          ],
+          "result": "passed",
+          "humanObserved": true,
+          "automationInferred": false
+        }
+      ],
+      "eventObservations": [
+        {
+          "eventType": "<every exact matrix requiredEvents type>",
+          "observedSpeech": "<literal human observation>",
+          "observedNavigation": "<literal human observation>",
+          "focusPath": [
+            "<ordered focus path>"
+          ],
+          "result": "passed",
+          "humanObserved": true,
+          "automationInferred": false
+        }
+      ]
+    }
+  ],
+  "defects": [],
+  "retests": [],
+  "timing": {
+    "startedAt": "<ISO-8601>",
+    "completedAt": "<ISO-8601>",
+    "expiresAt": "<at most 90 days>"
+  },
+  "signature": {
+    "scheme": "ed25519",
+    "keyId": "<registered key id>",
+    "signedBy": "<participant id>",
+    "signedAt": "<same as completedAt>",
+    "payloadSha256": "<canonical unsigned payload SHA-256>",
+    "value": "<base64 Ed25519 signature>"
+  }
+}

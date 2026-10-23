@@ -1,0 +1,9 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-21T14:40:09Z,Codex (GPT-5),Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec
+2026-03-21T15:13:27Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_00,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_00-2026-03-21-m4r8t2k6-report.md
+2026-03-21T15:37:40Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_01,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_01-2026-03-21-q6m2r9k4-report.md
+2026-03-21T16:05:06Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_02,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_02-2026-03-21-h6v2m8r1-report.md
+2026-03-21T16:27:06Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_03,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_03-2026-03-21-n5c8r2p7-report.md
+2026-03-21T23:51:03Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_04,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_04-2026-03-21-k7m4t1p9-report.md
+2026-03-22T04:10:18Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_05,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_05-2026-03-22-r8q2m6v4-report.md
+2026-03-22T04:29:04Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_06,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec/phase-reports/PHASE_06-2026-03-22-c9m2t7k4-report.md
