@@ -165,5 +165,9 @@ class DatabaseStorage:
             return [value[2] for value in events]
         return await self.db.transaction(scan)
 
+    def run_transaction(self, callback):
+        """Admit a Watch-owned shared-adapter transaction on the existing owner loop."""
+        return self._submit(self.db.transaction, callback).result()
+
     def query(self, metric=None):
         return self._submit(self._query, metric).result()

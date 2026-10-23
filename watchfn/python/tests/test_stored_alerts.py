@@ -7,6 +7,7 @@ from watchfn import Event, WatchFn
 from watchfn.alerts.alert_manager import Alert
 from watchfn.alerts.observations import evaluate, observations
 from test_database import migrate, start
+from test_durable_alerts import migrate_alerts
 
 
 def rule(metric='api.latency', **kwargs):
@@ -89,6 +90,7 @@ def test_sqlite_stored_producer_query_alert_reopen(tmp_path):
     path = 'sqlite:///' + str(tmp_path / 'observations.sqlite')
     engine = create_engine(path)
     migrate(engine)
+    migrate_alerts(engine)
     watch = start(create_adapter(engine))
     try:
         watch.track('api', {'latency': 20})
@@ -99,7 +101,7 @@ def test_sqlite_stored_producer_query_alert_reopen(tmp_path):
     engine = create_engine(path)
     watch = start(create_adapter(engine))
     try:
-        assert watch.alerts.get_all() == []  # Definitions are explicitly not durable yet.
+        assert watch.alerts.get_all()[0].state == 'triggered'  # Definition and lifecycle survive restart.
         watch.alerts.register(alert())
         assert watch.alerts.evaluate_stored()[0].matched is True
         watch.storage.SCAN_LIMIT = 0
@@ -130,7 +132,9 @@ def test_shared_alert_vectors():
 @pytest.mark.parametrize('database', [False, True])
 def test_same_metric_children_select_presence_in_each_window(tmp_path, database):
     engine = create_engine('sqlite:///' + str(tmp_path / 'windows.sqlite')) if database else None
-    if engine is not None: migrate(engine)
+    if engine is not None:
+        migrate(engine)
+        migrate_alerts(engine)
     watch = start(create_adapter(engine)) if engine is not None else memory()
     try:
         import json

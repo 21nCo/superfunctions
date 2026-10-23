@@ -5,6 +5,7 @@ from superfunctions.http import Route
 from .models import WatchFnConfig, Event
 from .query import Query, Aggregate
 from .alerts.alert_manager import AlertManager
+from .alerts.durable import DurableAlertManager
 from .alerts.observations import observations
 from .storage.memory_storage import MemoryStorage
 from .storage.database import DatabaseStorage
@@ -33,10 +34,16 @@ class WatchFn:
         self.system_metrics = SystemMetricsCollector(self)
         self.process_metrics = ProcessMetricsCollector(self)
 
-        self.alerts = AlertManager(snapshot=self._alert_snapshot)
+        self._alerts = None
 
         # HTTP Routes
         self.http_routes: List[Route] = create_routes(self)
+
+    @property
+    def alerts(self):
+        if self._alerts is None:
+            self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name) if isinstance(self.storage, DatabaseStorage) else AlertManager(snapshot=self._alert_snapshot)
+        return self._alerts
 
     def _alert_snapshot(self, requested, now, maximum):
         if not self.is_started:

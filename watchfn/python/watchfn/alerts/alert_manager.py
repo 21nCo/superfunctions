@@ -16,9 +16,9 @@ class Alert:
     description: Optional[str]
     enabled: bool
     condition: Dict[str, Any]
-    severity: Literal["info", "warning", "critical"]
+    severity: Literal["info", "warning", "error", "critical"]
     channels: List[str]
-    state: Literal["normal", "triggered"] = "normal"
+    state: Literal["normal", "triggered", "acknowledged", "resolved"] = "normal"
     triggered_at: Optional[float] = None
     last_evaluated: Optional[float] = None
     consecutive_failures: int = 0

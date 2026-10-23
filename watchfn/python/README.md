@@ -229,13 +229,101 @@ windows are inclusive; nonfinite values, booleans, strings and future samples
 are excluded. `minDataPoints` and legacy `min_data_points` are supported for
 anomalies. Invalid conditions fail before reading storage.
 
-Definitions, states and recovery configuration are **process-local**. A restarted
-client can re-register a definition and evaluate persisted events, but does not
-recover prior alert state. No notifications are sent. Durable definitions,
-lifecycle, acknowledgement, notes and outbox delivery remain unfinished. Host
-code must serialize definition edits/legacy evaluations with stored evaluation;
-concurrent `evaluate_stored` calls alone are serialized. The old standalone
-`evaluate`/`evaluate_all(data)` APIs retain their legacy array behavior and are
-not the stored/windowed path. Synchronous stored evaluation uses the same DB
-owner-loop boundary as synchronous queries; do not block an async request loop
-with it.
+With memory storage, definitions and state remain process-local and legacy array
+`evaluate`/`evaluate_all(data)` remain separate from the windowed path. Database
+storage now uses the durable manager below. Both synchronous paths use the same
+DB owner-loop boundary as synchronous queries; do not block an async request loop
+with them.
+
+
+### Durable database alert lifecycle and pending outbox
+
+For `storage="database"`, `watch.alerts` now persists definitions/state through
+the existing shared adapter. Start WatchFn before any durable alert operation;
+unlike the former process-local register, durable registration requires an active
+storage owner loop. Stop drains admitted database operations. Apply both tables returned by `get_alert_schema()`
+in addition to `get_watchfn_schema()` before using alerts. Event-only clients do
+not query the alert tables. Schemas use the TS names `watchfn_alerts` and
+`watchfn_alert_outbox`, namespace/id/revision columns, and Watch-owned JSON-text
+payloads. The namespace is the Watch name (maximum128 characters); it is a host
+partition, not user/tenant authorization. The host applies migrations and database
+indexes; no schema creation happens automatically.
+
+```python
+from watchfn import get_alert_schema
+
+# Apply exported TableSchemas using your migration system, then start WatchFn.
+record = watch.alerts.create({
+    'name': 'Slow API',
+    'condition': {'metric': 'api.latency', 'operator': 'gt', 'threshold': 100,
+                  'window': '5m'},
+    'channels': [],
+})
+watch.track('api', {'latency': 120})
+watch.alerts.evaluate_stored()
+watch.alerts.acknowledge(record['id'], acknowledged_by='operator', note='Investigating')
+watch.alerts.resolve(record['id'], resolved_by='operator', resolution='Fixed')
+```
+
+`create`, `get_record`, `list`, `update`, `trigger`, `add_note`, `acknowledge`,
+`resolve`, `enable` and `disable` return detached sanitized record dictionaries.
+`update(id, definition)` replaces the full definition and removes omitted optional
+routing/recovery metadata while preserving lifecycle. Only triggered alerts may
+be acknowledged; only active alerts resolve. Explicit `autoResolve` recovery and
+unknown/no-data semantics remain. Conditions support the existing TS wire fields;
+legacy anomaly `min_data_points` is normalized to persisted `minDataPoints`.
+
+Partial compatibility: `register(Alert(...))` inserts the caller-owned ID once, or leaves
+an identical persisted definition/state untouched. Changed definitions require
+`update`; registration cannot reset an existing trigger. `get`, `get_all`,
+`get_triggered` and `evaluate_stored` return detached legacy `Alert`/evaluation
+objects, so mutating returned objects no longer edits database definitions.
+Structured channel dictionaries are required for durable registration; legacy
+channel names alone cannot configure delivery. In particular, `get(id)` returns
+redacted channel names and is not a configuration export: passing that result to
+`register` is rejected for configured channels. Use `create`/`update` with the
+host's trusted full channel configuration; use `get_record` only for sanitized
+inspection, not credential round-tripping. Identical re-registration means the
+original full definition, not a public metadata projection. IDs are unique across the table;
+reusing one caller-owned ID under another namespace fails. Legacy array evaluation
+rejects on the durable manager; use actual stored observations. Removal is
+explicitly unavailable until notification reconciliation is implemented; disable
+an alert instead.
+
+Every lifecycle transition compares the persisted revision and enqueues its
+pending channel obligations in the same transaction. Failed outbox creation rolls
+back lifecycle; concurrent/stale evaluation raises `AlertConflict` and must be
+retried with fresh observations. A lost completion can be retried without
+re-triggering an already-active alert. The shared transaction must implement the
+optional atomic `update_many` extension; unsupported adapters reject before
+writing, with no read/unconditional-write fallback. SQLite independent engines and
+owner threads are tested. Backend transaction isolation/rowcount semantics remain
+adapter responsibilities. Evaluation reads one bounded event snapshot and commits
+each alert independently: a later page-item failure does not roll back prior
+items. Observation and definition snapshots are not one database transaction.
+
+`list(limit=50, after=None, status=None)` and `notifications(limit=50, after=None)`
+use ID cursors, limits1–100. `evaluate_stored(limit=50, after=None)` uses the same
+bounded definition page (use `list` to advance through pages including disabled
+alerts); observation caps remain unchanged. `get_all` raises above100 records,
+rather than truncating. Definitions are capped at32KiB, notes at100 with4096
+characters each, and total stored payload at512KiB. Default pending capacity is
+100 obligations per alert; exceeding it fails the transition, preserving prior
+state. These per-record bounds do not limit total historical definitions/outbox
+storage across all alerts.
+
+**No Python delivery yet:** channel configurations are saved as pending obligations
+for `triggered`, `acknowledged` and `resolved` events. `notifications` reports
+pending metadata, never credentials; `process_notifications` raises explicitly.
+Public channels report `configured: false` because no dispatcher/sender is
+configured. No HTTP/provider requests are made. Pending jobs are not silently
+marked sent or discarded. Credentials and notification snapshots remain plaintext
+at rest; protect the database and backups. Shared adapter error text is sanitized
+because it may contain SQL parameters. Custom adapters must honor the shared
+error contract and must not log secrets themselves.
+
+Lease-based dispatch, retries/dead-letter reconciliation, configured email/Slack/
+PagerDuty/webhook sends, transition callbacks, calculated-value notification
+context and complete TS lifecycle parity remain required follow-up work. Existing
+HTTP auth/ingestion/query routes are unchanged; no public alert-management route
+is introduced. The methods above are trusted host APIs.
