@@ -1,0 +1,27 @@
+watchfn/python/watchfn/utils/batching.py
+  s_e1c5fc1a65c0cf::t_fdb460e33cfa65 33-34,42-43
+watchfn/.conduct/python-buffer-aggregation-readiness.md
+  s_e1c5fc1a65c0cf::t_a9432bbaa36319 10-45
+watchfn/python/tests/test_batching.py
+  s_e1c5fc1a65c0cf::t_3a9ec6c8c7f859 76-146
+watchfn/python/tests/core/test_metric_aggregator.py
+  s_e1c5fc1a65c0cf::t_07ce9c0b9c511f 132-140
+watchfn/python/watchfn/core/metric_aggregator.py
+  s_e1c5fc1a65c0cf::t_c6756cbd1b73ca 74-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b267e8b869ed7e95e4567e55467175a0d68dc25d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
