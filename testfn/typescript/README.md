@@ -269,3 +269,24 @@ Storage automatically applies retention every 100 saved runs. Set `cleanupThresh
 The package includes `@testfn/core/storage/indexeddb-browser`, a classic-script bundle exposing `TestFnBrowser.IndexedDbManager`. Serve the resolved file as a normal script, then create a manager with `{ dbName: "test-history" }`. It uses the browser's native IndexedDB (including prefixed factories), includes runtime polyfills, and contains no in-memory IndexedDB fallback. The build parses the complete bundle as ES5.
 
 The browser acceptance fixture checks the shipped bundle both normally and with native Promise, microtask helpers, array methods and unprefixed IndexedDB globals removed. Cleanup queues dependent requests directly from IndexedDB events so a task-based Promise polyfill does not prematurely commit its transaction. These checks reduce the compatibility gap; they do not substitute for exact Chrome 24, Firefox 16, Safari 10 and Edge 12 runtime validation, which remains outstanding.
+
+### Explicit framework workspace
+
+`new TestRunner({ framework: 'vitest', cwd: '/absolute/project', reporters: [] })`
+resolves and canonicalizes the workspace once when `run()` starts, before asynchronous
+work. Omitting `cwd` snapshots the caller's current directory. Built-in adapters use
+that directory for discovery, installed framework resolution, subprocess execution,
+Playwright configuration/output, and path-only framework artifacts. Relative
+`configFile` values refer to this workspace. No host `process.chdir()` is performed;
+independent runners can execute different workspaces concurrently.
+
+Custom adapters receive `{ cwd }` as the optional second argument to `discover` and
+in `RunOptions`; they must honor it and avoid global directory changes. Caller-owned
+reporters, storage configurations and custom callbacks retain their own path semantics;
+use absolute paths for them when the host may change its directory. This is directory
+isolation, not a sandbox for arbitrary test code. Framework timeout/cancellation still
+uses the existing subprocess and process-group supervisor.
+
+`node testfn/typescript/scripts/verify-workspaces.mjs` checks concurrent Vitest, Jest,
+Playwright and Node-test/Puppeteer-adapter fixtures using installed frameworks. It does
+not launch browsers or establish browser-engine readiness.

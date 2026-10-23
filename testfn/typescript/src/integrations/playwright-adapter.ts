@@ -9,7 +9,7 @@ export class PlaywrightAdapter extends JsonFrameworkAdapter {
   name = "playwright";
   protected arguments(_file: string, options: RunOptions): string[] {
     return [
-      frameworkCli("@playwright/test", "playwright"),
+      frameworkCli("@playwright/test", "playwright", options.cwd),
       "test",
       "--config",
       options.configFile!,
@@ -22,12 +22,13 @@ export class PlaywrightAdapter extends JsonFrameworkAdapter {
     test: TestCase,
     options: RunOptions,
   ): Promise<TestResult[]> {
+    const cwd = resolve(options.cwd ?? process.cwd());
     const token = randomUUID();
-    const configFile = resolve(`.testfn-${token}.config.ts`);
+    const configFile = resolve(cwd, `.testfn-${token}.config.ts`);
     const original =
       options.configFile ??
       ["ts", "js", "mts", "mjs", "cts", "cjs"]
-        .map((ext) => resolve(`playwright.config.${ext}`))
+        .map((ext) => resolve(cwd, `playwright.config.${ext}`))
         .find(existsSync);
     const browsers = options.browsers?.length
       ? options.browsers
@@ -42,12 +43,12 @@ export class PlaywrightAdapter extends JsonFrameworkAdapter {
         timezone: undefined,
       },
     }));
-    const literalPath = resolve(test.file).replace(
+    const literalPath = resolve(cwd, test.file).replace(
       /[.*+?^${}()|[\]\\]/g,
       "\\$&",
     );
-    const content = `${original ? `import original from ${JSON.stringify(resolve(original))};` : "const original = {};"}
-export default {...original, testDir:${JSON.stringify(process.cwd())}, testMatch:new RegExp(${JSON.stringify("^" + literalPath + "$")}), outputDir:${JSON.stringify(join(process.cwd(), "test-results", `testfn-${token}`))}, projects:${JSON.stringify(projects)}.map(project=>({...project,use:{...original.use,...original.projects?.find(p=>p.name===project.name)?.use,...project.use}}))};`;
+    const content = `${original ? `import original from ${JSON.stringify(resolve(cwd, original))};` : "const original = {};"}
+export default {...original, testDir:${JSON.stringify(cwd)}, testMatch:new RegExp(${JSON.stringify("^" + literalPath + "$")}), outputDir:${JSON.stringify(join(cwd, "test-results", `testfn-${token}`))}, projects:${JSON.stringify(projects)}.map(project=>({...project,use:{...original.use,...original.projects?.find(p=>p.name===project.name)?.use,...project.use}}))};`;
     writeFileSync(configFile, content);
     try {
       return await super.execute(test, { ...options, configFile });
