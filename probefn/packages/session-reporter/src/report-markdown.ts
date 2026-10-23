@@ -59,6 +59,7 @@ export function renderReportMarkdown(report: ReportJsonDocument): string {
 
   lines.push('', '## Artifact References', '');
   lines.push(`- Manifest: \`${report.artifactReferences.manifestPath}\``);
+  for (const trace of report.tracePaths ?? []) lines.push(`- Trace chunk: \`${trace}\``);
   lines.push(`- Trace: \`${report.tracePath ?? 'missing'}\``);
 
   for (const [label, sinkPath] of Object.entries(report.artifactReferences.eventSinks)) {

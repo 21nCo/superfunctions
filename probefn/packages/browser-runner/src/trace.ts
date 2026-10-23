@@ -13,6 +13,7 @@ export interface TraceLifecycleOptions {
   runId: string;
   enabled: boolean;
   relativeTracePath?: string;
+  chunk?: boolean;
 }
 
 export async function startTracing(
@@ -47,8 +48,10 @@ export async function stopTracing(
   const scratch = await mkdtemp(path.join(tmpdir(), 'probefn-trace-'));
   try {
     const filename = path.join(scratch, 'trace.zip');
-    await context.tracing.stop({ path: filename });
+    if (options.chunk) await context.tracing.stopChunk({ path: filename });
+    else await context.tracing.stop({ path: filename });
     await options.artifactStore.importArtifactFile(relativeTracePath, filename);
+    if (options.chunk) await context.tracing.startChunk();
     return relativeTracePath;
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }

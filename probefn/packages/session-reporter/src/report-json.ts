@@ -33,6 +33,7 @@ export interface SessionStateLike {
   artifacts: {
     manifestPath: string;
     tracePath?: string | null;
+    tracePaths?: string[];
     reportJsonPath?: string;
     reportMarkdownPath?: string;
     consoleSinkPath?: string;
@@ -73,6 +74,7 @@ export interface RegressionIndexEntry {
 export interface ArtifactReferences {
   manifestPath: string;
   tracePath: string | null;
+  tracePaths?: string[];
   eventSinks: {
     actions?: string;
     console?: string;
@@ -106,6 +108,7 @@ export interface ReportJsonDocument {
   hypotheses: RootCauseHypothesis[];
   unresolvedReason?: string;
   tracePath: string | null;
+  tracePaths?: string[];
   artifactReferences: ArtifactReferences;
 }
 
@@ -193,7 +196,11 @@ export async function assembleReportJson(
     input.repoRoot,
     input.session.artifacts.tracePath ?? null,
   );
+  const requestedTraces = [...new Set([...(input.session.artifacts.tracePaths ?? []), ...(tracePath ? [tracePath] : [])])];
+  const tracePaths: string[] = [];
+  for (const candidate of requestedTraces) if (await resolveTracePath(input.repoRoot, candidate)) tracePaths.push(candidate);
   const warnings = [
+    ...(tracePaths.length < requestedTraces.length ? ['Some recorded trace chunks are missing.'] : []),
     ...designSummary.warnings,
     ...(tracePath ? [] : ['Trace artifact was not recorded for this run.']),
   ];
@@ -226,9 +233,11 @@ export async function assembleReportJson(
         ? { unresolvedReason: correlation.unresolvedReason }
         : {}),
       tracePath,
+      tracePaths,
       artifactReferences: {
         manifestPath: input.session.artifacts.manifestPath,
         tracePath,
+        tracePaths,
         eventSinks: {
           ...(actionCount > 0 ? { actions: actionSinkPath } : {}),
           ...(input.session.artifacts.consoleSinkPath ? { console: input.session.artifacts.consoleSinkPath } : {}),

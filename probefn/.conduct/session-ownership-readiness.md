@@ -18,3 +18,7 @@ Native evidence:
 - Five focused tests pass; scoped build/typecheck15tasks pass. Logs `/tmp/probe-ownership-tests2.log` and `/tmp/probe-ownership-types.log`. Temporary roots and owned child removed.
 
 This is a prerequisite API checkpoint. Runtime command/transport fencing and resident browser integration are still being implemented; these tests alone do not establish that existing CLI/MCP mutations are fenced.
+
+## Runtime follow-up
+
+The resident-session checkpoint wires this prerequisite into guarded CLI/MCP operations and transport-owned browser lifetime; see `resident-session-readiness.md`. This does not automatically fence raw `ArtifactStore` writers or lower-level callers bypassing the guarded operation APIs. Those callers must coordinate separately; comprehensive SDK writer fencing remains follow-up.

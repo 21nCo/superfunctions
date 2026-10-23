@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import { expect, it, vi } from 'vitest';
+import { createCheckpoint } from '@probefn/core';
 import { BrowserRunner } from '@probefn/browser-runner';
 import { ProbefnRuntime, runFlow, startSessionFromConfig, stopSession, createCheckpointFromSession } from '../src/server.js';
 
@@ -63,12 +64,21 @@ it('keeps transient form state, hashes the finalized trace, and preserves prior 
   } finally { await f.close(); }
 });
 
-it('rejects an unavailable requested trace explicitly', async () => {
+it('captures a real standalone trace and rejects a missing low-level trace', async () => {
   const f = await fixture();
   try {
-    await expect(createCheckpointFromSession(f.runtime, { sessionId: 'flow', name: 'missing', includeTrace: true }))
-      .rejects.toMatchObject({ code: 'E_CHECKPOINT_CAPTURE_FAILED' });
+    const { scope } = await f.runtime.resolveSessionContext('flow');
+    await expect(createCheckpoint({ repoRoot: f.root, artifactStore: scope.artifactStore, sessionId: 'flow', runId: 'flow',
+      browser: 'chromium', name: 'missing', includeTrace: true, tracePath: null,
+      delta: { newConsoleErrors: 0, newPageErrors: 0, newNetworkFailures: 0 },
+      source: { url: () => f.url, viewportSize: () => ({ width: 100, height: 100 }), screenshot: async () => Buffer.from(''),
+        domSnapshot: async () => ({}), accessibilitySnapshot: async () => ({}), layoutSnapshot: async () => ({}) },
+    })).rejects.toMatchObject({ code: 'E_CHECKPOINT_CAPTURE_FAILED' });
     await expect(readFile(path.join(f.root, '.artifacts/runs/flow/checkpoints/missing/checkpoint.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await createCheckpointFromSession(f.runtime, { sessionId: 'flow', name: 'standalone', includeTrace: true })).ok).toBe(true);
+    const manifest = await f.json('.artifacts/runs/flow/checkpoints/standalone/checkpoint.json');
+    const trace = manifest.artifacts.find((artifact: { kind: string }) => artifact.kind === 'trace');
+    expect((await readFile(path.join(f.root, trace.path))).subarray(0, 2).toString()).toBe('PK');
   } finally { await f.close(); }
 });
 

@@ -6,6 +6,7 @@ export type SessionLifecycleStatus = 'starting' | 'running' | 'completed' | 'fai
 export interface SessionArtifactsState {
   manifestPath: string;
   tracePath?: string | null;
+  tracePaths?: string[];
   storageStatePath?: string;
   reportJsonPath?: string;
   reportMarkdownPath?: string;

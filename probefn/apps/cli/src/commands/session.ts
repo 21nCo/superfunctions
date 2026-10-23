@@ -88,45 +88,47 @@ async function startAdhocAttachSession(
   const browser = (getFlagValue(args, '--browser') ?? 'chromium') as 'chromium' | 'firefox' | 'webkit';
   const sessionId = `sess_${Date.now()}`;
   const runId = `run_${Date.now()}`;
-  const scope = context.runtime.createScope('.artifacts');
-  const startedSession = await scope.devServerManager.startSession({
-    sessionId,
-    runId,
-    mode,
-    browser,
-    deterministic: DEFAULT_DETERMINISTIC,
-    devServer: {
-      mode: 'attach',
-      name: getFlagValue(args, '--dev-server') ?? 'adhoc',
-      url,
-      timeoutMs: 120000,
-      envAllowlist: [],
-    },
-  });
+  return context.runtime.withSessionOperation(sessionId, async () => {
+    const scope = context.runtime.createScope('.artifacts');
+    const startedSession = await scope.devServerManager.startSession({
+      sessionId,
+      runId,
+      mode,
+      browser,
+      deterministic: DEFAULT_DETERMINISTIC,
+      devServer: {
+        mode: 'attach',
+        name: getFlagValue(args, '--dev-server') ?? 'adhoc',
+        url,
+        timeoutMs: 120000,
+        envAllowlist: [],
+      },
+    });
 
-  await scope.sessionManager.initialize({
-    sessionId,
-    runId,
-    mode,
-    browser,
-    deterministic: DEFAULT_DETERMINISTIC,
-    artifactRoot: startedSession.artifactRoot,
-    startedAt: startedSession.startedAt,
-    manifestPath: startedSession.manifestPath,
-    resolvedUrl: startedSession.resolvedUrl,
-  });
-  await scope.sessionManager.markRunning(sessionId, {
-    resolvedUrl: startedSession.resolvedUrl,
-  });
-  context.runtime.rememberSession(sessionId, '.artifacts');
+    await scope.sessionManager.initialize({
+      sessionId,
+      runId,
+      mode,
+      browser,
+      deterministic: DEFAULT_DETERMINISTIC,
+      artifactRoot: startedSession.artifactRoot,
+      startedAt: startedSession.startedAt,
+      manifestPath: startedSession.manifestPath,
+      resolvedUrl: startedSession.resolvedUrl,
+    });
+    await scope.sessionManager.markRunning(sessionId, {
+      resolvedUrl: startedSession.resolvedUrl,
+    });
+    context.runtime.rememberSession(sessionId, '.artifacts');
 
-  return createSuccessEnvelope({
-    sessionId,
-    runId,
-    artifactRoot: startedSession.artifactRoot,
-    startedAt: startedSession.startedAt,
-    resolvedUrl: startedSession.resolvedUrl,
-  });
+    return createSuccessEnvelope({
+      sessionId,
+      runId,
+      artifactRoot: startedSession.artifactRoot,
+      startedAt: startedSession.startedAt,
+      resolvedUrl: startedSession.resolvedUrl,
+    });
+  }, { artifactRoot: '.artifacts', runId });
 }
 
 async function handleStop(

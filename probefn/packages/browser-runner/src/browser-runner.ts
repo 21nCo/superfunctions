@@ -206,7 +206,15 @@ export class BrowserRunner {
     } finally { finishStart(); }
   }
 
-  public async stopSession(sessionId: string): Promise<ClosedBrowserSession> {
+  public async flushTrace(sessionId: string, relativeTracePath: string): Promise<string> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.context || !session.traceEnabled || session.cancelled) throw createProbefnError({ code: 'E_SESSION_NOT_FOUND', message: 'Browser trace is not active.', retryable: false });
+    await session.eventCapture?.flush();
+    return (await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
+      runId: session.runId, enabled: true, relativeTracePath, chunk: true }))!;
+  }
+
+  public async stopSession(sessionId: string, options: { saveTrace?: boolean } = {}): Promise<ClosedBrowserSession> {
     const activeSession = this.sessions.get(sessionId);
     if (!activeSession) {
       throw createProbefnError({
@@ -223,7 +231,7 @@ export class BrowserRunner {
     activeSession.cancelled = true;
     const stopping = (async () => {
       await activeSession.startDone;
-      const result = await this.cleanupSession(activeSession, true);
+      const result = await this.cleanupSession(activeSession, options.saveTrace ?? true);
       if (!activeSession.browser?.isConnected() && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
       if (result.errors.length === 1 && !activeSession.browser?.isConnected() &&
           isProbefnError(result.errors[0]) && result.errors[0].code === 'E_STORAGE_CAP_EXCEEDED') {

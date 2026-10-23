@@ -59,7 +59,7 @@ import {
   type SessionState,
 } from '@probefn/core';
 import { DevServerManager } from '@probefn/dev-server';
-import { ArtifactStore, type StorageCaps } from '@probefn/storage';
+import { ArtifactStore, SessionOwnership, type StorageCaps } from '@probefn/storage';
 import { compareBaseline, DEFAULT_BASELINE_ROOT, recordBaseline } from '@probefn/visual-baselines';
 
 import { getBaselineTools } from './tools/baseline.js';
@@ -158,7 +158,260 @@ interface FlowPlayback {
   browser: Awaited<ReturnType<BrowserRunner['startSession']>>;
 }
 
+// In-flight operations retain this flag without a runtime-global history of closed connections.
+export interface RuntimeTransportContext { closed: boolean }
+
+interface RuntimeSessionOwner {
+  sessionId: string;
+  runId: string;
+  artifactRoot: string;
+  lease: SessionOwnership;
+  transport: RuntimeTransportContext | undefined;
+  persistent: boolean;
+  operation?: { controller: AbortController; done: Promise<void> };
+  closing: boolean;
+  browser?: {
+    runner: BrowserRunner;
+    id: string;
+    started: ReturnType<BrowserRunner['startSession']>;
+    closing?: Promise<void>;
+  };
+}
+
+export interface ProbefnRuntimeOptions { cleanupTimeoutMs?: number }
+
 export class ProbefnRuntime {
+  private readonly cleanupTimeoutMs: number;
+  private readonly transportCleanup = new Map<RuntimeTransportContext, Promise<void>>();
+
+  public async awaitCleanup<T>(task: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([task, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(createProbefnError({ code: 'E_INTERNAL',
+          message: 'Cleanup has not settled; ownership remains held until its work finishes.', retryable: true,
+          details: { cleanupPending: true, cleanupTimeoutMs: this.cleanupTimeoutMs } })), this.cleanupTimeoutMs);
+      })]);
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
+  private readonly transportScope = new AsyncLocalStorage<RuntimeTransportContext>();
+  private readonly operationScope = new AsyncLocalStorage<RuntimeSessionOwner>();
+  private readonly sessionOwners = new Map<string, RuntimeSessionOwner>();
+
+  public operationSignal(): AbortSignal | undefined { return this.requestSignal.getStore(); }
+
+  public withTransport<T>(transport: RuntimeTransportContext, execute: () => Promise<T>): Promise<T> {
+    return this.transportScope.run(transport, execute);
+  }
+
+  public isSessionOperation(sessionId: string): boolean {
+    const owner = this.operationScope.getStore();
+    if (owner?.sessionId !== sessionId) return false;
+    owner.lease.assertOwned();
+    return true;
+  }
+
+  public async withSessionOperation<T>(sessionId: string, execute: () => Promise<T>, initial?: { artifactRoot: string; runId: string; maxOwnershipSlots?: number }, resident = false): Promise<T> {
+    if (this.isSessionOperation(sessionId)) return execute();
+    const transport = this.transportScope.getStore();
+    if (transport?.closed) throw new Error('MCP transport is closing.');
+    let owner = this.sessionOwners.get(sessionId);
+    if (owner && initial && (owner.runId !== initial.runId || owner.artifactRoot !== initial.artifactRoot)) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'Owned session identity differs from requested run or artifact root.', retryable: false });
+    }
+    if (owner && (owner.transport !== transport || owner.operation || owner.closing)) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'Another caller owns this session operation.', retryable: true });
+    }
+    if (!owner) {
+      const context = initial ? undefined : await this.resolveSessionContext(sessionId);
+      const artifactRoot = initial?.artifactRoot ?? context!.scope.artifactRoot;
+      const runId = initial?.runId ?? context!.session.runId;
+      const lease = await SessionOwnership.acquire({ repoRoot: this.repoRoot, artifactRoot, sessionId, runId,
+        ...(initial?.maxOwnershipSlots !== undefined ? { maxOwnershipSlots: initial.maxOwnershipSlots } : {}) });
+      if (transport?.closed) { lease.release(); throw new Error('MCP transport closed during ownership acquisition.'); }
+      owner = { sessionId, runId, artifactRoot, lease, transport, persistent: Boolean(transport && (initial || resident)), closing: false };
+      this.sessionOwners.set(sessionId, owner);
+      if (!initial) {
+        try {
+          const current = await this.resolveSessionContext(sessionId);
+          if (current.session.runId !== runId || current.scope.artifactRoot !== artifactRoot) throw new Error('Session identity changed during ownership acquisition.');
+        } catch (error) { lease.release(); this.sessionOwners.delete(sessionId); throw error; }
+      }
+    }
+    owner.lease.assertOwned();
+    const controller = new AbortController();
+    const parent = this.requestSignal.getStore();
+    const abort = () => controller.abort(parent?.reason);
+    parent?.addEventListener('abort', abort, { once: true });
+    if (parent?.aborted) abort();
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    owner.operation = { controller, done };
+    try {
+      controller.signal.throwIfAborted();
+      return await this.operationScope.run(owner, () => this.requestSignal.run(controller.signal, execute));
+    } finally {
+      parent?.removeEventListener('abort', abort);
+      delete owner.operation;
+      if (!owner.persistent) { owner.lease.release(); this.sessionOwners.delete(sessionId); }
+      finish();
+    }
+  }
+
+  public async cancelSessionOperation(sessionId: string): Promise<void> {
+    const owner = this.sessionOwners.get(sessionId);
+    if (!owner || this.isSessionOperation(sessionId)) return;
+    if (owner.transport !== this.transportScope.getStore()) throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'Session belongs to another transport.', retryable: true });
+    if (owner.operation) {
+      owner.operation.controller.abort(new Error('Session stop requested.'));
+      await this.awaitCleanup(owner.operation.done);
+    }
+  }
+
+  public releaseSessionOwner(sessionId: string): void {
+    const owner = this.operationScope.getStore();
+    if (owner?.sessionId !== sessionId) throw new Error('Only the active owner can release a session.');
+    owner.lease.release();
+    this.sessionOwners.delete(sessionId);
+  }
+
+  public async closeTransport(transport: RuntimeTransportContext): Promise<void> {
+    transport.closed = true;
+    let task = this.transportCleanup.get(transport);
+    if (!task) {
+      const owners = [...this.sessionOwners.values()].filter(owner => owner.transport === transport);
+      // Signal every owner first; one stalled cleanup cannot delay another client's session cancellation.
+      for (const owner of owners) { owner.closing = true; owner.operation?.controller.abort(new Error('MCP transport closed.')); }
+      task = (async () => {
+        const results = await Promise.allSettled(owners.map(async owner => {
+          await owner.operation?.done;
+          if (this.sessionOwners.get(owner.sessionId) !== owner) return;
+          try { await this.operationScope.run(owner, () => stopSession(this, owner.sessionId)); }
+          catch (error) {
+            if (toErrorEnvelope(error).error.code !== 'E_SESSION_NOT_FOUND') throw error;
+            await this.createScope(owner.artifactRoot).devServerManager.stopSession(owner.sessionId).catch(error => {
+              if (toErrorEnvelope(error).error.code !== 'E_SESSION_NOT_FOUND') throw error;
+            });
+            owner.lease.release(); this.sessionOwners.delete(owner.sessionId);
+          }
+        }));
+        const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => result.reason as unknown);
+        if (errors.length) throw new AggregateError(errors, 'MCP session cleanup failed.');
+      })();
+      this.transportCleanup.set(transport, task);
+      void task.then(() => this.transportCleanup.delete(transport), () => this.transportCleanup.delete(transport));
+    }
+    await this.awaitCleanup(task);
+  }
+
+  private traceDestination(scope: SessionScope, runId: string): string {
+    return path.posix.join(path.posix.dirname(scope.artifactStore.getRunPaths(runId).tracePath), `browser-${randomUUID()}.trace.zip`);
+  }
+
+  private async recordTrace(sessionId: string, tracePath: string): Promise<void> {
+    const owner = this.operationScope.getStore();
+    owner?.lease.assertOwned();
+    const { scope, session } = await this.resolveSessionContext(sessionId);
+    const patch = { artifacts: {
+      tracePath, tracePaths: [...new Set([...(session.artifacts.tracePaths ?? []), ...(session.artifacts.tracePath ? [session.artifacts.tracePath] : []), tracePath])],
+    } };
+    if (session.status === 'failed') await scope.sessionManager.markFailed(sessionId, patch);
+    else if (session.status === 'completed') await scope.sessionManager.markCompleted(sessionId, patch);
+    else await scope.sessionManager.markRunning(sessionId, patch);
+  }
+
+  public async flushSessionTrace(sessionId: string): Promise<string | null> {
+    const owner = this.operationScope.getStore();
+    const transient = this.playbackScope.getStore();
+    owner?.lease.assertOwned();
+    let trace: string;
+    if (owner?.sessionId === sessionId && owner.browser) {
+      const scope = this.createScope(owner.artifactRoot);
+      await owner.browser.started;
+      trace = await owner.browser.runner.flushTrace(owner.browser.id, this.traceDestination(scope, owner.runId));
+    } else if (transient?.sessionId === sessionId) {
+      trace = await transient.runner.flushTrace(transient.id, this.traceDestination(transient.scope, transient.runId));
+    } else return null;
+    await this.recordTrace(sessionId, trace);
+    return trace;
+  }
+
+  public hasActiveFlow(sessionId: string): boolean { return this.activeFlows.has(sessionId); }
+
+  public async closeSessionBrowser(sessionId: string, saveTrace = true): Promise<void> {
+    const owner = this.operationScope.getStore();
+    if (owner?.sessionId !== sessionId || !owner.browser) return;
+    const browser = owner.browser;
+    browser.closing ??= (async () => {
+      try {
+        const closed = await browser.runner.stopSession(browser.id, { saveTrace });
+        if (closed.tracePath) await this.recordTrace(sessionId, closed.tracePath);
+        delete owner.browser;
+      } catch (error) {
+        const started = await browser.started.catch(() => undefined);
+        if (started && !started.page.context().browser()?.isConnected()) delete owner.browser;
+        if (!started && error && typeof error === 'object' && 'code' in error && error.code === 'E_SESSION_NOT_FOUND') {
+          delete owner.browser;
+          return;
+        }
+        throw error;
+      }
+    })();
+    await browser.closing;
+  }
+
+  private async withResidentPlayback<T>(session: SessionState, execute: (input: {
+    page: Awaited<ReturnType<BrowserRunner['startSession']>>['page'];
+    sinkPaths: Awaited<ReturnType<BrowserRunner['startSession']>>['sinkPaths'];
+    flushEvents: () => Promise<void>;
+  }) => Promise<T>, options: { flow?: boolean; signal?: AbortSignal; video?: boolean }, storageStatePath?: string): Promise<PlaybackSessionResult<T>> {
+    const owner = this.operationScope.getStore()!;
+    if (options.video) throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'Video finalization closes its page; use an explicit ephemeral CLI capture instead of a resident session.', retryable: false });
+    const scope = this.createScope(owner.artifactRoot);
+    if (session.status === 'completed' || session.status === 'failed') throw createProbefnError({ code: 'E_SESSION_NOT_FOUND', message: 'Browser session has already ended.', retryable: false });
+    const signal = options.signal ?? this.requestSignal.getStore();
+    signal?.throwIfAborted();
+    if (!owner.browser) {
+      const runner = new BrowserRunner({ repoRoot: this.repoRoot, artifactStore: scope.artifactStore, now: this.now });
+      const id = `${session.sessionId}__resident__${randomUUID()}`;
+      const started = runner.startSession({ sessionId: id, runId: session.runId, browser: session.browser,
+        deterministic: session.deterministic, initialUrl: session.resolvedUrl!, ...(storageStatePath ? { storageStatePath } : {}),
+        trace: { enabled: true, relativeTracePath: this.traceDestination(scope, session.runId) } });
+      owner.browser = { runner, id, started };
+    }
+    const browser = owner.browser;
+    const abort = () => { void this.operationScope.run(owner, () => this.closeSessionBrowser(session.sessionId)).catch(() => undefined); };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    let executionError: unknown;
+    try {
+      const started = await browser.started;
+      signal?.throwIfAborted();
+      const invoke = () => execute({ page: started.page, sinkPaths: started.sinkPaths, flushEvents: () => started.eventCapture.flush() });
+      const value = await (options.flow ? this.flowPlayback.run({ sessionId: session.sessionId, browser: started }, invoke) : invoke());
+      signal?.throwIfAborted();
+      const auth = new AuthProfileStore({ repoRoot: this.repoRoot, artifactStore: scope.artifactStore });
+      return { value, sinkPaths: started.sinkPaths, storageStatePath: await auth.writeSessionStorageState({ runId: session.runId, storageState: await started.page.context().storageState() }) };
+    } catch (error) { executionError = error; throw error; }
+    finally {
+      signal?.removeEventListener('abort', abort);
+      try {
+        if (signal?.aborted) {
+          await this.closeSessionBrowser(session.sessionId);
+          await scope.sessionManager.markFailed(session.sessionId);
+        } else if (owner.browser) await this.flushSessionTrace(session.sessionId);
+      } catch (cleanupError) {
+        try { await this.closeSessionBrowser(session.sessionId, false); }
+        catch (closeError) { throw new AggregateError([executionError, cleanupError, closeError].filter(Boolean), 'Resident playback cleanup failed.'); }
+        await scope.sessionManager.markFailed(session.sessionId);
+        if (executionError) throw new AggregateError([executionError, cleanupError], 'Resident playback and trace finalization failed.');
+        throw cleanupError;
+      }
+    }
+  }
+
+  private readonly playbackScope = new AsyncLocalStorage<{ sessionId: string; runId: string; runner: BrowserRunner; id: string; scope: SessionScope }>();
   private readonly playbackOwners = new Set<string>();
   private readonly flowPlayback = new AsyncLocalStorage<FlowPlayback>();
   private readonly requestSignal = new AsyncLocalStorage<AbortSignal>();
@@ -207,7 +460,10 @@ export class ProbefnRuntime {
   private readonly devServerManagers = new Map<string, DevServerManager>();
   private readonly sessionScopes = new Map<string, RegisteredSessionScope>();
 
-  public constructor(repoRoot: string, now: () => string = () => new Date().toISOString()) {
+  public constructor(repoRoot: string, now: () => string = () => new Date().toISOString(), options: ProbefnRuntimeOptions = {}) {
+    const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 30000;
+    if (!Number.isSafeInteger(cleanupTimeoutMs) || cleanupTimeoutMs < 1 || cleanupTimeoutMs > 300000) throw new TypeError('cleanupTimeoutMs must be an integer from 1 through 300000.');
+    this.cleanupTimeoutMs = cleanupTimeoutMs;
     this.repoRoot = repoRoot;
     this.now = now;
   }
@@ -424,6 +680,9 @@ export class ProbefnRuntime {
         runId: session.runId, storageState: await browser.page.context().storageState(),
       }) };
     }
+    if (this.operationScope.getStore()?.persistent) {
+      return this.withResidentPlayback(session, execute, options, existingStorageStatePath);
+    }
     if (this.activeFlows.has(session.sessionId) && !options.flow) {
       throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'A flow owns this session.', retryable: true });
     }
@@ -433,6 +692,7 @@ export class ProbefnRuntime {
       now: this.now,
     });
     const playbackSessionId = `${session.sessionId}__mcp__${randomUUID()}`;
+    options = { ...options, ...(options.signal ?? this.requestSignal.getStore() ? { signal: options.signal ?? this.requestSignal.getStore()! } : {}) };
     options.signal?.throwIfAborted();
     const startingBrowser = browserRunner.startSession({
       sessionId: playbackSessionId,
@@ -443,8 +703,8 @@ export class ProbefnRuntime {
       initialUrl: session.resolvedUrl,
       ...(options.video ? { video: { enabled: true } } : {}),
       trace: {
-        enabled: options.flow ?? false,
-        ...(options.flow ? { relativeTracePath: path.posix.join(path.posix.dirname(scope.artifactStore.getRunPaths(session.runId).tracePath), `browser-${randomUUID()}.trace.zip`) } : {}),
+        enabled: true,
+        relativeTracePath: this.traceDestination(scope, session.runId),
       },
     });
 
@@ -462,7 +722,7 @@ export class ProbefnRuntime {
         sinkPaths: startedBrowser.sinkPaths,
         flushEvents: () => startedBrowser.eventCapture.flush(),
       });
-      const value = await (options.flow
+      const value = await this.playbackScope.run({ sessionId: session.sessionId, runId: session.runId, runner: browserRunner, id: playbackSessionId, scope }, () => options.flow
         ? this.flowPlayback.run({ sessionId: session.sessionId, browser: startedBrowser }, invoke)
         : invoke());
       return {
@@ -480,7 +740,7 @@ export class ProbefnRuntime {
       try {
         // Failed startup owns its cleanup; an explicit cancellation may already own close().
         const closed = await (closing ?? startingBrowser.then(close, () => null));
-        if (closed?.tracePath) await scope.sessionManager.markRunning(session.sessionId, { artifacts: { tracePath: closed.tracePath } });
+        if (closed?.tracePath) await this.recordTrace(session.sessionId, closed.tracePath);
       }
       catch (cleanupError) {
         const active = this.activeFlows.get(session.sessionId);
@@ -553,20 +813,27 @@ export class ProbefnMcpServer {
   public constructor(runtime: ProbefnRuntime) {
     this.runtime = runtime;
     this.tools = runtime.listTools();
-    this.registry = new McpFnRegistry();
+    this.registry = this.createRegistry();
+  }
+
+  private createRegistry(transport?: RuntimeTransportContext): McpFnRegistry {
+    const registry = new McpFnRegistry();
     for (const tool of this.tools) {
-      this.registry.register({
+      registry.register({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema as unknown as McpFnObjectSchema,
         annotations: { openWorldHint: false },
         metadata: { 'mcpfn/source': 'probefn' },
-        handler: async (args, _context, extra) =>
-          await this.runtime.callTool(tool.name, args, extra.signal) as unknown as CallToolResult,
+        handler: async (args, _context, extra) => {
+          const execute = () => this.runtime.callTool(tool.name, args, extra.signal);
+          return await (transport ? this.runtime.withTransport(transport, execute) : execute()) as unknown as CallToolResult;
+        },
         handleInvalidArguments: async (args) =>
           await this.runtime.callTool(tool.name, args) as unknown as CallToolResult,
       });
     }
+    return registry;
   }
 
   public listTools(): ToolDefinition[] {
@@ -577,15 +844,16 @@ export class ProbefnMcpServer {
     transport: Transport,
     signal?: AbortSignal,
   ): Promise<void> {
+    const owner: RuntimeTransportContext = { closed: false };
     const server = createMcpFnServer({
       info: MCP_SERVER_INFO,
-      registry: this.registry,
+      registry: this.createRegistry(owner),
       transports: ['stdio'],
     });
     await server.connect(transport);
 
     let abortCleanup: (() => void) | undefined;
-    await new Promise<void>((resolve) => {
+    try { await new Promise<void>((resolve) => {
       let closed = false;
       const finish = () => {
         if (closed) return;
@@ -612,7 +880,7 @@ export class ProbefnMcpServer {
         }
         signal.addEventListener('abort', abortCleanup, { once: true });
       }
-    });
+    }); } finally { await this.runtime.closeTransport(owner); }
   }
 
   public manifest(): McpFnManifest {
@@ -703,6 +971,11 @@ export async function startSessionFromConfig(
   const runId = input.runId ?? (derivedSuffix ? `run_${derivedSuffix}` : `run_${Date.now()}`);
   assertArtifactIdentifier(sessionId, 'Session id');
   assertArtifactIdentifier(runId, 'Run id');
+  if (!runtime.isSessionOperation(sessionId)) {
+    return runtime.withSessionOperation(sessionId, () => startSessionFromConfig(runtime, { ...input, sessionId, runId }), {
+      artifactRoot, runId, ...(config.storageCaps?.maxOwnershipSlots !== undefined ? { maxOwnershipSlots: config.storageCaps.maxOwnershipSlots } : {}),
+    });
+  }
   const storageCaps: Partial<StorageCaps> = {
     ...(config.storageCaps?.maxOwnershipSlots !== undefined ? { maxOwnershipSlots: config.storageCaps.maxOwnershipSlots } : {}),
     ...(config.storageCaps?.maxArtifactBytes !== undefined ? { maxArtifactBytes: config.storageCaps.maxArtifactBytes } : {}),
@@ -710,6 +983,14 @@ export async function startSessionFromConfig(
     ...(config.storageCaps?.maxAccountingDatabaseBytes !== undefined ? { maxAccountingDatabaseBytes: config.storageCaps.maxAccountingDatabaseBytes } : {}),
   };
   const scope = runtime.createScope(artifactRoot, storageCaps);
+  const priorBytes = await readFile(path.resolve(runtime.getRepoRoot(), scope.sessionManager.getStatePath(sessionId)), 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (priorBytes) {
+    const prior = JSON.parse(priorBytes) as SessionState;
+    if (prior.status === 'running' || prior.status === 'starting') throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: 'Session already has an active persisted run.', retryable: false });
+  }
   const mode = input.mode ?? config.defaultMode;
   const browser = input.browser ?? config.defaultBrowser;
   const authProfileStore = new AuthProfileStore({
@@ -746,7 +1027,9 @@ export async function startSessionFromConfig(
     });
   }
 
-  const startedSession = await scope.devServerManager.startSession({
+  const signal = runtime.operationSignal();
+  signal?.throwIfAborted();
+  const startingSession = scope.devServerManager.startSession({
     sessionId,
     runId,
     mode,
@@ -755,6 +1038,16 @@ export async function startSessionFromConfig(
     devServer: selectedDevServer,
     storageCaps,
   });
+  let stopping: Promise<unknown> | undefined;
+  const cancelStart = () => { stopping ??= scope.devServerManager.stopSession(sessionId); void stopping.catch(() => undefined); };
+  signal?.addEventListener('abort', cancelStart, { once: true });
+  if (signal?.aborted) cancelStart();
+  let startedSession: Awaited<typeof startingSession>;
+  try { startedSession = await startingSession; signal?.throwIfAborted(); }
+  finally {
+    signal?.removeEventListener('abort', cancelStart);
+    if (stopping) await stopping.catch(error => { if (toErrorEnvelope(error).error.code !== 'E_SESSION_NOT_FOUND') throw error; });
+  }
   await scope.sessionManager.initialize({
     sessionId,
     runId,
@@ -803,7 +1096,14 @@ export async function stopSession(
   runtime: ProbefnRuntime,
   sessionId: string,
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(sessionId)) {
+    return runtime.awaitCleanup((async () => {
+      await runtime.cancelSessionOperation(sessionId);
+      return runtime.withSessionOperation(sessionId, () => stopSession(runtime, sessionId));
+    })());
+  }
   await runtime.cancelFlow(sessionId);
+  await runtime.closeSessionBrowser(sessionId);
   const { scope, session } = await runtime.resolveSessionContext(sessionId);
   try {
     await scope.devServerManager.stopSession(sessionId);
@@ -821,6 +1121,10 @@ export async function stopSession(
       ? session
       : await scope.sessionManager.markCompleted(sessionId);
 
+  const manifest = JSON.parse(await readFile(path.resolve(runtime.getRepoRoot(), nextState.artifacts.manifestPath), 'utf8')) as RunManifest;
+  await scope.artifactStore.writeRunManifest(nextState.runId, { ...manifest,
+    status: nextState.status === 'failed' ? 'failed' : 'completed', ...(nextState.endedAt ? { endedAt: nextState.endedAt } : {}) });
+  runtime.releaseSessionOwner(sessionId);
   return createSuccessEnvelope({
     sessionId: nextState.sessionId,
     status: nextState.status,
@@ -835,6 +1139,7 @@ export async function openPage(
     url: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => openPage(runtime, input), undefined, true);
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
   const targetUrl = session.resolvedUrl
     ? new URL(input.url, session.resolvedUrl).toString()
@@ -872,6 +1177,7 @@ export async function findPageElement(
     query: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => findPageElement(runtime, input), undefined, true);
   const { session } = await runtime.resolveSessionContext(input.sessionId);
   const playback = await runtime.withPlaybackSession(session, async ({ page }) =>
     resolveSemanticTarget(page, input.query),
@@ -903,6 +1209,7 @@ export async function actOnPage(
     requireDomConfirmation?: boolean;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => actOnPage(runtime, input), undefined, true);
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
   const playback = await runtime.withPlaybackSession(session, async ({ page, sinkPaths, flushEvents }) =>
     performPageAction({
@@ -950,8 +1257,12 @@ export async function createCheckpointFromSession(
     includeVideo?: boolean;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => createCheckpointFromSession(runtime, input), undefined, true);
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
   const checkpoint = await runtime.withPlaybackSession(session, async ({ page, sinkPaths }) => {
+    const tracePath = input.includeTrace && !runtime.isInFlow(session.sessionId)
+      ? await runtime.flushSessionTrace(session.sessionId) ?? session.artifacts.tracePath ?? null
+      : session.artifacts.tracePath ?? null;
     const before = await captureEventDeltaBaseline(runtime.getRepoRoot(), sinkPaths);
     const createdCheckpoint = await createCheckpoint({
       repoRoot: runtime.getRepoRoot(),
@@ -964,7 +1275,7 @@ export async function createCheckpointFromSession(
       ...(input.includeVideo ? { includeVideo: true } : {}),
       ...(input.includeTrace !== undefined ? { includeTrace: input.includeTrace && !runtime.isInFlow(session.sessionId) } : {}),
       ...(input.includeStyles !== undefined ? { includeStyles: input.includeStyles } : {}),
-      tracePath: session.artifacts.tracePath ?? null,
+      tracePath,
       delta: diffEventDeltaSummary(
         before,
         await captureEventDeltaBaseline(runtime.getRepoRoot(), sinkPaths),
@@ -1076,6 +1387,7 @@ export async function recordVisualBaseline(
     configPath?: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => recordVisualBaseline(runtime, input));
   const { session } = await runtime.resolveSessionContext(input.sessionId);
   const baselineRoot = input.configPath
     ? (await loadConfig(input.configPath, { cwd: runtime.getRepoRoot() })).baselineRoot
@@ -1107,6 +1419,7 @@ export async function compareVisualBaseline(
     configPath?: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => compareVisualBaseline(runtime, input));
   const { session } = await runtime.resolveSessionContext(input.sessionId);
   const baselineRoot = input.configPath
     ? (await loadConfig(input.configPath, { cwd: runtime.getRepoRoot() })).baselineRoot
@@ -1135,6 +1448,7 @@ export async function saveAuthProfile(
     profileId: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => saveAuthProfile(runtime, input));
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
   const authProfileStore = new AuthProfileStore({
     repoRoot: runtime.getRepoRoot(),
@@ -1171,6 +1485,8 @@ export async function exportSessionReport(
     artifactOnly?: boolean;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => exportSessionReport(runtime, input));
+  if (!runtime.hasActiveFlow(input.sessionId)) await runtime.flushSessionTrace(input.sessionId);
   const { scope } = await runtime.resolveSessionContext(input.sessionId);
   if (input.artifactOnly) {
     const exported = await scope.sessionManager.exportReportArtifact({ sessionId: input.sessionId, format: input.format });
@@ -1277,6 +1593,7 @@ export async function runFlow(
     file: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (!runtime.isSessionOperation(input.sessionId)) return runtime.withSessionOperation(input.sessionId, () => runFlow(runtime, input), undefined, true);
   const flow = await loadFlow(runtime.getRepoRoot(), input.file);
   const executedSteps: string[] = [];
   let lastCheckpointId: string | null = null;

@@ -212,7 +212,33 @@ flow finalizes a unique Playwright trace under its run directory before exportin
 reports or returning success; `includeTrace` checkpoint entries link that real ZIP.
 Flow report steps produce final run summaries after trace finalization. The trace
 uses the persisted run artifact allowance and fails explicitly if it cannot fit.
-A standalone checkpoint requesting a trace without an existing finalized trace
-fails explicitly. Separate page calls still relaunch playback; resident cross-call
-continuity and standalone-operation trace coverage remain open. See
-[flow and trace evidence](.conduct/live-flow-trace-readiness.md).
+Live MCP connections retain one browser/context per session across separate page,
+action and checkpoint calls. Standalone operations flush real trace chunks under
+the run allowance; reports expose `tracePaths` and the latest `tracePath`.
+`includeTrace` checkpoints link a completed chunk before returning. A connection
+owns its sessions exclusively: overlapping operations or another process's
+mutating CLI/MCP calls fail with `E_SESSION_ALREADY_RUNNING`. Closing a connection
+cancels and closes only its own sessions. Cleanup waits up to 30 seconds by default
+(`ProbefnRuntime`'s `cleanupTimeoutMs`); a timeout reports `cleanupPending` and retains
+ownership while cleanup finishes. It does not report successful release.
+
+Separate CLI processes remain ephemeral browser invocations; use one `run flow`
+for transient page continuity. Resident MCP video requests currently fail explicitly
+because video finalization closes the page; ephemeral CLI video remains supported.
+
+Ownership uses canonical run/session identities and held native SQLite locks.
+`storageCaps.maxOwnershipSlots` configures the persisted metadata capacity
+(default 256, range 2–65536). Exhaustion fails deterministically; an explicit higher
+capacity permits growth. Never unlink live ownership databases. Offline maintenance
+requires all writers stopped; preserve the registry and registered slot identities.
+See [ownership limits](.conduct/session-ownership-readiness.md).
+
+**Lower-level writer limitation:** `ArtifactStore` is an artifact/storage API, not a
+session ownership boundary. Direct store writes and callers bypassing the guarded
+CLI/MCP operation APIs do not automatically acquire these session locks. Applications
+must coordinate those writers themselves; do not write a run while CLI/MCP owns it.
+Comprehensive fencing of raw storage/SDK writers remains required follow-up. These
+locks also do not defend arbitrary external replacement of the authority directory.
+
+See [resident session evidence](.conduct/resident-session-readiness.md) and the
+preceding [flow and trace evidence](.conduct/live-flow-trace-readiness.md).

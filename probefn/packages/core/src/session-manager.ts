@@ -63,6 +63,7 @@ export class SessionManager {
       ...(input.resolvedUrl ? { resolvedUrl: input.resolvedUrl } : {}),
       artifacts: {
         manifestPath: input.manifestPath,
+        ...(input.artifacts?.tracePaths ? { tracePaths: input.artifacts.tracePaths } : {}),
         ...(input.artifacts?.tracePath !== undefined ? { tracePath: input.artifacts.tracePath } : {}),
         ...(input.artifacts?.storageStatePath ? { storageStatePath: input.artifacts.storageStatePath } : {}),
         ...(input.artifacts?.reportJsonPath ? { reportJsonPath: input.artifacts.reportJsonPath } : {}),
@@ -219,6 +220,7 @@ export class SessionManager {
       ...(patch.resolvedUrl ?? currentState.resolvedUrl ? { resolvedUrl: patch.resolvedUrl ?? currentState.resolvedUrl! } : {}),
       artifacts: {
         manifestPath: patch.artifacts?.manifestPath ?? currentState.artifacts.manifestPath,
+        ...(patch.artifacts?.tracePaths ?? currentState.artifacts.tracePaths ? { tracePaths: patch.artifacts?.tracePaths ?? currentState.artifacts.tracePaths! } : {}),
         ...(patch.artifacts?.tracePath !== undefined || currentState.artifacts.tracePath !== undefined
           ? { tracePath: patch.artifacts?.tracePath ?? currentState.artifacts.tracePath ?? null }
           : {}),
