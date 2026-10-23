@@ -1,12 +1,14 @@
 import { createServer } from 'node:net';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, mkdtemp, cp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { BrowserRunner, captureLayoutMetadata, captureStylesMetadata } from '@probefn/browser-runner';
+import { isProbefnError } from '@probefn/contracts/errors';
 import type { DeterministicSettings } from '@probefn/contracts/config';
 import { captureEventDeltaBaseline, createCheckpoint, diffEventDeltaSummary, SessionManager } from '@probefn/core';
 import { DevServerManager } from '@probefn/dev-server';
@@ -22,7 +24,11 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '../../..');
+const fixtureSource = path.resolve(__dirname, '../../../test/fixtures');
+const projectRoot = await mkdtemp(path.join(tmpdir(), 'probe-design-fixture-'));
+let setup: Promise<void> | undefined;
+let closing = false;
+let cleanupFailed = false;
 
 const baseDeterministic: Omit<DeterministicSettings, 'viewport'> = {
   enabled: true,
@@ -67,7 +73,9 @@ const tokenMap: DesignTokenMap = {
 
 const seededRuns: Partial<Record<'healthy' | 'overflow' | 'hmr' | 'tokenDrift' | 'noTokens', SeededRun>> = {};
 
-beforeAll(async () => {
+beforeAll(() => {
+  setup = (async () => {
+  await cp(fixtureSource, path.join(projectRoot, 'test/fixtures'), { recursive: true });
   await Promise.all([
     removeSeed('run_design_healthy', 'sess_design_healthy'),
     removeSeed('run_overflow', 'sess_overflow'),
@@ -121,6 +129,14 @@ beforeAll(async () => {
     deterministic: desktopDeterministic,
     checkpointName: 'desktop',
   });
+  })();
+  return setup;
+});
+afterAll(async () => {
+  closing = true;
+  await setup?.catch(() => undefined);
+  if (cleanupFailed) throw new Error(`Fixture cleanup incomplete; retained ${projectRoot}`);
+  await rm(projectRoot, { recursive: true, force: true });
 });
 
 describe.sequential('design analyzers', () => {
@@ -261,6 +277,7 @@ interface SeededRun {
 }
 
 async function seedFixtureRun(input: SeedFixtureRunInput): Promise<SeededRun> {
+  if (closing) throw new Error('Fixture setup was cancelled');
   const reservation = createServer();
   await new Promise<void>((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
   const address = reservation.address();
@@ -284,6 +301,7 @@ async function seedFixtureRun(input: SeedFixtureRunInput): Promise<SeededRun> {
     artifactStore,
   });
 
+  try {
   const startedServer = await devServerManager.startSession({
     sessionId: input.sessionId,
     runId: input.runId,
@@ -388,6 +406,15 @@ async function seedFixtureRun(input: SeedFixtureRunInput): Promise<SeededRun> {
     artifactRoot: startedServer.artifactRoot,
     checkpointId: checkpoint.checkpointId,
   };
+  } finally {
+    try {
+      try { if (browserRunner.hasSession(input.sessionId)) await browserRunner.stopSession(input.sessionId); }
+      finally {
+        try { await devServerManager.stopSession(input.sessionId); }
+        catch (error) { if (!isProbefnError(error) || error.code !== 'E_SESSION_NOT_FOUND') throw error; }
+      }
+    } catch (error) { cleanupFailed = true; throw error; }
+  }
 }
 
 async function readBundle(run: SeededRun) {

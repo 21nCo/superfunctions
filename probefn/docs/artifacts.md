@@ -211,3 +211,19 @@ uses FULL synchronous DELETE-journal commits. Acceptance covers independent proc
 SIGKILL and reopen on local SQLite, not physical power-loss certification or remote
 filesystem semantics. Opaque browser scratch, total filesystem physical quota and
 orphaned encoder scratch reclamation remain separate open requirements.
+
+### Trace finalization retries
+
+A successfully admitted trace ZIP is retained separately from temporary-file
+cleanup. If scratch removal fails, the browser owner stays registered until an
+explicit stop or trace retry removes that exact directory. Repeating a chunk
+flush after cleanup or chunk restart failure returns the original admitted path
+before capturing a new chunk, even if the caller supplies a new destination.
+Retryable errors include the admitted relative trace path and cleanup status.
+Failures before admission do not claim a recovered trace; stopped tracing is
+marked inactive. A failed stop plus failed cleanup cannot replace the pending
+scratch directory with a new capture.
+
+This recovery belongs to the live process owner. It is not durable crash
+reclamation, and does not impose an operating-system quota on opaque browser
+profiles or capture scratch.

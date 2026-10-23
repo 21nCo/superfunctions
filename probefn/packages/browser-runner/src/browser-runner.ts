@@ -10,7 +10,7 @@ import { createProbefnError, isProbefnError } from '@probefn/contracts/errors';
 import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
 
 import { attachBrowserEventCapture, type BrowserEventCapture } from './event-capture.js';
-import { startTracing, stopTracing } from './trace.js';
+import { startTracing, stopTracing, TraceFinalizationError } from './trace.js';
 
 export interface LaunchBrowserSessionOptions {
   sessionId: string;
@@ -57,6 +57,8 @@ interface ManagedBrowserSession {
   relativeTracePath?: string;
   finalizedTracePath?: string;
   pendingEventFlush?: boolean;
+  traceScratchDirectory?: string;
+  pendingChunkTracePath?: string;
   videoDirectory?: string;
   browser?: Browser;
   context?: BrowserContext;
@@ -198,14 +200,14 @@ export class BrowserRunner {
       };
     } catch (error) {
       const cleanup = await this.cleanupSession(session, false);
-      if (!session.browser?.isConnected() && !session.videoDirectory && !session.pendingEventFlush && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
+      if (!session.browser?.isConnected() && !session.videoDirectory && !session.pendingEventFlush && !session.traceScratchDirectory && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
       throw createProbefnError({
         code: 'E_BROWSER_LAUNCH_FAILED',
         message: `Could not launch ${options.browser} browser session.`,
         retryable: true,
         details: {
           browser: options.browser,
-          ...((session.videoDirectory || session.pendingEventFlush) ? { cleanupPending: true } : {}),
+          ...((session.videoDirectory || session.pendingEventFlush || session.traceScratchDirectory) ? { cleanupPending: true } : {}),
           ...(session.videoDirectory ? { scratchDirectory: session.videoDirectory } : {}),
         },
         cause: cleanup.errors.length ? new AggregateError([error, ...cleanup.errors], 'Browser startup and cleanup failed') : error,
@@ -215,10 +217,40 @@ export class BrowserRunner {
 
   public async flushTrace(sessionId: string, relativeTracePath: string): Promise<string> {
     const session = this.sessions.get(sessionId);
-    if (!session?.context || !session.traceEnabled || session.cancelled) throw createProbefnError({ code: 'E_SESSION_NOT_FOUND', message: 'Browser trace is not active.', retryable: false });
+    if (!session?.context || session.cancelled) throw createProbefnError({ code: 'E_SESSION_NOT_FOUND', message: 'Browser trace is not active.', retryable: false });
+    if (session.pendingChunkTracePath) {
+      await this.cleanTraceScratch(session);
+      try { await session.context.tracing.startChunk(); }
+      catch (error) { throw new TraceFinalizationError(session.pendingChunkTracePath, null, true, [error]); }
+      session.traceEnabled = true;
+      const receipt = session.pendingChunkTracePath;
+      delete session.pendingChunkTracePath;
+      return receipt;
+    }
+    await this.cleanTraceScratch(session);
+    if (!session.traceEnabled) throw createProbefnError({ code: 'E_SESSION_NOT_FOUND', message: 'Browser trace is not active.', retryable: false });
     await session.eventCapture?.flush();
-    return (await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
-      runId: session.runId, enabled: true, relativeTracePath, chunk: true }))!;
+    try {
+      return (await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
+        runId: session.runId, enabled: true, relativeTracePath, chunk: true }))!;
+    } catch (error) { this.rememberTraceFailure(session, error, true); throw error; }
+  }
+
+  private rememberTraceFailure(session: ManagedBrowserSession, error: unknown, chunk: boolean): void {
+    if (!(error instanceof TraceFinalizationError)) return;
+    if (error.tracePath) {
+      session.finalizedTracePath = error.tracePath;
+      if (chunk) session.pendingChunkTracePath = error.tracePath;
+    }
+    if (error.scratchDirectory) session.traceScratchDirectory = error.scratchDirectory;
+    if (error.tracingStopped) session.traceEnabled = false;
+  }
+
+  private async cleanTraceScratch(session: ManagedBrowserSession): Promise<void> {
+    if (!session.traceScratchDirectory) return;
+    try { await rm(session.traceScratchDirectory, { recursive: true, force: true }); }
+    catch (error) { throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Trace scratch cleanup remains pending.', retryable: true, details: { cleanupPending: true, ...(session.finalizedTracePath ? { tracePath: session.finalizedTracePath } : {}) }, cause: error }); }
+    delete session.traceScratchDirectory;
   }
 
   public async stopSession(sessionId: string, options: { saveTrace?: boolean } = {}): Promise<ClosedBrowserSession> {
@@ -239,7 +271,7 @@ export class BrowserRunner {
     const stopping = (async () => {
       await activeSession.startDone;
       const result = await this.cleanupSession(activeSession, options.saveTrace ?? true);
-      if (!activeSession.browser?.isConnected() && !activeSession.videoDirectory && !activeSession.pendingEventFlush && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
+      if (!activeSession.browser?.isConnected() && !activeSession.videoDirectory && !activeSession.pendingEventFlush && !activeSession.traceScratchDirectory && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
       if (result.errors.length === 1 && !activeSession.browser?.isConnected() &&
           isProbefnError(result.errors[0]) && result.errors[0].code === 'E_STORAGE_CAP_EXCEEDED') {
         throw result.errors[0];
@@ -247,7 +279,7 @@ export class BrowserRunner {
       if (result.errors.length || !activeSession.sinkPaths) {
         throw createProbefnError({ code: 'E_BROWSER_LAUNCH_FAILED',
           message: `Could not close browser session ${sessionId} cleanly.`, retryable: true,
-          details: { sessionId, ...((activeSession.videoDirectory || activeSession.pendingEventFlush) ? { cleanupPending: true } : {}), ...(activeSession.videoDirectory ? { scratchDirectory: activeSession.videoDirectory } : {}) }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
+          details: { sessionId, ...((activeSession.videoDirectory || activeSession.pendingEventFlush || activeSession.traceScratchDirectory) ? { cleanupPending: true } : {}), ...(activeSession.videoDirectory ? { scratchDirectory: activeSession.videoDirectory } : {}) }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
       }
       return { tracePath: result.tracePath, sinkPaths: activeSession.sinkPaths };
     })();
@@ -260,17 +292,19 @@ export class BrowserRunner {
   private async cleanupSession(session: ManagedBrowserSession, saveTrace: boolean): Promise<{ tracePath: string | null; errors: unknown[] }> {
     const errors: unknown[] = [];
     let tracePath: string | null = session.finalizedTracePath ?? null;
+    try { await this.cleanTraceScratch(session); } catch (error) { errors.push(error); }
     try { session.eventCapture?.dispose(); } catch (error) { errors.push(error); }
     try { await session.eventCapture?.flush(); session.pendingEventFlush = false; }
     catch (error) { session.pendingEventFlush = true; errors.push(error); }
-    if (saveTrace && session.context && session.traceEnabled) {
+    if (saveTrace && session.context && session.traceEnabled && !session.traceScratchDirectory) {
       try {
         tracePath = await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
           runId: session.runId, enabled: true, ...(session.relativeTracePath ? { relativeTracePath: session.relativeTracePath } : {}) });
         if (tracePath) session.finalizedTracePath = tracePath;
         session.traceEnabled = false;
-      } catch (error) { errors.push(error); }
+      } catch (error) { this.rememberTraceFailure(session, error, false); errors.push(error); }
     }
+    tracePath = session.finalizedTracePath ?? tracePath;
     try { await session.browser?.close(); } catch (error) { errors.push(error); }
     if (!session.browser?.isConnected()) session.traceEnabled = false;
     if (!session.browser?.isConnected() && session.videoDirectory) {

@@ -4,8 +4,20 @@ import { tmpdir } from 'node:os';
 
 import type { BrowserContext } from 'playwright';
 
-import { createProbefnError } from '@probefn/contracts/errors';
+import { createProbefnError, isProbefnError, ProbefnError } from '@probefn/contracts/errors';
 import type { ArtifactStore } from '@probefn/storage';
+
+/** Preserves admitted artifacts and exact scratch ownership when finalization fails. */
+export class TraceFinalizationError extends ProbefnError {
+  constructor(readonly tracePath: string | null, readonly scratchDirectory: string | null,
+    readonly tracingStopped: boolean, readonly failures: unknown[]) {
+    const primary = failures[0];
+    super({ code: isProbefnError(primary) ? primary.code : 'E_STORAGE_WRITE_FAILED',
+      message: 'Trace finalization did not complete.', retryable: Boolean(tracePath || scratchDirectory),
+      details: { ...(isProbefnError(primary) ? primary.details : {}), cleanupPending: Boolean(scratchDirectory), ...(tracePath ? { tracePath } : {}) },
+      cause: new AggregateError(failures) });
+  }
+}
 
 export interface TraceLifecycleOptions {
   repoRoot: string;
@@ -46,12 +58,26 @@ export async function stopTracing(
     throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'Trace path must remain inside its owning run.', retryable: false });
   }
   const scratch = await mkdtemp(path.join(tmpdir(), 'probefn-trace-'));
+  let admitted: string | null = null;
+  let stopped = false;
+  const errors: unknown[] = [];
   try {
     const filename = path.join(scratch, 'trace.zip');
     if (options.chunk) await context.tracing.stopChunk({ path: filename });
     else await context.tracing.stop({ path: filename });
+    stopped = true;
     await options.artifactStore.importArtifactFile(relativeTracePath, filename);
-    if (options.chunk) await context.tracing.startChunk();
-    return relativeTracePath;
-  } finally { await rm(scratch, { recursive: true, force: true }); }
+    admitted = relativeTracePath;
+  } catch (error) { errors.push(error); }
+  let pendingScratch: string | null = null;
+  try { await rm(scratch, { recursive: true, force: true }); }
+  catch (error) { pendingScratch = scratch; errors.push(error); }
+  if (!errors.length && options.chunk) {
+    try { await context.tracing.startChunk(); stopped = false; }
+    catch (error) { errors.push(error); }
+  }
+  if (errors.length) {
+    throw new TraceFinalizationError(admitted, pendingScratch, stopped, errors);
+  }
+  return admitted;
 }
