@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { RemoteRunner } from '../../runner/dist/index.mjs';
 const require = createRequire(import.meta.url);
-const { DatabaseStore, CIFN_STATE_TABLE } = require('../dist/index.js');
+const { DatabaseStore, CIFN_STATE_TABLE, resolvePipelineDoc } = require('../dist/index.js');
 const SQLite = require('better-sqlite3');
 const { Kysely, SqliteDialect } = require('kysely');
 const { kyselyAdapter } = await import('@superfunctions/db/adapters');
@@ -66,8 +66,9 @@ try {
   await mkdir(source);
   const gitEnv = { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
   const git = (...args) => execFileSync('git', args, { cwd: source, env: gitEnv, encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); git('add', '.'); git('commit', '-m', 'owned fixture');
+  git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); await writeFile(join(source, 'cifn.yml'), 'name: owned resolver'); git('add', '.'); git('commit', '-m', 'owned fixture');
   const checkoutSha = git('rev-parse', 'HEAD'); git('clone', '--bare', '--', source, repository);
+  assert.deepEqual(await resolvePipelineDoc({ repo: repository, ref: checkoutSha }, { allowLocalRepositories: true }), { doc: 'name: owned resolver', resolvedConfigPath: 'cifn.yml' });
   control = await start();
   const registered = await data('/api/v1/runners/register', { token });
   let dropped = false, logsOffline = false, stepsOffline = false, firstBody, replayBody;
@@ -230,7 +231,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }

@@ -90,3 +90,10 @@ export { LogFnStepOutputDispatcher, deliverStepOutput } from './observability/st
 export type { StepOutputDelivery, StepOutputCheckpoint, StepOutputClaim } from './log-delivery/forwarding.js';
 
 export type { ExecutionDecision, ExecutionEvidence, ExecutionAdjudication, ExecutionInspection } from './dispatch/adjudication.js';
+
+export { executeOwnedProcess, executeOwnedShell, ProcessGroupUncertainError } from './execution/owned-process.js';
+export type { OwnedProcessResult } from './execution/owned-process.js';
+export { executeCheckout, executeOwnedCheckout } from './pipeline/git-checkout.js';
+export type { CheckoutOptions, CheckoutResult } from './pipeline/git-checkout.js';
+export { resolvePipelineDoc, ResolverError } from './pipeline/resolver.js';
+export type { ResolveOptions, ResolveResult, PipelineRef, PipelineFetcher } from './pipeline/resolver.js';
