@@ -1,0 +1,25 @@
+flowfn/.conduct/stream-renewal-deadline-installed-20261025.jsonl
+  s_e1c5fc1a65c0cf::t_601a1d71b11b83 1-7
+flowfn/.conduct/stream-renewal-deadline-readiness.md
+  s_e1c5fc1a65c0cf::t_eda602b6807734 1-9
+flowfn/typescript/src/stream/delivery-lease.test.ts
+  s_e1c5fc1a65c0cf::t_8e354dd384c873 70-101
+flowfn/typescript/src/stream/delivery-lease.ts
+  s_e1c5fc1a65c0cf::t_9368aed4599cf9 6,15,25,29-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "963620651fca736ad5792f3c2b24d2c78c8ccf54",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
