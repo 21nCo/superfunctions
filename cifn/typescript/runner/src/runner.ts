@@ -1,3 +1,4 @@
+import type { OwnedDockerExecutor } from './owned-docker-executor.js';
 import { ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { StepStatusReportingError } from './step-journal.js';
 import type { ReportedStepStatus } from '@cifn/control-plane';
@@ -28,6 +29,8 @@ import { DockerExecutor } from './docker-executor.js';
 export interface RunnerOptions {
   /** Host-only opt-in for owned local repository fixtures. */
   allowLocalRepositories?: boolean;
+  /** Called once when a run command reports bounded/truncated output. */
+  onOutputTruncated?: () => void;
   /** Awaited at each actual transition; failures stop execution rather than invent outcomes. */
   onStepStatus?: (stepKey: string, status: ReportedStepStatus) => Promise<void>;
   runCommand?: (command: string, workspace: string, env?: Record<string, string>, onLines?: (lines: string[]) => void) => Promise<RunStepResult>;
@@ -51,6 +54,8 @@ export interface RunnerOptions {
   getSecret?: (runId: string, name: string) => Promise<string | null>;
   labels?: string[];
   runnerType?: 'default' | 'hostfn-runner';
+  ownedDockerExecutor?: OwnedDockerExecutor;
+  executionOwner?: string;
   dockerExecutor?: DockerExecutor;
   defaultDockerImage?: string;
   dockerRunOnLabels?: string[];
@@ -59,6 +64,7 @@ export interface RunnerOptions {
 
 export class Runner {
   private allowLocalRepositories: boolean;
+  private onOutputTruncated?: () => void;
   private onStepStatus?: RunnerOptions['onStepStatus'];
   private runCommand?: RunnerOptions['runCommand'];
   private executionSignal?: AbortSignal;
@@ -74,6 +80,8 @@ export class Runner {
   private secretValues: Map<string, string[]>;
   private labels: string[];
   private runnerType: 'default' | 'hostfn-runner';
+  private ownedDockerExecutor?: OwnedDockerExecutor;
+  private executionOwner: string;
   private dockerExecutor?: DockerExecutor;
   private defaultDockerImage: string;
   private dockerRunOnLabels: Set<string>;
@@ -83,6 +91,7 @@ export class Runner {
   constructor(options: RunnerOptions) {
     this.allowLocalRepositories = options.allowLocalRepositories ?? false;
     this.onStepStatus = options.onStepStatus;
+    this.onOutputTruncated = options.onOutputTruncated;
     this.executionEnv = options.executionEnv;
     this.runCommand = options.runCommand;
     this.executionSignal = options.executionSignal;
@@ -100,6 +109,8 @@ export class Runner {
     this.labels = options.labels && options.labels.length > 0
       ? [...new Set(options.labels)]
       : [this.runnerType];
+    this.ownedDockerExecutor = options.ownedDockerExecutor;
+    this.executionOwner = options.executionOwner ?? 'local-runner';
     this.dockerExecutor = options.dockerExecutor;
     this.defaultDockerImage = options.defaultDockerImage ?? 'node:20';
     this.dockerRunOnLabels = new Set(options.dockerRunOnLabels ?? ['docker-ubuntu-22']);
@@ -578,6 +589,7 @@ export class Runner {
 
         const result = await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv, lines => logLines(step.stepKey, lines));
 
+        if (result.truncated) this.onOutputTruncated?.();
         if (!result.streamed) logLines(step.stepKey, result.lines);
 
         if (result.exitCode === 0) {
@@ -629,8 +641,11 @@ export class Runner {
     env?: Record<string, string>,
     onLines?: (lines: string[]) => void,
   ) {
-    if (this.shouldUseDocker(jobSpec) && !this.dockerExecutor) {
+    if (this.shouldUseDocker(jobSpec) && !this.dockerExecutor && !this.ownedDockerExecutor) {
       return { exitCode: 1, stdout: '', stderr: '', lines: ['Job image requires a configured container executor; host execution refused'] };
+    }
+    if (this.shouldUseDocker(jobSpec) && this.ownedDockerExecutor) {
+      return this.ownedDockerExecutor.execute({ image: jobSpec.image ?? this.defaultDockerImage, workspace, command, env, signal: this.executionSignal, onLines, owner: this.executionOwner });
     }
     if (this.shouldUseDocker(jobSpec) && this.dockerExecutor) {
       return this.dockerExecutor.execute({

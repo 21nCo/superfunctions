@@ -101,7 +101,7 @@ jobs. Started work without a saved result is never silently re-executed.
 
 Run the built runner with `CIFN_CONTROL_PLANE_URL`, `CIFN_RUNNER_ID`,
 `CIFN_RUNNER_SECRET` and a persistent `CIFN_RUNNER_STATE_DIR`. This remote path
-supports shell and checkout steps; Docker and other provider steps remain unsupported remotely.
+supports shell and checkout steps. Image jobs require the explicit host-owned async Docker executor; other provider steps remain unsupported remotely. Native Docker acceptance is still open (see container lifecycle below).
 Execution leases/reassignment, cancellation delivery, remote logs/artifacts and
 durable notifications are described below; hosted email delivery remains unverified. See the [remote execution contract](.conduct/remote-execution-readiness.md),
 [dispatch contract](.conduct/durable-dispatch-readiness.md), and
@@ -405,4 +405,26 @@ After validating the trusted base config and branch filter, all discovered secre
 
 A local `Runner` with `job.image`, `dockerForDefault`, or a selected Docker label must have a configured container executor. If it does not, the step fails without invoking the host shell or host `runCommand` callback. An explicitly empty image declaration also cannot silently select the host. Image-free jobs without container policy retain host behavior.
 
-This admission check does not complete the Docker execution contract. The current legacy `DockerExecutor` is synchronous and does not prove cancellation or removal of an owned container after CLI failure; its environment argument handling is also not suitable for secret-bearing production execution. The durable remote runner still rejects image jobs. Owned asynchronous container lifecycle, secret-safe transport and real runtime acceptance remain required before claiming remote Docker readiness or untrusted-code isolation.
+This admission check does not complete the Docker execution contract. The current legacy `DockerExecutor` is synchronous and does not prove cancellation or removal of an owned container after CLI failure; its environment argument handling is also not suitable for secret-bearing production execution. The async executor described below is a separate opt-in path. Real Docker runtime acceptance remains required before claiming remote Docker readiness or untrusted-code isolation.
+
+
+### Owned async container lifecycle (runtime acceptance pending)
+
+`OwnedDockerExecutor({ stateDirectory, context, timeoutMs? })` can be passed as `ownedDockerExecutor` to `Runner` or `RemoteRunner`. `Runner.executionOwner` supplies a host identity; `RemoteRunner` supplies the durable run/dispatch/execution/runner identity without its claim credential. The built remote server opts in only when the host sets `CIFN_DOCKER_CONTEXT`; its receipts live under `CIFN_RUNNER_STATE_DIR/containers`. Without that option, image jobs remain denied. The old synchronous `DockerExecutor` remains compatibility-only and is not used by this remote path.
+
+The async path uses the shared owned-process supervisor and a cached image (`--pull=never`). Each run step creates a separate container with the canonical workspace bind-mounted at `/workspace`; `/bin/sh` must exist in the image. Files in that workspace persist between steps, but container filesystem/process state does not. This is not yet the original persistent per-job container contract.
+
+Before creation, a private fsynced receipt records the unique name, context, daemon ID and execution identity. Prepared environment values use a mode-0600 file outside the repository mount. The interpolated command travels only in the owned Docker client's environment, then a fixed shell wrapper; neither environment values nor the command enter Docker argv. Environment keys must be valid shell names, values single-line, with at most 256 entries and 256 KiB total; the command is separately limited to 256 KiB. These env-file restrictions are an explicit current limitation. The privileged daemon and container can inspect their environment; removal does not guarantee credential erasure.
+
+Cancellation/output limits terminate the owned CLI and then force-remove the verified owned container. Only matching container ID/label, unchanged daemon identity and confirmed absence release the receipt/workspace. Uncertain create, process termination, identity or cleanup retains private evidence and propagates the existing uncertain-execution outcome. There is no automatic replay, stale-PID kill or historical-receipt deletion. Interrupted create may retain the private environment file. Operators must reconcile such evidence without treating stale heartbeat/CLI exit as proof the container stopped.
+
+The default start/attach timeout is 300 seconds (host-configurable 1 ms–1 hour), with separate bounded creation, inspection and cleanup calls; it is not a single wall-clock deadline. The server's existing graceful shutdown waits for the current tick. No enforced resource/network/nonroot sandbox, cross-process receipt quota or receipt-maintenance API is claimed. Host checkout and other provider operations are not isolated by this shell executor.
+
+Source protocol tests and installed-package protocol tests use a controlled transport, not Docker. The local daemon did not answer either bounded availability probe. Run the actual runtime acceptance only with an explicitly selected context and already cached POSIX shell image:
+
+```sh
+CIFN_DOCKER_CONTEXT=owned-context CIFN_DOCKER_IMAGE=already-cached-image \
+  node cifn/typescript/runner/scripts/verify-owned-docker.mjs
+```
+
+That opt-in fixture checks command success, nonzero exit and cancellation with verified owned-container removal, retaining uncertain evidence instead of blindly deleting it. It has not passed on the current unavailable daemon.

@@ -26,10 +26,30 @@ try {
     const installed = await realpath(join(directory, 'node_modules', name));
     assert.ok(installed.startsWith(moduleRoot + '/'), 'Consumer must use its installed package');
   }
-  await writeFile(join(directory, 'consumer.cjs'), "const assert=require('node:assert/strict');assert.equal(typeof require('@cifn/runner').RemoteRunner,'function');assert.equal(typeof require('@cifn/control-plane').createApp,'function');assert.equal(require('@cifn/runner').executeOwnedCheckout,require('@cifn/control-plane').executeOwnedCheckout);");
-  await writeFile(join(directory, 'consumer.mjs'), "import assert from 'node:assert/strict';import * as runner from './node_modules/@cifn/runner/dist/index.mjs';import * as control from './node_modules/@cifn/control-plane/dist/index.mjs';assert.equal(typeof runner.RemoteRunner,'function');assert.equal(typeof control.createApp,'function');const {createLogger}=await import('@logfn/core');const events=[];const logger=createLogger({name:'installed',sinks:[batch=>events.push(...batch)]});logger.info('installed logfn');await logger.flush();assert.equal(events[0].msg,'installed logfn');");
+  await writeFile(join(directory, 'consumer.cjs'), "const assert=require('node:assert/strict');assert.equal(typeof require('@cifn/runner').RemoteRunner,'function');assert.equal(typeof require('@cifn/runner').OwnedDockerExecutor,'function');assert.equal(typeof require('@cifn/control-plane').createApp,'function');assert.equal(require('@cifn/runner').executeOwnedCheckout,require('@cifn/control-plane').executeOwnedCheckout);");
+  await writeFile(join(directory, 'consumer.mjs'), "import assert from 'node:assert/strict';import * as runner from './node_modules/@cifn/runner/dist/index.mjs';import * as control from './node_modules/@cifn/control-plane/dist/index.mjs';assert.equal(typeof runner.RemoteRunner,'function');assert.equal(typeof runner.OwnedDockerExecutor,'function');assert.equal(typeof control.createApp,'function');const {createLogger}=await import('@logfn/core');const events=[];const logger=createLogger({name:'installed',sinks:[batch=>events.push(...batch)]});logger.info('installed logfn');await logger.flush();assert.equal(events[0].msg,'installed logfn');");
   run(process.execPath, ['consumer.cjs']);
   run(process.execPath, ['consumer.mjs']);
+  await writeFile(join(directory, 'owned-docker.mjs'), `
+import assert from 'node:assert/strict';
+import {mkdir, readFile, readdir, stat} from 'node:fs/promises';
+import {join} from 'node:path';
+import {OwnedDockerExecutor, executeRemoteShellJob} from './node_modules/@cifn/runner/dist/index.mjs';
+const stateDirectory=join(process.cwd(),'owned-docker-state');let name='',id='',started=false;const cid='a'.repeat(64);
+const executor=new OwnedDockerExecutor({stateDirectory,context:'fixture-only'},async(args,cwd,signal,onLines,timeout,internalEnv)=>{
+ const ok=(stdout='')=>({exitCode:0,stdout,stderr:'',lines:[]});
+ if(args[0]==='info')return ok('fake-daemon');
+ if(args[0]==='create'){name=args[args.indexOf('--name')+1];id=name.slice(5);const path=args[args.indexOf('--env-file')+1];assert.equal((await stat(path)).mode&511,384);assert.ok(internalEnv.CIFN_INTERNAL_COMMAND);assert.equal(args.includes(internalEnv.CIFN_INTERNAL_COMMAND),false);assert.equal(JSON.parse(await readFile(join(stateDirectory,id,'receipt.json'),'utf8')).owner,'packed-execution');return ok(cid);}
+ if(args[0]==='start'){started=true;onLines?.(['owned output']);return {...ok('owned output'),streamed:true};}
+ if(args[0]==='container'&&args[1]==='inspect')return ok(JSON.stringify({id:cid,owner:id,running:false,status:started?'exited':'created',exitCode:0}));
+ if(args[0]==='rm'||args[1]==='ls')return ok();throw new Error('Unexpected owned protocol command');
+});
+const result=await executeRemoteShellJob({runId:'packed',jobKey:'build',jobSpec:{'runs-on':'default',image:'fixture-only',steps:[{run:'printf private-owned-command'}]}},undefined,undefined,undefined,undefined,undefined,{ownedDockerExecutor:executor,executionOwner:'packed-execution'});
+assert.equal(result.status,'success');assert.deepEqual(await readdir(stateDirectory),[]);
+console.log(JSON.stringify({installedOwnedDockerProtocol:true,nativeDocker:false}));
+`);
+  process.stdout.write(run(process.execPath, ['owned-docker.mjs']));
+
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
   process.stdout.write(receipt);
   process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-step-status.mjs']));
@@ -41,7 +61,7 @@ try {
   assert.equal(audit.metadata.vulnerabilities.total, 0);
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
-  await writeFile(join(directory, 'consumer.ts'), `import {Runner, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
+  await writeFile(join(directory, 'consumer.ts'), `import {Runner, OwnedDockerExecutor, type OwnedDockerOptions, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
 import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, resolvePipelineDoc, type ResolveOptions, type ForkApproval, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
@@ -66,6 +86,7 @@ export async function adjudication(store: DatabaseStore, runId: string, dispatch
 export const approval: ForkApproval = { id: "owned", baseRepositoryId: 1, baseRepository: "base/repo", baseRepositoryUrl: "https://github.com/base/repo.git", baseSha: "a".repeat(40), headRepositoryId: 2, headRepository: "fork/repo", headRepositoryUrl: "https://github.com/fork/repo.git", headSha: "b".repeat(40), allowedSecrets: [] };
 export function resolve(options: ResolveOptions) { return resolvePipelineDoc({repo:'owner/repo',ref:'HEAD'}, options); }
 export async function checkout(options: CheckoutOptions) { return executeOwnedCheckout(options); }
+export function ownedDocker(options: OwnedDockerOptions) { return new OwnedDockerExecutor(options); }
 export const typed = {Runner, observer};
 `);
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts']);
