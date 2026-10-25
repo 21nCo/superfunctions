@@ -13,8 +13,14 @@ export interface AlertConfig {
 export interface AlertNotification {
   id: string; event: 'triggered' | 'resolved' | 'acknowledged'; timestamp: number;
   alert: { id: string; name: string; severity: string; state: string; description?: string; runbook?: string; triggeredAt?: number };
-  value?: number;
+  value?: number; threshold?: number;
 }
+/** Context of a committed transition; composite/anomaly conditions have no scalar threshold. */
+export interface AlertLifecycleContext {
+  timestamp: number; triggeredAt?: number; duration: number;
+  value?: number; threshold?: number;
+}
+export type AlertLifecycleListener = (alert: PublicAlert, context: AlertLifecycleContext) => unknown;
 /** Senders must honor AbortSignal and use notification.id for downstream deduplication. */
 export type AlertSender = (notification: AlertNotification, channel: AlertChannel, signal: AbortSignal) => Promise<void>;
 export interface AlertEmailConfig {

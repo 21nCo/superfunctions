@@ -366,8 +366,14 @@ protect the database and backups. Receipt snapshots can still contain event/aler
 context. Adapter failures and provider responses are sanitized; custom adapters
 must honor shared error contracts and avoid logging secrets themselves.
 
-Transition callbacks, calculated-value notification context and complete
-TypeScript provider parity remain required follow-up work. Standalone legacy channel helpers are not this durable
+Stored evaluation returns the calculated scalar in `EvaluationResult.value`.
+Durable trigger and automatic-resolution notifications retain that observation
+and the applicable scalar `threshold` in their committed snapshot. Composite
+conditions have no invented scalar value; anomaly observations have no scalar
+threshold. Manual transitions do not invent an observation.
+
+Transition callbacks and complete TypeScript provider parity remain required
+follow-up work. Standalone legacy channel helpers are not this durable
 dispatch protocol. HTTP auth/ingestion/query routes are unchanged; no public
 alert-management route is introduced. These methods are trusted host APIs.
 

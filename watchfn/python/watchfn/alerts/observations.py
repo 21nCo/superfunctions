@@ -71,42 +71,54 @@ def observations(events, metric, start, now, maximum):
 
 
 def evaluate(condition, data, now):
-    """Return True/False/None; None is an unknown observation, never recovery."""
+    """Return True/False/None; None is unknown, never recovery."""
+    return evaluate_result(condition, data, now)["matched"]
+
+
+def evaluate_result(condition, data, now):
+    """Return the decision and its actual scalar observation, when one exists."""
     validate(condition)
     if not number(now): raise ValueError("Evaluation time must be finite")
+    def result(matched, count, value=None):
+        return {"matched": matched, "dataPoints": count, **({"value": value} if value is not None else {})}
     def visit(rule):
         kind = rule.get("type", "threshold")
         if kind == "composite":
-            matches = [visit(child) for child in rule["conditions"]]
+            children = [visit(child) for child in rule["conditions"]]
+            matches = [child["matched"] for child in children]
             decisive = False if rule["operator"] == "and" else True
-            return decisive if any(value is decisive for value in matches) else None if None in matches else not decisive
+            matched = decisive if any(value is decisive for value in matches) else None if None in matches else not decisive
+            return result(matched, sum(child["dataPoints"] for child in children))
         cutoff = -math.inf if kind == "anomaly" else now - window_ms(rule["window"])
         points = [point for point in data.get((rule["metric"], None if kind == "anomaly" else cutoff), data.get(rule["metric"], [])) if number(point.get("value")) and number(point.get("timestamp")) and cutoff <= point["timestamp"] <= now]
-        if not points: return None
+        if not points: return result(None, 0)
+        count = len(points)
         values = [point["value"] for point in points]
         if kind == "anomaly":
-            if len(points) < rule.get("minDataPoints", rule.get("min_data_points")): return None
+            if count < rule.get("minDataPoints", rule.get("min_data_points")): return result(None, count)
             points.sort(key=lambda point: point["timestamp"])
             history = [point["value"] for point in points[:-1]]
             current = points[-1]["value"]
             mean = sequential_sum(value / len(history) for value in history)
             delta = abs(current - mean)
-            if not number(mean) or not number(delta): return None
-            if delta <= sys.float_info.epsilon * max(abs(value) for value in values) * 8: return False
-            if rule["algorithm"] == "moving-average": return delta > 0 if mean == 0 else delta / abs(mean) > 1 - rule["sensitivity"]
+            if not number(mean) or not number(delta): return result(None, count)
+            if delta <= sys.float_info.epsilon * max(abs(value) for value in values) * 8: return result(False, count, current)
+            if rule["algorithm"] == "moving-average":
+                return result(delta > 0 if mean == 0 else delta / abs(mean) > 1 - rule["sensitivity"], count, current)
             try: variance = sequential_sum((value - mean) ** 2 / len(history) for value in history)
-            except OverflowError: return None
-            if not number(variance): return None
-            return delta > 0 if variance == 0 else delta / math.sqrt(variance) > 3 - rule["sensitivity"] * 2
+            except OverflowError: return result(None, count)
+            if not number(variance): return result(None, count)
+            return result(delta > 0 if variance == 0 else delta / math.sqrt(variance) > 3 - rule["sensitivity"] * 2, count, current)
         aggregation = rule.get("aggregation", "avg")
         if aggregation == "avg": value = sequential_sum(value / len(values) for value in values)
         elif aggregation == "sum": value = sequential_sum(values)
         elif aggregation == "min": value = min(values)
         elif aggregation == "max": value = max(values)
         else: value = len(values)
-        if not number(value): return None
+        if not number(value): return result(None, count)
         target = rule["threshold"]
-        return {"gt": value > target, "gte": value >= target, "lt": value < target, "lte": value <= target, "eq": value == target, "ne": value != target}[rule["operator"]]
+        matched = {"gt": value > target, "gte": value >= target, "lt": value < target, "lte": value <= target, "eq": value == target, "ne": value != target}[rule["operator"]]
+        return result(matched, count, value)
     return visit(condition)
 
 

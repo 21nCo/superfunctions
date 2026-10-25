@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from superfunctions_sqlalchemy import create_adapter
 from watchfn import Event, WatchFn
 from watchfn.alerts.alert_manager import Alert
-from watchfn.alerts.observations import evaluate, observations
+from watchfn.alerts.observations import evaluate, evaluate_result, observations
 from test_database import migrate, start
 from test_durable_alerts import migrate_alerts
 
@@ -127,6 +127,7 @@ def test_shared_alert_vectors():
     from pathlib import Path
     for case in json.loads((Path(__file__).parent / 'fixtures/alert-golden.json').read_text()):
         assert evaluate(case['condition'], case['data'], case['now']) is case['expected'], case['name']
+        assert evaluate_result(case['condition'], case['data'], case['now']).get('value') == case['expectedValue'], case['name']
 
 
 @pytest.mark.parametrize('database', [False, True])
@@ -151,3 +152,17 @@ def test_same_metric_children_select_presence_in_each_window(tmp_path, database)
     finally:
         watch.stop()
         if engine is not None: engine.dispose()
+
+
+def test_scalar_context_and_no_invented_composite_or_unknown_values():
+    from watchfn.alerts.observations import evaluate_result
+    points = {'api.latency': [{'value': 20, 'timestamp': 1000000}, {'value': 40, 'timestamp': 1000000}]}
+    assert evaluate_result(rule(), points, 1000000) == {'matched': True, 'dataPoints': 2, 'value': 30}
+    assert 'value' not in evaluate_result({'type': 'composite', 'operator': 'and', 'conditions': [rule()]}, points, 1000000)
+    assert 'value' not in evaluate_result(rule(), points, 2000000)
+    watch = memory()
+    try:
+        watch.alerts.register(alert())
+        watch.storage.add(event('api', {'latency': 20}))
+        assert watch.alerts.evaluate_stored(now=1000000)[0].value == 20
+    finally: watch.stop()

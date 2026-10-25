@@ -1,0 +1,18 @@
+# WatchFn original public API gaps — October25
+
+Read against baseline7fe63b4cc, not inferred from old passing test totals. The full original SPEC remains the completion boundary.
+
+- SPEC section9 lifecycle examples require calculated value/threshold and asynchronous post-commit callbacks. TypeScript already invokes listeners after commit, but shares a mutable public alert between listeners and omits threshold. Python stored evaluation calculates a decision and discards its scalar; durable notifications omit it. The current context checkpoint addresses those defects. Python on_trigger/on_resolve APIs are still absent and must be implemented with explicit callback/thread/reentrancy semantics.
+- `typescript/src/core/watch-fn.ts` logs getter returns empty query/pattern results and empty aggregate objects. These are public placeholders, not complete LogFn integration or log analytics. Trace/log correlation in the lifecycle example cannot be certified by alert tests.
+- The same file business getter returns empty goals, funnels, revenue, MRR, churn and LTV results. Synthetics getters return empty uptime/incidents/trends. Dashboard APIs and the broader original specification require separate source/runtime proof.
+- Python callback parity, memory lifecycle differences, provider delivery guarantees, original performance targets and browser/platform acceptance remain distinct; earlier published checkpoints do not waive them.
+
+Next implementation priority after context: explicit Python lifecycle callbacks and actual stored log query/aggregation using existing query/storage abstractions. Add native stored-event and package-consumer acceptance for the specification examples; do not replace placeholder returns with differently named or smaller APIs. No production readiness claim.
+
+## Calculated-context validation in progress
+
+- Temporarily restored the six changed implementation files to exact baseline `7fe63b4cc` while keeping the new regression tests, then restored the candidate bytes in a `finally` block. Python durable regression failed with `None == 30`; TypeScript callback isolation regression failed after a listener altered the shared snapshot. Both baseline test processes exited 1.
+- Candidate Python durable/stored focused tests: 26 passed. Full Python source suite: 198 passed with 22 dependency deprecation warnings (26.13s).
+- Candidate TypeScript public manager tests: 25 passed; source `tsc --noEmit` and `git diff --check` passed.
+- Fresh build passed; all 13 shared golden vectors passed against built TypeScript. Full TypeScript suite: 280 tests in 28 files passed. Fresh seven-tarball installed ESM/CJS consumers passed calculated callback value/threshold/isolation and automatic recovery, with strict public declaration checks. Fresh six-wheel installation outside the checkout passed all 198 Python tests (29.10s; 103 dependency/runtime deprecation warnings). Source and installed results establish this context checkpoint, not full readiness.
+- Local logs: `/tmp/watch-context-baseline-python.log`, `/tmp/watch-context-baseline-ts.log`, `/tmp/watch-context-python-focused.log`, `/tmp/watch-context-python-full.log`, `/tmp/watch-context-ts-focused.log`, `/tmp/watch-context-types.log`, `/tmp/watch-context-build.log`, `/tmp/watch-context-golden.log`, `/tmp/watch-context-ts-full.log`, `/tmp/watch-context-packed.log`, `/tmp/watch-context-wheel.log`.

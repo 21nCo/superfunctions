@@ -11,7 +11,7 @@ from uuid import uuid4
 from superfunctions.db import AdapterError, CreateParams, FindOneParams, FindManyParams, OrderBy, WhereClause, UpdateManyParams
 from .schema import ALERTS, OUTBOX
 from .alert_manager import Alert, EvaluationResult
-from .observations import validate, ranges, evaluate
+from .observations import validate, ranges, evaluate_result
 from .pagerduty import route_key
 from ..query import number
 
@@ -215,7 +215,7 @@ class DurableAlertManager:
     def get_triggered(self):
         return [alert for alert in self.get_all() if alert.state in ('triggered', 'acknowledged')]
 
-    def _mutate(self, identifier, change, expected=None, now=None):
+    def _mutate(self, identifier, change, expected=None, now=None, observations=None):
         now = time.time() * 1000 if now is None else now
         async def action(tx):
             row = await self._row(tx, identifier)
@@ -236,6 +236,10 @@ class DurableAlertManager:
                     job = str(uuid4())
                     notification = {'id': job, 'event': transition, 'timestamp': now, 'alert': {key: record[key] for key in ('id', 'name', 'state', 'description', 'runbook', 'triggeredAt') if key in record}}
                     notification['alert']['severity'] = record.get('severity', 'warning')
+                    if observations and transition in observations:
+                        notification.update(observations[transition])
+                    if transition == 'triggered' and record['condition'].get('type', 'threshold') == 'threshold':
+                        notification['threshold'] = record['condition']['threshold']
                     payload = {'notification': notification, 'channel': channel}
                     if channel['type'] == 'pagerduty' and 'pagerDuty' in record:
                         sequence, route = record['pagerDuty'], route_key(channel)
@@ -324,17 +328,23 @@ class DurableAlertManager:
         for row in rows:
             before = self._decode(row)
             if not before['enabled']: continue
-            matched = evaluate(before['condition'], data, now)
-            recovery = evaluate(before['autoResolve']['condition'], data, now) if before.get('autoResolve', {}).get('enabled') else None
+            observation = evaluate_result(before['condition'], data, now)
+            matched = observation['matched']
+            recovery = evaluate_result(before['autoResolve']['condition'], data, now) if before.get('autoResolve', {}).get('enabled') else {'matched': None}
             def change(record, moment):
                 if record.get('lastEvaluated', -float('inf')) > moment: raise AlertConflict('Evaluation time moved backwards')
                 record['lastEvaluated'] = moment
                 if matched is True and record['state'] not in ('triggered', 'acknowledged'): return self._trigger(record, moment)
-                if record['state'] in ('triggered', 'acknowledged') and recovery is True:
+                if record['state'] in ('triggered', 'acknowledged') and recovery['matched'] is True:
                     record.update(state='resolved', resolvedBy='autoResolve', resolvedAt=moment)
                     return 'resolved'
-            record = self._mutate(row['id'], change, row['revision'], now)
-            results.append(EvaluationResult(self._legacy(record), matched is True, now, matched=matched, observed=matched is not None))
+            contexts = {}
+            for event, measured in [('triggered', observation), ('resolved', recovery)]:
+                contexts[event] = {key: measured[key] for key in ('value',) if key in measured}
+            if recovery['matched'] is True and before['autoResolve']['condition'].get('type', 'threshold') == 'threshold':
+                contexts['resolved']['threshold'] = before['autoResolve']['condition']['threshold']
+            record = self._mutate(row['id'], change, row['revision'], now, contexts)
+            results.append(EvaluationResult(self._legacy(record), matched is True, now, value=observation.get('value'), matched=matched, observed=matched is not None))
         return results
 
     def notifications(self, *, limit=50, after=None):

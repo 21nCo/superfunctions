@@ -6,7 +6,7 @@ import { ConditionEvaluator, validateAlertCondition, alertWindowMs, type AlertCo
 import { ALERTS, ALERT_OUTBOX, ALERT_RUNTIME, getAlertSchema } from './schema';
 import { ReceiptRetention, validateReceiptProjection } from './retention';
 import { pagerDutyRoute, pagerDutyRequest, type PagerDutyJob } from './channels/pagerduty';
-import type { AlertConfig, AlertChannel, AlertRecord, PublicAlert, AlertRuntimeConfig, AlertNotification } from './types';
+import type { AlertConfig, AlertChannel, AlertRecord, PublicAlert, AlertRuntimeConfig, AlertNotification, AlertLifecycleListener, AlertLifecycleContext } from './types';
 export type { AlertConfig, AlertChannel } from './types';
 interface Row { id: string; namespace: string; revision: number; payload: AlertRecord }
 interface Delivery { outcome: 'pending' | 'unknown' | 'rejected' | 'delivered' | 'dismissed'; reason?: string; completedAt?: number; actor?: string }
@@ -32,7 +32,7 @@ export class AlertManager {
   private readonly namespace: string;
   private readonly evaluator = new ConditionEvaluator();
   private readonly config: Required<Pick<AlertRuntimeConfig, 'maxObservations' | 'maxPendingPerAlert' | 'timeoutMs' | 'leaseMs' | 'maxAttempts'>> & AlertRuntimeConfig;
-  private readonly listeners = { triggered: [] as ((alert: PublicAlert, context: any) => unknown)[], resolved: [] as ((alert: PublicAlert, context: any) => unknown)[] };
+  private readonly listeners = { triggered: [] as AlertLifecycleListener[], resolved: [] as AlertLifecycleListener[] };
   constructor(private readonly host: AlertHost) {
     const database = host.database ?? memoryAdapter();
     if (!database.capabilities?.transactions?.supported || typeof database.transaction !== 'function') throw new TypeError('Alerts require a shared DB adapter with transactions');
@@ -138,8 +138,8 @@ export class AlertManager {
       Object.assign(record, config, { enabled: config.enabled ?? record.enabled });
     }));
   }
-  onTrigger(callback: (alert: PublicAlert, context: any) => unknown) { this.listeners.triggered.push(callback); }
-  onResolve(callback: (alert: PublicAlert, context: any) => unknown) { this.listeners.resolved.push(callback); }
+  onTrigger(callback: AlertLifecycleListener) { if (typeof callback !== 'function') throw new TypeError('Alert listener must be a function'); this.listeners.triggered.push(callback); }
+  onResolve(callback: AlertLifecycleListener) { if (typeof callback !== 'function') throw new TypeError('Alert listener must be a function'); this.listeners.resolved.push(callback); }
   private note(record: AlertRecord, content: unknown, createdBy: unknown, now: number) {
     if (!text(content, 4096) || !text(createdBy, 255)) throw new TypeError('Invalid alert note');
     if (record.notes.length >= 100) throw new Error('Alert note capacity reached');
@@ -207,7 +207,7 @@ export class AlertManager {
           if (result.matched === true && !active(record)) { this.triggerState(record, now); return { event: 'triggered' as const, value: result.value }; }
           if (active(record) && record.autoResolve?.enabled) {
             const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations);
-            if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value }; }
+            if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value, threshold: record.autoResolve.condition.type === undefined || record.autoResolve.condition.type === 'threshold' ? record.autoResolve.condition.threshold : undefined }; }
           }
         }, now, row.revision);
         results.push({ alert, observed: matched !== null, matched });
@@ -215,13 +215,14 @@ export class AlertManager {
       return { results, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
     }, true);
   }
-  private async mutate(id: string, change: (record: AlertRecord, now: number) => { event: AlertNotification['event']; value?: number } | void, now = Date.now(), expectedRevision?: number): Promise<PublicAlert> {
+  private async mutate(id: string, change: (record: AlertRecord, now: number) => { event: AlertNotification['event']; value?: number; threshold?: number } | void, now = Date.now(), expectedRevision?: number): Promise<PublicAlert> {
     await this.assertDispatchProtocol();
     const committed = await this.transaction(async tx => {
       const row = await this.row(id, tx);
       if (expectedRevision !== undefined && row.revision !== expectedRevision) throw new Conflict('Alert changed during evaluation; retry');
       const record = copy(row.payload), transition = change(record, now);
       record.updatedAt = now;
+      if (transition?.event === 'triggered' && (record.condition.type === undefined || record.condition.type === 'threshold')) transition.threshold = record.condition.threshold;
       if (transition && record.pendingNotifications + record.channels.length > this.config.maxPendingPerAlert) throw new Error('Alert notification capacity reached; reconcile parked obligations');
       const jobs: Job[] = [];
       if (transition) {
@@ -230,7 +231,7 @@ export class AlertManager {
         if (transition.event === 'triggered') record.pagerDuty = { episode: randomUUID(), tails: {}, settled: [] };
         for (const channel of record.channels) {
           const jobId = randomUUID();
-          const notification: AlertNotification = { id: jobId, event: transition.event, timestamp: now, value: transition.value,
+          const notification: AlertNotification = { id: jobId, event: transition.event, timestamp: now, value: transition.value, threshold: transition.threshold,
             alert: { id, name: record.name, severity: record.severity ?? 'warning', state: record.state, description: record.description, runbook: record.runbook, triggeredAt: record.triggeredAt } };
           const payload: Job['payload'] = { notification, channel };
           if (channel.type === 'pagerduty' && record.pagerDuty) {
@@ -253,7 +254,8 @@ export class AlertManager {
     });
     const result = this.public(committed.record);
     if (committed.transition?.event === 'triggered' || committed.transition?.event === 'resolved') {
-      const failures = await Promise.allSettled(this.listeners[committed.transition.event].map(callback => Promise.resolve().then(() => callback(result, { value: committed.transition!.value, triggeredAt: committed.record.triggeredAt, timestamp: now, duration: now - (committed.record.triggeredAt ?? now) }))));
+      const context: AlertLifecycleContext = { value: committed.transition.value, threshold: committed.transition.threshold, triggeredAt: committed.record.triggeredAt, timestamp: now, duration: now - (committed.record.triggeredAt ?? now) };
+      const failures = await Promise.allSettled(this.listeners[committed.transition.event].map(callback => Promise.resolve().then(() => callback(copy(result), copy(context)))));
       // Durable state/outbox already committed; listener failures never undo them or retry sends.
       if (failures.some(outcome => outcome.status === 'rejected')) throw new Error('Alert transition committed; one or more listeners failed');
     }

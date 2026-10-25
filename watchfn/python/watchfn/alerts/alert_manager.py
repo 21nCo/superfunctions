@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional, Literal
 from dataclasses import dataclass
 import time
 import threading
-from .observations import validate, evaluate as evaluate_stored, ranges
+from .observations import validate, evaluate_result as evaluate_stored, ranges
 from ..query import number
 from .conditions import ConditionEvaluator
 
@@ -74,21 +74,22 @@ class AlertManager:
                 evaluate_stored(alert.auto_resolve["condition"], data, now)
                 if alert.auto_resolve and alert.auto_resolve["enabled"] else None) for alert in alerts]
             results = []
-            for alert, matched, recovery in evaluated:
+            for alert, observation, recovery in evaluated:
                 if alert.last_evaluated is not None and now < alert.last_evaluated:
                     raise ValueError("Evaluation time must not move backwards")
-            for alert, matched, recovery in evaluated:
+            for alert, observation, recovery in evaluated:
+                matched = observation["matched"]
                 if matched is True:
                     alert.consecutive_failures += 1
                     if alert.state == "normal":
                         alert.state = "triggered"
                         alert.triggered_at = now
-                if alert.state == "triggered" and recovery is True:
+                if alert.state == "triggered" and recovery is not None and recovery["matched"] is True:
                     alert.state = "normal"
                     alert.triggered_at = None
                     alert.consecutive_failures = 0
                 alert.last_evaluated = now
-                results.append(EvaluationResult(alert, matched is True, now, matched=matched, observed=matched is not None))
+                results.append(EvaluationResult(alert, matched is True, now, value=observation.get("value"), matched=matched, observed=matched is not None))
             return results
 
     def register(self, alert: Alert) -> None:

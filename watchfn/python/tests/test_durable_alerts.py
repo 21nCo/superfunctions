@@ -243,3 +243,31 @@ def test_stored_corruption_fails_without_lifecycle_mutation(tmp_path, corruption
         with pytest.raises(ValueError, match='stored'): watch.alerts.trigger(record['id'])
         assert watch.alerts.notifications() == []
     finally: watch.stop(); engine.dispose()
+
+
+def test_calculated_transition_context_survives_reopen(tmp_path):
+    from datetime import datetime, timezone
+    from watchfn import Event
+    path = 'sqlite:///' + str(tmp_path / 'context.sqlite')
+    engine, watch = open_watch(path)
+    migrate(engine); tables = migrate_alerts(engine)
+    try:
+        condition = definition()['condition']
+        record = watch.alerts.create(definition(autoResolve={'enabled': True, 'condition': dict(condition, operator='lt', threshold=2, window='1s')}))
+        def sample(value, when):
+            watch.storage.add(Event(type='track', name='api', properties={'latency': value}, timestamp=datetime.fromtimestamp(when / 1000, timezone.utc)))
+        sample(20, 1000000); sample(40, 1000000)
+        result = watch.alerts.evaluate_stored(now=1000000)[0]
+        assert result.value == 30 and result.matched is True
+        sample(0, 1010000)
+        watch.alerts.evaluate_stored(now=1010000)
+        assert watch.alerts.get_record(record['id'])['state'] == 'resolved'
+    finally: watch.stop(); engine.dispose()
+    engine, watch = open_watch(path)
+    try:
+        with engine.connect() as connection:
+            notifications = [json.loads(row['payload'])['notification'] for row in connection.execute(select(tables['watchfn_alert_outbox'])).mappings()]
+        by_event = {item['event']: item for item in notifications}
+        assert (by_event['triggered']['value'], by_event['triggered']['threshold']) == (30, 10)
+        assert (by_event['resolved']['value'], by_event['resolved']['threshold']) == (0, 2)
+    finally: watch.stop(); engine.dispose()

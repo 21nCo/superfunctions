@@ -58,6 +58,14 @@ try {
  const emailAlert=await first.alerts.create({name:'packed email',condition:{metric:'latency',window:'1m',operator:'gt',threshold:1},channels:[{type:'email',recipients:['operator@example.test']}]});
  await first.alerts.trigger(emailAlert.id);await Promise.all([drain(first),drain(second)]);assert.equal(emails.length,1);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,0);
  emailDrop=true;await first.alerts.resolve(emailAlert.id,{resolvedBy:'operator'});await drain(second);await drain(first);assert.equal(emails.length,2);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,1);assert.ok(!JSON.stringify(await first.alerts.list()).includes('packed-local-secret'));
+ const measured=await first.alerts.create({name:'calculated context',condition:{metric:'measured',window:'1m',operator:'gt',threshold:5},channels:[],autoResolve:{enabled:true,condition:{metric:'measured',window:'1s',operator:'lt',threshold:2}}});
+ const contexts=[];first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){alert.name='modified';context.value=-1;}});
+ first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){assert.equal(alert.name,'calculated context');contexts.push(context);}});
+ first.alerts.onResolve((alert,context)=>{if(alert.id===measured.id)contexts.push(context);});
+ const moment=Date.now();await first.ingest([{type:'metric',name:'measured',value:10,timestamp:moment},{type:'metric',name:'measured',value:20,timestamp:moment}]);
+ await first.alerts.evaluate({now:moment});assert.equal(contexts[0].value,15);assert.equal(contexts[0].threshold,5);
+ await first.ingest([{type:'metric',name:'measured',value:0,timestamp:moment+10000}]);await first.alerts.evaluate({now:moment+10000});
+ assert.equal(contexts[1].value,0);assert.equal(contexts[1].threshold,2);assert.equal(contexts[1].duration,10000);
  await assert.rejects(first.alerts.migrateStoppedLegacyNamespace(),/existing ts-v1/);
  await assert.rejects(first.flush(),error=>error instanceof AggregateError && error.errors.length===1 && /existing ts-v1/.test(error.errors[0].message));
  }finally{const stopped=await Promise.allSettled([first.stop(),second.stop()]);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));const failures=stopped.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw new AggregateError(failures,'Installed consumer cleanup failed');}
@@ -65,8 +73,10 @@ try {
  for(const [extension,imports] of [['mjs',"import assert from 'node:assert/strict';import {WatchFn} from '@watchfn/core';"],['cjs',"const assert=require('node:assert/strict');const {WatchFn}=require('@watchfn/core');"]]){
   const path=join(temporary,'consumer.'+extension);await writeFile(path,imports+'\n(async()=>{'+body+'})().catch(error=>{console.error(error);process.exitCode=1;});');execFileSync(process.execPath,[path],{cwd:temporary,stdio:'inherit',timeout:30000});
  }
- await writeFile(join(temporary,'consumer.ts'), `import {WatchFn} from '@watchfn/core';
+ await writeFile(join(temporary,'consumer.ts'), `import {WatchFn, type AlertLifecycleContext, type AlertLifecycleListener} from '@watchfn/core';
+ const callback:AlertLifecycleListener=(_alert,context:AlertLifecycleContext)=>{const threshold:number|undefined=context.threshold;return threshold;};
  const watch=new WatchFn({name:'typed',storage:'memory',alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'local',secretAccessKey:'local',timeoutMs:1000,maxResponseBytes:1024}}}});
+ watch.alerts.onTrigger(callback);watch.alerts.onResolve(callback);
  async function maintenance(){const status=await watch.alerts.receiptRetentionStatus();const migration=await watch.alerts.migrateReceiptRetention({limit:1});const page=await watch.alerts.pruneNotifications({completedBefore:Date.now(),limit:1});if(page.nextCursor)await watch.alerts.pruneNotifications({completedBefore:Date.now(),after:page.nextCursor});const done:boolean=migration.done;const protocol:string|undefined=status?.protocol;return {done,protocol};}void maintenance;`);
  execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
  await rm(join(temporary,'node_modules/sendfn'),{recursive:true,force:true});

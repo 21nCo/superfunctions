@@ -300,3 +300,25 @@ it('converges independent first-owner claims on the same immutable protocol', as
   await Promise.all([watch.alerts.processNotifications(), second.alerts.processNotifications()]);
   expect(await sql.selectFrom('watchfn_alert_runtime').selectAll().execute()).toMatchObject([{ id: 'test', protocol: 'ts-v3' }]);
 });
+
+it('isolates committed callback snapshots and persists calculated threshold context', async () => {
+  const { watch, sql } = await setup(); const now = Date.now();
+  const alert = await watch.alerts.create({ name: 'context', condition: rule, channels: [{ type: 'webhook', webhook: 'https://example.invalid/private' }], autoResolve: { enabled: true, condition: { ...rule, operator: 'lt', threshold: 2, window: '1s' } } });
+  const contexts: any[] = [];
+  watch.alerts.onTrigger((value, context) => { value.name = 'mutated'; context.value = -1; });
+  watch.alerts.onTrigger(async (value, context) => {
+    expect(value.name).toBe('context'); contexts.push(context);
+    await watch.alerts.addNote(value.id, { content: 'Post-commit note', createdBy: 'listener' });
+  });
+  watch.alerts.onResolve((_value, context) => { contexts.push(context); });
+  await observe(watch, 10, now); await observe(watch, 20, now);
+  const result = await watch.alerts.evaluate({ now });
+  expect(result.results[0].alert.name).toBe('context');
+  expect(contexts[0]).toMatchObject({ value: 15, threshold: 5, triggeredAt: now });
+  expect((await watch.alerts.get(alert.id)).notes).toHaveLength(1);
+  await observe(watch, 0, now + 10000); await watch.alerts.evaluate({ now: now + 10000 });
+  expect(contexts[1]).toMatchObject({ value: 0, threshold: 2, duration: 10000 });
+  const notifications = (await sql.selectFrom('watchfn_alert_outbox').select('payload').execute()).map((row: any) => JSON.parse(row.payload).notification);
+  expect(notifications.find((item: any) => item.event === 'triggered')).toMatchObject({ value: 15, threshold: 5 });
+  expect(notifications.find((item: any) => item.event === 'resolved')).toMatchObject({ value: 0, threshold: 2 });
+});
