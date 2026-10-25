@@ -61,11 +61,14 @@ export interface RunOptions {
   resources: ResourceHandlers;
   /** Read the protected inventory; a failed read throws. */
   snapshot: () => Promise<ProtectedSnapshot>;
+  /** Aborted on interrupt: no further scenario starts, and the running one is cleaned up only once its driver has returned. */
+  signal?: AbortSignal;
   now?: () => Date;
 }
 
 /** Why a scenario cannot run here, before anything is created. */
 function blockedReason(scenario: QualificationScenario, options: RunOptions): Pick<ScenarioResult, "status" | "reason"> | undefined {
+  if (options.signal?.aborted) return { status: "blocked", reason: "The run was interrupted before this scenario started." };
   if (!(QUALIFIED_PLATFORMS as readonly string[]).includes(options.platform)) return { status: "unsupported", reason: `${options.platform} is not a qualified DevFn host; no support is claimed without its own evidence.` };
   const results = new Map(options.prerequisites.map((item) => [item.id, item]));
   const unmet = scenario.prerequisites.filter((id) => results.get(id)?.status !== "satisfied");
@@ -78,7 +81,8 @@ function blockedReason(scenario: QualificationScenario, options: RunOptions): Pi
  * Run each selected scenario in order. A scenario passes only when its
  * driver returns, every planned assertion was observed and none failed,
  * each resource it created is read back absent and the protected inventory
- * is unchanged. Cleanup and the protected read run even when a driver throws.
+ * is unchanged. Cleanup and the protected read run even when a driver throws,
+ * and never while a driver is still running.
  */
 export async function runScenarios(options: RunOptions): Promise<ScenarioResult[]> {
   const now = options.now ?? (() => new Date());

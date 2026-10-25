@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@d
 import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
-import type { LiveHost } from "./live.js";
+import type { Answer, LiveHost } from "./live.js";
 import { ownerLabel } from "./matrix.js";
 import type { ScenarioContext, ScenarioDriver } from "./runner.js";
 
@@ -53,11 +53,11 @@ export function domainFixture(domain: string): Record<string, unknown> {
     profiles: { default: { processes: ["web"], proxy: true } }, hostnames: { web: { target: "web", domain } } };
 }
 
-/** web published at /app through a tunnel binding; private is routed locally but never selected for public exposure. */
+/** web published at /app through a tunnel binding; private is routed locally over internal TLS, so Caddy holds its certificate, but never selected for public exposure. */
 export function tunnelFixture(binding: string, ephemeral: boolean): Record<string, unknown> {
   return { version: 1, project: { id: "qualification" }, ports: { web: {}, private: {} }, processes: { web: serverProcess("web"), private: serverProcess("private") },
     profiles: { default: { processes: ["web", "private"], proxy: true, tunnel: { binding, routes: ["web"], ...(ephemeral ? { ephemeral: true } : {}) } } },
-    hostnames: { web: { target: "web", path: "/app", stripPrefix: true }, private: { target: "private" } } };
+    hostnames: { web: { target: "web", path: "/app", stripPrefix: true }, private: { target: "private", tls: "internal" } } };
 }
 
 export { OAUTH_CALLBACK_PATH };
@@ -153,6 +153,34 @@ async function systemTrustAccepts(url: string): Promise<boolean | undefined> {
   return (await exec(process.execPath, ["--use-system-ca", "-e", script])).code === 0;
 }
 
+const originHeader = (answer: Answer) => answer.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()];
+
+/**
+ * Answer predicates. Each holds only for the positive answer the shipped
+ * component gives for its claim; a failed request (undefined), another
+ * status, a fixture answer or a missing marker header never satisfies one.
+ */
+export const ANSWERS = {
+  /** The public origin's marked deny for a name Caddy holds a certificate for but does not publish (SNI == Host). */
+  originDenied: (answer?: Answer) => answer?.status === 403 && originHeader(answer) === "deny" && answer.json === undefined,
+  /** Caddy's empty 421 on the public origin for a Host header that differs from the TLS server name. */
+  forgedHostRefused: (answer?: Answer) => answer?.status === 421 && answer.body === "",
+  /** A published host's marked fallback for a path the profile did not select. */
+  originFallback: (answer?: Answer) => answer?.status === 404 && originHeader(answer) === "fallback" && answer.json === undefined,
+  /** The local proxy's own 404 for an unknown name or unrouted path: no fixture process answered. */
+  proxyNotFound: (answer?: Answer) => answer?.status === 404 && answer.json === undefined && answer.headers.location === undefined,
+  /** Caddy's permanent redirect of a TLS route's plain-HTTP name to HTTPS on the same name. */
+  httpsRedirect: (answer: Answer | undefined, hostname: string) => {
+    try { return answer?.status === 308 && new URL(String(answer.headers.location)).protocol === "https:" && new URL(String(answer.headers.location)).hostname === hostname; } catch { return false; }
+  },
+  /** The relay's rejection of a callback whose state it already consumed. */
+  relayReplayRejected: (answer?: Answer) => answer?.status === 403 && /^DEVFN_OAUTH_RELAY_REJECTED: replayed\b/.test(answer.body),
+  /** The edge's own error answer for a Host the run never published; no fixture answered. */
+  edgeUnrouted: (answer?: Answer) => answer !== undefined && answer.status >= 400 && answer.json?.marker === undefined,
+  /** The provider read-back holds no name for the private route, and every name it holds for the binding is the selected public host. */
+  providerWithheld: (held: readonly string[], publicHost: string, privateName: string) => !held.includes(privateName) && held.every((name) => name === publicHost),
+};
+
 const marker = (cwd: string) => path.basename(cwd);
 const pathOf = (url: string) => new URL(url).pathname.replace(/\/$/, "");
 const originOf = (url: string) => new URL(url).origin;
@@ -218,7 +246,7 @@ const compose: LiveDriver = async (context, host) => {
   const client = allocation("client");
   const answer = client ? await host.request(`http://127.0.0.1:${client.port}/`) : undefined;
   context.expect("sibling-url", answer?.json?.upstream === "http://echo:8080" && answer.json.answer === "echo", `client saw ${String(answer?.json?.upstream)} and reached it: ${answer?.json?.answer === "echo"}`);
-  const published = await Promise.all(["echo", "client"].map(async (name) => (await exec("docker", ["ps", "--filter", `publish=${allocation(name)?.port ?? 0}`, "--format", "{{.Ports}}"])).stdout.trim()));
+  const published = await Promise.all(["echo", "client"].map(async (name) => (await host.docker(["ps", "--filter", `publish=${allocation(name)?.port ?? 0}`, "--format", "{{.Ports}}"])).stdout.trim()));
   context.expect("loopback-mapping", published.every((ports, index) => ports.length > 0 && ports.split(",").every((item) => item.trim().startsWith("127.0.0.1:")) && allocation(["echo", "client"][index])?.host === "127.0.0.1"),
     `published: ${published.join(" | ")}`);
 };
@@ -238,10 +266,10 @@ const routeIsolation: LiveDriver = async (context, host) => {
   const api = a.urls.api;
   const stripped = await host.request(`${api}/item?x=1`, { ca });
   const boundary = await host.request(`${originOf(api)}${pathOf(api)}x`, { ca });
-  context.expect("path-prefix", stripped.json?.name === "api" && stripped.json.path === "/item?x=1" && boundary.status === 404, `${pathOf(api)}/item -> ${String(stripped.json?.path)}; ${pathOf(api)}x -> ${boundary.status}`);
+  context.expect("path-prefix", stripped.json?.name === "api" && stripped.json.path === "/item?x=1" && ANSWERS.proxyNotFound(boundary), `${pathOf(api)}/item -> ${String(stripped.json?.path)}; ${pathOf(api)}x -> ${boundary.status}`);
   const unselected = await host.request(`${originOf(api)}/other`, { ca });
   const unknown = await host.request(`http://${host.prefix}-unknown.localhost/`);
-  context.expect("unselected-denied", unselected.status === 404 && unknown.status === 404 && !unselected.json && !unknown.json, `unselected path ${unselected.status}, unknown host ${unknown.status}`);
+  context.expect("unselected-denied", ANSWERS.proxyNotFound(unselected) && ANSWERS.proxyNotFound(unknown), `unselected path ${unselected.status}, unknown host ${unknown.status}`);
   const crossed = [];
   for (const [own, other] of [[a, b], [b, a]]) for (const url of [own.urls.web, `${own.urls.api}/x`]) crossed.push((await host.request(url, { ca })).json?.marker === marker(other.cwd));
   const disjoint = !(a.receipt.routes as Array<{ hostname: string }>).some((route) => (b.receipt.routes as Array<{ hostname: string }>).some((other) => other.hostname === route.hostname));
@@ -255,7 +283,7 @@ const internalTls: LiveDriver = async (context, host) => {
   const names = await Promise.all([a, b].map(async (item) => await certificateNames(hostOf(item.urls.web), ca)));
   context.expect("verified-sni", names.every((name, index) => name.includes(`DNS:${hostOf([a, b][index].urls.web)}`)), `verified certificates: ${names.join(" | ")}`);
   const plain = await host.request(plainOf(a.urls.web));
-  context.expect("http-redirect", plain.status >= 300 && plain.status < 400 && String(plain.headers.location ?? "").startsWith("https://"), `HTTP answered ${plain.status} -> ${String(plain.headers.location)}`);
+  context.expect("http-redirect", ANSWERS.httpsRedirect(plain, hostOf(a.urls.web)), `HTTP answered ${plain.status} -> ${String(plain.headers.location)}`);
   const unchanged = JSON.stringify(await host.trustAnchors()) === JSON.stringify(anchors);
   // A root the operator trusted before the run is reported, not attributed to DevFn.
   context.expect("no-trust-install", unchanged, `OS trust store ${unchanged ? "unchanged" : "changed"} across startup and TLS use (${anchors.length} anchors); the internal root was ${{ true: "already trusted by the operator", false: "not trusted by the OS", undefined: "not checked against the OS store (Node.js before 22.15)" }[String(await systemTrustAccepts(a.urls.web))]}`);
@@ -302,30 +330,32 @@ const googleOAuth = (approval: QualificationApproval | undefined): LiveDriver =>
   const read = async (app: { url: string }) => (await host.request(`${originOf(app.url)}/evidence`, { ca })).json as Evidence;
   // A person or browser agent signs in at each URL; the run only waits for the apps to report the outcome.
   process.stderr.write(`Complete a Google sign-in at each URL within 10 minutes:\n${apps.map((app) => `  ${originOf(app.url)}/login`).join("\n")}\n`);
+  // Each consumed callback is replayed as soon as its app reports it, well inside the relay ticket lifetime, so only "replayed" is a rejection.
+  const replays: Array<Answer | undefined> = [];
+  const replay = async () => {
+    for (const app of apps) for (const url of (await host.request(`${originOf(app.url)}/replays`, { ca })).json as unknown as string[]) replays.push(await host.request(url, { ca }).catch(() => undefined));
+  };
   const deadline = Date.now() + 600_000;
   let evidence: Evidence[] = [];
   while (Date.now() < deadline) {
     evidence = await Promise.all(apps.map(read));
+    await replay();
     if (evidence.every((item) => item.evidence.some((record) => record.session === true))) break;
     await sleep(3_000);
   }
+  await replay();
   const logins = evidence.map((item) => item.evidence.find((record) => record.session === true));
   const approved = `${relay.origin}${OAUTH_CALLBACK_PATH}` === oauth.redirectUri;
   context.expect("one-redirect-uri", approved && logins.every((record) => record?.redirectUri === oauth.redirectUri), `relay redirect ${relay.origin}${OAUTH_CALLBACK_PATH}; both flows used it: ${logins.every((record) => record?.redirectUri === oauth.redirectUri)}`);
-  // Each session is honored on its own host and refused on the other worktree's host.
-  const me = async (app: { url: string }, probe: string | undefined) => probe ? (await host.request(`${originOf(app.url)}/me`, { ca, cookie: `sid=${probe}` }).catch(() => undefined))?.status : undefined;
-  const own = await Promise.all(apps.map(async (app, index) => await me(app, evidence[index].probe)));
-  const crossed = await Promise.all(apps.map(async (app, index) => await me(app, evidence[1 - index].probe)));
-  context.expect("login-both", logins.every((record, index) => record?.host === new URL(apps[index].url).host && evidence[index].sessionHosts.every((item) => item === record.host)) && own.every((status) => status === 200) && crossed.every((status) => status === 401),
-    `sessions on ${logins.map((record) => record?.host ?? "none").join(", ")}; /me with its own session ${own.join(", ")}, with the other worktree's ${crossed.join(", ")}`);
+  // The relay delivered each callback to its own worktree's host, which honors the session it established there.
+  const own = await Promise.all(apps.map(async (app, index) => evidence[index].probe ? (await host.request(`${originOf(app.url)}/me`, { ca, cookie: `sid=${evidence[index].probe}` }).catch(() => undefined))?.status : undefined));
+  context.expect("login-both", logins.every((record, index) => record?.host === new URL(apps[index].url).host && evidence[index].sessionHosts.every((item) => item === record.host)) && own.every((status) => status === 200),
+    `callbacks and sessions on ${logins.map((record) => record?.host ?? "none").join(", ")}; /me with each own session: ${own.join(", ")}`);
   context.expect("state-nonce-pkce", logins.every((record) => record?.stateOk === true && record.nonceOk === true && record.pkce === "S256" && record.audienceOk === true && record.issuerOk === true),
     "state, ID token nonce/audience/issuer and S256 PKCE validated by both clients");
-  const replays = (await Promise.all(apps.map(async (app) => (await host.request(`${originOf(app.url)}/replays`, { ca })).json as unknown as string[]))).flat();
-  const statuses: number[] = [];
-  for (const url of replays) statuses.push((await host.request(url, { ca }).catch(() => ({ status: 0 }))).status);
   const after = await Promise.all(apps.map(read));
-  context.expect("replay-rejected", replays.length >= 2 && statuses.every((status) => status >= 400) && after.every((item, index) => item.sessions === evidence[index].sessions),
-    `replayed ${replays.length} consumed callbacks: ${statuses.join(", ")}; no new session`);
+  context.expect("replay-rejected", replays.length >= 2 && replays.every(ANSWERS.relayReplayRejected) && after.every((item) => item.sessions === item.evidence.filter((record) => record.session === true).length),
+    `replayed ${replays.length} consumed callbacks: ${replays.map((answer) => answer ? `${answer.status} ${answer.body.trim()}` : "unanswered").join(", ")}; sessions ${after.map((item) => item.sessions).join(", ")}, one per login`);
   context.expect("token-exchange", logins.every((record) => record?.tokenStatus === 200), "Google's token endpoint answered 200 to each worktree's own exchange; the receipt holds no code or token, and consumed callbacks were replayed from memory");
 };
 
@@ -385,22 +415,24 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   context.expect("url-timing", timing, `planned ${planned.timing}: ${planned.urls.web ?? "assigned after start"}; started ${url}`);
   const served = await publicAnswer(host, `${url}/item`);
   context.expect("public-route-served", served?.marker === marker(cwd) && served.name === "web" && served.path === "/item", `${url}/item -> ${JSON.stringify(served)}`);
-  // Denial needs positive evidence; an unreachable or failed probe proves nothing.
+  // Denial needs the shipped component's own answer; an unreachable or failed probe proves nothing.
   const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name)!;
-  const privateName = hostname.replace(/^web-/, "private-");
   const ca = await host.ca();
-  const originDenied = await host.request(`https://${hostname}/`, { ca, port: PUBLIC_ORIGIN_PORT, host: privateName }).catch(() => undefined);
+  const local = hostOf((await urls(host, cwd)).private);
+  const privateName = hostname.replace(/^web-/, "private-");
+  // The origin denies the private route's own name (SNI == Host) and refuses it as a forged Host behind the public name.
+  const denied = await host.request(`https://${local}/`, { ca, port: PUBLIC_ORIGIN_PORT }).catch(() => undefined);
+  const forged = await host.request(`https://${hostname}/`, { ca, port: PUBLIC_ORIGIN_PORT, host: local }).catch(() => undefined);
   const outside = await host.request(`${originOf(url)}/other`, { publicDns: true }).catch(() => undefined);
-  const edge = kind === "cloudflare" ? (await host.readBack(bound, privateName, undefined) ? "a provider record" : "no provider record")
-    : kind === "ngrok-reserved" ? await host.request(`https://${privateName}/`, { publicDns: true }).then((answer) => answer.json?.marker === undefined && answer.status >= 400 ? `edge ${answer.status}` : `served ${answer.status}`, () => "unanswered")
-      : "no name assigned";
-  context.expect("private-route-denied", !(receipt.tunnel?.hostnames as string[]).some((item) => item.startsWith("private-")) && originDenied?.status === 403 && originDenied.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] === "deny"
-    && outside?.status === 404 && outside.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] === "fallback" && /^(no |edge )/.test(edge),
-    `origin for ${privateName}: ${String(originDenied?.status ?? "unanswered")} ${String(originDenied?.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] ?? "")}; ${originOf(url)}/other: ${String(outside?.status ?? "unanswered")} ${String(outside?.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] ?? "")}; public ${privateName}: ${edge}`);
+  const held = await host.readBack(bound, privateName, undefined);
+  const shown = (answer?: Answer) => answer ? `${answer.status} ${String(originHeader(answer) ?? "")}`.trim() : "unanswered";
+  context.expect("private-route-denied", !(receipt.tunnel?.hostnames as string[]).some((item) => item.startsWith("private-")) && ANSWERS.originDenied(denied) && ANSWERS.forgedHostRefused(forged)
+    && ANSWERS.originFallback(outside) && ANSWERS.providerWithheld(held, hostOf(url), privateName),
+    `origin for ${local}: ${shown(denied)}; Host ${local} behind ${hostname}: ${shown(forged)}; ${originOf(url)}/other: ${shown(outside)}; ${bound.provider} holds ${held.join(", ") || "nothing"} for the binding or ${privateName}`);
   if (bound.provider === "cloudflare") await new CloudflareTunnelProvider({ env: host.options.env }).verifyDns(bound, hostname);
   const resolved = await lookup(hostOf(url), { all: true }).then((items) => items.map((item) => item.address), () => []);
   const misrouted = await host.request(url, { publicDns: true, host: `${host.prefix}-unrouted.${hostOf(url).split(".").slice(1).join(".")}` }).catch(() => undefined);
-  context.expect("dns-host-sni", resolved.length > 0 && misrouted !== undefined && misrouted.json?.marker === undefined,
+  context.expect("dns-host-sni", resolved.length > 0 && ANSWERS.edgeUnrouted(misrouted),
     `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host answered ${misrouted?.status ?? "nothing"} without a fixture marker`);
   await probePublicOrigin(hostname, PUBLIC_ORIGIN_PORT, ca);
   context.observe("origin-tls", true, `origin certificate for ${hostname} verified against the internal root on ${PUBLIC_ORIGIN_PORT}`);
@@ -467,11 +499,13 @@ const crash: LiveDriver = async (context, host) => {
   const status = await host.devfn(cwd, ["status"]);
   // An interrupted start: the CLI is killed once its first process has recorded its startup.
   const interrupted = await host.repository(context.scenario.id, "interrupted", hostFixture());
-  host.options.inventory.record("runtime", interrupted, context.scenario.id);
-  const child = spawn(process.execPath, [host.options.devfnCli, "up", "--json", "--state-dir", host.stateDir], { cwd: interrupted, env: host.options.env, stdio: "ignore" });
+  // The interrupted start runs like every DevFn command of the run, in the run's environment; it is killed with SIGKILL.
+  const kill = new AbortController();
+  const pending = host.up(context.scenario.id, interrupted, [], kill.signal);
   let orphan: number | undefined;
   for (let wait = 0; wait < 300 && orphan === undefined; wait += 1) { orphan = (await host.seen(interrupted, "web").catch(() => undefined))?.pid; if (orphan === undefined) await sleep(100); }
-  child.kill("SIGKILL");
+  kill.abort();
+  await pending;
   const collected = await host.devfn(interrupted, ["ports", "gc"]);
   context.expect("crash-detected", status.json.state !== "ready" && collected.code === 0 && orphan !== undefined,
     `status after kill: ${String(status.json.state)}; ports gc after interrupted up: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
@@ -501,7 +535,7 @@ const oneWorktreeStop: LiveDriver = async (context, host) => {
   const routes = await host.routesOf(String(a.receipt.instanceId));
   // Withdrawal is observed as the proxy's own 404 for the name on plain HTTP, never as a failed request.
   const answer = await host.request(plainOf(a.urls.web)).catch(() => undefined);
-  context.expect("stopped-withdrawn", status.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && answer?.status === 404 && answer.json === undefined,
+  context.expect("stopped-withdrawn", status.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && ANSWERS.proxyNotFound(answer),
     `state ${String(status.state)}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
   const after = await host.seen(b.cwd, "web");
   context.expect("sentinel-preserved", after.pid === before.pid && await serves(host, b.urls.web, b.cwd, ca), `other worktree pid ${before.pid} -> ${after.pid}`);

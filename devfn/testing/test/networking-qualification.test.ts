@@ -1,4 +1,6 @@
-import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,12 +9,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { validateDevFnConfig } from "@devfn/config";
 import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@devfn/core";
-import { proxyListenerPorts } from "@devfn/proxy";
+import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { ephemeralOriginDomain, ngrokMarker, registerTunnelBinding, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { staleBuildOutputs } from "../src/networking/cli.js";
+import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
-  approvedDomains, checkPrerequisites, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, hostFixture, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerReadBack, receiptProblems, redactSecrets, runScenarios, selectScenarios, summarize, tunnelFixture,
-  type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioDriver, type ScenarioResult,
+  ANSWERS, approvedDomains, checkPrerequisites, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, hostFixture, InventoryError, listenerPorts, liveDrivers, LiveHost,
+  localDockerEndpoint, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerReadBack, receiptProblems, redactSecrets, runScenarios, selectScenarios, summarize, tunnelFixture,
+  type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
@@ -161,6 +165,23 @@ describe("prerequisite probes", () => {
     expect(await status("caddy", { platform: "darwin", approval: approvalFor("darwin"), run: tools({ "getcap /usr/bin/caddy": "" }) })).toMatchObject({ status: "satisfied" });
   });
 
+  it("accepts Compose only against a local Docker engine socket", async () => {
+    const context = (host: string) => tools({ "docker context inspect --format {{.Endpoints.docker.Host}}": host, "docker context inspect remote --format {{.Endpoints.docker.Host}}": "ssh://ci@build.example.test" });
+    expect(await localDockerEndpoint({}, context("unix:///var/run/docker.sock"))).toBe("unix:///var/run/docker.sock");
+    await expect(localDockerEndpoint({ DOCKER_CONTEXT: "remote" }, context("unix:///var/run/docker.sock"))).rejects.toThrow(/ssh:\/\/ci@build.example.test, not a local engine socket/);
+    await expect(localDockerEndpoint({ DOCKER_HOST: "tcp://10.0.0.5:2376" }, context("unix:///var/run/docker.sock"))).rejects.toThrow(/tcp:\/\/10.0.0.5:2376/);
+    await expect(localDockerEndpoint({}, async () => ({ code: 1, stdout: "" }))).rejects.toThrow(/unreadable/);
+    expect(await status("docker-compose", { run: context("unix:///var/run/docker.sock") })).toMatchObject({ status: "satisfied", detail: expect.stringContaining("local engine") });
+    expect(await status("docker-compose", { run: context("tcp://docker.example.test:2376") })).toMatchObject({ status: "missing", detail: expect.stringContaining("remote targets need their own approval") });
+  });
+
+  it("finds a listener bound to IPv6 loopback only", async (test) => {
+    const server = net.createServer();
+    const bound = await new Promise<boolean>((resolve) => { server.once("error", () => resolve(false)); server.listen(0, "::1", () => resolve(true)); });
+    if (!bound) { test.skip(); return; }
+    try { expect(await loopbackListening((server.address() as net.AddressInfo).port)).toBe(true); } finally { server.close(); }
+  });
+
   it("names unset credential variables without reading values into results", async () => {
     const result = await status("google-oauth", { env: { QUAL_GOOGLE_ID: "id" } });
     expect(result).toMatchObject({ status: "missing", detail: "credential variables unset: QUAL_GOOGLE_SECRET" });
@@ -206,6 +227,30 @@ describe("scenario runner", () => {
     expect(unreadable.resources[0].cleanup).toMatchObject({ absent: false, detail: "read-back failed: provider unreadable" });
   });
 
+  it("on interrupt cleans up only after the running driver returned, so a resource it created late is read back, and starts nothing more", async () => {
+    const interrupt = new AbortController();
+    const events: string[] = [];
+    const late = `${ROOT}/qabcdef12-late`;
+    const existing = new Set<string>();
+    const driver: ScenarioDriver = async (context) => {
+      interrupt.abort();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // An in-flight start finished after the interrupt; it can no longer be removed, as a connector outside DevFn's reach.
+      context.inventory.record("fixture-repository", late, context.scenario.id);
+      existing.add(late);
+      events.push("created");
+      throw new Error("the run was interrupted");
+    };
+    const inventory = new DisposableInventory({ runId: "abcdef123456", root: ROOT, domains: [] });
+    const scenarios = selectScenarios({ scenarios: ["host.two-worktrees", "host.route-isolation"] });
+    const results = await runScenarios({ scenarios, platform: "linux", prerequisites: allPrerequisites, drivers: { "host.two-worktrees": driver, "host.route-isolation": async () => { events.push("second driver"); } },
+      inventory, signal: interrupt.signal, snapshot: async () => ({}),
+      resources: { remove: async () => { events.push("remove"); }, present: async (entry) => { events.push("read"); return existing.has(entry.id) ? "checkout exists" : false; } } });
+    expect(events).toEqual(["created", "remove", "read"]);
+    expect(results[0]).toMatchObject({ status: "failed", reason: expect.stringContaining(`not confirmed absent: fixture-repository ${late}`) });
+    expect(results[1]).toMatchObject({ status: "blocked", reason: "The run was interrupted before this scenario started." });
+  });
+
   it("fails on any protected change and refuses to start without a protected read", async () => {
     let reads = 0;
     const changed = await run(complete, { snapshot: async () => ({ routes: reads++ === 0 ? ["operator@app.localhost"] : [] }) });
@@ -214,6 +259,23 @@ describe("scenario runner", () => {
     const unreadable = await run(async () => { ran = true; }, { snapshot: async () => { throw new Error("EACCES"); } });
     expect(unreadable).toMatchObject({ status: "failed", reason: expect.stringContaining("protected inventory unreadable before start: EACCES") });
     expect(ran).toBe(false);
+  });
+});
+
+describe("build provenance", () => {
+  it("refuses a checkout whose entry points are fresh but an implementation module's output is stale or missing", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-provenance-")));
+    try {
+      const file = async (name: string, at: number) => { await mkdir(path.dirname(path.join(dir, name)), { recursive: true }); await writeFile(path.join(dir, name), "export {};\n"); await utimes(path.join(dir, name), at, at); };
+      for (const name of ["devfn/cli/src/index.ts", "devfn/core/src/index.ts", "devfn/core/src/orchestrator.ts", "devfn/proxy/src/tunnel/service.ts", "devfn/core/src/types.d.ts"]) await file(name, 2_000);
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      execFileSync("git", ["add", "."], { cwd: dir });
+      for (const name of ["devfn/cli/dist/index.js", "devfn/core/dist/index.js", "devfn/core/dist/orchestrator.js", "devfn/proxy/dist/tunnel/service.js"]) await file(name, 3_000);
+      expect(await staleBuildOutputs(dir)).toEqual([]);
+      await file("devfn/core/dist/orchestrator.js", 1_000);
+      await rm(path.join(dir, "devfn/proxy/dist/tunnel/service.js"));
+      expect(await staleBuildOutputs(dir)).toEqual(["devfn/core/dist/orchestrator.js", "devfn/proxy/dist/tunnel/service.js"]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
 
@@ -324,25 +386,30 @@ describe("live host cleanup handlers", () => {
   afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = ""; });
 
   /** A live host whose devfn, lsof and ps answer from fixtures; calls are recorded in order. */
-  async function fixtureHost(answers: { devfn: Record<string, unknown>; lsof?: (root: string) => string; ps?: string }, providers?: ProviderReadBackFixture) {
+  async function fixtureHost(answers: { devfn: Record<string, unknown>; lsof?: (root: string) => string; ps?: string; docker?: (args: readonly string[]) => { code: number; stdout: string } },
+    providers?: ProviderReadBackFixture, env: NodeJS.ProcessEnv = {}) {
     dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-livehost-")));
     const calls: string[] = [];
-    const run: CommandRunner = async (command, args) => {
+    const options: Array<Parameters<CommandRunner>[2]> = [];
+    const run: CommandRunner = async (command, args, given) => {
+      options.push(given);
       if (command === process.execPath) {
         const name = args.slice(1, args.indexOf("--json")).join(" ");
         calls.push(`devfn ${name}`);
         const answer = answers.devfn[name];
+        if (typeof answer === "function") return await (answer as (signal?: AbortSignal) => Promise<{ code: number; stdout: string; stderr: string }>)(given?.signal);
         return answer === undefined ? { code: 1, stdout: JSON.stringify({ ok: false, error: { code: "UNEXPECTED" } }), stderr: "" } : { code: 0, stdout: JSON.stringify(answer), stderr: "" };
       }
-      calls.push(command);
+      calls.push(command === "docker" ? `docker ${args.slice(0, 2).join(" ")}` : command);
+      if (command === "docker") return { stderr: "", ...(answers.docker?.(args) ?? { code: 0, stdout: "" }) };
       return { code: 0, stdout: command === "lsof" ? answers.lsof?.(dir) ?? "p1\nn/\n" : command === "ps" ? answers.ps ?? "" : "", stderr: "" };
     };
     const inventory = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: [] });
-    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env: {}, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }) });
+    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock" });
     await mkdir(host.stateDir, { recursive: true });
-    return { host, inventory, calls };
+    return { host, inventory, calls, options };
   }
-  type ProviderReadBackFixture = (binding: TunnelBinding, hostname: string, url: string | undefined) => Promise<boolean>;
+  type ProviderReadBackFixture = (binding: TunnelBinding, hostname: string, url: string | undefined) => Promise<string[]>;
   const stopped = { status: { state: "stopped", instanceId: "i1" }, ports: { allocations: [] }, down: { ok: true } };
 
   it("reads a runtime back after devfn down and before any reaping, leaving shared process groups to their own resources", async () => {
@@ -356,6 +423,58 @@ describe("live host cleanup handlers", () => {
     expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "still present on read-back: processes: 4242" });
     // Removal is devfn down alone; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
     expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps"]);
+  });
+
+  it("reports a removed working directory and the Compose containers and networks an owner left on the pinned engine", async () => {
+    const owner = ownerLabel("i1");
+    const listings: Record<string, string> = { ps: `qualification-echo-1\tdevfn-p-0123456789ab-${owner}\nother-1\tdevfn-p-0123456789ab-o-ffffffffffffffffffff\n`, network: `devfn-p-0123456789ab-${owner}_default\tdevfn-p-0123456789ab-${owner}\n` };
+    let docker = (args: readonly string[]) => ({ code: 0, stdout: listings[args[0]] ?? "" });
+    const { host, inventory, options } = await fixtureHost({ devfn: stopped, docker: (args) => docker(args), lsof: (root) => `p4242\nn${root}/qabcdef12-gone (deleted)\n` }, undefined, { DOCKER_CONTEXT: "remote", HOME: "/home/operator" });
+    expect(await host.processesIn(path.join(dir, "qabcdef12-gone"), new Set())).toEqual([4242]);
+    const runtime = path.join(dir, "qabcdef12-compose");
+    await mkdir(runtime);
+    await writeFile(path.join(runtime, "devfn.config.json"), JSON.stringify(composeFixture()));
+    inventory.record("runtime", runtime, "s");
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup?.detail).toBe(`still present on read-back: Compose resources: container qualification-echo-1, network devfn-p-0123456789ab-${owner}_default`);
+    // Every docker command uses the pinned local engine, never the operator's context.
+    const dockerEnv = options.filter((item) => item?.env?.DOCKER_HOST !== undefined).map((item) => item!.env!);
+    expect(dockerEnv.length).toBeGreaterThan(0);
+    for (const env of dockerEnv) expect(env).toMatchObject({ DOCKER_HOST: "unix:///var/run/docker.sock", HOME: "/home/operator" });
+    expect(dockerEnv.some((env) => "DOCKER_CONTEXT" in env)).toBe(false);
+    // Leftovers are removed only after the read-back recorded them, containers before networks.
+    const removed: string[] = [];
+    docker = (args) => { if (args[0] === "rm" || args[1] === "rm") removed.push(args.join(" ")); return { code: 0, stdout: listings[args[0]] ?? "" }; };
+    await host.reapCompose();
+    expect(removed).toEqual(["rm -f qualification-echo-1", `network rm devfn-p-0123456789ab-${owner}_default`]);
+    // An unreadable engine is never absence.
+    docker = () => ({ code: 1, stdout: "" });
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup?.detail).toBe("read-back failed: docker could not list containers on the pinned engine");
+  });
+
+  it("runs every DevFn command in the run environment and, once aborted, kills in-flight commands and refuses creation but not cleanup", async () => {
+    let inFlight: AbortSignal | undefined;
+    const up = async (signal?: AbortSignal) => { inFlight = signal; await new Promise((resolve) => signal?.addEventListener("abort", resolve)); return { code: -1, stdout: "", stderr: "killed" }; };
+    const { host, calls, options } = await fixtureHost({ devfn: { ...stopped, up } }, undefined, { XDG_DATA_HOME: "/home/operator/.local/share" });
+    const runtime = path.join(dir, "qabcdef12-crash");
+    // The crash scenario's own kill and the run's abort both reach the in-flight start.
+    const kill = new AbortController();
+    const killed = host.up("s", runtime, [], kill.signal);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    kill.abort();
+    expect(await killed).toMatchObject({ json: { error: { code: "UNPARSEABLE" } } });
+    expect(options.at(-1)?.env).toMatchObject({ XDG_DATA_HOME: path.join(dir, "xdg", "data"), XDG_CONFIG_HOME: path.join(dir, "xdg", "config"), XDG_STATE_HOME: path.join(dir, "xdg", "state") });
+    const pending = host.up("s", path.join(dir, "qabcdef12-other"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    host.abort();
+    await pending;
+    expect(inFlight?.aborted).toBe(true);
+    await expect(host.up("s", runtime)).rejects.toThrow(/interrupted; devfn up is refused/);
+    await expect(host.repository("s", "late", hostFixture())).rejects.toThrow(/refused/);
+    await expect(host.must(runtime, ["tunnel", "register", "qabcdef12-cf"])).rejects.toThrow(/refused/);
+    expect((await host.devfn(runtime, ["down"])).code).toBe(0);
+    expect(calls.filter((call) => call.startsWith("devfn"))).toEqual(["devfn up", "devfn up", "devfn down"]);
   });
 
   it("reports surviving fixture processes and routes the owner still holds in the run proxy state", async () => {
@@ -376,7 +495,7 @@ describe("live host cleanup handlers", () => {
 
   it("reads a public name back through the provider and never treats an unreadable provider as absence", async () => {
     const held = new Set(["held"]);
-    let provider: ProviderReadBackFixture = async () => held.has("held");
+    let provider: ProviderReadBackFixture = async () => held.has("held") ? ["web-qabcdef12-public.ngrok-free.app"] : [];
     const { host, inventory } = await fixtureHost({ devfn: { "tunnel status qabcdef12-nge": { tunnel: { hostnames: [], outstanding: [] } } } }, async (...args) => await provider(...args));
     const binding = await registerTunnelBinding(host.stateDir, { name: "qabcdef12-nge", provider: "ngrok", domain: ephemeralOriginDomain("qabcdef12-nge"), projectId: "qualification",
       repositoryIdentity: dir, nonproduction: true, ngrok: { endpoints: "ephemeral", authtokenEnv: "QUAL_NGROK_AUTHTOKEN", apiKeyEnv: "QUAL_NGROK_API_KEY" } });
@@ -384,13 +503,13 @@ describe("live host cleanup handlers", () => {
     // The URL refuses connections: a failed request alone is never evidence of absence.
     const entry = inventory.record("public-hostname", name, "s", { cwd: dir, binding: binding.name, url: "http://127.0.0.1:9/" });
     const handlers = host.handlers();
-    expect(await handlers.present(entry)).toBe("held by ngrok");
+    expect(await handlers.present(entry)).toBe("held by ngrok: web-qabcdef12-public.ngrok-free.app");
     provider = async () => { throw new Error("ngrok GET /endpoints answered HTTP 503"); };
     await expect(handlers.present(entry)).rejects.toThrow(/503/);
     await inventory.cleanup({ remove: async () => undefined, present: handlers.present }, "s");
     expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "read-back failed: ngrok GET /endpoints answered HTTP 503" });
     held.clear();
-    provider = async () => held.has("held");
+    provider = async () => held.has("held") ? ["web-qabcdef12-public.ngrok-free.app"] : [];
     expect(await handlers.present(entry)).toBe(false);
   });
 
@@ -402,11 +521,54 @@ describe("live host cleanup handlers", () => {
       return new Response(JSON.stringify({ ...list, next_page_uri: null }), { status });
     }) as typeof fetch;
     const env = { QUAL_NGROK_API_KEY: "key" };
-    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, "web-q.ngrok.example.test", undefined)).toBe(true);
-    expect(await providerReadBack(env, pages([], [{ public_url: "https://web-q.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toBe(true);
-    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toBe(false);
+    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual(["other.ngrok.example.test"]);
+    expect(await providerReadBack(env, pages([], [{ public_url: "https://web-q.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual(["web-q.ngrok.example.test"]);
+    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual([]);
     await expect(providerReadBack(env, pages([], [], 503))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/HTTP 503/);
     await expect(providerReadBack({}, pages([]))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/no readable API key/);
+  });
+});
+
+describe("answer predicates", () => {
+  const answer = (status: number, body = "", headers: Record<string, string> = {}): Answer => {
+    let json: Record<string, any> | undefined;
+    try { json = JSON.parse(body) as Record<string, any>; } catch { json = undefined; }
+    return { status, body, headers, ...(json ? { json } : {}) };
+  };
+  const header = PUBLIC_ORIGIN_HEADER.toLowerCase();
+  const fixture = answer(200, JSON.stringify({ marker: "qabcdef12-public", name: "private" }));
+  const failures: Record<string, Answer | undefined> = {
+    "transport error": undefined, "500": answer(500, "DEVFN_OAUTH_RELAY_FAILED\n"), "503": answer(503, "DEVFN_OAUTH_RELAY_UNAVAILABLE\n"), "502": answer(502),
+    "fixture 404": answer(404, JSON.stringify({ marker: "qabcdef12-public" })), "fixture 200": fixture, "421": answer(421), "403 deny": answer(403, "", { [header]: "deny" }),
+    "403 unmarked": answer(403), "404 fallback": answer(404, "", { [header]: "fallback" }), "404 proxy": answer(404), "301": answer(301, "", { location: "https://app-x.localhost:8443/" }),
+    "308": answer(308, "", { location: "https://app-x.localhost:8443/" }), "403 replayed": answer(403, "DEVFN_OAUTH_RELAY_REJECTED: replayed\n"), "403 unknown-state": answer(403, "DEVFN_OAUTH_RELAY_REJECTED: unknown-state\n"),
+    "421 wrong-origin": answer(421, "DEVFN_OAUTH_RELAY_REJECTED: wrong-origin\n"),
+  };
+  const accepted = (predicate: (item?: Answer) => boolean) => Object.entries(failures).filter(([, item]) => predicate(item)).map(([name]) => name);
+
+  it("accept only the shipped component's own answer for each claim", () => {
+    expect(accepted(ANSWERS.originDenied)).toEqual(["403 deny"]);
+    expect(accepted(ANSWERS.forgedHostRefused)).toEqual(["421"]);
+    expect(accepted(ANSWERS.originFallback)).toEqual(["404 fallback"]);
+    expect(accepted(ANSWERS.relayReplayRejected)).toEqual(["403 replayed"]);
+    // The local proxy's empty 404; the marked origin fallback is a public-origin answer, not a local one.
+    expect(accepted(ANSWERS.proxyNotFound)).toEqual(["404 fallback", "404 proxy"]);
+    expect(accepted((item) => ANSWERS.httpsRedirect(item, "app-x.localhost"))).toEqual(["308"]);
+    expect(ANSWERS.httpsRedirect(failures["308"], "app-y.localhost")).toBe(false);
+    expect(accepted(ANSWERS.edgeUnrouted)).not.toContain("transport error");
+    expect(accepted(ANSWERS.edgeUnrouted)).not.toContain("fixture 404");
+  });
+
+  it("require a provider read-back holding nothing for the private route and only the selected public host", () => {
+    expect(ANSWERS.providerWithheld([], "web-q.preview.example.test", "private-q.preview.example.test")).toBe(true);
+    expect(ANSWERS.providerWithheld(["web-q.ngrok-free.app"], "web-q.ngrok-free.app", "private-q.ngrok.devfn.internal")).toBe(true);
+    expect(ANSWERS.providerWithheld(["private-q.preview.example.test"], "web-q.preview.example.test", "private-q.preview.example.test")).toBe(false);
+    expect(ANSWERS.providerWithheld(["web-q.ngrok-free.app", "other.ngrok-free.app"], "web-q.ngrok-free.app", "private-q.ngrok.devfn.internal")).toBe(false);
+  });
+
+  it("route the private fixture over internal TLS so the public origin holds its certificate and must deny it", () => {
+    const config = validateDevFnConfig(tunnelFixture("qabcdef12-cf", false));
+    expect(config.hostnames?.private).toMatchObject({ tls: "internal" });
   });
 });
 

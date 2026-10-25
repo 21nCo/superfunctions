@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import { liveDrivers } from "./drivers.js";
 import { DisposableInventory } from "./inventory.js";
 import { LiveHost } from "./live.js";
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
-import { checkPrerequisites, hostProbeEnvironment } from "./prerequisites.js";
+import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
 import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
 import { runScenarios, selectScenarios, type PrerequisiteResult } from "./runner.js";
 
@@ -49,9 +49,27 @@ const git = async (cwd: string, args: readonly string[]): Promise<string> => awa
 });
 
 /**
+ * Build outputs of a checkout older than their source: for every tracked
+ * devfn/<package>/src/**.ts, its tsc output devfn/<package>/dist/**.js must
+ * exist and be at least as new. Every DevFn package the CLI and harness load
+ * is covered, not only their entry points.
+ */
+export async function staleBuildOutputs(checkout: string): Promise<string[]> {
+  const sources = (await git(checkout, ["ls-files", "-z", "--", "devfn"])).split("\0").filter((file) => /^devfn\/(?!docs\/)[^/]+\/src\/.+\.ts$/.test(file) && !file.endsWith(".d.ts"));
+  const mtime = async (file: string) => await stat(path.join(checkout, file)).then((item) => item.mtimeMs, () => undefined);
+  const stale: string[] = [];
+  for (const file of sources) {
+    const output = file.replace(/\/src\/(.+)\.ts$/, "/dist/$1.js");
+    const [source, built] = [await mtime(file), await mtime(output)];
+    if (source === undefined || built === undefined || built < source) stale.push(output);
+  }
+  return stale;
+}
+
+/**
  * Bind a run to the code under test: the harness and the DevFn CLI must come
- * from one clean checkout at --head, built after its sources were last
- * written. Anything else is refused before a resource exists.
+ * from one clean checkout at --head whose every build output is newer than
+ * its source. Anything else is refused before a resource exists.
  */
 async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   const harness = fileURLToPath(import.meta.url);
@@ -60,10 +78,8 @@ async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   const actual = (await git(checkout, ["rev-parse", "HEAD"])).trim();
   if (actual !== head) throw new Error(`--head ${head} is not the checkout HEAD ${actual}.`);
   if ((await git(checkout, ["status", "--porcelain"])).trim()) throw new Error(`${checkout} has uncommitted or untracked changes; qualify a clean checkout.`);
-  const sources = (await git(checkout, ["ls-files", "-z", "--", "devfn"])).split("\0").filter((file) => /^devfn\/[^/]+\/src\//.test(file));
-  const newest = Math.max(...await Promise.all(sources.map(async (file) => (await stat(path.join(checkout, file))).mtimeMs)));
-  const built = Math.min(...await Promise.all([devfnCli, harness].map(async (file) => (await stat(file)).mtimeMs)));
-  if (built < newest) throw new Error("The built DevFn CLI or harness is older than the checkout sources; rebuild before the run.");
+  const stale = await staleBuildOutputs(checkout);
+  if (stale.length) throw new Error(`Build output is missing or older than its source (${stale.slice(0, 5).join(", ")}${stale.length > 5 ? `, ${stale.length - 5} more` : ""}); rebuild before the run.`);
   return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
 }
 
@@ -95,11 +111,13 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file>.");
   const source = await provenance(values.head, devfnCli);
+  // Compose runs only against the local engine the prerequisite resolved, pinned for every DevFn and docker command of the run.
+  const docker = prerequisites.find((item) => item.id === "docker-compose")?.status === "satisfied" ? await localDockerEndpoint(process.env, execute) : undefined;
   const runId = randomBytes(6).toString("hex");
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), `devfn-qualification-${runId}-`)));
   const ledger = path.join(root, "inventory.json");
   const inventory = new DisposableInventory({ runId, root, domains: approvedDomains(approval), ledger });
-  const host = new LiveHost({ root, devfnCli, env: process.env, inventory });
+  const host = new LiveHost({ root, devfnCli, env: process.env, inventory, docker });
   const handlers = host.handlers();
   process.stderr.write(`Run ${runId}: root ${root}; every resource is recorded in ${ledger} before it is created.\n`);
   // Run-level resources outlive each scenario: the DevFn Caddy the first start launches, and any process left in the run root.
@@ -108,22 +126,28 @@ export async function main(argv: readonly string[]): Promise<number> {
   /** Leftover processes are reaped only after their read-back was recorded, so a leak stays in the evidence. */
   const finish = async (): Promise<void> => {
     await inventory.cleanup(handlers);
-    if (!inventory.allAbsent()) await host.reap(root, new Set()).catch(() => undefined);
+    if (!inventory.allAbsent()) { await host.reap(root, new Set()).catch(() => undefined); await host.reapCompose().catch(() => undefined); }
   };
-  let interrupted = false;
+  // An interrupt stops creation first: in-flight DevFn commands are killed and later ones refused. The one cleanup
+  // below runs only after the running driver returned, so its read-back sees whatever that driver still created.
+  const interrupt = new AbortController();
   const onSignal = (signal: NodeJS.Signals): void => {
-    if (interrupted) { process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`); process.exit(130); }
-    interrupted = true;
-    process.stderr.write(`${signal}: no receipt is written; cleaning up the run's resources (${ledger}).\n`);
-    void finish().then(() => inventory.allAbsent(), () => false).then((clean) => {
-      process.stderr.write(`${JSON.stringify({ interrupted: signal, cleanup: clean ? "confirmed" : "incomplete", ledger, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
-      process.exit(130);
-    });
+    if (interrupt.signal.aborted) { process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`); process.exit(130); }
+    process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
+    interrupt.abort(signal);
+    host.abort();
   };
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
   const startedAt = new Date().toISOString();
-  const results = await runScenarios({ scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot() });
+  const results = await runScenarios({ scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal });
   await inventory.cleanup(handlers, "run");
+  if (interrupt.signal.aborted) {
+    await finish();
+    const clean = inventory.allAbsent();
+    process.stderr.write(`${JSON.stringify({ interrupted: interrupt.signal.reason, cleanup: clean ? "confirmed" : `incomplete; inspect ${root}`, ledger, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
+    if (clean) await rm(root, { recursive: true, force: true });
+    return 130;
+  }
   const secrets = approval ? [approval.oauth?.clientSecretEnv, approval.oauth?.clientIdEnv, approval.cloudflare?.apiTokenEnv, approval.ngrokReserved?.authtokenEnv, approval.ngrokReserved?.apiKeyEnv,
     approval.ngrokEphemeral?.authtokenEnv, approval.ngrokEphemeral?.apiKeyEnv].flatMap((name) => name && process.env[name] ? [process.env[name]!] : []) : [];
   const receipt: NetworkingQualificationReceipt = redactSecrets({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head: values.head, runId, provenance: source,
@@ -132,6 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations],
     summary: summarize(results) }, secrets);
   await writeFile(values.out, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(values.out, 0o600);
   const clean = inventory.allAbsent();
   if (!clean) await finish();
   // Keep the run root, with its logs and state, whenever anything was not confirmed absent.

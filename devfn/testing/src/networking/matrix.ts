@@ -54,7 +54,7 @@ const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing:
   assertions: [
     a("url-timing", timing === "pre-start" ? "devfn tunnel urls reports each selected URL before start, and the started lifecycle publishes exactly that URL." : "Before start the route is listed as assigned after start with no URL; the started lifecycle reports the provider-assigned URL."),
     a("public-route-served", "The selected route answers its own marker at its public URL through real public DNS and the provider edge."),
-    a("private-route-denied", "A route the profile did not select is not served at any public name, and an unselected path on a public name is denied."),
+    a("private-route-denied", "The provider holds no public name for a route the profile did not select; the public origin denies that route's own name (403, deny) and refuses it as a forged Host (421); an unselected path on a public name gets the origin's marked fallback."),
     a("dns-host-sni", `${dns} The edge certificate verifies for the public hostname (SNI), and a mismatched Host header is not routed.`),
     a("origin-tls", "The DevFn public origin presents a certificate for each public hostname that verifies against the Caddy internal root, without OS trust changes."),
     a("withdrawn-absent", "After devfn down the public URL stops serving, tunnel status lists no hostname or outstanding withdrawal, and a provider read-back finds no DevFn-owned record."),
@@ -73,7 +73,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/endpoints.test.ts", "devfn/core/test/startup-fixture.test.ts"] },
   { id: "host.compose-prestart", row: 1, title: "Compose endpoint wiring before start", prerequisites: [...HOST, "docker-compose"],
     assertions: [
-      a("sibling-url", "A Compose container receives its sibling's container-network URL before it starts and reaches it."),
+      a("sibling-url", "On the pinned local Docker engine, a Compose container receives its sibling's container-network URL before it starts and reaches it."),
       a("loopback-mapping", "The container's leased host port is published on loopback only and answers at the receipt's direct URL."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/compose/test/override.test.ts", "devfn/compose/test/path-contract.test.ts", "devfn/core/test/endpoints.test.ts"] },
@@ -108,9 +108,9 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     prerequisites: [...HOST, "approval", "registered-domain", "google-oauth", "browser-operator"],
     assertions: [
       a("one-redirect-uri", "Both worktrees send the provider the same registered relay redirect URI, unchanged in the token exchange."),
-      a("login-both", "A real Google login completes in each worktree and establishes a session only on that worktree's own host."),
+      a("login-both", "A real Google login completes in each worktree: the relay delivers its callback to that worktree's own host, which honors the session it established."),
       a("state-nonce-pkce", "Each client validated its own state at its callback, the ID token nonce, and an S256 PKCE verifier the provider accepted."),
-      a("replay-rejected", "Replaying a consumed callback is rejected by the relay and creates no session."),
+      a("replay-rejected", "Replaying a consumed callback at once is rejected by the relay as replayed (403) and creates no session."),
       a("token-exchange", "Each token exchange returned tokens to the worktree that started the flow, and no code or token reached the receipt."),
     ],
     resources: ["fixture-repository", "runtime", "registered-domain", "oauth-relay"],

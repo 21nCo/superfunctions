@@ -12,6 +12,7 @@ import { proxyListenerPorts, readRegisteredDomains } from "@devfn/proxy";
 import { readRelayService } from "@devfn/proxy/oauth-relay";
 import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
 
+import { ownerLabel } from "./matrix.js";
 import { loopbackListening } from "./prerequisites.js";
 import type { DisposableInventory, ProtectedSnapshot, ResourceHandlers } from "./inventory.js";
 
@@ -37,29 +38,31 @@ createServer((request, response) => {
 }).listen(Number(process.env[portKey]), "127.0.0.1");
 `;
 
-export type CommandRunner = (command: string, args: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }) => Promise<{ code: number; stdout: string; stderr: string }>;
+/** Runs a command to completion; an aborted signal kills it with SIGKILL. */
+export type CommandRunner = (command: string, args: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal }) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 const run: CommandRunner = async (command, args, options = {}) => await new Promise((resolve) => {
-  execFile(command, [...args], { cwd: options.cwd, env: options.env, timeout: options.timeoutMs ?? 180_000, maxBuffer: 16 * 1024 * 1024 },
+  execFile(command, [...args], { cwd: options.cwd, env: options.env, timeout: options.timeoutMs ?? 180_000, maxBuffer: 16 * 1024 * 1024, signal: options.signal, killSignal: "SIGKILL" },
     (error, stdout, stderr) => resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stdout: String(stdout), stderr: String(stderr) }));
 });
 
 /**
- * Whether the provider still holds a record or online endpoint for a run's
- * public name: a Cloudflare DNS record DevFn owns, or an ngrok endpoint or
- * tunnel for the name or carrying the registration's marker. A failed read
- * throws; it is never absence.
+ * The public names the provider holds for a run's name or binding: the name
+ * when Cloudflare holds a DNS record DevFn owns for it, or the host of every
+ * ngrok endpoint or tunnel for the name or carrying the registration's
+ * marker. Empty is absence; a failed read throws, it is never absence.
  */
-export type ProviderReadBack = (binding: TunnelBinding, hostname: string, url: string | undefined) => Promise<boolean>;
+export type ProviderReadBack = (binding: TunnelBinding, hostname: string, url: string | undefined) => Promise<string[]>;
 
 const NGROK_API = "https://api.ngrok.com";
 
 export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): ProviderReadBack {
   return async (binding, hostname, url) => {
-    if (binding.provider === "cloudflare") return await new CloudflareTunnelProvider({ env, fetch: fetcher }).ownsDns(binding, hostname);
+    if (binding.provider === "cloudflare") return await new CloudflareTunnelProvider({ env, fetch: fetcher }).ownsDns(binding, hostname) ? [hostname] : [];
     const key = binding.ngrok.apiKeyEnv ? env[binding.ngrok.apiKeyEnv] : undefined;
     if (!key) throw new Error(`ngrok binding ${binding.name} has no readable API key, so its endpoints cannot be read back`);
     const names = new Set([hostname, ...(url ? [new URL(url).hostname] : [])]);
+    const held = new Set<string>();
     for (const [route, list] of [["/endpoints", "endpoints"], ["/tunnels", "tunnels"]] as const) {
       let next: string | undefined = `${NGROK_API}${route}?limit=100`;
       for (let page = 0; next; page += 1) {
@@ -69,14 +72,17 @@ export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch =
         if (!response.ok || !Array.isArray(payload?.[list])) throw new Error(`ngrok GET ${route} answered HTTP ${response.status}`);
         for (const item of payload![list] as Array<Record<string, unknown>>) {
           const hosts = [item.url, item.public_url].flatMap((value) => { try { return typeof value === "string" ? [new URL(value).hostname] : []; } catch { return []; } });
-          if (item.metadata === ngrokMarker(binding) || hosts.some((name) => names.has(name))) return true;
+          if (item.metadata === ngrokMarker(binding) || hosts.some((name) => names.has(name))) for (const name of hosts.length ? hosts : ["an endpoint without a URL"]) held.add(name);
         }
         next = typeof payload!.next_page_uri === "string" && payload!.next_page_uri ? payload!.next_page_uri : undefined;
       }
     }
-    return false;
+    return [...held].sort();
   };
 }
+
+/** devfn commands that only read state or remove what a run created; they still run after an abort. */
+const READ_OR_CLEANUP = /^(down|status|ports|url|tunnel (status|urls|unregister)|domains unregister|oauth-relay (status|stop))( |$)/;
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
 
@@ -85,8 +91,11 @@ const alive = (pid: number): boolean => { try { process.kill(pid, 0); return tru
  * state directory under the run root, generic fixture repositories, and
  * loopback or public HTTP(S) probes. Every resource it creates is recorded
  * in the run inventory first, so cleanup reaches it whatever fails later.
- * DevFn and the Caddy it starts see XDG directories under the run root, so
- * the run's internal CA and Caddy configuration never touch the operator's.
+ * Every DevFn child, and the Caddy and Compose processes it starts, sees XDG
+ * directories under the run root, so the run's internal CA and Caddy
+ * configuration never touch the operator's, and Docker pinned to the local
+ * engine the prerequisites resolved. Once aborted, the host kills its
+ * in-flight DevFn commands and runs only read and cleanup commands.
  */
 export class LiveHost {
   public readonly stateDir: string;
@@ -97,25 +106,43 @@ export class LiveHost {
   /** The provider read-back public-name cleanup uses; drivers use it for positive absence evidence. */
   public readonly readBack: ProviderReadBack;
 
-  public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack }) {
+  private readonly stop = new AbortController();
+  /** Compose containers and networks of the run's own owners that a read-back found; reaped only after that read-back was recorded. */
+  private readonly composeLeft = new Set<string>();
+
+  public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string }) {
     this.stateDir = path.join(options.root, "state");
-    this.env = { ...options.env, ...Object.fromEntries(["DATA", "CONFIG", "STATE"].map((kind) => [`XDG_${kind}_HOME`, path.join(options.root, "xdg", kind.toLowerCase())])) };
+    const { DOCKER_CONTEXT: _context, ...env } = options.env;
+    this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
+      ...Object.fromEntries(["DATA", "CONFIG", "STATE"].map((kind) => [`XDG_${kind}_HOME`, path.join(options.root, "xdg", kind.toLowerCase())])) };
     this.exec = options.run ?? run;
     this.readBack = options.providers ?? providerReadBack(options.env);
   }
 
+  /** Kill in-flight DevFn commands and refuse anything that could create a resource from now on. */
+  public abort(): void { this.stop.abort(); }
+
+  public get aborted(): boolean { return this.stop.signal.aborted; }
+
+  private refuseIfAborted(what: string): void { if (this.aborted) throw new Error(`the run was interrupted; ${what} is refused`); }
+
   public get prefix(): string { return this.options.inventory.prefix; }
 
-  /** Run one devfn command with --json against the run state directory. */
-  public async devfn(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
-    const result = await this.exec(process.execPath, [this.options.devfnCli, ...args, "--json", "--state-dir", this.stateDir], { cwd, env: { ...this.env, ...env } });
+  /**
+   * Run one devfn command with --json against the run state directory. After
+   * abort only read and cleanup commands run; signal kills this command alone.
+   */
+  public async devfn(cwd: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<CliResult> {
+    if (!READ_OR_CLEANUP.test(args.slice(0, 2).join(" "))) this.refuseIfAborted(`devfn ${args.join(" ")}`);
+    const signal = READ_OR_CLEANUP.test(args.slice(0, 2).join(" ")) ? options.signal : AbortSignal.any([this.stop.signal, ...(options.signal ? [options.signal] : [])]);
+    const result = await this.exec(process.execPath, [this.options.devfnCli, ...args, "--json", "--state-dir", this.stateDir], { cwd, env: { ...this.env, ...options.env }, ...(signal ? { signal } : {}) });
     try { return { code: result.code, json: JSON.parse(result.stdout) as Record<string, any> }; }
     catch { return { code: result.code === 0 ? -1 : result.code, json: { ok: false, error: { code: "UNPARSEABLE", message: result.stderr.slice(-2000) } } }; }
   }
 
   /** devfn command that must succeed; its JSON result. */
-  public async must(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<Record<string, any>> {
-    const result = await this.devfn(cwd, args, env);
+  public async must(cwd: string, args: readonly string[]): Promise<Record<string, any>> {
+    const result = await this.devfn(cwd, args);
     if (result.code !== 0 || result.json.ok === false) throw new Error(`devfn ${args.join(" ")} failed: ${JSON.stringify(result.json.error ?? result.json).slice(0, 2000)}`);
     return result.json;
   }
@@ -128,6 +155,7 @@ export class LiveHost {
 
   /** A committed generic fixture repository named for the run. */
   public async repository(scenario: string, name: string, config: unknown, files: Record<string, string> = {}): Promise<string> {
+    this.refuseIfAborted(`fixture repository ${name}`);
     const root = path.join(this.options.root, `${this.prefix}-${name}`);
     this.options.inventory.record("fixture-repository", root, scenario);
     await mkdir(root, { recursive: true });
@@ -141,6 +169,7 @@ export class LiveHost {
 
   /** A linked worktree of a fixture repository, named for the run. */
   public async worktree(scenario: string, repository: string, label: string): Promise<string> {
+    this.refuseIfAborted(`worktree ${label}`);
     const target = `${repository}-${label}`;
     this.options.inventory.record("fixture-repository", target, scenario, { cwd: repository });
     await this.git(repository, ["worktree", "add", "-q", "-b", `${this.prefix}-${label}`, target]);
@@ -157,9 +186,35 @@ export class LiveHost {
   }
 
   /** Start a fixture lifecycle, recording it first so a partial start is still stopped. */
-  public async up(scenario: string, cwd: string, args: readonly string[] = [], env?: NodeJS.ProcessEnv): Promise<CliResult> {
+  public async up(scenario: string, cwd: string, args: readonly string[] = [], signal?: AbortSignal): Promise<CliResult> {
+    this.refuseIfAborted("devfn up");
     if (!this.options.inventory.list(scenario).some((entry) => entry.kind === "runtime" && entry.id === cwd && !entry.cleanup)) this.options.inventory.record("runtime", cwd, scenario);
-    return await this.devfn(cwd, ["up", ...args], env);
+    return await this.devfn(cwd, ["up", ...args], signal ? { signal } : {});
+  }
+
+  /** A docker command against the engine the run pinned. */
+  public async docker(args: readonly string[]): Promise<{ code: number; stdout: string }> { return await this.exec("docker", args, { env: this.env, timeoutMs: 60_000 }); }
+
+  /** Containers and networks of an owner's Compose projects (named with its o-<digest> label) that still exist on the pinned engine. */
+  public async composeLeftovers(instanceId: string): Promise<string[]> {
+    const owner = `-${ownerLabel(instanceId)}`;
+    const left: string[] = [];
+    for (const [kind, args, name] of [["container", ["ps", "-a"], "{{.Names}}"], ["network", ["network", "ls"], "{{.Name}}"]] as const) {
+      const listed = await this.docker([...args, "--filter", "label=com.docker.compose.project", "--format", `${name}\t{{.Label "com.docker.compose.project"}}`]);
+      if (listed.code !== 0) throw new Error(`docker could not list ${kind}s on the pinned engine`);
+      for (const line of listed.stdout.split("\n")) { const [item, project = ""] = line.split("\t"); if (item && project.endsWith(owner)) left.push(`${kind} ${item}`); }
+    }
+    for (const item of left) this.composeLeft.add(item);
+    return left;
+  }
+
+  /** Remove the run owners' Compose containers, then networks, that a recorded read-back reported. */
+  public async reapCompose(): Promise<void> {
+    const left = [...this.composeLeft].sort((a, b) => Number(b.startsWith("container")) - Number(a.startsWith("container")));
+    for (const item of left) {
+      const [kind, name] = item.split(" ");
+      if ((await this.docker(kind === "container" ? ["rm", "-f", name] : ["network", "rm", name])).code === 0) this.composeLeft.delete(item);
+    }
   }
 
   public async seen(cwd: string, name: string): Promise<{ pid: number; env: Record<string, string> }> {
@@ -247,7 +302,8 @@ export class LiveHost {
           const status = await this.must(entry.id, ["status"]);
           const leases = ((await this.must(entry.id, ["ports"])).allocations as Array<{ instanceId: string; port: number }>).filter((item) => item.instanceId === status.instanceId).map((item) => item.port);
           return (status.state === "stopped" ? undefined : `state ${String(status.state)}`) ?? describe("processes", await this.processesIn(entry.id, await this.sharedLeaders()))
-            ?? describe("fixture processes", await this.survivingFixtures(entry.id)) ?? describe("leases", leases) ?? describe("routes", await this.routesOf(String(status.instanceId))) ?? false;
+            ?? describe("fixture processes", await this.survivingFixtures(entry.id)) ?? describe("leases", leases) ?? describe("routes", await this.routesOf(String(status.instanceId)))
+            ?? (await this.usesCompose(entry.id) ? describe("Compose resources", await this.composeLeftovers(String(status.instanceId))) : undefined) ?? false;
         }
         if (entry.kind === "proxy") return await this.proxyRunning() || await loopbackListening(2019) ? "the run's Caddy still runs or 2019 is held" : false;
         if (entry.kind === "registered-domain") return (await readRegisteredDomains(this.stateDir)).some((item) => item.domain === entry.id);
@@ -258,11 +314,17 @@ export class LiveHost {
         if (!bound) throw new Error(`binding ${binding} is not readable for ${entry.id}`);
         const { tunnel } = await this.must(cwd!, ["tunnel", "status", bound.name]);
         if (JSON.stringify([tunnel.hostnames, tunnel.outstanding, tunnel.residue ?? []]).includes(entry.id)) return "routed or journaled by DevFn";
-        if (await this.readBack(bound, entry.id, url)) return `held by ${bound.provider}`;
+        const held = await this.readBack(bound, entry.id, url);
+        if (held.length) return `held by ${bound.provider}: ${held.join(", ")}`;
         const served = await this.request(url ?? `https://${entry.id}/`, { publicDns: true }).catch(() => undefined);
         return served?.json?.marker !== undefined && String(served.json.marker).startsWith(this.prefix) ? "still serves the run" : false;
       },
     };
+  }
+
+  /** Whether a fixture checkout declares Compose services; an unreadable manifest counts as Compose, so its read-back still runs. */
+  private async usesCompose(cwd: string): Promise<boolean> {
+    return await readFile(path.join(cwd, "devfn.config.json"), "utf8").then((text) => (JSON.parse(text) as { services?: unknown }).services !== undefined, () => true);
   }
 
   /** Whether the Caddy DevFn started from the run state directory may still run. */
@@ -311,8 +373,10 @@ export class LiveHost {
     const pids = new Set<number>();
     let pid = 0;
     for (const line of result.stdout.split("\n")) {
+      // Linux lsof marks a removed working directory with a " (deleted)" suffix.
+      const name = line.slice(1).replace(/ \(deleted\)$/, "");
       if (line.startsWith("p")) pid = Number(line.slice(1));
-      else if (line.startsWith("n") && (line.slice(1) === dir || line.slice(1).startsWith(`${dir}${path.sep}`)) && pid !== process.pid && !shared.has(pid) && !shared.has(groups.get(pid) ?? -1)) pids.add(pid);
+      else if (line.startsWith("n") && (name === dir || name.startsWith(`${dir}${path.sep}`)) && pid !== process.pid && !shared.has(pid) && !shared.has(groups.get(pid) ?? -1)) pids.add(pid);
     }
     return [...pids];
   }

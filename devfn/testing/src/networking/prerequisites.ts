@@ -46,6 +46,23 @@ function envSet(environment: ProbeEnvironment, id: PrerequisiteId, names: Readon
   return unset.length ? missing(id, `credential variables unset: ${unset.join(", ")}`) : undefined;
 }
 
+/**
+ * The Docker engine Compose would reach from env: DOCKER_HOST, else the
+ * endpoint of the current context (DOCKER_CONTEXT or the persisted one).
+ * Only a local socket is accepted: remote-target access is a separate
+ * capability this harness never exercises. The run pins the result.
+ */
+export async function localDockerEndpoint(env: NodeJS.ProcessEnv, run: ProbeEnvironment["run"]): Promise<string> {
+  let endpoint = env.DOCKER_HOST;
+  if (!endpoint) {
+    const context = await run("docker", ["context", "inspect", ...(env.DOCKER_CONTEXT ? [env.DOCKER_CONTEXT] : []), "--format", "{{.Endpoints.docker.Host}}"]);
+    if (context.code !== 0) throw new Error("the current Docker context is unreadable");
+    endpoint = context.stdout.trim();
+  }
+  if (!/^(unix|npipe):\/\//.test(endpoint)) throw new Error(`Docker targets ${endpoint || "an unknown endpoint"}, not a local engine socket; remote targets need their own approval`);
+  return endpoint;
+}
+
 async function loopbackOnly(environment: ProbeEnvironment, hostname: string): Promise<string | undefined> {
   const addresses = await environment.resolve(hostname).catch(() => []);
   return addresses.length && addresses.every(isLoopback) ? undefined : `${hostname} resolves to ${addresses.join(", ") || "nothing"}, not only loopback`;
@@ -91,8 +108,10 @@ const PROBES: Record<PrerequisiteId, (environment: ProbeEnvironment) => Promise<
   "docker-compose": async (environment) => {
     const compose = await tool(environment, "docker-compose", "docker", ["compose", "version"]);
     if (compose.status !== "satisfied") return compose;
-    const daemon = await environment.run("docker", ["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ code: -1, stdout: "" }));
-    return daemon.code === 0 ? ok("docker-compose", `${compose.detail}; engine ${daemon.stdout.trim()}`) : missing("docker-compose", "the Docker engine is not running");
+    const endpoint = await localDockerEndpoint(environment.env, environment.run).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    if (endpoint instanceof Error) return missing("docker-compose", endpoint.message);
+    const daemon = await environment.run("docker", ["--host", endpoint, "info", "--format", "{{.ServerVersion}}"]).catch(() => ({ code: -1, stdout: "" }));
+    return daemon.code === 0 ? ok("docker-compose", `${compose.detail}; local engine ${daemon.stdout.trim()} at ${endpoint}`) : missing("docker-compose", `the Docker engine at ${endpoint} is not running`);
   },
   approval: async ({ approval, approvalError }) => approval ? ok("approval", `approved by ${approval.approvedBy} until ${approval.expiresAt}`) :
     missing("approval", approvalError ?? "no nonproduction approval file was supplied"),
@@ -142,17 +161,21 @@ export async function checkPrerequisites(environment: ProbeEnvironment, ids: Ite
   return results;
 }
 
-const execute = async (command: string, args: readonly string[]): Promise<{ code: number; stdout: string }> => await new Promise((resolve) => {
+/** Run a host tool read-only, with a short timeout. */
+export const execute = async (command: string, args: readonly string[]): Promise<{ code: number; stdout: string }> => await new Promise((resolve) => {
   execFile(command, [...args], { timeout: 15_000, maxBuffer: 1024 * 1024 }, (error, stdout) => resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stdout: String(stdout) }));
 });
 
-/** Whether something accepts TCP connections on a loopback port; an unanswered probe counts as in use. */
-export const loopbackListening = async (port: number): Promise<boolean> => await new Promise((resolve) => {
-  const socket = net.connect({ host: "127.0.0.1", port });
+/** Whether something accepts TCP connections on a loopback address; an unanswered probe counts as in use, a host without that address family as free. */
+const listeningOn = async (host: string, port: number): Promise<boolean> => await new Promise((resolve) => {
+  const socket = net.connect({ host, port });
   socket.setTimeout(1_000, () => { socket.destroy(); resolve(true); });
   socket.once("connect", () => { socket.destroy(); resolve(true); });
-  socket.once("error", (error: NodeJS.ErrnoException) => resolve(error.code !== "ECONNREFUSED"));
+  socket.once("error", (error: NodeJS.ErrnoException) => resolve(!["ECONNREFUSED", "EADDRNOTAVAIL", "ENETUNREACH", "EAFNOSUPPORT"].includes(error.code ?? "")));
 });
+
+/** Whether something listens on a loopback port over IPv4 or IPv6; DevFn's Caddy binds ::1 too when the host has it. */
+export const loopbackListening = async (port: number): Promise<boolean> => await listeningOn("127.0.0.1", port) || await listeningOn("::1", port);
 
 /** Probes against the real host. */
 export function hostProbeEnvironment(input: Pick<ProbeEnvironment, "devfnCli" | "approval" | "approvalError" | "browserOperator">): ProbeEnvironment {
