@@ -52,6 +52,20 @@ await delivered[0].ack();
 await new Promise(resolve => setImmediate(resolve));
 if (delivered[2]?.id !== later) throw new Error('Packed partition progress failed');
 for (const message of delivered) await message.ack();
+for (const partitions of [undefined, 2]) {
+  const manual = flow.stream('manual-' + (partitions ?? 'legacy'), partitions === undefined ? {} : { partitions });
+  const id = await manual.publish(1);
+  const receipts = [];
+  const member = manual.createConsumer('single', { groupId: 'g', fromBeginning: true, autoCommit: false, visibilityTimeout: 300 });
+  await member.subscribe(async message => { receipts.push(message); });
+  const deadline = performance.now() + 3000;
+  while (receipts.length < 2 && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  if (receipts.length !== 2 || receipts.some(message => message.id !== id) || !receipts[0].signal.aborted || receipts[1].signal.aborted) throw new Error('Packed Memory receipt expiry failed');
+  await receipts[0].ack(); await receipts[0].nack(true);
+  if ((await manual.getInfo()).lag !== 1) throw new Error('Packed Memory stale settlement changed current receipt');
+  await member.close();
+  if (!receipts[1].signal.aborted) throw new Error('Packed Memory unsubscribe did not abort returned receipt');
+}
 await flow.close({ timeout: 1000 });
 instrumentation.disable();
 if (observed < 2) throw new Error('Packed instrumentation entry point does not share runtime state');

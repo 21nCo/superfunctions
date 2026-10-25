@@ -140,27 +140,24 @@ export class MemoryConsumerGroups {
         const member = members[group.round++ % members.length], token = Symbol();
         const pending: Pending = { message: { id: message.id, partition: message.partition, offset: message.offset }, member, token };
         group.pending.set(message.id, pending);
-        let controller = new AbortController();
-        if (partitioned) {
-          const duration = member.options.visibilityTimeout ?? 30000;
-          const arm = () => {
-            if (pending.expiry) clearTimeout(pending.expiry);
-            pending.deadline = performance.now() + duration;
-            pending.expiry = setTimeout(() => {
-              if (group.pending.get(message.id)?.token !== token) return;
-              group.pending.delete(message.id);
-              pending.lease?.abort();
-              if (this.history(group.stream).some(m => m.id === message.id)) group.retry.push(message.id);
-              this.dispatch(group);
-            }, duration);
-          };
-          arm();
-          pending.lease = new DeliveryLease(duration, performance.now(), async () => {
-            if (group.pending.get(message.id)?.token !== token || performance.now() >= pending.deadline! || !this.history(group.stream).some(m => m.id === message.id)) return false;
-            arm(); return true;
-          }, () => {});
-          controller = pending.lease.controller;
-        }
+        const duration = member.options.visibilityTimeout ?? 30000;
+        const arm = () => {
+          if (pending.expiry) clearTimeout(pending.expiry);
+          pending.deadline = performance.now() + duration;
+          pending.expiry = setTimeout(() => {
+            if (group.pending.get(message.id)?.token !== token) return;
+            group.pending.delete(message.id);
+            pending.lease?.abort();
+            if (this.history(group.stream).some(m => m.id === message.id)) group.retry.push(message.id);
+            this.dispatch(group);
+          }, duration);
+        };
+        arm();
+        pending.lease = new DeliveryLease(duration, performance.now(), async () => {
+          if (group.pending.get(message.id)?.token !== token || performance.now() >= pending.deadline! || !this.history(group.stream).some(m => m.id === message.id)) return false;
+          arm(); return true;
+        }, () => {});
+        const controller = pending.lease.controller;
         member.busy.set(token, controller);
         const settle = async (requeue: boolean) => {
           if (group.pending.get(message.id)?.token !== token) return;
@@ -261,6 +258,7 @@ export class MemoryConsumerGroups {
         for (const [key, pending] of group.pending)
           if (pending.member === member) {
             group.pending.delete(key);
+            pending.lease?.abort();
             this.clearPending(pending);
             if (this.history(group.stream).some(m => m.id === pending.message.id)) group.retry.push(pending.message.id);
           }
@@ -277,7 +275,7 @@ export class MemoryConsumerGroups {
         for (const timer of member.commits) clearTimeout(timer);
       }
       group.members.clear();
-      for (const pending of group.pending.values()) this.clearPending(pending);
+      for (const pending of group.pending.values()) { pending.lease?.abort(); this.clearPending(pending); }
       group.pending.clear();
       group.retry = [];
     }

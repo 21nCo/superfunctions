@@ -11,3 +11,5 @@ Initial baseline: 2 expected failures. Corrected focused suite: 19 pass; source/
 A separate Redis first-policy test reproduced its unsupported API against an owned local Redis process; it is not part of the Memory implementation. Owned PID 27516 stopped and its private `flow-redis-partition-l6vy0fc6` directory was removed/read back absent. Redis implementation and acceptance remain the next slice.
 
 This is process-local storage, not cross-process durability. Legacy unpartitioned Memory visibilityTimeout support, Redis/Python partition parity and original performance targets remain open. No throughput or total physical-memory guarantee is inferred.
+
+The later `memory-stream-receipt-readiness.md` checkpoint adds the previously missing legacy visibility expiry and returned-receipt unsubscribe/cleanup signaling, with baseline failures and installed acceptance.

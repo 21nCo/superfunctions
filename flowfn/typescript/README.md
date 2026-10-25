@@ -109,14 +109,15 @@ IDs, global offsets, ranges and retention remain unchanged.
 Memory supports the same configured partition routing, immutable count, group
 progress and current-receipt fencing within one adapter instance. Reopening a
 stream handle on that instance preserves its policy/cursors; a new adapter or
-process has no durable history. Configured Memory partition consumers renew a
+process has no durable history. All Memory consumer-group deliveries renew a
 monotonic local lease while their handler runs. Manual unacknowledged deliveries
 expire after the handler returns; trimming prevents renewal without releasing the
 barrier early. Active callbacks still own their delivered snapshots. Pending/retry
 registries retain identities, not additional payload copies. Unsubscribe aborts
 owned signals and releases current receipts; stale settlement cannot affect a
-successor. Visibility timeout for legacy unpartitioned Memory streams remains an
-unfinished behavior and is not implied by this partition support.
+successor. These local receipt deadlines also apply to legacy unpartitioned
+streams. Unsubscribe and adapter cleanup abort returned pending receipt signals
+as well as active callbacks, and remove their timers.
 
 Redis supports the same immutable routing policy with independent group progress
 and Redis-clock receipt barriers. Global Redis Stream IDs and payload history are
