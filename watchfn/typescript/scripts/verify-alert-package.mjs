@@ -66,6 +66,7 @@ try {
  assert.equal((await first.trace.query({operation:'lookup',status:'error',duration:{gte:10}}))[0].id,'packed-child');
  const trace=await first.trace.getTrace({traceId:'packed-trace',includeSpans:true,includeLogs:true});assert.equal(trace.spans.length,2);assert.equal(trace.logs[0].message,'trace error');assert.equal(trace.status,'error');
  assert.deepEqual((await first.trace.getServiceMap({})).edges,[{source:'api',target:'db',calls:1,errors:1,averageDuration:10}]);
+ await first.trace.startWithHeaders('packed request',{traceparent:'00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00',tracestate:'vendor=packed'},async span=>{await Promise.resolve();const headers=first.trace.injectHeaders();assert.equal(headers.traceparent,'00-4bf92f3577b34da6a3ce929d0e0e4736-'+span.id+'-00');assert.equal(headers.tracestate,'vendor=packed');assert.equal(span.parentId,'00f067aa0ba902b7');});
  const contexts=[];first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){alert.name='modified';context.value=-1;}});
  first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){assert.equal(alert.name,'calculated context');contexts.push(context);}});
  first.alerts.onResolve((alert,context)=>{if(alert.id===measured.id)contexts.push(context);});
@@ -84,7 +85,7 @@ try {
  const callback:AlertLifecycleListener=(_alert,context:AlertLifecycleContext)=>{const threshold:number|undefined=context.threshold;return threshold;};
  const watch=new WatchFn({name:'typed',storage:'memory',alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'local',secretAccessKey:'local',timeoutMs:1000,maxResponseBytes:1024}}}});
  watch.alerts.onTrigger(callback);watch.alerts.onResolve(callback);
- const tq:TraceQueryOptions={operation:'checkout',duration:{gt:10}};const td:TraceDetailsOptions={traceId:'t',includeSpans:true};const sm:ServiceMapOptions={minCalls:2};void watch.trace.query(tq);void watch.trace.getTrace(td);void watch.trace.getServiceMap(sm);
+ const tq:TraceQueryOptions={operation:'checkout',duration:{gt:10}};const td:TraceDetailsOptions={traceId:'t',includeSpans:true};const sm:ServiceMapOptions={minCalls:2};void watch.trace.query(tq);void watch.trace.getTrace(td);void watch.trace.getServiceMap(sm);void watch.trace.startWithHeaders('typed',{},async span=>{const headers:Record<string,string>=watch.trace.injectHeaders({},span);return headers;});
  async function maintenance(){const status=await watch.alerts.receiptRetentionStatus();const migration=await watch.alerts.migrateReceiptRetention({limit:1});const page=await watch.alerts.pruneNotifications({completedBefore:Date.now(),limit:1});if(page.nextCursor)await watch.alerts.pruneNotifications({completedBefore:Date.now(),after:page.nextCursor});const done:boolean=migration.done;const protocol:string|undefined=status?.protocol;return {done,protocol};}void maintenance;`);
  execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
  await rm(join(temporary,'node_modules/sendfn'),{recursive:true,force:true});

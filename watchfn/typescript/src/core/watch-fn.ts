@@ -307,6 +307,8 @@ export class WatchFn implements WatchFnInstance {
     return {
         start: (name: string, cb: Function, opts?: any) => this.tracer.start(name, cb as any, opts),
         startSpan: (name: string, opts?: any) => this.tracer.startSpan(name, opts),
+        startWithHeaders: <T>(name: string, headers: Record<string, string | string[] | undefined>, callback: (span: import("../trace/span").Span) => T) => this.tracer.startWithHeaders(name, headers, callback),
+        injectHeaders: (headers?: Record<string, string>, span?: import("../trace/span").Span) => this.tracer.injectHeaders(headers, span),
         query: (opts: TraceQueryOptions) => new TraceQueries(options => this.query(options)).query(opts),
         getTrace: (opts: TraceDetailsOptions) => new TraceQueries(options => this.query(options)).getTrace(opts),
         getServiceMap: (opts: ServiceMapOptions) => new TraceQueries(options => this.query(options)).getServiceMap(opts),

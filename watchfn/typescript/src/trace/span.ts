@@ -13,6 +13,8 @@ export interface SpanOptions {
   traceId?: string;
   startTime?: number;
   tags?: Record<string, any>;
+  traceFlags?: number;
+  traceState?: string;
 }
 
 export class Span {
@@ -21,6 +23,8 @@ export class Span {
   readonly parentId?: string;
   readonly name: string;
   readonly startTime: number;
+  readonly traceFlags: number;
+  readonly traceState?: string;
   
   endTime?: number;
   tags: Record<string, any> = {};
@@ -33,6 +37,8 @@ export class Span {
     this.name = options.name;
     this.startTime = options.startTime ?? Date.now();
     this.tags = options.tags || {};
+    this.traceFlags = options.traceFlags ?? 1;
+    this.traceState = options.traceState;
   }
 
   setTag(key: string, value: any) {
@@ -60,7 +66,7 @@ export class Span {
       traceId: this.traceId,
       spanId: this.id,
       parentId: this.parentId,
-      sampled: true,
+      sampled: (this.traceFlags & 1) === 1,
     };
   }
   
@@ -74,6 +80,8 @@ export class Span {
           endTime: this.endTime,
           duration: this.endTime !== undefined ? this.endTime - this.startTime : undefined,
           tags: this.tags,
+          traceFlags: this.traceFlags,
+          traceState: this.traceState,
           logs: this.logs
       };
   }

@@ -1,0 +1,125 @@
+[
+  {
+    "name": "mixed case header",
+    "headers": {
+      "TraceParent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      "TraceState": [
+        "vendor=a",
+        "other=b"
+      ]
+    },
+    "valid": true,
+    "state": "vendor=a,other=b"
+  },
+  {
+    "name": "future version",
+    "headers": {
+      "traceparent": "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-opaque"
+    },
+    "valid": true
+  },
+  {
+    "name": "unknown flag masked",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff"
+    },
+    "valid": true
+  },
+  {
+    "name": "invalid state preserves parent",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      "tracestate": "vendor=a,vendor=b"
+    },
+    "valid": true
+  },
+  {
+    "name": "empty state members",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      "tracestate": ", vendor=a, "
+    },
+    "valid": true,
+    "state": ", vendor=a, "
+  },
+  {
+    "name": "zero trace",
+    "headers": {
+      "traceparent": "00-00000000000000000000000000000000-00f067aa0ba902b7-01"
+    },
+    "valid": false
+  },
+  {
+    "name": "zero span",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"
+    },
+    "valid": false
+  },
+  {
+    "name": "uppercase",
+    "headers": {
+      "traceparent": "00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01"
+    },
+    "valid": false
+  },
+  {
+    "name": "bad flags",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz"
+    },
+    "valid": false
+  },
+  {
+    "name": "forbidden version",
+    "headers": {
+      "traceparent": "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    },
+    "valid": false
+  },
+  {
+    "name": "v0 suffix",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra"
+    },
+    "valid": false
+  },
+  {
+    "name": "newline",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\n"
+    },
+    "valid": false
+  },
+  {
+    "name": "duplicate",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01,00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    },
+    "valid": false
+  },
+  {
+    "name": "oversized",
+    "headers": {
+      "traceparent": "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "valid": false
+  },
+  {
+    "name": "short",
+    "headers": {
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0"
+    },
+    "valid": false
+  },
+  {
+    "name": "multiple parent fields",
+    "headers": {
+      "traceparent": [
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+      ]
+    },
+    "valid": false
+  }
+]

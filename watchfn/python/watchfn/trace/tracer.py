@@ -8,6 +8,8 @@ from copy import deepcopy
 from .queries import TraceQueries
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
+from .context_propagation import TraceContext, trace_context_propagator
 
 
 @dataclass
@@ -22,6 +24,8 @@ class Span:
     tags: Optional[Dict[str, str]] = None
     logs: Optional[list] = None
     status: str = "ok"
+    trace_flags: int = 1
+    trace_state: Optional[str] = None
     
     _on_finish: Any = field(default=None, repr=False, compare=False)
     _recorded: bool = field(default=False, repr=False, compare=False)
@@ -53,7 +57,7 @@ class Span:
             "data": data
         })
     
-    def set_error(self, error: Exception):
+    def set_error(self, error: BaseException):
         """Mark span as error."""
         self.status = "error"
         self.set_tag("error", "true")
@@ -69,6 +73,7 @@ class Tracer(TraceQueries):
         self.service_name = service_name
         self.track_callback = track_callback
         self.active_spans: Dict[str, Span] = {}
+        self._context = ContextVar("watchfn_current_span", default=None)
     
     @staticmethod
     def _unavailable_query(_options):
@@ -79,9 +84,19 @@ class Tracer(TraceQueries):
         operation: str,
         trace_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None
+        tags: Optional[Dict[str, str]] = None,
+        trace_flags: Optional[int] = None,
+        trace_state: Optional[str] = None
     ) -> Span:
         """Start a new span."""
+        parent = self._context.get()
+        if parent is not None and parent.end_time is not None:
+            parent = None
+        if parent is not None and (trace_id is None or trace_id == parent.trace_id):
+            trace_id = parent.trace_id
+            if parent_span_id is None: parent_span_id = parent.span_id
+            if trace_flags is None: trace_flags = parent.trace_flags
+            if trace_state is None: trace_state = parent.trace_state
         if trace_id is None:
             trace_id = token_hex(16)
         span_id = token_hex(8)
@@ -93,6 +108,8 @@ class Tracer(TraceQueries):
             operation=operation,
             start_time=time.time() * 1000,
             tags=deepcopy(tags or {}),
+            trace_flags=1 if trace_flags is None else trace_flags,
+            trace_state=trace_state,
             _on_finish=self._record_span
         )
         
@@ -113,6 +130,7 @@ class Tracer(TraceQueries):
             "id": span.span_id, "traceId": span.trace_id, "name": span.operation,
             "startTime": span.start_time, "endTime": span.end_time,
             "service": self.service_name,
+            "traceFlags": span.trace_flags, "traceState": span.trace_state,
             **({"parentId": span.parent_span_id} if span.parent_span_id is not None else {}),
             "trace_id": span.trace_id, "span_id": span.span_id,
             "parent_span_id": span.parent_span_id, "operation": span.operation,
@@ -131,11 +149,41 @@ class Tracer(TraceQueries):
     ):
         """Context manager for tracing."""
         span = self.start_span(operation, trace_id, parent_span_id, tags)
+        token = self._context.set(span)
         
         try:
             yield span
-        except Exception as e:
+        except BaseException as e:
             span.set_error(e)
             raise
         finally:
+            self._context.reset(token)
             self.finish_span(span)
+
+    @contextmanager
+    def with_headers(self, operation, headers):
+        parent = trace_context_propagator.extract(headers)
+        token = self._context.set(None)
+        try:
+            span = self.start_span(operation, trace_id=parent.trace_id if parent else None,
+                                   parent_span_id=parent.span_id if parent else None,
+                                   trace_flags=parent.trace_flags if parent else None,
+                                   trace_state=parent.trace_state if parent else None)
+            current = self._context.set(span)
+            try:
+                yield span
+            except BaseException as error:
+                span.set_error(error)
+                raise
+            finally:
+                self._context.reset(current)
+                self.finish_span(span)
+        finally:
+            self._context.reset(token)
+
+    def inject_headers(self, headers=None, span=None):
+        span = self._context.get() if span is None else span
+        if span is None or span.end_time is not None:
+            raise RuntimeError("No active trace span")
+        return trace_context_propagator.inject(TraceContext(trace_id=span.trace_id, span_id=span.span_id,
+                                                            trace_flags=span.trace_flags, trace_state=span.trace_state), headers)

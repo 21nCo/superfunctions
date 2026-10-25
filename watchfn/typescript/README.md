@@ -363,3 +363,18 @@ surfaced and leaves the claimed lease for conservative recovery; it is not a cle
 shutdown. Event-loop stalls can delay timers, so this is not a real-time deadline.
 The legacy `emailSender` override takes precedence when present and remains
 cooperatively cancellable host code; its existing 100-recipient limit is unchanged.
+
+## Explicit trace propagation
+
+Use `startWithHeaders` at an inbound request boundary and `injectHeaders` for an outbound request. Both operate on the active callback span; async callbacks retain their own context.
+
+```ts
+await watch.trace.startWithHeaders('checkout', incomingHeaders, async (span) => {
+  const response = await fetch(inventoryUrl, { headers: watch.trace.injectHeaders() });
+  span.setTag('inventory.status', response.status);
+});
+```
+
+The parser validates W3C Trace Context level 1 IDs, flags and state. Invalid incoming context starts an independent trace; invalid explicit injection throws before changing headers. Header names are case insensitive; output replaces existing trace headers with lowercase names. Each field is limited to 512 characters. Valid parent flags and vendor state propagate to child spans; flags do not by themselves suppress recording. Closed spans cannot supply outbound context, and late async work does not inherit a completed parent. Explicit non-W3C manual IDs remain usable locally but cannot be injected.
+
+This API does not patch HTTP clients or framework middleware automatically. Baggage, automatic instrumentation and configured sample-rate enforcement remain separate requirements. Flush before querying buffered completed spans outside callbacks. Stored trace APIs and their result/scan limits are documented in `../.conduct/stored-trace-queries.md`.

@@ -1,21 +1,24 @@
 import { AsyncLocalStorage } from "async_hooks";
 import type { WatchFn } from "../core/watch-fn";
 import { Span, SpanOptions } from "./span";
+import { traceContextPropagator } from "./context-propagation";
 
 export class Tracer {
   private watch: WatchFn;
-  private context: AsyncLocalStorage<Span>;
+  private context: AsyncLocalStorage<Span | undefined>;
 
   constructor(watch: WatchFn, private readonly service?: string) {
     this.watch = watch;
-    this.context = new AsyncLocalStorage<Span>();
+    this.context = new AsyncLocalStorage<Span | undefined>();
   }
 
   startSpan(name: string, options: Partial<SpanOptions> = {}): Span {
-    const parentSpan = this.context.getStore();
+    const ambient = this.context.getStore();
+    const parentSpan = ambient?.endTime === undefined ? ambient : undefined;
     
     // Use parent from options or from context
-    const parentId = options.parentId || parentSpan?.id;
+    const sameTrace = options.traceId === undefined || options.traceId === parentSpan?.traceId;
+    const parentId = options.parentId ?? (sameTrace ? parentSpan?.id : undefined);
     const traceId = options.traceId || parentSpan?.traceId;
 
     const span = new Span({
@@ -23,9 +26,21 @@ export class Tracer {
       ...options,
       parentId,
       traceId,
+      traceFlags: options.traceFlags ?? (sameTrace ? parentSpan?.traceFlags : undefined),
+      traceState: options.traceState ?? (sameTrace ? parentSpan?.traceState : undefined),
     }, finished => this.record(finished));
 
     return span;
+  }
+
+  startWithHeaders<T>(name: string, headers: Record<string, string | string[] | undefined>, callback: (span: Span) => T): T {
+    const parent = traceContextPropagator.extract(headers);
+    return this.context.run(undefined, () => this.start(name, callback, parent ? { traceId: parent.traceId, parentId: parent.spanId, traceFlags: parent.traceFlags, traceState: parent.traceState } : {}));
+  }
+
+  injectHeaders(headers: Record<string, string> = {}, span = this.context.getStore()): Record<string, string> {
+    if (!span || span.endTime !== undefined) throw new Error('No active trace span');
+    return traceContextPropagator.inject({ traceId: span.traceId, spanId: span.id, traceFlags: span.traceFlags, traceState: span.traceState }, headers);
   }
 
   /** Manual transactions keep explicit parentage without leaking ambient context. */
@@ -34,7 +49,7 @@ export class Tracer {
     return Object.assign(transaction, {
       startSpan: (childName: string, options: Partial<SpanOptions> = {}) => {
         if (transaction.endTime !== undefined) throw new Error("Transaction is finished");
-        return this.startSpan(childName, { ...options, parentId: transaction.id, traceId: transaction.traceId });
+        return this.startSpan(childName, { ...options, parentId: transaction.id, traceId: transaction.traceId, traceFlags: options.traceFlags ?? transaction.traceFlags, traceState: options.traceState ?? transaction.traceState });
       },
     });
   }

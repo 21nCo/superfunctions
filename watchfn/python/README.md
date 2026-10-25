@@ -544,3 +544,18 @@ indexes are required; native SQLite query plans are covered by acceptance tests.
 Projection integrity assumes cooperating writers; no hostile direct database
 modification isolation is promised. See the shared
 [receipt-retention acceptance](../.conduct/receipt-retention-readiness.md).
+
+### Explicit trace propagation
+
+The public tracer supports task-local nested scopes and explicit inbound/outbound header propagation:
+
+```python
+with watch.trace.with_headers("checkout", incoming_headers) as span:
+    with watch.trace.trace("inventory"):
+        outgoing_headers = watch.trace.inject_headers()
+        # Pass outgoing_headers to the HTTP client used by your application.
+```
+
+A scope can remain open across `await`; concurrent asyncio tasks retain separate contexts. Cancellation and exceptions record an error and restore the previous context. Invalid incoming W3C Trace Context level 1 headers start an independent trace; invalid explicit injection raises before mutating headers. Header names are case insensitive, each field is bounded to 512 characters, and valid flags/vendor state are propagated. Completed spans cannot inject context or become implicit parents for late work. Flags do not themselves suppress recording. Non-W3C IDs remain supported for local manual traces but cannot be injected.
+
+Call `watch.batcher.flush()` before querying newly completed spans with `watch.trace.query`, `get_trace` or `get_service_map`. Queries otherwise read stored data without joining callback work. These APIs do not automatically instrument HTTP libraries, propagate baggage or enforce configured sampling; broader tracing requirements remain open.
