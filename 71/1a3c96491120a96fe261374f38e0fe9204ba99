@@ -1,0 +1,23 @@
+flowfn/.conduct/native-queue-profiling-20261025.md
+  s_e1c5fc1a65c0cf::t_2ccddf5fa7529f 38-47
+flowfn/.conduct/postgres-concurrent-claim-rejected-20261025.json
+  s_e1c5fc1a65c0cf::t_5a966550976588 1-878
+flowfn/.conduct/postgres-serialized-claim-rejected-20261025.json
+  s_e1c5fc1a65c0cf::t_02db2eaae2c5dc 1-878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "711a3c96491120a96fe261374f38e0fe9204ba99",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
