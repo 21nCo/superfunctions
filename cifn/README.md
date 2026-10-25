@@ -485,3 +485,15 @@ The local `Runner` executes `hostfn/deploy` with supervised argument-vector exec
 The exported `executeHostFnDeployAsync` uses the same supervisor. Its `baseEnv`, `executable`, and redaction policy are trusted host settings. Without an explicit redaction policy, nonempty supplied environment values are redacted. A throwing output callback aborts execution and cannot produce success. Unproven group termination propagates `ProcessGroupUncertainError`; the Runner retains its workspace. Cancellation prevents subsequent steps, including `always()` steps.
 
 The existing synchronous `executeHostFnDeploy` keeps literal argv and its optional `ci` flag. It inherits the host environment for compatibility and provides no asynchronous process-group cleanup guarantee. Timeout, capture overflow, or signal termination throws `ProcessGroupUncertainError`; the managed Runner does not use this path. The remote durable executor still rejects HostFn steps: remote integration, deployment receipts, and live provider acceptance remain open.
+
+### Scheduled pipelines
+
+The built control-plane server accepts trusted host configuration in `CIFN_CRON_PIPELINES`: a JSON array of `{id, spec, pipelineRef, cronExpression}`. Each expression must also appear in that pipeline's `on.schedule` array. Startup admits at most 100 registrations and 500 KiB of configuration; IDs must be unique. Expressions have five fields and are evaluated in UTC by the actual `@flowfn/core` Scheduler and its cron parser, rather than a fixed execution interval. Pipeline credentials should remain secret references, not literal values in this host configuration.
+
+```json
+[{"id":"nightly","pipelineRef":{"repo":"owner/repository","ref":"main"},"cronExpression":"0 2 * * *","spec":{"on":{"schedule":[{"cron":"0 2 * * *"}]},"jobs":{"build":{"runs-on":"default","steps":[{"run":"npm test"}]}}}}]
+```
+
+`CronScheduler.start()` returns a promise and repeated starts share the same owner. Register before starting; stop before modifying registrations. `await scheduler.stop()` prevents new scheduled admission and drains active work before closing its Flow scheduler. A shutdown timeout retains the stop fence and reports uncertain ownership. The server waits for that drain before closing storage. The legacy `start(intervalMs)` argument is accepted for source compatibility but cannot override the expression.
+
+This integration has one scheduler owner per process. Restart schedules strictly future occurrences; missed occurrences are not backfilled. Concurrent control-plane processes must not register the same schedules: durable occurrence deduplication, distributed schedule ownership and crash reconciliation of ambiguous admission are not implemented here. Failed admission is recorded as a sanitized scheduler error and the next occurrence remains eligible; the failed occurrence is not blindly replayed. Committed run/job dispatch still uses the existing durable store and publisher. This does not claim the entire original FlowFn integration is complete.

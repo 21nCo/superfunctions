@@ -34,7 +34,7 @@ export { MemoryQueueClient, DEFAULT_QUEUE_NAME } from './queue/flowfn-client.js'
 export type { QueueClient, JobPayload } from './queue/flowfn-client.js';
 export { verifySignature, handleWebhook, parseGitHubEvent } from './triggers/webhook.js';
 export type { WebhookOptions, WebhookResult } from './triggers/webhook.js';
-export { CronScheduler } from './triggers/cron.js';
+export { CronScheduler, parseCronPipelines } from './triggers/cron.js';
 export type { CronPipeline, CronSchedulerOptions } from './triggers/cron.js';
 export { MemorySecFnClient } from './secrets/secfn-client.js';
 export type { SecFnClient } from './secrets/secfn-client.js';

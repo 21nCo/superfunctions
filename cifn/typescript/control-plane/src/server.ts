@@ -1,3 +1,4 @@
+import { CronScheduler, parseCronPipelines } from './triggers/cron.js';
 import { snapshotForkApprovals } from './triggers/fork-approval.js';
 import { resolvePipelineDoc } from './pipeline/resolver.js';
 import { LogFnStepOutputDispatcher } from './observability/step-output.js';
@@ -79,7 +80,10 @@ async function start() {
   const stepOutputMode = process.env.CIFN_STEP_OUTPUT_LOGS ?? 'off';
   if (!['off', 'console'].includes(stepOutputMode)) throw new Error('CIFN_STEP_OUTPUT_LOGS must be off or console');
   if (stepOutputMode !== 'off' && process.env.CIFN_STORE_ADAPTER !== 'sqlite') throw new Error('Step output LogFn delivery requires SQLite storage');
+  const cronPipelines = parseCronPipelines(process.env.CIFN_CRON_PIPELINES);
   const runtimeStore = await createRuntimeStore();
+  const cron = new CronScheduler({store:runtimeStore.store,queue:adapters.queue,secrets:adapters.secrets});
+  try { for (const pipeline of cronPipelines) cron.register(pipeline); } catch { await runtimeStore.close(); throw new Error("Invalid cron pipeline registration"); }
   const stepOutput = stepOutputMode === 'console' ? new LogFnStepOutputDispatcher(runtimeStore.store as DatabaseStore, sinkConsole({ json: true, color: false })) : undefined;
   let stepOutputCursor: string | undefined;
   let stepOutputActive: Promise<unknown> | undefined;
@@ -116,6 +120,8 @@ async function start() {
   const close = () => {
     if (closing) return;
     closing = true; resolverAbort.abort(); clearInterval(retentionTimer); clearInterval(lifecycleTimer);
+    const cronClosing = cron.stop().catch(() => { console.error("CiFn cron shutdown failed; active ownership uncertain"); process.exitCode = 1; throw Error("Cron shutdown incomplete"); });
+    void cronClosing.catch(() => {});
     const stepOutputClosing = stepOutput?.close().catch(() => { console.error('CiFn step output shutdown failed'); process.exitCode = 1; });
     const lifecycleClosing = lifecycle?.close().catch(() => { console.error('CiFn lifecycle shutdown failed'); process.exitCode = 1; });
     server.close(async () => {
@@ -128,6 +134,7 @@ async function start() {
       await stepOutputActive;
       await stepOutputClosing;
       await lifecycleClosing;
+      try { await cronClosing; } catch { return; }
       try { await runtimeStore.close(); }
       catch { console.error('CiFn store shutdown failed'); process.exitCode = 1; }
     });
@@ -136,10 +143,11 @@ async function start() {
   process.once('SIGINT', close);
   server.once('error', () => {
     process.exitCode = 1; closing = true; resolverAbort.abort(); clearInterval(retentionTimer); clearInterval(lifecycleTimer);
-    void Promise.allSettled([retentionActive, lifecycleActive, lifecycle?.close()]).then(() => runtimeStore.close()).catch(() => console.error('CiFn store shutdown failed'));
+    void Promise.all([cron.stop(), retentionActive, lifecycleActive, lifecycle?.close()]).then(() => runtimeStore.close()).catch(() => console.error('CiFn store shutdown failed'));
   });
 
   server.listen(PORT, () => {
+    void cron.start().catch(() => { console.error("CiFn cron startup failed"); process.exitCode = 1; close(); });
     deliverLifecycle();
     dispatchPublisher?.start();
     notificationPublisher?.start();

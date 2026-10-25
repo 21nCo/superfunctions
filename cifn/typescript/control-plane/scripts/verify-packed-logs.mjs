@@ -59,6 +59,7 @@ try{
   console.log(run(process.execPath, ['node_modules/@cifn/runner/scripts/verify-hostfn-argv.mjs']));
   if(process.env.CIFN_TEST_NATIVE_DOCKER==='1')process.stdout.write(run(process.execPath,['node_modules/@cifn/runner/scripts/verify-per-job-docker.mjs']));
 
+  process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-cron.mjs']));
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
   process.stdout.write(receipt);
   process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-step-status.mjs']));
