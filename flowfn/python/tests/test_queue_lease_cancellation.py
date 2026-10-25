@@ -51,7 +51,7 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters:
                     async with a.client.pipeline(transaction=True) as pipe:
                         try:
                             await pipe.watch(base+':version')
-                            raw_state = await pipe.hget(base+':jobs',job.id)
+                            raw_state = await pipe.execute_command('HGET',base+':jobs',job.id)
                             assert isinstance(raw_state, (str, bytes))
                             state = json.loads(raw_state)
                             state['lease_expires_at'] = 0

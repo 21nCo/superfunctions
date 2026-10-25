@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -124,7 +125,8 @@ async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters
     assert not await subscription._owned(first,'attempt-one',acknowledge=True)
     assert await subscription._owned(second,'attempt-two')
     assert await subscription._owned(second,'attempt-two',acknowledge=True)
-    assert await adapter.client.hlen(subscription._owners_key)==0
+    execute: Callable[..., Awaitable[Any]] = adapter.client.execute_command
+    assert await execute('HLEN',subscription._owners_key)==0
 
 
 async def test_ack_reply_after_local_cancellation_is_settled_safely(adapters: NativeAdapters, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,6 +5,7 @@ from collections.abc import Awaitable
 from typing import Callable
 
 from flowfn.core.lease_expiry import LeaseExpiry
+from flowfn.core.owned_wait import wait_for_owned
 
 
 async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[], Awaitable[bool]],
@@ -27,7 +28,7 @@ async def run_with_lease(work: Callable[[], Awaitable[None]], renew: Callable[[]
                 raise RuntimeError('Stream delivery lease expired')
             requested = time.monotonic()
             try:
-                owned = await asyncio.wait_for(renew(), remaining)
+                owned = await wait_for_owned(renew(), remaining)
             except Exception:
                 renew_at = time.monotonic() + min(.05, duration / 6)
                 continue

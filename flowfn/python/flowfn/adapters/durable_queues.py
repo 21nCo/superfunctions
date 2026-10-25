@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional
 
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.core.lease_expiry import LeaseExpiry
+from flowfn.core.owned_wait import wait_for_owned
 from flowfn.queue.dlq import DLQJob
 from flowfn.queue.types import BackoffType, Job, JobLeaseError, JobOptions, JobStatus, QueueStats
 
@@ -210,7 +211,7 @@ class DurableQueues(ABC):
                         return
                     started = time.monotonic()
                     try:
-                        await asyncio.wait_for(self._transition('_renew_job',queue,job),remaining)
+                        await wait_for_owned(self._transition('_renew_job',queue,job),remaining)
                         # wait_for can return late if its awaitable suppresses cancellation.
                         if not expiry.renew(started+self.reclaim_after_ms/1000):
                             lost.set()

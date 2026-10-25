@@ -153,13 +153,11 @@ async def test_unsubscribe_releases_owned_receipt_before_timeout() -> None:
         await flow.close()
 
 
-@pytest.mark.parametrize('provider', ['redis', 'postgres'])
-async def test_unsupported_provider_rejects_before_io(provider: str, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_unsupported_postgres_rejects_before_io(monkeypatch: pytest.MonkeyPatch) -> None:
     from typing import Any
 
     from flowfn.adapters.postgres import PostgresAdapter
-    from flowfn.adapters.redis import RedisAdapter
-    adapter = RedisAdapter('redis://127.0.0.1:1') if provider == 'redis' else PostgresAdapter('postgresql://127.0.0.1:1/absent')
+    adapter = PostgresAdapter('postgresql://127.0.0.1:1/absent')
     calls: list[str] = []
     async def forbidden(*args: Any, **kwargs: Any) -> Any:
         calls.append('io')

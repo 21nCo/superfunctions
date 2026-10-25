@@ -5,6 +5,8 @@ sequential API latencies, and measures same-queue concurrent enqueue and
 claim-and-complete throughput.
 Every run owns a fresh namespace and deletes all of its records in finally.
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import math

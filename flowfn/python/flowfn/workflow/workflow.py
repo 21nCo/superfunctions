@@ -13,6 +13,7 @@ from flowfn.adapters.base import FlowAdapter
 from flowfn.adapters.workflow_state import WorkflowLeaseError
 from flowfn.core.lease_expiry import LeaseExpiry
 from flowfn.core.lifecycle import Admissions
+from flowfn.core.owned_wait import wait_for_owned
 from flowfn.core.telemetry import OperationObserver
 from flowfn.monitoring.health import EventTracker
 from flowfn.workflow.types import (
@@ -206,7 +207,7 @@ class Workflow:
                     break
                 requested = time.monotonic()
                 try:
-                    renewed = await asyncio.wait_for(self._adapter.transition_workflow_state(
+                    renewed = await wait_for_owned(self._adapter.transition_workflow_state(
                         execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms}),remaining)
                 except Exception:
                     renew_at = time.monotonic() + min(.05, duration / 6)

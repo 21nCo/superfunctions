@@ -58,6 +58,8 @@ class RedisAdapter(DurableQueues):
         self.state_key = self.prefix + ':state'
         self._setup_queues(reclaim_after_ms, backoff_strategies)
         self._subscriptions: set[RedisSubscription] = set()
+        from flowfn.adapters.redis_partitions import RedisPartitions
+        self._partitions = RedisPartitions(self)
 
     def _stream(self, name: str) -> str:
         self._check_open()
@@ -142,15 +144,23 @@ class RedisAdapter(DurableQueues):
                     executions.append(execution)
         return executions
 
+    async def configure_stream(self, stream: str, partitions: Optional[int] = None) -> Optional[int]:
+        return await self._partitions.configure(stream, partitions)
+
     async def publish(self, stream: str, message: Message) -> str:
-        await self.client.xadd(self._stream(stream), {'payload': message.model_dump_json()})
-        return message.id
+        return await self._partitions.publish(stream, message)
 
     async def get_stream_messages(self, stream: str) -> list[Message]:
         rows = await self.client.xrange(self._stream(stream))
+        if await self.configure_stream(stream) is not None:
+            from flowfn.adapters.redis_partitions import decode_message
+            return [decode_message(stream, identity, fields) for identity, fields in _stream_entries(rows)]
         return [Message.model_validate_json(fields['payload']) for _, fields in _stream_entries(rows)]
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
+        count = await self.configure_stream(stream)
+        if count is not None:
+            return await self._partitions.info(stream, count)
         key = self._stream(stream)
         try:
             info = await self.client.xinfo_stream(key)
@@ -163,6 +173,8 @@ class RedisAdapter(DurableQueues):
             return StreamInfo(name=stream,length=0,lag=0,consumers=0)
 
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
+        if await self.configure_stream(stream) is not None:
+            return await self._partitions.trim(stream, strategy)
         # Keep entries still unread or pending in any group. Redis XTRIM alone
         # deletes their payload, making subsequent delivery impossible.
         script = """
@@ -218,14 +230,14 @@ class RedisAdapter(DurableQueues):
     async def consume(self, stream: str, group: str, consumer: str, handler: Any,
                       options: Optional[ConsumerOptions] = None) -> 'RedisSubscription':
         options = options or ConsumerOptions(group_id=group)
-        try:
-            await self.client.xgroup_create(self._stream(stream), group,
-                                            id='0-0' if options.from_beginning else '$', mkstream=True)
-        except ResponseError as exc:
-            if 'BUSYGROUP' not in str(exc):
-                raise
-        subscription = RedisSubscription(self, stream, handler, group=group,
-                                         consumer=consumer, options=options)
+        count = await self._partitions.ensure_group(stream, group, options.from_beginning)
+        if count is not None:
+            from flowfn.adapters.redis_partition_subscription import RedisPartitionSubscription
+            subscription: RedisSubscription = RedisPartitionSubscription(self, stream, handler, group=group,
+                                               consumer=consumer, options=options)
+        else:
+            subscription = RedisSubscription(self, stream, handler, group=group,
+                                               consumer=consumer, options=options)
         self._subscriptions.add(subscription)
         subscription.start()
         return subscription
@@ -247,6 +259,7 @@ class RedisSubscription:
                  cursor: str = '0-0', group: Optional[str] = None, consumer: Optional[str] = None,
                  options: Optional[ConsumerOptions] = None) -> None:
         self.adapter = adapter
+        self.stream_name = stream
         self.key = adapter._stream(stream)
         self.handler = handler
         self.cursor = cursor
@@ -306,7 +319,11 @@ class RedisSubscription:
                         await asyncio.sleep(.02)
                 for identity, fields in rows:
                     await self.running.wait()
-                    message = Message.model_validate_json(fields['payload'])
+                    if 'payload' in fields:
+                        message = Message.model_validate_json(fields['payload'])
+                    else:
+                        from flowfn.adapters.redis_partitions import decode_message
+                        message = decode_message(self.stream_name, identity, fields)
                     decision: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
 
                     async def settle(requeue: bool, future: asyncio.Future[bool] = decision,
