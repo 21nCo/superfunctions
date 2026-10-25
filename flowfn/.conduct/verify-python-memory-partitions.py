@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 UV = shutil.which('uv')
@@ -25,8 +26,16 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix='flow-python-memory-wheel-') as temporary:
         base = Path(temporary)
         wheels = base / 'wheels'
-        run([sys.executable, '-m', 'build', '--wheel', '--outdir', str(wheels), str(ROOT / 'flowfn/python')], base, env)
+        source = base / 'source'
+        shutil.copytree(ROOT / 'flowfn/python', source, ignore=shutil.ignore_patterns(
+            'build', 'dist', '*.egg-info', '__pycache__', '.venv', '.mypy_cache',
+            '.pytest_cache', '.ruff_cache', '.coverage',
+        ))
+        run([sys.executable, '-m', 'build', '--wheel', '--outdir', str(wheels), str(source)], base, env)
         wheel = next(wheels.glob('flowfn-*.whl'))
+        with ZipFile(wheel) as archive:
+            assert 'flowfn/adapters/memory_stream.py' in archive.namelist()
+            assert 'flowfn/adapters/memory_partitions.py' not in archive.namelist()
         for version in ('3.9', '3.11'):
             consumer = base / version
             consumer.mkdir()
@@ -34,11 +43,12 @@ def main() -> None:
             run([UV, 'venv', '--python', version, str(venv)], consumer, env)
             python = venv / 'bin/python'
             run([UV, 'pip', 'install', '--python', str(python), f'{wheel}[dev]'], consumer, env)
-            test = consumer / 'test_memory_stream_partitions.py'
-            shutil.copyfile(ROOT / 'flowfn/python/tests/test_memory_stream_partitions.py', test)
+            tests = [consumer / name for name in ('test_memory_stream_partitions.py', 'test_memory_stream_receipts.py')]
+            for test in tests:
+                shutil.copyfile(ROOT / 'flowfn/python/tests' / test.name, test)
             run([str(python), '-c', 'import flowfn,sys; from pathlib import Path; assert Path(flowfn.__file__).is_relative_to(Path(sys.prefix)); print(flowfn.__file__)'], consumer, env)
-            run([str(python), '-m', 'pytest', str(test), '--asyncio-mode=auto', '-q'], consumer, env)
-            run([str(python), '-m', 'mypy', '--strict', str(test)], consumer, env)
+            run([str(python), '-m', 'pytest', *[str(test) for test in tests], '--asyncio-mode=auto', '-q'], consumer, env)
+            run([str(python), '-m', 'mypy', '--strict', *[str(test) for test in tests]], consumer, env)
             print(json.dumps({'python': version, 'wheel': wheel.name, 'focused_tests': 'passed', 'strict_consumer': 'passed'}), flush=True)
     assert not base.exists()
     print(json.dumps({'temporary_consumer_removed': True}), flush=True)

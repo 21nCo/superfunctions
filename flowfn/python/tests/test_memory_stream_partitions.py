@@ -205,7 +205,7 @@ async def test_legacy_policy_cannot_change_after_trim_or_group_creation() -> Non
 
 
 async def test_independent_groups_partitions_and_sparse_progress() -> None:
-    from flowfn.adapters.memory_partitions import MemoryPartitionGroup
+    from flowfn.adapters.memory_stream import MemoryConsumerGroup
     adapter = MemoryAdapter()
     stream = Stream('sparse', adapter, {'partitions': 1_000_000})
     deliveries: asyncio.Queue[tuple[str, Message]] = asyncio.Queue()
@@ -222,7 +222,7 @@ async def test_independent_groups_partitions_and_sparse_progress() -> None:
         results = [await asyncio.wait_for(deliveries.get(), 1) for _ in range(4)]
         assert {(group, message.id) for group, message in results} == {(group, identity) for group in ['first', 'second'] for identity in [a, b]}
         for state in adapter._groups.values():
-            assert isinstance(state, MemoryPartitionGroup)
+            assert isinstance(state, MemoryConsumerGroup)
             assert len(state.cursors) == len(state.pending) == 2
         for _, message in results:
             await message.ack()

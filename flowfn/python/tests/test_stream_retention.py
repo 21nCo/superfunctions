@@ -1,4 +1,4 @@
-"""Configured stream retention uses storage age and protects group deliveries."""
+"""Stream retention uses storage age; durable legacy protection remains explicit."""
 
 from __future__ import annotations
 
@@ -113,11 +113,32 @@ async def test_durable_retention_preserves_unread_and_pending(adapters: NativeAd
     await assert_pending_retention(adapters[0], rejects_stale_ack=True)
 
 
-async def test_memory_retention_preserves_unread_and_pending() -> None:
-    adapter=MemoryAdapter()
+async def test_memory_retention_removes_unread_and_pending_payloads() -> None:
+    adapter = MemoryAdapter()
+    stream = Stream('bounded', adapter)
+    deliveries: asyncio.Queue[Message] = asyncio.Queue()
+    async def receive(message: Message) -> None:
+        deliveries.put_nowait(message)
     try:
-        await assert_pending_retention(adapter)
+        await stream.publish('held')
+        await stream.publish('unread')
+        old = stream.create_consumer('old', ConsumerOptions(group_id='group', from_beginning=True, max_in_flight=1))
+        await old.subscribe(receive)
+        held = await asyncio.wait_for(deliveries.get(), 1)
+        bounded = Stream('bounded', adapter, {'max_length': 0, 'retention': 0})
+        assert (await bounded.get_info()).length == 0
+        assert await adapter.get_stream_messages('bounded') == []
+        await old.close()
+        await held.ack()  # Stale settlement cannot recreate a deleted payload.
+        new = bounded.create_consumer('new', ConsumerOptions(group_id='group', max_in_flight=1))
+        await new.subscribe(receive)
+        await asyncio.sleep(.02)
+        assert deliveries.empty()
+        assert adapter._groups[('bounded', 'group')].unacknowledged == set()
+        assert adapter._groups[('bounded', 'group')].retry == []
+        await bounded.close()
     finally:
+        await stream.close()
         await adapter.cleanup()
 
 

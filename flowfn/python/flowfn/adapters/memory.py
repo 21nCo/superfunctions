@@ -8,7 +8,6 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Optional
 
-from flowfn.adapters.memory_partitions import MemoryPartitionGroup
 from flowfn.adapters.memory_stream import MemoryConsumerGroup
 from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.partition import partition_for, validate_partitions
@@ -28,7 +27,7 @@ class MemoryAdapter:
         self._stream_offsets: dict[str, int] = defaultdict(int)
         self._stream_subscribers: dict[str, list[MessageHandler]] = defaultdict(list)
         self._workflow_states: dict[str, Any] = {}
-        self._groups: dict[tuple[str, str], MemoryConsumerGroup | MemoryPartitionGroup] = {}
+        self._groups: dict[tuple[str, str], MemoryConsumerGroup] = {}
         self._deliveries: set[asyncio.Task[None]] = set()
 
     # Queue operations
@@ -365,10 +364,11 @@ class MemoryAdapter:
         key = (stream, group)
         self._partition_policies.setdefault(stream, None)
         if key not in self._groups:
-            if self._partition_policies[stream] is not None:
-                self._groups[key] = MemoryPartitionGroup(lambda: self._streams[stream], 0 if opts.from_beginning else self._stream_offsets[stream])
-            else:
-                self._groups[key] = MemoryConsumerGroup(self._streams[stream] if opts.from_beginning else [])
+            self._groups[key] = MemoryConsumerGroup(
+                lambda: self._streams[stream],
+                0 if opts.from_beginning else self._stream_offsets[stream],
+                partitioned=self._partition_policies[stream] is not None,
+            )
         return self._groups[key].subscribe(consumer, handler, opts)
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
@@ -394,12 +394,9 @@ class MemoryAdapter:
             retained = [message for message in retained if message.timestamp >= cutoff]
         if strategy.max_length is not None:
             retained = retained[-strategy.max_length :] if strategy.max_length else []
-        protected = set().union(*(group.unacknowledged for (name, _), group in self._groups.items() if name == stream and isinstance(group, MemoryConsumerGroup)))
-        retained_ids = {message.id for message in retained} | protected
-        retained = [message for message in messages if message.id in retained_ids]
         self._streams[stream] = retained
         for (name, _), group in self._groups.items():
-            if name == stream and isinstance(group, MemoryPartitionGroup):
+            if name == stream:
                 group.trim()
         return len(messages) - len(retained)
 
