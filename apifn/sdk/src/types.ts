@@ -26,6 +26,8 @@ export type SdkDiagnosticCode =
   | "SDK_UNSUPPORTED_SECURITY_SCHEME"
   /** Component schemas refer to each other in a cycle the target cannot type; the back-references are widened. */
   | "SDK_SCHEMA_CYCLE"
+  /** A chain of component schema references is too deep for the target's compiler; the reference that starts it is widened. */
+  | "SDK_SCHEMA_DEPTH"
   /** Spec `servers` are recorded but never used as request destinations. */
   | "SDK_SERVERS_IGNORED"
   /** The release identity could not be derived (createReleaseDescriptor rejected the input). */

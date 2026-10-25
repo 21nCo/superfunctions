@@ -73,17 +73,25 @@ function typeList(schema: Record<string, unknown>): unknown[] | null {
 type Position = "direct" | "array" | "tuple";
 
 /**
+ * The longest chain of references TypeScript resolves eagerly (see `aliasCuts`) a generated package may
+ * hold, in levels: each reference counts one plus the levels of `allOf`/`anyOf`/`oneOf` members and array
+ * items it sits inside. TypeScript 5.9 overflows its call stack at about 1,000 such levels.
+ */
+export const MAX_ALIAS_DEPTH = 256;
+
+/**
  * Component names a schema's type refers to in a `direct` or `tuple` position (see `Position`):
  * through `$ref`, `$dynamicRef`, `allOf`/`anyOf`/`oneOf` members and array items, but never through an
- * object type. A cycle of these references may be a circular type alias.
+ * object type. A cycle of these references may be a circular type alias. Each maps to the most levels
+ * of members and items it sits inside.
  */
-function directReferences(schema: unknown, found: Set<string>, position: Position = "direct", depth = 0): Set<string> {
+function directReferences(schema: unknown, found: Map<string, number>, position: Position = "direct", depth = 0): Map<string, number> {
   if (depth > MAX_DEPTH || !isRecord(schema)) return found;
   if (position !== "array") {
     for (const keyword of ["$ref", "$dynamicRef"]) {
       const ref = schema[keyword];
       const component = typeof ref === "string" ? componentName(ref) : null;
-      if (component !== null) found.add(component);
+      if (component !== null) found.set(component, Math.max(found.get(component) ?? 0, depth));
     }
   }
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
@@ -99,34 +107,40 @@ function directReferences(schema: unknown, found: Set<string>, position: Positio
   return found;
 }
 
-/**
- * Finds the references (see `directReferences`) that close a cycle between component schemas,
- * by a depth-first search over names and references in sorted order, so the result is deterministic.
- * Typing each returned reference as `unknown` leaves the direct references acyclic. Keys are the
- * referencing schemas; values are the referenced ones, sorted.
- */
-export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<string, string[]> {
-  const names = Object.keys(schemas).sort(compareCodeUnits);
-  const edges = new Map(names.map((name) => [name, [...directReferences(schemas[name], new Set())].filter((target) => Object.prototype.hasOwnProperty.call(schemas, target)).sort(compareCodeUnits)]));
+/** Each component's `directReferences` to components `schemas` has, as [target, levels] sorted by target. */
+function referenceGraph(schemas: Readonly<Record<string, unknown>>): Map<string, Array<[string, number]>> {
+  return new Map(
+    Object.keys(schemas)
+      .sort(compareCodeUnits)
+      .map((name) => [name, [...directReferences(schemas[name], new Map())].filter(([target]) => Object.prototype.hasOwnProperty.call(schemas, target)).sort(([a], [b]) => compareCodeUnits(a, b))])
+  );
+}
+
+function addCut(cuts: Map<string, string[]>, name: string, target: string): void {
+  cuts.set(name, [...(cuts.get(name) ?? []), target]);
+}
+
+/** `aliasCycleCuts` over a `referenceGraph`. */
+function cycleCuts(edges: Map<string, Array<[string, number]>>): Map<string, string[]> {
   const state = new Map<string, "open" | "done">();
   const cuts = new Map<string, string[]>();
   // An explicit stack of (schema, next reference) frames, not recursion, so a reference chain of any
   // length cannot exhaust the call stack; it visits in the same order a recursive search would.
-  for (const root of names) {
+  for (const root of edges.keys()) {
     if (state.has(root)) continue;
     state.set(root, "open");
     const stack: Array<{ name: string; next: number }> = [{ name: root, next: 0 }];
     while (stack.length > 0) {
       const frame = stack[stack.length - 1]!;
-      const targets = edges.get(frame.name) ?? [];
+      const targets = edges.get(frame.name)!;
       if (frame.next === targets.length) {
         state.set(frame.name, "done");
         stack.pop();
         continue;
       }
-      const target = targets[frame.next++]!;
+      const [target] = targets[frame.next++]!;
       const seen = state.get(target);
-      if (seen === "open") cuts.set(frame.name, [...(cuts.get(frame.name) ?? []), target]);
+      if (seen === "open") addCut(cuts, frame.name, target);
       else if (seen === undefined) {
         state.set(target, "open");
         stack.push({ name: target, next: 0 });
@@ -134,6 +148,80 @@ export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<
     }
   }
   return cuts;
+}
+
+/**
+ * Finds the references (see `directReferences`) that close a cycle between component schemas,
+ * by a depth-first search over names and references in sorted order, so the result is deterministic.
+ * Typing each returned reference as `unknown` leaves the direct references acyclic. Keys are the
+ * referencing schemas; values are the referenced ones, sorted.
+ */
+export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<string, string[]> {
+  return cycleCuts(referenceGraph(schemas));
+}
+
+/** The references between component schemas typed `unknown`: referencing schemas map to referenced ones, sorted. */
+export interface AliasCuts {
+  /** References that close a cycle: `aliasCycleCuts`. */
+  cycles: Map<string, string[]>;
+  /** References at which a chain of the remaining ones would exceed MAX_ALIAS_DEPTH levels. */
+  depth: Map<string, string[]>;
+}
+
+/**
+ * The references (see `directReferences`) a generated package types `unknown`: those that close a
+ * cycle (`aliasCycleCuts`), then those that would make a chain of the rest longer than MAX_ALIAS_DEPTH
+ * levels. Each component's longest chain is computed after those of the components it refers to, with
+ * an explicit stack, and a reference that would take it past the bound is cut; so the result depends
+ * only on the references, not on the order they are visited in, and the chain restarts at a cut. Depth
+ * cuts are sorted by referencing schema.
+ */
+export function aliasCuts(schemas: Readonly<Record<string, unknown>>): AliasCuts {
+  const edges = referenceGraph(schemas);
+  const cycles = cycleCuts(edges);
+  const live = (name: string) => {
+    const cut = cycles.get(name);
+    const targets = edges.get(name)!;
+    return cut ? targets.filter(([target]) => !cut.includes(target)) : targets;
+  };
+  const depth = new Map<string, string[]>();
+  const longest = new Map<string, number>();
+  const entered = new Set<string>();
+  for (const root of edges.keys()) {
+    if (entered.has(root)) continue;
+    entered.add(root);
+    const stack = [{ name: root, targets: live(root), next: 0 }];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]!;
+      if (frame.next < frame.targets.length) {
+        const [target] = frame.targets[frame.next++]!;
+        if (!entered.has(target)) {
+          entered.add(target);
+          stack.push({ name: target, targets: live(target), next: 0 });
+        }
+        continue;
+      }
+      stack.pop();
+      // Without the cycle cuts the references are acyclic, so every target is already done.
+      let length = 0;
+      for (const [target, levels] of frame.targets) {
+        const through = levels + 1 + longest.get(target)!;
+        if (through > MAX_ALIAS_DEPTH) addCut(depth, frame.name, target);
+        else length = Math.max(length, through);
+      }
+      longest.set(frame.name, length);
+    }
+  }
+  return { cycles, depth: new Map([...depth].sort(([a], [b]) => compareCodeUnits(a, b))) };
+}
+
+/** Both kinds of `aliasCuts` per referencing schema. */
+export function allAliasCuts(cuts: AliasCuts): Map<string, ReadonlySet<string>> {
+  const all = new Map<string, Set<string>>();
+  for (const kind of [cuts.cycles, cuts.depth]) {
+    for (const [name, targets] of kind) for (const target of targets) all.set(name, (all.get(name) ?? new Set()).add(target));
+  }
+  return all;
 }
 
 /** Kinds of value a schema's type admits at its top level, as bit flags. */
@@ -176,7 +264,7 @@ type Step =
  * What `valueKinds` and `containerMembers` know about the components of one `schemas` object, which they
  * treat as immutable (generateSdk passes targets its own validated copy). Every component is analyzed once,
  * in its own context, so a result never depends on which schema referred to it first or how deeply. A
- * reference `aliasCycleCuts` cuts is `unknown`, as `SchemaTypes` types it.
+ * reference `aliasCuts` cuts is `unknown`, as `SchemaTypes` types it.
  */
 interface Analysis {
   schemas: Readonly<Record<string, unknown>>;
@@ -217,7 +305,7 @@ function topReferences(schema: unknown, schemas: Readonly<Record<string, unknown
 function analysisOf(schemas: Readonly<Record<string, unknown>>): Analysis {
   const existing = analyses.get(schemas);
   if (existing) return existing;
-  const cuts = new Map([...aliasCycleCuts(schemas)].map(([name, targets]) => [name, new Set(targets)] as const));
+  const cuts = allAliasCuts(aliasCuts(schemas));
   const analysis: Analysis = { schemas, cuts, kinds: new Map(), steps: new Map() };
   const cutOf = (name: string) => cuts.get(name) ?? NO_CUTS;
   const visited = new Set<string>();
@@ -252,7 +340,7 @@ export function valueKinds(schema: unknown, schemas: Readonly<Record<string, unk
   return kindsOf(schema, analysisOf(schemas), NO_CUTS);
 }
 
-/** `valueKinds` where `cut` holds the references typed `unknown` (see `aliasCycleCuts`). */
+/** `valueKinds` where `cut` holds the references typed `unknown` (see `aliasCuts`). */
 function kindsOf(schema: unknown, analysis: Analysis, cut: ReadonlySet<string>, depth = 0): number {
   if (depth > MAX_DEPTH) return ANY | INCOMPLETE;
   if (schema === true || schema === undefined || schema === null || !isRecord(schema)) return schema === false ? 0 : ANY;
@@ -441,7 +529,7 @@ export class SchemaTypes {
   }
 
   /**
-   * `cut` names components whose references in a `direct` or `tuple` position (see `aliasCycleCuts`)
+   * `cut` names components whose references in a `direct` or `tuple` position (see `aliasCuts`)
    * are typed `unknown`; `position` is where `schema` sits in the component schema being typed.
    */
   type(schema: unknown, indent = "", depth = 0, cut: ReadonlySet<string> = NO_CUTS, position: Position = "direct"): string {

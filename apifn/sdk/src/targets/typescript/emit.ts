@@ -7,7 +7,7 @@ import { camelCase, docComment, NameRegistry, pascalCase, propertyKey } from "./
 import { analyzeOperation, isReadMethod, type ResponseShape, suppliedByCredential } from "./operations.js";
 import type { TypeScriptOptions } from "./options.js";
 import { RUNTIME_SOURCE } from "./runtime-source.js";
-import { aliasCycleCuts, SchemaTypes } from "./schema.js";
+import { aliasCuts, allAliasCuts, MAX_ALIAS_DEPTH, SchemaTypes } from "./schema.js";
 
 export const CUSTOM_CODE_ROOT = "src/custom/";
 /** TypeScript used to build generated packages; pinned so builds are reproducible. */
@@ -124,21 +124,33 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
   const resolve = (component: string) => typeNames.get(component) ?? null;
   const modelTypes = new SchemaTypes(resolve);
   const clientTypes = new SchemaTypes(resolve, "Models.");
-  // A cycle of references outside object and plain array types would be a circular type alias.
-  const cuts = aliasCycleCuts(catalog.schemas);
-  for (const [schema, targets] of cuts) {
+  // A cycle of references outside object and plain array types would be a circular type alias, and a
+  // long enough chain of them overflows the compiler's call stack.
+  const found = aliasCuts(catalog.schemas);
+  const listed = (targets: string[]) => targets.map((target) => `"${target}"`).join(", ");
+  const which = (targets: string[]) => (targets.length === 1 ? "that reference is" : "those references are");
+  for (const [schema, targets] of found.cycles) {
     diagnostics.push({
       code: "SDK_SCHEMA_CYCLE",
       severity: "warning",
-      message: `Component schema "${schema}" refers back to ${targets.map((target) => `"${target}"`).join(", ")} outside any object or plain array type, which TypeScript cannot express as a type alias; ${targets.length === 1 ? "that reference is" : "those references are"} typed unknown.`,
+      message: `Component schema "${schema}" refers back to ${listed(targets)} outside any object or plain array type, which TypeScript cannot express as a type alias; ${which(targets)} typed unknown.`,
       pointer: `/schemas/${schema.replace(/~/g, "~0").replace(/\//g, "~1")}`,
     });
   }
+  for (const [schema, targets] of found.depth) {
+    diagnostics.push({
+      code: "SDK_SCHEMA_DEPTH",
+      severity: "warning",
+      message: `Component schema "${schema}" refers to ${listed(targets)} outside any object or plain array type at the start of a chain of such references more than ${MAX_ALIAS_DEPTH} levels deep, which overflows the TypeScript compiler; ${which(targets)} typed unknown.`,
+      pointer: `/schemas/${schema.replace(/~/g, "~0").replace(/\//g, "~1")}`,
+    });
+  }
+  const cuts = allAliasCuts(found);
   let models = header(context);
   for (const schema of schemaNames) {
     const value = catalog.schemas[schema];
     const description = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.description === "string" ? value.description : null;
-    models += `\n${docComment([description])}export type ${typeNames.get(schema)} = ${modelTypes.type(value, "", 0, new Set(cuts.get(schema)))};\n`;
+    models += `\n${docComment([description])}export type ${typeNames.get(schema)} = ${modelTypes.type(value, "", 0, cuts.get(schema))};\n`;
   }
   if (schemaNames.length === 0) models += "\nexport {};\n";
 

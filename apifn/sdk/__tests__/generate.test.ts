@@ -1,11 +1,13 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, sha256Hex, type CatalogParameter, type JsonValue } from "@apifn/contracts";
 import { afterAll, describe, expect, it } from "vitest";
 import { GENERATOR_VERSION, SDK_ARTIFACT_MANIFEST_FILE, TYPESCRIPT_TARGET_VERSION, writeSdk } from "../src/index.js";
 import { parameterSupport } from "../src/targets/typescript/operations.js";
 import { RUNTIME_SOURCE } from "../src/targets/typescript/runtime-source.js";
-import { aliasCycleCuts } from "../src/targets/typescript/schema.js";
+import { aliasCuts, aliasCycleCuts, MAX_ALIAS_DEPTH } from "../src/targets/typescript/schema.js";
 import { cleanupTemp, clone, compile, fixtureCatalog, fixtureConfig, FIXTURES, generate, PACKAGE_DIR, readJson, tempDir } from "./helpers.js";
 
 afterAll(cleanupTemp);
@@ -549,11 +551,11 @@ export async function use(): Promise<void> {
 
   it("analyzes each referenced component once, however often it is referenced", () => {
     const cases = [
-      { name: "array items through a repeated chain", schemas: chain("Chain", 200, { type: "string" }), parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Chain0" } } }, expect: { supported: true, admitsUnserializable: false } },
-      { name: "a nested member through a repeated chain", schemas: chain("Deep", 200, { type: "object", properties: { owner: { type: "object" } } }), parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Deep0" } }, expect: { supported: false } },
+      { name: "array items through a repeated chain", schemas: chain("Chain", 120, { type: "string" }), parameter: { in: "query", name: "tags", style: "form", explode: true, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Chain0" } } }, expect: { supported: true, admitsUnserializable: false } },
+      { name: "a nested member through a repeated chain", schemas: chain("Deep", 120, { type: "object", properties: { owner: { type: "object" } } }), parameter: { in: "query", name: "filter", style: "deepObject", explode: true, required: false, schema: { $ref: "#/components/schemas/Deep0" } }, expect: { supported: false } },
       // Every level also refers back to the first, so each one is in a cycle too; the cut references are
       // unknown in an intersection, so the items are strings, as the emitted types say.
-      { name: "a repeated chain that is also cyclic", schemas: chain("Loop", 200, { type: "string" }, [{ $ref: "#/components/schemas/Loop0" }]), parameter: { in: "header", name: "X-Loop", style: "simple", explode: false, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Loop0" } } }, expect: { supported: true, admitsUnserializable: false } },
+      { name: "a repeated chain that is also cyclic", schemas: chain("Loop", 120, { type: "string" }, [{ $ref: "#/components/schemas/Loop0" }]), parameter: { in: "header", name: "X-Loop", style: "simple", explode: false, required: false, schema: { type: "array", items: { $ref: "#/components/schemas/Loop0" } } }, expect: { supported: true, admitsUnserializable: false } },
     ];
     const started = performance.now();
     const result = generate(vectorCatalog(cases.map((vector, index) => ({ vector, index }))));
@@ -647,16 +649,115 @@ export async function use(): Promise<void> {
     const ring = links("Ring", length, { $ref: "#/components/schemas/Ring0" });
     const vector = { name: "a long alias chain", schemas: { ...links("Link", length, { type: "string" }), ...ring, ...links("Spare", length, { type: "string" }) }, parameter: { in: "query", name: "tag", style: "form", explode: true, required: false, schema: { $ref: "#/components/schemas/Link0" } } };
     const catalog = vectorCatalog([{ vector, index: 0 }]);
-    const operation = catalog.operations.find((entry: any) => entry.id === "vectors.v0");
-    operation.responses.find((response: any) => response.status === "200").contents[0].schema = { $ref: "#/components/schemas/Ring0" };
+    const operation = catalog.operations.find((entry: { id: string }) => entry.id === "vectors.v0");
+    operation.responses.find((response: { status: string }) => response.status === "200").contents[0].schema = { $ref: "#/components/schemas/Ring0" };
 
-    expect(aliasCycleCuts(ring)).toEqual(new Map([[`Ring${length}`, ["Ring0"]]]));
+    // Counting back from the string at the end, every 257th reference starts a chain over the bound and is cut.
+    const depthCuts = (prefix: string) => new Map(Array.from({ length: 46 }, (_, step) => [`${prefix}${178 + 257 * step}`, [`${prefix}${179 + 257 * step}`]]));
+    expect(aliasCuts(ring)).toEqual({ cycles: new Map([[`Ring${length}`, ["Ring0"]]]), depth: depthCuts("Ring") });
     const result = generate(catalog);
     expect(result.ok).toBe(true);
     expect(result.manifest!.operations.included.map((entry) => entry.id)).toContain("vectors.v0");
+    const cut = result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_DEPTH").map(({ severity, pointer }) => `${severity} ${pointer}`);
+    expect(cut).toEqual(["Link", "Ring", "Spare"].flatMap((prefix) => [...depthCuts(prefix).keys()].sort().map((name) => `warning /schemas/${name}`)));
+    // Link0 now reaches the reference cut at Link178, so it may be anything and the parameter is narrowed.
+    const models = result.files.find((file) => file.path === "src/models.ts")!.contents;
+    expect(models).toContain("export type Link178 = unknown;\n");
+    expect(models).toContain("export type Link179 = Link180;\n");
     const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
-    expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).not.toMatch(/\bParamValue</);
+    expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).toMatch(/\bParamValue<Models\.Link0>/);
   });
+
+  it("cuts the reference that starts a chain of eagerly resolved references over the depth bound, whatever the order", () => {
+    // Each reference counts one level plus the members and items it sits inside: anyOf adds one.
+    const anyOf = (prefix: string, length: number) => {
+      const schemas: Record<string, unknown> = { [`${prefix}${length}`]: { type: "string" } };
+      for (let level = 0; level < length; level++) schemas[`${prefix}${level}`] = { anyOf: [{ $ref: `#/components/schemas/${prefix}${level + 1}` }, { type: "integer" }] };
+      return schemas;
+    };
+    const schemas = {
+      ...links("AtBound", MAX_ALIAS_DEPTH, { type: "string" }),
+      ...links("Over", MAX_ALIAS_DEPTH + 1, { type: "string" }),
+      ...anyOf("Half", MAX_ALIAS_DEPTH / 2),
+      ...anyOf("HalfOver", MAX_ALIAS_DEPTH / 2 + 1),
+      // Over2 starts a chain of 255 levels: a reference to it reaches the bound, one inside allOf passes it.
+      Into: { $ref: "#/components/schemas/Over2" },
+      ...links("Feed", 2, { allOf: [{ $ref: "#/components/schemas/Over2" }] }),
+      // References through object properties and plain arrays are not resolved eagerly.
+      ...Object.fromEntries(Array.from({ length: 5001 }, (_, level) => [`Obj${level}`, level === 5000 ? { type: "string" } : { type: "object", properties: { next: { $ref: `#/components/schemas/Obj${level + 1}` } } }])),
+    };
+    const expected = {
+      cycles: new Map(),
+      depth: new Map([
+        ["Feed2", ["Over2"]],
+        ["HalfOver0", ["HalfOver1"]],
+        ["Over0", ["Over1"]],
+      ]),
+    };
+    expect(aliasCuts(schemas)).toEqual(expected);
+    expect(aliasCuts(reorder(schemas) as Record<string, unknown>)).toEqual(expected);
+    expect(aliasCuts(Object.fromEntries(Object.entries(schemas).sort(() => -1)))).toEqual(expected);
+  });
+
+  it("emits packages its pinned compiler builds for eager reference chains of any depth, keeping chains within the bound precise", () => {
+    const shapes = {
+      ref: (next: string) => ({ $ref: next }),
+      allOf: (next: string) => ({ allOf: [{ $ref: next }] }),
+      anyOf: (next: string) => ({ anyOf: [{ $ref: next }, { type: "integer" }] }),
+      array: (next: string) => ({ type: "array", items: { $ref: next } }),
+      object: (next: string) => ({ type: "object", properties: { next: { $ref: next } } }),
+    };
+    const build = (prefix: string, length: number, shape: keyof typeof shapes) => {
+      const schemas: Record<string, unknown> = { [`${prefix}${length}`]: { type: "string" } };
+      for (let level = 0; level < length; level++) schemas[`${prefix}${level}`] = shapes[shape](`#/components/schemas/${prefix}${level + 1}`);
+      return schemas;
+    };
+    // The compiler overflowed at about 1,000 references of each eager shape, used or not.
+    const vector = {
+      name: "deep alias chains",
+      schemas: {
+        ...build("Used", 1500, "ref"),
+        ...build("Answer", 1500, "anyOf"),
+        ...build("Spare", 1500, "allOf"),
+        ...build("Choice", 1500, "anyOf"),
+        ...build("Exact", MAX_ALIAS_DEPTH, "ref"),
+        ...build("List", 5000, "array"),
+        ...build("Nest", 5000, "object"),
+      },
+      parameter: { in: "query", name: "tag", style: "form", explode: true, required: false, schema: { $ref: "#/components/schemas/Used0" } },
+    };
+    const catalog = vectorCatalog([{ vector, index: 0 }]);
+    const operation = catalog.operations.find((entry: { id: string }) => entry.id === "vectors.v0");
+    operation.responses.find((response: { status: string }) => response.status === "200").contents[0].schema = { $ref: "#/components/schemas/Answer0" };
+    const result = generate(catalog);
+    expect(result.ok).toBe(true);
+    const cut = new Set(result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_DEPTH").map(({ pointer }) => pointer!.replace(/^\/schemas\/|\d+$/g, "")));
+    expect([...cut].sort()).toEqual(["Answer", "Choice", "Spare", "Used"]);
+
+    const dir = tempDir();
+    return writeSdk(dir, result).then((written) => {
+      expect(written.ok).toBe(true);
+      writeFileSync(
+        path.join(dir, "src/custom/consumer-depth.ts"),
+        `import type { Exact0, List0, Nest0 } from "../models.js";
+export const exact: Exact0 = "a";
+// @ts-expect-error a chain within the bound keeps its precise type
+export const notExact: Exact0 = 1;
+export const list: List0 = [];
+// @ts-expect-error array chains have no bound
+export const notList: List0 = ["a"];
+export const nest: Nest0 = { next: {} };
+// @ts-expect-error object chains have no bound
+export const notNest: Nest0 = { next: "a" };
+`
+      );
+      // A child process, as the generated package's own build runs it: an overflow there is not catchable here.
+      const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+      const compiled = spawnSync(process.execPath, [tsc, "-p", path.join(dir, "tsconfig.json"), "--noEmit"], { encoding: "utf8" });
+      expect(`${compiled.stdout}${compiled.stderr}`).toBe("");
+      expect(compiled.status).toBe(0);
+    });
+  }, 120_000);
 
   it("cuts alias cycles exactly where a recursive depth-first search in sorted order would", () => {
     /** The recursive search the iterative one replaced, as the reference. */
