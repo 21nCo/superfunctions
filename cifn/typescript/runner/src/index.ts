@@ -29,3 +29,5 @@ export type { OwnedDockerOptions, OwnedDockerStep } from './owned-docker-executo
 export type { OwnedDockerJob, DockerJobOptions, DockerJobStep } from './owned-docker-job.js';
 
 export type { DockerReceiptDecision, DockerCleanupReceipt } from './docker-receipts.js';
+
+export type { ArchiveLimits } from './steps/archive.js';

@@ -1,3 +1,4 @@
+import type { ArchiveLimits } from './steps/archive.js';
 import { DockerExecutionInterruptedError, type OwnedDockerJob } from './owned-docker-job.js';
 import type { OwnedDockerExecutor } from './owned-docker-executor.js';
 import { ProcessGroupUncertainError } from './executor/owned-shell.js';
@@ -43,6 +44,7 @@ export interface RunnerOptions {
   pipelineSpecs?: Map<string, PipelineSpec>;
   queueName?: string;
   cleanWorkspace?: boolean;
+  archiveLimits?: ArchiveLimits;
   fileFnClient?: {
     upload(namespace: string, key: string, data: Buffer): Promise<string>;
     downloadByKey(namespace: string, key: string): Promise<Buffer | null>;
@@ -76,6 +78,7 @@ export class Runner {
   private pipelineSpecs: Map<string, PipelineSpec>;
   private queueName: string;
   private cleanWorkspace: boolean;
+  private archiveLimits?: ArchiveLimits;
   private fileFnClient?: RunnerOptions['fileFnClient'];
   private artifactStore?: RunnerOptions['artifactStore'];
   private secretValues: Map<string, string[]>;
@@ -103,6 +106,7 @@ export class Runner {
     this.queueName = options.queueName ?? DEFAULT_QUEUE_NAME;
     this.cleanWorkspace = options.cleanWorkspace ?? true;
     this.fileFnClient = options.fileFnClient;
+    this.archiveLimits = options.archiveLimits;
     this.artifactStore = options.artifactStore;
     this.secretValues = options.secretValues ?? new Map();
     this.getSecret = options.getSecret;
@@ -342,7 +346,7 @@ export class Runner {
             ]);
 
             const uploadResult = await executeArtifactUpload({
-              name: artName, path: artPath, workspace, runId, fileFnClient: this.fileFnClient,
+              name: artName, path: artPath, workspace, runId, fileFnClient: this.fileFnClient, archiveLimits: this.archiveLimits,
             });
             logLines(step.stepKey, uploadResult.lines);
 
@@ -387,7 +391,7 @@ export class Runner {
             ]);
 
             const downloadResult = await executeArtifactDownload({
-              name: artName, workspace, runId, fileFnClient: this.fileFnClient,
+              name: artName, workspace, runId, fileFnClient: this.fileFnClient, archiveLimits: this.archiveLimits,
             });
             logLines(step.stepKey, downloadResult.lines);
 
@@ -430,7 +434,7 @@ export class Runner {
             ]);
 
             const saveResult = await executeCacheSave({
-              key: cacheKey, paths: cachePaths, workspace, fileFnClient: this.fileFnClient,
+              key: cacheKey, paths: cachePaths, workspace, fileFnClient: this.fileFnClient, archiveLimits: this.archiveLimits,
             });
             logLines(step.stepKey, saveResult.lines);
 
@@ -470,7 +474,7 @@ export class Runner {
             ]);
 
             const restoreResult = await executeCacheRestore({
-              key: cacheKey, workspace, fileFnClient: this.fileFnClient,
+              key: cacheKey, workspace, fileFnClient: this.fileFnClient, archiveLimits: this.archiveLimits,
             });
             logLines(step.stepKey, restoreResult.lines);
 

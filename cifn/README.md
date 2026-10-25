@@ -454,3 +454,24 @@ Inspection reads one exact UUID directory and at most 16 KiB from a private regu
 The original receipt and a separate immutable `cleanup.json` remain retained. Exact decision replay returns that terminal receipt without another daemon request; a different operator/decision rejects. Cleanup never deletes the workspace, executes steps, changes claim status, or supplies a completion result. Use the separate control-plane adjudication contract only with its required evidence.
 
 Interrupted or uncertain cleanup retains `cleanup.lock`; subsequent calls fail closed rather than stealing it by age/PID. Offline lock repair must establish that its actual owner has stopped and inspect the state first. No public automatic stale-lock recovery, inventory pagination, terminal pruning or total disk quota is provided. These operational limits remain explicit; the original dated requirements do not prescribe a particular receipt TTL or mandate autonomous recovery. The native fixture separately demonstrates killed cleanup-owner lock retention and uses explicit fixture-only offline repair before exercising public cleanup and reopen replay.
+
+### Artifact and cache workspace archives
+
+The local artifact upload/download and cache save/restore helpers share the existing four-byte manifest-length + JSON manifest + file-bytes format. Valid legacy archives still round-trip. Upload paths and extraction entries must be relative POSIX paths: absolute paths, `..`/`.` components, empty components, NUL, backslash and colon are rejected. `.` or an empty selected upload root means the workspace itself. Artifact directories extract relative to the selected directory; single artifact files and cache files keep their workspace-relative path. Overlapping cache selections are deduplicated.
+
+Before any extraction write, the complete manifest, contiguous integer byte ranges, UTF-8, destination paths, duplicate case/NFC file aliases and file/directory prefix conflicts are validated. Existing symlink parents, dangling/final symlinks, hardlinked files and nonregular files reject. Reads are bounded through no-follow descriptors. New output files use exclusive create; existing outputs open without truncation, then regular-file/link checks precede truncation. Zero-progress writes fail. Unexpected provider/filesystem error text is not reflected in returned logs.
+
+`Runner({ archiveLimits })` and the four public helper option objects accept trusted host limits:
+
+| Field | Default | Supported maximum |
+| --- | --- | --- |
+| `maxBytes` | 64 MiB for the complete encoded archive | 1 GiB |
+| `maxManifestBytes` | 1 MiB | 16 MiB |
+| `maxEntries` | 10,000 visited source entries / distinct destination files and parent directories | 100,000 |
+| `maxDepth` | 64 path components | 256 |
+
+Values must be positive safe integers; path text is at most 4096 UTF-8 bytes. These are explicit implementation resource policies, not numeric limits invented as original specification requirements. A host can tighten or raise them within the supported bounds; downstream FileFn limits still apply. Existing larger archives may require explicit configuration.
+
+This path requires POSIX no-follow file operations and fails closed on Windows; case/NFC collision checks do not claim Windows reparse/filename compatibility. The host must exclude concurrent hostile workspace writers, including background processes started by job commands. Path checks and file descriptors defend against static malicious archives/preexisting links; they are not an OS sandbox against parent-directory replacement races. A filesystem failure during otherwise valid extraction can leave partial in-workspace output; whole-archive transactional rollback is not promised. The current provider interface returns a Buffer, so these archive caps do not bound provider-side network buffering before the helper receives that Buffer.
+
+Remote FileFn upload/download/reference acknowledgement and cache integration remain required work: the remote executor still rejects these provider steps, and the existing FileFn HTTP adapter's key lookup/list implementation is incomplete. The archive helper checkpoint does not establish production FileFn interoperability.
