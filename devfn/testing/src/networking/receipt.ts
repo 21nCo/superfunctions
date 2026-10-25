@@ -1,7 +1,11 @@
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_MATRIX, NETWORKING_QUALIFICATION_CONTRACT, QUALIFIED_PLATFORMS, type QualificationScenario } from "./matrix.js";
+import type { InventoryEntry } from "./inventory.js";
 import type { PrerequisiteResult, ScenarioResult, ScenarioStatus } from "./runner.js";
 
 export const RECEIPT_CHECK = "networking-qualification-contract";
+
+/** The code a run qualified: one clean checkout at head whose DevFn CLI and harness were built after its sources. */
+export interface Provenance { head: string; checkout: string; clean: boolean; builtAfterSources: boolean; devfnCli: string }
 
 /** One host's live run. Only a valid receipt whose scenarios passed is acceptance evidence. */
 export interface NetworkingQualificationReceipt {
@@ -10,12 +14,15 @@ export interface NetworkingQualificationReceipt {
   target: typeof LIVE_MATRIX_TARGET;
   head: string;
   runId: string;
+  provenance: Provenance;
   host: { platform: string; arch: string; release: string; node: string };
   startedAt: string;
   finishedAt: string;
   approval?: { approvedBy: string; expiresAt: string };
   prerequisites: PrerequisiteResult[];
   scenarios: ScenarioResult[];
+  /** Resources the whole run shares, such as its DevFn Caddy and the processes of its root, with their cleanup read-back. */
+  runResources: InventoryEntry[];
   interface: typeof ENDPOINT_INTERFACE;
   /** Host and provider limitations observed or reported during the run. */
   limitations: string[];
@@ -44,12 +51,18 @@ export function redactSecrets<T>(value: T, secrets: readonly string[]): T {
  * Problems that make a receipt unusable as evidence. A passed scenario must
  * come from a qualified platform and carry a passing observation of every
  * planned assertion, no failed one, resources read back absent and no
- * protected change; a summary must match its scenarios.
+ * protected change. The receipt must come from a clean, freshly built
+ * checkout at its head, every run-level resource must be read back absent,
+ * and the summary must match the scenarios.
  */
 export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix: readonly QualificationScenario[] = NETWORKING_MATRIX): string[] {
   const problems: string[] = [];
   if (receipt.contract !== NETWORKING_QUALIFICATION_CONTRACT || receipt.check !== RECEIPT_CHECK) problems.push("not a networking qualification receipt");
   if (!/^[a-f0-9]{40}$/.test(receipt.head)) problems.push("head is not a full commit SHA");
+  const source = receipt.provenance;
+  if (source?.head !== receipt.head || source.clean !== true || source.builtAfterSources !== true) problems.push("not run from a clean checkout built at its head");
+  for (const entry of receipt.runResources ?? []) if (entry.cleanup?.absent !== true) problems.push(`run-level ${entry.kind} ${entry.id} not read back absent`);
+  if (!receipt.runResources?.some((entry) => entry.kind === "proxy") || !receipt.runResources.some((entry) => entry.kind === "run-processes")) problems.push("run-level cleanup was not recorded");
   const seen = new Set<string>();
   for (const scenario of receipt.scenarios) {
     const definition = matrix.find((item) => item.id === scenario.id);

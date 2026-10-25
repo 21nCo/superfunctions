@@ -15,8 +15,12 @@ export interface QualificationApproval {
   oauth?: { provider: "google"; clientIdEnv: string; clientSecretEnv: string; relayHost: string; redirectUri: string };
   cloudflare?: { domain: string; accountId: string; zoneId: string; tunnelId: string; credentialsFile: string; apiTokenEnv: string };
   ngrokReserved?: { domain: string; authtokenEnv: string; apiKeyEnv: string };
-  ngrokEphemeral?: { authtokenEnv: string; apiKeyEnv?: string };
+  /** The API key reads back the account's online endpoints, so a withdrawn name's absence is observed. */
+  ngrokEphemeral?: { authtokenEnv: string; apiKeyEnv: string };
 }
+
+/** The callback path of the fixture OAuth apps; the relay redirect URI is the relay origin plus this path. */
+export const OAUTH_CALLBACK_PATH = "/oauth/callback";
 
 export class ApprovalError extends Error {
   public constructor(message: string) { super(message); this.name = "ApprovalError"; }
@@ -69,8 +73,8 @@ export function parseApproval(value: unknown, now = new Date()): QualificationAp
     const redirectUri = text(oauth, "redirectUri", "approval.oauth");
     let redirect: URL;
     try { redirect = new URL(redirectUri); } catch { throw new ApprovalError("approval.oauth.redirectUri is not a URL."); }
-    if (redirect.protocol !== "https:" || redirect.hostname !== `${relayHost}.${approval.domain}` || redirect.search || redirect.hash || redirect.username || redirect.password || redirect.pathname === "/") {
-      throw new ApprovalError("approval.oauth.redirectUri must be an https callback path on the relay host of the approved domain.");
+    if (redirect.protocol !== "https:" || redirect.hostname !== `${relayHost}.${approval.domain}` || redirect.search || redirect.hash || redirect.username || redirect.password || redirect.pathname !== OAUTH_CALLBACK_PATH) {
+      throw new ApprovalError(`approval.oauth.redirectUri must be https://<relayHost>.<domain>[:port]${OAUTH_CALLBACK_PATH}, the relay host of the approved domain.`);
     }
     approval.oauth = { provider: "google", clientIdEnv: envName(oauth, "clientIdEnv", "approval.oauth"), clientSecretEnv: envName(oauth, "clientSecretEnv", "approval.oauth"), relayHost, redirectUri: redirect.href };
   }
@@ -89,8 +93,8 @@ export function parseApproval(value: unknown, now = new Date()): QualificationAp
   }
   if (root.ngrokEphemeral !== undefined) {
     const field = "approval.ngrokEphemeral";
-    const ephemeral = object(root.ngrokEphemeral, field, ["authtokenEnv"], ["apiKeyEnv"]);
-    approval.ngrokEphemeral = { authtokenEnv: envName(ephemeral, "authtokenEnv", field), ...(ephemeral.apiKeyEnv === undefined ? {} : { apiKeyEnv: envName(ephemeral, "apiKeyEnv", field) }) };
+    const ephemeral = object(root.ngrokEphemeral, field, ["authtokenEnv", "apiKeyEnv"]);
+    approval.ngrokEphemeral = { authtokenEnv: envName(ephemeral, "authtokenEnv", field), apiKeyEnv: envName(ephemeral, "apiKeyEnv", field) };
   }
   return approval;
 }

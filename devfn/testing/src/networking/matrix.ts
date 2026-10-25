@@ -6,6 +6,8 @@
  * same behavior without real hosts or providers; they are never live evidence.
  */
 
+import { createHash } from "node:crypto";
+
 export const NETWORKING_QUALIFICATION_CONTRACT = "devfn.networking-qualification/v1";
 /** The issue that executes the live matrix. */
 export const LIVE_MATRIX_TARGET = "DEV-17";
@@ -14,12 +16,12 @@ export const QUALIFIED_PLATFORMS = ["darwin", "linux"] as const;
 export type QualifiedPlatform = typeof QUALIFIED_PLATFORMS[number];
 
 export type PrerequisiteId =
-  | "supported-host" | "devfn-cli" | "git" | "caddy" | "proxy-ports" | "docker-compose"
+  | "supported-host" | "devfn-cli" | "git" | "caddy" | "process-tools" | "proxy-ports" | "docker-compose"
   | "approval" | "registered-domain" | "google-oauth" | "browser-operator"
   | "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral";
 
 /** Disposable resources a scenario may create. Each must be removed and its absence read back. */
-export type ResourceKind = "fixture-repository" | "runtime" | "proxy" | "registered-domain" | "oauth-relay" | "tunnel-binding" | "public-hostname";
+export type ResourceKind = "fixture-repository" | "runtime" | "proxy" | "run-processes" | "registered-domain" | "oauth-relay" | "tunnel-binding" | "public-hostname";
 
 export interface PlannedAssertion { id: string; claim: string }
 
@@ -45,7 +47,7 @@ export const DEFERRED_ROWS: Readonly<Record<QualificationScenario["row"] | 6, st
   6: "DEV-2 completes only after every scenario passes live on macOS and Linux at the merged head.",
 };
 
-const HOST: readonly PrerequisiteId[] = ["supported-host", "devfn-cli", "git", "caddy", "proxy-ports"];
+const HOST: readonly PrerequisiteId[] = ["supported-host", "devfn-cli", "git", "caddy", "process-tools", "proxy-ports"];
 const a = (id: string, claim: string): PlannedAssertion => ({ id, claim });
 const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing: "pre-start" | "post-start", dns: string): QualificationScenario => ({
   id, row: 3, title, prerequisites: [...HOST, "approval", prerequisite],
@@ -163,7 +165,10 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/endpoints.test.ts", "devfn/compose/test/override.test.ts", "devfn/testing/test/networking-qualification.test.ts"] },
 ];
 
-/** The opaque-owner endpoint interface DEV-3 consumes, as this harness qualifies it. */
+/** The opaque label local hostnames carry for an owner: o- and the first 20 hex digits of its SHA-256. */
+export const ownerLabel = (owner: string): string => `o-${createHash("sha256").update(owner).digest("hex").slice(0, 20)}`;
+
+/** The opaque-owner endpoint interface DEV-3 consumes, as this harness qualifies it; the contract tests bind it to @devfn/core. */
 export const ENDPOINT_INTERFACE = {
   version: 1,
   resolver: "@devfn/core resolveEndpointTemplates",

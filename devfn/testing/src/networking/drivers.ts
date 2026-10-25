@@ -1,17 +1,17 @@
 import { execFile, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import path from "node:path";
 import tls from "node:tls";
 
 import { createPlan, resolveEndpointTemplates } from "@devfn/core";
 import { validateDevFnConfig } from "@devfn/config";
-import { proxyListenerPorts, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
+import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
 import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings } from "@devfn/proxy/tunnel";
 
-import type { QualificationApproval } from "./approval.js";
+import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
 import type { LiveHost } from "./live.js";
+import { ownerLabel } from "./matrix.js";
 import type { ScenarioContext, ScenarioDriver } from "./runner.js";
 
 type LiveDriver = (context: ScenarioContext, host: LiveHost) => Promise<void>;
@@ -60,17 +60,18 @@ export function tunnelFixture(binding: string, ephemeral: boolean): Record<strin
     hostnames: { web: { target: "web", path: "/app", stripPrefix: true }, private: { target: "private" } } };
 }
 
-export const OAUTH_CALLBACK_PATH = "/oauth/callback";
+export { OAUTH_CALLBACK_PATH };
 
 /**
  * A worktree's own Google OAuth code-flow client. It owns state, nonce and the
  * S256 PKCE verifier, asks the DevFn relay for the registered redirect URI,
  * validates its callback and ID token nonce, and exchanges the code itself.
- * /evidence reports outcomes only, never codes or tokens.
+ * /evidence reports outcomes, session hosts and one fixture session ID for
+ * the cross-host probe, never codes or tokens. A consumed callback URL stays
+ * in memory until the harness takes it once from /replays to replay it.
  */
 export function oauthApp(relayModule: string): string {
   return `import { createHash, randomBytes } from "node:crypto";
-import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { OAuthRelayClient } from ${JSON.stringify(relayModule)};
 const [portKey, idEnv, secretEnv, callbackPath] = process.argv.slice(2);
@@ -78,6 +79,7 @@ const clientId = process.env[idEnv], clientSecret = process.env[secretEnv];
 const relay = new OAuthRelayClient();
 const token = (n = 32) => randomBytes(n).toString("base64url");
 const flows = new Map(), sessions = new Map(), evidence = [];
+let replays = [];
 const cookie = (request, name) => (request.headers.cookie ?? "").split(/;\\s*/).find((item) => item.startsWith(name + "="))?.slice(name.length + 1);
 createServer(async (request, response) => {
   const url = new URL(request.url, "https://" + request.headers.host);
@@ -96,7 +98,7 @@ createServer(async (request, response) => {
       const record = { host: request.headers.host, stateOk: !!flow && flow.state === url.searchParams.get("state") };
       if (!record.stateOk) { evidence.push(record); response.writeHead(400).end("state_mismatch"); return; }
       flows.delete(cookie(request, "pre"));
-      writeFileSync("replay-" + Date.now() + ".url", flow.redirectUri + url.search);
+      replays.push(flow.redirectUri + url.search);
       const exchange = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code",
         code: url.searchParams.get("code") ?? "", redirect_uri: flow.redirectUri, client_id: clientId, client_secret: clientSecret, code_verifier: flow.verifier }) });
       const result = await exchange.json().catch(() => ({}));
@@ -112,7 +114,8 @@ createServer(async (request, response) => {
       response.writeHead(302, { location: "/me", "set-cookie": "sid=" + sid + "; Path=/; HttpOnly; Secure; SameSite=Lax" }).end(); return;
     }
     if (url.pathname === "/me") { const host = sessions.get(cookie(request, "sid") ?? ""); response.writeHead(host === request.headers.host ? 200 : 401).end(host ? "signed-in" : "anonymous"); return; }
-    if (url.pathname === "/evidence") { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ evidence, sessions: sessions.size })); return; }
+    if (url.pathname === "/evidence") { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ evidence, sessions: sessions.size, sessionHosts: [...new Set(sessions.values())], probe: [...sessions.keys()][0] })); return; }
+    if (url.pathname === "/replays") { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(replays)); replays = []; return; }
     response.writeHead(404).end();
   } catch (error) { response.writeHead(500).end(error instanceof Error ? error.name : "error"); }
 }).listen(Number(process.env[portKey]), "127.0.0.1");
@@ -142,8 +145,10 @@ async function certificateNames(servername: string, ca: string, address = "127.0
   });
 }
 
-/** Whether a fresh Node.js that trusts the operating system's CA store accepts url. */
-async function systemTrustAccepts(url: string): Promise<boolean> {
+/** Whether a fresh Node.js that trusts the operating system's CA store accepts url; unknown before Node.js 22.15 (--use-system-ca). */
+async function systemTrustAccepts(url: string): Promise<boolean | undefined> {
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  if (major === 22 && minor < 15) return undefined;
   const script = `const u = new URL(${JSON.stringify(url)}); require("https").get({ host: "127.0.0.1", port: u.port, servername: u.hostname, headers: { host: u.host } }, () => process.exit(0)).on("error", () => process.exit(9));`;
   return (await exec(process.execPath, ["--use-system-ca", "-e", script])).code === 0;
 }
@@ -152,6 +157,8 @@ const marker = (cwd: string) => path.basename(cwd);
 const pathOf = (url: string) => new URL(url).pathname.replace(/\/$/, "");
 const originOf = (url: string) => new URL(url).origin;
 const hostOf = (url: string) => new URL(url).hostname;
+/** The plain-HTTP form of a local TLS route URL, on the proxy's HTTP listener. */
+const plainOf = (url: string) => url.replace(/^https:/, "http:").replace(`:${proxyListenerPorts().httpsPort}`, `:${proxyListenerPorts().httpPort}`);
 
 async function urls(host: LiveHost, cwd: string): Promise<Record<string, string>> { return (await host.must(cwd, ["url"])).urls as Record<string, string>; }
 
@@ -247,27 +254,28 @@ const internalTls: LiveDriver = async (context, host) => {
   const ca = await host.ca();
   const names = await Promise.all([a, b].map(async (item) => await certificateNames(hostOf(item.urls.web), ca)));
   context.expect("verified-sni", names.every((name, index) => name.includes(`DNS:${hostOf([a, b][index].urls.web)}`)), `verified certificates: ${names.join(" | ")}`);
-  const plain = await host.request(a.urls.web.replace(/^https:/, "http:").replace(`:${proxyListenerPorts().httpsPort}`, `:${proxyListenerPorts().httpPort}`));
+  const plain = await host.request(plainOf(a.urls.web));
   context.expect("http-redirect", plain.status >= 300 && plain.status < 400 && String(plain.headers.location ?? "").startsWith("https://"), `HTTP answered ${plain.status} -> ${String(plain.headers.location)}`);
   const unchanged = JSON.stringify(await host.trustAnchors()) === JSON.stringify(anchors);
   // A root the operator trusted before the run is reported, not attributed to DevFn.
-  context.expect("no-trust-install", unchanged, `OS trust store ${unchanged ? "unchanged" : "changed"} across startup and TLS use (${anchors.length} anchors); the internal root was ${await systemTrustAccepts(a.urls.web) ? "already trusted by the operator" : "not trusted by the OS"}`);
+  context.expect("no-trust-install", unchanged, `OS trust store ${unchanged ? "unchanged" : "changed"} across startup and TLS use (${anchors.length} anchors); the internal root was ${{ true: "already trusted by the operator", false: "not trusted by the OS", undefined: "not checked against the OS store (Node.js before 22.15)" }[String(await systemTrustAccepts(a.urls.web))]}`);
 };
 
 const registeredDomain = (approval: QualificationApproval | undefined): LiveDriver => async (context, host) => {
   const domain = approval!.domain!;
   const primary = await host.repository(context.scenario.id, "domain", domainFixture(domain));
-  context.inventory.record("registered-domain", domain, context.scenario.id);
-  host.remember("registered-domain", domain, { cwd: primary });
+  context.inventory.record("registered-domain", domain, context.scenario.id, { cwd: primary });
   const registered = await host.devfn(primary, ["domains", "register", domain, "--tls", "internal"]);
   const loopback = async (name: string) => (await lookup(name, { all: true })).every((item) => item.address.startsWith("127.") || item.address === "::1");
   context.expect("loopback-only", registered.code === 0 && await loopback(domain), `registration ${registered.code === 0 ? "accepted" : JSON.stringify(registered.json.error)}; ${domain} resolves only to loopback`);
   const linked = await host.worktree(context.scenario.id, primary, "b");
-  const ca = await host.ca();
   const served = [];
   const routes: string[][] = [];
+  let ca = "";
   for (const cwd of [primary, linked]) {
     const receipt = await start(context, host, cwd);
+    // The internal root is read from the Caddy admin API, which exists only once a lifecycle started Caddy.
+    ca ||= await host.ca();
     routes.push((receipt.routes as Array<{ hostname: string }>).map((route) => route.hostname));
     const { web } = await urls(host, cwd);
     served.push(await loopback(hostOf(web)) && await serves(host, web, cwd, ca));
@@ -281,18 +289,16 @@ const registeredDomain = (approval: QualificationApproval | undefined): LiveDriv
 const googleOAuth = (approval: QualificationApproval | undefined): LiveDriver => async (context, host) => {
   const domain = approval!.domain!;
   const oauth = approval!.oauth!;
-  const primary = await host.repository(context.scenario.id, "oauth", oauthFixture(domain, oauth), { "oauth.mjs": oauthApp(import.meta.resolve("@devfn/proxy/oauth-relay")), ".gitignore": ".devfn/\nseen-*.json\nfail-*\nreplay-*\n" });
-  context.inventory.record("registered-domain", domain, context.scenario.id);
-  host.remember("registered-domain", domain, { cwd: primary });
+  const primary = await host.repository(context.scenario.id, "oauth", oauthFixture(domain, oauth), { "oauth.mjs": oauthApp(import.meta.resolve("@devfn/proxy/oauth-relay")) });
+  context.inventory.record("registered-domain", domain, context.scenario.id, { cwd: primary });
   await host.must(primary, ["domains", "register", domain, "--tls", "internal"]);
-  context.inventory.record("oauth-relay", domain, context.scenario.id);
-  host.remember("oauth-relay", domain, { cwd: primary });
+  context.inventory.record("oauth-relay", domain, context.scenario.id, { cwd: primary });
   const { relay } = await host.must(primary, ["oauth-relay", "start", domain, "--host", oauth.relayHost]);
   const linked = await host.worktree(context.scenario.id, primary, "b");
   const apps: Array<{ cwd: string; url: string }> = [];
   for (const cwd of [primary, linked]) { await start(context, host, cwd); apps.push({ cwd, url: (await urls(host, cwd)).app }); }
   const ca = await host.ca();
-  type Evidence = { evidence: Array<Record<string, any>>; sessions: number };
+  type Evidence = { evidence: Array<Record<string, any>>; sessions: number; sessionHosts: string[]; probe?: string };
   const read = async (app: { url: string }) => (await host.request(`${originOf(app.url)}/evidence`, { ca })).json as Evidence;
   // A person or browser agent signs in at each URL; the run only waits for the apps to report the outcome.
   process.stderr.write(`Complete a Google sign-in at each URL within 10 minutes:\n${apps.map((app) => `  ${originOf(app.url)}/login`).join("\n")}\n`);
@@ -306,16 +312,21 @@ const googleOAuth = (approval: QualificationApproval | undefined): LiveDriver =>
   const logins = evidence.map((item) => item.evidence.find((record) => record.session === true));
   const approved = `${relay.origin}${OAUTH_CALLBACK_PATH}` === oauth.redirectUri;
   context.expect("one-redirect-uri", approved && logins.every((record) => record?.redirectUri === oauth.redirectUri), `relay redirect ${relay.origin}${OAUTH_CALLBACK_PATH}; both flows used it: ${logins.every((record) => record?.redirectUri === oauth.redirectUri)}`);
-  context.expect("login-both", logins.every((record, index) => record?.host === new URL(apps[index].url).host), `sessions on ${logins.map((record) => record?.host ?? "none").join(", ")}`);
+  // Each session is honored on its own host and refused on the other worktree's host.
+  const me = async (app: { url: string }, probe: string | undefined) => probe ? (await host.request(`${originOf(app.url)}/me`, { ca, cookie: `sid=${probe}` }).catch(() => undefined))?.status : undefined;
+  const own = await Promise.all(apps.map(async (app, index) => await me(app, evidence[index].probe)));
+  const crossed = await Promise.all(apps.map(async (app, index) => await me(app, evidence[1 - index].probe)));
+  context.expect("login-both", logins.every((record, index) => record?.host === new URL(apps[index].url).host && evidence[index].sessionHosts.every((item) => item === record.host)) && own.every((status) => status === 200) && crossed.every((status) => status === 401),
+    `sessions on ${logins.map((record) => record?.host ?? "none").join(", ")}; /me with its own session ${own.join(", ")}, with the other worktree's ${crossed.join(", ")}`);
   context.expect("state-nonce-pkce", logins.every((record) => record?.stateOk === true && record.nonceOk === true && record.pkce === "S256" && record.audienceOk === true && record.issuerOk === true),
     "state, ID token nonce/audience/issuer and S256 PKCE validated by both clients");
-  const replays = (await Promise.all(apps.map(async (app) => (await readdir(app.cwd)).filter((file) => file.startsWith("replay-")).map((file) => path.join(app.cwd, file))))).flat();
+  const replays = (await Promise.all(apps.map(async (app) => (await host.request(`${originOf(app.url)}/replays`, { ca })).json as unknown as string[]))).flat();
   const statuses: number[] = [];
-  for (const file of replays) { statuses.push((await host.request((await readFile(file, "utf8")).trim(), { ca }).catch(() => ({ status: 0 }))).status); await rm(file, { force: true }); }
+  for (const url of replays) statuses.push((await host.request(url, { ca }).catch(() => ({ status: 0 }))).status);
   const after = await Promise.all(apps.map(read));
   context.expect("replay-rejected", replays.length >= 2 && statuses.every((status) => status >= 400) && after.every((item, index) => item.sessions === evidence[index].sessions),
     `replayed ${replays.length} consumed callbacks: ${statuses.join(", ")}; no new session`);
-  context.expect("token-exchange", logins.every((record) => record?.tokenStatus === 200), "Google's token endpoint answered 200 to each worktree's own exchange; the harness never read a code or token");
+  context.expect("token-exchange", logins.every((record) => record?.tokenStatus === 200), "Google's token endpoint answered 200 to each worktree's own exchange; the receipt holds no code or token, and consumed callbacks were replayed from memory");
 };
 
 /** Read-back helpers shared by tunnel journeys. */
@@ -336,23 +347,25 @@ function registerArgs(approval: QualificationApproval, kind: "cloudflare" | "ngr
   }
   if (kind === "ngrok-reserved") return ["--provider", "ngrok", "--domain", approval.ngrokReserved!.domain, "--authtoken-env", approval.ngrokReserved!.authtokenEnv, "--api-key-env", approval.ngrokReserved!.apiKeyEnv];
   const ephemeral = approval.ngrokEphemeral!;
-  return ["--provider", "ngrok", "--ephemeral", "--authtoken-env", ephemeral.authtokenEnv, ...(ephemeral.apiKeyEnv ? ["--api-key-env", ephemeral.apiKeyEnv] : [])];
+  return ["--provider", "ngrok", "--ephemeral", "--authtoken-env", ephemeral.authtokenEnv, "--api-key-env", ephemeral.apiKeyEnv];
 }
 
 /** Register a run-named binding for a fresh fixture repository. */
 async function binding(context: ScenarioContext, host: LiveHost, approval: QualificationApproval, kind: "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral", repository: string): Promise<string> {
   const name = `${host.prefix}-${kind === "cloudflare" ? "cf" : kind === "ngrok-reserved" ? "ngr" : "nge"}`;
   const cwd = await host.repository(context.scenario.id, repository, tunnelFixture(name, kind === "ngrok-ephemeral"));
-  context.inventory.record("tunnel-binding", name, context.scenario.id);
-  host.remember("tunnel-binding", name, { cwd });
+  context.inventory.record("tunnel-binding", name, context.scenario.id, { cwd });
   await host.must(cwd, ["tunnel", "register", name, ...registerArgs(approval, kind), "--nonproduction"]);
+  const registered = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name);
+  if (!registered) throw new Error(`binding ${name} is not readable after registration`);
+  host.noteBinding(registered);
   return cwd;
 }
 
 /** Record and start one public worktree; its public hostname is recorded before it can exist. */
 async function publicStart(context: ScenarioContext, host: LiveHost, cwd: string, name: string): Promise<{ hostname: string; url: string; receipt: Record<string, any> }> {
   const planned = (await host.must(cwd, ["tunnel", "urls"])) as { urls: Record<string, string> };
-  const record = (hostname: string, url: string) => { context.inventory.record("public-hostname", hostname, context.scenario.id); host.remember("public-hostname", hostname, { cwd, binding: name, url }); };
+  const record = (hostname: string, url: string) => { context.inventory.record("public-hostname", hostname, context.scenario.id, { cwd, binding: name, url }); };
   if (planned.urls.web) record(hostOf(planned.urls.web), planned.urls.web);
   const receipt = await start(context, host, cwd, ["--allow-public"]);
   const hostname = (receipt.tunnel?.hostnames as string[] | undefined)?.[0] ?? "";
@@ -372,17 +385,24 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   context.expect("url-timing", timing, `planned ${planned.timing}: ${planned.urls.web ?? "assigned after start"}; started ${url}`);
   const served = await publicAnswer(host, `${url}/item`);
   context.expect("public-route-served", served?.marker === marker(cwd) && served.name === "web" && served.path === "/item", `${url}/item -> ${JSON.stringify(served)}`);
-  const privateName = hostname.replace(/^web-/, "private-");
-  const privateAnswer = kind === "ngrok-ephemeral" ? undefined : await publicAnswer(host, `https://${privateName}/`, 2);
-  const outside = await publicAnswer(host, `${originOf(url)}/other`, 1);
-  context.expect("private-route-denied", privateAnswer?.name !== "private" && !outside?.marker && !(receipt.tunnel?.hostnames as string[]).some((item) => item.startsWith("private-")),
-    `private name ${kind === "ngrok-ephemeral" ? "never published" : JSON.stringify(privateAnswer ?? "unreachable")}; ${originOf(url)}/other -> ${JSON.stringify(outside ?? "unreachable")}`);
+  // Denial needs positive evidence; an unreachable or failed probe proves nothing.
   const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name)!;
+  const privateName = hostname.replace(/^web-/, "private-");
+  const ca = await host.ca();
+  const originDenied = await host.request(`https://${hostname}/`, { ca, port: PUBLIC_ORIGIN_PORT, host: privateName }).catch(() => undefined);
+  const outside = await host.request(`${originOf(url)}/other`, { publicDns: true }).catch(() => undefined);
+  const edge = kind === "cloudflare" ? (await host.readBack(bound, privateName, undefined) ? "a provider record" : "no provider record")
+    : kind === "ngrok-reserved" ? await host.request(`https://${privateName}/`, { publicDns: true }).then((answer) => answer.json?.marker === undefined && answer.status >= 400 ? `edge ${answer.status}` : `served ${answer.status}`, () => "unanswered")
+      : "no name assigned";
+  context.expect("private-route-denied", !(receipt.tunnel?.hostnames as string[]).some((item) => item.startsWith("private-")) && originDenied?.status === 403 && originDenied.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] === "deny"
+    && outside?.status === 404 && outside.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] === "fallback" && /^(no |edge )/.test(edge),
+    `origin for ${privateName}: ${String(originDenied?.status ?? "unanswered")} ${String(originDenied?.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] ?? "")}; ${originOf(url)}/other: ${String(outside?.status ?? "unanswered")} ${String(outside?.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] ?? "")}; public ${privateName}: ${edge}`);
   if (bound.provider === "cloudflare") await new CloudflareTunnelProvider({ env: host.options.env }).verifyDns(bound, hostname);
   const resolved = await lookup(hostOf(url), { all: true }).then((items) => items.map((item) => item.address), () => []);
   const misrouted = await host.request(url, { publicDns: true, host: `${host.prefix}-unrouted.${hostOf(url).split(".").slice(1).join(".")}` }).catch(() => undefined);
-  context.expect("dns-host-sni", resolved.length > 0 && !misrouted?.json?.marker, `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host -> ${misrouted?.status ?? "refused"}`);
-  await probePublicOrigin(hostname, PUBLIC_ORIGIN_PORT, await host.ca());
+  context.expect("dns-host-sni", resolved.length > 0 && misrouted !== undefined && misrouted.json?.marker === undefined,
+    `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host answered ${misrouted?.status ?? "nothing"} without a fixture marker`);
+  await probePublicOrigin(hostname, PUBLIC_ORIGIN_PORT, ca);
   context.observe("origin-tls", true, `origin certificate for ${hostname} verified against the internal root on ${PUBLIC_ORIGIN_PORT}`);
   await host.must(cwd, ["down"]);
   const entry = context.inventory.list(context.scenario.id).find((item) => item.kind === "public-hostname")!;
@@ -410,10 +430,13 @@ const startupFailure: LiveDriver = async (context, host) => {
   const failed = await host.up(context.scenario.id, cwd);
   const status = (await host.devfn(cwd, ["status"])).json;
   const leases = ((await host.must(cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === status.instanceId);
+  // The processes the failed start launched recorded their pids; none may survive, and no route of the owner may stay.
+  const survivors = await host.survivingFixtures(cwd);
+  const routes = await host.routesOf(String(status.instanceId));
   await rm(path.join(cwd, "fail-api"));
   const retried = await host.up(context.scenario.id, cwd);
-  context.expect("failure-cleaned", failed.code !== 0 && typeof failed.json.error?.code === "string" && status.state !== "ready" && leases.length === 0 && retried.json.state === "ready",
-    `failure ${String(failed.json.error?.code)}; state ${String(status.state)}; leases left ${leases.length}; retry ${String(retried.json.state)}`);
+  context.expect("failure-cleaned", failed.code !== 0 && typeof failed.json.error?.code === "string" && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && retried.json.state === "ready",
+    `failure ${String(failed.json.error?.code)}; state ${String(status.state)}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
   await check();
 };
 
@@ -425,12 +448,13 @@ const concurrentChange: LiveDriver = async (context, host) => {
   const status = await host.must(cwd, ["status"]);
   context.expect("single-owner", winners.length === 1 && status.state === "ready" && (status.processes as unknown[]).length === 2,
     `${winners.length} of 2 concurrent starts succeeded; the other: ${JSON.stringify(results.find((item) => item !== winners[0])?.json.error?.code)}`);
+  const before = await host.seen(cwd, "web");
   await writeFile(path.join(cwd, "devfn.config.json"), `${JSON.stringify(hostFixture({ QUAL_REVISION: "2" }), null, 2)}\n`);
   const degraded = await host.devfn(cwd, ["status", "--trust"]);
   const restarted = await host.must(cwd, ["restart"]);
   const seen = await host.seen(cwd, "web");
-  context.expect("change-detected", degraded.json.state === "degraded" && restarted.state === "ready" && seen.env.DEVFN_INSTANCE_ID === restarted.instanceId,
-    `status after change: ${String(degraded.json.state)}; restart: ${String(restarted.state)}`);
+  context.expect("change-detected", before.env.QUAL_REVISION === undefined && degraded.json.state === "degraded" && restarted.state === "ready" && seen.pid !== before.pid && seen.env.QUAL_REVISION === "2" && seen.env.DEVFN_INSTANCE_ID === restarted.instanceId,
+    `status after change: ${String(degraded.json.state)}; restart: ${String(restarted.state)}; process ${before.pid} -> ${seen.pid} saw QUAL_REVISION=${String(seen.env.QUAL_REVISION)}`);
   await check();
 };
 
@@ -473,8 +497,12 @@ const oneWorktreeStop: LiveDriver = async (context, host) => {
   await host.must(a.cwd, ["down"]);
   const status = await host.must(a.cwd, ["status"]);
   const leases = ((await host.must(a.cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === a.receipt.instanceId);
-  const gone = !await serves(host, a.urls.web, a.cwd, ca);
-  context.expect("stopped-withdrawn", status.state === "stopped" && leases.length === 0 && gone, `state ${String(status.state)}; leases ${leases.length}; route withdrawn: ${gone}`);
+  const survivors = await host.survivingFixtures(a.cwd);
+  const routes = await host.routesOf(String(a.receipt.instanceId));
+  // Withdrawal is observed as the proxy's own 404 for the name on plain HTTP, never as a failed request.
+  const answer = await host.request(plainOf(a.urls.web)).catch(() => undefined);
+  context.expect("stopped-withdrawn", status.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && answer?.status === 404 && answer.json === undefined,
+    `state ${String(status.state)}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
   const after = await host.seen(b.cwd, "web");
   context.expect("sentinel-preserved", after.pid === before.pid && await serves(host, b.urls.web, b.cwd, ca), `other worktree pid ${before.pid} -> ${after.pid}`);
 };
@@ -497,7 +525,7 @@ const ownerEndpoint: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "owner", config);
   const receipt = await start(context, host, cwd);
   const seen = await host.seen(cwd, "web");
-  const digest = `o-${createHash("sha256").update(receipt.instanceId as string).digest("hex").slice(0, 20)}`;
+  const digest = ownerLabel(receipt.instanceId as string);
   const hostnames = (receipt.routes as Array<{ hostname: string }>).map((route) => route.hostname);
   context.expect("owner-opaque", seen.env.DEVFN_INSTANCE_ID === receipt.instanceId && hostnames.every((name) => name.includes(digest) && !name.includes(receipt.instanceId as string) && !name.includes(marker(cwd))),
     `owner ${String(receipt.instanceId)} appears in routes only as ${digest}`);

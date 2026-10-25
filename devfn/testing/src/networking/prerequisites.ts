@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 
-import { proxyListenerPorts, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
+import { PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
 
 import type { QualificationApproval } from "./approval.js";
 import type { PrerequisiteId } from "./matrix.js";
@@ -28,6 +28,9 @@ export interface ProbeEnvironment {
   listening(port: number): Promise<boolean>;
   exists(file: string): Promise<boolean>;
 }
+
+/** The DevFn proxy listener ports on a platform; on this host they equal @devfn/proxy proxyListenerPorts(). */
+export const listenerPorts = (platform: NodeJS.Platform): { httpPort: number; httpsPort: number } => platform === "darwin" ? { httpPort: 8080, httpsPort: 8443 } : { httpPort: 80, httpsPort: 443 };
 
 const ok = (id: PrerequisiteId, detail: string): PrerequisiteResult => ({ id, status: "satisfied", detail });
 const missing = (id: PrerequisiteId, detail: string): PrerequisiteResult => ({ id, status: "missing", detail });
@@ -60,10 +63,27 @@ const PROBES: Record<PrerequisiteId, (environment: ProbeEnvironment) => Promise<
     return result.code === 0 && result.stdout.includes("\"ok\":true") ? ok("devfn-cli", environment.devfnCli) : missing("devfn-cli", `${environment.devfnCli} does not answer help --json`);
   },
   git: async (environment) => await tool(environment, "git", "git", ["--version"]),
-  caddy: async (environment) => await tool(environment, "caddy", "caddy", ["version"]),
+  caddy: async (environment) => {
+    const caddy = await tool(environment, "caddy", "caddy", ["version"]);
+    if (caddy.status !== "satisfied" || environment.platform !== "linux") return caddy;
+    // Linux listeners are 80 and 443: Caddy must already be allowed to bind them; the harness never grants it.
+    const output = async (command: string, args: readonly string[]) => (await environment.run(command, args).catch(() => ({ code: -1, stdout: "" }))).stdout.trim();
+    const unprivileged = Number.parseInt(await output("cat", ["/proc/sys/net/ipv4/ip_unprivileged_port_start"]), 10);
+    if (await output("id", ["-u"]) === "0" || unprivileged <= 80) return caddy;
+    const binary = await output("sh", ["-c", "command -v caddy"]);
+    if (binary && (await output("getcap", [binary])).includes("cap_net_bind_service")) return caddy;
+    return missing("caddy", "Caddy may not bind ports 80 and 443 here (not root, ip_unprivileged_port_start above 80, no cap_net_bind_service); permit it explicitly before the run.");
+  },
+  "process-tools": async (environment) => {
+    // Cleanup read-back finds a run's leftover processes by working directory and process group.
+    const cwd = await environment.run("lsof", ["-n", "-w", "-a", "-p", String(process.pid), "-d", "cwd", "-Fn"]).catch(() => ({ code: -1, stdout: "" }));
+    const groups = await environment.run("ps", ["-A", "-o", "pid=,pgid="]).catch(() => ({ code: -1, stdout: "" }));
+    return cwd.code === 0 && /^n\//m.test(cwd.stdout) && groups.code === 0 && /^\s*\d+\s+\d+\s*$/m.test(groups.stdout) ? ok("process-tools", "lsof and ps list working directories and process groups")
+      : missing("process-tools", "lsof or ps cannot list process working directories and groups; cleanup could not read processes back.");
+  },
   "proxy-ports": async (environment) => {
     // The DevFn Caddy is a machine singleton; an occupied port means an unrelated runtime the run must not touch.
-    const ports = [2019, ...Object.values(proxyListenerPorts()), PUBLIC_ORIGIN_PORT];
+    const ports = [2019, ...Object.values(listenerPorts(environment.platform)), PUBLIC_ORIGIN_PORT];
     const busy: number[] = [];
     for (const port of ports) if (await environment.listening(port)) busy.push(port);
     return busy.length ? missing("proxy-ports", `loopback ports in use by another runtime: ${busy.join(", ")}`) : ok("proxy-ports", `free: ${ports.join(", ")}`);
@@ -89,7 +109,7 @@ const PROBES: Record<PrerequisiteId, (environment: ProbeEnvironment) => Promise<
   "google-oauth": async (environment) => {
     const oauth = environment.approval?.oauth;
     if (!oauth) return missing("google-oauth", "the approval names no Google OAuth client");
-    const { httpsPort } = proxyListenerPorts();
+    const { httpsPort } = listenerPorts(environment.platform);
     const origin = `https://${oauth.relayHost}.${environment.approval!.domain}${httpsPort === 443 ? "" : `:${httpsPort}`}`;
     if (new URL(oauth.redirectUri).origin !== origin) return missing("google-oauth", `the approved redirect URI must use the relay origin ${origin} on this host`);
     return envSet(environment, "google-oauth", [oauth.clientIdEnv, oauth.clientSecretEnv]) ?? ok("google-oauth", `client ${oauth.clientIdEnv}, redirect ${oauth.redirectUri}`);

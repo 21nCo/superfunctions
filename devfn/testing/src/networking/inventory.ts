@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { ResourceKind } from "./matrix.js";
@@ -12,14 +13,16 @@ export interface InventoryEntry {
   id: string;
   scenario: string;
   createdAt: string;
+  /** What removal and read-back need: the owning checkout, binding, URL and provider marker. */
+  context?: { cwd?: string; binding?: string; url?: string; marker?: string };
   cleanup?: { absent: boolean; detail: string; checkedAt: string };
 }
 
 export interface ResourceHandlers {
   /** Remove one resource; an already absent resource is success. */
   remove(entry: InventoryEntry): Promise<void>;
-  /** Read back whether the resource still exists. A failed read must throw, never report absence. */
-  present(entry: InventoryEntry): Promise<boolean>;
+  /** Read back whether the resource still exists; a string is present, saying what remains. A failed read must throw, never report absence. */
+  present(entry: InventoryEntry): Promise<boolean | string>;
 }
 
 export class InventoryError extends Error {
@@ -30,11 +33,14 @@ export class InventoryError extends Error {
  * The run's disposable resource ledger. A resource outside the approved
  * nonproduction scope (the run root for local resources, an approved domain
  * for names, the run's own prefix for bindings) is refused before it exists.
+ * With a ledger file, every change is written there before the call returns,
+ * so a resource is on disk before it is created and an interrupted run
+ * leaves a readable list of what may remain.
  */
 export class DisposableInventory {
   private readonly entries: InventoryEntry[] = [];
 
-  public constructor(private readonly scope: { runId: string; root: string; domains: readonly string[] }, private readonly now: () => Date = () => new Date()) {
+  public constructor(private readonly scope: { runId: string; root: string; domains: readonly string[]; ledger?: string }, private readonly now: () => Date = () => new Date()) {
     if (!/^[a-z0-9]{8,16}$/.test(scope.runId)) throw new InventoryError("A run ID is 8 to 16 lowercase letters or digits.");
     if (!path.isAbsolute(scope.root)) throw new InventoryError("The run root must be an absolute path.");
   }
@@ -42,7 +48,10 @@ export class DisposableInventory {
   /** Name prefix for bindings and labels this run creates. */
   public get prefix(): string { return `q${this.scope.runId.slice(0, 8)}`; }
 
-  public record(kind: ResourceKind, id: string, scenario: string): InventoryEntry {
+  public get ledger(): string | undefined { return this.scope.ledger; }
+
+  public record(kind: ResourceKind, id: string, scenario: string, context?: InventoryEntry["context"]): InventoryEntry {
+    if (kind === "run-processes" && id !== this.scope.root) throw new InventoryError(`run-processes ${id} is not the run root.`);
     const relative = path.relative(this.scope.root, id);
     if ((kind === "fixture-repository" || kind === "runtime" || kind === "proxy") && (!path.isAbsolute(id) || !relative || relative.startsWith("..") || path.isAbsolute(relative))) {
       throw new InventoryError(`${kind} ${id} is outside the run root.`);
@@ -54,8 +63,9 @@ export class DisposableInventory {
     if (kind === "public-hostname" && !(label.includes(this.prefix) && namespace)) throw new InventoryError(`public hostname ${id} is not a run-owned name under an approved domain.`);
     if (kind === "tunnel-binding" && !id.startsWith(`${this.prefix}-`)) throw new InventoryError(`tunnel binding ${id} is not named for this run.`);
     if (this.entries.some((entry) => entry.kind === kind && entry.id === id && !entry.cleanup?.absent)) throw new InventoryError(`${kind} ${id} is already recorded.`);
-    const entry: InventoryEntry = { kind, id, scenario, createdAt: this.now().toISOString() };
+    const entry: InventoryEntry = { kind, id, scenario, createdAt: this.now().toISOString(), ...(context ? { context: { ...context } } : {}) };
     this.entries.push(entry);
+    this.persist();
     return entry;
   }
 
@@ -72,20 +82,26 @@ export class DisposableInventory {
       let cleanup: InventoryEntry["cleanup"];
       try {
         const present = await handlers.present(entry);
-        cleanup = { absent: !present, detail: `${removal}${present ? "still present on read-back" : "absent on read-back"}`, checkedAt: this.now().toISOString() };
+        cleanup = { absent: present === false, detail: `${removal}${present === false ? "absent on read-back" : `still present on read-back${typeof present === "string" ? `: ${present}` : ""}`}`, checkedAt: this.now().toISOString() };
       } catch (error) {
         cleanup = { absent: false, detail: `${removal}read-back failed: ${message(error)}`, checkedAt: this.now().toISOString() };
       }
       entry.cleanup = cleanup;
+      this.persist();
     }
     return pending;
   }
 
   public list(scenario?: string): InventoryEntry[] {
-    return this.entries.filter((entry) => scenario === undefined || entry.scenario === scenario).map((entry) => ({ ...entry, ...(entry.cleanup ? { cleanup: { ...entry.cleanup } } : {}) }));
+    return this.entries.filter((entry) => scenario === undefined || entry.scenario === scenario)
+      .map((entry) => ({ ...entry, ...(entry.context ? { context: { ...entry.context } } : {}), ...(entry.cleanup ? { cleanup: { ...entry.cleanup } } : {}) }));
   }
 
   public allAbsent(scenario?: string): boolean { return this.list(scenario).every((entry) => entry.cleanup?.absent === true); }
+
+  private persist(): void {
+    if (this.scope.ledger) writeFileSync(this.scope.ledger, `${JSON.stringify({ runId: this.scope.runId, root: this.scope.root, entries: this.entries }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  }
 }
 
 /**
