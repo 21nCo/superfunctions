@@ -1,0 +1,39 @@
+devfn/testing/README.md
+  s_e1c5fc1a65c0cf::t_70e2d75ddcbe62 21,23-24,40
+devfn/testing/src/networking/drivers.ts
+  s_02a18f21d1b632::t_548f0714c454e6 7,10,21-22,28,46,54,60,128,179-194,359,383,410-416,419-422,426-427,459-461,523,531,541,575
+devfn/testing/src/networking/index.ts
+  s_02a18f21d1b632::t_5fe7d9f7ce229b 4
+devfn/testing/src/networking/inventory.ts
+  s_02a18f21d1b632::t_ecba75e9766f39 72-79
+devfn/testing/src/networking/live.ts
+  s_02a18f21d1b632::t_9d1d47d23fd1df 8,14,54-56,58,61-78,82-85,88,113-128,152-153,171-176,198-202,204-209,330-339,341-345,350,356-358,365-375,379,382,385-387,391-401,484-488,493-499,509-514,524-527
+devfn/testing/src/networking/matrix.ts
+  s_02a18f21d1b632::t_6ab73fa514b094 58
+devfn/testing/test/networking-qualification.test.ts
+  s_02a18f21d1b632::t_c736b10ec27a41 1-2,14-15,20-21,401-402,410,428-429,500-629,692-706
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f32f57026e9842ea07354be8aa82dae7108ed04",
+  "prompts": {},
+  "sessions": {
+    "s_02a18f21d1b632": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_02a18f21d1b632",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
