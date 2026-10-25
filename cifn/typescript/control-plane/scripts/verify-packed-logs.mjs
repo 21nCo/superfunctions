@@ -56,6 +56,7 @@ try{
 `);
   process.stdout.write(run(process.execPath, ['owned-docker.mjs']));
   console.log(run(process.execPath, ['node_modules/@cifn/runner/scripts/verify-workspace-archives.mjs']));
+  console.log(run(process.execPath, ['node_modules/@cifn/runner/scripts/verify-hostfn-argv.mjs']));
   if(process.env.CIFN_TEST_NATIVE_DOCKER==='1')process.stdout.write(run(process.execPath,['node_modules/@cifn/runner/scripts/verify-per-job-docker.mjs']));
 
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
@@ -69,7 +70,7 @@ try{
   assert.equal(audit.metadata.vulnerabilities.total, 0);
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
-  await writeFile(join(directory, 'consumer.ts'), `import {Runner, OwnedDockerExecutor, type OwnedDockerOptions, type DockerReceiptDecision, type DockerCleanupReceipt, type ArchiveLimits, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
+  await writeFile(join(directory, 'consumer.ts'), `import {Runner, OwnedDockerExecutor, type OwnedDockerOptions, type DockerReceiptDecision, type DockerCleanupReceipt, type ArchiveLimits, type HostFnDeployAsyncOptions, executeHostFnDeployAsync, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
 import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, resolvePipelineDoc, type ResolveOptions, type ForkApproval, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
@@ -94,6 +95,7 @@ export async function adjudication(store: DatabaseStore, runId: string, dispatch
 export const approval: ForkApproval = { id: "owned", baseRepositoryId: 1, baseRepository: "base/repo", baseRepositoryUrl: "https://github.com/base/repo.git", baseSha: "a".repeat(40), headRepositoryId: 2, headRepository: "fork/repo", headRepositoryUrl: "https://github.com/fork/repo.git", headSha: "b".repeat(40), allowedSecrets: [] };
 export function resolve(options: ResolveOptions) { return resolvePipelineDoc({repo:'owner/repo',ref:'HEAD'}, options); }
 export async function checkout(options: CheckoutOptions) { return executeOwnedCheckout(options); }
+export const hostDeploy = (options: HostFnDeployAsyncOptions) => executeHostFnDeployAsync(options);
 export const archivePolicy: ArchiveLimits = {maxBytes: 64 * 1024 * 1024};
 export function ownedDocker(options: OwnedDockerOptions) { return new OwnedDockerExecutor(options); }
 export async function cleanupDocker(executor: OwnedDockerExecutor, decision: DockerReceiptDecision): Promise<DockerCleanupReceipt> { executor.inspectReceipt(decision.id); return executor.cleanupReceipt(decision); }

@@ -17,8 +17,8 @@ export type { CacheRestoreOptions, CacheRestoreResult } from './steps/cache-rest
 export { redactSecrets } from './reporting/redact.js';
 export { executeTestFnRun, executeTestFnRunAsync } from './steps/testfn-run.js';
 export type { TestFnRunOptions, TestFnRunResult } from './steps/testfn-run.js';
-export { executeHostFnDeploy } from './steps/hostfn-deploy.js';
-export type { HostFnDeployOptions, HostFnDeployResult } from './steps/hostfn-deploy.js';
+export { executeHostFnDeploy, executeHostFnDeployAsync } from './steps/hostfn-deploy.js';
+export type { HostFnDeployOptions, HostFnDeployAsyncOptions, HostFnDeployResult } from './steps/hostfn-deploy.js';
 export { DockerExecutor } from './docker-executor.js';
 export type { DockerExecutorOptions, DockerCommandRunner } from './docker-executor.js';
 export { RemoteRunner, executeRemoteShellJob } from './remote-runner.js';

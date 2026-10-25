@@ -23,7 +23,7 @@ import { executeArtifactUpload } from './steps/artifact-upload.js';
 import { executeArtifactDownload } from './steps/artifact-download.js';
 import { executeCacheSave } from './steps/cache-save.js';
 import { executeCacheRestore } from './steps/cache-restore.js';
-import { executeHostFnDeploy } from './steps/hostfn-deploy.js';
+import { executeHostFnDeployAsync } from './steps/hostfn-deploy.js';
 import type { LogFnClient } from './reporting/logfn-client.js';
 import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
@@ -44,6 +44,9 @@ export interface RunnerOptions {
   pipelineSpecs?: Map<string, PipelineSpec>;
   queueName?: string;
   cleanWorkspace?: boolean;
+  /** Trusted host executable for deployment; never supplied by a step. */
+  hostFnExecutable?: string;
+  hostFnTimeoutMs?: number;
   archiveLimits?: ArchiveLimits;
   fileFnClient?: {
     upload(namespace: string, key: string, data: Buffer): Promise<string>;
@@ -78,6 +81,8 @@ export class Runner {
   private pipelineSpecs: Map<string, PipelineSpec>;
   private queueName: string;
   private cleanWorkspace: boolean;
+  private hostFnExecutable?: string;
+  private hostFnTimeoutMs?: number;
   private archiveLimits?: ArchiveLimits;
   private fileFnClient?: RunnerOptions['fileFnClient'];
   private artifactStore?: RunnerOptions['artifactStore'];
@@ -107,6 +112,8 @@ export class Runner {
     this.cleanWorkspace = options.cleanWorkspace ?? true;
     this.fileFnClient = options.fileFnClient;
     this.archiveLimits = options.archiveLimits;
+    this.hostFnExecutable = options.hostFnExecutable;
+    this.hostFnTimeoutMs = options.hostFnTimeoutMs;
     this.artifactStore = options.artifactStore;
     this.secretValues = options.secretValues ?? new Map();
     this.getSecret = options.getSecret;
@@ -535,7 +542,7 @@ export class Runner {
             await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             const environment = (stepSpec.with?.environment as string) ?? '';
-            const ci = (stepSpec.with?.ci as boolean) ?? true;
+            const ci = true; // Runner deployments are always noninteractive.
             const local = typeof stepSpec.with?.local === 'boolean'
               ? (stepSpec.with.local as boolean)
               : jobSpec['runs-on'] === 'hostfn-runner';
@@ -543,10 +550,13 @@ export class Runner {
               `Step "${step.stepKey}" started: hostfn/deploy ${environment}`,
             ]);
 
-            const deployResult = executeHostFnDeploy({
-              environment, ci, local, workspace, env: jobEnv,
+            const deployResult = await executeHostFnDeployAsync({
+              environment, ci, local, workspace, env: jobEnv, executable: this.hostFnExecutable,
+              timeoutMs: this.hostFnTimeoutMs, baseEnv: this.executionEnv, signal: this.executionSignal,
+              secretValues: secretVals, onLines: lines => logLines(step.stepKey, lines),
             });
-            logLines(step.stepKey, deployResult.lines);
+            if (deployResult.truncated) this.onOutputTruncated?.();
+            if (!deployResult.streamed) logLines(step.stepKey, deployResult.lines);
 
             if (deployResult.success) {
               await transition(step, 'success');
