@@ -15,3 +15,7 @@ Copy `wrangler.example.jsonc`, provision the declared bindings, apply `migration
 The Email Worker preflights recipient lifecycle, sender policy, declared size, ingress quota, and stored-byte quota before reading raw MIME. Delivery identity is a SHA-256 fingerprint over normalized envelope plus raw evidence, not sender-controlled `Message-ID`. Raw MIME is then committed to R2 before the D1 row; the Queue job is sent last. Queue failures leave a reconcilable `queue_failed` row. See the parent `OPERATIONS.md` and `THREAT_MODEL.md` before deployment.
 
 The package test command includes Node unit tests and a workerd integration suite using real local D1 and R2 bindings, Email/Queue handler invocation, D1 batch atomicity, durable webhook replay, and concurrent quota enforcement. A real Cloudflare Email Routing/DNS smoke remains an approval-gated pre-runtime-release operation.
+
+## Local tests
+
+Use Node.js 22.12+ and run `npm run test --workspace=@mailfn/cloudflare` from the repository root. The workerd suite uses `@cloudflare/vitest-plugin` with Vitest 4. Storage is isolated per test file; tests in the existing single integration file share its bindings. This changes the contributor test runtime, not the deployed Worker runtime.

@@ -74,9 +74,9 @@ class SetCookie(BaseModel):
     path: str = "/"
     domain: Optional[str] = None
     secure: bool = True
-    http_only: bool = Field(True, alias="httpOnly")
-    same_site: Literal["lax", "strict", "none"] = Field("lax", alias="sameSite")
-    max_age: Optional[int] = Field(None, alias="maxAge")
+    http_only: bool = Field(default=True, alias="httpOnly")
+    same_site: Literal["lax", "strict", "none"] = Field(default="lax", alias="sameSite")
+    max_age: Optional[int] = Field(default=None, alias="maxAge")
     expires: Optional[datetime] = None
 
     model_config = ConfigDict(populate_by_name=True)

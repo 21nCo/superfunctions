@@ -1,3 +1,5 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -55,7 +57,8 @@ async function buildSearchProbe(
   };
 }
 
-async function loadFixtureSource(fixtureRoot: string): Promise<DocsSiteSource> {
+async function loadFixtureSource(relativeFixtureRoot: string): Promise<DocsSiteSource> {
+  const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), relativeFixtureRoot);
   const provider = new FsContentProvider({
     root: fixtureRoot,
   });

@@ -14,6 +14,14 @@
 > **Alpha software**.
 > Super functions is currently in alpha and is not yet fully ready for production use. APIs and behavior may change without notice, and some features may be incomplete or unstable. Evaluate it carefully and use it at your own risk.
 
+# Contributor runtime
+
+Use Node.js 20.19+ or 22.12+ for the root test tools. MailFn Cloudflare workerd tests require Node.js 22.12+; the release workflow uses Node 22. Individual published packages retain their own runtime requirements, including separately tested Node 18 consumers.
+
+`npm run test:ui` runs the three DocsFn projects selected by the root Vitest config. For a scoped checkout, install `@docsfn/svelte`, `@docsfn/sveltekit`, and `@docsfn/example-sveltekit-docs-site` with `--include-workspace-root`, then build their dependencies with Turbo before launching. The UI launcher bootstraps npm 11.21.0 and keeps matching Vitest/UI 4.1.12 and jsdom 27.4.0 in an isolated npm cache tree; npm 10's optional-peer resolver fails for this combination. It preserves the caller's working directory and forwards arguments after `--`. It does not change the npm version or dependencies globally.
+
+UI shutdown terminates its owned process group on POSIX and uses `taskkill /PID /T /F` on Windows. Windows users must launch through `npm run test:ui`; Windows process-tree cleanup has not been validated on a Windows host. Cleanup failures are reported instead of claiming success. See [_conduct/vitest4-default-docs-ui.md](_conduct/vitest4-default-docs-ui.md) for exact install, validation, and remaining compatibility limits.
+
 # Functions
 
 ## Data and storage
