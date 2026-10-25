@@ -252,6 +252,9 @@ def test_calculated_transition_context_survives_reopen(tmp_path):
     engine, watch = open_watch(path)
     migrate(engine); tables = migrate_alerts(engine)
     try:
+        seen = []
+        watch.alerts.on_trigger(lambda item, context: seen.append(('triggered', context)))
+        watch.alerts.on_resolve(lambda item, context: seen.append(('resolved', context)))
         condition = definition()['condition']
         record = watch.alerts.create(definition(autoResolve={'enabled': True, 'condition': dict(condition, operator='lt', threshold=2, window='1s')}))
         def sample(value, when):
@@ -262,9 +265,16 @@ def test_calculated_transition_context_survives_reopen(tmp_path):
         sample(0, 1010000)
         watch.alerts.evaluate_stored(now=1010000)
         assert watch.alerts.get_record(record['id'])['state'] == 'resolved'
+        assert seen == [('triggered', {'timestamp': 1000000, 'triggeredAt': 1000000, 'duration': 0, 'value': 30, 'threshold': 10}), ('resolved', {'timestamp': 1010000, 'triggeredAt': 1000000, 'duration': 10000, 'value': 0, 'threshold': 2})]
     finally: watch.stop(); engine.dispose()
     engine, watch = open_watch(path)
     try:
+        replayed = []
+        watch.alerts.on_trigger(lambda *args: replayed.append(args))
+        watch.alerts.on_resolve(lambda *args: replayed.append(args))
+        assert watch.alerts.get_record(record['id'])['state'] == 'resolved'
+        watch.alerts.resolve(record['id'], resolved_by='operator')
+        assert replayed == []
         with engine.connect() as connection:
             notifications = [json.loads(row['payload'])['notification'] for row in connection.execute(select(tables['watchfn_alert_outbox'])).mappings()]
         by_event = {item['event']: item for item in notifications}

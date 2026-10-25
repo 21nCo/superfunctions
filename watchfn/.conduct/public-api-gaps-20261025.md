@@ -2,12 +2,12 @@
 
 Read against baseline7fe63b4cc, not inferred from old passing test totals. The full original SPEC remains the completion boundary.
 
-- SPEC section9 lifecycle examples require calculated value/threshold and asynchronous post-commit callbacks. TypeScript already invokes listeners after commit, but shares a mutable public alert between listeners and omits threshold. Python stored evaluation calculates a decision and discards its scalar; durable notifications omit it. The current context checkpoint addresses those defects. Python on_trigger/on_resolve APIs are still absent and must be implemented with explicit callback/thread/reentrancy semantics.
+- SPEC section9 lifecycle examples require calculated value/threshold and asynchronous post-commit callbacks. TypeScript already invokes listeners after commit, but shares a mutable public alert between listeners and omits threshold. Python stored evaluation calculates a decision and discards its scalar; durable notifications omit it. The current context checkpoint addresses those defects. Python on_trigger/on_resolve and explicit async entry points are now implemented and validated in python-lifecycle-callbacks.md.
 - `typescript/src/core/watch-fn.ts` logs getter returns empty query/pattern results and empty aggregate objects. These are public placeholders, not complete LogFn integration or log analytics. Trace/log correlation in the lifecycle example cannot be certified by alert tests.
 - The same file business getter returns empty goals, funnels, revenue, MRR, churn and LTV results. Synthetics getters return empty uptime/incidents/trends. Dashboard APIs and the broader original specification require separate source/runtime proof.
 - Python callback parity, memory lifecycle differences, provider delivery guarantees, original performance targets and browser/platform acceptance remain distinct; earlier published checkpoints do not waive them.
 
-Next implementation priority after context: explicit Python lifecycle callbacks and actual stored log query/aggregation using existing query/storage abstractions. Add native stored-event and package-consumer acceptance for the specification examples; do not replace placeholder returns with differently named or smaller APIs. No production readiness claim.
+Python lifecycle callbacks and stored log query/aggregation are implemented as described below and in python-lifecycle-callbacks.md. Next priorities are automatic LogFn ingestion, pattern detection and the remaining trace/business/synthetic APIs. Add native stored-event and package-consumer acceptance for the specification examples; do not replace placeholder returns with differently named or smaller APIs. No production readiness claim.
 
 ## Calculated-context validation in progress
 

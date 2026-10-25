@@ -13,6 +13,7 @@ from .schema import ALERTS, OUTBOX
 from .alert_manager import Alert, EvaluationResult
 from .observations import validate, ranges, evaluate_result
 from .pagerduty import route_key
+from .lifecycle import LifecycleCallbacks, joined_call, owned_operation
 from ..query import number
 
 
@@ -37,8 +38,24 @@ class DurableAlertManager:
         self.storage, self.snapshot, self.namespace = storage, snapshot, namespace
         self.max_pending = max_pending
         self.active = active
+        self._callbacks = LifecycleCallbacks()
         from ..models import AlertDeliveryConfig
         self.delivery = (delivery or AlertDeliveryConfig()).model_copy(deep=True)
+
+    def on_trigger(self, callback):
+        self._callbacks.add('triggered', callback)
+
+    def on_resolve(self, callback):
+        self._callbacks.add('resolved', callback)
+
+    async def trigger_async(self, identifier):
+        return await joined_call(self.trigger, identifier)
+
+    async def resolve_async(self, identifier, **options):
+        return await joined_call(self.resolve, identifier, **options)
+
+    async def evaluate_stored_async(self, **options):
+        return await joined_call(self.evaluate_stored, **options)
 
     def _where(self, identifier=None):
         return [WhereClause(field='namespace', value=self.namespace)] + ([WhereClause(field='id', value=identifier)] if identifier else [])
@@ -215,7 +232,9 @@ class DurableAlertManager:
     def get_triggered(self):
         return [alert for alert in self.get_all() if alert.state in ('triggered', 'acknowledged')]
 
-    def _mutate(self, identifier, change, expected=None, now=None, observations=None):
+    @owned_operation
+    def _mutate(self, identifier, change, expected=None, now=None, observations=None, notify=False):
+        if notify: self._callbacks.require_sync_context()
         now = time.time() * 1000 if now is None else now
         async def action(tx):
             row = await self._row(tx, identifier)
@@ -255,8 +274,15 @@ class DurableAlertManager:
             if count != 1: raise AlertConflict('Concurrent alert update; retry')
             for job in jobs:
                 await tx.create(CreateParams(model=OUTBOX, data=job))
-            return record
-        return self._run(action, mutating=True)
+            return record, transition
+        record, transition = self._run(action, mutating=True)
+        if transition in ('triggered', 'resolved'):
+            context = dict(timestamp=now, triggeredAt=record.get('triggeredAt'), duration=now - record.get('triggeredAt', now))
+            context.update((observations or {}).get(transition, {}))
+            if transition == 'triggered' and record['condition'].get('type', 'threshold') == 'threshold':
+                context['threshold'] = record['condition']['threshold']
+            self._callbacks.emit(transition, self._public(record), context)
+        return record
 
     def update(self, identifier, definition):
         definition = self._definition(definition)
@@ -296,7 +322,7 @@ class DurableAlertManager:
             record.update(state='resolved', resolvedBy=resolved_by, resolvedAt=now)
             if resolution is not None: self._note(record, resolution, resolved_by, now)
             return 'resolved'
-        return self._public(self._mutate(identifier, change))
+        return self._public(self._mutate(identifier, change, notify=True))
 
     def _trigger(self, record, now):
         record.update(state='triggered', triggeredAt=now)
@@ -304,7 +330,7 @@ class DurableAlertManager:
         return 'triggered'
 
     def trigger(self, identifier):
-        return self._public(self._mutate(identifier, lambda record, now: self._trigger(record, now) if record['enabled'] and record['state'] not in ('triggered', 'acknowledged') else None))
+        return self._public(self._mutate(identifier, lambda record, now: self._trigger(record, now) if record['enabled'] and record['state'] not in ('triggered', 'acknowledged') else None, notify=True))
 
     def enable(self, identifier):
         return self._public(self._mutate(identifier, lambda record, now: record.__setitem__('enabled', True)))
@@ -312,7 +338,9 @@ class DurableAlertManager:
     def disable(self, identifier):
         return self._public(self._mutate(identifier, lambda record, now: record.__setitem__('enabled', False)))
 
+    @owned_operation
     def evaluate_stored(self, *, now=None, maximum=10000, limit=50, after=None):
+        self._callbacks.require_sync_context()
         now = time.time() * 1000 if now is None else now
         if not number(now): raise ValueError('Evaluation time must be finite')
         if type(maximum) is not int or not 1 <= maximum <= 1000000: raise ValueError('Invalid observation capacity')

@@ -43,6 +43,8 @@ class WatchFn:
     def alerts(self):
         if self._alerts is None:
             self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name, active=lambda: self.is_started, delivery=self.config.alerts) if isinstance(self.storage, DatabaseStorage) else AlertManager(snapshot=self._alert_snapshot)
+            if not self.is_started:
+                self._alerts._callbacks.stop()
         return self._alerts
 
     def _alert_snapshot(self, requested, now, maximum):
@@ -65,6 +67,8 @@ class WatchFn:
             return
         if isinstance(self.storage, DatabaseStorage):
             self.storage.start()
+        if self._alerts is not None:
+            self._alerts._callbacks.start()
         self.is_started = True
         self.batcher.start()
         # Enable collectors based on config
@@ -72,6 +76,8 @@ class WatchFn:
         self.process_metrics.start()
 
     def stop(self):
+        if self._alerts is not None:
+            self._alerts._callbacks.stop()
         self.is_started = False
         self.system_metrics.stop()
         self.process_metrics.stop()

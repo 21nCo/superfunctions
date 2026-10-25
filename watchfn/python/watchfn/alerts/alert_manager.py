@@ -4,6 +4,8 @@ from typing import List, Dict, Any, Optional, Literal
 from dataclasses import dataclass
 import time
 import threading
+from copy import deepcopy
+from .lifecycle import LifecycleCallbacks, joined_call, owned_operation
 from .observations import validate, evaluate_result as evaluate_stored, ranges
 from ..query import number
 from .conditions import ConditionEvaluator
@@ -44,13 +46,25 @@ class AlertManager:
         self.evaluator = ConditionEvaluator()
         self._snapshot = snapshot
         self._evaluation_lock = threading.Lock()
+        self._callbacks = LifecycleCallbacks()
     
+    def on_trigger(self, callback):
+        self._callbacks.add('triggered', callback)
+
+    def on_resolve(self, callback):
+        self._callbacks.add('resolved', callback)
+
+    async def evaluate_stored_async(self, **options):
+        return await joined_call(self.evaluate_stored, **options)
+
+    @owned_operation
     def evaluate_stored(self, *, now=None, maximum=10000) -> List[EvaluationResult]:
         """Evaluate owned storage explicitly; definitions/state remain process-local.
 
         Unlike the legacy array API, only explicit auto_resolve can recover a
         triggered alert. Storage/validation failures leave all states unchanged.
         """
+        self._callbacks.require_sync_context()
         if self._snapshot is None:
             raise RuntimeError("Stored evaluation requires a WatchFn-owned alert manager")
         now = time.time() * 1000 if now is None else now
@@ -74,23 +88,39 @@ class AlertManager:
                 evaluate_stored(alert.auto_resolve["condition"], data, now)
                 if alert.auto_resolve and alert.auto_resolve["enabled"] else None) for alert in alerts]
             results = []
+            transitions = []
             for alert, observation, recovery in evaluated:
                 if alert.last_evaluated is not None and now < alert.last_evaluated:
                     raise ValueError("Evaluation time must not move backwards")
             for alert, observation, recovery in evaluated:
+                alert.last_evaluated = now
                 matched = observation["matched"]
                 if matched is True:
                     alert.consecutive_failures += 1
                     if alert.state == "normal":
                         alert.state = "triggered"
                         alert.triggered_at = now
+                        context = dict(timestamp=now, triggeredAt=now, duration=0)
+                        if 'value' in observation: context['value'] = observation['value']
+                        if alert.condition.get('type', 'threshold') == 'threshold': context['threshold'] = alert.condition['threshold']
+                        transitions.append(('triggered', deepcopy(alert), context))
                 if alert.state == "triggered" and recovery is not None and recovery["matched"] is True:
+                    triggered_at = alert.triggered_at
                     alert.state = "normal"
+                    context = dict(timestamp=now, triggeredAt=triggered_at, duration=now - (triggered_at if triggered_at is not None else now))
+                    if 'value' in recovery: context['value'] = recovery['value']
+                    if alert.auto_resolve['condition'].get('type', 'threshold') == 'threshold': context['threshold'] = alert.auto_resolve['condition']['threshold']
+                    transitions.append(('resolved', deepcopy(alert), context))
                     alert.triggered_at = None
                     alert.consecutive_failures = 0
                 alert.last_evaluated = now
                 results.append(EvaluationResult(alert, matched is True, now, value=observation.get("value"), matched=matched, observed=matched is not None))
-            return results
+        failures = []
+        for event, alert, context in transitions:
+            try: self._callbacks.emit(event, alert, context)
+            except RuntimeError as error: failures.append(error)
+        if failures: raise RuntimeError("Alert transitions committed; one or more listeners failed") from None
+        return results
 
     def register(self, alert: Alert) -> None:
         """Register an alert."""
@@ -98,11 +128,12 @@ class AlertManager:
         alert.consecutive_failures = 0
         self.alerts[alert.id] = alert
     
+    @owned_operation
     def evaluate_all(self, data: Dict[str, List[Any]]) -> List[EvaluationResult]:
         """Evaluate all alerts."""
         results: List[EvaluationResult] = []
         
-        for alert in self.alerts.values():
+        for alert in list(self.alerts.values()):
             if not alert.enabled:
                 continue
             
@@ -111,9 +142,13 @@ class AlertManager:
         
         return results
     
+    @owned_operation
     def evaluate(self, alert: Alert, data: Dict[str, List[Any]]) -> EvaluationResult:
         """Evaluate a single alert."""
+        self._callbacks.require_sync_context()
         timestamp = time.time() * 1000
+        before = alert.state
+        triggered_at = alert.triggered_at
         
         # Get relevant data
         alert_data = self._get_alert_data(alert, data)
@@ -135,12 +170,25 @@ class AlertManager:
         
         alert.last_evaluated = timestamp
         
-        return EvaluationResult(
+        result = EvaluationResult(
             alert=alert,
             triggered=triggered,
             timestamp=timestamp,
             message=f"Alert {alert.name} triggered" if triggered else None
         )
+        transition = 'triggered' if before == 'normal' and alert.state == 'triggered' else 'resolved' if before == 'triggered' and alert.state == 'normal' else None
+        if transition:
+            start = alert.triggered_at if transition == 'triggered' else triggered_at
+            context = dict(timestamp=timestamp, triggeredAt=start, duration=timestamp - (start if start is not None else timestamp))
+            if transition == 'triggered' and alert.condition.get('type', 'threshold') == 'threshold': context['threshold'] = alert.condition['threshold']
+            self._callbacks.emit(transition, alert, context)
+        return result
+
+    async def evaluate_async(self, alert, data):
+        return await joined_call(self.evaluate, alert, data)
+
+    async def evaluate_all_async(self, data):
+        return await joined_call(self.evaluate_all, data)
     
     def get(self, alert_id: str) -> Optional[Alert]:
         """Get alert by ID."""

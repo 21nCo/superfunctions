@@ -372,8 +372,32 @@ and the applicable scalar `threshold` in their committed snapshot. Composite
 conditions have no invented scalar value; anomaly observations have no scalar
 threshold. Manual transitions do not invent an observation.
 
-Transition callbacks and complete TypeScript provider parity remain required
-follow-up work. Standalone legacy channel helpers are not this durable
+Alert managers expose `on_trigger(callback)` and `on_resolve(callback)`.
+Listeners receive separate snapshots and a context dictionary containing
+`timestamp`, `triggeredAt`, `duration`, and available `value`/`threshold`.
+Database listeners run after the state/outbox transaction commits; memory
+listeners run after state changes and outside the evaluation lock. Listener
+failures attempt the other listeners, then raise a sanitized committed-transition
+error. They do not rollback state, replay on reopen, or retry notifications.
+Durable callbacks receive the public dictionary projection; memory callbacks
+receive an `Alert` snapshot, matching each manager's public representation.
+
+Callbacks may return awaitables. From an active event loop, use
+`await alerts.evaluate_stored_async(...)` and the durable `trigger_async` /
+`resolve_async` methods. These run callbacks on the owning worker's private
+loop; callbacks must not use resources tied to another loop. The memory legacy
+array API also has `evaluate_async` / `evaluate_all_async`. Its older implicit
+recovery behavior is preserved; it does not invent a measured scalar.
+Cancelling these async methods joins admitted work before reporting cancellation.
+Synchronous transition methods reject an active event loop when listeners are
+registered. Storage reads and note writes remain available inside callbacks.
+
+`watch.stop()` waits for admitted lifecycle work before closing storage and
+rejects shutdown from inside its own callback. A callback that never settles
+can therefore delay shutdown indefinitely. Invoke synchronous shutdown outside
+your event loop (for example with `asyncio.to_thread`) when callbacks are active.
+Callbacks are process-local; the durable notification outbox owns delivery.
+Complete TypeScript provider parity remains required follow-up work. Standalone legacy channel helpers are not this durable
 dispatch protocol. HTTP auth/ingestion/query routes are unchanged; no public
 alert-management route is introduced. These methods are trusted host APIs.
 
