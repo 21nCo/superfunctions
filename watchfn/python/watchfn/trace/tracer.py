@@ -1,7 +1,11 @@
 """Tracer for distributed tracing."""
 
 from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import RLock
+from secrets import token_hex
+from copy import deepcopy
+from .queries import TraceQueries
 import time
 from contextlib import contextmanager
 
@@ -19,10 +23,19 @@ class Span:
     logs: Optional[list] = None
     status: str = "ok"
     
+    _on_finish: Any = field(default=None, repr=False, compare=False)
+    _recorded: bool = field(default=False, repr=False, compare=False)
+    _lock: Any = field(default_factory=RLock, repr=False, compare=False)
+
     def finish(self):
-        """Finish the span."""
-        self.end_time = time.time() * 1000
-        self.duration = self.end_time - self.start_time
+        """Finish once; a failed recording can be retried without changing timing."""
+        with self._lock:
+            if self.end_time is None:
+                self.end_time = time.time() * 1000
+                self.duration = self.end_time - self.start_time
+            if self._on_finish is not None and not self._recorded:
+                self._on_finish(self)
+                self._recorded = True
     
     def set_tag(self, key: str, value: str):
         """Set a tag on the span."""
@@ -48,14 +61,19 @@ class Span:
         self.log(f"Error: {str(error)}")
 
 
-class Tracer:
+class Tracer(TraceQueries):
     """Tracer for distributed tracing."""
     
-    def __init__(self, service_name: str, track_callback):
+    def __init__(self, service_name: str, track_callback, query=None):
+        super().__init__(query or self._unavailable_query)
         self.service_name = service_name
         self.track_callback = track_callback
         self.active_spans: Dict[str, Span] = {}
     
+    @staticmethod
+    def _unavailable_query(_options):
+        raise RuntimeError("Trace query storage is unavailable")
+
     def start_span(
         self,
         operation: str,
@@ -64,21 +82,18 @@ class Tracer:
         tags: Optional[Dict[str, str]] = None
     ) -> Span:
         """Start a new span."""
-        import random
-        import string
-        
         if trace_id is None:
-            trace_id = ''.join(random.choices(string.hexdigits.lower(), k=32))
-        
-        span_id = ''.join(random.choices(string.hexdigits.lower(), k=16))
-        
+            trace_id = token_hex(16)
+        span_id = token_hex(8)
+
         span = Span(
             trace_id=trace_id,
             span_id=span_id,
             parent_span_id=parent_span_id,
             operation=operation,
             start_time=time.time() * 1000,
-            tags=tags or {}
+            tags=deepcopy(tags or {}),
+            _on_finish=self._record_span
         )
         
         span.set_tag("service.name", self.service_name)
@@ -87,24 +102,25 @@ class Tracer:
         return span
     
     def finish_span(self, span: Span):
-        """Finish a span."""
+        """Finish and record a span at most once."""
         span.finish()
-        
-        if span.span_id in self.active_spans:
-            del self.active_spans[span.span_id]
-        
-        # Track the span
+
+    def _record_span(self, span: Span):
+        tags = deepcopy(span.tags or {})
+        if span.status == "error":
+            tags["error"] = True
         self.track_callback("trace.span", {
-            "trace_id": span.trace_id,
-            "span_id": span.span_id,
-            "parent_span_id": span.parent_span_id,
-            "operation": span.operation,
-            "duration": span.duration,
-            "tags": span.tags,
-            "logs": span.logs,
-            "status": span.status,
+            "id": span.span_id, "traceId": span.trace_id, "name": span.operation,
+            "startTime": span.start_time, "endTime": span.end_time,
+            "service": self.service_name,
+            **({"parentId": span.parent_span_id} if span.parent_span_id is not None else {}),
+            "trace_id": span.trace_id, "span_id": span.span_id,
+            "parent_span_id": span.parent_span_id, "operation": span.operation,
+            "duration": span.duration, "tags": tags,
+            "logs": deepcopy(span.logs or []), "status": span.status,
         })
-    
+        self.active_spans.pop(span.span_id, None)
+
     @contextmanager
     def trace(
         self,

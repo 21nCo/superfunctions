@@ -181,6 +181,8 @@ def calendar_range(shortcut, now):
 
 
 class Query:
+    _max_limit = 1000
+
     def __init__(self, options):
         if not isinstance(options, dict) or set(options) - {'metric', 'where', 'timeRange', 'groupBy', 'aggregations', 'orderBy', 'limit'}:
             raise QueryValidationError('Invalid query options')
@@ -189,8 +191,8 @@ class Query:
         if 'metric' in options and (not isinstance(metric, str) or not metric.strip()):
             raise QueryValidationError('Invalid metric')
         limit = options.get('limit', 1000)
-        if type(limit) is not int or not 0 <= limit <= 1000:
-            raise QueryValidationError('Limit must be between0 and1000')
+        if type(limit) is not int or not 0 <= limit <= self._max_limit:
+            raise QueryValidationError(f'Limit must be between0 and{self._max_limit}')
         self.limit = limit
         filters = options.get('where', {})
         if not isinstance(filters, dict): raise QueryValidationError('Invalid filters')

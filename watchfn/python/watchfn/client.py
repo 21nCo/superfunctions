@@ -1,9 +1,12 @@
 import time
+from threading import RLock
 from typing import Any, Dict, List, Optional, overload
 from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
 from .query import Query, Aggregate
+from .trace.tracer import Tracer
+from .trace.queries import StoredTraceQuery
 from .alerts.alert_manager import AlertManager
 from .alerts.durable import DurableAlertManager
 from .alerts.observations import observations
@@ -18,6 +21,7 @@ class WatchFn:
     def __init__(self, name: str, database=None, **kwargs):
         self.config = WatchFnConfig(name=name, **kwargs)
         self.is_started = False
+        self._trace_admission = RLock()
         
         # Storage
         if self.config.storage == "database":
@@ -35,9 +39,22 @@ class WatchFn:
         self.process_metrics = ProcessMetricsCollector(self)
 
         self._alerts = None
+        self.trace = Tracer(self.config.name, self._record_trace, self._query_traces)
 
         # HTTP Routes
         self.http_routes: List[Route] = create_routes(self)
+
+    def _record_trace(self, name, properties):
+        with self._trace_admission:
+            if not self.is_started:
+                raise RuntimeError("WatchFn storage is unavailable")
+            self.batcher.add(Event(type="track", name=name, properties=properties))
+
+    def _query_traces(self, options):
+        if not self.is_started:
+            raise RuntimeError("WatchFn storage is unavailable")
+        # Stored-only queries do not join delivery or lifecycle callback work.
+        return StoredTraceQuery(options).execute(self.storage.query())
 
     @property
     def alerts(self):
@@ -69,7 +86,8 @@ class WatchFn:
             self.storage.start()
         if self._alerts is not None:
             self._alerts._callbacks.start()
-        self.is_started = True
+        with self._trace_admission:
+            self.is_started = True
         self.batcher.start()
         # Enable collectors based on config
         self.system_metrics.start()
@@ -78,7 +96,8 @@ class WatchFn:
     def stop(self):
         if self._alerts is not None:
             self._alerts._callbacks.stop()
-        self.is_started = False
+        with self._trace_admission:
+            self.is_started = False
         self.system_metrics.stop()
         self.process_metrics.stop()
         try:
