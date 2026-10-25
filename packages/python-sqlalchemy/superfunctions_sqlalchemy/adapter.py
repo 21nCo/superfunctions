@@ -5,7 +5,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import MetaData, Table, and_, delete, func, insert, or_, select, text, update
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 from superfunctions.db import (
     Adapter,
@@ -440,20 +440,21 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"CreateMany failed: {str(e)}", cause=e)
 
-    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
+    async def _update_many(self, normalized: UpdateManyParams, connection: Optional[Connection] = None) -> int:
         """Update multiple records."""
-        normalized = self._coerce_params(UpdateManyParams, params, kwargs)
         try:
             table = self._get_table(normalized.model, normalized.namespace)
             where_clause = self._build_where_clause(table, normalized.where)
             if where_clause is None:
                 raise QueryFailedError("UpdateMany failed: update_many requires a where clause")
 
-            with self.engine.begin() as conn:
-                result = conn.execute(update(table).where(where_clause).values(**normalized.data))
+            if connection is not None:
+                result = connection.execute(update(table).where(where_clause).values(**normalized.data))
                 return result.rowcount
+            with self.engine.begin() as conn:
+                return await self._update_many(normalized, conn)
 
-        except QueryFailedError:
+        except (QueryFailedError, ConstraintViolationError, ConnectionError):
             raise
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
@@ -461,6 +462,10 @@ class SQLAlchemyAdapter:
             raise ConnectionError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"UpdateMany failed: {str(e)}", cause=e)
+
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
+        """Update matching records atomically and return the driver row count."""
+        return await self._update_many(self._coerce_params(UpdateManyParams, params, kwargs))
 
     async def delete_many(self, params: Optional[DeleteManyParams] = None, **kwargs: Any) -> int:
         """Delete multiple records."""
@@ -630,6 +635,10 @@ class SQLAlchemyTransactionAdapter:
 
     async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
         return await self.parent._update(self.parent._coerce_params(UpdateParams, params, kwargs), self.connection)
+
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
+        """Keep all predicates in one UPDATE on the owned transaction connection."""
+        return await self.parent._update_many(self.parent._coerce_params(UpdateManyParams, params, kwargs), self.connection)
 
     async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
         await self.parent._delete(self.parent._coerce_params(DeleteParams, params, kwargs), self.connection)

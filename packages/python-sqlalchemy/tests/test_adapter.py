@@ -412,3 +412,63 @@ async def test_update_does_not_treat_no_op_rowcount_as_missing(adapter, monkeypa
     )
 
     assert updated == {"id": 1, "email": "alice@example.com", "name": "Alice"}
+
+
+@pytest.mark.asyncio
+async def test_transaction_update_many_cas_rollback_and_predicates(adapter):
+    from superfunctions.db import UpdateManyParams
+    await adapter.create(model="users", data={"id": 1, "name": "old", "email": "one@example.test"})
+    await adapter.create(model="users", data={"id": 2, "name": "old", "email": "two@example.test"})
+    async def rollback(tx):
+        assert await tx.update_many(UpdateManyParams(model="users", where=[WhereClause(field="id", value=1), WhereClause(field="name", value="old")], data={"name": "new"})) == 1
+        assert await tx.update_many(model="users", where=[WhereClause(field="id", value=1), WhereClause(field="name", value="old")], data={"name": "lost"}) == 0
+        assert (await tx.find_one(model="users", where=[WhereClause(field="id", value=2)]))["name"] == "old"
+        raise RuntimeError("rollback")
+    with pytest.raises(RuntimeError, match="rollback"):
+        await adapter.transaction(rollback)
+    assert (await adapter.find_one(model="users", where=[WhereClause(field="id", value=1)]))["name"] == "old"
+    async def invalid(tx):
+        with pytest.raises(QueryFailedError):
+            await tx.update_many(model="users", where=[], data={"name": "all"})
+        with pytest.raises(QueryFailedError):
+            await tx.update_many(model="users", where=[WhereClause(field="missing", value=1)], data={"name": "all"})
+    await adapter.transaction(invalid)
+
+
+def test_transaction_update_many_independent_sqlite_writers(tmp_path):
+    import asyncio
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    path = "sqlite:///" + str(tmp_path / "cas.sqlite")
+    engine = create_engine(path)
+    metadata = MetaData()
+    table = Table("claims", metadata, Column("id", Integer, primary_key=True), Column("revision", Integer), Column("owner", String))
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(table.insert().values(id=1, revision=0, owner="none"))
+    engine.dispose()
+    ready = threading.Barrier(2)
+    def writer(owner):
+        worker_engine = create_engine(path)
+        worker = create_adapter(worker_engine)
+        async def run():
+            # Both independent workers begin from the same observed revision.
+            observed = await worker.find_one(model="claims", where=[WhereClause(field="id", value=1)])
+            ready.wait(timeout=5)
+            async def claim(tx):
+                return await tx.update_many(model="claims", where=[WhereClause(field="id", value=1), WhereClause(field="revision", value=observed["revision"])], data={"revision": 1, "owner": owner})
+            return await worker.transaction(claim)
+        try:
+            return asyncio.run(run())
+        finally:
+            worker_engine.dispose()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(writer, ["one", "two"]))
+    assert sorted(results) == [0, 1]
+    engine = create_engine(path)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(table.select()).mappings().one()
+            assert row["revision"] == 1 and row["owner"] in ("one", "two")
+    finally:
+        engine.dispose()

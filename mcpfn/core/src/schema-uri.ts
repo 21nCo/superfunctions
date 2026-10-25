@@ -1,9 +1,19 @@
 import uri from "fast-uri";
 import type { UriResolver } from "ajv/dist/types/index.js";
 
-/** Keep URI authority normalization in fast-uri and adapt only JSON Pointer fragments. */
+/** Preserve patched URI authority handling with JSON Schema-specific root/pointer rules. */
 export const schemaUriResolver: UriResolver = {
   ...uri,
+  resolve(base, reference) {
+    // An anonymous schema has no public resource URI. Its literal relative dot
+    // segments denote that root; do not restore URI equivalence for authored
+    // paths, encoded dots, queries, root paths or authority-bearing references.
+    if ((base === "" || base.startsWith("#")) && /^(?:\.{1,2}\/)*\.{1,2}\/?(?:#.*)?$/u.test(reference)) {
+      const fragment = reference.indexOf("#");
+      return fragment < 0 ? "" : reference.slice(fragment);
+    }
+    return uri.resolve(base, reference);
+  },
   parse(value) {
     const parsed = uri.parse(value);
     if (parsed.fragment !== undefined) {

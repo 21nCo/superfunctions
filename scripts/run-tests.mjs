@@ -8,17 +8,7 @@ const isFileFnServerContractRun =
   args[1] === "filefn/server/tests/client-contract.test.ts";
 
 const command = isFileFnServerContractRun
-  ? [
-      "npm",
-      [
-        "exec",
-        "--yes",
-        "--package=vitest@3.2.4",
-        "vitest",
-        "--run",
-        "filefn/server/tests/client-contract.test.ts",
-      ],
-    ]
+  ? ["npm", ["run", "test:filefn-server-contract"]]
   : ["npx", ["turbo", "run", "test", "--", ...args]];
 
 const result = spawnSync(command[0], command[1], {
