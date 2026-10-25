@@ -68,7 +68,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
   { id: "host.native-prestart", row: 1, title: "Native process endpoint wiring before start", prerequisites: HOST,
     assertions: [
       a("env-before-start", "The native process reads its DEVFN_URL_/DEVFN_PORT_ values and DEVFN_INSTANCE_ID at its first instruction, before it listens."),
-      a("receipt-matches", "The values the process saw equal the ready receipt's leased port and devfn url output."),
+      a("receipt-matches", "The port the process saw is the ready receipt's lease for its owner, its direct URL answers with the worktree's marker, and the devfn url route serves that worktree."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/endpoints.test.ts", "devfn/core/test/startup-fixture.test.ts"] },
   { id: "host.compose-prestart", row: 1, title: "Compose endpoint wiring before start", prerequisites: [...HOST, "docker-compose"],
@@ -87,7 +87,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     assertions: [
       a("path-prefix", "A prefix route reaches its own process with the prefix stripped, at its segment boundary only."),
       a("unselected-denied", "An unselected path on a routed host and an unknown host both return 404 and reach no process."),
-      a("no-cross-worktree", "Requests carrying one worktree's hostname never reach the other worktree's processes."),
+      a("no-cross-worktree", "The worktrees' route hostnames are disjoint, and every route of each worktree answers with that worktree's own marker, never the other's."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/proxy/test/domain-routing.test.ts", "devfn/proxy/test/real-caddy.test.ts", "devfn/core/test/domain-routing.test.ts"] },
   { id: "host.internal-tls", row: 1, title: "Internal TLS without trust installation", prerequisites: HOST,
@@ -117,7 +117,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     fixtureEvidence: ["devfn/proxy/test/oauth-relay.test.ts", "devfn/proxy/test/oauth-relay-service.test.ts", "devfn/core/test/oauth-relay-lifecycle.test.ts", "devfn/core/test/oauth-relay-owner.test.ts"] },
   tunnel("tunnel.cloudflare", "Cloudflare named-tunnel public journey", "cloudflare", "pre-start", "Public DNS for the hostname is a DevFn-owned record routing to the approved tunnel."),
   tunnel("tunnel.ngrok-reserved", "ngrok reserved-endpoint public journey", "ngrok-reserved", "pre-start", "The hostname is under the account's reserved wildcard domain and resolves publicly."),
-  tunnel("tunnel.ngrok-ephemeral", "ngrok ephemeral-endpoint public journey", "ngrok-ephemeral", "post-start", "The assigned hostname resolves publicly only while the connector runs."),
+  tunnel("tunnel.ngrok-ephemeral", "ngrok ephemeral-endpoint public journey", "ngrok-ephemeral", "post-start", "The assigned hostname resolves publicly while the connector runs."),
   { id: "recovery.startup-failure", row: 4, title: "Startup failure preserves unrelated runtimes", prerequisites: HOST,
     assertions: [
       a("failure-cleaned", "A start whose last node fails while the node started before it answers reports a stable error, stops that running sibling, leaves no process, lease or route of its own, and its retry succeeds once fixed."),
@@ -126,7 +126,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/teardown-evidence.test.ts", "devfn/core/test/orchestrator.test.ts"] },
   { id: "recovery.concurrent-change", row: 4, title: "Concurrent starts and configuration change", prerequisites: HOST,
     assertions: [
-      a("single-owner", "Concurrent starts of one worktree leave exactly one running lifecycle, and the other start fails without side effects."),
+      a("single-owner", "Concurrent starts of one worktree leave exactly one running lifecycle with both processes, and the other start fails with a stable error code."),
       a("change-detected", "A changed manifest degrades status and a restart applies it to that worktree only."),
       a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
     ],
@@ -153,14 +153,14 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
   { id: "recovery.tunnel-reload", row: 4, title: "Tunnel recovery preserves other owners' public routes", prerequisites: [...HOST, "approval", "cloudflare"],
     assertions: [
       a("withdraw-one", "Stopping one of two public worktrees withdraws only its hostname; the other keeps serving publicly."),
-      a("recover-preserves", "devfn tunnel recover restarts the connector and the remaining owner's public route still serves."),
+      a("recover-preserves", "After the run kills the binding's connector and sees it down with the remaining route unserved, devfn tunnel recover starts a different connector and that route serves again."),
       a("withdrawn-absent", "After both stop, tunnel status lists nothing and a provider read-back finds no DevFn-owned record."),
     ],
     resources: ["fixture-repository", "runtime", "tunnel-binding", "public-hostname"], fixtureEvidence: ["devfn/proxy/test/tunnel-service.test.ts", "devfn/core/test/tunnel-lifecycle.test.ts"] },
   { id: "interface.owner-endpoint", row: 5, title: "Opaque owner and endpoint interface", prerequisites: HOST,
     assertions: [
       a("owner-opaque", "The process's DEVFN_INSTANCE_ID equals the receipt owner, and its hostname carries only an owner digest, never the owner value or worktree path."),
-      a("resolver-matches", "The published resolver, given the live owner and leased ports, reproduces every generated value each process saw."),
+      a("resolver-matches", "The published resolver, given the live owner and leased ports, reproduces every DEVFN_ value each process saw and produces none it did not see; the one launch-time value, DEVFN_STATE_DIR, is the lifecycle's state directory."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/endpoints.test.ts", "devfn/compose/test/override.test.ts", "devfn/testing/test/networking-qualification.test.ts"] },
 ];

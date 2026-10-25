@@ -2,6 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readdirSync, statSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +18,7 @@ import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelB
 import { staleBuildOutputs } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
-  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
+  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
   localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runScenarios, selectScenarios, summarize, tunnelFixture,
   protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
@@ -134,12 +135,18 @@ describe("prerequisite probes", () => {
     if (command === "lsof") return { code: 0, stdout: `p${String(process.pid)}\nn/tmp\n` };
     return { code: 0, stdout: known[key] ?? "{\"ok\":true}" };
   };
-  /** The Cloudflare API answering GET cfd_tunnel for the approved tunnel with these connections. */
-  const tunnelApi = (connections: unknown[] | undefined, status = 200): typeof fetch => async (input, init) => {
-    expect(String(input)).toBe(`https://api.cloudflare.com/client/v4/accounts/${approval.cloudflare.accountId}/cfd_tunnel/${approval.cloudflare.tunnelId}`);
+  /**
+   * The Cloudflare API for the approved tunnel: GET cfd_tunnel/{id}/connections
+   * answers these clients, and GET cfd_tunnel/{id} this status, with its
+   * deprecated connections field always empty, as Cloudflare documents it will be.
+   */
+  const tunnelApi = (clients: unknown[] | undefined, tunnelStatus = "inactive", status = 200): typeof fetch => async (input, init) => {
+    const base = `https://api.cloudflare.com/client/v4/accounts/${approval.cloudflare.accountId}/cfd_tunnel/${approval.cloudflare.tunnelId}`;
+    expect([base, `${base}/connections`]).toContain(String(input));
     expect(init?.method ?? "GET").toBe("GET");
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer cf-token-value");
-    return new Response(JSON.stringify(status === 200 ? { success: true, result: { id: approval.cloudflare.tunnelId, connections } } : { success: false, errors: [{ code: 10000 }] }), { status });
+    if (status !== 200) return new Response(JSON.stringify({ success: false, errors: [{ code: 10000 }] }), { status });
+    return new Response(JSON.stringify({ success: true, result: String(input) === base ? { id: approval.cloudflare.tunnelId, status: tunnelStatus, connections: [] } : clients }), { status });
   };
   const environment = (overrides: Partial<ProbeEnvironment> = {}): ProbeEnvironment => ({
     platform: "linux", nodeVersion: "v22.12.0", env: { QUAL_GOOGLE_ID: "id", QUAL_GOOGLE_SECRET: "google-secret-value", QUAL_CF_TOKEN: "cf-token-value" }, fetch: tunnelApi([]), devfnCli: "/devfn/cli.js", approval: approvalFor(overrides.platform ?? "linux"), browserOperator: true,
@@ -186,13 +193,19 @@ describe("prerequisite probes", () => {
   });
 
   it("needs an approved Cloudflare tunnel no connector holds, read with the approved token, and fails closed when unreadable", async () => {
-    const held = [{ id: "c1", client_id: "operator-connector", colo_name: "ams01" }, { id: "c2", client_id: "operator-connector", colo_name: "fra02" }];
+    // The documented /connections answer: one client (connector) holding two connections, and one that has none left.
+    const held = [{ id: "operator-connector", conns: [{ colo_name: "ams01" }, { colo_name: "fra02" }], version: "2026.9.0" }, { id: "gone-connector", conns: [] }];
     expect(await status("cloudflare")).toMatchObject({ status: "satisfied", detail: expect.stringContaining("no connected connector") });
-    expect(await status("cloudflare", { fetch: tunnelApi(held) })).toMatchObject({ status: "missing", detail: expect.stringContaining("1 connected connector(s); an approved tunnel serves one run at a time") });
-    for (const unreadable of [tunnelApi([], 403), tunnelApi(undefined), (async () => { throw new Error("ENOTFOUND api.cloudflare.com"); }) as typeof fetch]) {
+    expect(await status("cloudflare", { fetch: tunnelApi([{ id: "gone-connector", conns: [] }]) })).toMatchObject({ status: "satisfied" });
+    expect(await status("cloudflare", { fetch: tunnelApi(held, "healthy") })).toMatchObject({ status: "missing", detail: expect.stringContaining("1 connected connector(s); an approved tunnel serves one run at a time") });
+    // A healthy or degraded tunnel listing no connected client contradicts itself (the deprecated field reads empty): never free.
+    for (const contradictory of ["healthy", "degraded"]) {
+      expect(await status("cloudflare", { fetch: tunnelApi([], contradictory) })).toMatchObject({ status: "missing", detail: expect.stringContaining(`reports the tunnel ${contradictory} but lists no connected connector`) });
+    }
+    for (const unreadable of [tunnelApi([], "inactive", 403), tunnelApi(undefined), tunnelApi([{ conns: [] }]), tunnelApi([], "unknown"), (async () => { throw new Error("ENOTFOUND api.cloudflare.com"); }) as typeof fetch]) {
       expect(await status("cloudflare", { fetch: unreadable })).toMatchObject({ status: "missing", detail: expect.stringContaining("connections are unreadable") });
     }
-    expect(await cloudflareConnectors(approval.cloudflare, { QUAL_CF_TOKEN: "cf-token-value" }, tunnelApi(held))).toEqual(["operator-connector"]);
+    expect(await cloudflareConnectors(approval.cloudflare, { QUAL_CF_TOKEN: "cf-token-value" }, tunnelApi(held, "healthy"))).toEqual(["operator-connector"]);
     await expect(cloudflareConnectors(approval.cloudflare, {}, tunnelApi([]))).rejects.toThrow(/QUAL_CF_TOKEN is unset/);
     expect(JSON.stringify(await status("cloudflare", { fetch: tunnelApi(held) }))).not.toContain("cf-token-value");
   });
@@ -667,37 +680,109 @@ describe("live host cleanup handlers", () => {
     expect(name.cleanup).toMatchObject({ absent: false, detail: "still present on read-back: held by ngrok: abc123.ngrok-free.app" });
   });
 
-  it("starts a Cloudflare connector only on a tunnel whose every connected connector the run started", async () => {
+  /** Record connector as the binding's running connector, and retired ones, in the run's tunnel state, as DevFn does. */
+  async function recordConnectors(stateDir: string, name: string, connector: { pid: number; metricsPort: number } | undefined, retired: Array<{ pid: number; metricsPort: number }> = []) {
+    const record = (item: { pid: number; metricsPort: number }) => ({ ...item, birthSignature: "fixture", startedAt: new Date().toISOString(), configDigest: "0".repeat(64), hostnames: [] });
+    const state = tunnelPaths(stateDir, name).state;
+    await mkdir(path.dirname(state), { recursive: true });
+    await writeFile(state, JSON.stringify({ version: 1, binding: name, hostnames: [], retired: retired.map(record), residue: [], ...(connector ? { connector: record(connector) } : {}) }));
+  }
+
+  /** A Cloudflare binding registered in the run state as the journeys register it. */
+  async function cloudflareBinding(stateDir: string): Promise<TunnelBinding> {
+    const credentials = path.join(dir, "tunnel.json");
+    await writeFile(credentials, "{}", { mode: 0o600 });
+    return await registerTunnelBinding(stateDir, { name: "qabcdef12-cf", provider: "cloudflare", domain: "preview.example.test", projectId: "qualification", repositoryIdentity: dir, nonproduction: true,
+      cloudflare: { accountId: approval.cloudflare.accountId, zoneId: approval.cloudflare.zoneId, tunnelId: approval.cloudflare.tunnelId, credentialsFile: credentials, apiTokenEnv: approval.cloudflare.apiTokenEnv } });
+  }
+
+  it("starts a Cloudflare connector only on a tunnel whose every connected connector is one the run started, by the ID its own cloudflared reports", async () => {
     let connected: string[] | undefined = ["operator-connector"];
     const reads: string[] = [];
+    // Each run-started cloudflared answers its own connector ID on its metrics port.
+    const identities = new Map<number, string>([[4101, "run-a"], [4102, "run-b"], [4103, "run-c"]]);
     const ready = { code: 0, stdout: JSON.stringify({ ok: true, state: "ready", tunnel: { hostnames: [] }, publicUrls: {} }), stderr: "" };
     const { host, calls } = await fixtureHost({ devfn: { ...stopped, "tunnel urls": { ok: true, timing: "pre-start", urls: { web: "https://web-qabcdef12-public-0123.preview.example.test/app" } },
-      "tunnel register": async () => {
-        const credentials = path.join(dir, "tunnel.json");
-        await writeFile(credentials, "{}", { mode: 0o600 });
-        await registerTunnelBinding(host.stateDir, { name: "qabcdef12-cf", provider: "cloudflare", domain: "preview.example.test", projectId: "qualification", repositoryIdentity: dir, nonproduction: true,
-          cloudflare: { accountId: approval.cloudflare.accountId, zoneId: approval.cloudflare.zoneId, tunnelId: approval.cloudflare.tunnelId, credentialsFile: credentials, apiTokenEnv: approval.cloudflare.apiTokenEnv } });
-        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
-      },
-      "up --allow-public": async () => { connected = [...connected ?? [], "run-connector"]; return ready; } } }, undefined, {},
-    { connectors: async (binding) => { reads.push(binding.cloudflare.tunnelId); if (!connected) throw new Error("Cloudflare GET cfd_tunnel answered HTTP 403"); return connected; } });
-    const scenario = NETWORKING_MATRIX.find((item) => item.id === "tunnel.cloudflare")!;
-    const context: ScenarioContext = { scenario, inventory: new DisposableInventory({ runId: "abcdef123456", root: dir, domains: approvedDomains(parseApproval(approval)) }), observe: () => undefined, expect: () => undefined };
-    // A connector the run did not start is on the approved tunnel: the journey stops before devfn up.
-    await expect(liveDrivers(host, parseApproval(approval))[scenario.id](context)).rejects.toThrow(/connectors the run did not start \(operator-connector\); an approved tunnel serves one run at a time/);
-    expect(calls.some((call) => call.startsWith("devfn up"))).toBe(false);
-    expect(reads).toEqual([approval.cloudflare.tunnelId]);
-    const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === "qabcdef12-cf")!;
-    let steps = 0;
-    connected = [];
-    await host.soleTunnelUser(bound, async () => { steps += 1; connected = ["run-a"]; });
-    // The run's own connector, and a replacement it starts, are the run's.
-    await host.soleTunnelUser(bound, async () => { steps += 1; connected = ["run-a", "run-b"]; });
-    connected = ["run-b", "operator-connector"];
-    await expect(host.soleTunnelUser(bound, async () => { steps += 1; })).rejects.toThrow(/\(operator-connector\)/);
-    connected = undefined;
-    await expect(host.soleTunnelUser(bound, async () => { steps += 1; })).rejects.toThrow(/HTTP 403/);
-    expect(steps).toBe(2);
+      "tunnel register": async () => { await cloudflareBinding(host.stateDir); return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" }; },
+      "up --allow-public": async () => ready } }, undefined, {},
+    { connectors: async (binding) => { reads.push(binding.cloudflare.tunnelId); if (!connected) throw new Error("Cloudflare GET cfd_tunnel/connections answered HTTP 403"); return connected; },
+      connectorIdentity: async (port) => identities.get(port), connectorReads: { reads: 2, intervalMs: 1 } });
+    const [a, b, c] = [await survivor(), await survivor(), await survivor()];
+    try {
+      const scenario = NETWORKING_MATRIX.find((item) => item.id === "tunnel.cloudflare")!;
+      const context: ScenarioContext = { scenario, inventory: new DisposableInventory({ runId: "abcdef123456", root: dir, domains: approvedDomains(parseApproval(approval)) }), observe: () => undefined, expect: () => undefined };
+      // A connector the run did not start is on the approved tunnel: the journey stops before devfn up, after reading it again for API lag.
+      await expect(liveDrivers(host, parseApproval(approval))[scenario.id](context)).rejects.toThrow(/connectors the run did not start \(operator-connector\) before the step; an approved tunnel serves one run at a time/);
+      expect(calls.some((call) => call.startsWith("devfn up"))).toBe(false);
+      expect(reads).toEqual([approval.cloudflare.tunnelId, approval.cloudflare.tunnelId]);
+      const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === "qabcdef12-cf")!;
+      const steps: string[] = [];
+      connected = [];
+      await host.soleTunnelUser(bound, async () => { steps.push("start"); await recordConnectors(host.stateDir, bound.name, { pid: a.pid, metricsPort: 4101 }); connected = ["run-a"]; });
+      // Withdrawing a name swaps in a successor and stops the predecessor, which the connection list still shows for a while: both are the run's.
+      await host.soleTunnelUser(bound, async () => { steps.push("swap"); await recordConnectors(host.stateDir, bound.name, { pid: b.pid, metricsPort: 4102 }); await a.stop(); connected = ["run-a", "run-b"]; });
+      // A successor DevFn swaps in outside any wrapped step (one worktree's down) is still the run's, by the ID it reports.
+      await recordConnectors(host.stateDir, bound.name, { pid: c.pid, metricsPort: 4103 }, [{ pid: b.pid, metricsPort: 4102 }]);
+      connected = ["run-b", "run-c"];
+      await host.soleTunnelUser(bound, async () => { steps.push("recover"); });
+      await recordConnectors(host.stateDir, bound.name, { pid: b.pid, metricsPort: 4102 });
+      connected = ["run-b"];
+      // A connector attaching during a step is not the run's merely because it appeared then.
+      await expect(host.soleTunnelUser(bound, async () => { steps.push("foreign attaches"); connected = ["run-b", "operator-connector"]; })).rejects.toThrow(/\(operator-connector\) after the step/);
+      await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/\(operator-connector\) before the step/);
+      // A connector the run state records but whose process no longer runs cannot vouch for an unknown ID.
+      identities.set(4102, "operator-connector");
+      await b.stop();
+      await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/\(operator-connector\)/);
+      connected = undefined;
+      await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/HTTP 403/);
+      expect(steps).toEqual(["start", "swap", "recover", "foreign attaches"]);
+    } finally { for (const item of [a, b, c]) await item.stop().catch(() => undefined); }
+  });
+
+  it("reads a cloudflared connector ID from its metrics /ready and nothing else", async () => {
+    const server = http.createServer((request, response) => {
+      if (request.url === "/ready") response.end(JSON.stringify({ status: 200, readyConnections: 4, connectorId: "1b0e6c5e-0000-4000-8000-000000000001" }));
+      else response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const silent = http.createServer((_request, response) => response.end("not json"));
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    try {
+      expect(await cloudflaredConnectorId((server.address() as net.AddressInfo).port)).toBe("1b0e6c5e-0000-4000-8000-000000000001");
+      expect(await cloudflaredConnectorId((silent.address() as net.AddressInfo).port)).toBeUndefined();
+    } finally { server.close(); silent.close(); }
+  });
+
+  it("counts a tunnel recover as a restart only when the killed connector went down and a different one runs and serves", async () => {
+    const [killed, successor] = [await survivor(), await survivor()];
+    let recovered: number | undefined;
+    const { host } = await fixtureHost({ devfn: {
+      "tunnel status": async () => ({ code: 0, stdout: JSON.stringify({ ok: true, tunnel: recovered === undefined ? { connector: "stopped" } : { connector: "running", pid: recovered } }), stderr: "" }),
+      "tunnel recover": async () => { recovered = successor.pid; return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" }; },
+    } }, undefined, {}, { connectors: async () => [], connectorReads: { reads: 1, intervalMs: 1 } });
+    const cwd = path.join(dir, "qabcdef12-reload-b");
+    try {
+      const bound = await cloudflareBinding(host.stateDir);
+      await recordConnectors(host.stateDir, bound.name, { pid: killed.pid, metricsPort: 4101 });
+      // The remaining route answers with the worktree's marker only once a connector serves it.
+      host.request = async () => recovered === undefined ? { status: 530, body: "error code: 1033", headers: {} } : { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload-b" } };
+      const recovery = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      expect(recovery).toEqual({ killed: killed.pid, downAfterKill: true, servedWhileDown: false, after: successor.pid, running: true, served: true });
+      expect(RECOVERED.connectorRestarted(recovery)).toBe(true);
+      // A recover that left the same (or no) connector, a kill that did not take the connector down, or a route served throughout is no restart.
+      expect(RECOVERED.connectorRestarted({ ...recovery, after: killed.pid })).toBe(false);
+      expect(RECOVERED.connectorRestarted({ ...recovery, after: undefined, running: false })).toBe(false);
+      expect(RECOVERED.connectorRestarted({ ...recovery, downAfterKill: false })).toBe(false);
+      expect(RECOVERED.connectorRestarted({ ...recovery, servedWhileDown: true })).toBe(false);
+      expect(RECOVERED.connectorRestarted({ ...recovery, served: false })).toBe(false);
+      // A recover that reports the connector it was given: that pid is dead after the kill, so it is not running, though the route answers.
+      recovered = undefined;
+      await recordConnectors(host.stateDir, bound.name, { pid: successor.pid, metricsPort: 4102 });
+      const noop = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      expect(noop).toMatchObject({ killed: successor.pid, downAfterKill: true, after: successor.pid, running: false, served: true });
+      expect(RECOVERED.connectorRestarted(noop)).toBe(false);
+    } finally { await killed.stop().catch(() => undefined); await successor.stop().catch(() => undefined); }
   });
 
   it("counts a killed start as crash evidence only when it was killed before it ended and reported no ready lifecycle", async () => {
@@ -730,6 +815,59 @@ describe("live host cleanup handlers", () => {
     expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { ok: false, error: { code: "DEVFN_REGISTRY_LOCK_TIMEOUT" } } })).toBe(false);
     expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { state: "ready" } })).toBe(false);
     expect(INTERRUPTED.killedBeforeReady({ ...killed, result: { code: 0, json: { state: "ready" } } })).toBe(false);
+    // Any orphan of the killed start that still runs fails, even when a later lifecycle lists its pid.
+    expect(INTERRUPTED.orphanGone(killed, () => true)).toBe(false);
+    expect(INTERRUPTED.orphanGone(killed, () => false)).toBe(true);
+    expect(INTERRUPTED.orphanGone({ ...killed, orphan: undefined }, () => false)).toBe(false);
+  });
+
+  it("lets proxy reload settle when interrupted during a pending down, then cleans up, with no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on("unhandledRejection", onUnhandled);
+    const events: string[] = [];
+    const interrupt = new AbortController();
+    const ready = async (_signal?: AbortSignal, cwd?: string) => {
+      await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: process.pid, env: {} }));
+      return { code: 0, stdout: JSON.stringify({ ok: true, state: "ready" }), stderr: "" };
+    };
+    const fixture = await fixtureHost({ devfn: { status: { ok: true, state: "ready" }, url: { urls: { web: "https://app-x.localhost:8443/" } }, up: ready,
+      // The interrupt arrives while the reload's down runs; down is cleanup, so it finishes, while the sentinel probe's wait rejects.
+      down: async () => {
+        events.push("down started");
+        interrupt.abort();
+        fixture.host.abort();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        events.push("down ended");
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      } } });
+    const { host, inventory } = fixture;
+    host.ca = async () => "fixture-ca";
+    host.request = async () => ({ status: 200, body: "", headers: {}, json: { marker: "qabcdef12-sentinel" } });
+    try {
+      const scenario = NETWORKING_MATRIX.find((item) => item.id === "recovery.proxy-reload")!;
+      const drivers = liveDrivers(host, undefined);
+      const [result] = await runScenarios({ scenarios: [scenario], platform: "linux", prerequisites: allPrerequisites, inventory, signal: interrupt.signal, snapshot: async () => ({}),
+        drivers: { [scenario.id]: async (context) => { try { await drivers[scenario.id](context); } finally { events.push("driver settled"); } } },
+        resources: { remove: async () => { events.push("remove"); }, present: async () => false } });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+      expect(events.slice(0, 4)).toEqual(["down started", "down ended", "driver settled", "remove"]);
+      expect(result).toMatchObject({ status: "failed", reason: expect.stringContaining("the run was interrupted") });
+    } finally { process.off("unhandledRejection", onUnhandled); }
+  });
+
+  it("joins a detached promise's rejection only when asked, never leaving it unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const join = detach(Promise.reject(new Error("interrupted")));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+      await expect(join()).rejects.toThrow("interrupted");
+      expect(await detach(Promise.resolve(7))()).toBe(7);
+    } finally { process.off("unhandledRejection", onUnhandled); }
   });
 
   it("reads a public name back through the provider and never treats an unreadable provider as absence", async () => {
@@ -898,5 +1036,21 @@ describe("opaque-owner endpoint interface", () => {
     expect(hostname).toBe(`web-${ownerLabel("owner/with spaces")}.localhost`);
     expect(hostname).not.toContain("owner");
     expect(ENDPOINT_INTERFACE.owner).toContain("o-<20 hex sha256 digest>");
+  });
+
+  it("compares resolver and process DEVFN_ values in both directions", () => {
+    const config = validateDevFnConfig(hostFixture());
+    const resolved = resolveEndpointTemplates({ config, plan: createPlan(config), ownerId: "owner-1", ports: { web: 41000, api: 41001 } }).nodes.web.environment;
+    const seen = Object.fromEntries(Object.entries(resolved).filter(([key]) => key.startsWith("DEVFN_")));
+    expect(resolverDifferences(resolved, seen)).toEqual([]);
+    // A generated key the process saw that the resolver does not produce fails, as does one the process never saw or saw with another value.
+    expect(resolverDifferences(resolved, { ...seen, DEVFN_URL_EXTRA: "http://127.0.0.1:41002" })).toEqual(["DEVFN_URL_EXTRA (not produced by the resolver)"]);
+    const { DEVFN_PORT_WEB: _port, ...withoutPort } = seen;
+    expect(resolverDifferences(resolved, withoutPort)).toEqual(["DEVFN_PORT_WEB (not seen by the process)"]);
+    expect(resolverDifferences(resolved, { ...seen, DEVFN_INSTANCE_ID: "other" })).toEqual(["DEVFN_INSTANCE_ID"]);
+    // Only a key named as runtime-only is excluded; non-DEVFN_ values are outside the claim.
+    expect([...RUNTIME_ONLY_KEYS]).toEqual(["DEVFN_STATE_DIR"]);
+    expect(resolverDifferences(resolved, { ...seen, DEVFN_STATE_DIR: "/tmp/x", QUAL_REVISION: "2" })).toEqual([]);
+    expect(resolverDifferences(resolved, { ...seen, DEVFN_STATE_DIR: "/tmp/x" }, new Set())).toEqual(["DEVFN_STATE_DIR (not produced by the resolver)"]);
   });
 });

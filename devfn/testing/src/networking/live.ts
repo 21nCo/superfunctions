@@ -131,6 +131,20 @@ const reasons = (items: ReadonlyArray<string | undefined>): string | false => it
 /** A lifecycle lock a killed DevFn command held is recoverable only once stale (five minutes); cleanup waits that long for it. */
 const LOCK_STALE_WAIT_MS = 360_000;
 
+/** The connector ID a cloudflared reports on its metrics GET /ready ({"status":200,"readyConnections":n,"connectorId":"<uuid>"}); undefined when it does not answer one. */
+export async function cloudflaredConnectorId(metricsPort: number): Promise<string | undefined> {
+  return await new Promise((resolve) => {
+    const request = http.get({ host: "127.0.0.1", port: metricsPort, path: "/ready", timeout: 5_000, agent: false }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => { body += chunk; });
+      response.on("end", () => { try { const id = (JSON.parse(body) as { connectorId?: unknown }).connectorId; resolve(typeof id === "string" && id ? id : undefined); } catch { resolve(undefined); } });
+    });
+    request.once("timeout", () => request.destroy());
+    request.once("error", () => resolve(undefined));
+  });
+}
+
 /** Times DevFn rewrites without a material change; every other field of a protected record is compared. */
 const VOLATILE = new Set(["createdAt", "updatedAt", "releasedAt"]);
 
@@ -166,12 +180,15 @@ export class LiveHost {
   private readonly composeLeft = new Set<string>();
   /** The relay and connector processes, and the binding, a resource had when its removal began; its read-back confirms them gone. */
   private readonly removed = new Map<string, { pids: Set<number>; binding?: TunnelBinding }>();
-  /** Connectors that appeared on an approved Cloudflare tunnel across the run's own connector starts. */
+  /** Connector IDs the run's own cloudflared processes reported on their metrics /ready; never inferred from timing. */
   private readonly ownConnectors = new Set<string>();
   private readonly connectors: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>;
+  private readonly connectorIdentity: (metricsPort: number) => Promise<string | undefined>;
+  private readonly connectorReads: { reads: number; intervalMs: number };
 
   public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string;
-    connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]> }) {
+    connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>; connectorIdentity?: (metricsPort: number) => Promise<string | undefined>;
+    connectorReads?: { reads: number; intervalMs: number } }) {
     this.stateDir = path.join(options.root, "state");
     const { DOCKER_CONTEXT: _context, ...env } = options.env;
     this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
@@ -179,22 +196,52 @@ export class LiveHost {
     this.exec = options.run ?? run;
     this.readBack = options.providers ?? providerReadBack(options.env);
     this.connectors = options.connectors ?? (async (binding) => await cloudflareConnectors(binding.cloudflare, options.env));
+    this.connectorIdentity = options.connectorIdentity ?? cloudflaredConnectorId;
+    this.connectorReads = options.connectorReads ?? { reads: 6, intervalMs: 5_000 };
+  }
+
+  /** Learn the connector ID of every running connector the run state records for binding, from its own metrics endpoint. */
+  private async identifyOwnConnectors(binding: TunnelBinding): Promise<void> {
+    const state = await readTunnelState(this.stateDir, binding.name);
+    for (const record of [state.connector, ...state.retired]) {
+      if (!record || !alive(record.pid)) continue;
+      const id = await this.connectorIdentity(record.metricsPort).catch(() => undefined);
+      if (id) this.ownConnectors.add(id);
+    }
   }
 
   /**
-   * Run a step that may start a connector for binding. On a Cloudflare
-   * tunnel every connector connected before the step must be one the run
-   * started, or the step is refused: Cloudflare would spread the run's
-   * traffic over another runtime's connector. Connectors that appear across
-   * the step are the run's own.
+   * Every connector connected to binding's Cloudflare tunnel must be one the
+   * run identified as its own. Cloudflare's connection list lags a connector
+   * change, so a foreign, contradictory or unreadable answer is read again a
+   * few times before the step is refused.
+   */
+  private async assertOwnConnectors(binding: Extract<TunnelBinding, { provider: "cloudflare" }>, when: string): Promise<void> {
+    let problem = "";
+    for (let read = 0; read < this.connectorReads.reads; read += 1) {
+      if (read) await this.wait(this.connectorReads.intervalMs);
+      await this.identifyOwnConnectors(binding);
+      const connected = await this.connectors(binding).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+      if (connected instanceof Error) { problem = connected.message; continue; }
+      const foreign = connected.filter((id) => !this.ownConnectors.has(id));
+      if (!foreign.length) return;
+      problem = `Cloudflare tunnel ${binding.cloudflare.tunnelId} has connectors the run did not start (${foreign.join(", ")}) ${when}; an approved tunnel serves one run at a time`;
+    }
+    throw new Error(problem);
+  }
+
+  /**
+   * Run a step that may start, swap or recover a connector for binding. On a
+   * Cloudflare tunnel every connected connector must be one the run started,
+   * by the connector ID its own cloudflared reports, both before the step
+   * and after it: Cloudflare would spread the run's traffic over another
+   * runtime's connector.
    */
   public async soleTunnelUser<T>(binding: TunnelBinding, step: () => Promise<T>): Promise<T> {
     if (binding.provider !== "cloudflare") return await step();
-    const before = await this.connectors(binding);
-    const foreign = before.filter((id) => !this.ownConnectors.has(id));
-    if (foreign.length) throw new Error(`Cloudflare tunnel ${binding.cloudflare.tunnelId} has connectors the run did not start (${foreign.join(", ")}); an approved tunnel serves one run at a time`);
+    await this.assertOwnConnectors(binding, "before the step");
     const result = await step();
-    for (const id of await this.connectors(binding)) if (!before.includes(id)) this.ownConnectors.add(id);
+    await this.assertOwnConnectors(binding, "after the step");
     return result;
   }
 

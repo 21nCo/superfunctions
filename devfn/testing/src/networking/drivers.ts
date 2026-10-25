@@ -7,7 +7,7 @@ import tls from "node:tls";
 import { createPlan, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity } from "@devfn/core";
 import { validateDevFnConfig } from "@devfn/config";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
-import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, readTunnelState, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
 import type { Answer, LiveHost, ProviderReadBack } from "./live.js";
@@ -211,6 +211,17 @@ async function start(context: ScenarioContext, host: LiveHost, cwd: string, args
   return result.json;
 }
 
+/**
+ * Handle a promise the driver does not await at once, from the moment it is
+ * created, and rethrow its rejection only when joined: an interrupt that
+ * rejects it while the driver awaits something else never ends the process
+ * before the run's cleanup and read-back.
+ */
+export function detach<T>(promise: Promise<T>): () => Promise<T> {
+  const settled = promise.then((value) => ({ value }), (error: unknown) => ({ error }));
+  return async () => { const outcome = await settled; if ("error" in outcome) throw outcome.error; return outcome.value; };
+}
+
 /** Whether url answers with cwd's marker through the local DevFn proxy. */
 async function serves(host: LiveHost, url: string, cwd: string, ca: string): Promise<boolean> {
   const answer = await host.request(url, { ca }).catch(() => undefined);
@@ -288,10 +299,11 @@ const routeIsolation: LiveDriver = async (context, host) => {
   const unselected = await host.request(`${originOf(api)}/other`, { ca });
   const unknown = await host.request(`http://${host.prefix}-unknown.localhost/`);
   context.expect("unselected-denied", ANSWERS.proxyNotFound(unselected) && ANSWERS.proxyNotFound(unknown), `unselected path ${unselected.status}, unknown host ${unknown.status}`);
-  const crossed = [];
-  for (const [own, other] of [[a, b], [b, a]]) for (const url of [own.urls.web, `${own.urls.api}/x`]) crossed.push((await host.request(url, { ca })).json?.marker === marker(other.cwd));
+  // Each of a worktree's names must answer with that worktree's own marker: an unanswered request proves nothing about isolation.
+  const answered: string[] = [];
+  for (const own of [a, b]) for (const url of [own.urls.web, `${own.urls.api}/x`]) { const found = (await host.request(url, { ca })).json?.marker; if (found !== marker(own.cwd)) answered.push(`${url} -> ${String(found ?? "no marker")}`); }
   const disjoint = !(a.receipt.routes as Array<{ hostname: string }>).some((route) => (b.receipt.routes as Array<{ hostname: string }>).some((other) => other.hostname === route.hostname));
-  context.expect("no-cross-worktree", !crossed.includes(true) && disjoint, `route hostnames disjoint: ${disjoint}; cross answers: ${crossed.filter(Boolean).length}`);
+  context.expect("no-cross-worktree", answered.length === 0 && disjoint, `route hostnames disjoint: ${disjoint}; names not answered by their own worktree: ${answered.join(", ") || "none"}`);
 };
 
 const internalTls: LiveDriver = async (context, host) => {
@@ -315,7 +327,7 @@ const registeredDomain = (approval: QualificationApproval | undefined): LiveDriv
   const loopback = async (name: string) => (await lookup(name, { all: true })).every((item) => item.address.startsWith("127.") || item.address === "::1");
   context.expect("loopback-only", registered.code === 0 && await loopback(domain), `registration ${registered.code === 0 ? "accepted" : JSON.stringify(registered.json.error)}; ${domain} resolves only to loopback`);
   const linked = await host.worktree(context.scenario.id, primary, "b");
-  const served = [];
+  const served: boolean[] = [];
   const routes: string[][] = [];
   let ca = "";
   for (const cwd of [primary, linked]) {
@@ -323,10 +335,11 @@ const registeredDomain = (approval: QualificationApproval | undefined): LiveDriv
     // The internal root is read from the Caddy admin API, which exists only once a lifecycle started Caddy.
     ca ||= await host.ca();
     routes.push((receipt.routes as Array<{ hostname: string }>).map((route) => route.hostname));
-    const { web } = await urls(host, cwd);
-    served.push(await loopback(hostOf(web)) && await serves(host, web, cwd, ca));
+    // The worktree's own alias itself resolves to loopback and serves the worktree over the registration's internal TLS.
+    const alias = routes.at(-1)!.find((name) => name.endsWith(`.${domain}`) && name.startsWith("web-"));
+    served.push(alias !== undefined && await loopback(alias) && await serves(host, `https://${alias}:${proxyListenerPorts().httpsPort}/`, cwd, ca));
   }
-  context.expect("worktree-alias", served.every(Boolean) && routes.every((names) => names.some((name) => name.endsWith(`.${domain}`) && name.startsWith("web-"))), `aliases ${routes.flat().join(", ")}`);
+  context.expect("worktree-alias", served.length === 2 && served.every(Boolean), `aliases ${routes.flat().join(", ")}; each served its own worktree: ${served.join(", ")}`);
   const canonical = `web.${domain}`;
   context.expect("primary-alias", routes[0].includes(canonical) && !routes[1].includes(canonical) && await serves(host, `https://${canonical}:${proxyListenerPorts().httpsPort}/`, primary, ca),
     `${canonical} routed to the primary worktree only`);
@@ -465,7 +478,9 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   const resolved = await lookup(hostOf(url), { all: true }).then((items) => items.map((item) => item.address), () => []);
   const misrouted = await host.request(url, { publicDns: true, host: `${host.prefix}-unrouted.${hostOf(url).split(".").slice(1).join(".")}` }).catch(() => undefined);
   const edgeError = misrouted ? String(misrouted.headers["ngrok-error-code"] ?? misrouted.body.trim().slice(0, 40)) : "";
-  context.expect("dns-host-sni", resolved.length > 0 && ANSWERS.edgeUnrouted(misrouted, bound.provider),
+  // A reserved endpoint's name lies under the account's reserved wildcard domain.
+  const underDomain = kind !== "ngrok-reserved" || hostOf(url).endsWith(`.${approval!.ngrokReserved!.domain}`);
+  context.expect("dns-host-sni", resolved.length > 0 && underDomain && ANSWERS.edgeUnrouted(misrouted, bound.provider),
     `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host answered ${misrouted ? `${misrouted.status} ${edgeError}`.trim() : "nothing"}`);
   await probePublicOrigin(hostname, PUBLIC_ORIGIN_PORT, ca);
   context.observe("origin-tls", true, `origin certificate for ${hostname} verified against the internal root on ${PUBLIC_ORIGIN_PORT}`);
@@ -480,14 +495,45 @@ const tunnelReload = (approval: QualificationApproval | undefined): LiveDriver =
   const linked = await host.worktree(context.scenario.id, primary, "b");
   const [a, b] = [await publicStart(context, host, primary, name), await publicStart(context, host, linked, name)];
   const present = async (hostname: string) => await host.handlers().present(context.inventory.list(context.scenario.id).find((item) => item.kind === "public-hostname" && item.id === hostname)!);
-  await host.must(primary, ["down"]);
-  context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves`);
   const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name)!;
-  await host.soleTunnelUser(bound, async () => await host.must(linked, ["tunnel", "recover", name, "--allow-public"]));
-  context.expect("recover-preserves", (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${b.hostname} serves after tunnel recover`);
+  // Withdrawing a name can swap the connector for a successor; the run identifies that successor as its own.
+  await host.soleTunnelUser(bound, async () => await host.must(primary, ["down"]));
+  context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves`);
+  const recovery = await restartConnector(host, bound, linked, `${b.url}/x`);
+  context.expect("recover-preserves", RECOVERED.connectorRestarted(recovery),
+    `connector ${recovery.killed} killed: ${recovery.downAfterKill ? "down" : "still up"}, served meanwhile: ${recovery.servedWhileDown}; after tunnel recover connector ${String(recovery.after ?? "none")} ${recovery.running ? "runs" : "is not running"}; ${b.hostname} serves: ${recovery.served}`);
   await host.must(linked, ["down"]);
   context.expect("withdrawn-absent", !await present(a.hostname) && !await present(b.hostname), "neither hostname is routed, journaled, recorded at the provider or served");
 };
+
+/** What a connector restart showed: the connector the run killed went down, and tunnel recover started a new one that serves the remaining route. */
+export interface ConnectorRecovery { killed: number; downAfterKill: boolean; servedWhileDown: boolean; after?: number; running: boolean; served: boolean }
+
+export const RECOVERED = {
+  /** The killed connector's process was gone and DevFn reported no running connector, nothing served the route meanwhile, and recover left a different connector running that serves it. */
+  connectorRestarted: (recovery: ConnectorRecovery) => recovery.downAfterKill && !recovery.servedWhileDown && recovery.after !== undefined && recovery.after !== recovery.killed && recovery.running && recovery.served,
+};
+
+/**
+ * Kill the binding's recorded connector (its process group, SIGKILL), observe
+ * that it is down and the remaining route is not served, then run devfn
+ * tunnel recover from cwd and read the connector and route back. A recover
+ * on a healthy connector would be a no-op, so it never stands for a restart.
+ */
+export async function restartConnector(host: LiveHost, bound: TunnelBinding, cwd: string, url: string): Promise<ConnectorRecovery> {
+  const connector = (await readTunnelState(host.stateDir, bound.name)).connector;
+  if (!connector) throw new Error(`binding ${bound.name} records no connector to restart`);
+  try { process.kill(-connector.pid, "SIGKILL"); } catch { try { process.kill(connector.pid, "SIGKILL"); } catch { /* already gone */ } }
+  for (let wait = 0; wait < 50 && alive(connector.pid); wait += 1) await host.wait(200);
+  const stopped = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string };
+  const downAfterKill = !alive(connector.pid) && stopped.connector !== "running";
+  const meanwhile = await host.request(url, { publicDns: true }).catch(() => undefined);
+  await host.soleTunnelUser(bound, async () => await host.must(cwd, ["tunnel", "recover", bound.name, "--allow-public"]));
+  const recovered = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string; pid?: number };
+  const after = typeof recovered.pid === "number" ? recovered.pid : undefined;
+  return { killed: connector.pid, downAfterKill, servedWhileDown: meanwhile?.json?.marker === marker(cwd), ...(after !== undefined ? { after } : {}),
+    running: recovered.connector === "running" && after !== undefined && alive(after), served: (await publicAnswer(host, url))?.marker === marker(cwd) };
+}
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
 
@@ -530,8 +576,9 @@ const concurrentChange: LiveDriver = async (context, host) => {
   const results = await Promise.all([host.up(context.scenario.id, cwd), host.up(context.scenario.id, cwd)]);
   const winners = results.filter((item) => item.code === 0 && item.json.state === "ready");
   const status = await host.must(cwd, ["status"]);
-  context.expect("single-owner", winners.length === 1 && status.state === "ready" && (status.processes as unknown[]).length === 2,
-    `${winners.length} of 2 concurrent starts succeeded; the other: ${JSON.stringify(results.find((item) => item !== winners[0])?.json.error?.code)}`);
+  const loser = results.find((item) => item !== winners[0]);
+  context.expect("single-owner", winners.length === 1 && status.state === "ready" && (status.processes as unknown[]).length === 2 && loser?.code !== 0 && typeof loser?.json.error?.code === "string",
+    `${winners.length} of 2 concurrent starts succeeded; the other: ${JSON.stringify(loser?.json.error?.code)}`);
   const before = await host.seen(cwd, "web");
   await writeFile(path.join(cwd, "devfn.config.json"), `${JSON.stringify(hostFixture({ QUAL_REVISION: "2" }), null, 2)}\n`);
   const degraded = await host.devfn(cwd, ["status", "--trust"]);
@@ -556,13 +603,19 @@ export async function interruptStart(context: ScenarioContext, host: LiveHost, c
   const kill = new AbortController();
   let ended = false;
   // It runs like every DevFn command of the run, in the run's environment.
-  const pending = host.up(context.scenario.id, cwd, [], kill.signal).finally(() => { ended = true; });
+  const join = detach(host.up(context.scenario.id, cwd, [], kill.signal).finally(() => { ended = true; }));
   let orphan: number | undefined;
-  for (let wait = 0; wait < 300 && orphan === undefined && !ended; wait += 1) { orphan = (await host.seen(cwd, held).catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
-  const killed = !ended && orphan !== undefined;
-  kill.abort();
-  const result = await pending;
-  await rm(path.join(cwd, `hold-${held}`), { force: true });
+  let killed = false;
+  try {
+    for (let wait = 0; wait < 300 && orphan === undefined && !ended; wait += 1) { orphan = (await host.seen(cwd, held).catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
+    killed = !ended && orphan !== undefined;
+  } finally {
+    // An interrupted wait still kills the start and waits for it to end before the driver returns to cleanup.
+    kill.abort();
+    await join().catch(() => undefined);
+    await rm(path.join(cwd, `hold-${held}`), { force: true });
+  }
+  const result = await join();
   // A failed or degraded lifecycle exits non-zero but still reports its state; a failed read reports none.
   const status = (await host.devfn(cwd, ["status"])).json;
   return { killed, ...(orphan !== undefined ? { orphan } : {}), result, status };
@@ -572,6 +625,8 @@ export const INTERRUPTED = {
   /** The start was killed while its held node had recorded itself and before it ended, it reported no ready lifecycle, and status then read a lifecycle that is not ready. */
   killedBeforeReady: (start: InterruptedStart) => start.killed && start.orphan !== undefined && start.result.code !== 0 && start.result.json.state !== "ready"
     && typeof start.status.state === "string" && start.status.state !== "ready",
+  /** No process of the killed start still runs, whatever a later lifecycle lists: a live orphan fails, and an unknown orphan proves nothing. */
+  orphanGone: (start: InterruptedStart, running: (pid: number) => boolean = alive) => start.orphan !== undefined && !running(start.orphan),
 };
 
 const crash: LiveDriver = async (context, host) => {
@@ -594,10 +649,10 @@ const crash: LiveDriver = async (context, host) => {
     await host.wait(15_000);
     await host.devfn(interrupted, ["ports", "gc"]);
   }
-  const orphaned = orphan !== undefined && alive(orphan) && !((retried.json.processes ?? []) as Array<{ pid: number }>).some((item) => item.pid === orphan);
+  const gone = INTERRUPTED.orphanGone(killed);
   const ca = await host.ca();
-  context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.json.state === "ready" && !orphaned && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
-    `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; process ${String(orphan)} from the killed start ${orphaned ? "still runs" : "is gone"}`);
+  context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.json.state === "ready" && gone && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
+    `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; process ${String(orphan)} from the killed start ${gone ? "is gone" : "still runs"}`);
   await check();
 };
 
@@ -624,12 +679,27 @@ const proxyReload: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "reload", hostFixture());
   let probing = true;
   const answers: boolean[] = [];
-  const probe = (async () => { while (probing) { answers.push(await serves(host, web, sentinelCwd, ca)); await host.wait(50); } })();
+  const probe = detach((async () => { while (probing) { answers.push(await serves(host, web, sentinelCwd, ca)); await host.wait(50); } })());
   try { await start(context, host, cwd); await host.must(cwd, ["down"]); await start(context, host, cwd); await host.must(cwd, ["down"]); }
-  finally { probing = false; await probe; }
+  finally { probing = false; await probe(); }
   context.expect("reload-preserves", answers.length > 0 && answers.every(Boolean), `${answers.filter(Boolean).length}/${answers.length} sentinel probes answered across four route changes`);
   await check();
 };
+
+/**
+ * DEVFN_ values a process sees that DevFn sets at launch outside the endpoint
+ * resolver; a new one must be named here, never ignored by default.
+ * DEVFN_STATE_DIR is the lifecycle's state directory (core orchestrator), so
+ * the OAuth relay client reaches the right DevFn state; the driver checks its
+ * value against the run's state directory instead.
+ */
+export const RUNTIME_ONLY_KEYS: ReadonlySet<string> = new Set(["DEVFN_STATE_DIR"]);
+
+/** Every DEVFN_ key, in either direction, whose resolver value differs from what the process saw: a key only one side has differs too. */
+export function resolverDifferences(resolved: Record<string, string>, seen: Record<string, string>, runtimeOnly: ReadonlySet<string> = RUNTIME_ONLY_KEYS): string[] {
+  const keys = new Set([...Object.keys(resolved), ...Object.keys(seen)].filter((key) => key.startsWith("DEVFN_") && !runtimeOnly.has(key)));
+  return [...keys].sort().flatMap((key) => resolved[key] === seen[key] ? [] : [key in resolved ? (key in seen ? key : `${key} (not seen by the process)`) : `${key} (not produced by the resolver)`]);
+}
 
 const ownerEndpoint: LiveDriver = async (context, host) => {
   const config = hostFixture();
@@ -643,9 +713,9 @@ const ownerEndpoint: LiveDriver = async (context, host) => {
   const validated = validateDevFnConfig(config);
   const api = await host.seen(cwd, "api");
   const resolved = resolveEndpointTemplates({ config: validated, plan: createPlan(validated), ownerId: receipt.instanceId as string, ports: { web: Number(seen.env.DEVFN_PORT_WEB), api: Number(api.env.DEVFN_PORT_API) } });
-  const differing = (["web", "api"] as const).flatMap((name) => Object.entries(resolved.nodes[name].environment)
-    .filter(([key, value]) => key.startsWith("DEVFN_") && value !== (name === "web" ? seen : api).env[key]).map(([key]) => `${name}.${key}`));
-  context.expect("resolver-matches", differing.length === 0, differing.length ? `differs: ${differing.join(", ")}` : "the published resolver reproduced every generated value the process saw");
+  const differing = (["web", "api"] as const).flatMap((name) => [...resolverDifferences(resolved.nodes[name].environment, (name === "web" ? seen : api).env),
+    ...((name === "web" ? seen : api).env.DEVFN_STATE_DIR === host.stateDir ? [] : [`DEVFN_STATE_DIR (${String((name === "web" ? seen : api).env.DEVFN_STATE_DIR)}, not the run state directory)`])].map((item) => `${name}.${item}`));
+  context.expect("resolver-matches", differing.length === 0, differing.length ? `differs: ${differing.join(", ")}` : "the published resolver reproduced every DEVFN_ value each process saw, and nothing more; DEVFN_STATE_DIR is the run state directory");
 };
 
 /** Live drivers for every matrix scenario against one live host. */

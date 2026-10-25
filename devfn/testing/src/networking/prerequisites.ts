@@ -67,19 +67,30 @@ export async function localDockerEndpoint(env: NodeJS.ProcessEnv, run: ProbeEnvi
 
 /**
  * The connectors holding connections on an approved Cloudflare tunnel, read
- * with the approved token (GET cfd_tunnel/{id}, read-only). Cloudflare
+ * with the approved token from the supported read-only endpoints: GET
+ * cfd_tunnel/{id}/connections lists each connector (client) with its live
+ * connections, and GET cfd_tunnel/{id} gives the tunnel status. Cloudflare
  * spreads a tunnel's requests over every connected connector, so a run may
- * start its own only on a tunnel no other connector holds. A failed read
- * throws; it is never "none".
+ * start its own only on a tunnel no other connector holds. A failed read,
+ * or a healthy or degraded tunnel with no connected client listed, throws;
+ * it is never "none".
  */
 export async function cloudflareConnectors(tunnel: { accountId: string; tunnelId: string; apiTokenEnv: string }, env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): Promise<string[]> {
   const token = env[tunnel.apiTokenEnv];
   if (!token) throw new Error(`${tunnel.apiTokenEnv} is unset, so the tunnel's connections cannot be read`);
-  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${tunnel.accountId}/cfd_tunnel/${tunnel.tunnelId}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
-  const payload = await response.json().catch(() => undefined) as { success?: boolean; result?: { id?: string; connections?: Array<{ client_id?: unknown }> } } | undefined;
-  const connections = payload?.result?.connections;
-  if (!response.ok || payload?.success !== true || payload.result?.id !== tunnel.tunnelId || !Array.isArray(connections)) throw new Error(`Cloudflare GET cfd_tunnel answered HTTP ${response.status}`);
-  return [...new Set(connections.map((connection) => typeof connection.client_id === "string" ? connection.client_id : "a connection without a connector ID"))].sort();
+  const read = async (suffix: string): Promise<unknown> => {
+    const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${tunnel.accountId}/cfd_tunnel/${tunnel.tunnelId}${suffix}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
+    const payload = await response.json().catch(() => undefined) as { success?: boolean; result?: unknown } | undefined;
+    if (!response.ok || payload?.success !== true) throw new Error(`Cloudflare GET cfd_tunnel${suffix} answered HTTP ${response.status}`);
+    return payload.result;
+  };
+  const clients = await read("/connections") as Array<{ id?: unknown; conns?: unknown }> | undefined;
+  if (!Array.isArray(clients) || !clients.every((client) => typeof client?.id === "string" && Array.isArray(client.conns))) throw new Error("Cloudflare GET cfd_tunnel/connections answered without a client list");
+  const tunnelState = await read("") as { id?: unknown; status?: unknown } | undefined;
+  if (tunnelState?.id !== tunnel.tunnelId || !["inactive", "degraded", "healthy", "down"].includes(String(tunnelState.status))) throw new Error("Cloudflare GET cfd_tunnel answered without the tunnel's status");
+  const connected = [...new Set(clients.filter((client) => (client.conns as unknown[]).length > 0).map((client) => client.id as string))].sort();
+  if (!connected.length && (tunnelState.status === "healthy" || tunnelState.status === "degraded")) throw new Error(`Cloudflare reports the tunnel ${String(tunnelState.status)} but lists no connected connector`);
+  return connected;
 }
 
 async function loopbackOnly(environment: ProbeEnvironment, hostname: string): Promise<string | undefined> {

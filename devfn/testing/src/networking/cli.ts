@@ -138,6 +138,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     host.abort();
   };
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
+  // Drivers join every promise they leave running; should one still reject unhandled, the run records it and fails instead of exiting before cleanup.
+  const strays: string[] = [];
+  process.on("unhandledRejection", (error: unknown) => { strays.push(message(error)); process.stderr.write(`unhandled rejection during the run: ${message(error)}\n`); });
   const startedAt = new Date().toISOString();
   const results = await runScenarios({ scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal });
   await inventory.cleanup(handlers, "run");
@@ -153,7 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const receipt: NetworkingQualificationReceipt = redactSecrets({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head: values.head, runId, provenance: source,
     host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
     ...(approval ? { approval: { approvedBy: approval.approvedBy, expiresAt: approval.expiresAt } } : {}),
-    prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations],
+    prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations, ...strays.map((item) => `unhandled rejection during the run: ${item}`)],
     summary: summarize(results) }, secrets);
   await writeFile(values.out, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(values.out, 0o600);
@@ -162,7 +165,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
   if (clean) await rm(root, { recursive: true, force: true });
   process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: receipt.summary, problems: receiptProblems(receipt), cleanup: clean ? "confirmed" : `incomplete; inspect ${root}` }, null, 2)}\n`);
-  return receipt.summary.passed === results.length && clean ? 0 : 1;
+  return receipt.summary.passed === results.length && clean && !strays.length ? 0 : 1;
 }
 
 if (process.argv[1] && await realpath(process.argv[1]).then((file) => file === fileURLToPath(import.meta.url), () => false)) {
