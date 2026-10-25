@@ -1,11 +1,9 @@
 /**
- * Deterministic patch validation: op allowlist, required fields per op,
- * path syntax (non-empty, allowed chars). Path grammar: segments separated by '.',
- * each segment = [a-zA-Z0-9_]+ or array index [0-9]+. For array item by _key we allow
- * a ref segment (exact encoding documented in implementation).
+ * Deterministic patch validation with legacy dotted paths or explicit literal
+ * segment arrays. Both forms reject empty and prototype-mutating segments.
  */
 
-import type { ContentfnPatchOp, ContentfnPatchInput } from "./types.js";
+import type { ContentfnPatchOp, ContentfnPatchInput, ContentfnPatchPath } from "./types.js";
 import { PATCH_OPS } from "./types.js";
 import type { ContentfnEnvelope } from "../errors.js";
 import { err } from "../errors.js";
@@ -13,28 +11,30 @@ import { err } from "../errors.js";
 /** Path segment: alphanumeric + underscore, or numeric index. No empty segments. */
 const SEGMENT_REGEX = /^([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)$/;
 
-function validatePath(path: unknown, pathField: string): ContentfnEnvelope<string> {
-  if (typeof path !== "string") {
-    return err("PATCH_INVALID", "Path must be a string", { path: pathField });
-  }
-  if (path.length === 0) {
-    return err("PATCH_INVALID", "Path must be non-empty", { path: pathField });
-  }
-  const segments = path.split(".");
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    if (!seg) {
-      return err("PATCH_INVALID", "Path segment cannot be empty", {
-        path: `${pathField}`,
-      });
+/** Validate and detach literal segments before any asynchronous storage operation. */
+export function parsePatchPath(path: unknown, pathField = "path"): ContentfnEnvelope<string[]> {
+  if (typeof path !== "string" && !Array.isArray(path)) return err("PATCH_INVALID", "Path must be a string or segment array", { path: pathField });
+  const segments: unknown[] = typeof path === "string" ? path.split(".") : path;
+  if (!segments.length) return err("PATCH_INVALID", "Path cannot be empty", { path: pathField });
+  const detached: string[] = [];
+  for (const segment of segments) {
+    if (typeof segment !== "string" || !segment.length || ["__proto__", "prototype", "constructor"].includes(segment) || (typeof path === "string" && !SEGMENT_REGEX.test(segment))) {
+      return err("PATCH_INVALID", "Path segment is invalid", { path: pathField });
     }
-    if (["__proto__", "prototype", "constructor"].includes(seg) || !SEGMENT_REGEX.test(seg)) {
-      return err("PATCH_INVALID", "Path segment has invalid characters", {
-        path: pathField,
-      });
-    }
+    detached.push(segment);
   }
-  return { ok: true, result: path };
+  return { ok: true, result: detached };
+}
+
+/** Preserve legacy event paths where lossless; otherwise encode literal segments. */
+export function formatPatchPath(path: ContentfnPatchPath): string {
+  if (typeof path === "string") return path;
+  return path.every(segment => SEGMENT_REGEX.test(segment)) ? path.join(".") : JSON.stringify(path);
+}
+function validatePath(path: unknown, pathField: string): ContentfnEnvelope<ContentfnPatchPath> {
+  const parsed = parsePatchPath(path, pathField);
+  if (!parsed.ok) return parsed;
+  return { ok: true, result: typeof path === "string" ? path : parsed.result };
 }
 
 function validateOp(op: unknown, index: number): ContentfnEnvelope<ContentfnPatchOp> {

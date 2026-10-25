@@ -29,7 +29,7 @@ import { executeCfql } from "./query/executeCfql.js";
 import { createContentRouter, endpointHandlers, handleStatus } from "./http/router.js";
 import { nodeHandler } from "./http/node-handler.js";
 import { checkAuthorize } from "./auth/authorize.js";
-import { err, type ContentfnEnvelope } from "@contentfn/core";
+import { err, validatePatch, type ContentfnEnvelope } from "@contentfn/core";
 import { RealtimeServer, type AuthorizeFn } from "./realtime/server.js";
 import type { ContentfnEvent } from "./storage/events.js";
 import { resolveLimits, type ContentfnLimits } from "./limits/limits.js";
@@ -181,9 +181,15 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
   async function invoke(action: string, input: unknown, context?: unknown, idempotencyKey?: string): Promise<ContentfnEnvelope<unknown>> {
     try {
       if (input === null || typeof input !== "object" || Array.isArray(input)) return err("VALIDATION_FAILED", "Input must be an object", { path: "body" });
-      const record = input as Record<string, unknown>;
+      let record = input as Record<string, unknown>;
       const invalidInput = validateOptionalInput(action, record);
       if (invalidInput) return invalidInput;
+      if (action === "docs.patch") {
+        const patch = validatePatch(input);
+        if (!patch.ok) return patch;
+        record = { ...record, ...patch.result };
+        input = record;
+      }
       const authorizationAction = action === "query" && record.perspective === "draft" ? "query.drafts" : action;
       const denied = await checkAuthorize(config.authorize, context, authorizationAction, record);
       if (denied) return denied;

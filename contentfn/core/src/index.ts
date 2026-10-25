@@ -28,9 +28,9 @@ export type {
 export { CFQL_OPERATORS } from "./query/types.js";
 export { validateCfql } from "./query/validateCfql.js";
 
-export type { ContentfnPatchOp, ContentfnPatchInput } from "./patch/types.js";
+export type { ContentfnPatchOp, ContentfnPatchInput, ContentfnPatchPath } from "./patch/types.js";
 export { PATCH_OPS } from "./patch/types.js";
-export { validatePatch } from "./patch/validatePatch.js";
+export { validatePatch, parsePatchPath, formatPatchPath } from "./patch/validatePatch.js";
 
 export { isValidDatasetName, validateDatasetName } from "./ids/datasetName.js";
 export { nowISO, isISO8601 } from "./time/iso.js";

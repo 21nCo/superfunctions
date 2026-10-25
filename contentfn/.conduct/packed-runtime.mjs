@@ -25,7 +25,7 @@ try {
  assert.equal(snapshot.value.result.eventType,'query.snapshot');
  assert.equal(snapshot.value.result.queryResult.data.length,1);
  await queries.return();
- assert.equal(require('@contentfn/server').getSchema().version,3);
+ assert.equal(require('@contentfn/server').getSchema().version,4);
  assert.equal(require('@contentfn/server').getSchema().schemas.length,13);
  const audit = await client.audit.query({dataset:'packed',action:'docs.create'});
  assert.equal(audit.ok,true);
@@ -35,5 +35,26 @@ try {
  assert.equal(exported.result.dataset,'packed'); assert.equal(typeof exported.result.exportedAt,'string');
  const cli = await promisify(execFile)(process.execPath,['node_modules/@contentfn/cli/dist/index.js','--server',baseUrl,'doc','get','--dataset','packed','--id','one']);
  assert.match(cli.stdout, /one/);
+ const literalSchema = { version: 2, documentTypes: [{ name: 'post', fields: [{ name: 'literal.key', type: { kind: 'primitive', type: 'string' } }, { name: 'section', type: { kind: 'object', fields: [{ name: 'literal.asset', type: { kind: 'primitive', type: 'json' } }, { name: 'title', type: { kind: 'primitive', type: 'string' } }] } }, { name: '_custom', type: { kind: 'primitive', type: 'string' } }] }] };
+ assert.equal((await client.schema.upsert({ dataset: 'packed', schema: literalSchema })).ok, true);
+ const initial = await client.docs.create({ dataset: 'packed', id: 'literal', type: 'post', asDraft: true, doc: { 'literal.key': 'old', section: { title: 'old' }, _custom: 'old' } });
+ assert.equal(initial.ok, true);
+ const edited = await client.docs.patch({ dataset: 'packed', id: 'drafts.literal', ifRev: initial.result._rev, ops: [{ op: 'set', path: ['literal.key'], value: 'native literal' }, { op: 'set', path: 'section.title', value: 'nested' }, { op: 'set', path: ['section', 'literal.asset'], value: { kept: true } }, { op: 'set', path: ['_custom'], value: 'new' }] });
+ assert.equal(edited.ok, true, JSON.stringify(edited));
+ assert.equal(edited.result['literal.key'], 'native literal');
+ assert.deepEqual(edited.result.section, { title: 'nested', 'literal.asset': { kept: true } });
+ assert.equal(edited.result._custom, 'new');
+ for (const path of [['_rev'], ['section', '__proto__'], 'constructor.prototype']) {
+   const denied = await client.docs.patch({ dataset: 'packed', id: 'drafts.literal', ops: [{ op: 'set', path, value: 'forged' }] });
+   assert.equal(denied.error.code, 'PATCH_INVALID');
+ }
+ assert.equal((await client.docs.patch({ dataset: 'packed', id: 'drafts.literal', ifRev: initial.result._rev, ops: [{ op: 'set', path: ['section'], value: {} }] })).error.code, 'REV_CONFLICT');
+ assert.deepEqual((await client.docs.get({ dataset: 'packed', id: 'literal', perspective: 'draft' })).result, edited.result);
+ const emptied = await client.docs.patch({ dataset: 'packed', id: 'drafts.literal', ifRev: edited.result._rev, ops: [{ op: 'set', path: ['section'], value: {} }, { op: 'unset', path: ['literal.key'] }] });
+ assert.equal(emptied.ok, true, JSON.stringify(emptied));
+ assert.deepEqual(emptied.result.section, {});
+ assert.equal(Object.hasOwn(emptied.result, 'literal.key'), false);
+ assert.equal(emptied.result._custom, 'new');
+ console.log('Installed literal patch paths, reserved-field/pollution denial and revision fencing passed');
  console.log(`Packed ESM/CJS/HTTP/CLI passed on ${process.version}`);
 } finally { await new Promise(resolve=>http.close(resolve)); await db.close(); }

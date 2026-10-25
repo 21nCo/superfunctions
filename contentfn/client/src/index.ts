@@ -23,6 +23,7 @@ export type {
   CfqlProjection,
   CfqlQuery,
   CfqlResultPage,
+  ContentfnPatchPath,
   ContentfnPatchOp,
   ContentfnPatchInput,
 } from "@contentfn/core";

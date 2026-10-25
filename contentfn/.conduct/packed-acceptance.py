@@ -4,7 +4,7 @@ root=pathlib.Path(__file__).resolve().parents[2]
 fixtures=pathlib.Path(__file__).resolve().parent
 out=pathlib.Path(tempfile.mkdtemp(prefix='contentfn-target-packed-'))
 print(out,flush=True)
-paths=['packages/db','packages/http','packages/storage','mdfn/core','mdfn/markdown','mdfn/extensions','mdfn/contentfn','contentfn/core','contentfn/client','contentfn/server','contentfn/cli','mcpfn/core','packages/admin','contentfn/admin']
+paths=['packages/observability','packages/db','packages/http','packages/storage','mdfn/core','mdfn/markdown','mdfn/extensions','mdfn/contentfn','contentfn/core','contentfn/client','contentfn/server','contentfn/cli','mcpfn/core','packages/admin','contentfn/admin']
 packages={}
 for path in paths:
  manifest=json.loads((root/path/'package.json').read_text())

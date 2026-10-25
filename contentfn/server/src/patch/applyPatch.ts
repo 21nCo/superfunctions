@@ -6,15 +6,7 @@
 
 import type { ContentfnPatchOp } from "@contentfn/core";
 import type { ContentfnEnvelope } from "@contentfn/core";
-import { ok, err } from "@contentfn/core";
-
-/**
- * Parse a path into segments.
- * Supports dot notation: "field", "nested.field", "array.0", etc.
- */
-function parsePath(path: string): string[] {
-  return path.split(".");
-}
+import { ok, err, parsePatchPath, formatPatchPath } from "@contentfn/core";
 
 /**
  * Get value at path in document.
@@ -102,12 +94,14 @@ function applyOperation(
   doc: Record<string, unknown>,
   op: ContentfnPatchOp
 ): ContentfnEnvelope<void> {
-  const segments = parsePath(op.path);
-  if (segments.some(segment => ["__proto__", "prototype", "constructor"].includes(segment))) return err("PATCH_INVALID", "Unsafe path segment", { path: op.path });
+  const parsed = parsePatchPath(op.path);
+  if (!parsed.ok) return parsed;
+  const segments = parsed.result;
+  const path = formatPatchPath(op.path);
 
   switch (op.op) {
     case "set": {
-      return setValueAtPath(doc, segments, op.value, op.path);
+      return setValueAtPath(doc, segments, op.value, path);
     }
 
     case "unset": {
@@ -119,18 +113,18 @@ function applyOperation(
     case "dec": {
       const current = getValueAtPath(doc, segments);
       if (current !== undefined && typeof current !== "number") {
-        return err("PATCH_INVALID", `Cannot ${op.op} non-numeric field`, { path: op.path });
+        return err("PATCH_INVALID", `Cannot ${op.op} non-numeric field`, { path });
       }
       const currentValue = typeof current === "number" ? current : 0;
       const newValue = op.op === "inc" ? currentValue + op.value : currentValue - op.value;
-      return setValueAtPath(doc, segments, newValue, op.path);
+      return setValueAtPath(doc, segments, newValue, path);
     }
 
     case "insert": {
       // Insert items into array at position relative to ref item
       const current = getValueAtPath(doc, segments);
       if (!Array.isArray(current)) {
-        return err("PATCH_INVALID", `Cannot insert into non-array field`, { path: op.path });
+        return err("PATCH_INVALID", `Cannot insert into non-array field`, { path });
       }
 
       // Find item with _key matching ref
@@ -145,7 +139,7 @@ function applyOperation(
 
       if (refIndex === -1) {
         return err("PATCH_INVALID", `Reference item with _key="${op.ref}" not found in array`, {
-          path: op.path,
+          path,
         });
       }
 
@@ -158,13 +152,13 @@ function applyOperation(
       // Splice array at index
       const current = getValueAtPath(doc, segments);
       if (!Array.isArray(current)) {
-        return err("PATCH_INVALID", `Cannot splice non-array field`, { path: op.path });
+        return err("PATCH_INVALID", `Cannot splice non-array field`, { path });
       }
 
       // Bounds check
       if (op.index < 0 || op.index > current.length) {
         return err("PATCH_INVALID", `Splice index ${op.index} out of bounds (array length ${current.length})`, {
-          path: op.path,
+          path,
         });
       }
 
