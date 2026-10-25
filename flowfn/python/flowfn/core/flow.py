@@ -107,6 +107,12 @@ class FlowFn:
             stream_options = {**(self.config.default_stream_options or {}), **(options or {})}
             self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics, observer=self._observer, events=self._event_tracker)
 
+        elif options is not None and "partitions" in options:
+            from flowfn.stream.types import StreamOptions
+
+            requested = StreamOptions.model_validate(options).partitions
+            if requested != self._streams[name].partitions:
+                raise ValueError("Cached stream partition policy cannot change; use a new Flow instance")
         return self._streams[name]
 
     async def list_streams(self) -> list[str]:

@@ -8,8 +8,10 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Optional
 
+from flowfn.adapters.memory_partitions import MemoryPartitionGroup
 from flowfn.adapters.memory_stream import MemoryConsumerGroup
 from flowfn.queue.types import Job, JobStatus, QueueStats
+from flowfn.stream.partition import partition_for, validate_partitions
 from flowfn.stream.types import ConsumerOptions, Message, MessageHandler, StreamInfo, TrimStrategy
 
 
@@ -22,9 +24,11 @@ class MemoryAdapter:
         self._dependency_results: dict[tuple[str, str], JobStatus] = {}
         self._active_jobs: dict[tuple[str, str], Job] = {}
         self._streams: dict[str, list[Message]] = defaultdict(list)
+        self._partition_policies: dict[str, Optional[int]] = {}
+        self._stream_offsets: dict[str, int] = defaultdict(int)
         self._stream_subscribers: dict[str, list[MessageHandler]] = defaultdict(list)
         self._workflow_states: dict[str, Any] = {}
-        self._groups: dict[tuple[str, str], MemoryConsumerGroup] = {}
+        self._groups: dict[tuple[str, str], MemoryConsumerGroup | MemoryPartitionGroup] = {}
         self._deliveries: set[asyncio.Task[None]] = set()
 
     # Queue operations
@@ -284,8 +288,29 @@ class MemoryAdapter:
         return job
 
     # Stream operations
+    async def configure_stream(self, stream: str, partitions: Optional[int] = None) -> Optional[int]:
+        if partitions is None:
+            return self._partition_policies.get(stream)
+        validate_partitions(partitions)
+        if stream in self._partition_policies:
+            if self._partition_policies[stream] != partitions:
+                raise ValueError('Stream partition policy is immutable; migration required')
+        else:
+            self._partition_policies[stream] = partitions
+        return partitions
+
     async def publish(self, stream: str, message: Message) -> str:
         """Publish message to stream."""
+        partitions = self._partition_policies.get(stream)
+        if partitions is None and message.partition is not None:
+            raise ValueError('Explicit partition requires configured stream partitioning')
+        snapshot = message.model_copy(deep=True)
+        if partitions is not None:
+            snapshot.partition = partition_for(partitions, snapshot.id, snapshot.key, snapshot.partition)
+        self._partition_policies.setdefault(stream, None)
+        self._stream_offsets[stream] += 1
+        snapshot.offset = self._stream_offsets[stream]
+        message = snapshot
         self._streams[stream].append(message)
 
         # Notify subscribers
@@ -338,10 +363,12 @@ class MemoryAdapter:
         """Deliver each message to one member of each consumer group."""
         opts = options or ConsumerOptions(group_id=group)
         key = (stream, group)
+        self._partition_policies.setdefault(stream, None)
         if key not in self._groups:
-            self._groups[key] = MemoryConsumerGroup(
-                self._streams[stream] if opts.from_beginning else []
-            )
+            if self._partition_policies[stream] is not None:
+                self._groups[key] = MemoryPartitionGroup(lambda: self._streams[stream], 0 if opts.from_beginning else self._stream_offsets[stream])
+            else:
+                self._groups[key] = MemoryConsumerGroup(self._streams[stream] if opts.from_beginning else [])
         return self._groups[key].subscribe(consumer, handler, opts)
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
@@ -349,6 +376,7 @@ class MemoryAdapter:
         messages = self._streams.get(stream, [])
         return StreamInfo(
             name=stream,
+            partitions=self._partition_policies.get(stream),
             length=len(messages),
             groups=sum(name == stream for name, _ in self._groups),
             lag=sum(len(group.unacknowledged) for (name, _),group in self._groups.items() if name==stream),
@@ -366,10 +394,13 @@ class MemoryAdapter:
             retained = [message for message in retained if message.timestamp >= cutoff]
         if strategy.max_length is not None:
             retained = retained[-strategy.max_length :] if strategy.max_length else []
-        protected = set().union(*(group.unacknowledged for (name, _), group in self._groups.items() if name == stream))
+        protected = set().union(*(group.unacknowledged for (name, _), group in self._groups.items() if name == stream and isinstance(group, MemoryConsumerGroup)))
         retained_ids = {message.id for message in retained} | protected
         retained = [message for message in messages if message.id in retained_ids]
         self._streams[stream] = retained
+        for (name, _), group in self._groups.items():
+            if name == stream and isinstance(group, MemoryPartitionGroup):
+                group.trim()
         return len(messages) - len(retained)
 
     # Workflow operations
@@ -411,5 +442,7 @@ class MemoryAdapter:
         self._queues.clear()
         self._active_jobs.clear()
         self._streams.clear()
+        self._partition_policies.clear()
+        self._stream_offsets.clear()
         self._stream_subscribers.clear()
         self._workflow_states.clear()

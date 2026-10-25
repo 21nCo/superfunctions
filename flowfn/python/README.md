@@ -118,9 +118,30 @@ MIT
 
 Use `await stream.subscribe(handler)` when you need registration to finish before an external producer sends messages. Decorator registration starts asynchronously; `await stream.ready()` provides the same barrier. Publishing through that stream instance waits for its registrations. Close streams and the owning FlowFn instance to unsubscribe and await background cleanup.
 
-The memory adapter retains a separate pending queue for each consumer group. Each message goes to one member of each group. With `auto_commit=False`, call `await message.ack()` to release its in-flight slot. `await message.nack(requeue=True)` schedules another delivery; `requeue=False` discards that delivery. Disconnecting a member returns its unacknowledged work to the group. A new group with `from_beginning=True` starts from the retained history; reconnecting an existing group continues its pending work. Memory state is process-local and does not survive process termination. Handlers should tolerate redelivery.
+Unconfigured Memory streams retain a separate pending queue for each consumer group. Each message goes to one member of each group. With `auto_commit=False`, call `await message.ack()` to release its in-flight slot. `await message.nack(requeue=True)` schedules another delivery; `requeue=False` discards that delivery. Disconnecting a member returns its unacknowledged work to the group. A new group with `from_beginning=True` starts from the retained history; reconnecting an existing group continues its pending work. Memory state is process-local and does not survive process termination. Handlers should tolerate redelivery.
 
-`await stream.get_message_count()`, replay and trimming read the adapter's retained stream state, including messages published by another instance. A zero `max_length` removes all retained history; pending group deliveries remain available for acknowledgement.
+`await stream.get_message_count()`, replay and trimming read the adapter's retained stream state, including messages published by another instance. For configured partitioned Memory streams, zero `max_length` removes all retained history while current receipt barriers remain until authorized settlement or expiry. Legacy unconfigured streams protect pending/unread group payloads; that older retention behavior and their missing manual visibility expiry remain parity gaps.
+
+### Partitioned Memory streams
+
+```python
+from flowfn.stream.types import ConsumerOptions, PublishOptions
+
+stream = flow.stream('orders', {'partitions': 8})
+await stream.publish({'order': 123}, PublishOptions(key='customer-42'))
+consumer = stream.create_consumer('worker', ConsumerOptions(
+    group_id='billing', from_beginning=True, visibility_timeout=30000,
+))
+await consumer.subscribe(handle_order)  # handler explicitly awaits message.ack()
+```
+
+Python Memory supports immutable counts from 1 through 2,147,483,647. Keys use exact UTF-8 SHA-256, first four bytes interpreted as unsigned big-endian, modulo count (`sha256-utf8-u32be-v1`), matching TypeScript. Omitted keys route by the stable message ID; explicit partition indices must be within the configured range. Sparse progress uses only encountered partitions. Global message IDs, retained history, range reads, and replay remain available across partitions.
+
+Each group has one current receipt per partition; different groups and partitions progress independently. An active callback renews its receipt. After a manual callback returns, renewal stops and the last confirmed `visibility_timeout` (milliseconds) bounds its remaining ownership. Expiry permits redelivery of retained messages; stale ACK/NACK closures cannot settle a replacement receipt. Trimming removes payloads without releasing a live partition barrier. Trimmed deliveries cannot renew, and their callbacks are cancelled when renewal fails; their barriers remain until authorized settlement or the original deadline. Unsubscribe cancels and awaits owned callbacks before releasing their receipts. A callback that suppresses cancellation can delay shutdown; fencing cannot undo its external side effects.
+
+The count persists only in the same Memory adapter instance. Reopening an unconfigured stream handle adopts it; changing it or converting a previously used legacy stream fails. Changing a cached handle's requested count also fails; use a new Flow instance with the same adapter to adopt an existing policy. Process termination loses Memory state.
+
+Python Redis/PostgreSQL partition implementations are still pending. Explicit `partitions` requests fail before publication, retention, or consumer-group mutation on unsupported adapters. Existing unconfigured provider behavior remains available. This does not establish cross-language durable-store compatibility or Python performance targets.
 
 Custom Python adapters must implement `update_job`, `get_stream_messages`, `trim_stream`, and consumer options in `consume`. Consumer subscriptions provide `pause`, `resume`, and `unsubscribe`. Custom backoff callbacks are process-local configuration; hosts restoring serialized jobs must restore their strategy callable.
 

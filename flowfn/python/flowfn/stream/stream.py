@@ -11,6 +11,7 @@ from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
 from flowfn.core.telemetry import OperationObserver
 from flowfn.monitoring.health import EventTracker
+from flowfn.stream.partition import PartitionedStreams
 from flowfn.stream.types import (
     ConsumerOptions,
     Message,
@@ -36,6 +37,7 @@ class Stream:
         self._adapter = adapter
         self._options = options or {}
         retention = StreamOptions.model_validate(self._options)
+        self.partitions = retention.partitions
         self._retention = TrimStrategy(
             max_length=retention.max_length,
             max_age_seconds=retention.retention / 1000 if retention.retention is not None else None,
@@ -52,6 +54,9 @@ class Stream:
         async with self._admissions.track():
             await self.ready()
             options = opts or PublishOptions()
+            configured = await self._configure()
+            if options.partition is not None and configured is None:
+                raise ValueError("Explicit partition requires configured stream partitioning")
 
             message = Message(
                 id=str(uuid.uuid4()),
@@ -135,7 +140,15 @@ class Stream:
         self._consumers.append(consumer)
         return consumer
 
+    async def _configure(self) -> Optional[int]:
+        if isinstance(self._adapter, PartitionedStreams):
+            return await self._adapter.configure_stream(self.name, self.partitions)
+        if self.partitions is not None:
+            raise RuntimeError("Adapter does not support stream partitioning")
+        return None
+
     async def _apply_retention(self) -> None:
+        await self._configure()
         if self._retention.max_length is not None or self._retention.max_age_seconds is not None:
             await self._adapter.trim_stream(self.name, self._retention)
 
@@ -147,6 +160,7 @@ class Stream:
 
     async def trim(self, strategy: TrimStrategy) -> int:
         """Trim old messages."""
+        await self._configure()
         return await self._adapter.trim_stream(self.name, strategy)
 
     async def get_messages(

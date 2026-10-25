@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 
 class StreamOptions(BaseModel):
-    """Stream retention: maximum entries and maximum age in milliseconds."""
+    """Stream partition policy and retention (maximum age in milliseconds)."""
 
+    partitions: Optional[int] = Field(default=None, strict=True, ge=1, le=2147483647)
     max_length: Optional[int] = Field(default=None, ge=0)
     retention: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
 
@@ -18,7 +19,7 @@ class PublishOptions(BaseModel):
 
     key: Optional[str] = None
     headers: Optional[dict[str, str]] = None
-    partition: Optional[int] = None
+    partition: Optional[int] = Field(default=None, strict=True, ge=0)
 
 
 class Message(BaseModel):
@@ -63,6 +64,7 @@ class ConsumerOptions(BaseModel):
     auto_commit: bool = False
     commit_interval: int = Field(default=1000, gt=0)
     max_in_flight: int = Field(default=100, ge=1, le=10000)
+    visibility_timeout: int = Field(default=30000, strict=True, gt=0)
 
 
 class StreamInfo(BaseModel):
@@ -70,6 +72,7 @@ class StreamInfo(BaseModel):
 
     name: str
     length: int
+    partitions: Optional[int] = None
     groups: int = 0
     lag: Optional[int] = None
     consumers: Optional[int] = None
