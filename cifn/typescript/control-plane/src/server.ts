@@ -1,3 +1,4 @@
+import { LogFnStepOutputDispatcher } from './observability/step-output.js';
 import { sinkConsole } from '@logfn/core';
 import { LogFnLifecycleDispatcher } from './observability/dispatcher.js';
 import type { DatabaseStore } from "./store/database-store.js";
@@ -56,7 +57,19 @@ async function start() {
   const lifecycleMode = process.env.CIFN_LIFECYCLE_LOGS ?? 'off';
   if (!['off', 'console'].includes(lifecycleMode)) throw new Error('CIFN_LIFECYCLE_LOGS must be off or console');
   if (lifecycleMode !== 'off' && process.env.CIFN_STORE_ADAPTER !== 'sqlite') throw new Error('Lifecycle LogFn delivery requires SQLite storage');
+  const stepOutputMode = process.env.CIFN_STEP_OUTPUT_LOGS ?? 'off';
+  if (!['off', 'console'].includes(stepOutputMode)) throw new Error('CIFN_STEP_OUTPUT_LOGS must be off or console');
+  if (stepOutputMode !== 'off' && process.env.CIFN_STORE_ADAPTER !== 'sqlite') throw new Error('Step output LogFn delivery requires SQLite storage');
   const runtimeStore = await createRuntimeStore();
+  const stepOutput = stepOutputMode === 'console' ? new LogFnStepOutputDispatcher(runtimeStore.store as DatabaseStore, sinkConsole({ json: true, color: false })) : undefined;
+  let stepOutputCursor: string | undefined;
+  let stepOutputActive: Promise<unknown> | undefined;
+  const deliverStepOutput = () => {
+    if (!stepOutput || stepOutputActive || closing) return;
+    stepOutputActive = stepOutput.tick(stepOutputCursor).then(page => { stepOutputCursor = page.nextCursor; })
+      .catch(() => console.error('CiFn step output dispatch failed; inspect durable delivery state'))
+      .finally(() => { stepOutputActive = undefined; });
+  };
   const lifecycle = lifecycleMode === 'console' ? new LogFnLifecycleDispatcher(runtimeStore.store as DatabaseStore, sinkConsole({ json: true, color: false })) : undefined;
   let lifecycleCursor: string | undefined;
   let lifecycleActive: Promise<unknown> | undefined;
@@ -70,7 +83,7 @@ async function start() {
 
   const telemetry = runtimeStore.store as Partial<Pick<DatabaseStore, 'recordApiError'>>;
   const server = createControlPlaneServer(app, telemetry.recordApiError ? { recordApiError: event => telemetry.recordApiError!(event) } : undefined);
-  const lifecycleTimer = setInterval(deliverLifecycle, 1000); lifecycleTimer.unref();
+  const lifecycleTimer = setInterval(() => { deliverLifecycle(); deliverStepOutput(); }, 1000); lifecycleTimer.unref();
   let logCursor: string | undefined;
   let retentionActive: Promise<void> | undefined;
   const durableLogs = runtimeStore.store as Partial<Pick<DatabaseStore, 'purgeExpiredLogs'>>;
@@ -84,6 +97,7 @@ async function start() {
   const close = () => {
     if (closing) return;
     closing = true; clearInterval(retentionTimer); clearInterval(lifecycleTimer);
+    const stepOutputClosing = stepOutput?.close().catch(() => { console.error('CiFn step output shutdown failed'); process.exitCode = 1; });
     const lifecycleClosing = lifecycle?.close().catch(() => { console.error('CiFn lifecycle shutdown failed'); process.exitCode = 1; });
     server.close(async () => {
       try { await dispatchPublisher?.stop(); }
@@ -92,6 +106,8 @@ async function start() {
       catch { console.error('CiFn notification shutdown failed'); process.exitCode = 1; }
       await retentionActive;
       await lifecycleActive;
+      await stepOutputActive;
+      await stepOutputClosing;
       await lifecycleClosing;
       try { await runtimeStore.close(); }
       catch { console.error('CiFn store shutdown failed'); process.exitCode = 1; }

@@ -284,3 +284,43 @@ scan uses this index; no automatic historical backfill or retention scheduler is
 provided. Remote
 step output already uses the real LogFn pipeline and its private durable sink;
 configurable external forwarding of that output remains separate unfinished work.
+
+### Forwarding admitted step output through LogFn
+
+`CIFN_STEP_OUTPUT_LOGS=console` enables the built SQLite server's actual LogFn
+console sink for admitted, redacted stdout/stderr lines (default `off`). This is
+independent of `CIFN_LIFECYCLE_LOGS`. No standalone LogFn HTTP query server is
+assumed. Programmatic hosts may use `LogFnStepOutputDispatcher(store, sink)` with
+an actual `@logfn/core` sink, traverse `tick(cursor)` pages and call `close()` to
+join admitted I/O. Each page considers at most ten runs and claims at most one
+line per run. A host must keep traversing/wrapping pages for progress.
+
+Delivery retains one compact checkpoint per job log ledger: a delivered prefix
+and at most one in-flight or unknown claim. No extra copy of log output is stored.
+The stable `ctx.eventId` identifies the run/dispatch/line ordinal; output context
+contains the redacted job key and fixed step key, never runner credentials or raw
+claim tokens. The delivered prefix cannot be pruned independently of the payload:
+that would permit replay. Its fixed size is the receipt compaction policy. Global
+run/database history retention remains host-owned; there is no hidden automatic
+removal of unresolved claims.
+
+A delivered receipt means the sink and flush resolved. Sink errors, lost receipts
+or expired leases park `unknown`, blocking subsequent lines in that job. Inspect
+`getStepOutputStatus(runId, dispatchId)` and use privileged
+`reconcileStepOutput(runId, dispatchId, eventId, 'delivered' | 'retry' | 'undelivered', now)`
+after investigation. Explicit retry may duplicate an accepted effect; `undelivered`
+is valid only after payload expiry. These are host APIs, not public HTTP routes.
+
+All existing log expiry paths still remove the bytes. A constant-sized tombstone
+retains delivered/expired-undelivered counts and any unresolved event identity.
+Expired output cannot be retried (`retry` returns false); ambiguity must be
+explicitly resolved. Historical payloads expired before this upgrade report
+`historicalCountUnavailable`, rather than inventing delivery counts. Drain old
+writers before upgrade; existing unexpired packets are eligible, without historical
+sink claims. No shell status is inferred and no command is rerun.
+
+The dispatcher rejects new sink invocation after claim/payload expiry. Already
+started arbitrary sink I/O cannot be forcibly cancelled: hosts must supply bounded
+transports, and `close()` waits for their settlement. Storage payload expiry does
+not revoke bytes already handed to a sink or an in-flight caller. API log reads
+continue using CiFn's authoritative durable ledger, separately from sink receipts.

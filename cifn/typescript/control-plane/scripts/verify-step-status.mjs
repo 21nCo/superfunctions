@@ -40,7 +40,7 @@ async function api(path, body) {
 }
 try {
   control = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url))], {
-    env: { ...process.env, PORT: '0', CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: join(directory, 'state.sqlite'), CIFN_STORE_ENCRYPTION_KEY: randomBytes(32).toString('base64'), CIFN_RUNNER_REGISTRATION_TOKEN: registration, CIFN_API_KEYS: credential, CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory', CIFN_LIFECYCLE_LOGS: 'console', CIFN_NOTIFY_ON_RUN_COMPLETE: 'false' }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '0', CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: join(directory, 'state.sqlite'), CIFN_STORE_ENCRYPTION_KEY: randomBytes(32).toString('base64'), CIFN_RUNNER_REGISTRATION_TOKEN: registration, CIFN_API_KEYS: credential, CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory', CIFN_LIFECYCLE_LOGS: 'console', CIFN_STEP_OUTPUT_LOGS: 'console', CIFN_NOTIFY_ON_RUN_COMPLETE: 'false' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   exited = once(control, 'exit');
   control.stdout.on('data', bytes => { output += bytes; const match = /listening on port (\d+)/.exec(output); if (match) port = Number(match[1]); });
@@ -49,7 +49,7 @@ try {
   assert.ok(port, 'control ready');
   const runner = await api('/api/v1/runners/register', { token: registration });
   const run = await api('/api/v1/runs', { trigger: { type: 'workflow_dispatch' }, pipelineSpec: { on: { workflow_dispatch: {} }, jobs: { build: { 'runs-on': 'default', steps: [
-    { run: command(`require('fs').writeFileSync(${JSON.stringify(witness)},'finished');`) },
+    { run: command(`require('fs').writeFileSync(${JSON.stringify(witness)},'finished');console.log('owned step output');`) },
     { run: command(`const fs=require('fs');fs.writeFileSync(${JSON.stringify(active)},'running');const tick=setInterval(()=>{if(fs.existsSync(${JSON.stringify(gate)})){clearInterval(tick);process.exit(0)}},20);setTimeout(()=>process.exit(9),10000);`) },
   ] } } } });
   const runId = run.runId ?? run.id;
@@ -82,7 +82,11 @@ try {
   const lifecycle = output.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(event => event.msg === 'run.created');
   assert.equal(lifecycle?.ctx?.runId, runId, 'built server dispatches actual LogFn lifecycle event');
   assert.match(lifecycle.ctx.eventId, /^[a-f0-9]{64}$/);
-  console.log(JSON.stringify({ serverLogFnLifecycle: true, stepStatusesPersisted: true, lostAckReplayed: true, whileSecondShellActive: { run: before.status, job: before.jobs[0].status, steps: before.jobs[0].steps.map(step => step.status) }, actualWitnesses: ['first finished', 'second running'], afterRelease: { run: after.status, steps: after.jobs[0].steps.map(step => step.status) }, node: process.version }));
+  for (let i = 0; !output.includes('\"msg\":\"owned step output\"') && i < 100; i++) await delay(25);
+  const forwarded = output.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).filter(event => event.msg === 'owned step output');
+  assert.equal(forwarded.length, 1, 'built server forwards actual step output once through LogFn');
+  assert.equal(forwarded[0].ctx.runId, runId); assert.match(forwarded[0].ctx.eventId, /^[a-f0-9]{64}$/);
+  console.log(JSON.stringify({ serverStepOutputLogFn: true, serverLogFnLifecycle: true, stepStatusesPersisted: true, lostAckReplayed: true, whileSecondShellActive: { run: before.status, job: before.jobs[0].status, steps: before.jobs[0].steps.map(step => step.status) }, actualWitnesses: ['first finished', 'second running'], afterRelease: { run: after.status, steps: after.jobs[0].steps.map(step => step.status) }, node: process.version }));
 } finally {
   const errors = [];
   try { await writeFile(gate, 'release'); } catch (error) { errors.push(error); }

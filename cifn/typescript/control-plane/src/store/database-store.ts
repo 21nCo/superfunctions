@@ -1,3 +1,4 @@
+import { expireLogLedger, stepOutputCheckpoint, stepOutputId, type StepOutputCheckpoint, type StepOutputDelivery } from '../log-delivery/forwarding.js';
 import { validateApiErrorTelemetry, type ApiErrorTelemetry } from '../observability/error-context.js';
 import { captureLifecycle, appendLifecycle, emptyLifecycle, LIFECYCLE_MAX_EVENTS, type LifecycleOwner, type LifecycleLedger, type LifecycleRecord } from '../observability/lifecycle.js';
 import { MAX_STEP_EVENTS, validateStepEvent, type StepEvent } from '../dispatch/step-events.js';
@@ -439,12 +440,82 @@ export class DatabaseStore implements ControlPlaneStore {
       await this.mutate<RunState, void>('run', snapshot.run.id, state => {
         let changed = false;
         for (const ledger of Object.values(state.logs ?? {})) if (ledger.status !== 'expired' && Date.now() >= ledger.expiresAt) {
-          ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0; changed = true;
+          expireLogLedger(ledger, Date.now()); changed = true;
         }
         return { result: undefined, changed };
       });
     }
     return { nextCursor: page.nextCursor };
+  }
+  /** One bounded run page; no log payload leaves storage until its claim commits. */
+  async listStepOutputRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
+    const page = await this.page({ limit: 10, cursor });
+    return { runIds: page.rows.filter(row => Object.values(this.decode<RunState>(row).logs ?? {}).some(ledger => ledger.status !== 'expired' && ledger.eventCount > (ledger.forwarding?.delivered ?? 0))).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
+  }
+  async getStepOutputStatus(runId: string, dispatchId: string): Promise<StepOutputCheckpoint | undefined> {
+    return this.mutate<RunState, StepOutputCheckpoint | undefined>('run', runId, state => {
+      const ledger = state.logs?.[dispatchId];
+      if (!ledger) return { result: undefined, changed: false };
+      const missing = !ledger.forwarding;
+      const expired = ledger.status !== 'expired' && Date.now() >= ledger.expiresAt;
+      if (expired) expireLogLedger(ledger, Date.now());
+      return { result: clone(stepOutputCheckpoint(ledger)), changed: expired || missing };
+    });
+  }
+  async claimStepOutput(runId: string, now: number, leaseMs: number): Promise<StepOutputDelivery | undefined> {
+    if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000 || !Number.isSafeInteger(now + leaseMs)) throw new Error('Invalid step output claim bounds');
+    return this.mutate<RunState, StepOutputDelivery | undefined>('run', runId, state => {
+      let changed = false;
+      for (const [dispatchId, ledger] of Object.entries(state.logs ?? {})) {
+        if (ledger.status === 'expired') continue;
+        if (now >= ledger.expiresAt) { expireLogLedger(ledger, now); changed = true; continue; }
+        const receipt = stepOutputCheckpoint(ledger);
+        if (receipt.claim) {
+          if (receipt.claim.state === 'sending' && receipt.claim.expiresAt <= now) { receipt.claim.state = 'unknown'; changed = true; }
+          continue;
+        }
+        if (receipt.delivered >= ledger.eventCount) continue;
+        const event = ledger.packets.flatMap(packet => packet.events)[receipt.delivered];
+        const intent = state.dispatches?.find(item => item.id === dispatchId);
+        if (!event || !intent) throw new Error('Step output payload requires repair');
+        const eventId = stepOutputId(this.namespace, runId, dispatchId, receipt.delivered);
+        const token = randomUUID(); const expiresAt = now + leaseMs;
+        receipt.claim = { eventId, ordinal: receipt.delivered, token, expiresAt, state: 'sending' };
+        return { result: { runId, dispatchId, jobKey: redactSecrets([intent.payload.jobKey], state.secretValues)[0], eventId, ordinal: receipt.delivered, token, claimExpiresAt: expiresAt, payloadExpiresAt: ledger.expiresAt, event: clone(event) }, changed: true };
+      }
+      return { result: undefined, changed };
+    });
+  }
+  async finishStepOutput(runId: string, dispatchId: string, eventId: string, token: string, outcome: 'delivered' | 'unknown', now: number): Promise<boolean> {
+    if (!Number.isSafeInteger(now) || now < 0 || !['delivered', 'unknown'].includes(outcome)) throw new Error('Invalid step output receipt');
+    return await this.mutate<RunState, boolean>('run', runId, state => {
+      const ledger = state.logs?.[dispatchId];
+      if (!ledger) return { result: false, changed: false };
+      const receipt = stepOutputCheckpoint(ledger); const claim = receipt.claim;
+      if (!claim || claim.eventId !== eventId || claim.token !== token || claim.state !== 'sending') return { result: false, changed: false };
+      if (now >= ledger.expiresAt) { expireLogLedger(ledger, now); return { result: true, changed: true }; }
+      if (claim.expiresAt <= now || outcome === 'unknown') claim.state = 'unknown';
+      else { receipt.delivered++; delete receipt.claim; }
+      return { result: true, changed: true };
+    }) ?? false;
+  }
+  /** Privileged decision; retry may duplicate an accepted sink effect and is impossible after payload expiry. */
+  async reconcileStepOutput(runId: string, dispatchId: string, eventId: string, resolution: 'delivered' | 'retry' | 'undelivered', now: number): Promise<boolean> {
+    if (!Number.isSafeInteger(now) || now < 0 || !['delivered', 'retry', 'undelivered'].includes(resolution)) throw new Error('Invalid step output reconciliation');
+    return await this.mutate<RunState, boolean>('run', runId, state => {
+      const ledger = state.logs?.[dispatchId];
+      if (!ledger) return { result: false, changed: false };
+      const expired = ledger.status !== 'expired' && now >= ledger.expiresAt;
+      if (expired) expireLogLedger(ledger, now);
+      const receipt = stepOutputCheckpoint(ledger); const claim = receipt.claim;
+      if (!claim || claim.eventId !== eventId || claim.state !== 'unknown') return { result: false, changed: expired };
+      if (resolution === 'retry' && ledger.status === 'expired') return { result: false, changed: expired };
+      if (resolution === 'undelivered' && ledger.status !== 'expired') throw new Error('Live step output must be retried or confirmed delivered');
+      if (resolution === 'delivered') receipt.delivered++;
+      if (resolution === 'undelivered') receipt.expired!.undelivered++;
+      delete receipt.claim;
+      return { result: true, changed: true };
+    }) ?? false;
   }
   async appendDispatchLogs(identity: ClaimIdentity, packet: LogPacket): Promise<{ status: LogLedger['status']; nextSequence: number; expiresAt: number }> {
     // Freeze the accepted request before the first database await.
@@ -457,7 +528,7 @@ export class DatabaseStore implements ControlPlaneStore {
       const ledger = ledgers[intent.id] ??= { status: 'pending', expiresAt: Date.parse(intent.claim!.acknowledgedAt ?? intent.claim!.claimedAt) + this.logRetentionMs, bytes: 0, eventCount: 0, packets: [] };
       const receipt = () => ({ status: ledger.status, nextSequence: ledger.packets.length, expiresAt: ledger.expiresAt });
       if (Date.now() >= ledger.expiresAt) {
-        ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0;
+        expireLogLedger(ledger, Date.now());
         return { result: receipt(), changed: true };
       }
       const existing = ledger.packets[packet.sequence];
@@ -493,7 +564,7 @@ export class DatabaseStore implements ControlPlaneStore {
       }
       let changed = false;
       if (Date.now() >= ledger.expiresAt && ledger.status !== 'expired') {
-        ledger.status = 'expired'; ledger.packets = []; ledger.bytes = 0; ledger.eventCount = 0; changed = true;
+        expireLogLedger(ledger, Date.now()); changed = true;
       }
       return { result: { lines: ledger.packets.flatMap(packet => packet.events.map(event => ({ line: event.msg, timestamp: event.ts, stepKey: event.ctx.stepKey }))), transfer: { status: ledger.status, expiresAt: ledger.expiresAt, eventCount: ledger.eventCount } }, changed };
     });

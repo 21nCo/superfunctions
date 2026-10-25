@@ -1,3 +1,4 @@
+import type { StepOutputCheckpoint } from './forwarding.js';
 import { createHash } from 'node:crypto';
 /** Bounds apply to serialized UTF-8 events, independently of execution status. */
 export const LOG_BATCH_BYTES = 64 * 1024;
@@ -8,7 +9,7 @@ export type LogTransferStatus = 'pending' | 'complete' | 'truncated' | 'failed' 
 /** Actual LogFn envelope subset used by Ci's private durable sink. */
 export interface RunnerLogEvent { ts: string; level: 'info'; name: 'cifn'; msg: string; version: string; ctx: { stepKey: string } }
 export interface LogPacket { sequence: number; events: RunnerLogEvent[]; terminal?: 'complete' | 'truncated' | 'failed'; digest: string }
-export interface LogLedger { status: LogTransferStatus; expiresAt: number; bytes: number; eventCount: number; packets: LogPacket[] }
+export interface LogLedger { forwarding?: StepOutputCheckpoint; status: LogTransferStatus; expiresAt: number; bytes: number; eventCount: number; packets: LogPacket[] }
 export function logDigest(value: Omit<LogPacket, 'digest'>): string {
   return createHash('sha256').update(JSON.stringify({ sequence: value.sequence, events: value.events, ...(value.terminal ? { terminal: value.terminal } : {}) })).digest('hex');
 }

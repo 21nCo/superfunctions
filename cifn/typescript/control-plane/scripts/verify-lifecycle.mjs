@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
-const { DatabaseStore, CIFN_SQLITE_SCHEMA, CIFN_STATE_TABLE, LogFnLifecycleDispatcher, createApp, MemorySecFnClient } = require('../dist/index.js');
+const { DatabaseStore, CIFN_SQLITE_SCHEMA, CIFN_STATE_TABLE, LogFnLifecycleDispatcher, createApp, MemorySecFnClient, prepareRun, logDigest, LogFnStepOutputDispatcher } = require('../dist/index.js');
 const SQLite = require('better-sqlite3');
 const { Kysely, SqliteDialect } = require('kysely');
 const { kyselyAdapter } = await import('@superfunctions/db/adapters');
@@ -28,9 +28,9 @@ async function bounded(operation, ms = 5000) {
   finally { clearTimeout(timer); }
 }
 const env = path => ({ CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: path, CIFN_STORE_ENCRYPTION_KEY: Buffer.alloc(32, 73).toString('base64') });
-if (process.argv[2] === 'claim-child') {
+if (['claim-child', 'claim-output-child'].includes(process.argv[2])) {
   const runtime = await createRuntimeStore(env(process.argv[3]));
-  const record = await runtime.store.claimLifecycle(process.argv[4], Date.now(), 1);
+  const record = process.argv[2] === 'claim-child' ? await runtime.store.claimLifecycle(process.argv[4], Date.now(), 1) : await runtime.store.claimStepOutput(process.argv[4], Date.now(), 1);
   assert.ok(record);
   process.stdout.write('claimed\n');
   setInterval(() => {}, 1000);
@@ -107,7 +107,40 @@ if (process.argv[2] === 'claim-child') {
     }
     assert.equal(received.filter(event => event.msg === 'pipeline.parse_error').length, 1);
     assert.equal(received.filter(event => event.msg === 'runner.heartbeat').length, 1);
-    console.log(JSON.stringify({ passed: true, actualLogFnSink: true, killedOwnerParked: true, noBlindReplay: true, sqliteReopen: true, runnerApiTelemetry: true, sanitizedParseErrors: true }));
+    await dispatcher.close(); dispatcher = undefined;
+    const outputRun = await runtime.store.createPreparedRun(await prepareRun({ trigger: { type: 'workflow_dispatch' }, pipelineSpec: { on: { workflow_dispatch: {} }, jobs: { build: { 'runs-on': 'default', steps: [{ run: 'never executed' }] } } } }));
+    const dispatchId = JSON.stringify([outputRun.id, 'build', 1]);
+    const payload = await runtime.store.claimDispatch(outputRun.id, dispatchId, 'fixture', ['default']);
+    const outputIdentity = { runId: outputRun.id, dispatchId, runnerId: 'fixture', executionId: 'owned-output', claimToken: payload.claimToken };
+    await runtime.store.acknowledgeDispatch(outputIdentity);
+    const packet = { sequence: 0, events: ['owned forwarded line', 'owned second line'].map(msg => ({ ts: new Date().toISOString(), level: 'info', name: 'cifn', msg, version: '1', ctx: { stepKey: 'step-0' } })) };
+    await runtime.store.appendDispatchLogs(outputIdentity, { ...packet, digest: logDigest(packet) });
+    await runtime.close(); runtime = undefined;
+    child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'claim-output-child', path, outputRun.id], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const outputExited = once(child, 'exit');
+    await bounded(new Promise((resolve, reject) => {
+      child.stdout.once('data', bytes => bytes.toString().includes('claimed') ? resolve() : reject(Error('Invalid output child receipt')));
+      child.once('error', reject); child.once('exit', () => reject(Error('Output claim child exited before receipt')));
+    }), 10_000);
+    child.kill('SIGKILL'); await bounded(outputExited); child = undefined;
+    runtime = await createRuntimeStore(env(path));
+    assert.equal(await runtime.store.claimStepOutput(outputRun.id, Date.now() + 1000, 1000), undefined);
+    let outputStatus = await runtime.store.getStepOutputStatus(outputRun.id, dispatchId);
+    assert.equal(outputStatus.claim.state, 'unknown');
+    await runtime.store.reconcileStepOutput(outputRun.id, dispatchId, outputStatus.claim.eventId, 'retry', Date.now());
+    dispatcher = new LogFnStepOutputDispatcher(runtime.store, async batch => { await sink(batch); throw Error('owned post-acceptance response loss'); });
+    await dispatcher.tick(); await dispatcher.tick(); await dispatcher.close(); dispatcher = undefined;
+    assert.equal(received.filter(event => event.msg === 'owned forwarded line').length, 1);
+    await runtime.close(); runtime = await createRuntimeStore(env(path));
+    dispatcher = new LogFnStepOutputDispatcher(runtime.store, sink);
+    await dispatcher.tick();
+    assert.equal(received.filter(event => event.msg === 'owned forwarded line').length, 1);
+    outputStatus = await runtime.store.getStepOutputStatus(outputRun.id, dispatchId);
+    await runtime.store.reconcileStepOutput(outputRun.id, dispatchId, outputStatus.claim.eventId, 'delivered', Date.now());
+    await dispatcher.tick(); await dispatcher.tick();
+    assert.equal(received.filter(event => event.msg === 'owned second line').length, 1);
+    assert.deepEqual(await runtime.store.getStepOutputStatus(outputRun.id, dispatchId), { version: 1, delivered: 2 });
+    console.log(JSON.stringify({ passed: true, actualLogFnSink: true, killedOwnerParked: true, noBlindReplay: true, sqliteReopen: true, runnerApiTelemetry: true, sanitizedParseErrors: true, killedOutputOwnerParked: true, actualStepOutputSink: true }));
   } finally {
     const cleanup = [];
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); cleanup.push(bounded(exited)); }

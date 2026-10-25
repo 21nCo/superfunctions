@@ -864,3 +864,112 @@ describe('durable runner and API telemetry', () => {
     await expect(opened.store.recordApiError({ code: 'private-secret', route: '/api/v1/runs', method: 'GET', status: 400 })).rejects.toThrow('Invalid API error telemetry');
   });
 });
+
+describe('durable LogFn step output forwarding', () => {
+  async function setup(store: DatabaseStore, lines = ['first redacted ***', 'second line']) {
+    const { logDigest } = await import('../log-delivery/protocol.js');
+    const run = await store.createPreparedRun(await prepareRun({ trigger: { type: 'workflow_dispatch' }, pipelineSpec: { on: { workflow_dispatch: {} }, jobs: { build: { 'runs-on': 'default', steps: [{ run: 'never executed' }] } } } }));
+    const dispatchId = JSON.stringify([run.id, 'build', 1]);
+    const payload = await store.claimDispatch(run.id, dispatchId, 'owned-runner', ['default']);
+    const identity = { runId: run.id, dispatchId, runnerId: 'owned-runner', claimToken: payload!.claimToken!, executionId: 'owned-execution' };
+    await store.acknowledgeDispatch(identity);
+    const value = { sequence: 0, events: lines.map(msg => ({ ts: new Date().toISOString(), level: 'info' as const, name: 'cifn' as const, msg, version: '1', ctx: { stepKey: 'step-0' } })) };
+    const packet = { ...value, digest: logDigest(value) };
+    const admitted = await store.appendDispatchLogs(identity, packet);
+    return { run, identity, packet, expiresAt: admitted.expiresAt };
+  }
+  it('claims once across independent SQLite workers and preserves ordered receipts across reopen', async () => {
+    const { LogFnStepOutputDispatcher } = await import('../observability/step-output.js');
+    const { path } = await location(); let first = await open(path); const other = await open(path);
+    const fixture = await setup(first.store); const sent: any[] = [];
+    const sink = (events: any[]) => { sent.push(...events); };
+    const a = new LogFnStepOutputDispatcher(first.store, sink); const b = new LogFnStepOutputDispatcher(other.store, sink);
+    await Promise.all([a.tick(), b.tick()]); await a.close(); await b.close();
+    // Workers may serialize both events or race on the first; each admitted prefix appears once.
+    expect(sent.length).toBeGreaterThan(0); expect(new Set(sent.map(event => event.ctx.eventId)).size).toBe(sent.length);
+    await close(first.sql); first = await open(path);
+    const resumed = new LogFnStepOutputDispatcher(first.store, sink);
+    await resumed.tick(); await resumed.tick(); await resumed.close();
+    expect(sent.map(event => event.msg)).toEqual(['first redacted ***', 'second line']);
+    expect(sent.map(event => event.ctx.ordinal)).toEqual([0, 1]);
+    expect(sent.every(event => !Object.prototype.hasOwnProperty.call(event.ctx, 'dispatchId') && !Object.prototype.hasOwnProperty.call(event.ctx, 'token'))).toBe(true);
+    expect(await first.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId)).toEqual({ version: 1, delivered: 2 });
+    expect((await first.store.getRun(fixture.run.id))!.status).toBe('running');
+    expect((await first.store.readDispatchLogs(fixture.run.id, 'build')).lines).toHaveLength(2);
+  });
+  it('parks an accepted but unacknowledged sink effect, never retries without explicit reconciliation', async () => {
+    const { LogFnStepOutputDispatcher } = await import('../observability/step-output.js');
+    const { path } = await location(); let opened = await open(path); const fixture = await setup(opened.store);
+    const sent: any[] = [];
+    const failed = new LogFnStepOutputDispatcher(opened.store, events => { sent.push(...events); throw new Error('private sink response'); });
+    await failed.tick(); await failed.tick(); await failed.close();
+    expect(sent).toHaveLength(1);
+    let status = (await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!;
+    expect(status.claim?.state).toBe('unknown'); expect(JSON.stringify(status)).not.toContain('private');
+    await close(opened.sql); opened = await open(path);
+    const resumed = new LogFnStepOutputDispatcher(opened.store, events => { sent.push(...events); });
+    await resumed.tick(); expect(sent).toHaveLength(1);
+    expect(await opened.store.reconcileStepOutput(fixture.run.id, fixture.identity.dispatchId, status.claim!.eventId, 'delivered', Date.now())).toBe(true);
+    await resumed.tick(); await resumed.close(); expect(sent).toHaveLength(2);
+    status = (await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!;
+    expect(status).toEqual({ version: 1, delivered: 2 });
+  });
+  for (const pathName of ['read', 'append', 'purge'] as const) it(`preserves unknown and expired-undelivered counts when ${pathName} removes payload`, async () => {
+    const { path } = await location(); const opened = await open(path); const fixture = await setup(opened.store);
+    const claimed = (await opened.store.claimStepOutput(fixture.run.id, Date.now(), 1000))!;
+    vi.spyOn(Date, 'now').mockReturnValue(fixture.expiresAt + 1);
+    if (pathName === 'read') await opened.store.readDispatchLogs(fixture.run.id, 'build');
+    if (pathName === 'append') await opened.store.appendDispatchLogs(fixture.identity, fixture.packet);
+    if (pathName === 'purge') await opened.store.purgeExpiredLogs();
+    const status = (await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!;
+    expect(status).toMatchObject({ delivered: 0, expired: { undelivered: 1 }, claim: { eventId: claimed.eventId, state: 'unknown' } });
+    expect(JSON.stringify(status)).not.toContain('first redacted');
+    expect((await opened.store.readDispatchLogs(fixture.run.id, 'build')).lines).toEqual([]);
+    expect(await opened.store.reconcileStepOutput(fixture.run.id, fixture.identity.dispatchId, claimed.eventId, 'retry', Date.now())).toBe(false);
+    expect(await opened.store.claimStepOutput(fixture.run.id, Date.now(), 1000)).toBeUndefined();
+    expect(await opened.store.reconcileStepOutput(fixture.run.id, fixture.identity.dispatchId, claimed.eventId, 'undelivered', Date.now())).toBe(true);
+    expect(await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId)).toEqual({ version: 1, delivered: 0, expired: { at: fixture.expiresAt + 1, undelivered: 2 } });
+    vi.restoreAllMocks();
+  });
+  it('joins held sink I/O on close and treats expired owner leases as unknown', async () => {
+    const { LogFnStepOutputDispatcher } = await import('../observability/step-output.js');
+    const { path } = await location(); const opened = await open(path); const fixture = await setup(opened.store);
+    let entered!: () => void, release!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; });
+    const worker = new LogFnStepOutputDispatcher(opened.store, () => { entered(); return new Promise<void>(resolve => { release = resolve; }); }, 10_000);
+    const active = worker.tick(); await ready; let closed = false;
+    const closing = worker.close().then(() => { closed = true; });
+    await Promise.resolve(); expect(closed).toBe(false);
+    const receipt = (await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!;
+    vi.spyOn(Date, 'now').mockReturnValue(receipt.claim!.expiresAt + 1);
+    release(); expect((await active).delivered).toBe(0); await closing;
+    expect((await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!.claim?.state).toBe('unknown');
+    await expect(worker.tick()).rejects.toThrow('closed'); vi.restoreAllMocks();
+  });
+  it('does not begin sink I/O after the claim or payload expires', async () => {
+    const { deliverStepOutput } = await import('../observability/step-output.js');
+    const { path } = await location(); const opened = await open(path); const fixture = await setup(opened.store);
+    const delivery = (await opened.store.claimStepOutput(fixture.run.id, Date.now(), 1000))!;
+    let sends = 0;
+    vi.spyOn(Date, 'now').mockReturnValue(delivery.claimExpiresAt);
+    await expect(deliverStepOutput(delivery, () => { sends++; })).rejects.toThrow('reconciliation');
+    vi.spyOn(Date, 'now').mockReturnValue(delivery.payloadExpiresAt);
+    await expect(deliverStepOutput({ ...delivery, claimExpiresAt: delivery.payloadExpiresAt + 1000 }, () => { sends++; })).rejects.toThrow('reconciliation');
+    expect(sends).toBe(0); vi.restoreAllMocks();
+  });
+  it('never sends before a committed claim and preserves uncertain failed receipt after reopen', async () => {
+    const { LogFnStepOutputDispatcher } = await import('../observability/step-output.js');
+    const { path } = await location(); let opened = await open(path); const fixture = await setup(opened.store);
+    opened.native.exec("CREATE TRIGGER deny_forward BEFORE UPDATE ON cifn_state BEGIN SELECT RAISE(ABORT, 'owned rollback'); END");
+    let sends = 0;
+    const blocked = new LogFnStepOutputDispatcher(opened.store, () => { sends++; });
+    await expect(blocked.tick()).rejects.toThrow(); await blocked.close(); expect(sends).toBe(0);
+    opened.native.exec('DROP TRIGGER deny_forward');
+    const worker = new LogFnStepOutputDispatcher(opened.store, () => { sends++; opened.native.exec("CREATE TRIGGER deny_receipt BEFORE UPDATE ON cifn_state BEGIN SELECT RAISE(ABORT, 'owned receipt rollback'); END"); }, 10_000);
+    await expect(worker.tick()).rejects.toThrow(); await worker.close(); expect(sends).toBe(1);
+    opened.native.exec('DROP TRIGGER deny_receipt');
+    await close(opened.sql); opened = await open(path);
+    const receipt = (await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!;
+    await opened.store.claimStepOutput(fixture.run.id, receipt.claim!.expiresAt + 1, 1000);
+    expect((await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!.claim?.state).toBe('unknown');
+  });
+});
