@@ -357,7 +357,7 @@ describe("HTTP Sink", () => {
     it("should put failed events back in queue", async () => {
       fetchMock
         .mockRejectedValueOnce(new Error("Network error"))
-        .mockResolvedValueOnce(new Response("", { status: 200 }));
+        .mockResolvedValue(new Response("", { status: 200 }));
 
       const sink = sinkHttp({
         url: "https://logs.example.com/ingest",
@@ -375,7 +375,8 @@ describe("HTTP Sink", () => {
       await vi.runAllTimersAsync();
 
       // Both events should eventually be sent
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).events.map((event: LogEvent) => event.msg))).toEqual([["test"], ["test"], ["test2"]]);
     });
   });
 });

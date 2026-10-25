@@ -5,6 +5,7 @@
 import { Logger } from "./logger.js";
 import type { LoggerOptions } from "../types.js";
 import { sinkConsole } from "../sinks/console.js";
+import { sinkHttp } from "../sinks/http.js";
 
 /**
  * Create a logger with the given options
@@ -34,10 +35,9 @@ export function serverLogger(opts: {
 }): Logger {
   const sinks = [sinkConsole({ json: true })];
 
-  // Note: sinkHttp will be added when implementing that module
-  // if (opts.url) {
-  //   sinks.push(sinkHttp({ url: opts.url }));
-  // }
+  if (opts.url) {
+    sinks.push(sinkHttp({ url: opts.url }));
+  }
 
   return new Logger({
     name: opts.name,

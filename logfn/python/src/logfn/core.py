@@ -1,19 +1,25 @@
 import asyncio
+import inspect
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union, Callable
+from threading import RLock
+from typing import Any, Callable, Optional
 
+from .default_redaction import default_redactor
+from .serialization import bound_event, sanitize_value
 from .types import (
     DEFAULT_VERSION,
     LOG_LEVEL_VALUES,
-    ChildLoggerOptions,
+    DefaultRedactionOptions,
+    ErrorHandler,
+    LogCorrelation,
     LogEvent,
-    LoggerOptions,
     LogLevel,
     PipelineStage,
     Sink,
 )
+
 
 def default_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -22,28 +28,118 @@ def get_default_level() -> LogLevel:
     env = os.environ.get("ENV", os.environ.get("NODE_ENV", "development"))
     return "info" if env == "production" else "debug"
 
+class _ErrorReporter:
+    def __init__(self, callback: Optional[ErrorHandler], redact: Callable[[Any], Any]) -> None:
+        self.callback = callback
+        self.redact = redact
+        self.reporting = False
+
+    def report(self, error: BaseException, context: dict[str, str]) -> None:
+        if self.reporting:
+            return
+        self.reporting = True
+        try:
+            if self.callback is not None:
+                try:
+                    self.callback(error, context)
+                except Exception:
+                    print("[logfn internal error] error callback failed", file=sys.stderr)
+            else:
+                try:
+                    print("[logfn internal error]", self.redact({"context": context, "errorType": type(error).__name__}), file=sys.stderr)
+                except Exception:
+                    print("[logfn internal error] diagnostic redaction failed", file=sys.stderr)
+        finally:
+            self.reporting = False
+
+
+class _DeliveryState:
+    def __init__(self, reporter: _ErrorReporter) -> None:
+        self.reporter = reporter
+        self.contexts: dict[asyncio.Future[Any], dict[str, str]] = {}
+        self.pending: set[asyncio.Future[Any]] = set()
+        self.error: Optional[BaseException] = None
+
+    def completed(self, task: asyncio.Future[Any]) -> None:
+        self.pending.discard(task)
+        context = self.contexts.pop(task, {"sink": "unknown"})
+        error = asyncio.CancelledError() if task.cancelled() else task.exception()
+        if error is not None:
+            if self.error is None:
+                self.error = error
+            self.reporter.report(error, context)
+
+
+class _AttachedSinks:
+    def __init__(self) -> None:
+        self.lock = RLock()
+        self.entries: dict[int, tuple[Sink, int]] = {}
+
+
 class Logger:
     def __init__(
         self,
         name: str,
-        sinks: List[Sink],
+        sinks: list[Sink],
         level: Optional[LogLevel] = None,
-        pipeline: Optional[List[PipelineStage]] = None,
+        pipeline: Optional[list[PipelineStage]] = None,
         now: Optional[Callable[[], datetime]] = None,
-        base_context: Optional[Dict[str, Any]] = None,
-        base_tags: Optional[List[str]] = None,
+        base_context: Optional[dict[str, Any]] = None,
+        base_tags: Optional[list[str]] = None,
+        on_error: Optional[ErrorHandler] = None,
+        correlation: Optional[LogCorrelation] = None,
+        redaction: Optional[DefaultRedactionOptions] = None,
     ):
+        self._redact = default_redactor(redaction)
+        self._redaction_allowlist = tuple((redaction or {}).get("allowlist", []))
+        self._reporter = _ErrorReporter(on_error, self._redact)
+        self._delivery = _DeliveryState(self._reporter)
         self.name = name
         self.sinks = sinks
+        self._attached_sinks = _AttachedSinks()
         self.level = level or get_default_level()
         self.pipeline = pipeline or []
         self.now = now or default_now
         self.base_context = base_context or {}
         self.base_tags = base_tags or []
+        self.correlation: LogCorrelation = {**(correlation or {})}
         
         if not sinks:
             # We don't throw here to avoid breaking apps, but it's bad practice
             print("Warning: Logger created without sinks", file=sys.stderr)
+
+    def add_sink(self, sink: Sink) -> Callable[[], None]:
+        """Attach to the whole logger family; detach only affects future events.
+
+        Admitted async delivery remains owned by flush. Flush a buffering sink
+        before detaching to drain its private buffer.
+        """
+        flush = getattr(sink, "flush", None)
+        if not callable(sink) or (flush is not None and not callable(flush)):
+            raise TypeError("Invalid log sink")
+        attached = self._attached_sinks
+        key = id(sink)
+        with attached.lock:
+            old = attached.entries.get(key)
+            attached.entries[key] = (sink, old[1] + 1 if old else 1)
+        detached = False
+        def detach() -> None:
+            nonlocal detached
+            with attached.lock:
+                if detached:
+                    return
+                detached = True
+                current, count = attached.entries[key]
+                if count == 1:
+                    del attached.entries[key]
+                else:
+                    attached.entries[key] = (current, count - 1)
+        return detach
+
+    def _all_sinks(self) -> list[Sink]:
+        with self._attached_sinks.lock:
+            return [*self.sinks, *(sink for sink, _ in self._attached_sinks.entries.values()
+                                  if not any(sink is existing for existing in self.sinks))]
 
     def should_log(self, level: LogLevel) -> bool:
         return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[self.level]
@@ -52,8 +148,8 @@ class Logger:
         self,
         level: LogLevel,
         msg: str,
-        ctx: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None,
+        ctx: Optional[dict[str, Any]] = None,
+        tags: Optional[list[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not self.should_log(level):
@@ -70,6 +166,17 @@ class Logger:
             "name": self.name,
             "version": DEFAULT_VERSION,
         }
+
+        if "traceId" in self.correlation:
+            event["traceId"] = self.correlation["traceId"]
+        if "spanId" in self.correlation:
+            event["spanId"] = self.correlation["spanId"]
+        if "requestId" in self.correlation:
+            event["requestId"] = self.correlation["requestId"]
+        if "userId" in self.correlation:
+            event["userId"] = self.correlation["userId"]
+        if "tenantId" in self.correlation:
+            event["tenantId"] = self.correlation["tenantId"]
 
         # Merge context
         merged_ctx = {**self.base_context}
@@ -92,49 +199,59 @@ class Logger:
                 if current_event:
                     current_event = stage(current_event)
             except Exception as e:
-                print(f"[logfn internal error] stage failed: {e}", file=sys.stderr)
+                self._reporter.report(e, {"stage": getattr(stage, "__name__", type(stage).__name__)})
         
         if not current_event:
             return
 
         # Sinks
-        batch = [current_event]
-        for sink in self.sinks:
+        try:
+            final_event = bound_event(self._redact(current_event))
+        except Exception:
+            self._reporter.report(RuntimeError("Log event could not be safely redacted"), {"stage": "defaultRedaction"})
+            return
+        for sink in self._all_sinks():
             try:
-                res = sink(batch)
-                # If res is a coroutine and we are in a sync context, we can't await it.
-                # Sinks should generally be sync (enqueueing if async is needed).
-                # But if a sink returns a coroutine, we try to schedule it if a loop is running.
-                if asyncio.iscoroutine(res):
+                res = sink([sanitize_value(final_event)])
+                if inspect.isawaitable(res):
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(res)
+                        asyncio.get_running_loop()
                     except RuntimeError:
-                        # No running loop, can't schedule.
-                        # This implies usage error: using async sink in sync context without loop.
-                        print(f"[logfn internal error] Async sink returned coroutine but no event loop running", file=sys.stderr)
+                        if inspect.iscoroutine(res):
+                            res.close()
+                        error = RuntimeError("Async sink requires a running event loop")
+                        if self._delivery.error is None:
+                            self._delivery.error = error
+                        self._reporter.report(error, {"sink": getattr(sink, "__name__", type(sink).__name__)})
+                    else:
+                        task = asyncio.ensure_future(res)
+                        self._delivery.pending.add(task)
+                        self._delivery.contexts[task] = {"sink": getattr(sink, "__name__", type(sink).__name__)}
+                        task.add_done_callback(self._delivery.completed)
             except Exception as e:
-                print(f"[logfn internal error] sink failed: {e}", file=sys.stderr)
+                if self._delivery.error is None:
+                    self._delivery.error = e
+                self._reporter.report(e, {"sink": getattr(sink, "__name__", type(sink).__name__)})
 
-    def trace(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def trace(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("trace", msg, ctx, tags, **kwargs)
 
-    def debug(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def debug(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("debug", msg, ctx, tags, **kwargs)
 
-    def info(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def info(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("info", msg, ctx, tags, **kwargs)
 
-    def warn(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def warn(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("warn", msg, ctx, tags, **kwargs)
 
-    def error(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def error(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("error", msg, ctx, tags, **kwargs)
 
-    def fatal(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def fatal(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
         self._log("fatal", msg, ctx, tags, **kwargs)
 
-    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None) -> 'Logger':
+    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, correlation: Optional[LogCorrelation] = None) -> 'Logger':
         new_name = name or self.name
         new_level = level or self.level
         new_ctx = {**self.base_context}
@@ -144,7 +261,7 @@ class Logger:
         if tags:
             new_tags.extend(tags)
             
-        return Logger(
+        child = Logger(
             name=new_name,
             sinks=self.sinks,
             level=new_level,
@@ -152,26 +269,56 @@ class Logger:
             now=self.now,
             base_context=new_ctx,
             base_tags=new_tags,
+            correlation={**self.correlation, **(correlation or {})},
+            redaction={"allowlist": list(self._redaction_allowlist)},
         )
+        child._reporter = self._reporter
+        child._delivery = self._delivery
+        child._attached_sinks = self._attached_sinks
+        return child
 
     async def flush(self) -> None:
-        tasks = []
-        for sink in self.sinks:
-            if hasattr(sink, "flush"):
-                res = sink.flush()
-                if asyncio.iscoroutine(res):
-                    tasks.append(res)
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        sinks = self._all_sinks()
+        # Parent and children share delivery ownership. Shield application sink
+        # tasks so cancelling a flush waiter does not discard accepted events.
+        while self._delivery.pending:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in tuple(self._delivery.pending)),
+                return_exceptions=True,
+            )
+
+        async def flush_sink(sink: Sink) -> None:
+            flush = getattr(sink, "flush", None)
+            if flush is not None:
+                try:
+                    result = flush()
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as error:
+                    self._reporter.report(error, {"sink": getattr(sink, "__name__", type(sink).__name__), "phase": "flush"})
+                    raise
+
+        results = await asyncio.gather(
+            *(flush_sink(sink) for sink in sinks), return_exceptions=True
+        )
+        error = self._delivery.error
+        self._delivery.error = None
+        for result in results:
+            if isinstance(result, BaseException) and error is None:
+                error = result
+        if error is not None:
+            raise error
 
 def create_logger(
     name: str,
-    sinks: List[Sink],
+    sinks: list[Sink],
     level: Optional[LogLevel] = None,
-    pipeline: Optional[List[PipelineStage]] = None,
-    base_context: Optional[Dict[str, Any]] = None,
-    base_tags: Optional[List[str]] = None,
+    pipeline: Optional[list[PipelineStage]] = None,
+    base_context: Optional[dict[str, Any]] = None,
+    base_tags: Optional[list[str]] = None,
+    on_error: Optional[ErrorHandler] = None,
+    correlation: Optional[LogCorrelation] = None,
+    redaction: Optional[DefaultRedactionOptions] = None,
 ) -> Logger:
     return Logger(
         name=name,
@@ -180,4 +327,7 @@ def create_logger(
         pipeline=pipeline,
         base_context=base_context,
         base_tags=base_tags,
+        on_error=on_error,
+        correlation=correlation,
+        redaction=redaction,
     )

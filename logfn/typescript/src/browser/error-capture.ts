@@ -66,8 +66,8 @@ export function attachFlushHooks(logger: Logger): () => void {
 
   const visibilityHandler = () => {
     if (document.visibilityState === "hidden") {
-      logger.flush().catch((error) => {
-        console.error("[logfn] Failed to flush on visibility change", error);
+      logger.flush().catch(() => {
+        console.error("[logfn] Failed to flush on visibility change");
       });
     }
   };
@@ -79,11 +79,11 @@ export function attachFlushHooks(logger: Logger): () => void {
     });
   };
 
-  window.addEventListener("visibilitychange", visibilityHandler);
+  document.addEventListener("visibilitychange", visibilityHandler);
   window.addEventListener("beforeunload", unloadHandler);
 
   return () => {
-    window.removeEventListener("visibilitychange", visibilityHandler);
+    document.removeEventListener("visibilitychange", visibilityHandler);
     window.removeEventListener("beforeunload", unloadHandler);
   };
 }

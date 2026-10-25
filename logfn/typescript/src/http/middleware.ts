@@ -2,7 +2,9 @@
  * Core request logger middleware
  */
 
-import type { Logger } from "../core/logger.js";
+import { sanitizeValue } from "../validation.js";
+import { Logger } from "../core/logger.js";
+import { sinkConsole } from "../sinks/console.js";
 import { parseW3CTraceContext } from "../pipeline/request-ids.js";
 
 /**
@@ -23,6 +25,9 @@ export interface RequestLoggerOptions {
 
   /** Capture request/response body (default: false) */
   includeBody?: boolean;
+
+  /** Maximum time spent reading a Fetch request body for logs (default: 100ms). */
+  bodyCaptureTimeoutMs?: number;
 
   /** Function to extract user/tenant from request */
   captureUser?: (
@@ -62,7 +67,7 @@ export interface ResponseMetadata {
 export function extractCorrelationIds(
   headers: Record<string, string | string[] | undefined>,
   headerName = "traceparent"
-): { traceId?: string; spanId?: string; requestId?: string } {
+): { traceId: string; spanId: string; requestId: string } {
   const traceparent = headers[headerName.toLowerCase()];
   const traceparentValue = Array.isArray(traceparent)
     ? traceparent[0]
@@ -85,6 +90,25 @@ export function extractCorrelationIds(
     spanId: generateSpanId(),
     requestId: generateRequestId(),
   };
+}
+
+/** Response headers owned by the request logger; never reflect raw input headers. */
+export function correlationResponseHeaders(ids: ReturnType<typeof extractCorrelationIds>): Record<string, string> {
+  return {
+    "x-request-id": ids.requestId,
+    "x-trace-id": ids.traceId,
+    "x-span-id": ids.spanId,
+  };
+}
+
+/** Copy headers without buffering or consuming the response body (including immutable headers). */
+export function withCorrelationHeaders(response: Response, ids: ReturnType<typeof extractCorrelationIds>): Response {
+  // Opaque/error sentinels are not wire HTTP responses and cannot be reconstructed.
+  if (response.status === 0) return response;
+  // Pass the full runtime initializer: Workers also carries webSocket/cf metadata.
+  const correlated = new Response(response.body, response);
+  for (const [name, value] of Object.entries(correlationResponseHeaders(ids))) correlated.headers.set(name, value);
+  return correlated;
 }
 
 /**
@@ -140,7 +164,7 @@ export function redactHeaders(
   ]
 ): Record<string, string> {
   const result: Record<string, string> = {};
-  const redactSet = new Set(redactList.map((h) => h.toLowerCase()));
+  const redactSet = new Set(["authorization", "cookie", "x-api-key", "x-auth-token", ...redactList.map((h) => h.toLowerCase())]);
 
   for (const [key, value] of Object.entries(headers)) {
     if (!value) continue;
@@ -162,17 +186,82 @@ export function redactHeaders(
  * Truncate body to max size
  */
 export function truncateBody(body: any, maxSize = 8192): any {
-  if (!body) return undefined;
-
-  const serialized = typeof body === "string" ? body : JSON.stringify(body);
-
-  if (serialized.length <= maxSize) {
-    return body;
+  if (body === null || body === undefined) return undefined;
+  if (!Number.isFinite(maxSize) || maxSize < 64) {
+    throw new RangeError("Body capture limit must be at least 64 bytes");
   }
+  const cleaned = sanitizeValue(body);
+  const serialized = JSON.stringify(cleaned);
+  const encoder = new TextEncoder();
+  const size = encoder.encode(serialized).byteLength;
+  if (size <= maxSize) return cleaned;
 
-  return {
-    _truncated: true,
-    _size: serialized.length,
-    _preview: serialized.slice(0, 200),
-  };
+  const result = { _truncated: true, _size: size, _preview: "" };
+  // Bound the complete JSON value, including metadata and escaped characters.
+  for (const point of Array.from(typeof cleaned === "string" ? cleaned : serialized).slice(0, 200)) {
+    const previous = result._preview;
+    result._preview += point;
+    if (encoder.encode(JSON.stringify(result)).byteLength > maxSize) {
+      result._preview = previous;
+      break;
+    }
+  }
+  return result;
+}
+
+/** One decision for the automatic info-level request/response pair. */
+export function createRequestSampler(sample: RequestLoggerOptions["sample"]): () => boolean {
+  const rates = typeof sample === "number" ? [sample] : Object.values(sample ?? {});
+  if (rates.some(rate => !Number.isFinite(rate) || rate < 0 || rate > 1)) {
+    throw new RangeError("Request sample rates must be finite numbers between zero and one");
+  }
+  const rate = typeof sample === "number" ? sample : sample?.info ?? 1;
+  return () => rate === 1 || (rate > 0 && Math.random() < rate);
+}
+
+
+/** Read only a bounded prefix from a clone; leave the application branch intact. */
+export async function captureRequestBody(request: Request, timeoutMs = 100): Promise<unknown> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Body capture timeout must be a positive finite number");
+  }
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = 8192;
+  let bytes = 0;
+  let text = "";
+  const decoder = new TextDecoder();
+  const timeout = Symbol("timeout");
+  const deadline = new Promise<typeof timeout>(resolve => {
+    timer = setTimeout(() => resolve(timeout), timeoutMs);
+  });
+  try {
+    reader = request.clone().body?.getReader();
+    if (!reader) return undefined;
+    while (bytes < limit) {
+      const result = await Promise.race([reader.read(), deadline]);
+      if (result === timeout) return { _omitted: "body_capture_timeout" };
+      if (result.done) return truncateBody(text + decoder.decode());
+      const chunk = result.value.subarray(0, limit - bytes);
+      bytes += chunk.byteLength;
+      text += decoder.decode(chunk, { stream: true });
+    }
+    // Total size is unknown: don't drain the request just to measure it.
+    return { _truncated: true, _capturedBytes: bytes, _preview: Array.from(text).slice(0, 200).join("") };
+  } catch {
+    return { _omitted: "body_unavailable" };
+  } finally {
+    clearTimeout(timer);
+    // A tee branch's cancel promise may wait for the application branch.
+    // Awaiting it here would deadlock before the route can consume its body.
+    if (reader) void reader.cancel().catch(() => {});
+  }
+}
+
+
+let defaultRequestLogger: Logger | undefined;
+
+/** Lazily shared root for adapters without an application logger. */
+export function getDefaultRequestLogger(): Logger {
+  return defaultRequestLogger ??= new Logger({ name: "logfn.http", sinks: [sinkConsole()] });
 }

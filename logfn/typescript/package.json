@@ -25,6 +25,10 @@
     "./http/watch": {
       "types": "./dist/http/watch.d.ts",
       "default": "./dist/http/watch.js"
+    },
+    "./http/shared": {
+      "types": "./dist/http/shared.d.ts",
+      "default": "./dist/http/shared.js"
     }
   },
   "files": [
@@ -34,7 +38,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest --watch",
-    "lint": "echo 'lint not configured'",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "bench": "vitest bench"
@@ -65,7 +69,7 @@
     "namespace": "logfn"
   },
   "peerDependencies": {
-    "@superfunctions/http": "^0.1.0",
+    "@superfunctions/http": "^0.3.1",
     "express": "^4.18.0",
     "fastify": "^5.0.0",
     "hono": "^4.0.0"
@@ -85,10 +89,11 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@superfunctions/http": "0.3.1",
     "@types/express": "^4.17.0",
-    "@superfunctions/http": "^0.1.0",
+    "@types/node": "^22.0.0",
     "express": "^4.18.0",
+    "fake-indexeddb": "^6.2.4",
     "fastify": "^5.0.0",
     "hono": "^4.0.0",
     "typescript": "^5.6.0",
