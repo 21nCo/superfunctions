@@ -1,0 +1,41 @@
+devfn/testing/README.md
+  s_4de41e1c179793::t_1d672c75da0e1e 22
+devfn/testing/src/networking/cli.ts
+  s_4de41e1c179793::t_1c66914a72a949 141-143,159,168
+devfn/testing/src/networking/drivers.ts
+  s_4de41e1c179793::t_e6bc285c877406 10,214-224,302-304,306,330,338-340,342,481-483,499-504,509-537,579-581,606,608-618,628-629,652,654-655,682,684,689-697,710-711
+devfn/testing/src/networking/index.ts
+  s_4de41e1c179793::t_68fd853d042795 2,4
+devfn/testing/src/networking/live.ts
+  s_4de41e1c179793::t_9250ab9f7baa7c 134-147,183,186-187,190-191,199-230,234-238,242,244
+devfn/testing/src/networking/matrix.ts
+  s_4de41e1c179793::t_86fce8a939debb 71,90,120,129,156,163
+devfn/testing/src/networking/prerequisites.ts
+  s_4de41e1c179793::t_672ddc1445dc2a 70-72,74-76,81-93
+devfn/testing/test/networking-qualification.test.ts
+  s_dd193c608e4265::t_c7f9ef253113ed 5,21,138-145,148-149,196-197,199-205,208,683-699,702-703,706-785,818-870,1040-1053
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6845e98f670216e2f0754ffb483656ba569206d",
+  "prompts": {},
+  "sessions": {
+    "s_4de41e1c179793": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c0aca328-5bec-4814-9373-60ad0f474593",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_dd193c608e4265": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54825842-a190-4626-916d-18cadca74a07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
