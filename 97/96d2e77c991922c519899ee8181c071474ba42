@@ -1,0 +1,35 @@
+logfn/.conduct/dynamic-sink-readiness.md
+  s_e1c5fc1a65c0cf::t_b40d06dd0bcb3a 1-15
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_6544ab64eb38e8 251-270
+logfn/python/src/logfn/core.py
+  s_e1c5fc1a65c0cf::t_b3c64288600bfd 6,73-78,99,111-143,213,232-233,277,281,302
+logfn/python/tests/test_dynamic_sinks.py
+  s_e1c5fc1a65c0cf::t_146ced8d10a530 1-84
+logfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_48c6d627a76ecf 20,30
+logfn/scripts/python-http-acceptance.py
+  s_e1c5fc1a65c0cf::t_cb80a00c282c1e 46-47,52-54
+logfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_c69e95d3c82361 611-631
+logfn/typescript/src/core/dynamic-sinks.test.ts
+  s_e1c5fc1a65c0cf::t_cfe39d14a0f61a 1-63
+logfn/typescript/src/core/logger.ts
+  s_e1c5fc1a65c0cf::t_1d0326571405d8 11,34-57,178,193,263,271,276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9796d2e77c991922c519899ee8181c071474ba42",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
