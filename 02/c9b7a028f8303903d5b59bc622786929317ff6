@@ -1,0 +1,41 @@
+cifn/.conduct/cron-flow-readiness.md
+  s_e1c5fc1a65c0cf::t_ca3606db68b214 1-27
+cifn/.conduct/original-requirement-audit-20261025.md
+  s_e1c5fc1a65c0cf::t_d84ace68e579cf 18
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_a4149d3d29cde7 488-499
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_e792ebe11cdbdf 50-51
+cifn/typescript/control-plane/scripts/verify-cron.mjs
+  s_e1c5fc1a65c0cf::t_5ddcfd6dfe4e4e 1-175
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_5b030de6e9a191 62
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_ae64a11900ccd1 37
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_b2d08f2a24598b 1,83,85-86,123-124,137,146,150
+cifn/typescript/control-plane/src/triggers/cron-schedule.test.ts
+  s_e1c5fc1a65c0cf::t_a7437af93b4b41 1-200
+cifn/typescript/control-plane/src/triggers/cron.ts
+  s_e1c5fc1a65c0cf::t_88e103dbf70a70 1-8,20,22-26,28-55,61,63-122,124-144,146-147,150-178,180
+cifn/typescript/control-plane/tsconfig.durable.json
+  s_e1c5fc1a65c0cf::t_a8b842afa904c9 3
+package-lock.json
+  s_e1c5fc1a65c0cf::t_b4cdb92a038811 6401-6402,6411,7138,7140-7141,13152-13156,19160,19339,19351,19359,19371,19379,23058,23076,23098,23124,23145,23168,24533,25709,25717,25737,25803,26926,27536,27723,27775,27780,27789,33534,34822,34842,35912,37380,37635,37674,37688,38137,38151,38164,38174,38256,40868,41619,41884,41906,42654,42695,44257,44295,44308,44321,44331,44343,46044,47172,47223,49380,50789,51739,52423,53596,54084,54601,54612,54664,55898,56563,57689,58759,58782,61878-61882
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "02c9b7a028f8303903d5b59bc622786929317ff6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
