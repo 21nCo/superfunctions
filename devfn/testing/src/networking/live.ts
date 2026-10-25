@@ -14,7 +14,7 @@ import { readRelayService } from "@devfn/proxy/oauth-relay";
 import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, ownershipMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { ownerLabel } from "./matrix.js";
-import { loopbackListening } from "./prerequisites.js";
+import { cloudflareConnectors, loopbackListening } from "./prerequisites.js";
 import type { DisposableInventory, ProtectedSnapshot, ResourceHandlers } from "./inventory.js";
 
 export interface CliResult { code: number; json: Record<string, any> }
@@ -24,14 +24,29 @@ export interface Answer { status: number; body: string; headers: http.IncomingHt
  * A generic fixture process: it records the DevFn values, and the fixture's
  * own QUAL_ profile values, it sees at its first instruction, before
  * listening, then answers every request with its
- * worktree marker, the path and Host it received, and its owner.
+ * worktree marker, the path and Host it received, and its owner. With a
+ * fail-<name> file it exits before listening; a variable named in that file
+ * holds a sibling's URL, which it requests first and records, so the failure
+ * is known to happen while that sibling answers. With a hold-<name> file it
+ * waits to listen until the file is removed, so a start can be killed before
+ * it is ready.
  */
-export const FIXTURE_SERVER = `import { existsSync, writeFileSync } from "node:fs";
+export const FIXTURE_SERVER = `import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 const [name, portKey] = process.argv.slice(2);
-writeFileSync(\`seen-\${name}.json\`, JSON.stringify({ pid: process.pid, env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("DEVFN_") || key.startsWith("QUAL_"))) }));
-if (existsSync(\`fail-\${name}\`)) process.exit(3);
+const seen = { pid: process.pid, env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("DEVFN_") || key.startsWith("QUAL_"))) };
+writeFileSync(\`seen-\${name}.json\`, JSON.stringify(seen));
+if (existsSync(\`fail-\${name}\`)) {
+  const sibling = readFileSync(\`fail-\${name}\`, "utf8").trim();
+  if (sibling) {
+    seen.sibling = await fetch(process.env[sibling] ?? "", { signal: AbortSignal.timeout(5000) }).then((answer) => answer.json()).catch(() => null);
+    writeFileSync(\`seen-\${name}.json\`, JSON.stringify(seen));
+  }
+  process.exit(3);
+}
+while (existsSync(\`hold-\${name}\`)) await delay(100);
 const marker = path.basename(process.cwd());
 createServer((request, response) => {
   response.setHeader("content-type", "application/json");
@@ -151,14 +166,36 @@ export class LiveHost {
   private readonly composeLeft = new Set<string>();
   /** The relay and connector processes, and the binding, a resource had when its removal began; its read-back confirms them gone. */
   private readonly removed = new Map<string, { pids: Set<number>; binding?: TunnelBinding }>();
+  /** Connectors that appeared on an approved Cloudflare tunnel across the run's own connector starts. */
+  private readonly ownConnectors = new Set<string>();
+  private readonly connectors: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>;
 
-  public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string }) {
+  public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string;
+    connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]> }) {
     this.stateDir = path.join(options.root, "state");
     const { DOCKER_CONTEXT: _context, ...env } = options.env;
     this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
       ...Object.fromEntries(["DATA", "CONFIG", "STATE"].map((kind) => [`XDG_${kind}_HOME`, path.join(options.root, "xdg", kind.toLowerCase())])) };
     this.exec = options.run ?? run;
     this.readBack = options.providers ?? providerReadBack(options.env);
+    this.connectors = options.connectors ?? (async (binding) => await cloudflareConnectors(binding.cloudflare, options.env));
+  }
+
+  /**
+   * Run a step that may start a connector for binding. On a Cloudflare
+   * tunnel every connector connected before the step must be one the run
+   * started, or the step is refused: Cloudflare would spread the run's
+   * traffic over another runtime's connector. Connectors that appear across
+   * the step are the run's own.
+   */
+  public async soleTunnelUser<T>(binding: TunnelBinding, step: () => Promise<T>): Promise<T> {
+    if (binding.provider !== "cloudflare") return await step();
+    const before = await this.connectors(binding);
+    const foreign = before.filter((id) => !this.ownConnectors.has(id));
+    if (foreign.length) throw new Error(`Cloudflare tunnel ${binding.cloudflare.tunnelId} has connectors the run did not start (${foreign.join(", ")}); an approved tunnel serves one run at a time`);
+    const result = await step();
+    for (const id of await this.connectors(binding)) if (!before.includes(id)) this.ownConnectors.add(id);
+    return result;
   }
 
   /** Kill in-flight DevFn commands and refuse anything that could create a resource from now on. */
@@ -216,7 +253,7 @@ export class LiveHost {
     const root = path.join(this.options.root, `${this.prefix}-${name}`);
     this.options.inventory.record("fixture-repository", root, scenario);
     await mkdir(root, { recursive: true });
-    for (const [file, text] of Object.entries({ "server.mjs": FIXTURE_SERVER, "devfn.config.json": `${JSON.stringify(config, null, 2)}\n`, ".gitignore": ".devfn/\nseen-*.json\nfail-*\n", ...files })) {
+    for (const [file, text] of Object.entries({ "server.mjs": FIXTURE_SERVER, "devfn.config.json": `${JSON.stringify(config, null, 2)}\n`, ".gitignore": ".devfn/\nseen-*.json\nfail-*\nhold-*\n", ...files })) {
       await writeFile(path.join(root, file), text, "utf8");
     }
     for (const args of [["init", "-q", "-b", "main"], ["add", "."], ["-c", "user.name=DevFn Qualification", "-c", "user.email=qualification@devfn.invalid", "commit", "-q", "-m", "fixture"]]) await this.git(root, args);
@@ -274,8 +311,9 @@ export class LiveHost {
     }
   }
 
-  public async seen(cwd: string, name: string): Promise<{ pid: number; env: Record<string, string> }> {
-    return JSON.parse(await readFile(path.join(cwd, `seen-${name}.json`), "utf8")) as { pid: number; env: Record<string, string> };
+  /** What a fixture process recorded before listening, and, for a failing one, its sibling's answer. */
+  public async seen(cwd: string, name: string): Promise<{ pid: number; env: Record<string, string>; sibling?: Record<string, unknown> | null }> {
+    return JSON.parse(await readFile(path.join(cwd, `seen-${name}.json`), "utf8")) as { pid: number; env: Record<string, string>; sibling?: Record<string, unknown> | null };
   }
 
   /** The DevFn Caddy internal root, read from its admin API once a lifecycle started it; the run never installs it anywhere. */

@@ -27,6 +27,8 @@ export interface ProbeEnvironment {
   /** Whether something accepts TCP connections on a loopback port. */
   listening(port: number): Promise<boolean>;
   exists(file: string): Promise<boolean>;
+  /** Read-only provider API requests. */
+  fetch: typeof fetch;
 }
 
 /** The DevFn proxy listener ports on a platform; on this host they equal @devfn/proxy proxyListenerPorts(). */
@@ -61,6 +63,23 @@ export async function localDockerEndpoint(env: NodeJS.ProcessEnv, run: ProbeEnvi
   }
   if (!/^(unix|npipe):\/\//.test(endpoint)) throw new Error(`Docker targets ${endpoint || "an unknown endpoint"}, not a local engine socket; remote targets need their own approval`);
   return endpoint;
+}
+
+/**
+ * The connectors holding connections on an approved Cloudflare tunnel, read
+ * with the approved token (GET cfd_tunnel/{id}, read-only). Cloudflare
+ * spreads a tunnel's requests over every connected connector, so a run may
+ * start its own only on a tunnel no other connector holds. A failed read
+ * throws; it is never "none".
+ */
+export async function cloudflareConnectors(tunnel: { accountId: string; tunnelId: string; apiTokenEnv: string }, env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): Promise<string[]> {
+  const token = env[tunnel.apiTokenEnv];
+  if (!token) throw new Error(`${tunnel.apiTokenEnv} is unset, so the tunnel's connections cannot be read`);
+  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${tunnel.accountId}/cfd_tunnel/${tunnel.tunnelId}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
+  const payload = await response.json().catch(() => undefined) as { success?: boolean; result?: { id?: string; connections?: Array<{ client_id?: unknown }> } } | undefined;
+  const connections = payload?.result?.connections;
+  if (!response.ok || payload?.success !== true || payload.result?.id !== tunnel.tunnelId || !Array.isArray(connections)) throw new Error(`Cloudflare GET cfd_tunnel answered HTTP ${response.status}`);
+  return [...new Set(connections.map((connection) => typeof connection.client_id === "string" ? connection.client_id : "a connection without a connector ID"))].sort();
 }
 
 async function loopbackOnly(environment: ProbeEnvironment, hostname: string): Promise<string | undefined> {
@@ -138,7 +157,13 @@ const PROBES: Record<PrerequisiteId, (environment: ProbeEnvironment) => Promise<
     const cf = environment.approval?.cloudflare;
     if (!cf) return missing("cloudflare", "the approval names no Cloudflare tunnel");
     if (!await environment.exists(cf.credentialsFile)) return missing("cloudflare", "the approved tunnel credentials file does not exist");
-    return envSet(environment, "cloudflare", [cf.apiTokenEnv]) ?? (await tool(environment, "cloudflare", "cloudflared", ["--version"]));
+    const unready = envSet(environment, "cloudflare", [cf.apiTokenEnv]) ?? (await tool(environment, "cloudflare", "cloudflared", ["--version"]));
+    if (unready.status !== "satisfied") return unready;
+    // One run per approved tunnel: any connector already on it (the operator's DevFn or another run) would share this run's traffic.
+    const held = await cloudflareConnectors(cf, environment.env, environment.fetch).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    if (held instanceof Error) return missing("cloudflare", `the approved tunnel's connections are unreadable: ${held.message}`);
+    return held.length ? missing("cloudflare", `the approved tunnel already has ${held.length} connected connector(s); an approved tunnel serves one run at a time, so stop them first`)
+      : ok("cloudflare", `${unready.detail}; the approved tunnel has no connected connector`);
   },
   "ngrok-reserved": async (environment) => {
     const reserved = environment.approval?.ngrokReserved;
@@ -179,7 +204,7 @@ export const loopbackListening = async (port: number): Promise<boolean> => await
 
 /** Probes against the real host. */
 export function hostProbeEnvironment(input: Pick<ProbeEnvironment, "devfnCli" | "approval" | "approvalError" | "browserOperator">): ProbeEnvironment {
-  return { ...input, platform: process.platform, nodeVersion: process.version, env: process.env, run: execute, listening: loopbackListening,
+  return { ...input, platform: process.platform, nodeVersion: process.version, env: process.env, run: execute, listening: loopbackListening, fetch,
     resolve: async (hostname) => (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address),
     exists: async (file) => await access(file).then(() => true, () => false) };
 }

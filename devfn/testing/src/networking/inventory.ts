@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { ResourceKind } from "./matrix.js";
@@ -107,8 +107,16 @@ export class DisposableInventory {
 
   public allAbsent(scenario?: string): boolean { return this.list(scenario).every((entry) => entry.cleanup?.absent === true); }
 
+  /** Replace the ledger atomically: a synced 0600 sibling is renamed over it, so a crash leaves the previous or the new ledger, never a partial one. */
   private persist(): void {
-    if (this.scope.ledger) writeFileSync(this.scope.ledger, `${JSON.stringify({ runId: this.scope.runId, root: this.scope.root, entries: this.entries }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    if (!this.scope.ledger) return;
+    const temporary = `${this.scope.ledger}.${process.pid}.tmp`;
+    const descriptor = openSync(temporary, "w", 0o600);
+    try {
+      writeFileSync(descriptor, `${JSON.stringify({ runId: this.scope.runId, root: this.scope.root, entries: this.entries }, null, 2)}\n`, "utf8");
+      fsyncSync(descriptor);
+    } finally { closeSync(descriptor); }
+    renameSync(temporary, this.scope.ledger);
   }
 }
 

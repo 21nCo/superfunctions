@@ -74,7 +74,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
   { id: "host.compose-prestart", row: 1, title: "Compose endpoint wiring before start", prerequisites: [...HOST, "docker-compose"],
     assertions: [
       a("sibling-url", "On the pinned local Docker engine, a Compose container receives its sibling's container-network URL before it starts and reaches it."),
-      a("loopback-mapping", "The container's leased host port is published on loopback only and answers at the receipt's direct URL."),
+      a("loopback-mapping", "Each container's leased host port is published on loopback only and answers at its direct URL with that service."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/compose/test/override.test.ts", "devfn/compose/test/path-contract.test.ts", "devfn/core/test/endpoints.test.ts"] },
   { id: "host.two-worktrees", row: 1, title: "Two simultaneous worktrees", prerequisites: HOST,
@@ -120,7 +120,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
   tunnel("tunnel.ngrok-ephemeral", "ngrok ephemeral-endpoint public journey", "ngrok-ephemeral", "post-start", "The assigned hostname resolves publicly only while the connector runs."),
   { id: "recovery.startup-failure", row: 4, title: "Startup failure preserves unrelated runtimes", prerequisites: HOST,
     assertions: [
-      a("failure-cleaned", "A failing start reports a stable error, leaves no process, lease or route of its own, and its retry succeeds once fixed."),
+      a("failure-cleaned", "A start whose last node fails while the node started before it answers reports a stable error, stops that running sibling, leaves no process, lease or route of its own, and its retry succeeds once fixed."),
       a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/teardown-evidence.test.ts", "devfn/core/test/orchestrator.test.ts"] },
@@ -133,7 +133,7 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/ports/test/lock.test.ts", "devfn/ports/test/lock-takeover.test.ts", "devfn/core/test/replacement-contract.test.ts"] },
   { id: "recovery.crash", row: 4, title: "Crash recovery", prerequisites: HOST,
     assertions: [
-      a("crash-detected", "A killed process makes status report the worktree as not ready, and ports gc succeeds after a devfn up is killed mid-start."),
+      a("crash-detected", "A killed process makes status report the worktree as not ready, and a devfn up killed while its last node is held before listening reports no ready lifecycle, status reads that worktree as not ready, and ports gc succeeds after it."),
       a("restart-recovers", "A restart of the crashed worktree succeeds with its routes restored, and once the killed start's lifecycle lock is stale a new start succeeds and no process of the killed start survives."),
       a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
     ],

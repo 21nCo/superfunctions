@@ -10,7 +10,7 @@ import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@d
 import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
-import type { Answer, LiveHost } from "./live.js";
+import type { Answer, LiveHost, ProviderReadBack } from "./live.js";
 import { ownerLabel } from "./matrix.js";
 import type { ScenarioContext, ScenarioDriver } from "./runner.js";
 
@@ -258,12 +258,15 @@ const compose: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "compose", composeFixture(), { "compose.yaml": COMPOSE_FILE });
   const receipt = await start(context, host, cwd);
   const allocation = (name: string) => (receipt.allocations as Array<{ service: string; port: number; host: string }>).find((item) => item.service === name);
-  const client = allocation("client");
-  const answer = client ? await host.request(`http://127.0.0.1:${client.port}/`) : undefined;
+  const direct = async (name: string) => { const leased = allocation(name); return leased ? await host.request(`http://127.0.0.1:${leased.port}/`).catch(() => undefined) : undefined; };
+  const answer = await direct("client");
   context.expect("sibling-url", answer?.json?.upstream === "http://echo:8080" && answer.json.answer === "echo", `client saw ${String(answer?.json?.upstream)} and reached it: ${answer?.json?.answer === "echo"}`);
+  const echo = await direct("echo");
   const published = await Promise.all(["echo", "client"].map(async (name) => (await host.docker(["ps", "--filter", `publish=${allocation(name)?.port ?? 0}`, "--format", "{{.Ports}}"])).stdout.trim()));
-  context.expect("loopback-mapping", published.every((ports, index) => ports.length > 0 && ports.split(",").every((item) => item.trim().startsWith("127.0.0.1:")) && allocation(["echo", "client"][index])?.host === "127.0.0.1"),
-    `published: ${published.join(" | ")}`);
+  // Each leased port is published on loopback only and answers at its own direct URL with its own service.
+  context.expect("loopback-mapping", published.every((ports, index) => ports.length > 0 && ports.split(",").every((item) => item.trim().startsWith("127.0.0.1:")) && allocation(["echo", "client"][index])?.host === "127.0.0.1")
+    && echo?.status === 200 && echo.body === "echo" && answer?.status === 200,
+    `published: ${published.join(" | ")}; direct echo -> ${echo ? `${echo.status} ${echo.body.slice(0, 20)}` : "unanswered"}, client -> ${answer?.status ?? "unanswered"}`);
 };
 
 const twoWorktreeDriver: LiveDriver = async (context, host) => {
@@ -420,12 +423,17 @@ async function publicStart(context: ScenarioContext, host: LiveHost, cwd: string
   if (!bound) throw new Error(`binding ${name} is not readable before start`);
   const origin = planned.urls.web ? hostOf(planned.urls.web) : domainAliases("web", bound.domain, await resolveInstanceIdentity(PROJECT_ID, cwd))[0];
   const entry = context.inventory.record("public-hostname", origin, context.scenario.id, { cwd, binding: name, ...(planned.urls.web ? { url: planned.urls.web } : {}) });
-  const receipt = await start(context, host, cwd, ["--allow-public"]);
+  const receipt = await host.soleTunnelUser(bound, async () => await start(context, host, cwd, ["--allow-public"]));
   const hostname = (receipt.tunnel?.hostnames as string[] | undefined)?.[0] ?? "";
   const url = (receipt.publicUrls as Record<string, string> | undefined)?.web ?? "";
   if (hostname !== origin) throw new Error(`DevFn published ${hostname || "no name"} for web, not the recorded ${origin}`);
   if (!planned.urls.web && url) context.inventory.attach(entry, { url });
   return { hostname, url, receipt };
+}
+
+/** Every name the provider holds for the private route's name or carrying the binding's marker; providerWithheld allows only the selected public host among them. */
+export async function providerHeld(readBack: ProviderReadBack, binding: TunnelBinding, privateName: string): Promise<string[]> {
+  return [...new Set([...await readBack(binding, privateName, undefined), ...await readBack(binding, undefined, undefined)])].sort();
 }
 
 const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral"): LiveDriver => async (context, host) => {
@@ -448,7 +456,7 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   const denied = await host.request(`https://${local}/`, { ca, port: PUBLIC_ORIGIN_PORT }).catch(() => undefined);
   const forged = await host.request(`https://${hostname}/`, { ca, port: PUBLIC_ORIGIN_PORT, host: local }).catch(() => undefined);
   const outside = await host.request(`${originOf(url)}/other`, { publicDns: true }).catch(() => undefined);
-  const held = await host.readBack(bound, privateName, undefined);
+  const held = await providerHeld(host.readBack, bound, privateName);
   const shown = (answer?: Answer) => answer ? `${answer.status} ${String(originHeader(answer) ?? "")}`.trim() : "unanswered";
   context.expect("private-route-denied", !(receipt.tunnel?.hostnames as string[]).some((item) => item.startsWith("private-")) && ANSWERS.originDenied(denied) && ANSWERS.forgedHostRefused(forged)
     && ANSWERS.originFallback(outside) && ANSWERS.providerWithheld(held, hostOf(url), privateName),
@@ -474,26 +482,45 @@ const tunnelReload = (approval: QualificationApproval | undefined): LiveDriver =
   const present = async (hostname: string) => await host.handlers().present(context.inventory.list(context.scenario.id).find((item) => item.kind === "public-hostname" && item.id === hostname)!);
   await host.must(primary, ["down"]);
   context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves`);
-  await host.must(linked, ["tunnel", "recover", name, "--allow-public"]);
+  const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name)!;
+  await host.soleTunnelUser(bound, async () => await host.must(linked, ["tunnel", "recover", name, "--allow-public"]));
   context.expect("recover-preserves", (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${b.hostname} serves after tunnel recover`);
   await host.must(linked, ["down"]);
   context.expect("withdrawn-absent", !await present(a.hostname) && !await present(b.hostname), "neither hostname is routed, journaled, recorded at the provider or served");
 };
 
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
+
+/** The node a startup failure is injected into: the last in plan order, so DevFn started the node before it, which is listening when it fails. */
+export function failureInjection(config: Record<string, unknown>): { failing: string; sibling: string } {
+  const nodes = createPlan(validateDevFnConfig(config)).nodes;
+  if (nodes.length < 2) throw new Error("a startup failure needs a node started before the failing one");
+  return { failing: nodes.at(-1)!.name, sibling: nodes.at(-2)!.name };
+}
+
+/** The failing node asked its sibling before it exited and got the worktree's own answer, and the sibling's process is gone now. */
+export function rolledBackReadySibling(failing: { sibling?: Record<string, unknown> | null } | undefined, sibling: { pid: number } | undefined, name: string, cwd: string, running = alive): boolean {
+  return failing?.sibling?.name === name && failing.sibling.marker === marker(cwd) && sibling !== undefined && !running(sibling.pid);
+}
+
 const startupFailure: LiveDriver = async (context, host) => {
   const { check } = await sentinel(context, host);
-  const cwd = await host.repository(context.scenario.id, "failing", hostFixture());
-  await writeFile(path.join(cwd, "fail-api"), "", "utf8");
+  const config = hostFixture();
+  const cwd = await host.repository(context.scenario.id, "failing", config);
+  const { failing, sibling } = failureInjection(config);
+  await writeFile(path.join(cwd, `fail-${failing}`), `DEVFN_URL_${sibling.toUpperCase()}`, "utf8");
   const failed = await host.up(context.scenario.id, cwd);
+  const [failedSeen, siblingSeen] = await Promise.all([failing, sibling].map(async (name) => await host.seen(cwd, name).catch(() => undefined)));
+  const rolledBack = rolledBackReadySibling(failedSeen, siblingSeen, sibling, cwd);
   const status = (await host.devfn(cwd, ["status"])).json;
   const leases = ((await host.must(cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === status.instanceId);
   // The processes the failed start launched recorded their pids; none may survive, and no route of the owner may stay.
   const survivors = await host.survivingFixtures(cwd);
   const routes = await host.routesOf(String(status.instanceId));
-  await rm(path.join(cwd, "fail-api"));
+  await rm(path.join(cwd, `fail-${failing}`));
   const retried = await host.up(context.scenario.id, cwd);
-  context.expect("failure-cleaned", failed.code !== 0 && typeof failed.json.error?.code === "string" && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && retried.json.state === "ready",
-    `failure ${String(failed.json.error?.code)}; state ${String(status.state)}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
+  context.expect("failure-cleaned", failed.code !== 0 && typeof failed.json.error?.code === "string" && rolledBack && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && retried.json.state === "ready",
+    `${failing} failed while ${sibling} answered: ${failedSeen?.sibling ? "yes" : "no"}; ${sibling} process ${String(siblingSeen?.pid)} ${rolledBack ? "stopped" : "not shown stopped"}; failure ${String(failed.json.error?.code)}; state ${String(status.state)}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
   await check();
 };
 
@@ -515,6 +542,38 @@ const concurrentChange: LiveDriver = async (context, host) => {
   await check();
 };
 
+export interface InterruptedStart { killed: boolean; orphan?: number; result: { code: number; json: Record<string, any> }; status: Record<string, any> }
+
+/**
+ * Start cwd's lifecycle with its last node held before listening (hold-<name>),
+ * kill the start with SIGKILL once that node recorded itself, then lift the
+ * hold so the orphan listens as a process killed mid-start would. killed is
+ * whether the start was still running when it was killed.
+ */
+export async function interruptStart(context: ScenarioContext, host: LiveHost, cwd: string): Promise<InterruptedStart> {
+  const { failing: held } = failureInjection(hostFixture());
+  await writeFile(path.join(cwd, `hold-${held}`), "", "utf8");
+  const kill = new AbortController();
+  let ended = false;
+  // It runs like every DevFn command of the run, in the run's environment.
+  const pending = host.up(context.scenario.id, cwd, [], kill.signal).finally(() => { ended = true; });
+  let orphan: number | undefined;
+  for (let wait = 0; wait < 300 && orphan === undefined && !ended; wait += 1) { orphan = (await host.seen(cwd, held).catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
+  const killed = !ended && orphan !== undefined;
+  kill.abort();
+  const result = await pending;
+  await rm(path.join(cwd, `hold-${held}`), { force: true });
+  // A failed or degraded lifecycle exits non-zero but still reports its state; a failed read reports none.
+  const status = (await host.devfn(cwd, ["status"])).json;
+  return { killed, ...(orphan !== undefined ? { orphan } : {}), result, status };
+}
+
+export const INTERRUPTED = {
+  /** The start was killed while its held node had recorded itself and before it ended, it reported no ready lifecycle, and status then read a lifecycle that is not ready. */
+  killedBeforeReady: (start: InterruptedStart) => start.killed && start.orphan !== undefined && start.result.code !== 0 && start.result.json.state !== "ready"
+    && typeof start.status.state === "string" && start.status.state !== "ready",
+};
+
 const crash: LiveDriver = async (context, host) => {
   const { check } = await sentinel(context, host);
   const cwd = await host.repository(context.scenario.id, "crash", hostFixture());
@@ -522,18 +581,12 @@ const crash: LiveDriver = async (context, host) => {
   process.kill((await host.seen(cwd, "web")).pid, "SIGKILL");
   await host.wait(500);
   const status = await host.devfn(cwd, ["status"]);
-  // An interrupted start: the CLI is killed once its first process has recorded its startup.
   const interrupted = await host.repository(context.scenario.id, "interrupted", hostFixture());
-  // The interrupted start runs like every DevFn command of the run, in the run's environment; it is killed with SIGKILL.
-  const kill = new AbortController();
-  const pending = host.up(context.scenario.id, interrupted, [], kill.signal);
-  let orphan: number | undefined;
-  for (let wait = 0; wait < 300 && orphan === undefined; wait += 1) { orphan = (await host.seen(interrupted, "web").catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
-  kill.abort();
-  await pending;
+  const killed = await interruptStart(context, host, interrupted);
+  const orphan = killed.orphan;
   const collected = await host.devfn(interrupted, ["ports", "gc"]);
-  context.expect("crash-detected", status.json.state !== "ready" && collected.code === 0 && orphan !== undefined,
-    `status after kill: ${String(status.json.state)}; ports gc after interrupted up: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
+  context.expect("crash-detected", status.json.state !== "ready" && INTERRUPTED.killedBeforeReady(killed) && collected.code === 0,
+    `status after kill: ${String(status.json.state)}; interrupted up ${killed.killed ? "killed" : "not killed"} before it ended: code ${killed.result.code}, state ${String(killed.result.json.state ?? killed.result.json.error?.code)}; its status then ${String(killed.status.state ?? killed.status.error?.code)}; ports gc after it: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
   const restarted = await host.must(cwd, ["restart"]);
   // The killed start's lifecycle lock is recoverable only once stale (five minutes); a retry before then fails closed.
   let retried = await host.up(context.scenario.id, interrupted);
@@ -541,7 +594,6 @@ const crash: LiveDriver = async (context, host) => {
     await host.wait(15_000);
     await host.devfn(interrupted, ["ports", "gc"]);
   }
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const orphaned = orphan !== undefined && alive(orphan) && !((retried.json.processes ?? []) as Array<{ pid: number }>).some((item) => item.pid === orphan);
   const ca = await host.ca();
   context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.json.state === "ready" && !orphaned && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),

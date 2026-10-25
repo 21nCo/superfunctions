@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readdirSync, statSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -12,12 +13,12 @@ import { validateDevFnConfig } from "@devfn/config";
 import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@devfn/core";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { relayPaths } from "@devfn/proxy/oauth-relay";
-import { ephemeralOriginDomain, ngrokMarker, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
 import { staleBuildOutputs } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
-  ANSWERS, approvedDomains, checkPrerequisites, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, hostFixture, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerReadBack, receiptProblems, redactSecrets, runScenarios, selectScenarios, summarize, tunnelFixture,
+  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
+  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runScenarios, selectScenarios, summarize, tunnelFixture,
   protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
@@ -133,8 +134,15 @@ describe("prerequisite probes", () => {
     if (command === "lsof") return { code: 0, stdout: `p${String(process.pid)}\nn/tmp\n` };
     return { code: 0, stdout: known[key] ?? "{\"ok\":true}" };
   };
+  /** The Cloudflare API answering GET cfd_tunnel for the approved tunnel with these connections. */
+  const tunnelApi = (connections: unknown[] | undefined, status = 200): typeof fetch => async (input, init) => {
+    expect(String(input)).toBe(`https://api.cloudflare.com/client/v4/accounts/${approval.cloudflare.accountId}/cfd_tunnel/${approval.cloudflare.tunnelId}`);
+    expect(init?.method ?? "GET").toBe("GET");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer cf-token-value");
+    return new Response(JSON.stringify(status === 200 ? { success: true, result: { id: approval.cloudflare.tunnelId, connections } } : { success: false, errors: [{ code: 10000 }] }), { status });
+  };
   const environment = (overrides: Partial<ProbeEnvironment> = {}): ProbeEnvironment => ({
-    platform: "linux", nodeVersion: "v22.12.0", env: { QUAL_GOOGLE_ID: "id", QUAL_GOOGLE_SECRET: "google-secret-value" }, devfnCli: "/devfn/cli.js", approval: approvalFor(overrides.platform ?? "linux"), browserOperator: true,
+    platform: "linux", nodeVersion: "v22.12.0", env: { QUAL_GOOGLE_ID: "id", QUAL_GOOGLE_SECRET: "google-secret-value", QUAL_CF_TOKEN: "cf-token-value" }, fetch: tunnelApi([]), devfnCli: "/devfn/cli.js", approval: approvalFor(overrides.platform ?? "linux"), browserOperator: true,
     run: tools(), resolve: async () => ["127.0.0.1"], listening: async () => false, exists: async () => true, ...overrides,
   });
   const status = async (id: Parameters<typeof checkPrerequisites>[1] extends Iterable<infer T> ? T : never, overrides: Partial<ProbeEnvironment> = {}) =>
@@ -175,6 +183,18 @@ describe("prerequisite probes", () => {
     await expect(localDockerEndpoint({}, async () => ({ code: 1, stdout: "" }))).rejects.toThrow(/unreadable/);
     expect(await status("docker-compose", { run: context("unix:///var/run/docker.sock") })).toMatchObject({ status: "satisfied", detail: expect.stringContaining("local engine") });
     expect(await status("docker-compose", { run: context("tcp://docker.example.test:2376") })).toMatchObject({ status: "missing", detail: expect.stringContaining("remote targets need their own approval") });
+  });
+
+  it("needs an approved Cloudflare tunnel no connector holds, read with the approved token, and fails closed when unreadable", async () => {
+    const held = [{ id: "c1", client_id: "operator-connector", colo_name: "ams01" }, { id: "c2", client_id: "operator-connector", colo_name: "fra02" }];
+    expect(await status("cloudflare")).toMatchObject({ status: "satisfied", detail: expect.stringContaining("no connected connector") });
+    expect(await status("cloudflare", { fetch: tunnelApi(held) })).toMatchObject({ status: "missing", detail: expect.stringContaining("1 connected connector(s); an approved tunnel serves one run at a time") });
+    for (const unreadable of [tunnelApi([], 403), tunnelApi(undefined), (async () => { throw new Error("ENOTFOUND api.cloudflare.com"); }) as typeof fetch]) {
+      expect(await status("cloudflare", { fetch: unreadable })).toMatchObject({ status: "missing", detail: expect.stringContaining("connections are unreadable") });
+    }
+    expect(await cloudflareConnectors(approval.cloudflare, { QUAL_CF_TOKEN: "cf-token-value" }, tunnelApi(held))).toEqual(["operator-connector"]);
+    await expect(cloudflareConnectors(approval.cloudflare, {}, tunnelApi([]))).rejects.toThrow(/QUAL_CF_TOKEN is unset/);
+    expect(JSON.stringify(await status("cloudflare", { fetch: tunnelApi(held) }))).not.toContain("cf-token-value");
   });
 
   it("finds a listener bound to IPv6 loopback only", async (test) => {
@@ -314,6 +334,26 @@ describe("disposable inventory", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it("replaces the ledger atomically, so a failed write leaves the previous complete ledger", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-ledger-")));
+    try {
+      const file = path.join(dir, "inventory.json");
+      const ledger = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: ["dev.example.test"], ledger: file });
+      ledger.record("run-processes", dir, "run");
+      ledger.record("fixture-repository", `${dir}/qabcdef12-a`, "s");
+      // The next write cannot create its temporary file: the record fails and the ledger keeps every earlier entry.
+      await mkdir(`${file}.${process.pid}.tmp`);
+      expect(() => ledger.record("fixture-repository", `${dir}/qabcdef12-b`, "s")).toThrow();
+      const kept = JSON.parse(await readFile(file, "utf8")) as { entries: Array<{ id: string }> };
+      expect(kept.entries.map((entry) => entry.id)).toEqual([dir, `${dir}/qabcdef12-a`]);
+      await rm(`${file}.${process.pid}.tmp`, { recursive: true });
+      ledger.record("fixture-repository", `${dir}/qabcdef12-c`, "s");
+      expect((JSON.parse(await readFile(file, "utf8")) as { entries: unknown[] }).entries).toHaveLength(4);
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("removes newest first and reads every resource back", async () => {
     const ledger = inventory();
     ledger.record("fixture-repository", `${ROOT}/repo`, "s");
@@ -389,7 +429,7 @@ describe("live host cleanup handlers", () => {
 
   /** A live host whose devfn, lsof and ps answer from fixtures; calls are recorded in order. */
   async function fixtureHost(answers: { devfn: Record<string, unknown>; lsof?: (root: string) => string; ps?: string; docker?: (args: readonly string[]) => { code: number; stdout: string } },
-    providers?: ProviderReadBackFixture, env: NodeJS.ProcessEnv = {}) {
+    providers?: ProviderReadBackFixture, env: NodeJS.ProcessEnv = {}, extra: Partial<ConstructorParameters<typeof LiveHost>[0]> = {}) {
     dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-livehost-")));
     const calls: string[] = [];
     const options: Array<Parameters<CommandRunner>[2]> = [];
@@ -400,7 +440,7 @@ describe("live host cleanup handlers", () => {
         calls.push(`devfn ${name}`);
         // An exact command, or the longest answered command it starts with.
         const answer = answers.devfn[name] ?? Object.entries(answers.devfn).filter(([key]) => name.startsWith(`${key} `)).sort(([a], [b]) => b.length - a.length)[0]?.[1];
-        if (typeof answer === "function") return await (answer as (signal?: AbortSignal) => Promise<{ code: number; stdout: string; stderr: string }>)(given?.signal);
+        if (typeof answer === "function") return await (answer as (signal?: AbortSignal, cwd?: string) => Promise<{ code: number; stdout: string; stderr: string }>)(given?.signal, given?.cwd);
         return answer === undefined ? { code: 1, stdout: JSON.stringify({ ok: false, error: { code: "UNEXPECTED" } }), stderr: "" } : { code: 0, stdout: JSON.stringify(answer), stderr: "" };
       }
       calls.push(command === "docker" ? `docker ${args.slice(0, 2).join(" ")}` : command);
@@ -408,7 +448,7 @@ describe("live host cleanup handlers", () => {
       return { code: 0, stdout: command === "lsof" ? answers.lsof?.(dir) ?? "p1\nn/\n" : command === "ps" ? answers.ps ?? "" : "", stderr: "" };
     };
     const inventory = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: ["dev.example.test"] });
-    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock" });
+    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock", ...extra });
     await mkdir(host.stateDir, { recursive: true });
     return { host, inventory, calls, options };
   }
@@ -627,6 +667,71 @@ describe("live host cleanup handlers", () => {
     expect(name.cleanup).toMatchObject({ absent: false, detail: "still present on read-back: held by ngrok: abc123.ngrok-free.app" });
   });
 
+  it("starts a Cloudflare connector only on a tunnel whose every connected connector the run started", async () => {
+    let connected: string[] | undefined = ["operator-connector"];
+    const reads: string[] = [];
+    const ready = { code: 0, stdout: JSON.stringify({ ok: true, state: "ready", tunnel: { hostnames: [] }, publicUrls: {} }), stderr: "" };
+    const { host, calls } = await fixtureHost({ devfn: { ...stopped, "tunnel urls": { ok: true, timing: "pre-start", urls: { web: "https://web-qabcdef12-public-0123.preview.example.test/app" } },
+      "tunnel register": async () => {
+        const credentials = path.join(dir, "tunnel.json");
+        await writeFile(credentials, "{}", { mode: 0o600 });
+        await registerTunnelBinding(host.stateDir, { name: "qabcdef12-cf", provider: "cloudflare", domain: "preview.example.test", projectId: "qualification", repositoryIdentity: dir, nonproduction: true,
+          cloudflare: { accountId: approval.cloudflare.accountId, zoneId: approval.cloudflare.zoneId, tunnelId: approval.cloudflare.tunnelId, credentialsFile: credentials, apiTokenEnv: approval.cloudflare.apiTokenEnv } });
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      },
+      "up --allow-public": async () => { connected = [...connected ?? [], "run-connector"]; return ready; } } }, undefined, {},
+    { connectors: async (binding) => { reads.push(binding.cloudflare.tunnelId); if (!connected) throw new Error("Cloudflare GET cfd_tunnel answered HTTP 403"); return connected; } });
+    const scenario = NETWORKING_MATRIX.find((item) => item.id === "tunnel.cloudflare")!;
+    const context: ScenarioContext = { scenario, inventory: new DisposableInventory({ runId: "abcdef123456", root: dir, domains: approvedDomains(parseApproval(approval)) }), observe: () => undefined, expect: () => undefined };
+    // A connector the run did not start is on the approved tunnel: the journey stops before devfn up.
+    await expect(liveDrivers(host, parseApproval(approval))[scenario.id](context)).rejects.toThrow(/connectors the run did not start \(operator-connector\); an approved tunnel serves one run at a time/);
+    expect(calls.some((call) => call.startsWith("devfn up"))).toBe(false);
+    expect(reads).toEqual([approval.cloudflare.tunnelId]);
+    const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === "qabcdef12-cf")!;
+    let steps = 0;
+    connected = [];
+    await host.soleTunnelUser(bound, async () => { steps += 1; connected = ["run-a"]; });
+    // The run's own connector, and a replacement it starts, are the run's.
+    await host.soleTunnelUser(bound, async () => { steps += 1; connected = ["run-a", "run-b"]; });
+    connected = ["run-b", "operator-connector"];
+    await expect(host.soleTunnelUser(bound, async () => { steps += 1; })).rejects.toThrow(/\(operator-connector\)/);
+    connected = undefined;
+    await expect(host.soleTunnelUser(bound, async () => { steps += 1; })).rejects.toThrow(/HTTP 403/);
+    expect(steps).toBe(2);
+  });
+
+  it("counts a killed start as crash evidence only when it was killed before it ended and reported no ready lifecycle", async () => {
+    const seen = async (cwd: string | undefined) => await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: 2 ** 22 + 7, env: {} }));
+    const held: string[] = [];
+    const fast = await fixtureHost({ devfn: { status: { ok: true, state: "ready" },
+      // The start becomes ready before the run sees its process: there is nothing to kill.
+      up: async (_signal, cwd) => { await seen(cwd); return { code: 0, stdout: JSON.stringify({ ok: true, state: "ready" }), stderr: "" }; } } });
+    const scenario = NETWORKING_MATRIX.find((item) => item.id === "recovery.crash")!;
+    const context = (inventory: DisposableInventory): ScenarioContext => ({ scenario, inventory, observe: () => undefined, expect: () => undefined });
+    const quick = await interruptStart(context(fast.inventory), fast.host, await fast.host.repository(scenario.id, "interrupted", hostFixture()));
+    expect(quick.result.json.state).toBe("ready");
+    expect(INTERRUPTED.killedBeforeReady(quick)).toBe(false);
+    await rm(dir, { recursive: true, force: true });
+    const slow = await fixtureHost({ devfn: { status: { ok: true, state: "starting" },
+      // The held node recorded itself and does not listen, so the start runs until it is killed.
+      up: async (signal, cwd) => {
+        held.push(...readdirSync(cwd!).filter((file) => file.startsWith("hold-")));
+        await seen(cwd);
+        await new Promise((resolve) => signal!.addEventListener("abort", resolve));
+        return { code: -1, stdout: "", stderr: "" };
+      } } });
+    const cwd = await slow.host.repository(scenario.id, "interrupted", hostFixture());
+    const killed = await interruptStart(context(slow.inventory), slow.host, cwd);
+    expect(held).toEqual([`hold-${failureInjection(hostFixture()).failing}`]);
+    expect(killed).toMatchObject({ killed: true, orphan: 2 ** 22 + 7, result: { code: -1 }, status: { state: "starting" } });
+    expect(INTERRUPTED.killedBeforeReady(killed)).toBe(true);
+    // The hold is lifted after the kill, so the orphan listens as a process killed mid-start would.
+    await expect(access(path.join(cwd, "hold-web"))).rejects.toThrow();
+    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { ok: false, error: { code: "DEVFN_REGISTRY_LOCK_TIMEOUT" } } })).toBe(false);
+    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { state: "ready" } })).toBe(false);
+    expect(INTERRUPTED.killedBeforeReady({ ...killed, result: { code: 0, json: { state: "ready" } } })).toBe(false);
+  });
+
   it("reads a public name back through the provider and never treats an unreadable provider as absence", async () => {
     const held = new Set(["held"]);
     let provider: ProviderReadBackFixture = async () => held.has("held") ? ["web-qabcdef12-public.ngrok-free.app"] : [];
@@ -660,6 +765,59 @@ describe("live host cleanup handlers", () => {
     expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual([]);
     await expect(providerReadBack(env, pages([], [], 503))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/HTTP 503/);
     await expect(providerReadBack({}, pages([]))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/no readable API key/);
+  });
+});
+
+describe("fixture processes", () => {
+  let dir = "";
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = ""; });
+  const freePort = async () => await new Promise<number>((resolve) => { const server = net.createServer().listen(0, "127.0.0.1", () => { const { port } = server.address() as net.AddressInfo; server.close(() => resolve(port)); }); });
+  const answers = async (port: number) => await fetch(`http://127.0.0.1:${port}/`).then((answer) => answer.ok, () => false);
+  const serve = (name: string, env: NodeJS.ProcessEnv) => spawn(process.execPath, ["server.mjs", name, `DEVFN_PORT_${name.toUpperCase()}`], { cwd: dir, env: { ...process.env, ...env }, stdio: "ignore" });
+  const until = async (check: () => Promise<boolean>) => { for (let attempt = 0; attempt < 100 && !await check(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50)); };
+
+  it("fail the last node in plan order while the node DevFn started before it answers, and show that sibling stopped", async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-fixture-")));
+    await writeFile(path.join(dir, "server.mjs"), FIXTURE_SERVER);
+    const { failing, sibling } = failureInjection(hostFixture());
+    expect(createPlan(validateDevFnConfig(hostFixture())).nodes.map((node) => node.name)).toEqual([sibling, failing]);
+    const [siblingPort, failingPort] = [await freePort(), await freePort()];
+    const ready = serve(sibling, { [`DEVFN_PORT_${sibling.toUpperCase()}`]: String(siblingPort) });
+    try {
+      await until(async () => await answers(siblingPort));
+      await writeFile(path.join(dir, `fail-${failing}`), `DEVFN_URL_${sibling.toUpperCase()}`);
+      const failed = serve(failing, { [`DEVFN_PORT_${failing.toUpperCase()}`]: String(failingPort), [`DEVFN_URL_${sibling.toUpperCase()}`]: `http://127.0.0.1:${siblingPort}` });
+      const [code] = await once(failed, "exit");
+      expect(code).toBe(3);
+      const read = async (name: string) => JSON.parse(await readFile(path.join(dir, `seen-${name}.json`), "utf8")) as { pid: number; sibling?: Record<string, unknown> | null };
+      const [failedSeen, siblingSeen] = [await read(failing), await read(sibling)];
+      expect(failedSeen.sibling).toMatchObject({ name: sibling, marker: path.basename(dir) });
+      // A sibling still running is not a rollback; once it stopped, it is.
+      expect(rolledBackReadySibling(failedSeen, siblingSeen, sibling, dir)).toBe(false);
+      ready.kill("SIGKILL");
+      await once(ready, "exit");
+      expect(rolledBackReadySibling(failedSeen, siblingSeen, sibling, dir)).toBe(true);
+      // A failure before the sibling answered, or a failure with no sibling probe, shows nothing.
+      expect(rolledBackReadySibling({ sibling: null }, siblingSeen, sibling, dir)).toBe(false);
+      expect(rolledBackReadySibling({}, siblingSeen, sibling, dir)).toBe(false);
+      expect(rolledBackReadySibling(failedSeen, undefined, sibling, dir)).toBe(false);
+    } finally { ready.kill("SIGKILL"); }
+  });
+
+  it("hold a node after it recorded itself and before it listens until the hold is lifted", async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-fixture-")));
+    await writeFile(path.join(dir, "server.mjs"), FIXTURE_SERVER);
+    await writeFile(path.join(dir, "hold-web"), "");
+    const port = await freePort();
+    const child = serve("web", { DEVFN_PORT_WEB: String(port) });
+    try {
+      await until(async () => await access(path.join(dir, "seen-web.json")).then(() => true, () => false));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(await answers(port)).toBe(false);
+      await rm(path.join(dir, "hold-web"));
+      await until(async () => await answers(port));
+      expect(await answers(port)).toBe(true);
+    } finally { child.kill("SIGKILL"); }
   });
 });
 
@@ -711,6 +869,17 @@ describe("answer predicates", () => {
     expect(ANSWERS.providerWithheld(["web-q.ngrok-free.app"], "web-q.ngrok-free.app", "private-q.ngrok.devfn.internal")).toBe(true);
     expect(ANSWERS.providerWithheld(["private-q.preview.example.test"], "web-q.preview.example.test", "private-q.preview.example.test")).toBe(false);
     expect(ANSWERS.providerWithheld(["web-q.ngrok-free.app", "other.ngrok-free.app"], "web-q.ngrok-free.app", "private-q.ngrok.devfn.internal")).toBe(false);
+  });
+
+  it("read back every name the provider holds for the private route or with the binding's marker", async () => {
+    const binding = { name: "qabcdef12-cf", provider: "cloudflare" } as TunnelBinding;
+    const publicHost = "web-q.preview.example.test", privateName = "private-q.preview.example.test";
+    // DNS for the private name is gone, but another record carries the binding's ownership marker.
+    const held = await providerHeld(async (_binding, hostname) => hostname === privateName ? [] : [publicHost, "extra-q.preview.example.test"], binding, privateName);
+    expect(held).toEqual(["extra-q.preview.example.test", publicHost]);
+    expect(ANSWERS.providerWithheld(held, publicHost, privateName)).toBe(false);
+    expect(ANSWERS.providerWithheld(await providerHeld(async (_binding, hostname) => hostname === privateName ? [] : [publicHost], binding, privateName), publicHost, privateName)).toBe(true);
+    await expect(providerHeld(async () => { throw new Error("Cloudflare GET dns_records answered HTTP 403"); }, binding, privateName)).rejects.toThrow(/HTTP 403/);
   });
 
   it("route the private fixture over internal TLS so the public origin holds its certificate and must deny it", () => {
