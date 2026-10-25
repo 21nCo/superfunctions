@@ -68,7 +68,8 @@ async function start() {
   };
   const { app, dispatchPublisher, notificationPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store });
 
-  const server = createControlPlaneServer(app);
+  const telemetry = runtimeStore.store as Partial<Pick<DatabaseStore, 'recordApiError'>>;
+  const server = createControlPlaneServer(app, telemetry.recordApiError ? { recordApiError: event => telemetry.recordApiError!(event) } : undefined);
   const lifecycleTimer = setInterval(deliverLifecycle, 1000); lifecycleTimer.unref();
   let logCursor: string | undefined;
   let retentionActive: Promise<void> | undefined;

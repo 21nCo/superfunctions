@@ -1,3 +1,4 @@
+import { apiErrorTelemetry } from '../observability/http.js';
 import type { DatabaseStore } from "../store/database-store.js";
 import { redactSecrets } from '../secrets/redact.js';
 import { NotificationPublisher, isNotificationStore } from '../sendfn/outbox.js';
@@ -47,6 +48,11 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
   const app = new Hono();
   const runStore = (options.store ?? new MemoryStore()) as TStore;
   
+  if (typeof (runStore as unknown as Partial<DatabaseStore>).recordApiError === 'function') {
+    app.use('*', apiErrorTelemetry(runStore as unknown as DatabaseStore));
+    app.onError((_cause, context) => context.json(error('INTERNAL_ERROR', 'Internal request failure'), 500));
+  }
+
   const queue = options.adapters?.queue ?? options.queue ?? new MemoryQueueClient();
   const artifactAdapter = options.adapters?.artifacts;
   const secFn = options.adapters?.secrets ?? options.secFn;

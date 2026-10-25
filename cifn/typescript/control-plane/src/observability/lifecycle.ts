@@ -6,9 +6,10 @@ export const LIFECYCLE_MAX_EVENTS = 25_000;
 export const LIFECYCLE_MAX_BYTES = 8 * 1024 * 1024;
 export interface LifecycleEvent {
   id: string; sequence: number; timestamp: string;
-  type: 'run.created' | 'run.status_changed' | 'job.started' | 'job.completed' | 'step.started' | 'step.completed';
-  runId: string; jobKey?: string; stepKey?: string; status: string;
+  type: 'runner.registered' | 'runner.heartbeat' | 'api.error' | 'pipeline.parse_error' | 'run.created' | 'run.status_changed' | 'job.started' | 'job.completed' | 'step.started' | 'step.completed';
+  runId?: string; runnerId?: string; jobKey?: string; stepKey?: string; code?: string; route?: string; method?: string; status: string;
 }
+export type LifecycleOwner = { kind: 'run' | 'runner'; id: string } | { kind: 'api'; id: 'errors' };
 export interface LifecycleRecord {
   event: LifecycleEvent;
   state: 'pending' | 'sending' | 'delivered' | 'unknown';
@@ -44,13 +45,19 @@ export function captureLifecycle(namespace: string, ledger: LifecycleLedger, bef
   // Parents start first; terminal children precede terminal parents in one committed transition.
   const order = (event: Omit<LifecycleEvent, 'id' | 'sequence'>) => event.type === 'run.created' ? 0 : event.type === 'run.status_changed' ? (event.status === 'running' || event.status === 'queued' ? 1 : 6) : event.type === 'job.started' ? 2 : event.type === 'step.started' ? 3 : event.type === 'step.completed' ? 4 : 5;
   additions.sort((a, b) => order(a) - order(b));
+  appendLifecycle(namespace, after.id, ledger, additions);
+}
+export function appendLifecycle(namespace: string, ownerIdentity: string | string[], ledger: LifecycleLedger,
+  additions: Array<Omit<LifecycleEvent, 'id' | 'sequence'>>, maximum = LIFECYCLE_MAX_EVENTS): void {
+  if (ledger.version !== 1 || !Number.isSafeInteger(ledger.nextSequence) || ledger.nextSequence < 0 || !Array.isArray(ledger.records)) throw new Error('Unsupported lifecycle ledger');
+  if (!Number.isSafeInteger(ledger.nextSequence + additions.length)) throw new Error('Lifecycle sequence capacity reached');
   for (const event of additions) {
     const sequence = ledger.nextSequence++;
-    const id = createHash('sha256').update(JSON.stringify([namespace, after.id, sequence])).digest('hex');
+    const id = createHash('sha256').update(JSON.stringify([namespace, ownerIdentity, sequence])).digest('hex');
     ledger.records.push({ event: { ...event, id, sequence }, state: 'pending' });
   }
   // Reserve bounded receipt/claim metadata so maintenance remains possible at capacity.
-  if (ledger.records.length > LIFECYCLE_MAX_EVENTS || Buffer.byteLength(JSON.stringify(ledger)) + ledger.records.length * 256 > LIFECYCLE_MAX_BYTES) {
+  if (ledger.records.length > maximum || Buffer.byteLength(JSON.stringify(ledger)) + ledger.records.length * 256 > LIFECYCLE_MAX_BYTES) {
     throw new Error('CiFn lifecycle retention capacity reached; maintenance is required before accepting the transition');
   }
 }

@@ -14,10 +14,13 @@ export async function deliverLifecycleEvent(event: LifecycleEvent, sink: Sink): 
   };
   guarded.flush = () => sink.flush?.() ?? Promise.resolve();
   const logger = createLogger({ name: 'cifn', level: 'info', now: () => new Date(event.timestamp),
-    redaction: { allowlist: ['/ctx/eventId', '/ctx/sequence', '/ctx/runId', '/ctx/jobKey', '/ctx/stepKey', '/ctx/status'] },
+    redaction: { allowlist: ['/ctx/eventId', '/ctx/sequence', '/ctx/runId', '/ctx/jobKey', '/ctx/stepKey', '/ctx/status', '/ctx/runnerId', '/ctx/code', '/ctx/route', '/ctx/method'] },
     onError: () => { failed = true; }, sinks: [guarded],
   });
-  logger.info(event.type, { eventId: event.id, sequence: event.sequence, runId: event.runId,
+  logger.info(event.type, { eventId: event.id, sequence: event.sequence, ...(event.runId === undefined ? {} : { runId: event.runId }),
+    ...(event.runnerId === undefined ? {} : { runnerId: event.runnerId }),
+    ...(event.code === undefined ? {} : { code: event.code }), ...(event.route === undefined ? {} : { route: event.route }),
+    ...(event.method === undefined ? {} : { method: event.method }),
     ...(event.jobKey === undefined ? {} : { jobKey: event.jobKey }),
     ...(event.stepKey === undefined ? {} : { stepKey: event.stepKey }), status: event.status });
   try { await logger.flush(); } catch { failed = true; }
@@ -40,16 +43,16 @@ export class LogFnLifecycleDispatcher {
     return operation;
   }
   private async dispatch(cursor?: string): Promise<{ nextCursor?: string; delivered: number }> {
-    const page = await this.store.listLifecycleRuns(cursor);
+    const page = await this.store.listLifecycleOwners(cursor);
     let delivered = 0;
-    for (const runId of page.runIds) {
+    for (const owner of page.owners) {
       if (this.closed) break;
-      const record = await this.store.claimLifecycle(runId, Date.now(), this.leaseMs);
+      const record = await this.store.claimTelemetry(owner, Date.now(), this.leaseMs);
       if (!record) continue;
       let outcome: 'delivered' | 'unknown' = 'unknown';
       try { await deliverLifecycleEvent(record.event, this.sink); outcome = 'delivered'; } catch { /* Persist sanitized ambiguity, never raw sink error. */ }
       const finishedAt = Date.now();
-      const recorded = await this.store.finishLifecycle(runId, record.event.id, record.claim!.token, outcome, finishedAt);
+      const recorded = await this.store.finishTelemetry(owner, record.event.id, record.claim!.token, outcome, finishedAt);
       if (!recorded) throw new Error('CiFn lifecycle receipt could not be committed');
       if (outcome === 'delivered' && record.claim!.expiresAt > finishedAt) delivered++;
     }

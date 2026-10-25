@@ -82,4 +82,6 @@ export * from "./log-delivery/protocol.js";
 export * from './dispatch/step-events.js';
 
 export { LogFnLifecycleDispatcher, deliverLifecycleEvent } from "./observability/dispatcher.js";
-export type { LifecycleEvent, LifecycleRecord, LifecycleLedger } from "./observability/lifecycle.js";
+export type { LifecycleEvent, LifecycleRecord, LifecycleLedger, LifecycleOwner } from "./observability/lifecycle.js";
+
+export type { ApiErrorTelemetry } from "./observability/error-context.js";

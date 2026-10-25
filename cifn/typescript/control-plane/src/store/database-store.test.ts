@@ -45,20 +45,20 @@ async function location() {
   const directory = await mkdtemp(join(tmpdir(), 'cifn-durable-')); directories.push(directory);
   return { directory, path: join(directory, 'state.sqlite') };
 }
-async function open(path: string, namespace = 'first', encryptionKey = key) {
+async function open(path: string, namespace = 'first', encryptionKey = key, apiTelemetryMaxEvents?: number) {
   const native = new SQLite(path);
   native.pragma('journal_mode = WAL'); native.pragma('synchronous = FULL');
   native.exec(CIFN_SQLITE_SCHEMA);
   const sql = new Kysely({ dialect: new SqliteDialect({ database: native }) }); connections.push(sql);
   const database = kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { [CIFN_STATE_TABLE]: CIFN_STATE_TABLE } });
-  const store = await DatabaseStore.open({ database, encryptionKey, namespace });
+  const store = await DatabaseStore.open({ database, encryptionKey, namespace, apiTelemetryMaxEvents });
   return { store, sql, native, database };
 }
 async function close(sql: Kysely<any>) {
   await sql.destroy(); connections.splice(connections.indexOf(sql), 1);
 }
-async function serve(app: ReturnType<typeof createApp>['app']) {
-  const server = createControlPlaneServer(app); servers.push(server);
+async function serve(app: ReturnType<typeof createApp>['app'], telemetry?: Pick<DatabaseStore, 'recordApiError'>) {
+  const server = createControlPlaneServer(app, telemetry); servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') throw Error('No listener');
@@ -752,5 +752,115 @@ describe('durable LogFn lifecycle delivery', () => {
     await expect(opened.store.updateRunStatus(run.id, 'running')).rejects.toThrow();
     expect((await opened.store.getRun(run.id))?.status).toBe('queued');
     expect(await opened.store.getLifecycleRecords(run.id)).toHaveLength(1);
+  });
+});
+
+
+describe('durable runner and API telemetry', () => {
+  it('preserves runner projection and commits heartbeat events atomically across reopen', async () => {
+    const { path } = await location(); let opened = await open(path);
+    expect(JSON.stringify(opened.native.prepare('EXPLAIN QUERY PLAN SELECT * FROM cifn_state WHERE namespace=? AND id>? ORDER BY id ASC LIMIT 11').all('first', ''))).toContain('cifn_state_telemetry');
+    const runner = await opened.store.createRunner(['private-label'], hashSecret('private-runner-secret'));
+    const owner = { kind: 'runner' as const, id: runner.id };
+    expect(Object.keys(await opened.store.getRunner(runner.id) ?? {}).sort()).toEqual(['id', 'labels', 'lastSeenAt', 'secretHash']);
+    opened.native.exec("CREATE TRIGGER fail_runner BEFORE UPDATE ON cifn_state WHEN OLD.kind='runner' BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+    await expect(opened.store.updateRunnerLastSeen(runner.id)).rejects.toThrow();
+    expect(await opened.store.getTelemetryRecords(owner)).toHaveLength(1);
+    expect(await opened.store.getRunner(runner.id)).toEqual(runner);
+    opened.native.exec('DROP TRIGGER fail_runner');
+    await opened.store.updateRunnerLastSeen(runner.id);
+    await close(opened.sql); opened = await open(path);
+    const events = await opened.store.getTelemetryRecords(owner);
+    expect(events.map(record => record.event.type)).toEqual(['runner.registered', 'runner.heartbeat']);
+    expect(JSON.stringify(events)).not.toContain('private-label');
+    expect(JSON.stringify(events)).not.toContain(runner.secretHash);
+    const claim = await opened.store.claimTelemetry(owner, Date.now(), 1000);
+    expect(claim?.event.type).toBe('runner.registered');
+    expect(await opened.store.finishTelemetry(owner, claim!.event.id, claim!.claim!.token, 'delivered', Date.now())).toBe(true);
+    expect(await opened.store.pruneTelemetry(owner, Date.now() + 1)).toBe(1);
+  });
+  it('logs actual concurrent auth/parse errors with fixed codes and fails closed only when error capacity is full', async () => {
+    const { path } = await location(); const opened = await open(path, 'first', key, 3);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('CIFN_API_KEYS', 'owned-api-secret');
+    await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'owned-registration-secret');
+    const { app } = createApp({ store: opened.store, secFn: secrets, pipelineResolver: async () => ({ doc: 'jobs: [private-parser-text', resolvedConfigPath: 'private-config-path' }) });
+    const base = await serve(app);
+    const [unauthorized, malformed] = await Promise.all([
+      fetch(base + '/api/v1/runs?token=private-query', { headers: { Authorization: 'Bearer private-wrong-secret' }, signal: AbortSignal.timeout(5000) }),
+      fetch(base + '/api/v1/runs', { method: 'POST', headers: { Authorization: 'Bearer owned-api-secret', 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: { type: 'workflow_dispatch' }, pipelineRef: { repo: 'owned', ref: 'main' } }), signal: AbortSignal.timeout(5000) }),
+    ]);
+    expect(unauthorized.status).toBe(401); expect(malformed.status).toBe(422);
+    await Promise.all([unauthorized.arrayBuffer(), malformed.arrayBuffer()]);
+    const owner = { kind: 'api' as const, id: 'errors' as const };
+    const events = await opened.store.getTelemetryRecords(owner);
+    expect(events).toHaveLength(3);
+    expect(events.map(record => record.event.type).sort()).toEqual(['api.error', 'api.error', 'pipeline.parse_error']);
+    expect(events.map(record => record.event.code).sort()).toEqual(['PIPELINE_INVALID', 'PIPELINE_INVALID', 'UNAUTHORIZED']);
+    expect(events.every(record => record.event.route === '/api/v1/runs')).toBe(true);
+    expect(JSON.stringify(events)).not.toMatch(/private-|owned-api-secret/);
+    const full = await fetch(base + '/api/v1/runs', { signal: AbortSignal.timeout(5000) });
+    expect(full.status).toBe(503); expect((await full.json()).error.code).toBe('UNAVAILABLE');
+    expect(await opened.store.getTelemetryRecords(owner)).toHaveLength(3);
+    const okay = await fetch(base + '/api/v1/runs', { headers: { Authorization: 'Bearer owned-api-secret' }, signal: AbortSignal.timeout(5000) });
+    expect(okay.status).toBe(200); await okay.arrayBuffer();
+    const registered = await fetch(base + '/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'owned-registration-secret', labels: ['private-label'] }), signal: AbortSignal.timeout(5000) });
+    expect(registered.status).toBe(200); const identity = (await registered.json()).data;
+    const beat = await fetch(base + '/api/v1/runners/heartbeat', { method: 'POST', headers: { Authorization: `Bearer ${identity.runnerSecret}` }, body: JSON.stringify({ runnerId: identity.runnerId }), signal: AbortSignal.timeout(5000) });
+    expect(beat.status).toBe(200); await beat.arrayBuffer();
+    expect((await opened.store.getTelemetryRecords({ kind: 'runner', id: identity.runnerId })).map(record => record.event.type)).toEqual(['runner.registered', 'runner.heartbeat']);
+    await expect(open(path, 'first', key, 4)).rejects.toThrow('configuration differs');
+  });
+  it('persists pre-router oversized errors before responding and retains them across reopen', async () => {
+    const { path } = await location(); let opened = await open(path, 'first', key, 1);
+    const base = await serve(createApp({ store: opened.store }).app, opened.store);
+    const request = () => fetch(base + '/private-path?secret=private-query', { method: 'POST', body: 'x'.repeat(1_048_577), signal: AbortSignal.timeout(5000) });
+    const oversized = await request(); expect(oversized.status).toBe(413); await oversized.arrayBuffer();
+    const full = await request(); expect(full.status).toBe(503); await full.arrayBuffer();
+    await close(opened.sql); opened = await open(path, 'first', key, 1);
+    const records = await opened.store.getTelemetryRecords({ kind: 'api', id: 'errors' });
+    expect(records).toHaveLength(1);
+    expect(records[0].event).toMatchObject({ code: 'PAYLOAD_TOO_LARGE', route: 'unmatched', method: 'POST', status: '413' });
+    expect(JSON.stringify(records)).not.toContain('private-');
+  });
+  it('rolls back failed error admission and serializes independent dispatchers without duplicate sink effects', async () => {
+    const { path } = await location(); const first = await open(path); const second = await open(path);
+    const base = await serve(createApp({ store: first.store }).app);
+    first.native.exec(`CREATE TRIGGER deny_error_telemetry BEFORE UPDATE ON cifn_state WHEN OLD.kind = 'meta' BEGIN SELECT RAISE(ABORT, 'owned rollback'); END`);
+    const failed = await fetch(base + '/api/v1/runs', { signal: AbortSignal.timeout(5000) });
+    expect(failed.status).toBe(503); await failed.arrayBuffer();
+    const owner = { kind: 'api' as const, id: 'errors' as const };
+    expect(await second.store.getTelemetryRecords(owner)).toEqual([]);
+    first.native.exec('DROP TRIGGER deny_error_telemetry');
+    const denied = await fetch(base + '/api/v1/runs', { signal: AbortSignal.timeout(5000) });
+    expect(denied.status).toBe(401); await denied.arrayBuffer();
+    const { LogFnLifecycleDispatcher } = await import('../observability/dispatcher.js');
+    const sent: string[] = [];
+    const sink = (events: any[]) => { sent.push(...events.map(event => event.ctx.eventId)); };
+    const a = new LogFnLifecycleDispatcher(first.store, sink); const b = new LogFnLifecycleDispatcher(second.store, sink);
+    try { await Promise.all([a.tick(), b.tick()]); }
+    finally { await Promise.all([a.close(), b.close()]); }
+    const records = await second.store.getTelemetryRecords(owner);
+    expect(sent).toEqual([records[0].event.id]); expect(records[0].state).toBe('delivered');
+  });
+  it('does not return an error response before its telemetry commits and sanitizes unexpected failures', async () => {
+    const { path } = await location(); const opened = await open(path);
+    const secrets = new MemorySecFnClient();
+    let release!: () => void, entered!: () => void;
+    const admitted = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = opened.store.recordApiError.bind(opened.store);
+    vi.spyOn(opened.store, 'recordApiError').mockImplementationOnce(async event => { entered(); await gate; await original(event); });
+    const base = await serve(createApp({ store: opened.store, secFn: secrets }).app);
+    let responded = false;
+    const request = fetch(base + '/api/v1/runs', { signal: AbortSignal.timeout(5000) }).then(response => { responded = true; return response; });
+    await admitted; expect(responded).toBe(false); release();
+    const response = await request; expect(response.status).toBe(401); await response.arrayBuffer();
+    vi.spyOn(secrets, 'getSecret').mockRejectedValueOnce(new Error('private-storage-failure'));
+    const failed = await fetch(base + '/api/v1/runs', { headers: { Authorization: 'Bearer private-header' }, signal: AbortSignal.timeout(5000) });
+    expect(failed.status).toBe(500); expect(await failed.text()).not.toContain('private-');
+    const records = await opened.store.getTelemetryRecords({ kind: 'api', id: 'errors' });
+    expect(records.map(record => record.event.code)).toEqual(['UNAUTHORIZED', 'INTERNAL_ERROR']);
+    expect(JSON.stringify(records)).not.toContain('private-');
+    await expect(opened.store.recordApiError({ code: 'private-secret', route: '/api/v1/runs', method: 'GET', status: 400 })).rejects.toThrow('Invalid API error telemetry');
   });
 });

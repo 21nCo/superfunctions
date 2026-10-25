@@ -1,4 +1,5 @@
-import { captureLifecycle, emptyLifecycle, type LifecycleLedger, type LifecycleRecord } from '../observability/lifecycle.js';
+import { validateApiErrorTelemetry, type ApiErrorTelemetry } from '../observability/error-context.js';
+import { captureLifecycle, appendLifecycle, emptyLifecycle, LIFECYCLE_MAX_EVENTS, type LifecycleOwner, type LifecycleLedger, type LifecycleRecord } from '../observability/lifecycle.js';
 import { MAX_STEP_EVENTS, validateStepEvent, type StepEvent } from '../dispatch/step-events.js';
 import { redactSecrets } from "../secrets/redact.js";
 import { LOG_JOB_BYTES, LOG_MAX_EVENTS, LOG_RETENTION_MS, validateLogPacket, type LogPacket, type LogLedger } from "../log-delivery/protocol.js";
@@ -22,6 +23,9 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
+interface TelemetryState { lifecycle?: LifecycleLedger }
+interface RunnerState extends Runner, TelemetryState {}
+interface ApiTelemetryState extends TelemetryState { maximum: number }
 interface RunState { lifecycle?: LifecycleLedger; run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent; logs?: Record<string, LogLedger> }
 export interface DatabaseStoreOptions {
   database: Adapter;
@@ -30,6 +34,8 @@ export interface DatabaseStoreOptions {
   namespace?: string;
   notifications?: SendFnConfig;
   logRetentionMs?: number;
+  /** Namespace-persisted API-error admission cap; must match across workers. */
+  apiTelemetryMaxEvents?: number;
 }
 export interface RecoveryCandidate { run: Run; definition: CreateRunInput }
 export interface RecoveryPage { candidates: RecoveryCandidate[]; nextCursor?: string }
@@ -44,6 +50,7 @@ export class DatabaseStore implements ControlPlaneStore {
   private readonly namespace: string;
   private notificationUrl?: NotificationDestination;
   private logRetentionMs: number;
+  private apiTelemetryMaxEvents: number;
   private onRunStatusChange?: (run: Run) => void;
 
   private constructor(options: DatabaseStoreOptions) {
@@ -54,6 +61,8 @@ export class DatabaseStore implements ControlPlaneStore {
     if (options.namespace !== undefined && (!options.namespace.trim() || options.namespace.length > 128)) {
       throw new Error('CiFn storage namespace must contain 1 to 128 characters');
     }
+    this.apiTelemetryMaxEvents = options.apiTelemetryMaxEvents ?? LIFECYCLE_MAX_EVENTS;
+    if (!Number.isSafeInteger(this.apiTelemetryMaxEvents) || this.apiTelemetryMaxEvents < 1 || this.apiTelemetryMaxEvents > LIFECYCLE_MAX_EVENTS) throw new Error('Invalid API telemetry capacity');
     this.logRetentionMs = options.logRetentionMs ?? LOG_RETENTION_MS;
     if (!Number.isSafeInteger(this.logRetentionMs) || this.logRetentionMs < 1 || this.logRetentionMs > 30 * 86400000) throw new Error("Invalid log retention");
     this.notificationUrl = notificationDestination(options.notifications ?? { enabled: false });
@@ -79,6 +88,10 @@ export class DatabaseStore implements ControlPlaneStore {
         where: store.where(seed.id), conflictTarget: 'id', create: seed, update: {} });
       const metadata = store.decode<{ schemaVersion: number }>(stored);
       if (metadata.schemaVersion !== 1) throw new Error('Unsupported CiFn storage schema version');
+      const telemetry = store.row('meta', 'api-errors', 'ready', new Date().toISOString(), { maximum: store.apiTelemetryMaxEvents, lifecycle: emptyLifecycle() });
+      const admitted = await store.database.upsert<StateRow>({ model: CIFN_STATE_TABLE, where: store.where(telemetry.id), conflictTarget: 'id', create: telemetry, update: {} });
+      const settings = store.decode<ApiTelemetryState>(admitted);
+      if (settings.maximum !== store.apiTelemetryMaxEvents || settings.lifecycle?.version !== 1) throw new Error('API telemetry configuration differs from the persisted namespace');
       return store;
     } catch (cause) {
       store.key.fill(0);
@@ -171,17 +184,60 @@ export class DatabaseStore implements ControlPlaneStore {
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
   }
+  private telemetryAddress(owner: LifecycleOwner): { kind: StateRow['kind']; id: string } {
+    if (!owner || Object.keys(owner).sort().join(',') !== 'id,kind' || typeof owner.id !== 'string' || !owner.id || owner.id.length > 512) throw new Error('Invalid lifecycle owner');
+    if (owner.kind === 'api' && owner.id === 'errors') return { kind: 'meta', id: 'api-errors' };
+    if (owner.kind === 'run' || owner.kind === 'runner') return owner;
+    throw new Error('Invalid lifecycle owner');
+  }
+  private mutateTelemetry<R>(owner: LifecycleOwner, change: (state: TelemetryState) => { result: R; changed: boolean }): Promise<R | undefined> {
+    const address = this.telemetryAddress(owner);
+    return this.mutate<TelemetryState, R>(address.kind, address.id, change);
+  }
+  async recordApiError(event: ApiErrorTelemetry): Promise<void> {
+    validateApiErrorTelemetry(event); event = clone(event);
+    const accepted = await this.mutate<ApiTelemetryState, true>('meta', 'api-errors', state => {
+      if (!state.lifecycle || state.maximum !== this.apiTelemetryMaxEvents) throw new Error('API telemetry metadata requires repair');
+      const base = { timestamp: new Date().toISOString(), code: event.code, route: event.route, method: event.method, status: String(event.status) };
+      appendLifecycle(this.namespace, ['api', 'errors'], state.lifecycle,
+        [...(event.code === 'PIPELINE_INVALID' ? [{ ...base, type: 'pipeline.parse_error' as const }] : []), { ...base, type: 'api.error' }], state.maximum);
+      return { result: true, changed: true };
+    });
+    if (!accepted) throw new Error('API telemetry metadata is missing');
+  }
+  /** Bounded keyset scan across run/runner/API owners; cursor is opaque and must be reset on upgrade. */
+  async listLifecycleOwners(cursor?: string): Promise<{ owners: LifecycleOwner[]; nextCursor?: string }> {
+    if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048)) throw new Error('Invalid lifecycle cursor');
+    const rows = await this.database.findMany<StateRow>({ model: CIFN_STATE_TABLE,
+      where: [{ field: 'namespace', operator: 'eq', value: this.namespace }, ...(cursor ? [{ field: 'id', operator: 'gt' as const, value: cursor }] : [])],
+      orderBy: [{ field: 'id', direction: 'asc' }], limit: 11 });
+    const slice = rows.slice(0, 10); const owners: LifecycleOwner[] = [];
+    for (const row of slice) {
+      const state = this.decode<TelemetryState>(row);
+      if (!state.lifecycle?.records.some(record => record.state === 'pending' || record.state === 'sending')) continue;
+      const identity = JSON.parse(row.id) as string[];
+      if (row.kind === 'run' || row.kind === 'runner') owners.push({ kind: row.kind, id: identity[2] });
+      else if (identity[2] === 'api-errors') owners.push({ kind: 'api', id: 'errors' });
+    }
+    return { owners, nextCursor: rows.length > 10 ? slice[slice.length - 1].id : undefined };
+  }
+  getLifecycleRecords(runId: string) { return this.getTelemetryRecords({ kind: 'run', id: runId }); }
+  claimLifecycle(runId: string, now: number, leaseMs: number) { return this.claimTelemetry({ kind: 'run', id: runId }, now, leaseMs); }
+  finishLifecycle(runId: string, eventId: string, token: string, outcome: 'delivered' | 'unknown', now: number) { return this.finishTelemetry({ kind: 'run', id: runId }, eventId, token, outcome, now); }
+  reconcileLifecycle(runId: string, eventId: string, resolution: 'delivered' | 'retry', now: number) { return this.reconcileTelemetry({ kind: 'run', id: runId }, eventId, resolution, now); }
+  pruneLifecycle(runId: string, completedBefore: number, limit = 100) { return this.pruneTelemetry({ kind: 'run', id: runId }, completedBefore, limit); }
   /** Privileged metadata: no sink credentials or raw provider errors. */
-  async getLifecycleRecords(runId: string): Promise<LifecycleRecord[]> {
-    return clone((await this.read<RunState>('run', runId))?.lifecycle?.records ?? []);
+  async getTelemetryRecords(owner: LifecycleOwner): Promise<LifecycleRecord[]> {
+    const address = this.telemetryAddress(owner);
+    return clone((await this.read<TelemetryState>(address.kind, address.id))?.lifecycle?.records ?? []);
   }
   async listLifecycleRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
     const page = await this.page({ limit: 10, cursor });
     return { runIds: page.rows.filter(row => this.decode<RunState>(row).lifecycle?.records.some(record => record.state === 'pending' || record.state === 'sending')).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
   }
-  async claimLifecycle(runId: string, now: number, leaseMs: number): Promise<LifecycleRecord | undefined> {
+  async claimTelemetry(owner: LifecycleOwner, now: number, leaseMs: number): Promise<LifecycleRecord | undefined> {
     if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) throw new Error('Invalid lifecycle claim bounds');
-    return this.mutate<RunState, LifecycleRecord | undefined>('run', runId, state => {
+    return this.mutateTelemetry<LifecycleRecord | undefined>(owner, state => {
       const record = state.lifecycle?.records.find(item => item.state !== 'delivered');
       if (!record || record.state === 'unknown') return { result: undefined, changed: false };
       if (record.state === 'sending') {
@@ -194,9 +250,9 @@ export class DatabaseStore implements ControlPlaneStore {
       return { result: clone(record), changed: true };
     });
   }
-  async finishLifecycle(runId: string, eventId: string, token: string, outcome: 'delivered' | 'unknown', now: number): Promise<boolean> {
+  async finishTelemetry(owner: LifecycleOwner, eventId: string, token: string, outcome: 'delivered' | 'unknown', now: number): Promise<boolean> {
     if (!Number.isSafeInteger(now) || now < 0 || !['delivered', 'unknown'].includes(outcome)) throw new Error('Invalid lifecycle receipt');
-    return await this.mutate<RunState, boolean>('run', runId, state => {
+    return await this.mutateTelemetry<boolean>(owner, state => {
       const record = state.lifecycle?.records.find(item => item.event.id === eventId);
       if (!record || record.state !== 'sending' || record.claim?.token !== token) return { result: false, changed: false };
       record.state = record.claim.expiresAt <= now ? 'unknown' : outcome;
@@ -206,9 +262,9 @@ export class DatabaseStore implements ControlPlaneStore {
     }) ?? false;
   }
   /** Operator-only decision. Retrying an unknown event can duplicate a prior sink effect. */
-  async reconcileLifecycle(runId: string, eventId: string, resolution: 'delivered' | 'retry', now: number): Promise<boolean> {
+  async reconcileTelemetry(owner: LifecycleOwner, eventId: string, resolution: 'delivered' | 'retry', now: number): Promise<boolean> {
     if (!['delivered', 'retry'].includes(resolution) || !Number.isSafeInteger(now) || now < 0) throw new Error('Invalid lifecycle reconciliation');
-    return await this.mutate<RunState, boolean>('run', runId, state => {
+    return await this.mutateTelemetry<boolean>(owner, state => {
       const record = state.lifecycle?.records.find(item => item.event.id === eventId);
       if (!record || record.state !== 'unknown') return { result: false, changed: false };
       record.state = resolution === 'retry' ? 'pending' : 'delivered';
@@ -217,9 +273,9 @@ export class DatabaseStore implements ControlPlaneStore {
     }) ?? false;
   }
   /** Explicit host maintenance; unresolved records are never discarded. */
-  async pruneLifecycle(runId: string, completedBefore: number, limit = 100): Promise<number> {
+  async pruneTelemetry(owner: LifecycleOwner, completedBefore: number, limit = 100): Promise<number> {
     if (!Number.isSafeInteger(completedBefore) || completedBefore < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid lifecycle pruning bounds');
-    return await this.mutate<RunState, number>('run', runId, state => {
+    return await this.mutateTelemetry<number>(owner, state => {
       if (!state.lifecycle) return { result: 0, changed: false };
       let removed = 0;
       state.lifecycle.records = state.lifecycle.records.filter(record => {
@@ -613,11 +669,18 @@ export class DatabaseStore implements ControlPlaneStore {
   async getSecretValues(runId: string): Promise<string[]> { return (await this.read<RunState>('run', runId))?.secretValues ?? []; }
   async createRunner(labels: string[] = [], secretHash: string): Promise<Runner> {
     const runner = { id: randomUUID(), labels: [...labels], lastSeenAt: new Date().toISOString(), secretHash };
-    await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('runner', runner.id, 'registered', runner.lastSeenAt, runner) });
+    const lifecycle = emptyLifecycle();
+    appendLifecycle(this.namespace, ['runner', runner.id], lifecycle, [{ type: 'runner.registered', timestamp: runner.lastSeenAt, runnerId: runner.id, status: 'registered' }]);
+    await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('runner', runner.id, 'registered', runner.lastSeenAt, { ...runner, lifecycle }) });
     return runner;
   }
-  async getRunner(runnerId: string): Promise<Runner | undefined> { return this.read<Runner>('runner', runnerId); }
+  async getRunner(runnerId: string): Promise<Runner | undefined> {
+    const stored = await this.read<RunnerState>('runner', runnerId);
+    return stored ? { id: stored.id, labels: [...stored.labels], lastSeenAt: stored.lastSeenAt, secretHash: stored.secretHash } : undefined;
+  }
   async updateRunnerLastSeen(runnerId: string): Promise<void> {
-    await this.mutate<Runner, void>('runner', runnerId, runner => { runner.lastSeenAt = new Date().toISOString(); return { result: undefined, changed: true }; });
+    await this.mutate<RunnerState, void>('runner', runnerId, runner => { runner.lastSeenAt = new Date().toISOString();
+      appendLifecycle(this.namespace, ['runner', runnerId], runner.lifecycle ??= emptyLifecycle(), [{ type: 'runner.heartbeat', timestamp: runner.lastSeenAt, runnerId, status: 'heartbeat' }]);
+      return { result: undefined, changed: true }; });
   }
 }

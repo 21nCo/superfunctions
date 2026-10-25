@@ -42,7 +42,7 @@ try {
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
   await writeFile(join(directory, 'consumer.ts'), `import {Runner, type RunnerOptions} from '@cifn/runner';
-import {LogFnLifecycleDispatcher, type LifecycleEvent, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
+import {LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
   if (!validateStepEvent(event)) throw new Error('invalid');
@@ -51,6 +51,10 @@ export async function report(store: DatabaseStore, identity: ClaimIdentity, even
   return (await store.appendStepEvent(identity,event)).nextSequence;
 }
 export function lifecycle(store: DatabaseStore) { return new LogFnLifecycleDispatcher(store, async events => { const id: unknown = events[0]?.ctx?.eventId; void id; }); }
+export async function telemetry(store: DatabaseStore, owner: LifecycleOwner, event: ApiErrorTelemetry) {
+  await store.recordApiError(event);
+  return {records: await store.getTelemetryRecords(owner), owners: await store.listLifecycleOwners(), pruned: await store.pruneTelemetry(owner, Date.now())};
+}
 export const typed = {Runner, observer};
 `);
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts']);

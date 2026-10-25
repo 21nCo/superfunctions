@@ -1,9 +1,10 @@
+import type { ApiErrorTelemetry } from './observability/error-context.js';
 import { createServer } from 'node:http';
 import { readBodyText, PayloadTooLargeError } from './api/body.js';
 import { error } from './api/envelope.js';
 
 /** Node transport with a bounded body, including requests without Content-Length. */
-export function createControlPlaneServer(app: { fetch(request: Request): Response | Promise<Response> }) {
+export function createControlPlaneServer(app: { fetch(request: Request): Response | Promise<Response> }, telemetry?: { recordApiError(event: ApiErrorTelemetry): Promise<void> }) {
   return createServer(async (req, res) => {
     let readingRequest = true;
     try {
@@ -41,8 +42,17 @@ export function createControlPlaneServer(app: { fetch(request: Request): Respons
       if (res.destroyed || res.writableEnded) return;
       if (res.headersSent) { res.destroy(); return; }
       const oversized = cause instanceof PayloadTooLargeError;
-      res.writeHead(oversized ? 413 : readingRequest ? 400 : 500, { 'Content-Type': 'application/json', Connection: 'close' });
-      res.end(JSON.stringify(error(oversized ? 'PAYLOAD_TOO_LARGE' : readingRequest ? 'BAD_REQUEST' : 'INTERNAL_ERROR', oversized ? 'Request body exceeds 1048576 bytes' : readingRequest ? 'Invalid request body' : 'Internal server error')));
+      let status = oversized ? 413 : readingRequest ? 400 : 500;
+      let code: Parameters<typeof error>[0] = oversized ? 'PAYLOAD_TOO_LARGE' : readingRequest ? 'BAD_REQUEST' : 'INTERNAL_ERROR';
+      let message = oversized ? 'Request body exceeds 1048576 bytes' : readingRequest ? 'Invalid request body' : 'Internal server error';
+      if (telemetry) {
+        const method = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'].includes(req.method ?? '') ? req.method! : 'OTHER';
+        try { await telemetry.recordApiError({ code, route: 'unmatched', method, status }); }
+        catch { status = 503; code = 'UNAVAILABLE'; message = 'Required error telemetry could not be persisted'; }
+      }
+      if (res.destroyed || res.writableEnded) return;
+      res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify(error(code, message)));
     }
   });
 }

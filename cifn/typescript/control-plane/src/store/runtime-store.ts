@@ -37,7 +37,7 @@ export async function createRuntimeStore(env: Record<string, string | undefined>
     database.exec(CIFN_SQLITE_SCHEMA);
     sql = new Kysely({ dialect: new SqliteDialect({ database }) });
     const adapter = kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { [CIFN_STATE_TABLE]: CIFN_STATE_TABLE } });
-    const store = await DatabaseStore.open({ database: adapter, encryptionKey: key, namespace: env.CIFN_STORE_NAMESPACE, logRetentionMs: env.CIFN_LOG_RETENTION_MS === undefined ? undefined : Number(env.CIFN_LOG_RETENTION_MS), notifications });
+    const store = await DatabaseStore.open({ database: adapter, encryptionKey: key, namespace: env.CIFN_STORE_NAMESPACE, apiTelemetryMaxEvents: env.CIFN_API_TELEMETRY_MAX_EVENTS === undefined ? undefined : Number(env.CIFN_API_TELEMETRY_MAX_EVENTS), logRetentionMs: env.CIFN_LOG_RETENTION_MS === undefined ? undefined : Number(env.CIFN_LOG_RETENTION_MS), notifications });
     return { store, mode, close: async () => { await sql!.destroy(); } };
   } catch (cause) {
     if (sql) await sql.destroy();

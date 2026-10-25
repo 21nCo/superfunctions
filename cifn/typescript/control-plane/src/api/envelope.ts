@@ -1,3 +1,4 @@
+import { noteErrorCode } from '../observability/error-context.js';
 import { createErrorRegistry } from '@superfunctions/errors';
 import {
   err as createEnvelopeError,
@@ -65,6 +66,7 @@ export function error(
   message: string,
   details?: Record<string, unknown>,
 ): ErrorEnvelope {
+  noteErrorCode(code);
   const resolved = errorRegistry.resolveOrDefault(code, {
     httpStatus: 500,
     retryable: code === 'INTERNAL_ERROR',

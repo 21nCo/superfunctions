@@ -11,7 +11,7 @@ export function getCiFnStoreSchema(): TableSchemaMap {
     createdAt: { type: 'string', required: true },
     revision: { type: 'number', required: true },
     payload: { type: 'json', jsonStorageType: 'json-text', required: true },
-  }, indexes: [{ name: 'cifn_state_listing', fields: ['namespace', 'kind', 'status', 'createdAt'] }] } };
+  }, indexes: [{ name: 'cifn_state_listing', fields: ['namespace', 'kind', 'status', 'createdAt'] }, { name: 'cifn_state_telemetry', fields: ['namespace', 'id'] }] } };
 }
 /** SQLite v1 migration. Existing tables are never rewritten or silently upgraded. */
 export const CIFN_SQLITE_SCHEMA = `
@@ -26,4 +26,6 @@ CREATE TABLE IF NOT EXISTS cifn_state (
 );
 CREATE INDEX IF NOT EXISTS cifn_state_listing
   ON cifn_state (namespace, kind, status, createdAt, id);
+CREATE INDEX IF NOT EXISTS cifn_state_telemetry
+  ON cifn_state (namespace, id);
 `;

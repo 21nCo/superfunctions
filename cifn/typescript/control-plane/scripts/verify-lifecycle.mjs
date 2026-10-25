@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
-const { DatabaseStore, CIFN_SQLITE_SCHEMA, CIFN_STATE_TABLE, LogFnLifecycleDispatcher } = require('../dist/index.js');
+const { DatabaseStore, CIFN_SQLITE_SCHEMA, CIFN_STATE_TABLE, LogFnLifecycleDispatcher, createApp, MemorySecFnClient } = require('../dist/index.js');
 const SQLite = require('better-sqlite3');
 const { Kysely, SqliteDialect } = require('kysely');
 const { kyselyAdapter } = await import('@superfunctions/db/adapters');
@@ -78,7 +78,36 @@ if (process.argv[2] === 'claim-child') {
     await dispatcher.tick(); await dispatcher.tick();
     assert.equal(received.length, 2);
     assert.equal((await runtime.store.getLifecycleRecords(run.id))[1].state, 'unknown');
-    console.log(JSON.stringify({ passed: true, actualLogFnSink: true, killedOwnerParked: true, noBlindReplay: true, sqliteReopen: true }));
+    await dispatcher.close(); dispatcher = undefined;
+    const secrets = new MemorySecFnClient();
+    await secrets.setSecret('CIFN_API_KEYS', 'owned-api-secret');
+    await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'owned-registration-secret');
+    const { app } = createApp({ store: runtime.store, secFn: secrets, pipelineResolver: async () => ({ doc: 'jobs: [private-parser-text', resolvedConfigPath: 'private-path' }) });
+    const denied = await app.request('/api/v1/runs?secret=private-query', { headers: { Authorization: 'Bearer private-token' } });
+    assert.equal(denied.status, 401); await denied.arrayBuffer();
+    const malformed = await app.request('/api/v1/runs', { method: 'POST', headers: { Authorization: 'Bearer owned-api-secret', 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: { type: 'workflow_dispatch' }, pipelineRef: { repo: 'owned', ref: 'main' } }) });
+    assert.equal(malformed.status, 422); await malformed.arrayBuffer();
+    const registered = await app.request('/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'owned-registration-secret', labels: ['private-label'] }) });
+    assert.equal(registered.status, 200); const identity = (await registered.json()).data;
+    const heartbeat = await app.request('/api/v1/runners/heartbeat', { method: 'POST', headers: { Authorization: `Bearer ${identity.runnerSecret}` }, body: JSON.stringify({ runnerId: identity.runnerId }) });
+    assert.equal(heartbeat.status, 200); await heartbeat.arrayBuffer();
+    await runtime.close(); runtime = await createRuntimeStore(env(path));
+    const apiOwner = { kind: 'api', id: 'errors' };
+    const runnerOwner = { kind: 'runner', id: identity.runnerId };
+    const errors = await runtime.store.getTelemetryRecords(apiOwner);
+    assert.deepEqual(errors.map(record => record.event.type), ['api.error', 'pipeline.parse_error', 'api.error']);
+    assert.deepEqual((await runtime.store.getTelemetryRecords(runnerOwner)).map(record => record.event.type), ['runner.registered', 'runner.heartbeat']);
+    assert.equal(JSON.stringify(errors).includes('private-'), false);
+    assert.equal(Object.hasOwn(await runtime.store.getRunner(identity.runnerId), 'lifecycle'), false);
+    dispatcher = new LogFnLifecycleDispatcher(runtime.store, sink);
+    for (let attempt = 0; attempt < 8; attempt++) await dispatcher.tick();
+    for (const owner of [apiOwner, runnerOwner]) {
+      assert.ok((await runtime.store.getTelemetryRecords(owner)).every(record => record.state === 'delivered'));
+      assert.ok(await runtime.store.pruneTelemetry(owner, Date.now() + 1) > 0);
+    }
+    assert.equal(received.filter(event => event.msg === 'pipeline.parse_error').length, 1);
+    assert.equal(received.filter(event => event.msg === 'runner.heartbeat').length, 1);
+    console.log(JSON.stringify({ passed: true, actualLogFnSink: true, killedOwnerParked: true, noBlindReplay: true, sqliteReopen: true, runnerApiTelemetry: true, sanitizedParseErrors: true }));
   } finally {
     const cleanup = [];
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); cleanup.push(bounded(exited)); }
