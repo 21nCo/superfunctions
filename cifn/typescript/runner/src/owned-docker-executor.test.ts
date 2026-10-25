@@ -1,3 +1,4 @@
+import {fakeDockerEngine} from './__tests__/fake-docker-engine.js';
 import { afterEach, expect, it } from "vitest";
 import {
   existsSync,
@@ -50,6 +51,7 @@ function fixture(mode = "success") {
       stderr: "",
       lines: [] as string[],
     });
+    if (args[0] === "context") return ok(JSON.stringify("unix:///fixture-only"));
     if (args[0] === "info") return ok("daemon-owned");
     if (args[0] === "create") {
       name = args[args.indexOf("--name") + 1];
@@ -105,6 +107,7 @@ function fixture(mode = "success") {
     executor: new OwnedDockerExecutor(
       { context: "owned", stateDirectory },
       command,
+      () => fakeDockerEngine(mode,calls),
     ),
   };
 }

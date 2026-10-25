@@ -26,3 +26,4 @@ export type { RemoteRunnerOptions } from './remote-runner.js';
 
 export { OwnedDockerExecutor } from './owned-docker-executor.js';
 export type { OwnedDockerOptions, OwnedDockerStep } from './owned-docker-executor.js';
+export type { OwnedDockerJob, DockerJobOptions, DockerJobStep } from './owned-docker-job.js';

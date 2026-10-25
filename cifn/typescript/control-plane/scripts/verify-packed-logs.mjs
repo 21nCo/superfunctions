@@ -32,23 +32,30 @@ try {
   run(process.execPath, ['consumer.mjs']);
   await writeFile(join(directory, 'owned-docker.mjs'), `
 import assert from 'node:assert/strict';
-import {mkdir, readFile, readdir, stat} from 'node:fs/promises';
+import {readFile,readdir,stat} from 'node:fs/promises';import{createServer}from'node:http';import{once}from'node:events';
 import {join} from 'node:path';
 import {OwnedDockerExecutor, executeRemoteShellJob} from './node_modules/@cifn/runner/dist/index.mjs';
-const stateDirectory=join(process.cwd(),'owned-docker-state');let name='',id='',started=false;const cid='a'.repeat(64);
-const executor=new OwnedDockerExecutor({stateDirectory,context:'fixture-only'},async(args,cwd,signal,onLines,timeout,internalEnv)=>{
- const ok=(stdout='')=>({exitCode:0,stdout,stderr:'',lines:[]});
- if(args[0]==='info')return ok('fake-daemon');
- if(args[0]==='create'){name=args[args.indexOf('--name')+1];id=name.slice(5);const path=args[args.indexOf('--env-file')+1];assert.equal((await stat(path)).mode&511,384);assert.ok(internalEnv.CIFN_INTERNAL_COMMAND);assert.equal(args.includes(internalEnv.CIFN_INTERNAL_COMMAND),false);assert.equal(JSON.parse(await readFile(join(stateDirectory,id,'receipt.json'),'utf8')).owner,'packed-execution');return ok(cid);}
- if(args[0]==='start'){started=true;onLines?.(['owned output']);return {...ok('owned output'),streamed:true};}
- if(args[0]==='container'&&args[1]==='inspect')return ok(JSON.stringify({id:cid,owner:id,running:false,status:started?'exited':'created',exitCode:0}));
- if(args[0]==='rm'||args[1]==='ls')return ok();throw new Error('Unexpected owned protocol command');
-});
-const result=await executeRemoteShellJob({runId:'packed',jobKey:'build',jobSpec:{'runs-on':'default',image:'fixture-only',steps:[{run:'printf private-owned-command'}]}},undefined,undefined,undefined,undefined,undefined,{ownedDockerExecutor:executor,executionOwner:'packed-execution'});
-assert.equal(result.status,'success');assert.deepEqual(await readdir(stateDirectory),[]);
-console.log(JSON.stringify({installedOwnedDockerProtocol:true,nativeDocker:false}));
+const stateDirectory=join(process.cwd(),'owned-docker-state'),socket=join(process.cwd(),'engine.sock');let id='',present=false,running=false,exec=0,created=0;const cid='a'.repeat(64);
+const server=createServer(async(req,res)=>{let text='';for await(const chunk of req)text+=chunk;const body=text?JSON.parse(text):undefined;const json=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
+ if(req.url==='/info')return json({ID:'fake-daemon'});
+ if(req.url.startsWith('/containers/create')){created++;present=true;id=body.Labels['io.21n.cifn.owner'];return json({Id:cid},201);}
+ if(req.url.endsWith('/exec')){exec++;assert.ok(body.Env.some(value=>value.startsWith('CIFN_INTERNAL_COMMAND=')));return json({Id:exec.toString(16).padStart(64,'0')},201);}
+ if(req.url.startsWith('/exec/')&&req.url.endsWith('/start')){const path=join(stateDirectory,id,'receipt.json');assert.equal((await stat(path)).mode&511,384);const receipt=JSON.parse(await readFile(path,'utf8'));assert.equal(receipt.owner,'packed-execution');assert.equal(receipt.execId,exec.toString(16).padStart(64,'0'));const output=Buffer.from('owned output'),header=Buffer.alloc(8);header[0]=1;header.writeUInt32BE(output.length,4);res.end(Buffer.concat([header,output]));return;}
+ if(req.url.startsWith('/exec/'))return json({ID:exec.toString(16).padStart(64,'0'),ContainerID:cid,Running:false,ExitCode:0});
+ if(req.method==='DELETE'){present=false;running=false;res.writeHead(204);res.end();return;}
+ if(req.url.endsWith('/start')){running=true;res.writeHead(204);res.end();return;}
+ if(req.url.startsWith('/containers/'))return present?json({Id:cid,Config:{Labels:{'io.21n.cifn.owner':id}},State:{Running:running}}):json({message:'absent'},404);
+ json({},500);
+});server.listen(socket);await once(server,'listening');
+try{
+ const executor=new OwnedDockerExecutor({stateDirectory,context:'fixture-only'},async args=>({exitCode:0,stdout:args[0]==='context'?JSON.stringify('unix://'+socket):'fake-daemon',stderr:'',lines:[]}));
+ const result=await executeRemoteShellJob({runId:'packed',jobKey:'build',jobSpec:{'runs-on':'default',image:'fixture-only',steps:[{run:'printf private-owned-command'},{run:'true'}]}},undefined,undefined,undefined,undefined,undefined,{ownedDockerExecutor:executor,executionOwner:'packed-execution'});
+ assert.equal(result.status,'success');assert.equal(created,1);assert.equal(exec,2);assert.deepEqual(await readdir(stateDirectory),[]);
+ console.log(JSON.stringify({installedOwnedDockerProtocol:true,actualUnixTransport:true,perJobProtocol:true,nativeDocker:false}));
+}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 `);
   process.stdout.write(run(process.execPath, ['owned-docker.mjs']));
+  if(process.env.CIFN_TEST_NATIVE_DOCKER==='1')process.stdout.write(run(process.execPath,['node_modules/@cifn/runner/scripts/verify-per-job-docker.mjs']));
 
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
   process.stdout.write(receipt);

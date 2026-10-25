@@ -1,3 +1,4 @@
+import { DockerExecutionInterruptedError, type OwnedDockerJob } from './owned-docker-job.js';
 import type { OwnedDockerExecutor } from './owned-docker-executor.js';
 import { ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { StepStatusReportingError } from './step-journal.js';
@@ -223,6 +224,7 @@ export class Runner {
 
     let jobFailed = false;
     let uncertainProcess = false;
+    let containerJob: OwnedDockerJob | undefined;
 
     const interpolateContext = {
       github,
@@ -587,7 +589,12 @@ export class Runner {
           `Step "${step.stepKey}" started: ${runCommand}`,
         ]);
 
-        const result = await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv, lines => logLines(step.stepKey, lines));
+        if (this.shouldUseDocker(jobSpec) && this.ownedDockerExecutor && !containerJob) {
+          containerJob = await this.ownedDockerExecutor.openJob({image:jobSpec.image ?? this.defaultDockerImage,workspace,owner:this.executionOwner,signal:this.executionSignal});
+        }
+        const result = containerJob
+          ? await containerJob.execute({command:runCommand,env:jobEnv,signal:this.executionSignal,onLines:lines=>logLines(step.stepKey,lines)})
+          : await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv, lines => logLines(step.stepKey, lines));
 
         if (result.truncated) this.onOutputTruncated?.();
         if (!result.streamed) logLines(step.stepKey, result.lines);
@@ -609,14 +616,26 @@ export class Runner {
       }
     } catch (error) {
       if (error instanceof ProcessGroupUncertainError) uncertainProcess = true;
-      throw error;
+      if (error instanceof DockerExecutionInterruptedError) {
+        if (error.outputIncomplete) this.onOutputTruncated?.();
+        jobFailed = true;
+        for (const step of job.steps) {
+          if (step.status === 'running') await transition(step, 'failure');
+          else if (step.status === 'pending') await transition(step, 'skipped');
+        }
+        logLines('__job__', ['Container execution interrupted; owned container removed; later steps not admitted']);
+      } else throw error;
     } finally {
+      try { await containerJob?.close(); }
+      catch (error) { uncertainProcess = true; throw error; }
+      finally {
       if (this.cleanWorkspace && !uncertainProcess) {
         try {
           rmSync(workspace, { recursive: true, force: true });
         } catch {
           // ignore cleanup errors
         }
+      }
       }
     }
 
@@ -643,9 +662,6 @@ export class Runner {
   ) {
     if (this.shouldUseDocker(jobSpec) && !this.dockerExecutor && !this.ownedDockerExecutor) {
       return { exitCode: 1, stdout: '', stderr: '', lines: ['Job image requires a configured container executor; host execution refused'] };
-    }
-    if (this.shouldUseDocker(jobSpec) && this.ownedDockerExecutor) {
-      return this.ownedDockerExecutor.execute({ image: jobSpec.image ?? this.defaultDockerImage, workspace, command, env, signal: this.executionSignal, onLines, owner: this.executionOwner });
     }
     if (this.shouldUseDocker(jobSpec) && this.dockerExecutor) {
       return this.dockerExecutor.execute({

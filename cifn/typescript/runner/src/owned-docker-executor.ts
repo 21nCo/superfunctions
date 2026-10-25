@@ -1,3 +1,10 @@
+import { UnixDockerEngine, type DockerEngine } from "./docker-engine.js";
+import {
+  DockerExecutionInterruptedError,
+  openOwnedDockerJob,
+  type DockerJobOptions,
+  type OwnedDockerJob,
+} from "./owned-docker-job.js";
 import {
   constants,
   accessSync,
@@ -74,7 +81,13 @@ export class OwnedDockerExecutor {
   private readonly command: DockerCommand;
   private readonly timeout: number;
   private readonly context: string;
-  constructor(options: OwnedDockerOptions, command?: DockerCommand) {
+  constructor(
+    options: OwnedDockerOptions,
+    command?: DockerCommand,
+    private readonly engineFactory: (socketPath: string) => DockerEngine = (
+      socketPath,
+    ) => new UnixDockerEngine(socketPath),
+  ) {
     if (
       !options.context ||
       options.context.length > 128 ||
@@ -115,6 +128,64 @@ export class OwnedDockerExecutor {
           onLines,
           timeoutMs,
         ));
+  }
+  async openJob(job: DockerJobOptions): Promise<OwnedDockerJob> {
+    try {
+      const context = await this.command(
+        [
+          "context",
+          "inspect",
+          this.context,
+          "--format",
+          "{{json .Endpoints.docker.Host}}",
+        ],
+        job.workspace,
+        job.signal,
+        undefined,
+        5000,
+      );
+      let endpoint: unknown;
+      try {
+        endpoint = JSON.parse(context.stdout);
+      } catch {
+        throw new Error("Docker context endpoint unavailable");
+      }
+      if (
+        context.exitCode !== 0 ||
+        context.truncated ||
+        typeof endpoint !== "string" ||
+        !endpoint.startsWith("unix://") ||
+        !isAbsolute(endpoint.slice(7)) ||
+        /[\0\r\n]/.test(endpoint)
+      )
+        throw new Error(
+          "Owned job containers require a local Unix Docker context",
+        );
+      const info = await this.command(
+        ["info", "--format", "{{.ID}}"],
+        job.workspace,
+        job.signal,
+        undefined,
+        5000,
+      );
+      if (info.exitCode !== 0 || info.truncated || !info.stdout.trim())
+        throw new Error("Docker daemon unavailable");
+      return await openOwnedDockerJob(
+        this.engineFactory(endpoint.slice(7)),
+        this.directory,
+        this.context,
+        info.stdout.trim(),
+        this.timeout,
+        job,
+      );
+    } catch (error) {
+      if (
+        error instanceof ProcessGroupUncertainError ||
+        error instanceof DockerExecutionInterruptedError
+      )
+        throw error;
+      throw new DockerExecutionInterruptedError(false);
+    }
   }
   async execute(step: OwnedDockerStep): Promise<RunStepResult> {
     if (
