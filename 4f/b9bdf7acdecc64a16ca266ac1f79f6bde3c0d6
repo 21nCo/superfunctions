@@ -1,0 +1,43 @@
+devfn/testing/src/networking/cli.ts
+  s_e1c5fc1a65c0cf::t_b0259df8d60d96 4,15,51-68,71-72,81-82,114-115,120,131-133,135-138,142,144-149,158
+devfn/testing/src/networking/drivers.ts
+  s_e1c5fc1a65c0cf::t_2cebf0dea7a97b 1,13,56,60,156-183,249,269,272,286,333-337,342,346,350-353,357-358,418,421-425,427-431,435,502-504,507-508,538
+devfn/testing/src/networking/live.ts
+  s_e1c5fc1a65c0cf::t_dbbb751a39de84 15,41-42,45,50-53,55,61,65,75,80,84-86,94-98,109-111,113-115,120-126,129-136,142-143,156,170,187-188,190-205,293-294,305-306,313-317,364-365,367
+devfn/testing/src/networking/prerequisites.ts
+  s_e1c5fc1a65c0cf::t_88962142f74dfc 49-65,111-114,164-165,169-171,174,177-179
+devfn/testing/src/networking/runner.ts
+  s_e1c5fc1a65c0cf::t_523d4242dc3921 64-65,71,84-85
+devfn/testing/README.md
+  s_7572bbf6321786::t_da62cfdf292052 19,22-24,40
+devfn/testing/src/networking/index.ts
+  s_7572bbf6321786::t_80c56d550a368b 2,4,6
+devfn/testing/src/networking/matrix.ts
+  s_e1c5fc1a65c0cf::t_25bad498523d26 57,76,111,113
+devfn/testing/test/networking-qualification.test.ts
+  s_e1c5fc1a65c0cf::t_b8ad8545e24196 1-3,12,14-15,17-19,168-184,230-253,265-281,389-390,393-395,400,403-404,408,410,412,428-474,493,501,507,519-521,527-569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fb9bdf7acdecc64a16ca266ac1f79f6bde3c0d6",
+  "prompts": {},
+  "sessions": {
+    "s_7572bbf6321786": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16274-bf3b-7d30-8b9b-ba488e95c36f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
