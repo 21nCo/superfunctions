@@ -1,3 +1,5 @@
+import { logIndexTable } from "./log-index/schema";
+import { equalitySeek, indexValue, indexId, logField, LOG_METADATA_LIMIT, validateIndexFields } from "./log-index/values";
 import { randomUUID } from "node:crypto";
 import { wrapWithSchema, type Adapter, type WhereClause } from "@superfunctions/db";
 import { StorageAdapter } from "./types";
@@ -43,16 +45,29 @@ export class DatabaseStorage implements StorageAdapter {
 
   getSchema() { return { ...getWatchFnSchema(this.tableName), ...(this.bugIssues ? getBugIssueSchema() : {}) }; }
 
-  async add(event: any): Promise<void> {
+  async add(event: any, options?: { indexFields: readonly string[] }): Promise<void> {
     if (this.bugIssues && event?.type === "bug_report") return this.bugIssues.ingest(event);
     if (this.legacy) {
+      if (options) throw new Error("Log indexing requires a shared DB Adapter");
       await this.legacy.insertEvent(event);
       return;
     }
     // Snapshot JSON before handing it to an asynchronous backend. Storage identity
     // is distinct from producer IDs; duplicate event IDs remain separate arrivals.
     const payload = JSON.parse(JSON.stringify(event));
-    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload, ...projectEvent(payload), receivedAt: Date.now() } });
+    const id = randomUUID();
+    const fields = payload.type === 'log' && options ? validateIndexFields(options.indexFields) : undefined;
+    const data = { id, payload, ...projectEvent(payload), receivedAt: Date.now(), ...(fields ? { logIndexFields: JSON.stringify(fields) } : {}) };
+    if (fields) {
+      if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 65536) throw new TypeError('Indexed log event exceeds 64KiB');
+      await this.db!.transaction(async tx => {
+        await tx.create({ model: this.tableName, data });
+        for (const field of fields) {
+          const scalar = indexValue(logField(payload, field));
+          if (scalar) await tx.create({ model: logIndexTable(this.tableName), data: { id: indexId(id, field), eventId: id, field, ...scalar } });
+        }
+      });
+    } else await this.db!.create({ model: this.tableName, data });
   }
 
   async query(filter: (event: any) => boolean): Promise<any[]> {
@@ -113,6 +128,64 @@ export class DatabaseStorage implements StorageAdapter {
     return result;
   }
 
+  /** Offline migration: stop all writers; process bounded pages until nextCursor is null. */
+  async backfillLogIndexes(fields: readonly string[], options: { after?: string; limit?: number } = {}): Promise<{ processed: number; nextCursor: string | null }> {
+    if (!this.db) throw new Error('Log indexes require a shared DB Adapter');
+    const policy = validateIndexFields(fields);
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000 || (options.after !== undefined && (typeof options.after !== 'string' || !options.after.length || options.after.length > 512))) throw new TypeError('Invalid log backfill page');
+    return this.db.transaction(async tx => {
+      const rows = await tx.findMany<StoredEvent>({ model: this.tableName, where: options.after === undefined ? [] : [{ field: 'id', operator: 'gt', value: options.after }], orderBy: [{ field: 'id', direction: 'asc' }], limit });
+      let payloadBytes = 0;
+      for (const row of rows) {
+        const length = Buffer.byteLength(JSON.stringify(row.payload), 'utf8'); payloadBytes += length;
+        if (length > 65536 || payloadBytes > 16 * 1024 * 1024) throw new Error('Log backfill payload limit exceeded; use a smaller page');
+        if (row.payload.type !== 'log') continue;
+        await tx.deleteMany({ model: logIndexTable(this.tableName), where: [{ field: 'eventId', operator: 'eq', value: row.id }] });
+        for (const field of policy) {
+          const scalar = indexValue(logField(row.payload, field));
+          if (scalar) await tx.create({ model: logIndexTable(this.tableName), data: { id: indexId(row.id, field), eventId: row.id, field, ...scalar } });
+        }
+        const updated = await tx.updateMany({ model: this.tableName, where: [{ field: 'id', operator: 'eq', value: row.id }], data: { logIndexFields: JSON.stringify(policy) } });
+        if (updated !== 1) throw new Error('Event changed during offline log backfill');
+      }
+      return { processed: rows.length, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
+    });
+  }
+
+  private async indexedLogs(seek: { field: string; valueType: string; valueKey: string }): Promise<any[]> {
+    return this.db!.transaction(async tx => {
+      const matches = await tx.findMany<{ eventId: string }>({ model: logIndexTable(this.tableName),
+        where: Object.entries(seek).map(([field, value]) => ({ field, operator: 'eq' as const, value })),
+        select: ['eventId'], limit: LOG_METADATA_LIMIT + 1 });
+      if (matches.length > LOG_METADATA_LIMIT) throw new Error('Log index candidate limit exceeded');
+      const ids = new Set(matches.map(row => row.eventId));
+      const result: any[] = []; let after: string | undefined, scanned = 0, bytes = 0, metadataBytes = 0;
+      for (;;) {
+        const rows = await tx.findMany<{ id: string; logIndexFields?: string | null }>({ model: this.tableName,
+          where: after === undefined ? [] : [{ field: 'id', operator: 'gt', value: after }],
+          select: ['id', 'logIndexFields'], orderBy: [{ field: 'id', direction: 'asc' }], limit: 128 });
+        for (const metadata of rows) {
+          if (++scanned > LOG_METADATA_LIMIT) throw new Error('Log metadata scan limit exceeded');
+          if (typeof metadata.id !== 'string' || metadata.id === after) throw new Error('Invalid log metadata cursor');
+          after = metadata.id;
+          metadataBytes += Buffer.byteLength(JSON.stringify(metadata), 'utf8');
+          if (metadataBytes > 16 * 1024 * 1024) throw new Error('Log query metadata byte limit exceeded');
+          const policy = metadata.logIndexFields == null ? undefined : JSON.parse(metadata.logIndexFields);
+          if (policy !== undefined && JSON.stringify(validateIndexFields(policy)) !== JSON.stringify(policy)) throw new Error('Invalid log index coverage');
+          if (policy?.includes(seek.field) && !ids.has(metadata.id)) continue;
+          const row = await tx.findOne<StoredEvent>({ model: this.tableName, where: [{ field: 'id', operator: 'eq', value: metadata.id }] });
+          if (!row) throw new Error('Log event disappeared during indexed query');
+          const size = Buffer.byteLength(JSON.stringify(row.payload), 'utf8'); bytes += size;
+          if (size > 65536 || bytes > 16 * 1024 * 1024) throw new Error('Log query payload limit exceeded');
+          result.push(row.payload);
+        }
+        if (rows.length < 128) break;
+      }
+      return result;
+    });
+  }
+
   /** Live keyset scan, not a snapshot across concurrent inserts/updates/deletes. */
   async *iterateQuery(options: any): AsyncGenerator<any> {
     if (this.legacy) {
@@ -120,6 +193,8 @@ export class DatabaseStorage implements StorageAdapter {
       yield* await this.legacy.queryEvents(options && typeof options === "object" ? legacyOptions : options);
       return;
     }
+    const seek = equalitySeek(options?.where);
+    if (seek) { yield* await this.indexedLogs(seek); return; }
     const predicates = eventProjectionWhere(options);
     if (!predicates.length) {
       for await (const row of this.readRows([])) yield row.payload;

@@ -388,3 +388,31 @@ This API does not patch HTTP clients or framework middleware automatically. Bagg
 `trace: { enabled: true, sampleRate: 0.1, serviceName: "api" }` controls tracing. Rates must be finite numbers from0 through1. New roots make a deterministic SHA-256/UTF-8 decision from their trace ID; child spans inherit that decision instead of resampling. Valid incoming context supplies its parent decision, even when the local root rate is0. `enabled: false` overrides all decisions, emits unsampled outbound context and suppresses trace recording.
 
 Omitting the entire trace configuration preserves the previous manual-tracing default of recording all spans. Providing a trace configuration without a rate uses0.1. Unsampled scopes still provide parentage and outbound context but produce no stored spans. This applies only to the tracer, not arbitrary explicit event ingestion. The configured service name labels recorded spans without changing the WatchFn storage/application namespace.
+
+### Attach LogFn output
+
+```typescript
+import { createLogger } from '@logfn/core';
+import { WatchFn } from '@watchfn/core';
+
+const logger = createLogger({ name: 'payments', sinks: [() => {}] });
+const watch = new WatchFn({ name: 'payments-app', storage: 'memory', infra: { enabled: false } });
+const detach = watch.use(logger, {
+  minLevel: 'info', parseStructured: true,
+  indexFields: ['level', 'service', 'traceId'],
+});
+watch.start();
+logger.info('payment accepted', { service: 'payments' });
+await logger.flush();
+const rows = await watch.logs.query({ filters: { service: 'payments' } });
+await watch.stop();
+detach();
+```
+
+Attachment observes the logger family, including existing and future children. Repeating the same attachment/options is idempotent; detach before changing options. `stop()` detaches future callbacks and drains admitted writes; `start()` restores registrations. Flush buffering LogFn sinks before manually detaching. Conversion errors are reported by `logger.flush()`; admitted persistence failures are also reported by `watch.flush()`/`stop()`.
+
+Parsed JSON messages receive LogFn's default privacy redaction before their text and properties are stored. The producer's canonical log identity wins over structured message fields. Attached logs receive `app.name` from the WatchFn configuration, so database retention can use that trusted application name. Batches are limited to 1,000 events and 16 MiB, with a 64 KiB input-event limit.
+
+Memory storage maintains scalar equality indexes. Shared database adapters require the current `getWatchFnSchema()` migration: the nullable event `logIndexFields` column and the log index table plus its declared indexes. The legacy `insertEvent`/`queryEvents` bridge cannot provide indexed ingestion. Existing rows and rows written with other policies remain query candidates. To migrate existing rows, stop writers and call `DatabaseStorage.backfillLogIndexes(fields, { after, limit })` until `nextCursor` is null. Each page replaces index entries and coverage atomically.
+
+Index equality queries verify payload predicates after lookup, and fail explicitly above 10,000 metadata rows, 16 MiB metadata, 64 KiB per fetched payload or 16 MiB total payload. These bounds also apply while migration coverage is incomplete. Index keys distinguish scalar types; objects, arrays and missing fields are not indexed. Invalid Unicode scalar strings are rejected. General query paths retain their existing limits.

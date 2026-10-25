@@ -16,10 +16,14 @@ from .http.routes import create_routes
 from .collectors.infra.system_metrics import SystemMetricsCollector
 from .collectors.infra.process_metrics import ProcessMetricsCollector
 from .utils.batching import Batcher
+from .integrations.logfn import LogRegistrations, Logs, LogIntegrationConfig
 
 class WatchFn:
     def __init__(self, name: str, database=None, **kwargs):
         self.config = WatchFnConfig(name=name, **kwargs)
+        if 'logfn' in self.config.integrations:
+            self.config.integrations['logfn'] = LogIntegrationConfig.model_validate(
+                self.config.integrations['logfn']).model_dump(by_alias=True)
         self.is_started = False
         self._trace_admission = RLock()
         
@@ -33,6 +37,8 @@ class WatchFn:
 
         # Batcher
         self.batcher = Batcher(on_flush=self._flush_events)
+        self._log_integrations = LogRegistrations(self)
+        self.logs = Logs(self)
 
         # Collectors
         self.system_metrics = SystemMetricsCollector(self)
@@ -77,11 +83,16 @@ class WatchFn:
                 for key, start in requested.items()}
 
     def _flush_events(self, events: List[Event]):
-        if hasattr(self.storage, 'add_batch'):
-            self.storage.add_batch(events)
-        else:
-            for event in events:
-                self.storage.add(event)
+        previous = getattr(self._log_integrations.local, 'storing', False)
+        self._log_integrations.local.storing = True
+        try:
+            if hasattr(self.storage, 'add_batch'):
+                self.storage.add_batch(events)
+            else:
+                for event in events:
+                    self.storage.add(event)
+        finally:
+            self._log_integrations.local.storing = previous
 
     def start(self):
         if self.is_started:
@@ -93,11 +104,21 @@ class WatchFn:
         with self._trace_admission:
             self.is_started = True
         self.batcher.start()
+        self._log_integrations.start()
         # Enable collectors based on config
         self.system_metrics.start()
         self.process_metrics.start()
 
+    def use(self, logger, options=None):
+        return self._log_integrations.use(logger, options)
+
+    def flush(self):
+        if getattr(self._log_integrations.local, 'storing', False):
+            raise RuntimeError('Reentrant WatchFn flush from storage callback')
+        self.batcher.flush()
+
     def stop(self):
+        self._log_integrations.stop()
         if self._alerts is not None:
             self._alerts._callbacks.stop()
         with self._trace_admission:

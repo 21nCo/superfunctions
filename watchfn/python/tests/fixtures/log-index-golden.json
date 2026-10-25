@@ -1,0 +1,50 @@
+[
+  {
+    "name": "unicode",
+    "value": "✓ café 🧭",
+    "valueType": "string",
+    "valueKey": "cdbb246651e3bca2dd19d4a2d23a78fe93daf9968aeb34079e69526b99bc0b4c"
+  },
+  {
+    "name": "null",
+    "value": null,
+    "valueType": "null",
+    "valueKey": "97cccb1b1197f11c6edbb0d93975220592ef8faf618c8770a131e4f7dfe567cc"
+  },
+  {
+    "name": "true",
+    "value": true,
+    "valueType": "boolean",
+    "valueKey": "8080ff7c35543072fc22cfd2d1e0fb77c88fba6c6c1f2d2773f06c9693735f44"
+  },
+  {
+    "name": "false",
+    "value": false,
+    "valueType": "boolean",
+    "valueKey": "2b5a4bb20bdb30d88e004caa8c3aacddc82d6f94bb82e39f4ac9e2d7e5c365d8"
+  },
+  {
+    "name": "negative-zero",
+    "value": -0.0,
+    "valueType": "number",
+    "valueKey": "8f93ded13738e1e66f47e976e3ee217ee2c945f2e8c0bcd83b6c268138a04200"
+  },
+  {
+    "name": "zero",
+    "value": 0,
+    "valueType": "number",
+    "valueKey": "8f93ded13738e1e66f47e976e3ee217ee2c945f2e8c0bcd83b6c268138a04200"
+  },
+  {
+    "name": "fraction",
+    "value": 1.25,
+    "valueType": "number",
+    "valueKey": "1a30be750d8dae7cb39e2bb99ee6a8c51f7f8747dfd720cca893fea46d358e57"
+  },
+  {
+    "name": "large-rounded",
+    "value": 9007199254740993,
+    "valueType": "number",
+    "valueKey": "1c87d11cfcf100318dbb5ff9ecd33177a15c80c768f67bb03c47e3b2a1b94366"
+  }
+]

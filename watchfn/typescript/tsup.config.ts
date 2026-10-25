@@ -11,6 +11,7 @@ export default defineConfig({
   // Bundle the shared implementation so Node 18 CommonJS consumers do not
   // synchronously require ESM-only dependency entry points.
   noExternal: [
+    "@logfn/core",
     "@superfunctions/auth",
     "@superfunctions/db",
     "@superfunctions/http",

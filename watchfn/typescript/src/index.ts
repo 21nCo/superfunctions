@@ -120,3 +120,5 @@ export type {
   ZodPromise, ZodFunction, ZodCustom, ZodInstanceOf,
 } from 'zod';
 export type { AuthProvider, AuthSession } from '@superfunctions/auth';
+
+export type { LogFnSource, LogFnIntegrationOptions } from "./integrations/logfn";

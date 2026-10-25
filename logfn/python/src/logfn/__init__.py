@@ -1,5 +1,6 @@
 from typing import Optional
 
+from .default_redaction import default_redactor
 from .core import Logger, create_logger
 from .pipeline import enrich_context, redact, sample, with_request_ids
 from .sinks import SinkConsole, SinkHttp
@@ -43,6 +44,7 @@ def server_logger(
     )
 
 __all__ = [
+    "default_redactor",
     "DefaultRedactionOptions",
     "LogCorrelation",
     "ErrorHandler",

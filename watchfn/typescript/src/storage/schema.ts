@@ -1,3 +1,4 @@
+import { getLogIndexSchema } from "./log-index/schema";
 import { createHash } from "node:crypto";
 import type { TableSchema } from "@superfunctions/db";
 
@@ -5,12 +6,13 @@ import type { TableSchema } from "@superfunctions/db";
 export function getWatchFnSchema(tableName = "watchfn_events"): Record<string, TableSchema> {
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(tableName)) throw new TypeError("Invalid table name");
   const indexPrefix = tableName.length > 35 ? `${tableName.slice(0, 24)}_${createHash("sha256").update(tableName).digest("hex").slice(0, 10)}` : tableName;
-  return { [tableName]: { modelName: tableName, fields: {
+  return { ...getLogIndexSchema(tableName), [tableName]: { modelName: tableName, fields: {
     id: { type: "string", required: true, unique: true },
     payload: { type: "json", jsonStorageType: "json-text", required: true },
     // Nullable additive columns preserve old rows until the explicit backfill.
     projectionVersion: { type: "number" },
     receivedAt: { type: "number" },
+    logIndexFields: { type: "string" },
     eventType: { type: "string", maxLength: 255 }, eventApp: { type: "string", maxLength: 255 }, eventTimestamp: { type: "number" },
     eventSeverity: { type: "string", maxLength: 255 }, eventIssueId: { type: "string", maxLength: 255 },
     eventSessionId: { type: "string", maxLength: 255 }, eventReplayId: { type: "string", maxLength: 255 },

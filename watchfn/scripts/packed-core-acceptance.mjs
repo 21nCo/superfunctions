@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const temporary = mkdtempSync(join(tmpdir(), 'watchfn-packed-'));
 const npm = (args, cwd = temporary) => execFileSync(process.env.NPM_CLI ? process.execPath : 'npm', process.env.NPM_CLI ? [process.env.NPM_CLI, ...args] : args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 try {
-  const paths = ['packages/observability', 'packages/http', 'packages/db', 'watchfn/typescript'];
+  const paths = ['packages/observability', 'packages/http', 'packages/db', 'logfn/typescript', 'watchfn/typescript'];
   const tarballs = paths.map(path => {
     const [pack] = JSON.parse(npm(['pack', '--json', '--ignore-scripts', '--pack-destination', temporary], join(root, path)));
     return join(temporary, pack.filename);
@@ -21,6 +21,9 @@ try {
   const check = `
 async function check(WatchFn) {
   const watch = new WatchFn({name:'packed',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'}});
+  const {createLogger} = await import('@logfn/core');
+  const logger = createLogger({name:'packed-log', sinks:[()=>{}]});
+  watch.use(logger);
   watch.start();
   try {
     const event={ts:'2026-10-20T12:00:00.000Z',name:'packed',msg:'retained',traceId:'0123456789abcdef0123456789abcdef',ctx:{nested:true}};
@@ -33,6 +36,12 @@ async function check(WatchFn) {
     assert.equal(queryResponse.status,200);
     assert.deepEqual((await queryResponse.json()).results,[event]);
     assert.deepEqual(await watch.aggregate({metric:'packed',aggregation:'count'}),[{value:1}]);
+    logger.info('installed-log', {service:'packed-service',password:'private-password'});
+    logger.info('other-service', {service:'other'});
+    await logger.flush();
+    const logs = await watch.logs.query({filters:{service:'packed-service'}});
+    assert.equal(logs.length,1); assert.equal(logs[0].message,'installed-log');
+    assert.equal(JSON.stringify(logs).includes('private-password'),false);
     const transaction = watch.startTransaction('packed-transaction');
     transaction.startSpan('packed-child').finish(); transaction.finish(); transaction.finish();
     const spans = await watch.query({metric:'trace.span'});

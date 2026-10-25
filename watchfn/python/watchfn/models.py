@@ -63,6 +63,7 @@ class WatchFnConfig(BaseModel):
     name: str
     auth: Optional[HttpAuthConfig] = None
     alerts: AlertDeliveryConfig = Field(default_factory=AlertDeliveryConfig)
+    integrations: Dict[str, Any] = Field(default_factory=dict)
     project_id: Optional[str] = None
     storage: Literal["memory", "database"] = "memory"
     apm_enabled: bool = True
@@ -73,6 +74,8 @@ class WatchFnConfig(BaseModel):
 class Event(BaseModel):
     _storage_id: str = PrivateAttr(default_factory=lambda: str(uuid4()))
     _storage_payload: Optional[str] = PrivateAttr(default=None)
+    _log_index_fields: Optional[tuple[str, ...]] = PrivateAttr(default=None)
+    _storage_index_fields: Optional[str] = PrivateAttr(default=None)
     type: str
     name: Optional[str] = None
     properties: Dict[str, Any] = Field(default_factory=dict)

@@ -79,7 +79,7 @@ describe("canonical event retention", () => {
     await watch.ingest([{ type: "log", app: { name: "web" } }, { type: "log", app: { name: "web" } }]);
     clock.mockReturnValue(now + 101);
     const transaction = db.transaction.bind(db); let attempts = 0;
-    const faulty = vi.spyOn(db, "transaction").mockImplementation(callback => transaction(tx => callback({ ...tx, deleteMany: async params => { if (++attempts === 2) throw new Error("delete interrupted"); return tx.deleteMany(params); } } as any)));
+    const faulty = vi.spyOn(db, "transaction").mockImplementation(callback => transaction(tx => callback({ ...tx, deleteMany: async params => { if (params.model === "watchfn_events" && ++attempts === 2) throw new Error("delete interrupted"); return tx.deleteMany(params); } } as any)));
     await expect(watch.cleanupRetention()).rejects.toThrow("delete interrupted");
     await expect(watch.flush()).rejects.toThrow("storage operations failed");
     expect(await watch.query({})).toHaveLength(1); faulty.mockRestore();

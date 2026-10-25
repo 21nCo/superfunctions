@@ -12,9 +12,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+logfn = ["logfn>=0.0.1,<0.2.0"]
 email = ["sendfn[email]>=0.0.1,<0.2.0"]
 dispatch = ["httpx>=0.27,<1"]
-dev = ["sendfn[email]>=0.0.1,<0.2.0", "superfunctions-sqlalchemy>=0.1.1,<0.2.0", "pytest", "pytest-asyncio", "httpx", "build", "superfunctions-fastapi>=0.1.0", "superfunctions-flask>=0.1.0", "flask"]
+dev = ["logfn>=0.0.1,<0.2.0", "sendfn[email]>=0.0.1,<0.2.0", "superfunctions-sqlalchemy>=0.1.1,<0.2.0", "pytest", "pytest-asyncio", "httpx", "build", "superfunctions-fastapi>=0.1.0", "superfunctions-flask>=0.1.0", "flask"]
 fastapi = ["superfunctions-fastapi>=0.1.0", "fastapi", "uvicorn"]
 flask = ["superfunctions-flask>=0.1.0", "flask"]
 

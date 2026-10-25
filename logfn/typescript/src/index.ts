@@ -36,6 +36,7 @@ export {
 } from "./validation.js";
 
 // Pipeline stages
+export { defaultRedactor } from "./pipeline/default-redaction.js";
 export { redactSecFn } from "./pipeline/redact.js";
 export type { RedactionOptions } from "./pipeline/redact.js";
 

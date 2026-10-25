@@ -1,5 +1,5 @@
 export interface StorageAdapter {
-  add(event: any): Promise<void> | void;
+  add(event: any, options?: { indexFields: readonly string[] }): Promise<void> | void;
   query(filter: (event: any) => boolean): Promise<any[]> | any[];
   /** Raw candidates in storage order; no semantic limit or aggregation. */
   iterateQuery?(options: any): AsyncIterable<any>;

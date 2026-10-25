@@ -19,7 +19,7 @@ for (const modern of [true, false]) {
   const prefix = modern ? 'modern/' : '';
   const bundle = await rollup({
     input,
-    external: id => !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@superfunctions/')
+    external: id => !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@superfunctions/') && !id.startsWith('@logfn/')
       && (modern || (id !== 'zod' && !id.startsWith('zod/'))),
     plugins: [...(modern ? [] : [{
       name: 'zod-core-type-identity',

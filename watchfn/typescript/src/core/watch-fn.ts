@@ -1,3 +1,5 @@
+import { validateIndexFields } from "../storage/log-index/values";
+import { normalizeLogBatch, resolveLogFnOptions, type LogFnSource, type LogFnIntegrationOptions, type ResolvedLogFnOptions } from "../integrations/logfn";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isAuthSession } from "@superfunctions/auth";
 import { compareDeploymentMetrics, DeploymentComparisonOptions } from "../analysis/deployment-comparison";
@@ -46,6 +48,13 @@ export class WatchFn implements WatchFnInstance {
   private pendingWrites = new Set<StorageWrite>();
   private failedWrites = new Set<StorageWrite>();
   private stopping?: Promise<void>;
+  private logBindings = new Map<LogFnSource, { options: ResolvedLogFnOptions; detach?: () => void; remove: () => void }>();
+
+  private attachLog(source: LogFnSource, binding: { options: ResolvedLogFnOptions; detach?: () => void }): void {
+    if (binding.detach || !binding.options.enabled || !binding.options.autoIngest) return;
+    binding.detach = source.addSink(batch => this.ingest(normalizeLogBatch(batch, binding.options, this.config.name), binding.options.indexFields));
+    if (typeof binding.detach !== "function") throw new TypeError("LogFn source must return a detach function");
+  }
   private readonly storageListener = (event: unknown): void => {
     const storage = this.storage;
     if (storage && this.isStarted) this.write(() => storage.add(event));
@@ -116,17 +125,18 @@ export class WatchFn implements WatchFnInstance {
   }
 
   /** Await persistence for external batches; never acknowledge stopped storage. */
-  async ingest(events: Record<string, unknown>[]): Promise<void> {
+  async ingest(events: Record<string, unknown>[], indexFields?: readonly string[]): Promise<void> {
     if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
     const storage = this.storage;
     const batch = [...events];
+    const fields = indexFields === undefined ? undefined : validateIndexFields(indexFields);
     // Validate every authorized route before admitting any member of the batch.
     if (storage instanceof DatabaseStorage && storage.bugIssues) {
       for (const event of batch) if (event.type === "bug_report") storage.bugIssues.validate(event);
     }
     const record = this.write(async () => {
       // A batch admitted before stop remains owned until its entire operation settles.
-      for (const event of batch) await storage.add(event);
+      for (const event of batch) await storage.add(event, fields === undefined ? undefined : { indexFields: fields });
     });
     await record.completion;
     if (record.failed) throw record.error;
@@ -201,6 +211,12 @@ export class WatchFn implements WatchFnInstance {
     if (this.stopping) throw new Error("WatchFn is stopping; await stop() before restarting");
     if (this.isStarted) return;
     this.isStarted = true;
+    try {
+      for (const [source, binding] of this.logBindings) this.attachLog(source, binding);
+    } catch (error) {
+      void this.stop().catch(() => {});
+      throw error;
+    }
     
     // Wire up storage
     if (this.storage) {
@@ -226,6 +242,10 @@ export class WatchFn implements WatchFnInstance {
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.isStarted = false;
+    for (const binding of this.logBindings.values()) {
+      const detach = binding.detach; binding.detach = undefined;
+      try { detach?.(); } catch (error) { this.write(() => { throw error; }); }
+    }
     this.eventRouter.removeListener("event", this.storageListener);
     // Continue cleanup even if one collector fails; surface every failure with storage.
     for (const cleanup of [
@@ -401,8 +421,28 @@ export class WatchFn implements WatchFnInstance {
   }
   
   // Integration helpers
-  use(integration: any, options?: any) {
-      // Logic to attach integration
+  use(integration: LogFnSource, options?: LogFnIntegrationOptions): () => void {
+    if (!integration || typeof integration.addSink !== "function") throw new TypeError("Integration requires a LogFn source with addSink");
+    if (this.stopping) throw new Error("WatchFn is stopping; await stop() before attaching");
+    const resolved = resolveLogFnOptions(this.config.integrations?.logfn, options);
+    const existing = this.logBindings.get(integration);
+    if (existing) {
+      if (JSON.stringify(existing.options) !== JSON.stringify(resolved)) throw new TypeError("Detach the logger before changing its integration options");
+      return existing.remove;
+    }
+    const binding: { options: ResolvedLogFnOptions; detach?: () => void; remove: () => void } = {
+      options: resolved,
+      remove: () => {
+        if (this.logBindings.get(integration) !== binding) return;
+        this.logBindings.delete(integration);
+        const detach = binding.detach; binding.detach = undefined;
+        detach?.();
+      },
+    };
+    this.logBindings.set(integration, binding);
+    try { if (this.isStarted) this.attachLog(integration, binding); }
+    catch (error) { binding.remove(); throw error; }
+    return binding.remove;
   }
   
   // Transaction helper

@@ -565,3 +565,92 @@ Call `watch.batcher.flush()` before querying newly completed spans with `watch.t
 Use `WatchFn("app", trace={"enabled": True, "sampleRate": 0.1, "serviceName": "api"})` (or typed `TraceConfig`) to configure tracing. Snake-case `sample_rate` and `service_name` are also accepted. Rates must be finite numbers from0 through1. A new root uses the same deterministic SHA-256/UTF-8 trace-ID decision as TypeScript; nested scopes inherit it. Valid incoming context supplies its parent decision rather than applying the local root rate again.
 
 `trace_enabled=False` remains supported and overrides nested configuration, as does `trace={"enabled": False}`. Disabled tracing propagates an unsampled decision and records no spans. Omitting `trace` preserves the previous all-spans manual default; providing it without a rate defaults to0.1. Unsampled scopes still carry context. Service naming does not alter the WatchFn storage/application namespace. Explicit event ingestion is outside tracer sampling.
+
+### LogFn ingestion and indexed log queries
+
+Install the `watchfn[logfn]` extra with a LogFn build exposing `add_sink` and
+`default_redactor`. Attach an existing logger before or after starting WatchFn:
+
+```python
+from logfn import create_logger
+from watchfn import WatchFn
+
+logger = create_logger(name="api", sinks=[lambda batch: None])
+watch = WatchFn("api", integrations={"logfn": {
+    "minLevel": "info", "indexFields": ["level", "service", "traceId"]
+}})
+detach = watch.use(logger)
+watch.start()
+logger.info("Payment received", {"service": "payments", "orderId": "order-1"})
+logs = watch.logs.query({"level": "info", "filters": {"service": "payments"}})
+counts = watch.logs.aggregate({"groupBy": ["service"], "aggregation": "count"})
+watch.stop()
+```
+
+`use(logger, options)` overrides `integrations.logfn`. Defaults are enabled,
+automatic ingestion and structured parsing, minimum level `trace`, and indexed
+fields `level`, `service`, `userId`, `traceId`. The logger's own level, sampling,
+pipeline and redaction still apply first. Watch cannot recover discarded events
+or redacted identities. Selecting an index field does not permit its disclosure.
+A JSON-object message is parsed only after producer redaction, and its extracted
+fields pass through LogFn's default redactor again and the message is reserialized
+from that redacted object; an invalid JSON message stays plain text. Explicit context wins over parsed fields, while timestamp, message,
+severity, logger name and service are assigned from the canonical producer fields.
+
+Attachment covers the logger's existing and future children. Repeating the same
+logger/options returns the same idempotent detach function; changing options
+requires explicit detach first. Stop detaches future log delivery and waits for
+an already admitted synchronous write before closing storage. Restart reattaches
+registrations unless manually detached. Do not call `stop()` from a storage
+callback: it raises instead of deadlocking. Logging back through the attached
+logger from a storage callback is also rejected explicitly, including background
+batcher flushes. Storage failures retain the existing
+batch for retry and are observable through `watch.flush()`, `watch.stop()` and
+`await logger.flush()`. Validation failures occur before admission and are
+observable through the logger's flush. No private buffering is added to LogFn.
+
+Database hosts must migrate before starting new writers:
+
+1. Stop all old/new writers and migration workers for the affected event table.
+2. Add nullable TEXT `logIndexFields` to the existing event table. Existing rows
+   stay NULL; do not infer that old rows were indexed.
+3. Create the table and both indexes described by `get_log_index_schema()` using
+   the host's existing shared-adapter migration system. Its default table is
+   `watchfn_log_index`; `get_log_index_schema(custom_event_table)` derives the
+   corresponding custom table name. This is explicit host DDL, not automatic
+   runtime schema mutation.
+4. Optionally run bounded `DatabaseStorage.backfill_log_index(fields, after=None,
+   limit=100)` pages on an explicitly started storage owner while all event
+   writers remain stopped. Persist each returned `nextCursor`; repeat the page
+   safely after interruption. A failed page rolls back event metadata and index
+   changes together. Stop the storage owner afterward, then resume writers.
+
+New integration events and their secondary rows commit in one shared-adapter
+transaction. Coverage is stored privately per event, separately from the event
+JSON; supplying `logIndexFields` in logged context cannot select storage policy.
+Equality queries use the `(field, valueType, valueKey, eventId)` index, then scan
+bounded event metadata and load payloads for matching IDs or legacy/differently
+indexed rows. Changing the index policy therefore cannot hide existing logs.
+Scalar keys hash a type prefix and UTF-8/IEEE754 representation; residual query
+checks still verify matches. Other filters and aggregations retain the existing
+query semantics. This reduces payload reads; it is not an index-only query or a
+promise of bounded total database work. The existing 10,000-event scan and separate 16 MiB
+metadata/payload budgets fail explicitly rather than returning a truncated answer.
+
+SQLite rollback, reopen and indexed query plans are covered. PostgreSQL/MySQL
+migration and index-width acceptance remain unverified. Applications deleting
+event rows outside WatchFn must delete corresponding secondary rows in the same
+transaction. Memory eviction removes its associated index entries. Pattern
+creation/detection is not provided by this integration.
+
+Canonical TypeScript stored log envelopes are accepted with explicit validation
+of their type, name, timestamp, message, level, service, properties and context.
+Canonical top-level values win over duplicated properties; conflicting `ts` or
+`msg` copies are rejected. Other stored event types keep the existing strict
+Python Event envelope validation. This does not enable arbitrary cross-language
+custom event envelopes. Index keys reject lone Unicode surrogates rather than
+silently changing them during UTF-8 encoding.
+
+Log batches are validated completely before admission. Both producer input and
+the normalized stored event must fit 64 KiB, and a batch must fit 16 MiB; structured
+JSON expansion cannot produce an acknowledged but unreadable stored event.

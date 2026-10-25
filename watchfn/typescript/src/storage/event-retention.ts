@@ -1,3 +1,4 @@
+import { logIndexTable } from "./log-index/schema";
 import type { Adapter, TransactionAdapter } from "@superfunctions/db";
 import { DEFAULT_RETENTION_MS } from "./time-series/retention";
 import { BUG_ISSUES_TABLE } from "../integrations/botfn/schema";
@@ -63,6 +64,7 @@ export class EventRetention {
         if (!row || !this.expired(row, now) || !await this.safeToExpire(row, tx)) return 0;
         const count = await tx.deleteMany({ model: this.table, where: [{ field: "id", operator: "eq", value: row.id }, { field: "receivedAt", operator: "eq", value: row.receivedAt }] });
         if (count > 1) throw new Error("Retention deleted multiple records for one storage ID");
+        if (count === 1 && row.payload?.type === "log") await tx.deleteMany({ model: logIndexTable(this.table), where: [{ field: "eventId", operator: "eq", value: row.id }] });
         return count;
       });
     }

@@ -83,13 +83,15 @@
     "build": "tsup && node scripts/bundle-declarations.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:log-index": "vitest run --config vitest.log-index.config.ts"
   },
   "dependencies": {
     "@superfunctions/db": "0.4.0",
     "@superfunctions/http": "0.3.1",
     "zod": "^4.6.6",
-    "@superfunctions/auth": "0.1.2"
+    "@superfunctions/auth": "0.1.2",
+    "@logfn/core": "0.1.0"
   },
   "devDependencies": {
     "@superfunctions/http-express": "0.1.3",

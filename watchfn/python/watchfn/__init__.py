@@ -9,3 +9,6 @@ from .storage.schema import get_watchfn_schema
 from .alerts.schema import get_alert_schema
 from .alerts.durable import AlertConflict
 __all__ += ["get_alert_schema", "AlertConflict"]
+
+from .storage.log_index import get_log_index_schema
+__all__ += ['get_log_index_schema']
