@@ -1,3 +1,6 @@
+import { createLogger, type CmsfnLoggerConfig, type Operation, type OperationAction } from './logging/logger.js';
+export { createLogger } from './logging/logger.js';
+export type { CmsfnLoggerConfig, LogSink } from './logging/logger.js';
 import { handleReferenceQuery } from './http/references.js';
 /**
  * @cmsfn/server — CmsFn HTTP server (status, roles, preview, releases, etc.).
@@ -45,6 +48,10 @@ export { getCmsfnStorageSchema } from "./storage/schema.js";
 
 /** Server config: studio config plus optional status auth and roles. */
 export interface CmsfnServerConfig extends CmsfnStudioConfig {
+  /** Metadata-only operational sink; failures never change committed operation results. */
+  logging?: CmsfnLoggerConfig;
+  /** Trusted host subject only. Never derive this from unverified body/header values. Bounded to 250ms. */
+  resolveLogSubject?: (req: IncomingMessage, signal: AbortSignal) => Promise<string | undefined>;
   /** Trusted upstream identity, resolved after doc.read checks for every candidate type. */
   contentfnReferenceHeaders?: (req: IncomingMessage) => NonNullable<RequestInit['headers']> | Promise<NonNullable<RequestInit['headers']>>;
   /** If set, called for GET /cmsfn/status; return true to allow, false to deny. */
@@ -83,8 +90,10 @@ async function route(
   config: CmsfnServerConfig,
   req: IncomingMessage,
   res: ServerResponse,
-  checkCapabilities: (req: IncomingMessage, required: readonly string[]) => Promise<boolean>
+  checkCapabilities: (req: IncomingMessage, required: readonly string[]) => Promise<boolean>,
+  operation?: Operation
 ): Promise<void> {
+  const respond = (response: ServerResponse, status: number, data: CmsfnEnvelope<unknown>) => { operation?.finish(data); sendJson(response, status, data); };
   const method = req.method ?? "";
   const path = req.url?.split("?")[0] ?? "";
 
@@ -100,7 +109,7 @@ async function route(
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
 
@@ -108,20 +117,21 @@ async function route(
     const rolesConfig = {
       db: config.db,
       authorizeRoles: config.authorizeRoles,
+      logContext: operation?.context,
     };
     if (path === "/cmsfn/roles/list") {
       const envelope = await handleRolesList(rolesConfig, req);
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/roles/upsert") {
       const envelope = await handleRolesUpsert(rolesConfig, req);
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/roles/delete") {
       const envelope = await handleRolesDelete(rolesConfig, req);
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/publish" && config.getRolesForSubject) {
@@ -134,7 +144,7 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/unpublish" && config.getRolesForSubject) {
@@ -147,13 +157,14 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/releases/create" && config.db) {
       const envelope = await handleReleasesCreate(
         {
           releasesStorage: { db: config.db },
+          logContext: operation?.context,
           resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
           releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
@@ -163,13 +174,14 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/releases/list" && config.db) {
       const envelope = await handleReleasesList(
         {
           releasesStorage: { db: config.db },
+          logContext: operation?.context,
           resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
           releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
@@ -179,13 +191,14 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/releases/add" && config.db) {
       const envelope = await handleReleasesAdd(
         {
           releasesStorage: { db: config.db },
+          logContext: operation?.context,
           resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
           releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
@@ -195,13 +208,14 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
     if (path === "/cmsfn/releases/publish" && config.db) {
       const envelope = await handleReleasesPublish(
         {
           releasesStorage: { db: config.db },
+          logContext: operation?.context,
           resolveExecutionIdentity: config.resolveReleaseExecutionIdentity,
           releaseExecutionSchemaVersion: config.releaseExecutionSchemaVersion,
           contentfnBaseUrl: config.contentfn.baseUrl,
@@ -211,7 +225,7 @@ async function route(
         },
         req
       );
-      sendJson(res, 200, envelope);
+      respond(res, 200, envelope);
       return;
     }
   }
@@ -228,7 +242,7 @@ async function route(
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
   if (method === "POST" && path === "/cmsfn/ops/import") {
@@ -243,7 +257,7 @@ async function route(
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
   if (method === "POST" && path === "/cmsfn/audit/events") {
@@ -257,7 +271,7 @@ async function route(
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
   if (method === "POST" && path === "/cmsfn/audit/webhooks") {
@@ -271,12 +285,12 @@ async function route(
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
 
   if (method === "POST" && path === "/cmsfn/references/query") {
-    sendJson(res, 200, await handleReferenceQuery({ contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), getRolesForSubject: config.getRolesForSubject, contentfnReferenceHeaders: config.contentfnReferenceHeaders, checkCapabilities }, req));
+    respond(res, 200, await handleReferenceQuery({ contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), getRolesForSubject: config.getRolesForSubject, contentfnReferenceHeaders: config.contentfnReferenceHeaders, checkCapabilities }, req));
     return;
   }
 
@@ -290,15 +304,16 @@ async function route(
         previewSecret: config.previewSecret,
         previewOrigin: config.preview?.targetOrigin,
         ttlSec: config.previewTokenTtlSec,
+        logContext: operation?.context,
       },
       req
     );
-    sendJson(res, 200, envelope);
+    respond(res, 200, envelope);
     return;
   }
 
   // Not found for other paths
-  sendJson(res, 404, {
+  respond(res, 404, {
     ok: false,
     error: { code: "NOT_FOUND", message: "Not found", details: {} },
   });
@@ -309,6 +324,7 @@ async function route(
  * Use server.listen() to start listening.
  */
 export function createCmsfnServer(config: CmsfnServerConfig) {
+  const logger = createLogger(config.logging);
   let controller = new AbortController();
   async function check(required?: readonly string[]): Promise<CmsfnEnvelope<ContentfnStatusResult>> {
     try {
@@ -320,16 +336,34 @@ export function createCmsfnServer(config: CmsfnServerConfig) {
   }
   let resolveReadiness!: (value: CmsfnEnvelope<ContentfnStatusResult>) => void;
   const readiness = new Promise<CmsfnEnvelope<ContentfnStatusResult>>(resolve => { resolveReadiness = resolve; });
+  const actions = new Map<string, OperationAction>([['/cmsfn/roles/upsert', 'roles.upsert'], ['/cmsfn/roles/delete', 'roles.delete'], ['/cmsfn/preview/token', 'preview.token'], ['/cmsfn/releases/publish', 'releases.publish']]);
   const server = createServer((req, res) => {
-    route(config, req, res, async (_request, required) => (await check(required)).ok).catch(() => {
-      sendJson(res, 500, { ok: false, error: { code: "INTERNAL_ERROR", message: "Internal server error", details: {} } });
+    const action = req.method === 'POST' ? actions.get(req.url?.split('?')[0] ?? '') : undefined;
+    const operation = action ? logger.operation(action, action === 'releases.publish' ? { origin: 'manual' } : {}) : undefined;
+    void (async () => {
+      if (operation && config.resolveLogSubject) {
+        const signal = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          operation.context.subject = await Promise.race([Promise.resolve().then(() => config.resolveLogSubject!(req, signal.signal)), new Promise<undefined>(resolve => { timer = setTimeout(() => { signal.abort(); resolve(undefined); }, 250); })]);
+        } catch { /* Identity enrichment is optional; no raw host error is logged. */ }
+        finally { if (timer) clearTimeout(timer); signal.abort(); }
+      }
+      await route(config, req, res, async (_request, required) => (await check(required)).ok, operation);
+    })().catch(() => {
+      const failure = err('INTERNAL_ERROR', 'Internal server error'); operation?.finish(failure);
+      if (!res.headersSent) sendJson(res, 500, failure); else res.destroy();
     });
   });
   server.on('listening', () => { if (controller.signal.aborted) controller = new AbortController(); void check().then(resolveReadiness); });
   server.on('close', () => { controller.abort(); resolveReadiness(err("CONTENTFN_UNAVAILABLE", "Server closed before readiness completed.")); });
-  return Object.assign(server, { readiness, executeDueReleases: (options?: { limit?: number; maxDocuments?: number }) => {
+  return Object.assign(server, { readiness, loggingStatus: logger.status,
+    /** Call after the host completes its deployment-defined login/logout; never pass credentials. */
+    reportSessionEvent: (action: 'session.login' | 'session.logout', input: { subject?: string; succeeded: boolean }) => {
+      const operation = logger.operation(action, { subject: input.subject });
+      operation.finish(input.succeeded ? ok({}) : err('AUTH_REQUIRED', 'Session operation failed'));
+    }, executeDueReleases: (options?: { limit?: number; maxDocuments?: number }) => {
     if (!config.db) throw new Error("Release execution requires a database");
-    return executeDueReleases({ db: config.db, contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), resolveIdentity: config.resolveReleaseExecutionIdentity, schemaVersion: config.releaseExecutionSchemaVersion }, options);
+    return executeDueReleases({ db: config.db, contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), resolveIdentity: config.resolveReleaseExecutionIdentity, schemaVersion: config.releaseExecutionSchemaVersion, logger }, options);
   } });
 }
 

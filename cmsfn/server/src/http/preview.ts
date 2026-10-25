@@ -1,3 +1,4 @@
+import type { OperationContext } from '../logging/logger.js';
 /**
  * POST /cmsfn/preview/token — mint short-lived preview token (dataset + docIds bound).
  */
@@ -12,6 +13,7 @@ import { mintPreviewToken, validPreviewConfig } from "../preview/tokens.js";
 import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
 import { readJsonObject } from "./jsonBody.js";
 export interface PreviewTokenHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
+  logContext?: OperationContext;
   allowedDatasets?: readonly string[];
   /** When false or unset, return PREVIEW_NOT_CONFIGURED. */
   previewEnabled?: boolean;
@@ -58,6 +60,7 @@ export async function handlePreviewToken(
   }
 
   if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs", "content.realtime"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn preview capabilities are unavailable");
+  if (config.logContext) { config.logContext.dataset = ds; config.logContext.documentCount = docIds.length; }
   const result = mintPreviewToken(
     { secret: config.previewSecret, audience: config.previewOrigin, ttlSec: config.ttlSec },
     ds,

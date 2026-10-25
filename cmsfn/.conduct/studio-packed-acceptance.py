@@ -49,6 +49,9 @@ const server = createCmsfnServer(config);
 void server.readiness.then(result => { if (result.ok) result.result.capabilities.map(value => value.toUpperCase()); });
 const runDue: () => Promise<import("@cmsfn/server").DueReleaseResult> = () => server.executeDueReleases({ limit: 2, maxDocuments: 5 });
 void runDue;
+server.reportSessionEvent('session.login', { subject: 'verified-host-actor', succeeded: true });
+const loggingFailures: number = server.loggingStatus().failures;
+void loggingFailures;
 """)
 (out / 'consumer.cts').write_text("""import { App, boot } from '@cmsfn/studio';
 import { createElement } from 'react';

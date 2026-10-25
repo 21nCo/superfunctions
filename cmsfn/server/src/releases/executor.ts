@@ -1,3 +1,4 @@
+import { createLogger, type CmsfnLogger, type OperationContext } from '../logging/logger.js';
 import { randomUUID } from 'node:crypto';
 import type { Adapter } from '@superfunctions/db';
 import { err, ok, evaluatePermissions, type CmsfnRole, type CmsfnEnvelope, type CmsfnReleasePublishResult } from 'cmsfn';
@@ -18,6 +19,7 @@ export interface ReleaseExecutionIdentity {
   headers: NonNullable<RequestInit['headers']>;
 }
 export interface ReleaseExecutorConfig {
+  logger?: CmsfnLogger;
   db: Adapter;
   /** Deployment assertion: additive DDL/backfill completed and old writers drained. */
   schemaVersion?: 2;
@@ -41,6 +43,14 @@ function summary(releaseId: string, execution: ReleaseExecution): CmsfnReleasePu
 }
 /** Shared manual/scheduled claim. No timers are started until this explicit call. */
 export async function executeRelease(config: ReleaseExecutorConfig, input: RunInput, authorizeManual?: Authorize): Promise<CmsfnEnvelope<CmsfnReleasePublishResult>> {
+  if (input.origin !== 'scheduled') return executeReleaseOperation(config, input, authorizeManual);
+  const operation = (config.logger ?? createLogger()).operation('releases.publish', { dataset: input.dataset, releaseId: input.releaseId, origin: 'scheduled' });
+  try {
+    const result = await executeReleaseOperation(config, input, authorizeManual, operation.context);
+    operation.finish(result); return result;
+  } catch { const result = err('INTERNAL_ERROR', 'Release execution failed'); operation.finish(result); return result; }
+}
+async function executeReleaseOperation(config: ReleaseExecutorConfig, input: RunInput, authorizeManual?: Authorize, logContext?: OperationContext): Promise<CmsfnEnvelope<CmsfnReleasePublishResult>> {
   if (input.origin === 'scheduled' && config.schemaVersion !== 2) return err('CONFLICT', 'Release schedule migration is not ready');
   if (!config.allowedDatasets.includes(input.dataset)) return err('PERMISSION_DENIED', 'Permission denied');
   const maxDocuments = input.maxDocuments ?? 500;
@@ -54,6 +64,7 @@ export async function executeRelease(config: ReleaseExecutorConfig, input: RunIn
       if (config.resolveIdentity) {
         const resolved = await bounded(() => config.resolveIdentity!({ dataset: input.dataset, releaseId: input.releaseId }));
         if (!resolved || typeof resolved.subject !== 'string' || !resolved.subject.trim() || resolved.subject.length > 1024) { policyUnavailable = true; return false; }
+        if (logContext) logContext.subject = resolved.subject;
         if (!evaluatePermissions(resolved.roles, { dataset: input.dataset, type, action }) || !evaluatePermissions(resolved.roles, { dataset: input.dataset, type: '*', action: 'release.manage' })) return false;
         if (identity && identity.subject !== resolved.subject) { policyUnavailable = true; return false; }
         identity = resolved;

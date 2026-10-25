@@ -184,3 +184,50 @@ must start a new traversal; this is deterministic pagination, not a snapshot und
 concurrent writes. The producer does not include dataset on individual query rows: the
 CMS response binds it to the authorized query and rejects a conflicting dataset if one
 is supplied by the upstream. HTML/empty HTTP 401/403 responses are treated as denial.
+
+## Operational logging
+
+The server emits metadata-only attempt/result pairs for role upsert/delete, preview
+minting and manual or scheduled release publication. Each pair carries an operation ID;
+results distinguish success, denial/failure, partial publication and pending/uncertain
+execution. No raw documents, asset bytes, tokens, headers, role definitions, upstream
+error messages or per-document failure text are copied. Fields are allowlisted, strings
+are at most 512 UTF-8 bytes without control characters, and counts are bounded integers.
+Invalid metadata values are omitted rather than truncated into ambiguous identities.
+
+```ts
+const server = createCmsfnServer({
+  ...config,
+  resolveLogSubject: async (request, signal) => {
+    // Resolve a verified subject from your existing host session service.
+    return hostSessions.subject(request, { signal });
+  },
+  logging: { sink: (_level, message, metadata) => logger.info(message, metadata) },
+});
+```
+
+The sink uses the existing CMS logging interface; a host can connect its actual LogFn
+logger without a second logging framework or a mandatory dependency. LogFn's own
+privacy/retention/delivery settings remain authoritative. Its default redaction can
+remove subject metadata; configure only the exact safe leaves the deployment needs.
+Without a sink the server writes structured JSON to stdout. Subject enrichment is
+optional and bounded to 250 ms, with an aborted signal on timeout; failure omits the
+subject and does not change authorization. It never accepts an actor from request
+payloads or automatically trusts identity headers. Hosts needing complete actor records
+must supply the verified resolver. Scheduled records use the verified execution subject.
+
+Authentication routes are deployment-defined. After the host completes a login or
+logout, call `server.reportSessionEvent('session.login' | 'session.logout',
+{ subject, succeeded })` with verified metadata only. CMS does not invent a session or
+claim that this hook performs authentication.
+
+Synchronous sink throws and asynchronous rejection increment
+`server.loggingStatus().failures`; they never turn an already committed operation into
+a failed HTTP result that could trigger an unsafe retry. At most 128 asynchronous sink
+calls remain in flight; excess records increment the failure counter without queuing.
+`pending` reports these outstanding callbacks. Monitor these process-local counters and
+configure the host logger's own flush/shutdown policy. A non-cooperative host callback
+cannot be cancelled by CMS, and a synchronously blocking sink still blocks the process.
+This is bounded best-effort operational logging, not a durable audit outbox, external
+delivery acknowledgement or exactly-once guarantee. Existing ContentFn audit and release
+journals remain the authoritative durable operation records.

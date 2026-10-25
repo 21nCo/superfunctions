@@ -1,3 +1,4 @@
+import type { OperationContext } from '../logging/logger.js';
 /**
  * CmsFn role endpoints: POST list, upsert, delete.
  * Deterministic validation errors; envelope responses.
@@ -10,6 +11,7 @@ import { rolesList, rolesUpsert, rolesDelete } from "../storage/roles.js";
 import type { RolesStorageConfig } from "../storage/roles.js";
 
 export interface RolesHandlerConfig extends RolesStorageConfig {
+  logContext?: OperationContext;
   /** Must explicitly return true to allow role management; missing or failed authorization denies access. */
   authorizeRoles?: (req: IncomingMessage) => Promise<boolean>;
 }
@@ -64,7 +66,9 @@ export async function handleRolesUpsert(
   if (role == null) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "role is required", details: { path: "role" } } };
   }
-  return rolesUpsert(config, { role: role as import("cmsfn").CmsfnRole });
+  const result = await rolesUpsert(config, { role: role as import("cmsfn").CmsfnRole });
+  if (result.ok && config.logContext) config.logContext.roleId = result.result.role.id;
+  return result;
 }
 
 /**
@@ -83,5 +87,7 @@ export async function handleRolesDelete(
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "roleId is required", details: { path: "roleId" } } };
   }
   // Storage returns "Invalid roleId" for empty string (TV-ENV-ERR-001)
-  return rolesDelete(config, { roleId: String(roleId).trim() });
+  const result = await rolesDelete(config, { roleId: String(roleId).trim() });
+  if (result.ok && config.logContext) config.logContext.roleId = String(roleId).trim();
+  return result;
 }

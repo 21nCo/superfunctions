@@ -1,3 +1,4 @@
+import type { OperationContext } from '../logging/logger.js';
 /**
  * POST /cmsfn/releases/create, list, add, publish.
  * create/list/add require release.manage; publish requires release.manage and per-doc doc.publish + workflow.
@@ -15,6 +16,7 @@ import type { AuthorizeConfig } from "../auth/authorize.js";
 import type { CapabilityGateConfig } from "../contentfn/statusClient.js";
 import type { ReleaseExecutorConfig } from "../releases/executor.js";
 export interface ReleasesHandlerConfig extends AuthorizeConfig, CapabilityGateConfig {
+  logContext?: OperationContext;
   releasesStorage: ReleasesStorageConfig;
   contentfnBaseUrl: string;
   releaseExecutionSchemaVersion?: 2;
@@ -142,6 +144,7 @@ export async function handleReleasesPublish(
   if (!releaseId) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "releaseId is required", details: { path: "releaseId" } } };
   }
+  if (config.logContext) { config.logContext.dataset = dataset; config.logContext.releaseId = releaseId; }
   if (config.checkCapabilities && !await config.checkCapabilities(req, ["content.docs"])) return err("CONTENTFN_UNAVAILABLE", "ContentFn document capability is unavailable");
   return publishRelease(
     {

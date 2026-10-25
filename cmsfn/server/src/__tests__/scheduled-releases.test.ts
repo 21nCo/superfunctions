@@ -1,3 +1,4 @@
+import { createLogger } from '../logging/logger.js';
 import { expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect } from 'kysely';
@@ -228,4 +229,26 @@ it('keeps an empty due schedule unclaimed until documents are added, including a
   expect((await executeDueReleases(f.config)).results[0].outcome).toMatchObject({ ok: true, result: { published: ['one'], failures: [] } });
   expect(f.sent).toHaveLength(1);
   expect((await executeDueReleases(f.config)).results).toEqual([]);
+}));
+
+
+it('logs scheduled attempts, actual outcomes and trusted identity without draft or token data', async () => fixture(async f => {
+  const records: Record<string, unknown>[] = [];
+  f.config.logger = createLogger({sink: (_level, _message, meta) => { records.push(meta); }});
+  await f.create(['one','unapproved']);
+  await executeDueReleases(f.config);
+  expect(records).toHaveLength(2);
+  expect(records[0]).toMatchObject({action:'releases.publish',origin:'scheduled',phase:'attempt',dataset:'prod'});
+  expect(records[1]).toMatchObject({phase:'result',outcome:'partial',subject:'scheduler',publishedCount:1,failedCount:1});
+  expect(JSON.stringify(records)).not.toMatch(/approved-r1|Idempotency|headers|_cms/);
+  records.length=0; f.state.denied=true; await f.create(['two']);
+  await executeDueReleases(f.config);
+  expect(records[1]).toMatchObject({phase:'result',outcome:'failed',code:'PERMISSION_DENIED',subject:'scheduler'});
+}));
+
+it('keeps scheduled publication successful when an operational sink fails', async () => fixture(async f => {
+  const logger=createLogger({sink:()=>{throw new Error('sink-secret');}}); f.config.logger=logger;
+  await f.create(['one']);
+  expect((await executeDueReleases(f.config)).results[0].outcome).toMatchObject({ok:true,result:{published:['one']}});
+  expect(logger.status()).toEqual({failures:2,pending:0});
 }));
