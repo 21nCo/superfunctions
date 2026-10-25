@@ -35,7 +35,7 @@ See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic
 deduplication and at-least-once delivery; [retry strategies](docs/retry-strategies.md)
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
-D1, SQS and Kafka adapters are not implemented. Stream partition assignment outside PostgreSQL and Memory,
+D1, SQS and Kafka adapters are not implemented. Python stream partition assignment,
 distributed trace propagation and the original performance targets
 remain incomplete. Workflow ownership and scheduler coordination are durable on
 Redis and PostgreSQL. This package is not yet a production-readiness claim.
@@ -118,11 +118,23 @@ owned signals and releases current receipts; stale settlement cannot affect a
 successor. Visibility timeout for legacy unpartitioned Memory streams remains an
 unfinished behavior and is not implied by this partition support.
 
-Redis and Python partition support remains unfinished. The TypeScript
-stream API rejects configured partitioning or explicit partition publication
-when the adapter lacks this capability. PostgreSQL policy coordination adds
-transactional work to publication; stream throughput has not been qualified by
-this correctness acceptance.
+Redis supports the same immutable routing policy with independent group progress
+and Redis-clock receipt barriers. Global Redis Stream IDs and payload history are
+preserved; sparse partition indices contain IDs only. Trimming removes those
+indices together with history, while a live barrier survives until authorized
+settlement or expiry. A claim examines at most 64 populated partitions and advances
+its scan position, rather than allocating for every configured partition. Returned
+manual callbacks stop renewal while retaining expiry observation. Drain old writers
+before enabling partitioning: older binaries do not maintain these indices/barriers.
+Use a dedicated key prefix; external key mutation is outside the supported contract.
+Server persistence, failover and Redis Cluster acceptance are not established by
+local worker-crash tests. Retention and statistics work scales with populated
+partitions/retained IDs; no stream throughput guarantee follows from these tests.
+
+Python partition support remains unfinished. The TypeScript stream API rejects
+configured partitioning or explicit partition publication when the adapter lacks
+this capability. PostgreSQL policy coordination adds transactional work to
+publication; stream throughput has not been qualified by this correctness acceptance.
 
 Configured `maxLength` and millisecond `retention` policies run after publishing,
 before history reads, and before subscription acquisition. An idle stream's next

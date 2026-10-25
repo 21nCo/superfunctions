@@ -42,3 +42,28 @@ it('cannot revive an expired receipt after a late successful renewal reply', asy
   expect(lost).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('stops renewing a returned callback but retains expiry observation until settlement', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const renew = vi.fn<() => Promise<boolean>>().mockResolvedValue(true);
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), renew, lost);
+  await vi.advanceTimersByTimeAsync(30);
+  lease.stopRenewal();
+  await vi.advanceTimersByTimeAsync(89);
+  expect(renew).toHaveBeenCalledTimes(1);
+  expect(lost).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(lost).toHaveBeenCalledTimes(1);
+  expect(lease.controller.signal.aborted).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('rejects an already expired claim synchronously before a handler microtask can run', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now() - 91, async () => true, lost);
+  expect(lease.controller.signal.aborted).toBe(true);
+  expect(lost).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});

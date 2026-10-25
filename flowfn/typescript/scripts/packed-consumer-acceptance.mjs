@@ -23,7 +23,7 @@ try {
   });
   writeFileSync(join(fixture, 'package.json'), JSON.stringify({ name: 'flowfn-packed-acceptance', private: true, version: '1.0.0' }));
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tars]);
-  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', 'typescript@5.9.3', '@types/node@20', ...(process.env.FLOWFN_POSTGRES_URL ? ['pg@8.23.1'] : [])]);
+  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', 'typescript@5.9.3', '@types/node@20', ...(process.env.FLOWFN_POSTGRES_URL ? ['pg@8.23.1'] : []), ...(process.env.FLOWFN_REDIS_URL ? ['ioredis@5.11.1'] : [])]);
   npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
   const installed = JSON.parse(npm(['ls', '--omit=dev', '--all', '--json']));
   assert.ok(installed.dependencies['@flowfn/core']);
@@ -96,6 +96,12 @@ try {
     writeFileSync(join(fixture, 'partition-consumer.mjs'), readFileSync(new URL('./packed-partition-consumer.mjs', import.meta.url)));
     const result = spawnSync(process.execPath, ['partition-consumer.mjs'], { cwd: fixture, encoding: 'utf8', timeout: 30_000 });
     if (result.status !== 0) throw new Error(`Installed partition consumer failed\n${result.stdout}\n${result.stderr}`);
+    console.log(result.stdout.trim());
+  }
+  if (process.env.FLOWFN_REDIS_URL) {
+    writeFileSync(join(fixture, 'redis-partition-consumer.mjs'), readFileSync(new URL('./packed-redis-partition-consumer.mjs', import.meta.url)));
+    const result = spawnSync(process.execPath, ['redis-partition-consumer.mjs'], { cwd: fixture, encoding: 'utf8', timeout: 30_000 });
+    if (result.status !== 0) throw new Error(`Installed Redis partition consumer failed\n${result.stdout}\n${result.stderr}`);
     console.log(result.stdout.trim());
   }
   const audit = JSON.parse(npm(['audit', '--omit=dev', '--json']));

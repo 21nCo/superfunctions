@@ -1,3 +1,6 @@
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
+import { resolve } from 'node:path';
 import { queueReplyLeaseContract, queueExpiredReplyContract, queueReleasedReplyContract } from '../storage/queue-reply-lease-contract.js';
 import { queueClockContract } from '../storage/queue-clock-contract.js';
 import { workflowCancelContract } from '../storage/workflow-cancel-contract.js';
@@ -25,6 +28,173 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('persists keyed partition policy across independent clients and preserves global IDs', async () => {
+      const stream = new StreamImpl<number>('partition-policy', adapter, { partitions: 3 });
+      const first = await stream.publish(1, { key: 'tenantα' });
+      const peerRedis = new Redis(process.env.FLOWFN_REDIS_URL!);
+      const peer = new RedisAdapter({ connection: peerRedis, prefix });
+      const reopened = new StreamImpl<number>('partition-policy', peer);
+      try {
+        const second = await reopened.publish(2, { key: 'tenantα' });
+        expect((await reopened.getMessages('-', '+')).map(m => [m.id, m.partition])).toEqual([[first, 2], [second, 2]]);
+        expect(await reopened.getInfo()).toMatchObject({ partitions: 3, length: 2 });
+        await expect(new StreamImpl('partition-policy', peer, { partitions: 2 }).publish(3)).rejects.toThrow('immutable');
+        await expect(stream.publish(4, { partition: 3 })).rejects.toThrow('range');
+      } finally { await reopened.close(); await stream.close(); await peer.cleanup(); }
+    });
+    it('keeps a live partition exclusive while other partitions and groups progress', async () => {
+      const stream = new StreamImpl<number>('partition-order', adapter, { partitions: 2 });
+      const first = await stream.publish(1, { partition: 0 });
+      const later = await stream.publish(2, { partition: 0 });
+      const other = await stream.publish(3, { partition: 1 });
+      const held: Message[] = [], seen: Message[] = [], independent: string[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const owner = await adapter.consume('partition-order', 'g', 'owner', async m => { held.push(m); await gate; }, { groupId: 'g', fromBeginning: true, autoCommit: false, visibilityTimeout: 5000 });
+      await vi.waitFor(() => expect(held).toHaveLength(1));
+      const peerRedis = new Redis(process.env.FLOWFN_REDIS_URL!);
+      const peer = new RedisAdapter({ connection: peerRedis, prefix });
+      const follower = await peer.consume('partition-order', 'g', 'follower', async m => { seen.push(m); }, { groupId: 'g', fromBeginning: true, autoCommit: false, maxInFlight: 2, visibilityTimeout: 5000 });
+      const another = await peer.consume('partition-order', 'independent', 'another', async m => { independent.push(m.id); await m.ack(); }, { groupId: 'independent', fromBeginning: true, maxInFlight: 2 });
+      try {
+        await vi.waitFor(() => { expect(seen.map(m => m.id)).toEqual([other]); expect(independent).toHaveLength(3); });
+        expect(held[0].id).toBe(first);
+        await held[0].ack();
+        await vi.waitFor(() => expect(seen.map(m => m.id)).toEqual([other, later]));
+        await held[0].nack();
+        for (const message of seen) await message.ack();
+        expect(await peer.getStreamInfo('partition-order')).toMatchObject({ partitions: 2, groups: 2, lag: 0 });
+      } finally { release(); await owner.unsubscribe(); await follower.unsubscribe(); await another.unsubscribe(); await stream.close(); await peer.cleanup(); }
+    });
+    it('retains a partition barrier after trim without retaining or renewing its payload', async () => {
+      const stream = new StreamImpl('partition-trim', adapter, { partitions: 2 });
+      await stream.publish(1, { partition: 0 });
+      const held: Message[] = [], seen: Message[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const owner = await adapter.consume('partition-trim', 'g', 'owner', async m => { held.push(m); await gate; }, { groupId: 'g', fromBeginning: true, autoCommit: false, visibilityTimeout: 1000 });
+      await vi.waitFor(() => expect(held).toHaveLength(1));
+      const barriers = `${prefix}partition-barriers:${JSON.stringify(['partition-trim', 'g'])}`;
+      const expires = JSON.parse((await redis.hget(barriers, '0'))!).expires as number;
+      await stream.trim({ maxLength: 0 });
+      expect(await stream.getMessages('-', '+')).toEqual([]);
+      const later = await stream.publish(2, { partition: 0 });
+      const other = await stream.publish(3, { partition: 1 });
+      const follower = await adapter.consume('partition-trim', 'g', 'follower', async m => { seen.push(m); if (m.id === other) await m.ack(); }, { groupId: 'g', fromBeginning: true, autoCommit: false, maxInFlight: 2, visibilityTimeout: 1000 });
+      try {
+        await vi.waitFor(() => expect(seen.map(m => m.id)).toEqual([other]));
+        expect(JSON.parse((await redis.hget(barriers, '0'))!).expires).toBe(expires);
+        await vi.waitFor(() => expect(held[0].signal?.aborted).toBe(true));
+        expect(seen.map(m => m.id)).toEqual([other]);
+        await vi.waitFor(() => expect(seen.map(m => m.id)).toEqual([other, later]), { timeout: 2000 });
+        const time = await redis.time();
+        expect(Number(time[0]) * 1000 + Number(time[1]) / 1000).toBeGreaterThanOrEqual(expires);
+        const successor = await redis.hget(barriers, '0');
+        await held[0].ack();
+        expect(await redis.hget(barriers, '0')).toBe(successor);
+        expect(await stream.getInfo()).toMatchObject({ length: 2, lag: 1 });
+      } finally { release(); await owner.unsubscribe(); await follower.unsubscribe(); await stream.close(); }
+    });
+    it('expires returned unacknowledged partition callbacks and rejects delayed claim replies', async () => {
+      const stream = new StreamImpl('partition-expiry', adapter, { partitions: 1 });
+      const id = await stream.publish(1);
+      const control = adapter as unknown as { executeScript(source: string, keys: number, ...args: Array<string | number | Buffer>): Promise<unknown> };
+      const execute = control.executeScript.bind(adapter);
+      let delayed = false;
+      vi.spyOn(control, 'executeScript').mockImplementation(async (source, keys, ...args) => {
+        const result = await execute(source, keys, ...args);
+        if (source.includes('local storedGroup=') && Array.isArray(result) && result.length && !delayed) {
+          delayed = true;
+          // Tag only the delayed transport reply; the real Redis payload stays 1.
+          const fields = (result as Array<[string, string[]]>)[0][1];
+          fields[fields.indexOf('data') + 1] = JSON.stringify('expired-transport-reply');
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        return result;
+      });
+      const seen: Message[] = [];
+      const consumer = await adapter.consume('partition-expiry', 'g', 'owner', async m => { seen.push(m); if (seen.length === 2) await m.ack(); }, { groupId: 'g', fromBeginning: true, autoCommit: false, visibilityTimeout: 100 });
+      try {
+        await vi.waitFor(() => expect(seen).toHaveLength(2), { timeout: 2000 });
+        expect(delayed).toBe(true);
+        expect(seen.map(m => m.id)).toEqual([id, id]);
+        expect(seen.map(m => m.data)).toEqual([1, 1]);
+        expect(seen[0].signal?.aborted).toBe(true);
+        expect(seen[1].signal?.aborted).toBe(false);
+        expect(await stream.getInfo()).toMatchObject({ lag: 0 });
+      } finally { await consumer.unsubscribe(); await stream.close(); }
+    });
+    it('recovers a SIGKILL partition owner before its same-partition successor', async () => {
+      const stream = new StreamImpl('partition-crash', adapter, { partitions: 2 });
+      const first = await stream.publish(1, { partition: 0 });
+      const later = await stream.publish(2, { partition: 0 });
+      const other = await stream.publish(3, { partition: 1 });
+      const child = fork(resolve('scripts/partition-crash-worker.mjs'), [], {
+        env: { ...process.env, FLOWFN_PARTITION_CRASH_CONFIG: JSON.stringify({ provider: 'redis', prefix, stream: 'partition-crash', group: 'g' }) },
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      });
+      let errors = '';
+      child.stderr?.on('data', data => { errors += data; });
+      let subscription: import('../stream/types.js').Subscription | undefined;
+      const peer = new RedisAdapter({ connection: new Redis(process.env.FLOWFN_REDIS_URL!), prefix });
+      try {
+        const initial = await new Promise<unknown>((done, reject) => {
+          const timer = setTimeout(() => reject(new Error(`Partition child readiness timeout: ${errors}`)), 10_000);
+          child.once('message', value => { clearTimeout(timer); done(value); });
+          child.once('error', error => { clearTimeout(timer); reject(error); });
+          child.once('exit', code => { clearTimeout(timer); reject(new Error(`Partition child exited ${code}: ${errors}`)); });
+        });
+        expect(initial).toEqual({ id: first, partition: 0 });
+        const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+        expect(child.signalCode).toBe('SIGKILL');
+        const seen: string[] = [];
+        subscription = await peer.consume('partition-crash', 'g', 'successor', async m => { seen.push(m.id); await m.ack(); }, { groupId: 'g', fromBeginning: true, maxInFlight: 2, visibilityTimeout: 300 });
+        await vi.waitFor(() => expect(seen).toHaveLength(3), { timeout: 5000 });
+        expect(seen.filter(id => id !== other)).toEqual([first, later]);
+        await vi.waitFor(async () => expect(await peer.getStreamInfo('partition-crash')).toMatchObject({ partitions: 2, lag: 0 }));
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
+        await subscription?.unsubscribe(); await stream.close(); await peer.cleanup();
+      }
+    });
+    it('visits sparse partitions beyond a poll page and atomically trims their ID indices', async () => {
+      const stream = new StreamImpl<number>('partition-sparse', adapter, { partitions: 1000000 });
+      const ids: string[] = [];
+      for (let i = 0; i < 70; i++) ids.push(await stream.publish(i, { partition: i * 1000 }));
+      expect(await redis.zcard(`${prefix}partition-indices:partition-sparse`)).toBe(70);
+      const seen: number[] = [];
+      const consumer = await adapter.consume('partition-sparse', 'g', 'owner', async m => { seen.push(m.data); await m.ack(); }, { groupId: 'g', fromBeginning: true, maxInFlight: 70 });
+      try {
+        await vi.waitFor(() => expect(seen).toHaveLength(70));
+        expect(new Set(seen).size).toBe(70);
+        await vi.waitFor(async () => expect(await stream.getInfo()).toMatchObject({ lag: 0 }));
+        expect(await stream.trim({ maxLength: 3 })).toBe(67);
+        expect((await stream.getMessages('-', '+')).map(m => m.id)).toEqual(ids.slice(-3));
+        expect(await redis.zcard(`${prefix}partition-indices:partition-sparse`)).toBe(3);
+        expect(await stream.getInfo()).toMatchObject({ length: 3, groups: 1, lag: 0 });
+        expect(await stream.trim({ maxLength: 0 })).toBe(3);
+        expect(await redis.zcard(`${prefix}partition-indices:partition-sparse`)).toBe(0);
+        await expect(new StreamImpl('partition-sparse', adapter, { partitions: 2 }).publish(1)).rejects.toThrow('immutable');
+      } finally { await consumer.unsubscribe(); await stream.close(); }
+    });
+    it('serializes first partition policy creation and preserves legacy policy after trimming', async () => {
+      const peer = new RedisAdapter({ connection: new Redis(process.env.FLOWFN_REDIS_URL!), prefix });
+      try {
+        const outcomes = await Promise.allSettled([adapter.configureStream('partition-race', 2), peer.configureStream('partition-race', 3)]);
+        expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+        expect(outcomes.filter(result => result.status === 'rejected')).toHaveLength(1);
+        const count = await adapter.configureStream('partition-race');
+        expect([2, 3]).toContain(count);
+        expect(await peer.configureStream('partition-race')).toBe(count);
+        const legacy = new StreamImpl('partition-legacy', adapter);
+        await legacy.publish(1); await legacy.trim({ maxLength: 0 });
+        await expect(peer.configureStream('partition-legacy', 2)).rejects.toThrow('immutable');
+        await adapter.createConsumerGroup('partition-empty-group', 'g');
+        await expect(peer.configureStream('partition-empty-group', 2)).rejects.toThrow('immutable');
+        await expect(legacy.publish(2, { partition: 0 })).rejects.toThrow('configured');
+        await legacy.close();
+      } finally { await peer.cleanup(); }
+    });
     it.each([false, true])('delivers remote workflow cancellation across process ownership (restart=%s)', async restart => { await workflowCancelContract(adapter, 'redis', prefix, restart); });
     it('filters subscribers and group deliveries without losing history or retrying skipped messages', async () => { await streamFilterContract(adapter); });
     it('aborts active stream handlers on unsubscribe and requeues their receipt', async () => { await streamUnsubscribeContract(adapter); });

@@ -2,9 +2,11 @@
 export class DeliveryLease {
   readonly controller = new AbortController();
   private stopped = false;
+  private renewing = true;
   private deadlineTimer?: ReturnType<typeof setTimeout>;
   private renewalTimer?: ReturnType<typeof setTimeout>;
   constructor(private duration: number, acquiredAt: number, private renew: () => Promise<boolean>, private onLost: () => void) {
+    if (performance.now() >= acquiredAt + duration) { this.lose(); return; }
     this.deadline(acquiredAt + duration);
     this.schedule();
   }
@@ -13,7 +15,7 @@ export class DeliveryLease {
     this.deadlineTimer = setTimeout(() => this.lose(), Math.max(0, at - performance.now()));
   }
   private schedule(): void {
-    if (this.stopped) return;
+    if (this.stopped || !this.renewing) return;
     this.renewalTimer = setTimeout(() => void this.tick(), Math.max(1, this.duration / 3));
   }
   private async tick(): Promise<void> {
@@ -31,6 +33,11 @@ export class DeliveryLease {
     this.stop();
     this.controller.abort();
     this.onLost();
+  }
+  /** Keep expiry observation after the callback returns without settlement. */
+  stopRenewal(): void {
+    this.renewing = false;
+    if (this.renewalTimer) clearTimeout(this.renewalTimer);
   }
   stop(): void {
     this.stopped = true;

@@ -1,3 +1,4 @@
+import { RedisPartitions } from "../stream/redis-partitions.js";
 import { DeliveryLease } from '../stream/delivery-lease.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { createHash, randomUUID } from "node:crypto";
@@ -174,6 +175,7 @@ export interface RedisAdapterOptions {
 
 export class RedisAdapter implements FlowAdapter {
   private redis: Redis;
+  private partitions: RedisPartitions;
   private prefix: string;
   private subscriptions = new Set<Subscription>();
   private closed = false;
@@ -185,6 +187,7 @@ export class RedisAdapter implements FlowAdapter {
       this.redis = new Redis((options.connection as RedisOptions) || {});
     }
     this.prefix = options.prefix || "flowfn:";
+    this.partitions = new RedisPartitions(this.redis, (kind, name) => this.key(kind, name), (source, count, ...args) => this.executeScript(source, count, ...args));
   }
 
   private readonly scriptHashes = new Map<string, string>();
@@ -360,22 +363,13 @@ export class RedisAdapter implements FlowAdapter {
     }
   }
 
+  async configureStream(stream: string, count?: number): Promise<number | undefined> {
+    if (this.closed) throw new Error("Adapter is closed");
+    return this.partitions.configure(stream, count);
+  }
   async publish(stream: string, message: Message): Promise<string> {
     if (this.closed) throw new Error("Adapter is closed");
-    return (await this.redis.xadd(
-      this.key("stream", stream),
-      "*",
-      "data",
-      JSON.stringify(message.data),
-      "headers",
-      JSON.stringify(message.headers ?? {}),
-      "metadata",
-      JSON.stringify({
-        partition: message.partition,
-        key: message.key,
-        timestamp: message.timestamp,
-      }),
-    ))!;
+    return this.partitions.publish(stream, message);
   }
   private message(stream: string, id: string, fields: string[]): Message {
     const values: Record<string, string> = {};
@@ -464,17 +458,8 @@ export class RedisAdapter implements FlowAdapter {
     const key = this.key("stream", stream),
       retryKey = this.key("retry", JSON.stringify([stream, group])),
       tokenKey = this.key("delivery-tokens", JSON.stringify([stream, group]));
-    try {
-      await this.redis.xgroup(
-        "CREATE",
-        key,
-        group,
-        options.fromBeginning ? "0" : "$",
-        "MKSTREAM",
-      );
-    } catch (error) {
-      if (!(error as Error).message.includes("BUSYGROUP")) throw error;
-    }
+    const partitioned = (await this.partitions.ensureGroup(stream, group, options.fromBeginning ?? false)) !== undefined;
+    const pendingPartitions = new Map<string, string>();
     let active = true,
       paused = false,
       timer: ReturnType<typeof setTimeout> | undefined,
@@ -483,7 +468,8 @@ export class RedisAdapter implements FlowAdapter {
     const callbacks = new Set<string>();
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
-    const release = async (id: string, token: string, requeue: boolean) => {
+    const release = async (id: string, token: string, requeue: boolean, partition?: string) => {
+      if (partitioned) return this.partitions.settle(stream, group, partition!, id, token, requeue);
       return Boolean(await this.executeScript(`
 if redis.call('EXISTS',KEYS[1])==0 then redis.call('HDEL',KEYS[2],ARGV[2]); return 0 end
 local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
@@ -494,10 +480,11 @@ if ARGV[5]=='1' then redis.call('RPUSH',KEYS[3],ARGV[2]); return 1 end
 return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2])
 `, 3, key, tokenKey, retryKey, group, id, consumer, token, requeue ? '1' : '0', options.visibilityTimeout ?? 30000));
     };
-    const deliver = (id: string, fields: string[], token: string, acquiredAt: number) => {
+    const deliver = (id: string, fields: string[], token: string, acquiredAt: number, partition?: string) => {
+      if (partition !== undefined) pendingPartitions.set(token, partition);
       pending.set(id, token);
       callbacks.add(token);
-      const lease = new DeliveryLease(options.visibilityTimeout ?? 30000, acquiredAt, async () => Boolean(await this.executeScript(`
+      const lease = new DeliveryLease(options.visibilityTimeout ?? 30000, acquiredAt, async () => partitioned ? this.partitions.renew(stream, group, partition!, id, token, options.visibilityTimeout ?? 30000) : Boolean(await this.executeScript(`
 -- flowfn renew stream delivery
 if redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
 local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
@@ -507,14 +494,16 @@ return #claimed
 `, 2, key, tokenKey, group, id, consumer, token, options.visibilityTimeout ?? 30000)), () => {
         if (pending.get(id) === token) pending.delete(id);
         leases.delete(token);
+        pendingPartitions.delete(token);
       });
       leases.set(token, lease);
       const settle = async (requeue: boolean) => {
-        if (!active || pending.get(id) !== token) return;
-        const owned = await release(id, token, requeue);
+        if (!active || (!partitioned && pending.get(id) !== token)) return;
+        const owned = await release(id, token, requeue, partition);
         if (owned) lease.stop(); else lease.abort();
         leases.delete(token);
         if (pending.get(id) === token) pending.delete(id);
+        pendingPartitions.delete(token);
       };
       const message = {
         ...this.message(stream, id, fields),
@@ -541,7 +530,11 @@ return #claimed
           },
         )
         .catch(() => undefined)
-        .finally(() => { lease.stop(); leases.delete(token); callbacks.delete(token); });
+        .finally(() => {
+          if (partitioned && pending.get(id) === token) lease.stopRenewal();
+          else { lease.stop(); leases.delete(token); }
+          callbacks.delete(token);
+        });
     };
     const poll = async () => {
       if (!active || polling) return;
@@ -552,7 +545,7 @@ return #claimed
           if (room > 0) {
             const attempt = randomUUID();
             const acquiredAt = performance.now();
-            const messages = await this.executeScript(`
+            const messages = partitioned ? await this.partitions.claim(stream, group, room, options.visibilityTimeout ?? 30000, attempt) : await this.executeScript(`
 local messages={}
 -- A retry is claimable only after its previous token was released atomically.
 for i=1,tonumber(ARGV[3]) do
@@ -579,10 +572,12 @@ end
 for _,row in ipairs(messages) do redis.call('HSET',KEYS[2],row[1],ARGV[5]..':'..row[1]) end
 return messages
 `, 3, key, tokenKey, retryKey, group, consumer, room, options.visibilityTimeout ?? 30000, attempt) as Array<[string, string[]]>;
-            for (const [id, fields] of messages) {
-              const token = `${attempt}:${id}`;
-              if (active && !paused) deliver(id, fields, token, acquiredAt);
-              else await release(id, token, true);
+            for (const row of messages) {
+              const [id, fields] = row;
+              const token = partitioned ? String(row[2]) : `${attempt}:${id}`;
+              const partition = partitioned ? String(row[3]) : undefined;
+              if (active && !paused) deliver(id, fields, token, acquiredAt, partition);
+              else await release(id, token, true, partition);
             }
           }
         }
@@ -606,8 +601,9 @@ return messages
         for (const commit of commits) clearTimeout(commit);
         for (const lease of leases.values()) lease.abort();
         leases.clear();
-        await Promise.all([...pending].map(([id, token]) => release(id, token, true)));
+        await Promise.all([...pending].map(([id, token]) => release(id, token, true, pendingPartitions.get(token))));
         pending.clear();
+        pendingPartitions.clear();
         this.subscriptions.delete(subscription);
       },
     };
@@ -616,17 +612,8 @@ return messages
     return subscription;
   }
   async createConsumerGroup(stream: string, group: string): Promise<void> {
-    try {
-      await this.redis.xgroup(
-        "CREATE",
-        this.key("stream", stream),
-        group,
-        "$",
-        "MKSTREAM",
-      );
-    } catch (error) {
-      if (!(error as Error).message.includes("BUSYGROUP")) throw error;
-    }
+    if (this.closed) throw new Error("Adapter is closed");
+    await this.partitions.ensureGroup(stream, group, false);
   }
   async getMessages(
     stream: string,
@@ -653,6 +640,8 @@ return messages
     for (const value of [strategy.maxLength, strategy.maxAgeSeconds])
       if (value !== undefined && (!Number.isFinite(value) || value < 0))
         throw new Error("Invalid retention");
+    if (strategy.maxLength !== undefined && !Number.isInteger(strategy.maxLength)) throw new Error("maxLength must be integer");
+    if (await this.partitions.configure(stream) !== undefined) return this.partitions.trim(stream, strategy);
     const key = this.key("stream", stream);
     let removed = 0;
     if (strategy.maxLength !== undefined) {
@@ -762,6 +751,8 @@ local output=cjson.encode(next); redis.call('SET',KEYS[1],output); return output
   }
 
   async getStreamInfo(stream: string): Promise<StreamInfo> {
+    const count = await this.partitions.configure(stream);
+    if (count !== undefined) return this.partitions.info(stream, count);
     const key = this.key("stream", stream);
     const length = await this.redis.xlen(key);
     let groups = 0,
