@@ -1,0 +1,27 @@
+mcpfn/core/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_299e15ca470bc3 1-2,5-7,21-25
+package-lock.json
+  s_e1c5fc1a65c0cf::t_6da6481eb62408 16247,16254-16255
+mcpfn/core/scripts/verify-bundled-zod.mjs
+  s_e1c5fc1a65c0cf::t_d753ed9f9dcee5 1-28
+mcpfn/core/package.json
+  s_e1c5fc1a65c0cf::t_031591fbefd803 17,35
+mcpfn/.conduct/bundled-zod-security-readiness.md
+  s_e1c5fc1a65c0cf::t_b8240d1b2819ee 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4ce269404180b93f29785820b9da7eb0eeee3d3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
