@@ -125,3 +125,22 @@ than being truncated or reinterpreted. This is not a global archive-array cap. A
 restore or publish validates against the current schema and limit. Hosts upgrading from
 uncapped versions should retain readable archives, inspect oversized fields and either
 correct content or explicitly configure an appropriate limit before publication.
+
+### Literal patch paths
+
+Patch operations accept the existing dotted string path (`"section.title"`) or an
+explicit array of literal string segments (`["section", "literal.title"]`). A dot
+inside an array segment is part of the field name. Arrays are nonempty, contain
+nonempty strings, and reject `__proto__`, `prototype` and `constructor` at every
+level. Reserved document system fields remain immutable in either form. The server
+detaches segment arrays before awaiting authorization/storage; `ifRev` conflict
+semantics and schema validation remain unchanged. All patch operation kinds share
+this path contract. Existing array-operation semantics are unchanged.
+
+Realtime/webhook `changedPaths` remains a string array. Explicit paths whose segments
+fit the legacy dotted grammar retain that representation (`["section","title"]`
+becomes `"section.title"`). Paths containing literal dots or other non-legacy segment
+characters use a JSON-array string (`'["section","literal.title"]'`). Consumers
+filtering these fields should parse entries beginning with `[` as JSON segment arrays;
+ordinary field filters remain unchanged. Install this producer/core prerequisite
+before clients emit literal segment paths; older producers reject the new form.

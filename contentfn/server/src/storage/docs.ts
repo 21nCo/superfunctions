@@ -10,7 +10,7 @@ import type {
   ContentfnDocument,
   ContentfnPatchOp,
 } from "@contentfn/core";
-import { ok, err, validatePatch } from "@contentfn/core";
+import { ok, err, validatePatch, formatPatchPath } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
 import { generateRev } from "../rev/rev.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
@@ -302,19 +302,18 @@ export async function docPatch(
     ops: ContentfnPatchOp[];
   }
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
-  if ("transaction" in config.db) return atomicMutation(config.db, db => docPatch({ ...config, db }, input));
-  const exists = await datasetExists({ db: config.db }, input.dataset);
-  if (!exists) {
-    return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
-  }
-
   const validatedPatch = validatePatch(input);
   if (!validatedPatch.ok) return validatedPatch as ContentfnEnvelope<ContentfnDocument>;
-  for (const op of validatedPatch.result.ops) {
-    if (["_id", "_type", "_rev", "_createdAt", "_updatedAt", "_publishedAt"].includes(op.path.split(".")[0])) {
-      return err("PATCH_INVALID", "System fields cannot be modified", { path: op.path });
+  input = validatedPatch.result;
+  for (const op of input.ops) {
+    const first = typeof op.path === "string" ? op.path.split(".")[0] : op.path[0];
+    if (["_id", "_type", "_rev", "_createdAt", "_updatedAt", "_publishedAt"].includes(first)) {
+      return err("PATCH_INVALID", "System fields cannot be modified", { path: formatPatchPath(op.path) });
     }
   }
+  if ("transaction" in config.db) return atomicMutation(config.db, db => docPatch({ ...config, db }, input));
+  const exists = await datasetExists({ db: config.db }, input.dataset);
+  if (!exists) return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
   // Determine perspective from ID
   const isDraft = input.id.startsWith("drafts.");
   const table = isDraft ? CONTENTFN_TABLE_NAMES.docsDrafts : CONTENTFN_TABLE_NAMES.docsPublished;
@@ -396,6 +395,6 @@ export async function docPatch(
     }
   );
 
-  await appendEvent(config, { dataset: input.dataset, type: "doc.updated", docId: input.id, rev: newRev, changedPaths: input.ops.map(op => op.path) });
+  await appendEvent(config, { dataset: input.dataset, type: "doc.updated", docId: input.id, rev: newRev, changedPaths: input.ops.map(op => formatPatchPath(op.path)) });
   return ok(persistedDoc);
 }

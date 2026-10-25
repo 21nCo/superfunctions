@@ -2,21 +2,24 @@
  * ContentFn patch types (SPEC.md).
  */
 
+/** Strings retain dotted syntax; arrays address literal field names without splitting. */
+export type ContentfnPatchPath = string | string[];
+
 export type ContentfnPatchOp =
-  | { op: "set"; path: string; value: unknown }
-  | { op: "unset"; path: string }
-  | { op: "inc"; path: string; value: number }
-  | { op: "dec"; path: string; value: number }
+  | { op: "set"; path: ContentfnPatchPath; value: unknown }
+  | { op: "unset"; path: ContentfnPatchPath }
+  | { op: "inc"; path: ContentfnPatchPath; value: number }
+  | { op: "dec"; path: ContentfnPatchPath; value: number }
   | {
       op: "insert";
-      path: string;
+      path: ContentfnPatchPath;
       position: "before" | "after";
       ref: string;
       items: unknown[];
     }
   | {
       op: "splice";
-      path: string;
+      path: ContentfnPatchPath;
       index: number;
       deleteCount: number;
       items?: unknown[];
