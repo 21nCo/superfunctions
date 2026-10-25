@@ -1,0 +1,27 @@
+watchfn/.conduct/python-stored-funnels-readiness.md
+  s_e1c5fc1a65c0cf::t_7543562ac04fc3 35-44
+watchfn/python/tests/test_stored_funnels.py
+  s_e1c5fc1a65c0cf::t_1f472a158b967a 170-180
+watchfn/python/watchfn/business/stored_funnels.py
+  s_e1c5fc1a65c0cf::t_1e7c2734ced8fb 12,81-94,97,172,175
+watchfn/python/watchfn/query.py
+  s_e1c5fc1a65c0cf::t_73cf363ee19af1 184,222,224,226,277,284
+watchfn/scripts/funnel-cross-language-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_edff7be856a597 39-42,55-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b00ca2640016c999a39a2171da0bc6b2ac860eb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
