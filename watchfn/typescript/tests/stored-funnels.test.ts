@@ -94,3 +94,8 @@ it('keeps prior chains stable across simultaneous newer attempts',async()=>{
   expect((await watch.business.getFunnel({name:'ties',timeRange:{from:now,to:now+4}})).steps.map(row=>row.count)).toEqual([1,1,1]);
  }
 });
+
+it('rejects malformed Unicode filter scalars',async()=>{
+ const watch=create();
+ await expect(watch.business.createFunnel({name:'invalid',steps:[{event:'a',filters:{value:'\ud800'}},{event:'b'}],timeWindow:'1h'})).rejects.toThrow();
+});

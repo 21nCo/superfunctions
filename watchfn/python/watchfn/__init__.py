@@ -12,3 +12,6 @@ __all__ += ["get_alert_schema", "AlertConflict"]
 
 from .storage.log_index import get_log_index_schema
 __all__ += ['get_log_index_schema']
+
+from .business.stored_funnels import get_business_schema
+__all__ += ['get_business_schema']

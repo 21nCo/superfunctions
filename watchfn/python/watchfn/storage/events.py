@@ -1,7 +1,10 @@
-"""Validate native Event envelopes and the canonical TypeScript log envelope."""
+"""Validate native events and canonical owned business/log envelopes."""
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import math
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models import Event
 
@@ -9,10 +12,53 @@ _NATIVE = {'type', 'name', 'timestamp', 'properties', 'context'}
 _LEVELS = {'trace', 'debug', 'info', 'warn', 'error', 'fatal'}
 
 
+class CanonicalApplication(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(strict=True, min_length=1, max_length=255)
+
+    @field_validator('name')
+    @classmethod
+    def valid_name(cls, value):
+        if not value.strip() or len(value.encode('utf-16-le')) // 2 > 255:
+            raise ValueError('Invalid application identity')
+        value.encode('utf-8')
+        return value
+
+
+class CanonicalBusinessEvent(Event):
+    # Only these owned track envelopes gain app; ordinary Event serialization
+    # remains byte-shape compatible and does not acquire an app:null field.
+    model_config = ConfigDict(extra='forbid')
+    type: Literal['track'] = 'track'
+    name: str = Field(strict=True, min_length=1)
+    app: CanonicalApplication
+
+    @field_validator('timestamp')
+    @classmethod
+    def millisecond_precision(cls, value):
+        if value.tzinfo is None: raise ValueError('Canonical track timestamp requires timezone')
+        return value.replace(microsecond=(value.microsecond // 1000) * 1000)
+
+
+
 def decode_event(payload):
     value = json.loads(payload)
     if not isinstance(value, dict):
         raise ValueError('Unsupported stored event shape')
+    if value.get('type') == 'track' and 'app' in value:
+        if (set(value) - (_NATIVE | {'app'}) or not {'type', 'name', 'timestamp', 'properties', 'app'}.issubset(value)
+                or not isinstance(value['name'], str) or not value['name'].strip() or not isinstance(value['properties'], dict)):
+            raise ValueError('Unsupported canonical track shape')
+        stamp = value['timestamp']
+        if type(stamp) in (int, float):
+            if not math.isfinite(stamp): raise ValueError('Invalid canonical track timestamp')
+            stamp = datetime.fromtimestamp(math.trunc(stamp) / 1000, timezone.utc)
+        elif isinstance(stamp, str):
+            stamp = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        else: raise ValueError('Invalid canonical track timestamp')
+        if stamp.tzinfo is None: raise ValueError('Canonical track timestamp requires timezone')
+        value['timestamp'] = stamp.isoformat()
+        return CanonicalBusinessEvent.model_validate_json(json.dumps(value), strict=True)
     if not set(value) - _NATIVE:
         if not {'type', 'timestamp', 'properties', 'context'}.issubset(value):
             raise ValueError('Unsupported stored event shape')

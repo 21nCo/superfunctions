@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, overload
 from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
+from .business.stored_funnels import StoredFunnels
 from .query import Query, Aggregate
 from .trace.tracer import Tracer
 from .trace.queries import StoredTraceQuery
@@ -39,6 +40,7 @@ class WatchFn:
         self.batcher = Batcher(on_flush=self._flush_events)
         self._log_integrations = LogRegistrations(self)
         self.logs = Logs(self)
+        self.business = StoredFunnels(self)
 
         # Collectors
         self.system_metrics = SystemMetricsCollector(self)
@@ -104,6 +106,7 @@ class WatchFn:
                 self._alerts.start_storage()
         with self._trace_admission:
             self.is_started = True
+        self.business._callbacks.start()
         self.batcher.start()
         self._log_integrations.start()
         # Enable collectors based on config
@@ -120,9 +123,11 @@ class WatchFn:
 
     def stop(self):
         # Rejected callback shutdown must not partially detach another subsystem.
+        self.business._callbacks.assert_can_stop()
         self._log_integrations.assert_can_stop()
         if self._alerts is not None:
             self._alerts._callbacks.assert_can_stop()
+        self.business._callbacks.stop()
         self._log_integrations.stop()
         if self._alerts is not None:
             self._alerts._callbacks.stop()

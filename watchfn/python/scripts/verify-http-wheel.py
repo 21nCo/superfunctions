@@ -21,3 +21,7 @@ with tempfile.TemporaryDirectory(prefix="watchfn-http-wheel-") as temporary:
     env.pop("PYTHONPATH", None)
     subprocess.run([str(python), "-c", "import watchfn, sendfn, logfn; assert 'site-packages' in watchfn.__file__, watchfn.__file__; assert 'site-packages' in sendfn.__file__, sendfn.__file__; assert 'site-packages' in logfn.__file__, logfn.__file__; print(watchfn.__file__, sendfn.__file__)"], cwd=directory, env=env, check=True)
     subprocess.run([str(python), "-m", "pytest", "tests", "-q"], cwd=directory, env=env, check=True)
+
+    if env.get("WATCH_FUNNEL_WIRE_NODE"):
+        wire_env = dict(env, WATCH_PYTHON=str(python))
+        subprocess.run([env["WATCH_FUNNEL_WIRE_NODE"], str(root / "watchfn/scripts/funnel-cross-language-acceptance.mjs")], cwd=directory, env=wire_env, check=True)

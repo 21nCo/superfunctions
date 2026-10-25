@@ -22,7 +22,7 @@ const copy = <T>(value:T):T=>JSON.parse(JSON.stringify(value));
 function record(value:unknown):value is Record<string,unknown> {return !!value && typeof value==='object' && !Array.isArray(value) && [Object.prototype,null].includes(Object.getPrototypeOf(value));}
 function text(value:unknown,max=255):value is string {return typeof value==='string' && !!value.trim() && value.length<=max && Buffer.from(value,'utf8').toString('utf8')===value;}
 function field(value:unknown):asserts value is string {if(!text(value,255)||value.split('.').some(p=>!p||['__proto__','constructor','prototype'].includes(p))) throw new TypeError('Invalid funnel field');}
-function scalar(value:unknown):value is Scalar {return value===null||typeof value==='string'&&value.length<=1024||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value);}
+function scalar(value:unknown):value is Scalar {return value===null||typeof value==='string'&&value.length<=1024&&Buffer.from(value,'utf8').toString('utf8')===value||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value);}
 export function businessEvent(name:string,properties:unknown,app:string):Record<string,unknown> {
  if(!text(name)||!text(app)||!record(properties))throw new TypeError('Business events require a name and properties object');
  const serialized=JSON.stringify({type:'track',name,app:{name:app},timestamp:new Date(),properties});

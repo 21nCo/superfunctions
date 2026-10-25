@@ -7,6 +7,7 @@ from typing import cast
 from superfunctions.auth import AuthProvider, AuthSession, validate_auth_session
 from superfunctions.http import Request, Response, RouteContext
 from ..models import Event
+from ..storage.events import decode_event
 from ..query import Query, QueryValidationError
 from ..storage.memory_storage import MemoryStorage
 from ..storage.database import DatabaseStorage
@@ -86,6 +87,12 @@ class HttpHandlers:
                 raise ValueError()
             events = []
             for value in values:
+                if isinstance(value, dict) and 'app' in value:
+                    if len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')) > 65536: raise OverflowError()
+                    event = decode_event(json.dumps(value, ensure_ascii=False, allow_nan=False))
+                    if event.type != 'track' or event.model_dump().get('app') != {'name': self.watch.config.name}: raise ValueError()
+                    events.append(event)
+                    continue
                 if not isinstance(value, dict) or set(value) - {"name", "properties", "context", "type"}:
                     raise ValueError()
                 if value.get("type", "track") != "track" or not isinstance(value.get("name"), str) or not value["name"].strip():
