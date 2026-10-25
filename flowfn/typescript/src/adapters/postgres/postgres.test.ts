@@ -1,3 +1,6 @@
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
+import { resolve } from 'node:path';
 import { queueReplyLeaseContract, queueExpiredReplyContract, queueReleasedReplyContract } from '../../storage/queue-reply-lease-contract.js';
 import { queueClockContract } from '../../storage/queue-clock-contract.js';
 import { workflowCancelContract } from '../../storage/workflow-cancel-contract.js';
@@ -9,7 +12,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { getPostgresSchema } from "./schema.js";
 import { PostgresAdapter } from "./index.js";
 import { JobImpl } from "../../queue/job.js";
@@ -57,6 +60,158 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await adapter.cleanup();
       await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await pool.end();
+    });
+    it('persists partition routing and keeps a held key ordered while another partition progresses', async () => {
+      const stream = new StreamImpl<{ value: number }>('partitioned', adapter, { partitions: 3 });
+      const firstId = await stream.publish({ value: 1 }, { key: 'tenant-α' });
+      const secondId = await stream.publish({ value: 2 }, { key: 'tenant-α' });
+      const history = await stream.getMessages('-', '+');
+      expect(history.map(message => message.partition)).toEqual([2, 2]);
+      const otherId = await stream.publish({ value: 3 }, { partition: 0 });
+      const peerPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const peer = new PostgresAdapter({ schema, db: drizzle(peerPool), pollInterval: 10 });
+      const reopened = new StreamImpl<{ value: number }>('partitioned', peer);
+      const seen: string[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const first = stream.createConsumer('first', { groupId: 'partition-workers', fromBeginning: true, maxInFlight: 3 });
+      const second = reopened.createConsumer('second', { groupId: 'partition-workers', fromBeginning: true, maxInFlight: 3 });
+      const handler = async (message: import('../../stream/types.js').Message<{ value: number }>) => {
+        seen.push(message.id);
+        if (message.id === firstId) await gate;
+        await message.ack();
+      };
+      try {
+        await first.subscribe(handler); await second.subscribe(handler);
+        await vi.waitFor(() => expect(seen).toContain(otherId));
+        expect(seen).toContain(firstId);
+        expect(seen).not.toContain(secondId);
+        release();
+        await vi.waitFor(() => expect(seen).toContain(secondId));
+        const reopenedId = await reopened.publish({ value: 4 }, { key: 'tenant-α' });
+        expect((await reopened.getMessages(reopenedId, reopenedId))[0].partition).toBe(2);
+        const conflict = new StreamImpl('partitioned', peer, { partitions: 4 });
+        await expect(conflict.publish({})).rejects.toThrow(/partition/i);
+        await conflict.close();
+      } finally { release(); await first.close(); await second.close(); await stream.close(); await reopened.close(); await peer.cleanup(); await peerPool.end(); }
+    });
+    it('atomically fixes partition policy and rejects legacy or invalid publications without writes', async () => {
+      const peer = new PostgresAdapter({ schema, db: drizzle(pool) });
+      try {
+        const results = await Promise.allSettled([adapter.configureStream('policy', 3), peer.configureStream('policy', 4)]);
+        expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+        const count = await adapter.configureStream('policy');
+        expect([3, 4]).toContain(count);
+        const stream = new StreamImpl('policy', peer);
+        for (const partition of [-1, count!, 0.5]) await expect(stream.publish({}, { partition })).rejects.toThrow(/partition/i);
+        await expect(stream.publish({}, { key: '\ud800' })).rejects.toThrow(/Unicode/);
+        expect(await stream.getInfo()).toMatchObject({ length: 0, groups: 0, lag: 0 });
+        const legacy = new StreamImpl('legacy-policy', adapter);
+        await legacy.publish({ retained: true });
+        await expect(adapter.configureStream('legacy-policy', 2)).rejects.toThrow(/migration/);
+        expect(await legacy.getMessages('-', '+')).toHaveLength(1);
+        await stream.close(); await legacy.close();
+      } finally { await peer.cleanup(); }
+    });
+    it('retains independent partition cursors across reopen, initial cutoffs, ranges and trimming', async () => {
+      const stream = new StreamImpl<{ value: number }>('partition-progress', adapter, { partitions: 2 });
+      const old = [await stream.publish({ value: 0 }, { partition: 0 }), await stream.publish({ value: 1 }, { partition: 1 })];
+      const seen: string[] = [];
+      const first = stream.createConsumer('first', { groupId: 'progress', maxInFlight: 2 });
+      await first.subscribe(async message => { seen.push(message.id); await message.ack(); });
+      const published = [await stream.publish({ value: 2 }, { partition: 0 }), await stream.publish({ value: 3 }, { partition: 1 })];
+      await vi.waitFor(() => expect(seen).toHaveLength(2));
+      expect(seen.sort()).toEqual([...published].sort());
+      await first.close();
+      const peerPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const peer = new PostgresAdapter({ schema, db: drizzle(peerPool), pollInterval: 10 });
+      const reopened = new StreamImpl<{ value: number }>('partition-progress', peer);
+      const second = reopened.createConsumer('second', { groupId: 'progress', fromBeginning: true, maxInFlight: 2 });
+      try {
+        await second.subscribe(async message => { seen.push(message.id); await message.ack(); });
+        const last = await reopened.publish({ value: 4 }, { partition: 0 });
+        await vi.waitFor(() => expect(seen).toHaveLength(3));
+        expect(seen).toContain(last);
+        expect(seen.some(id => old.includes(id))).toBe(false);
+        expect((await reopened.getMessages(published[0], last)).map(message => message.data.value)).toEqual([2, 3, 4]);
+        await second.close();
+        expect(await reopened.trim({ maxLength: 3 })).toBe(2);
+        expect(await reopened.getInfo()).toMatchObject({ length: 3, groups: 1, lag: 0 });
+        const replay: number[] = [];
+        expect(await reopened.replay(0, async message => { replay.push(message.data.value); })).toBe(3);
+        expect(replay).toEqual([2, 3, 4]);
+      } finally { await second.close(); await reopened.close(); await stream.close(); await peer.cleanup(); await peerPool.end(); }
+    });
+    it('fences expired partition receipts without allowing a later key to pass its successor', async () => {
+      const stream = new StreamImpl('partition-fence', adapter, { partitions: 2 });
+      const firstId = await stream.publish({}, { partition: 0 });
+      const laterId = await stream.publish({}, { partition: 0 });
+      const otherId = await stream.publish({}, { partition: 1 });
+      const old: import('../../stream/types.js').Message[] = [];
+      const next: import('../../stream/types.js').Message[] = [];
+      let releaseOld!: () => void, releaseNext!: () => void;
+      const oldGate = new Promise<void>(resolve => { releaseOld = resolve; });
+      const nextGate = new Promise<void>(resolve => { releaseNext = resolve; });
+      const peerPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const peer = new PostgresAdapter({ schema, db: drizzle(peerPool), pollInterval: 10 });
+      let successor: import('../../stream/types.js').Subscription | undefined;
+      const original = await adapter.consume('partition-fence', 'fenced', 'old', async message => { old.push(message); await oldGate; }, { groupId: 'fenced', fromBeginning: true, maxInFlight: 1, autoCommit: false, visibilityTimeout: 5000 });
+      try {
+        await vi.waitFor(() => expect(old).toHaveLength(1));
+        expect(old[0].id).toBe(firstId);
+        await pool.query(`UPDATE "${schema}".flowfn_deliveries SET delivered_at=0 WHERE message_id=$1`, [firstId]);
+        successor = await peer.consume('partition-fence', 'fenced', 'new', async message => {
+          next.push(message);
+          if (message.id === firstId) await nextGate;
+          else await message.ack();
+        }, { groupId: 'fenced', fromBeginning: true, maxInFlight: 2, autoCommit: false, visibilityTimeout: 5000 });
+        await vi.waitFor(() => expect(next.map(message => message.id)).toContain(otherId));
+        expect(next.map(message => message.id)).toContain(firstId);
+        expect(next.map(message => message.id)).not.toContain(laterId);
+        await old[0].ack();
+        expect((await pool.query(`SELECT consumer_id,state FROM "${schema}".flowfn_deliveries WHERE message_id=$1`, [firstId])).rows[0]).toEqual({ consumer_id: 'new', state: 'active' });
+        await next.find(message => message.id === firstId)!.ack();
+        releaseNext();
+        await vi.waitFor(() => expect(next.map(message => message.id)).toContain(laterId));
+      } finally { releaseOld(); releaseNext(); await original.unsubscribe(); await successor?.unsubscribe(); await stream.close(); await peer.cleanup(); await peerPool.end(); }
+    });
+    it('recovers the same partition message after SIGKILL before delivering its successor', async () => {
+      const stream = new StreamImpl('partition-crash', adapter, { partitions: 2 });
+      const first = await stream.publish({}, { partition: 0 });
+      const later = await stream.publish({}, { partition: 0 });
+      const other = await stream.publish({}, { partition: 1 });
+      const child = fork(resolve('scripts/partition-crash-worker.mjs'), [], {
+        env: { ...process.env, FLOWFN_PARTITION_CRASH_CONFIG: JSON.stringify({ schema, stream: 'partition-crash', group: 'crash-group' }) },
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      });
+      let errors = '';
+      child.stderr?.on('data', data => { errors += data; });
+      let subscription: import('../../stream/types.js').Subscription | undefined;
+      const peerPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const peer = new PostgresAdapter({ schema, db: drizzle(peerPool), pollInterval: 10 });
+      try {
+        const initial = await new Promise<unknown>((done, reject) => {
+          const timer = setTimeout(() => reject(new Error(`Partition child readiness timeout: ${errors}`)), 10_000);
+          child.once('message', value => { clearTimeout(timer); done(value); });
+          child.once('error', error => { clearTimeout(timer); reject(error); });
+          child.once('exit', code => { clearTimeout(timer); reject(new Error(`Partition child exited ${code}: ${errors}`)); });
+        });
+        expect(initial).toEqual({ id: first, partition: 0 });
+        const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+        expect(child.signalCode).toBe('SIGKILL');
+        const seen: string[] = [];
+        subscription = await peer.consume('partition-crash', 'crash-group', 'successor', async message => {
+          seen.push(message.id); await message.ack();
+        }, { groupId: 'crash-group', fromBeginning: true, maxInFlight: 2, autoCommit: false, visibilityTimeout: 300 });
+        await vi.waitFor(() => expect(seen).toHaveLength(3), { timeout: 5000 });
+        expect(seen).toContain(other);
+        expect(seen.filter(id => id !== other)).toEqual([first, later]);
+        expect(await peer.getStreamInfo('partition-crash')).toMatchObject({ partitions: 2, groups: 1, lag: 0 });
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
+        await subscription?.unsubscribe(); await stream.close(); await peer.cleanup(); await peerPool.end();
+      }
     });
     it('installs the matching claim index on an existing schema without rewriting queued jobs', async () => {
       await adapter.enqueue('index-upgrade', new JobImpl('work', { retained: true }, { jobId: 'retained', lifo: true, priority: 4 }));
@@ -145,11 +300,16 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       const started = new Promise<void>(resolve => { began = resolve; });
       const slow = new PostgresAdapter({ schema, db: {
         execute: db.execute.bind(db),
-        transaction: (callback: (tx: unknown) => Promise<unknown>) => db.transaction(async tx => {
-          began();
-          await gate;
-          return callback(tx);
-        }),
+        transaction: (callback: (tx: unknown) => Promise<unknown>) => db.transaction(async tx => callback({
+          execute: async (statement: Parameters<typeof tx.execute>[0]) => {
+            const query = typeof statement === 'string' ? statement : new PgDialect().sqlToQuery(statement.getSQL()).sql;
+            // Hold the polling ownership transaction, not group initialization.
+            if (query.startsWith('SELECT id FROM') && query.includes('flowfn_consumer_groups') && query.includes('FOR UPDATE')) {
+              began(); await gate;
+            }
+            return tx.execute(statement);
+          },
+        })),
       } });
       let stopping: Promise<void> | undefined;
       try {
@@ -407,7 +567,7 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
   CREATE TABLE "${schema}".flowfn_jobs(id text PRIMARY KEY,queue text,name text,state text,data jsonb,opts jsonb,timestamp bigint,delay bigint,attempts_made integer,progress integer,return_value jsonb,processed_on bigint,finished_on bigint,failed_reason text,stacktrace jsonb);
   INSERT INTO "${schema}".flowfn_jobs VALUES ('legacy-job','queue','task','completed','{"input":1}','{}',100,0,1,100,'42',110,120,NULL,'[]');
   CREATE TABLE "${schema}".flowfn_messages(id text PRIMARY KEY,stream text,data jsonb,headers jsonb,timestamp bigint,partition integer,key text);
-  INSERT INTO "${schema}".flowfn_messages VALUES ('legacy-message','stream','{"message":1}','{}',100,NULL,NULL);`);
+  INSERT INTO "${schema}".flowfn_messages VALUES ('legacy-message','stream','{"message":1}','{}',100,NULL,NULL),('legacy-label','stream','{"message":2}','{}',101,7,'historical');`);
       await expect(adapter.initialize()).rejects.toThrow("Legacy");
       await adapter.migrateLegacySchema();
       expect(await adapter.getJob("queue", "legacy-job")).toMatchObject({
@@ -419,6 +579,8 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       expect((await adapter.getMessages("stream", "-", "+"))[0].data).toEqual({
         message: 1,
       });
+      expect((await adapter.getMessages("stream", "-", "+"))[1]).toMatchObject({ partition: 7, key: 'historical' });
+      await expect(adapter.configureStream('stream', 8)).rejects.toThrow(/migration/);
       expect(
         (await pool.query(`SELECT data FROM "${schema}".flowfn_jobs_legacy_v0`))
           .rows[0].data,

@@ -1,3 +1,4 @@
+import { validatePartitions } from './partition.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { OperationObserver } from '../instrumentation.js';
 import { randomUUID } from "node:crypto";
@@ -22,6 +23,7 @@ export class StreamImpl<T = any> implements Stream<T> {
   private closed = false;
   private closing?: Promise<void>;
   private count = 0;
+  private configuration?: Promise<void>;
   constructor(
     public name: string,
     private adapter: FlowAdapter,
@@ -29,16 +31,30 @@ export class StreamImpl<T = any> implements Stream<T> {
     private record?: (metric: string, value: number) => void,
     private observer = new OperationObserver(),
   ) {
+    if (options.partitions !== undefined) validatePartitions(options.partitions);
     for (const value of [options.maxLength, options.retention])
       if (value !== undefined && (!Number.isFinite(value) || value < 0))
         throw new Error("Stream retention must be nonnegative");
     if (options.maxLength !== undefined && !Number.isInteger(options.maxLength))
       throw new Error("Stream maxLength must be an integer");
   }
+  private configure(): Promise<void> {
+    if (!this.configuration) {
+      if (this.options.partitions !== undefined && !this.adapter.configureStream)
+        return Promise.reject(new Error('Adapter does not support durable stream partitioning'));
+      this.configuration = Promise.resolve(this.adapter.configureStream?.(this.name, this.options.partitions)).then(() => undefined);
+      void this.configuration.catch(() => { this.configuration = undefined; });
+    }
+    return this.configuration;
+  }
   private open() {
     if (this.closed) throw new Error("Stream is closed");
   }
   async publish(data: T, options: PublishOptions = {}): Promise<string> {
+    this.open();
+    if (options.partition !== undefined && !this.adapter.configureStream)
+      throw new Error('Adapter does not support durable stream partitioning');
+    await this.configure();
     this.open();
     const message: Message<T> = {
       id: randomUUID(),
@@ -58,6 +74,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     return id;
   }
   private async applyRetention(): Promise<void> {
+    await this.configure();
     if (this.options.maxLength === undefined && this.options.retention === undefined) return;
     await this.trim({ maxLength: this.options.maxLength, maxAgeSeconds: this.options.retention === undefined ? undefined : this.options.retention / 1000 });
   }
@@ -178,6 +195,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     return { ...info, name: this.name };
   }
   async trim(strategy: TrimStrategy): Promise<number> {
+    await this.configure();
     if (!this.adapter.trimStream)
       throw new Error("Adapter does not support retained stream trimming");
     const removed = await this.adapter.trimStream(this.name, strategy);

@@ -1,0 +1,23 @@
+# PostgreSQL stream partitioning checkpoint
+
+The original P0 event-stream requirement in `SPEC.md` includes partitioning and a keyed `partitions: 3` example. Before this change, the count was ignored and native publication returned no assigned partition. The new native routing test reproduced that failure before implementation.
+
+This checkpoint implements the TypeScript PostgreSQL provider, not complete cross-provider/language partition support. The policy persists a positive immutable count and `sha256-utf8-u32be-v1` routing version. Routing uses exact UTF-8 bytes and independent Python hashlib-derived vectors. A configured stream maintains independent per-group/per-partition positions while retaining global append positions, UUID identities, history ranges and retention semantics. The existing group transaction and receipt machinery provide one authoritative delivery per partition/group; an outstanding receipt blocks only its partition. Arbitrary uncooperative external effects remain at least once.
+
+## Deployment and compatibility
+
+`initialize()` adds `flowfn_stream_policies` and `flowfn_partition_progress`; equivalent Drizzle schema metadata is exported. Install these tables before using the new adapter. Drain older writers before configuring partitioned streams: they do not participate in the stream policy protocol. New cooperating writers serialize first configuration, publication and group creation through the same PostgreSQL transaction advisory lock. A conflicting count, unknown routing version or populated legacy stream cannot be silently reconfigured.
+
+Legacy streams remain unpartitioned. The stopped-writer legacy import preserves historical partition labels (including null and explicit numeric labels) without claiming that these labels provide partition scheduling. There is no supported repartitioning migration in this checkpoint. Do not edit policy rows while writers are active. Public global numeric offsets retain the existing JavaScript integer-range limitation.
+
+Memory and Redis do not yet implement this capability; the TypeScript stream API rejects requested counts and explicit partition publication on unsupported adapters. Python still lacks the production partition implementation. D1/SQS/Kafka, provider parity, installed deployment acceptance and original performance targets remain open. Publication now performs transactional policy coordination; stream throughput has not been qualified by this correctness suite.
+
+## Validation
+
+Owned loopback PostgreSQL 16.13 and Redis 8.10.2 ran the unchanged native provider suites plus five new PostgreSQL partition cases. The final run passed **91 tests in two files**, 28.04 seconds, under Vitest 4.1.12. Cases cover independent connections and reopen, concurrent immutable policy establishment, invalid publication without writes, keyed blocking with another partition progressing, original group cutoffs, range and trim behavior, stale receipts, and actual child SIGKILL followed by same-message recovery before its partition successor.
+
+The first full run passed 90 tests but timed out in an existing cleanup fixture that deliberately delayed every transaction. Transactional group initialization now also passed through that fixture, preventing subscription acquisition from completing. The fixture now delays the actual polling claim's group-row lock rather than initialization; it still proves cleanup waits for the held transaction. The final native run includes this corrected assertion.
+
+Routing and stream lifecycle tests passed 20 cases, including rejection of unsupported partitioning without stored messages. Final source and test typechecks passed. The full source suite passed **179 tests**, with **91 native tests skipped** because that separate invocation had no provider URLs; those same native cases passed in the owned-provider run above. ESM/CJS and declaration builds passed. Built ESM and CJS consumers imported `getPostgresSchema` and verified the namespaced policy table and composite partition-progress primary key. This is built-output evidence, not a fresh installed-package or deployed-service acceptance.
+
+Final native cleanup stopped owned Redis/PostgreSQL PIDs 96614 and 96615 and removed/read back the private `flow-owned-native-myxf0n9x` cluster directory. Earlier failed-run processes and private clusters were also stopped and removed by the harness. No external service, deployed provider or account resources were used. An earlier unrelated Docker failed-create absence remains unverified as documented in the performance receipt; this test used native binaries and did not alter Docker settings.

@@ -10,6 +10,8 @@ import {
   bigserial,
   primaryKey,
   index,
+  integer,
+  check,
 } from "drizzle-orm/pg-core";
 /** Current adapter tables. Legacy tables require migrateLegacySchema(); intermediate queues require migrateQueueOrderingSchema(). */
 export function getPostgresSchema(namespace?: string) {
@@ -44,6 +46,17 @@ export function getPostgresSchema(namespace?: string) {
       ),
     }),
   );
+  const streamPolicies = table('flowfn_stream_policies', {
+    stream: text('stream').primaryKey(),
+    partitions: integer('partitions'),
+    routing: text('routing'),
+  }, value => ({ positive: check('flowfn_stream_policies_partitions_check', sql`${value.partitions}>0`) }));
+  const partitionProgress = table('flowfn_partition_progress', {
+    stream: text('stream').notNull(),
+    groupId: text('group_id').notNull(),
+    partition: integer('partition').notNull(),
+    lastOffset: bigint('last_offset', { mode: 'number' }).notNull(),
+  }, value => ({ pk: primaryKey({ columns: [value.stream, value.groupId, value.partition] }) }));
   const messages = table(
     "flowfn_messages",
     {
@@ -90,7 +103,7 @@ export function getPostgresSchema(namespace?: string) {
     workflowId: text("workflow_id").notNull(),
     state: jsonb("state").notNull(),
   });
-  return { jobs, messages, consumerGroups, deliveries, workflowExecutions };
+  return { jobs, messages, consumerGroups, deliveries, workflowExecutions, streamPolicies, partitionProgress };
 }
 export const {
   jobs,
@@ -98,4 +111,6 @@ export const {
   consumerGroups,
   deliveries,
   workflowExecutions,
+  streamPolicies,
+  partitionProgress,
 } = getPostgresSchema();

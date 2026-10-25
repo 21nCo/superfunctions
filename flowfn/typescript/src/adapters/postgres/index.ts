@@ -1,3 +1,4 @@
+import { PARTITION_ROUTING, partitionFor, validatePartitions } from '../../stream/partition.js';
 import { DeliveryLease } from '../../stream/delivery-lease.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../../core/shutdown.js';
 import { randomUUID, createHash } from "node:crypto";
@@ -64,6 +65,8 @@ export class PostgresAdapter implements FlowAdapter {
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_jobs (queue text NOT NULL,id text NOT NULL,name text NOT NULL,state text NOT NULL,priority double precision NOT NULL DEFAULT 0,available_at bigint NOT NULL,timestamp bigint NOT NULL,finished_on bigint,data jsonb NOT NULL,enqueue_order bigserial UNIQUE NOT NULL,PRIMARY KEY(queue,id));
 CREATE INDEX IF NOT EXISTS flowfn_jobs_ready ON "${this.schema}".flowfn_jobs(queue,state,available_at);
 CREATE INDEX IF NOT EXISTS flowfn_jobs_claim_order ON "${this.schema}".flowfn_jobs(queue,priority DESC,(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN 0 ELSE 1 END),(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN enqueue_order END) DESC,enqueue_order ASC) WHERE state IN ('waiting','delayed');
+CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_stream_policies (stream text PRIMARY KEY,partitions integer CHECK(partitions>0),routing text);
+CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_partition_progress (stream text NOT NULL,group_id text NOT NULL,partition integer NOT NULL,last_offset bigint NOT NULL,PRIMARY KEY(stream,group_id,partition));
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_messages (id text PRIMARY KEY,stream text NOT NULL,position bigserial UNIQUE,timestamp bigint NOT NULL,data jsonb NOT NULL);
 CREATE INDEX IF NOT EXISTS flowfn_messages_stream_offset ON "${this.schema}".flowfn_messages(stream,position);
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_consumer_groups (id text PRIMARY KEY,stream text NOT NULL,group_id text NOT NULL,last_offset bigint NOT NULL);
@@ -166,8 +169,11 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
       for (const row of (snapshots.flowfn_messages ?? []).sort(
         (a, b) =>
           Number(a.timestamp) - Number(b.timestamp) || a.id.localeCompare(b.id),
-      ))
-        await destination.publish(row.stream, {
+      )) {
+        // Historical partition labels were not routing/ownership guarantees.
+        // Preserve them as legacy data rather than silently repartitioning it.
+        await tx.execute(sql`INSERT INTO ${this.table('flowfn_stream_policies')} (stream,partitions,routing) VALUES (${row.stream},NULL,NULL) ON CONFLICT DO NOTHING`);
+        await destination.appendMessage(tx, row.stream, {
           id: row.id,
           stream: row.stream,
           data: row.data,
@@ -178,6 +184,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
           ack: async () => {},
           nack: async () => {},
         });
+      }
       for (const row of snapshots.flowfn_workflow_executions ?? []) {
         const state = row.state?.__flowfnExecution ?? {
           id: row.id,
@@ -379,17 +386,56 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
       stats[row.state as keyof QueueStats] = Number(row.count);
     return stats;
   }
+  private async streamPolicy(stream: string, tx: any = this.db): Promise<number | undefined> {
+    const rows = await this.rows(sql`SELECT partitions,routing FROM ${this.table('flowfn_stream_policies')} WHERE stream=${stream}`, tx);
+    const policy = rows[0];
+    if (!policy) return undefined;
+    if (policy.partitions === null) {
+      if (policy.routing !== null) throw new Error('Invalid legacy stream partition policy');
+      return undefined;
+    }
+    validatePartitions(policy.partitions);
+    if (policy.routing !== PARTITION_ROUTING) throw new Error('Unsupported stream partition routing version');
+    return policy.partitions;
+  }
+  private async lockStream(stream: string, tx: any): Promise<void> {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([this.schema, 'stream-policy', stream])},0))`);
+  }
+  async configureStream(stream: string, partitions?: number): Promise<number | undefined> {
+    if (this.closed) throw new Error('Adapter is closed');
+    if (partitions === undefined) return this.streamPolicy(stream);
+    validatePartitions(partitions);
+    return this.db.transaction(async (tx: any) => {
+      await this.lockStream(stream, tx);
+      const existing = await this.rows(sql`SELECT partitions FROM ${this.table('flowfn_stream_policies')} WHERE stream=${stream}`, tx);
+      if (existing.length) {
+        const current = await this.streamPolicy(stream, tx);
+        if (current !== partitions) throw new Error('Stream partition policy is immutable; stopped-writer migration required');
+        return current;
+      }
+      const populated = await this.rows(sql`SELECT EXISTS(SELECT 1 FROM ${this.table('flowfn_messages')} WHERE stream=${stream}) OR EXISTS(SELECT 1 FROM ${this.table('flowfn_consumer_groups')} WHERE stream=${stream}) AS present`, tx);
+      if (populated[0].present) throw new Error('Legacy stream partition migration required before configuration');
+      await tx.execute(sql`INSERT INTO ${this.table('flowfn_stream_policies')} (stream,partitions,routing) VALUES (${stream},${partitions},${PARTITION_ROUTING})`);
+      return partitions;
+    });
+  }
   async publish(stream: string, message: Message): Promise<string> {
     if (this.closed) throw new Error("Adapter is closed");
-    const payload = Object.fromEntries(
-      Object.entries(message).filter(
-        ([, value]) => typeof value !== "function",
-      ),
-    );
-    await this.db.execute(
-      sql`INSERT INTO ${this.table("flowfn_messages")} (id,stream,timestamp,data) VALUES (${message.id},${stream},${message.timestamp},${JSON.stringify(payload)}::jsonb)`,
-    );
+    await this.db.transaction(async (tx: any) => {
+      await this.lockStream(stream, tx);
+      const partitions = await this.streamPolicy(stream, tx);
+      if (partitions === undefined && message.partition !== undefined)
+        throw new Error('Explicit partition requires configured stream partitioning');
+      const payload = Object.fromEntries(Object.entries(message).filter(([, value]) => typeof value !== 'function'));
+      if (partitions !== undefined) payload.partition = partitionFor(partitions, message.id, message.key, message.partition);
+      await tx.execute(sql`INSERT INTO ${this.table('flowfn_stream_policies')} (stream,partitions,routing) VALUES (${stream},NULL,NULL) ON CONFLICT DO NOTHING`);
+      await this.appendMessage(tx, stream, payload);
+    });
     return message.id;
+  }
+  private async appendMessage(tx: any, stream: string, message: Record<string, unknown>): Promise<void> {
+    const payload = Object.fromEntries(Object.entries(message).filter(([, value]) => typeof value !== 'function'));
+    await tx.execute(sql`INSERT INTO ${this.table("flowfn_messages")} (id,stream,timestamp,data) VALUES (${payload.id},${stream},${payload.timestamp},${JSON.stringify(payload)}::jsonb)`);
   }
   private message(row: any): Message {
     return {
@@ -458,19 +504,19 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     group: string,
     beginning = false,
   ): Promise<void> {
-    const max = (
-      await this.rows(
-        sql`SELECT COALESCE(max(position),0) AS position FROM ${this.table("flowfn_messages")} WHERE stream=${stream}`,
-      )
-    )[0].position;
-    await this.db.execute(
-      sql`INSERT INTO ${this.table("flowfn_consumer_groups")} (id,stream,group_id,last_offset) VALUES (${this.groupId(stream, group)},${stream},${group},${beginning ? 0 : Number(max)}) ON CONFLICT DO NOTHING`,
-    );
+    await this.db.transaction(async (tx: any) => {
+      await this.lockStream(stream, tx);
+      await tx.execute(sql`INSERT INTO ${this.table('flowfn_stream_policies')} (stream,partitions,routing) VALUES (${stream},NULL,NULL) ON CONFLICT DO NOTHING`);
+      const max = (await this.rows(sql`SELECT COALESCE(max(position),0) AS position FROM ${this.table("flowfn_messages")} WHERE stream=${stream}`, tx))[0].position;
+      await tx.execute(sql`INSERT INTO ${this.table("flowfn_consumer_groups")} (id,stream,group_id,last_offset) VALUES (${this.groupId(stream, group)},${stream},${group},${beginning ? 0 : max}) ON CONFLICT DO NOTHING`);
+    });
   }
+
   async createConsumerGroup(stream: string, group: string): Promise<void> {
     await this.ensureGroup(stream, group);
   }
   async getStreamInfo(stream: string): Promise<StreamInfo> {
+    const partitions = await this.streamPolicy(stream);
     const length = (
       await this.rows(
         sql`SELECT count(*) AS count FROM ${this.table("flowfn_messages")} WHERE stream=${stream}`,
@@ -483,7 +529,9 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     )[0].count;
     const lag = (
       await this.rows(sql`SELECT
-      (SELECT count(*) FROM ${this.table("flowfn_messages")} m JOIN ${this.table("flowfn_consumer_groups")} g ON g.stream=m.stream WHERE m.stream=${stream} AND m.position>g.last_offset)
+      (SELECT count(*) FROM ${this.table("flowfn_messages")} m JOIN ${this.table("flowfn_consumer_groups")} g ON g.stream=m.stream LEFT JOIN ${this.table('flowfn_stream_policies')} policy ON policy.stream=m.stream
+      LEFT JOIN ${this.table('flowfn_partition_progress')} p ON p.stream=m.stream AND p.group_id=g.group_id AND p.partition=CASE WHEN policy.partitions IS NOT NULL THEN (m.data->>'partition')::integer END
+      WHERE m.stream=${stream} AND m.position>CASE WHEN policy.partitions IS NULL THEN g.last_offset ELSE COALESCE(p.last_offset,g.last_offset) END)
       + (SELECT count(*) FROM ${this.table("flowfn_deliveries")} WHERE stream=${stream} AND state!='completed') AS lag`)
     )[0].lag;
     return {
@@ -491,6 +539,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
       length: Number(length),
       groups: Number(groups),
       lag: Number(lag),
+      ...(partitions === undefined ? {} : { partitions }),
     };
   }
   async subscribe(
@@ -562,6 +611,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     )
       throw new Error("Invalid commit interval");
     await this.ensureGroup(stream, group, options.fromBeginning);
+    const partitioned = (await this.streamPolicy(stream)) !== undefined;
     let active = true,
       paused = false,
       timer: ReturnType<typeof setTimeout> | undefined;
@@ -589,13 +639,22 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
         let row = old[0];
         if (!row) {
           const next = await this.rows(
-            sql`SELECT m.* FROM ${messages} m JOIN ${groups} g ON g.id=${this.groupId(stream, group)} WHERE m.stream=${stream} AND m.position>g.last_offset ORDER BY m.position LIMIT 1`,
+            partitioned ? sql`SELECT m.* FROM ${messages} m JOIN ${groups} g ON g.id=${this.groupId(stream, group)}
+              LEFT JOIN ${this.table('flowfn_partition_progress')} p ON p.stream=m.stream AND p.group_id=${group} AND p.partition=(m.data->>'partition')::integer
+              WHERE m.stream=${stream} AND m.position>COALESCE(p.last_offset,g.last_offset)
+                AND NOT EXISTS(SELECT 1 FROM ${deliveries} d JOIN ${messages} held ON held.id=d.message_id
+                  WHERE d.stream=${stream} AND d.group_id=${group} AND d.state!='completed' AND held.data->>'partition'=m.data->>'partition')
+              ORDER BY m.position LIMIT 1`
+              : sql`SELECT m.* FROM ${messages} m JOIN ${groups} g ON g.id=${this.groupId(stream, group)} WHERE m.stream=${stream} AND m.position>g.last_offset ORDER BY m.position LIMIT 1`,
             tx,
           );
           row = next[0];
           if (!row) return null;
           await tx.execute(
-            sql`UPDATE ${groups} SET last_offset=${Number(row.position)} WHERE id=${this.groupId(stream, group)}`,
+            partitioned ? sql`INSERT INTO ${this.table('flowfn_partition_progress')} (stream,group_id,partition,last_offset)
+              VALUES (${stream},${group},${row.data.partition},${row.position})
+              ON CONFLICT(stream,group_id,partition) DO UPDATE SET last_offset=EXCLUDED.last_offset`
+              : sql`UPDATE ${groups} SET last_offset=${row.position} WHERE id=${this.groupId(stream, group)}`,
           );
         }
         const receipt = randomUUID();
@@ -729,3 +788,4 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     await boundedShutdown(Promise.all([...this.subscriptions].map(subscription => subscription.unsubscribe())), timeout, 'PostgreSQL adapter');
   }
 }
+export { getPostgresSchema } from './schema.js';

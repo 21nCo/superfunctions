@@ -27,6 +27,8 @@ export interface FlowAdapter {
   removeJob?(queue: string, jobId: string): Promise<void>;
 
   // Stream operations
+  /** Establish immutable partition policy, or discover it when omitted. Undefined means legacy unpartitioned. */
+  configureStream?(stream: string, partitions?: number): Promise<number | undefined>;
   publish(stream: string, message: Message): Promise<string>;
   subscribe(
     stream: string,

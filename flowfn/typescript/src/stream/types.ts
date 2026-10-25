@@ -95,6 +95,8 @@ export interface Subscription {
 
 export interface StreamInfo {
   name: string;
+  /** Present when a durable partition policy is configured. */
+  partitions?: number;
   length: number;
   groups: number;
   /** Retained messages awaiting delivery or acknowledgment, summed across groups. */

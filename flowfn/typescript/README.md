@@ -35,7 +35,7 @@ See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic
 deduplication and at-least-once delivery; [retry strategies](docs/retry-strategies.md)
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
-D1, SQS and Kafka adapters are not implemented. Stream partition assignment,
+D1, SQS and Kafka adapters are not implemented. Stream partition assignment outside PostgreSQL,
 distributed trace propagation and the original performance targets
 remain incomplete. Workflow ownership and scheduler coordination are durable on
 Redis and PostgreSQL. This package is not yet a production-readiness claim.
@@ -77,6 +77,30 @@ when cleanup fails or times out. PostgreSQL connections belong to the caller, wh
 must close their own pool after closing the flow.
 
 ### Stream retention and ownership
+
+PostgreSQL supports `flow.stream('orders', { partitions: 3 })`. Configure the
+count before publishing or creating a consumer group. The persisted count is
+immutable; reopening without a count adopts the stored policy. A conflicting
+count or an attempt to partition a populated legacy stream fails. Drain all old
+writers before enabling this feature: older binaries do not enforce the policy.
+`initialize()` adds the policy and partition-progress tables; applications using
+managed migrations must install the equivalent exported schema first. Existing
+streams remain unpartitioned, and historical explicit labels are not rerouted.
+
+Keys route by SHA-256 of exact UTF-8 bytes, using the unsigned big-endian first
+four bytes modulo the partition count. Explicit `partition` overrides the key;
+unkeyed messages use their generated ID. Invalid ranges and malformed Unicode
+are rejected. Each group has independent partition progress. An unacknowledged
+message blocks later messages in its partition while other partitions can run.
+Expired receipts can be reassigned; stale acknowledgments are fenced, but
+uncooperative handler side effects cannot be forcibly stopped. Public message
+IDs, global offsets, ranges and retention remain unchanged.
+
+Memory, Redis and Python partition support remains unfinished. The TypeScript
+stream API rejects configured partitioning or explicit partition publication
+when the adapter lacks this capability. PostgreSQL policy coordination adds
+transactional work to publication; stream throughput has not been qualified by
+this correctness acceptance.
 
 Configured `maxLength` and millisecond `retention` policies run after publishing,
 before history reads, and before subscription acquisition. An idle stream's next

@@ -14,6 +14,17 @@ afterEach(async () => {
   for (const value of adapters.splice(0)) await value.cleanup();
   vi.useRealTimers();
 });
+it('rejects unsupported partition configuration and explicit labels before writing', async () => {
+  const storage = adapter();
+  const configured = new StreamImpl('partitioned', storage, { partitions: 3 });
+  const legacy = new StreamImpl('legacy', storage);
+  await expect(configured.publish(1, { key: 'tenant' })).rejects.toThrow('does not support durable stream partitioning');
+  await expect(legacy.publish(2, { partition: 0 })).rejects.toThrow('does not support durable stream partitioning');
+  expect(await storage.getMessages('partitioned', '-', '+')).toEqual([]);
+  expect(await storage.getMessages('legacy', '-', '+')).toEqual([]);
+  await configured.close();
+  await legacy.close();
+});
 it("delivers each message to one member per group with manual acknowledgment backpressure", async () => {
   const storage = adapter(),
     stream = new StreamImpl<number>("events", storage),
