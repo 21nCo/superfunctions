@@ -67,3 +67,35 @@ it('rejects an already expired claim synchronously before a handler microtask ca
   expect(lost).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('rejects renewal success past the confirmed deadline even before its overdue timer runs', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  let reply!: (owned: boolean) => void;
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), () => new Promise(resolve => { reply = resolve; }), lost);
+  await vi.advanceTimersByTimeAsync(30);
+  // A renewal promise microtask can run before an overdue timer after a blocked loop.
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
+  try {
+    reply(true);
+    await Promise.resolve();
+    expect(lease.controller.signal.aborted).toBe(true);
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { clock.mockRestore(); lease.stop(); }
+});
+
+it('does not issue a renewal when its callback runs after the confirmed deadline', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const renew = vi.fn<() => Promise<boolean>>().mockResolvedValue(true);
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), renew, lost);
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
+  try {
+    await vi.advanceTimersByTimeAsync(30);
+    expect(renew).not.toHaveBeenCalled();
+    expect(lease.controller.signal.aborted).toBe(true);
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { clock.mockRestore(); lease.stop(); }
+});

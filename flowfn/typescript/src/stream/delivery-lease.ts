@@ -3,6 +3,7 @@ export class DeliveryLease {
   readonly controller = new AbortController();
   private stopped = false;
   private renewing = true;
+  private confirmedDeadline = 0;
   private deadlineTimer?: ReturnType<typeof setTimeout>;
   private renewalTimer?: ReturnType<typeof setTimeout>;
   constructor(private duration: number, acquiredAt: number, private renew: () => Promise<boolean>, private onLost: () => void) {
@@ -11,6 +12,7 @@ export class DeliveryLease {
     this.schedule();
   }
   private deadline(at: number): void {
+    this.confirmedDeadline = at;
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     this.deadlineTimer = setTimeout(() => this.lose(), Math.max(0, at - performance.now()));
   }
@@ -20,10 +22,12 @@ export class DeliveryLease {
   }
   private async tick(): Promise<void> {
     const began = performance.now();
+    if (began >= this.confirmedDeadline) { this.lose(); return; }
     try {
       const owned = await this.renew();
       if (this.stopped) return;
-      if (!owned || performance.now() >= began + this.duration) { this.lose(); return; }
+      const returnedAt = performance.now();
+      if (!owned || returnedAt >= this.confirmedDeadline || returnedAt >= began + this.duration) { this.lose(); return; }
       this.deadline(began + this.duration);
     } catch { /* Retry transport failures only within the last confirmed deadline. */ }
     this.schedule();
