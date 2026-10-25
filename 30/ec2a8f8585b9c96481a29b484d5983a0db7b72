@@ -1,0 +1,41 @@
+cifn/.conduct/pipeline-resolver-readiness.md
+  s_e1c5fc1a65c0cf::t_5f02ac8e527ce2 1-27
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_40000c9dfbeef5 377-385
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_ff49584ff7f0f5 29,45,66
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_1df25afbd080b6 14,69,71,234
+cifn/typescript/control-plane/src/execution/owned-process.ts
+  s_e1c5fc1a65c0cf::t_53bbb256ed25af 1-106
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_b4b6a31eed126e 93-99
+cifn/typescript/control-plane/src/pipeline/git-checkout.ts
+  s_e1c5fc1a65c0cf::t_ce0b7d524f29ba 1-89
+cifn/typescript/control-plane/src/pipeline/resolver-native.test.ts
+  s_e1c5fc1a65c0cf::t_618de50b38d4b9 1-79
+cifn/typescript/control-plane/src/pipeline/resolver.ts
+  s_e1c5fc1a65c0cf::t_eeea8fd774a9c8 6,8-10,45-54,57,59-60,62,64,70,77,79,81,93-95,97-101,103-125,127-130,132
+cifn/typescript/control-plane/tsconfig.durable.json
+  s_e1c5fc1a65c0cf::t_a6ea2ecb09b27f 3
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_572157f49d32cf 1-2
+cifn/typescript/runner/src/steps/checkout.ts
+  s_e1c5fc1a65c0cf::t_98a10d3a1fadee 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30ec2a8f8585b9c96481a29b484d5983a0db7b72",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
