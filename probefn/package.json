@@ -19,7 +19,7 @@
     "jiti": "^2.4.2",
     "typescript": "^5.8.0",
     "vitest": "^3.1.4",
-    "zod": "^3.24.4",
+    "zod": "^4.6.6",
     "@probefn/cli": "*",
     "@probefn/analyzers": "*",
     "@probefn/browser-runner": "*",

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { isProbefnError, loadConfig } from '../src/index.js';
+import { isProbefnError, loadConfig, validateConfig } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,6 +75,29 @@ describe('loadConfig', () => {
         code: 'E_CONFIG_INVALID',
         message: 'timeoutMs must be a positive integer in probefn config.',
       });
+    }
+  });
+});
+
+describe('configuration input and parsed output', () => {
+  it('parses nested defaults and preserves trimmed record values', () => {
+    const config = validateConfig({
+      projectName: ' project ',
+      deterministicDefaults: { viewport: { width: 800 }, locale: ' en-GB ' },
+      devServers: { web: { mode: 'attach', name: ' web ', url: ' http://localhost:3000 ' } },
+      analyzers: { custom: { enabled: true }, absent: undefined },
+      ignoredLegacyKey: true,
+    });
+    expect(config.projectName).toBe('project');
+    expect(config.deterministicDefaults).toEqual({ enabled: true, viewport: { width: 800, height: 900 }, locale: 'en-GB', timezone: 'UTC', colorScheme: 'light', reducedMotion: 'reduce', animationPolicy: 'freeze', networkIdleMs: 500 });
+    expect(config.devServers.web).toMatchObject({ name: 'web', url: 'http://localhost:3000', timeoutMs: 120000, envAllowlist: [] });
+    expect(config.analyzers).toEqual({ custom: { enabled: true }, absent: undefined });
+    expect(config).not.toHaveProperty('ignoredLegacyKey');
+    expect(validateConfig({}).deterministicDefaults.viewport).toEqual({ width: 1440, height: 900 });
+  });
+  it('rejects malformed records, null settings and unsafe integer caps', () => {
+    for (const input of [{ devServers: [] }, { devServers: { web: null } }, { analyzers: [] }, { deterministicDefaults: null }, { storageCaps: { maxArtifactBytes: Number.MAX_SAFE_INTEGER + 1 } }]) {
+      expect(() => validateConfig(input)).toThrow();
     }
   });
 });

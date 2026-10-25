@@ -10,6 +10,15 @@ Probefn is the Superfunctions browser evidence function for coding agents and hu
 
 The implementation spec for this repository lives under `.conduct/specs/2026-04-15-new-384qfawh-spec/`.
 
+## Validation dependency compatibility
+
+Probe packages require Zod 4.6.6 or newer. Configuration defaults are parsed
+before use, including nested deterministic settings and named dev-server entries.
+MCP argument schemas remain strict; missing required fields retain their structured
+error code and message, and invalid raw inputs are not included in error details.
+Consumers extending exported Zod schema helpers must use Zod 4 types. No Zod 3
+compatibility entry point is used by the runtime.
+
 ## Local-First Guarantees
 
 Core operation does not require a hosted Probefn service. Session orchestration, artifacts, design audits, baseline storage, report export, and auth profiles all live in the repository workspace.

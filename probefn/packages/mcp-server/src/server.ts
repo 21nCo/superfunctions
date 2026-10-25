@@ -930,17 +930,16 @@ export function parseToolArgs<TArgs extends JsonObject>(
   schema: ZodType<TArgs>,
   input: unknown,
 ): TArgs {
-  const parsed = schema.safeParse(input ?? {});
+  // Input is inspected only to preserve missing-field diagnostics; never expose it.
+  const parsed = schema.safeParse(input ?? {}, { reportInput: true });
   if (parsed.success) {
     return parsed.data;
   }
 
   const firstIssue = parsed.error.issues[0];
   const issuePath = firstIssue?.path.join('.') ?? '';
-  const message =
-    firstIssue?.code === 'invalid_type' &&
-    firstIssue.received === 'undefined' &&
-    issuePath.length > 0
+  const missing = firstIssue?.code === 'invalid_type' && firstIssue.input === undefined && issuePath.length > 0;
+  const message = missing
       ? `Missing required field ${issuePath}.`
       : firstIssue?.message ?? 'Invalid MCP tool arguments.';
 
@@ -953,7 +952,7 @@ export function parseToolArgs<TArgs extends JsonObject>(
         ? [
             {
               path: firstIssue.path.join('.'),
-              message: firstIssue.message,
+              message: missing ? 'Required' : firstIssue.message,
             },
           ]
         : [],

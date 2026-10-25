@@ -45,12 +45,19 @@ import {mkdir,readFile,access} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
-import {loadConfig} from '@probefn/contracts/config';
+import {loadConfig,validateConfig} from '@probefn/contracts/config';
 import {createProbeFnAdminAdapter,createProbeFnDomainAdminService} from '@probefn/admin';
 const project=join(process.cwd(),'consumer-project');await mkdir(project);
 await writeConfig();
 async function writeConfig(){const {writeFile}=await import('node:fs/promises');await writeFile(join(project,'probefn.config.ts'),'export default { projectName:"installed-project" };');}
 assert.equal((await loadConfig('probefn.config.ts',{cwd:project})).projectName,'installed-project');
+const parsedConfig=validateConfig({deterministicDefaults:{viewport:{width:800}},devServers:{web:{mode:'attach',name:' web ',url:'http://localhost:3000'}}});
+assert.equal(parsedConfig.deterministicDefaults.viewport.height,900);
+assert.equal(parsedConfig.deterministicDefaults.locale,'en-US');
+assert.equal(parsedConfig.devServers.web.name,'web');
+assert.equal(parsedConfig.devServers.web.timeoutMs,120000);
+assert.throws(()=>validateConfig({storageCaps:{unknown:1}}));
+assert.throws(()=>validateConfig({devServers:{web:null}}));
 const scope={installationId:'i',workspaceId:'w',projectId:'p',environmentId:'e'};
 const context={scope,actor:{id:'operator',type:'user',permissions:['*']},requestId:'r',correlationId:'c',source:'console',idempotencyKey:'key',confirmationToken:'test-confirmation'};
 const admin=createProbeFnAdminAdapter(createProbeFnDomainAdminService({bindings:[{scope,repoRoot:project,artifactRoot:'.artifacts'}]}));
@@ -69,6 +76,15 @@ const client=new Client({name:'installed-probe-consumer',version:'1.0.0'});
 try{
  await client.connect(transport);
  const listed=await client.listTools();assert.equal(listed.tools.length,16);
+ const missing=await client.callTool({name:'probefn_report_export',arguments:{}});
+ assert.equal(missing.isError,true);
+ assert.equal(missing.structuredContent.error.code,'E_MCP_INVALID_ARGS');
+ assert.equal(missing.structuredContent.error.message,'Missing required field sessionId.');
+ const malformed=await client.callTool({name:'probefn_report_export',arguments:{sessionId:{secret:'installed-private-input'}}});
+ assert.equal(malformed.isError,true);
+ assert(!JSON.stringify(malformed).includes('installed-private-input'));
+ assert(!malformed.structuredContent.error.message.includes('Missing required'));
+
  const result=await client.callTool({name:'probefn_report_export',arguments:{sessionId:'installed',format:'json',artifactOnly:true}});
  assert.equal(result.isError,false,JSON.stringify(result));
  assert.equal(result.structuredContent.ok,true);

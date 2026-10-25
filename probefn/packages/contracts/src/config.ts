@@ -30,7 +30,7 @@ function repositoryRelativePathSchema(fieldName: string, defaultValue: string) {
   return z
     .string()
     .trim()
-    .default(defaultValue)
+    .prefault(defaultValue)
     .superRefine((value, context) => {
       if (!isRepositoryRelativePath(value)) {
         context.addIssue({
@@ -42,17 +42,17 @@ function repositoryRelativePathSchema(fieldName: string, defaultValue: string) {
 }
 
 const deterministicSettingsSchema = z.object({
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().prefault(true),
   viewport: z.object({
-    width: z.number().int().positive().default(1440),
-    height: z.number().int().positive().default(900),
-  }).default({ width: 1440, height: 900 }),
-  locale: z.string().trim().min(1).default('en-US'),
-  timezone: z.string().trim().min(1).default('UTC'),
-  colorScheme: colorSchemeSchema.default('light'),
-  reducedMotion: reducedMotionSchema.default('reduce'),
-  animationPolicy: animationPolicySchema.default('freeze'),
-  networkIdleMs: z.number().int().positive().default(500),
+    width: z.number().int().positive().prefault(1440),
+    height: z.number().int().positive().prefault(900),
+  }).prefault({ width: 1440, height: 900 }),
+  locale: z.string().trim().min(1).prefault('en-US'),
+  timezone: z.string().trim().min(1).prefault('UTC'),
+  colorScheme: colorSchemeSchema.prefault('light'),
+  reducedMotion: reducedMotionSchema.prefault('reduce'),
+  animationPolicy: animationPolicySchema.prefault('freeze'),
+  networkIdleMs: z.number().int().positive().prefault(500),
 });
 
 const devServerSpecSchema = z
@@ -63,8 +63,8 @@ const devServerSpecSchema = z
     cwd: z.string().trim().min(1).optional(),
     url: z.string().trim().url().optional(),
     readyPattern: z.string().trim().min(1).optional(),
-    timeoutMs: z.number().int().positive().default(120000),
-    envAllowlist: z.array(z.string().trim().min(1)).default([]),
+    timeoutMs: z.number().int().positive().prefault(120000),
+    envAllowlist: z.array(z.string().trim().min(1)).prefault([]),
   })
   .superRefine((value, context) => {
     if (value.mode === 'spawn' && !value.command) {
@@ -93,22 +93,22 @@ const devServerSpecSchema = z
   });
 
 const probefnConfigSchema = z.object({
-  schemaVersion: z.literal('1.0').default('1.0'),
+  schemaVersion: z.literal('1.0').prefault('1.0'),
   projectName: z.string().trim().min(1).optional(),
   artifactRoot: repositoryRelativePathSchema('artifactRoot', '.artifacts'),
   baselineRoot: repositoryRelativePathSchema('baselineRoot', '.artifacts/baselines'),
-  defaultBrowser: browserEngineSchema.default('chromium'),
-  defaultMode: sessionModeSchema.default('mixed'),
-  devServers: z.record(devServerSpecSchema).default({}),
-  analyzers: z.record(z.unknown()).optional(),
-  redaction: z.record(z.unknown()).optional(),
+  defaultBrowser: browserEngineSchema.prefault('chromium'),
+  defaultMode: sessionModeSchema.prefault('mixed'),
+  devServers: z.record(z.string(), devServerSpecSchema).prefault({}),
+  analyzers: z.record(z.string(), z.unknown()).optional(),
+  redaction: z.record(z.string(), z.unknown()).optional(),
   storageCaps: z.object({
     maxArtifactBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     maxEventsPerSink: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     maxOwnershipSlots: z.number().int().min(2).max(65536).optional(),
     maxAccountingDatabaseBytes: z.number().int().min(65536).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict().optional(),
-  deterministicDefaults: deterministicSettingsSchema.default({}),
+  deterministicDefaults: deterministicSettingsSchema.prefault({}),
 });
 
 export type BrowserEngine = z.infer<typeof browserEngineSchema>;
