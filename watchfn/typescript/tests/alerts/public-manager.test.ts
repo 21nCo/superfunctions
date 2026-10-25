@@ -322,3 +322,31 @@ it('isolates committed callback snapshots and persists calculated threshold cont
   expect(notifications.find((item: any) => item.event === 'triggered')).toMatchObject({ value: 15, threshold: 5 });
   expect(notifications.find((item: any) => item.event === 'resolved')).toMatchObject({ value: 0, threshold: 2 });
 });
+
+
+it.each(['memory', 'database'])('queries and aggregates stored logs with correlation from a lifecycle callback (%s)', async storage => {
+  const watch = storage === 'database' ? (await setup()).watch : new WatchFn({ name: 'logs', storage: 'memory', infra: { enabled: false } });
+  if (storage === 'memory') { watches.push(watch); watch.start(); }
+  const now = Date.now();
+  await watch.ingest([
+    { type: 'log', message: 'payment failed', level: 'error', service: 'api', userId: 'u1', timestamp: now },
+    { type: 'log', message: 'payment failed again', level: 'error', service: 'api', timestamp: now + 1 },
+    { type: 'log', message: 'payment accepted', level: 'info', service: 'api', timestamp: now },
+    { type: 'track', message: 'payment failed', level: 'error', service: 'api', userId: 'u1', timestamp: now },
+    { type: 'log', message: 'payment failed old', level: 'error', service: 'api', userId: 'u1', timestamp: now - 10000 },
+  ]);
+  expect(await watch.logs.query({ level: 'error', timeRange: [now, now + 1], search: 'payment failed', filters: { service: 'api', userId: { exists: true } } })).toMatchObject([{ message: 'payment failed' }]);
+  expect(await watch.logs.aggregate({ timeRange: [now, now + 1], groupBy: ['level', 'service'], aggregation: 'count', orderBy: { field: 'level', direction: 'asc' } })).toEqual([{ level: 'error', service: 'api', value: 2 }, { level: 'info', service: 'api', value: 1 }]);
+  expect(await watch.logs.query({ timeRange: [now, now + 1], orderBy: { field: 'timestamp', direction: 'desc' }, limit: 1 })).toMatchObject([{ message: 'payment failed again' }]);
+  expect(await watch.logs.query({ search: 'absent' })).toEqual([]);
+  await expect(watch.logs.query({ filters: { type: 'track' } })).rejects.toThrow('type is fixed');
+  await expect(watch.logs.query({ level: 'invalid' as any })).rejects.toThrow('Invalid log level');
+  await expect(watch.logs.query({ filters: { userId: { exists: 'yes' } } })).rejects.toThrow('Exists requires');
+  const alert = await watch.alerts.create({ name: 'correlated', condition: rule, channels: [] });
+  watch.alerts.onTrigger(async (value, context) => {
+    const logs = await watch.logs.query({ timeRange: [context.triggeredAt! - 1000, context.triggeredAt!], level: 'error' });
+    await watch.alerts.addNote(value.id, { content: 'Related errors: ' + logs.length, createdBy: 'callback' });
+  });
+  await observe(watch, 20, now); await watch.alerts.evaluate({ now });
+  expect((await watch.alerts.get(alert.id)).notes[0].content).toBe('Related errors: 1');
+});

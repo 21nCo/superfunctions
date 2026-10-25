@@ -13,6 +13,7 @@ import { Tracer } from "../trace/tracer";
 import { AlertManager } from "../alerts/alert-manager";
 import { QueryEngine } from "../query/query-engine";
 import type { AggregateOptions } from "../query/types";
+import { logQuery, logAggregate, type LogQueryOptions, type LogAggregateOptions } from "../query/logs";
 import { SystemMetricsCollector } from "../collectors/infra/system-metrics";
 import { ProcessMetricsCollector } from "../collectors/infra/process-metrics";
 import { SyntheticScheduler } from "../synthetics/scheduler";
@@ -313,8 +314,8 @@ export class WatchFn implements WatchFnInstance {
   
   get logs() {
       return {
-          query: async (opts: any) => [],
-          aggregate: async (opts: any) => ({}),
+          query: async (opts: LogQueryOptions) => this.query(logQuery(opts)),
+          aggregate: async (opts: LogAggregateOptions) => this.aggregate(logAggregate(opts)),
           createPattern: async (opts: any) => {},
           detectPatterns: async (opts: any) => [],
       }

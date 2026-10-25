@@ -59,6 +59,9 @@ try {
  await first.alerts.trigger(emailAlert.id);await Promise.all([drain(first),drain(second)]);assert.equal(emails.length,1);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,0);
  emailDrop=true;await first.alerts.resolve(emailAlert.id,{resolvedBy:'operator'});await drain(second);await drain(first);assert.equal(emails.length,2);assert.equal((await first.alerts.get(emailAlert.id)).pendingNotifications,1);assert.ok(!JSON.stringify(await first.alerts.list()).includes('packed-local-secret'));
  const measured=await first.alerts.create({name:'calculated context',condition:{metric:'measured',window:'1m',operator:'gt',threshold:5},channels:[],autoResolve:{enabled:true,condition:{metric:'measured',window:'1s',operator:'lt',threshold:2}}});
+ await first.ingest([{type:'log',message:'packed error',level:'error',service:'api',timestamp:Date.now()},{type:'track',message:'packed error',level:'error',service:'api',timestamp:Date.now()}]);
+ assert.equal((await first.logs.query({level:'error',search:'packed error',filters:{service:'api'}})).length,1);
+ assert.deepEqual(await first.logs.aggregate({groupBy:['level'],aggregation:'count'}),[{level:'error',value:1}]);
  const contexts=[];first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){alert.name='modified';context.value=-1;}});
  first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){assert.equal(alert.name,'calculated context');contexts.push(context);}});
  first.alerts.onResolve((alert,context)=>{if(alert.id===measured.id)contexts.push(context);});

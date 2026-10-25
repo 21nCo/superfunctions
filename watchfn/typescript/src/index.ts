@@ -102,3 +102,5 @@ export { BugIssueConflictError, BugIssueValidationError } from "./integrations/b
 export { getAlertSchema } from './alerts/schema';
 export { AlertManager } from './alerts/alert-manager';
 export type { AlertConfig, AlertChannel, AlertRuntimeConfig, AlertEmailConfig, AlertSender, AlertNotification, PublicAlert, AlertLifecycleContext, AlertLifecycleListener } from './alerts/types';
+
+export type { LogQueryOptions, LogAggregateOptions } from './query/logs';
