@@ -9,7 +9,7 @@ from threading import RLock
 
 from superfunctions.db import CreateParams, FindOneParams, WhereClause, FieldSchema, TableSchema, IndexSchema
 from ..alerts.lifecycle import LifecycleCallbacks, owned_operation
-from ..query import Query, QueryValidationError, read, timestamp, equal, MISSING, js_string
+from ..query import Query, QueryValidationError, read, equal, MISSING, js_string
 from ..storage.database import DatabaseStorage
 from ..storage.events import CanonicalBusinessEvent
 
@@ -78,8 +78,23 @@ def validate(value):
     return json.loads(raw)
 
 
+def funnel_timestamp(value):
+    if type(value) in (int, float):
+        if not math.isfinite(value) or abs(value) > 8640000000000000: raise QueryValidationError('Invalid funnel timestamp')
+        return value
+    if isinstance(value, datetime) and value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try: value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError: raise QueryValidationError('Invalid funnel timestamp') from None
+    if not isinstance(value, datetime) or value.tzinfo is None: raise QueryValidationError('Funnel timestamp requires timezone')
+    elapsed = value.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return elapsed.days * 86400000 + elapsed.seconds * 1000 + elapsed.microseconds // 1000
+
+
 class FunnelQuery(Query):
     _max_limit = 10000
+    _timestamp = staticmethod(funnel_timestamp)
 
 
 class StoredFunnels:
@@ -154,10 +169,10 @@ class StoredFunnels:
             length = len(event.model_dump_json().encode('utf-8')); size += length
             if length > 65536 or size > 16777216: raise ValueError('Funnel payload capacity exceeded')
         rows = FunnelQuery({'where': {'type': 'track'}, 'timeRange': options['timeRange'], 'limit': 10000}).execute(events)
-        rows.sort(key=lambda row: timestamp(row['timestamp']))
+        rows.sort(key=lambda row: funnel_timestamp(row['timestamp']))
         users, prior_states, batch_time, ignored = {}, {}, None, 0
         for row in rows:
-            at = timestamp(row['timestamp'])
+            at = funnel_timestamp(row['timestamp'])
             if batch_time != at: batch_time, prior_states = at, {}
             matches = [row.get('name') == step['event'] and all(equal(read(row, key), value) for key, value in step.get('filters', {}).items()) for step in config['steps']]
             if not any(matches): continue

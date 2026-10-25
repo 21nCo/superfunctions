@@ -32,3 +32,13 @@ This does not implement goals, revenue, MRR/churn/LTV, Python synthetic executio
 - All commands exited0; temporary wheel environments, package consumer, SQLite files and handles were removed by owned finally scopes. The reusable parent-owned source-validation environment remains available. No live services or external provider operations were used.
 
 The preceding full TypeScript391-test receipt belongs to the already published synthetic/funnel checkpoint. This follow-up changes only the funnel scalar Unicode guard on the TypeScript side and reruns its focused suite, types, build and actual installed bilateral consumer; it does not relabel that earlier full result as a rerun of this exact source.
+
+### Exact millisecond conversion-window correction
+
+A public memory reproduction on the first Python checkpoint exposed a boundary error: canonical events at4001ms and64001ms, exactly one minute apart, yielded[1,0]. Multiplying Python floating epoch seconds by1000 produced4001.0000000000005 and64001.00000000001, so the difference incorrectly exceeded60000. Numeric report upper bounds could exclude the same retained endpoint.
+
+FunnelQuery now supplies its own timestamp conversion through the existing Query engine's overridable converter. Canonical datetime/ISO values use exact integer timedelta arithmetic; explicit numeric query bounds remain unchanged (including4001.5, which correctly excludes4001). Ordinary Query retains its original converter and microsecond semantics. Existing naive legacy datetime interpretation remains UTC so relevant unowned records still reach the explicit ownership-migration error. Tests cover both numeric and ISO inclusive boundaries, fractional numeric exclusions and the same actual installed bilateral SQLite vector.
+
+The first focused correction rejected naive legacy datetime too early; retaining its existing UTC interpretation restored the ownership error. Final focused funnel plus all existing Query tests:72 passed in0.31s (`/tmp/watch-funnel-integer-focused3.log`). Final normal-CI and fresh installed receipts are recorded below after completion.
+
+Final correction receipts: normal Python CI322 passed in30.49s (`/tmp/watch-funnel-integer-ci.log`); fresh seven-wheel322 passed in32.52s and fresh five-tarball TS/Python shared SQLite exact-window/fractional-bound vectors passed (`/tmp/watch-funnel-integer-wheel.log`). Both commands exited0. The owned `watchfn-http-wheel-fu_ol239` directory was verified absent afterward; no service/process remains owned by this acceptance.

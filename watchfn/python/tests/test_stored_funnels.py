@@ -167,3 +167,14 @@ def test_numeric_groups_match_javascript_without_boolean_collapse():
         groups = watch.business.get_funnel(query(groupBy='source'))['groups']
         assert [(type(group['group']), group['group'], group['steps'][0]['count']) for group in groups] == [(int, 0, 2), (int, 1, 2), (bool, True, 1)]
     finally: watch.stop()
+
+
+def test_exact_window_and_query_boundaries_use_integer_milliseconds():
+    watch = open_watch()
+    try:
+        watch.business.create_funnel(definition())
+        append(watch, 'cart', 4001); append(watch, 'paid', 64001)
+        assert [step['count'] for step in watch.business.get_funnel({'name': 'purchase', 'timeRange': {'from': 4001.5, 'to': 64001}})['steps']] == [0, 0]
+        for bounds in [{'from': 4001, 'to': 64001}, {'from': '1970-01-01T00:00:04.001Z', 'to': '1970-01-01T00:01:04.001Z'}]:
+            assert [step['count'] for step in watch.business.get_funnel({'name': 'purchase', 'timeRange': bounds})['steps']] == [1, 1]
+    finally: watch.stop()

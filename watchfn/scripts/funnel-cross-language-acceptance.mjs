@@ -36,6 +36,10 @@ try{
  await watch.ingest(['micro-a','micro-b'].map((name,index)=>({type:'track',name,app:{name:'wire-✓'},timestamp:'2026-01-01T00:00:00.000'+(index?'900':'100')+'Z',properties:{userId:'micro'}})));
  assert.deepEqual((await watch.business.getFunnel({name:'submillisecond',timeRange:{from:'2026-01-01T00:00:00Z',to:'2026-01-01T00:00:01Z'}})).steps.map(step=>step.count),[1,0]);
  await assert.rejects(watch.business.createFunnel({name:'invalid',steps:[{event:'a',filters:{value:'\ud800'}},{event:'b'}],timeWindow:'1m'}));
+ await watch.business.createFunnel({name:'exact-window',steps:[{event:'bound-a'},{event:'bound-b'}],timeWindow:'1m'});
+ await watch.ingest([['bound-a',4001],['bound-b',64001]].map(([name,timestamp])=>({type:'track',name,timestamp,app:{name:'wire-✓'},properties:{userId:'boundary'}})));
+ assert.deepEqual((await watch.business.getFunnel({name:'exact-window',timeRange:{from:4001,to:64001}})).steps.map(step=>step.count),[1,1]);
+ assert.deepEqual((await watch.business.getFunnel({name:'exact-window',timeRange:{from:4001.5,to:64001}})).steps.map(step=>step.count),[0,0]);
  const python=String.raw`
 import json,sys
 from sqlalchemy import create_engine
@@ -48,6 +52,10 @@ watch.system_metrics.start=lambda:None
 watch.process_metrics.start=lambda:None
 watch.start()
 try:
+ boundary=watch.business.get_funnel({'name':'exact-window','timeRange':{'from':4001,'to':64001}})
+ assert [step['count'] for step in boundary['steps']]==[1,1],boundary
+ fractional=watch.business.get_funnel({'name':'exact-window','timeRange':{'from':4001.5,'to':64001}})
+ assert [step['count'] for step in fractional['steps']]==[0,0],fractional
  micro=watch.business.get_funnel({'name':'submillisecond','timeRange':{'from':'2026-01-01T00:00:00Z','to':'2026-01-01T00:00:01Z'}})
  assert [step['count'] for step in micro['steps']]==[1,0],micro
  tie=watch.business.get_funnel({'name':'shared-tie-vector','timeRange':{'from':0,'to':100}})

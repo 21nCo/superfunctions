@@ -181,6 +181,7 @@ def calendar_range(shortcut, now):
 
 
 class Query:
+    _timestamp = staticmethod(timestamp)
     _max_limit = 1000
 
     def __init__(self, options):
@@ -218,11 +219,11 @@ class Query:
                     self.range = (now - duration, now)
                 elif value in ('today', 'yesterday', 'this-week', 'this-month'):
                     self.range = calendar_range(value, time.time() * 1000)
-                else: self.range = (timestamp(value), time.time() * 1000)
+                else: self.range = (self._timestamp(value), time.time() * 1000)
             elif isinstance(value, list) and len(value) == 2:
-                self.range = tuple(timestamp(item) for item in value)
+                self.range = tuple(self._timestamp(item) for item in value)
             elif isinstance(value, dict) and value and not set(value) - {'from', 'to'}:
-                self.range = (timestamp(value['from']) if 'from' in value else -math.inf, timestamp(value['to']) if 'to' in value else math.inf)
+                self.range = (self._timestamp(value['from']) if 'from' in value else -math.inf, self._timestamp(value['to']) if 'to' in value else math.inf)
             else: raise QueryValidationError('Invalid time range')
             if self.range[0] > self.range[1]: raise QueryValidationError('Reversed time range')
         self.groups = []
@@ -273,14 +274,14 @@ class Query:
                 if (metric or only_rates) and row.get('name') not in metrics and row.get('type') not in metrics: continue
             elif metric and row.get('name') != metric and row.get('type') != metric: continue
             if not matches(row, self.options.get('where', {})): continue
-            if self.range and not self.range[0] <= timestamp(event.timestamp) <= self.range[1]: continue
+            if self.range and not self.range[0] <= self._timestamp(event.timestamp) <= self.range[1]: continue
             rows.append(row)
         if self.aggregations:
             groups = {} if self.groups else {(): ({}, [])}
             for row in rows:
                 labels = {}
                 for key, interval in self.groups:
-                    value = math.floor(timestamp(row['timestamp']) / interval) * interval if interval else read(row, key)
+                    value = math.floor(self._timestamp(row['timestamp']) / interval) * interval if interval else read(row, key)
                     if value is MISSING: value = None
                     if value is not None and not (isinstance(value, str) or type(value) is bool or number(value)): raise QueryValidationError('Group requires finite scalar')
                     labels[key] = value
