@@ -1,0 +1,39 @@
+cifn/.conduct/remote-checkout-readiness.md
+  s_e1c5fc1a65c0cf::t_64b6f93f89a49e 1-23
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_607f0c72eeee09 104,366-376
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_cd8bec0f3c82f3 44,66
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_d02c9598712c48 3,6,65-70,92-94,233
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_7fff88253d0904 11-15,19,77
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_a999b634c77772 7
+cifn/typescript/runner/src/remote-checkout.test.ts
+  s_e1c5fc1a65c0cf::t_88eabfe97a8d78 1-121
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_64313780c79fb4 11,15,17,27,155
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_22e727f4a1e0d0 1,18,29-30,61,84,165-169,172-176,214,272-287,598-600,602
+cifn/typescript/runner/src/steps/checkout.ts
+  s_e1c5fc1a65c0cf::t_6c5fd039df34e6 1-5,12-14,16-17,19-53,56,58-65,67-70,72-76,78-84,86-88
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_e1f13bdd9a5bcc 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e2b2cb62883dc88540e2c4e5828834caa077747",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
