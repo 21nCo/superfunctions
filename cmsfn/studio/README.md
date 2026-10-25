@@ -152,3 +152,43 @@ writes, publication and restoration. Existing oversized content stays readable a
 reduced; pagination does not discard it. Imported historical fields that no longer appear
 in the archive's latest schema cannot be classified as richtext during import; later
 restoration and publication use the current schema's validation.
+
+### Custom field widgets
+
+Register trusted application function components through the public Studio entrypoint
+before mounting `App`. Registration does not execute the component or evaluate code from
+serialized configuration. A component runs when the host renders the matching field,
+including an explicitly requested server render; never load component code from content.
+
+```tsx
+import { App, registerWidget, type CustomWidgetProps } from '@cmsfn/studio';
+
+function TitleWidget(props: CustomWidgetProps) {
+  return <input data-field-path={props['data-field-path']} value={String(props.value ?? '')}
+    required={props.required} disabled={props.disabled}
+    onChange={event => props.onChange(event.target.value)} />;
+}
+registerWidget({ typeName: 'post', fieldName: 'title' }, TitleWidget);
+// Mount <App config={config} /> using the same Studio module instance.
+```
+
+`WidgetSelector`, `CustomWidgetProps` and `CustomWidgetComponent` are public types.
+Selectors can specify document type, literal field name, field kind, or a combination.
+A type-and-field selector takes precedence over a type-only or field-only selector,
+which takes precedence over a field-kind selector. Ties use the latest registration.
+`fieldType` means the ContentFn kind (`primitive`, `object`, `array`, `reference`,
+`richtext`, `markdown`, or `asset`), not a primitive subtype such as `string`.
+Dots in field names remain literal schema keys. Selector values are copied, so later
+mutation of the caller's selector does not alter matching.
+
+JavaScript calls must supply a plain selector with at least one nonempty string value
+and a function component. Optional undefined values are ignored. Unknown keys, symbol
+keys, accessors, inherited selectors and nonfunction components are rejected before
+registry mutation with a generic `TypeError`. The API retains the existing module-local
+registry: register during application startup, not per request or on every render.
+Registrations are not a reactive subscription or a server-side plugin loader.
+
+Widgets receive the canonical current value, `onChange`, required/disabled flags and
+the display field path. They must emit the schema's canonical value through `onChange`.
+Normal editor prechecks, revision checks, dataset scoping and authoritative ContentFn
+validation still apply on save. Registration does not grant permission or bypass them.

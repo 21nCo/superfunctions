@@ -18,6 +18,9 @@ export { DocumentEditorPane } from "./panes/editor/DocumentEditorPane.js";
 export { ConflictBanner } from "./editor/conflicts/ConflictBanner.js";
 export { buildPatchOps } from "./editor/save/buildPatchOps.js";
 export { renderField } from "./editor/renderField.js";
+export { registerWidget } from "./plugins/registerWidget.js";
+export type { CustomWidgetProps, CustomWidgetComponent } from "./plugins/registerWidget.js";
+export type { WidgetSelector } from "cmsfn";
 
 /**
  * Boot: validate config and return booted flag.

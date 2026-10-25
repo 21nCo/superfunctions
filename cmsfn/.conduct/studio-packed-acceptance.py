@@ -3,6 +3,7 @@ parser = argparse.ArgumentParser(description='Install the complete built Studio 
 parser.add_argument('--producer-root', type=pathlib.Path, help='Checkout containing the built matching ContentFn server')
 parser.add_argument('--native-safari', action='store_true', help='Use installed Safari WebDriver; host automation must already be enabled')
 parser.add_argument('--operational-only', action='store_true', help='Run installed operational JS boundaries and declaration/SSR checks without launching a browser')
+parser.add_argument('--widget-baseline', type=pathlib.Path, help='Old Studio tarball to reproduce missing public widget registration in the normal installation before installing the candidate')
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[2]
 producer = (args.producer_root or root).resolve()
@@ -26,8 +27,21 @@ for name,(path,m) in selected.items():
  packed=json.loads(subprocess.check_output(['npm','pack','--ignore-scripts','--json','--pack-destination',str(out)],cwd=path,text=True))
  deps[name]='file:'+str(out/packed[0]['filename'])
 print('Local closure:',list(deps),flush=True)
+candidate_studio = deps.get('@cmsfn/studio')
+if args.widget_baseline:
+ deps['@cmsfn/studio'] = 'file:' + str(args.widget_baseline.resolve())
 (out/'package.json').write_text(json.dumps({'private':True,'type':'module','dependencies':deps,'overrides':{k:'$'+k for k in deps}}))
 subprocess.run(['npx','--yes','npm@11','install'],cwd=out,check=True)
+if args.widget_baseline:
+ baseline = subprocess.run(['node','--input-type=module','-e', "import assert from 'node:assert/strict'; import * as studio from '@cmsfn/studio'; assert.equal(typeof studio.registerWidget, 'function');"],cwd=out,text=True,capture_output=True)
+ print('Installed baseline public registration exit:', baseline.returncode, flush=True)
+ print(baseline.stderr, flush=True)
+ if baseline.returncode == 0 or "'undefined'" not in baseline.stderr:
+  raise RuntimeError('Expected exact missing registration baseline was not reproduced')
+ deps['@cmsfn/studio'] = candidate_studio
+ (out/'package.json').write_text(json.dumps({'private':True,'type':'module','dependencies':deps,'overrides':{k:'$'+k for k in deps}}))
+ subprocess.run(['npx','--yes','npm@11','install'],cwd=out,check=True)
+
 with (out / 'production-audit.json').open('w') as f:subprocess.run(['npx','--yes','npm@11','audit','--omit=dev','--json'],cwd=out,stdout=f)
 subprocess.run(['npx','--yes','npm@11','install','--save-dev','esbuild@0.25.12','playwright@1.57.0','typescript@5.9.3','@types/react@18','@types/react-dom@18','@types/node@22'],cwd=out,check=True)
 shutil.copy(root/'cmsfn/.conduct/studio-browser-acceptance.mjs',out/'acceptance.mjs')
@@ -36,7 +50,7 @@ shutil.copy(root/'cmsfn/.conduct/operational-logging-package.mjs', out/'operatio
 subprocess.run(['node','operational-logging-package.mjs'],cwd=out,check=True)
 if not args.operational_only:
  subprocess.run(['node','acceptance.mjs'],cwd=out,check=True,env={**os.environ, **({'CMSFN_NATIVE_SAFARI':'1'} if args.native_safari else {})})
-(out / 'consumer.tsx').write_text("""import { App, boot, type CmsfnStudioConfig } from '@cmsfn/studio';
+(out / 'consumer.tsx').write_text("""import { App, boot, registerWidget, type CustomWidgetProps, type WidgetSelector, type CmsfnStudioConfig } from '@cmsfn/studio';
 import * as React from 'react';
 import { parseReferenceInput, type CmsfnReferenceInput, type CmsfnReferencePage } from 'cmsfn';
 const referenceInput: CmsfnReferenceInput = { dataset: 'prod', types: ['author'], limit: 20 };
@@ -47,6 +61,8 @@ import {createCmsfnServer, verifyPreviewToken, type PreviewTokenClaims} from '@c
 const claims: PreviewTokenClaims | null = verifyPreviewToken('server-only-secret-material', 'untrusted-token', { audience: 'https://preview.example', dataset: 'prod', docId: 'post' });
 void claims;
 const config: CmsfnStudioConfig = { contentfn: { baseUrl: 'http://localhost' }, datasets: [{ name: 'prod' }], auth: { kind: 'custom' }, desk: { kind: 'divider' } };
+const selector: WidgetSelector = { typeName: 'post', fieldName: 'title' };
+registerWidget(selector, (props: CustomWidgetProps) => <input value={String(props.value)} onChange={event => props.onChange(event.target.value)} />);
 const element: React.ReactElement = <App config={config} />;
 boot(config);
 const server = createCmsfnServer(config);
@@ -57,9 +73,10 @@ server.reportSessionEvent('session.login', { subject: 'verified-host-actor', suc
 const loggingFailures: number = server.loggingStatus().failures;
 void loggingFailures;
 """)
-(out / 'consumer.cts').write_text("""import { App, boot } from '@cmsfn/studio';
+(out / 'consumer.cts').write_text("""import { App, boot, registerWidget, type CustomWidgetProps } from '@cmsfn/studio';
 import { createElement } from 'react';
 createElement(App);
+registerWidget({fieldType:'primitive'}, (props: CustomWidgetProps) => createElement('span', null, String(props.value)));
 boot({ contentfn: { baseUrl: 'http://localhost' }, datasets: [{ name: 'prod' }], auth: { kind: 'custom' }, desk: { kind: 'divider' } });
 """)
 subprocess.run(['node', 'node_modules/typescript/bin/tsc', '--noEmit', '--strict', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--jsx', 'react-jsx', '--target', 'ES2022', 'consumer.tsx', 'consumer.cts'], cwd=out, check=True)

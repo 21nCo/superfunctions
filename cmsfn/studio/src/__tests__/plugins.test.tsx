@@ -60,3 +60,37 @@ describe("getWidgetForField", () => {
     expect(c).toBeNull();
   });
 });
+
+
+describe("Public widget registration", () => {
+  it("exposes typed registration and keeps specific/last precedence through the public editor", async () => {
+    const { registerWidget: register, renderField: renderPublic } = await import('../index.js');
+    const selector = { typeName: 'public-post', fieldName: 'literal.title' };
+    register(selector, () => <span data-public-widget="first" />);
+    register(selector, props => <input aria-label="Custom literal" value={String(props.value)} onChange={event => props.onChange(event.target.value)} data-public-widget="winner" />);
+    register({ fieldName: 'literal.title' }, () => <span data-public-widget="less-specific" />);
+    selector.fieldName = 'changed-after-registration';
+    let changed: unknown;
+    const { container } = render(<>{renderPublic({name:'literal.title',type:{kind:'primitive',type:'string'}}, 'literal.title', 'original', value=>{changed=value;}, null, {docTypeName:'public-post'})}</>);
+    const input = screen.getByRole('textbox',{name:'Custom literal'});
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(input,{target:{value:'edited'}});
+    expect(changed).toBe('edited');
+    expect(container.querySelector('[data-public-widget="winner"]')).toBeTruthy();
+    expect(container.querySelector('[data-public-widget="first"],[data-public-widget="less-specific"]')).toBeNull();
+  });
+
+  it("rejects malformed JavaScript registrations without admitting or invoking them", async () => {
+    const { registerWidget: register } = await import('../index.js');
+    let accessorReads = 0, componentCalls = 0;
+    const winner = () => { componentCalls++; return <span />; };
+    register({typeName:'protected',fieldName:'title'},winner);
+    const selectors: unknown[] = [null, [], {}, {typeName:5}, {fieldName:''}, {fieldType:false}, {typeName:'protected',fieldName:'title',source:'code'},
+      Object.create({fieldName:'title'}), {fieldName:'title',[Symbol('extra')]:true},
+      Object.defineProperty({},'fieldName',{get(){accessorReads++;throw new Error('must not run');}})];
+    for(const selector of selectors)expect(()=>Reflect.apply(register,undefined,[selector,winner])).toThrow('Invalid widget registration');
+    for(const component of [null,{},'function() {}',42])expect(()=>Reflect.apply(register,undefined,[{typeName:'protected',fieldName:'title'},component])).toThrow('Invalid widget registration');
+    expect(getWidgetForField('protected','title','primitive')).toBe(winner);
+    expect(accessorReads).toBe(0); expect(componentCalls).toBe(0);
+  });
+});
