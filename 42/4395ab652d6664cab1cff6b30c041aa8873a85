@@ -1,0 +1,49 @@
+cifn/.conduct/lifecycle-logfn-readiness.md
+  s_e1c5fc1a65c0cf::t_308ef67bda57da 1-29
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_e88119a40bb9ff 230-264
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_2976e92802bc70 49-50
+cifn/typescript/control-plane/scripts/verify-lifecycle.mjs
+  s_e1c5fc1a65c0cf::t_8cd5f6f75c0036 1-93
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_cb7afc4f423301 25,30,36,45,53
+cifn/typescript/control-plane/scripts/verify-step-status.mjs
+  s_e1c5fc1a65c0cf::t_8606996ca381bb 43,81-85
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_a2129e3d263e15 83-85
+cifn/typescript/control-plane/src/observability/dispatcher.ts
+  s_e1c5fc1a65c0cf::t_21cfc3112b246d 1-60
+cifn/typescript/control-plane/src/observability/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_380aba8ef9476e 1-39
+cifn/typescript/control-plane/src/observability/lifecycle.ts
+  s_e1c5fc1a65c0cf::t_e589860b84dbee 1-56
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_de21103b1be033 1-2,55-58,60-68,72,85-86,93-94,102-103,107
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_f6f6c3e1c2eefa 687-756
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_f3783f38420649 1,25,133,136-139,158,170,174-231
+cifn/typescript/control-plane/tsconfig.durable.json
+  s_e1c5fc1a65c0cf::t_22322e75208420 3
+cifn/typescript/control-plane/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_32e4defffb9008 10
+package-lock.json
+  s_e1c5fc1a65c0cf::t_eba336dcef4282 6409-6410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "424395ab652d6664cab1cff6b30c041aa8873a85",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
