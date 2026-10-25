@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -10,13 +11,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { validateDevFnConfig } from "@devfn/config";
 import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@devfn/core";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
-import { ephemeralOriginDomain, ngrokMarker, registerTunnelBinding, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { relayPaths } from "@devfn/proxy/oauth-relay";
+import { ephemeralOriginDomain, ngrokMarker, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
 import { staleBuildOutputs } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, hostFixture, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  localDockerEndpoint, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerReadBack, receiptProblems, redactSecrets, runScenarios, selectScenarios, summarize, tunnelFixture,
-  type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioDriver, type ScenarioResult,
+  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerReadBack, receiptProblems, redactSecrets, runScenarios, selectScenarios, summarize, tunnelFixture,
+  protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
@@ -396,7 +398,8 @@ describe("live host cleanup handlers", () => {
       if (command === process.execPath) {
         const name = args.slice(1, args.indexOf("--json")).join(" ");
         calls.push(`devfn ${name}`);
-        const answer = answers.devfn[name];
+        // An exact command, or the longest answered command it starts with.
+        const answer = answers.devfn[name] ?? Object.entries(answers.devfn).filter(([key]) => name.startsWith(`${key} `)).sort(([a], [b]) => b.length - a.length)[0]?.[1];
         if (typeof answer === "function") return await (answer as (signal?: AbortSignal) => Promise<{ code: number; stdout: string; stderr: string }>)(given?.signal);
         return answer === undefined ? { code: 1, stdout: JSON.stringify({ ok: false, error: { code: "UNEXPECTED" } }), stderr: "" } : { code: 0, stdout: JSON.stringify(answer), stderr: "" };
       }
@@ -404,7 +407,7 @@ describe("live host cleanup handlers", () => {
       if (command === "docker") return { stderr: "", ...(answers.docker?.(args) ?? { code: 0, stdout: "" }) };
       return { code: 0, stdout: command === "lsof" ? answers.lsof?.(dir) ?? "p1\nn/\n" : command === "ps" ? answers.ps ?? "" : "", stderr: "" };
     };
-    const inventory = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: [] });
+    const inventory = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: ["dev.example.test"] });
     const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock" });
     await mkdir(host.stateDir, { recursive: true });
     return { host, inventory, calls, options };
@@ -422,7 +425,8 @@ describe("live host cleanup handlers", () => {
     await inventory.cleanup(host.handlers(), "s");
     expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "still present on read-back: processes: 4242" });
     // Removal is devfn down alone; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
-    expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps"]);
+    // Every check runs: without a readable manifest the Compose resources of the owner are listed too.
+    expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps", "docker ps -a", "docker network ls"]);
   });
 
   it("reports a removed working directory and the Compose containers and networks an owner left on the pinned engine", async () => {
@@ -493,6 +497,136 @@ describe("live host cleanup handlers", () => {
     expect(inventory.list("s")[0].cleanup?.detail).toBe("still present on read-back: routes: web-o-1.localhost");
   });
 
+  it("snapshots operator records by material fields, so a same-name route, domain or binding change is a protected change", async () => {
+    const operator = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-operator-")));
+    try {
+      const { host } = await fixtureHost({ devfn: {} }, undefined, { XDG_STATE_HOME: operator });
+      host.trustAnchors = async () => ["anchor"];
+      const state = path.join(operator, "devfn");
+      await mkdir(state, { recursive: true });
+      const route = { id: "op-web", instanceId: "op", hostname: "web-o-1.localhost", targetHost: "127.0.0.1", targetPort: 41000, tls: "internal", updatedAt: "t1" };
+      const domain = { domain: "operator.example.test", projectId: "op", repositoryIdentity: "/op", tls: "internal" };
+      const write = async (changes: { route?: object; domain?: object } = {}) => {
+        await writeFile(path.join(state, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ ...route, ...changes.route }] }));
+        await writeFile(path.join(state, "domains.json"), JSON.stringify({ version: 1, domains: [{ ...domain, ...changes.domain }] }));
+      };
+      await write();
+      await registerTunnelBinding(state, { name: "operator-ngr", provider: "ngrok", domain: ephemeralOriginDomain("operator-ngr"), projectId: "op", repositoryIdentity: "/op", nonproduction: true,
+        ngrok: { endpoints: "ephemeral", authtokenEnv: "OP_NGROK_AUTHTOKEN", apiKeyEnv: "OP_NGROK_API_KEY" } });
+      const before = await host.snapshot();
+      // A rewrite that changes only DevFn's own timestamp is not material.
+      await write({ route: { updatedAt: "t2" } });
+      expect(protectedChanges(before, await host.snapshot())).toEqual([]);
+      await write({ route: { targetPort: 42000 } });
+      expect(protectedChanges(before, await host.snapshot())).toEqual([`routes: removed op-web@web-o-1.localhost ${materialDigest(route)}`,
+        `routes: added op-web@web-o-1.localhost ${materialDigest({ ...route, targetPort: 42000 })}`]);
+      await write({ domain: { tls: "certificate", certificateFile: "/op/cert.pem", keyFile: "/op/key.pem" } });
+      expect((await host.snapshot().then((after) => protectedChanges(before, after))).filter((change) => change.startsWith("domains:"))).toHaveLength(2);
+      await write();
+      const registry = JSON.parse(await readFile(path.join(state, "tunnels.json"), "utf8")) as { bindings: Array<{ ngrok: Record<string, string> }> };
+      registry.bindings[0].ngrok.authtokenEnv = "OTHER_NGROK_AUTHTOKEN";
+      await writeFile(path.join(state, "tunnels.json"), JSON.stringify(registry));
+      const after = await host.snapshot();
+      expect(protectedChanges(before, after).map((change) => change.split(" ").slice(0, 3).join(" "))).toEqual(["tunnelBindings: removed operator-ngr", "tunnelBindings: added operator-ngr"]);
+      // Bindings hold credential variable names only; a snapshot never holds a credential value.
+      expect(JSON.stringify(after)).not.toContain("OTHER_NGROK_AUTHTOKEN");
+    } finally { await rm(operator, { recursive: true, force: true }); }
+  });
+
+  /** A process that stands in for a relay or connector that outlived its removal. */
+  async function survivor() {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    await once(child, "spawn");
+    const exited = once(child, "exit");
+    return { pid: child.pid!, stop: async () => { child.kill("SIGKILL"); await exited; } };
+  }
+
+  it("keeps a checkout that still runs processes for its read-back and reaps nothing before it", async () => {
+    const { host, inventory, calls } = await fixtureHost({ devfn: stopped, lsof: (root) => `p4242\nn${root}/qabcdef12-app/sub\n` });
+    const checkout = path.join(dir, "qabcdef12-app");
+    await mkdir(checkout);
+    inventory.record("fixture-repository", checkout, "s");
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false,
+      detail: "removal failed: processes 4242 still run in the checkout, so it is kept; still present on read-back: checkout exists; processes: 4242" });
+    await expect(access(checkout)).resolves.toBeUndefined();
+    // One listing before removal and one for the read-back: nothing was signalled, which would list again.
+    expect(calls).toEqual(["lsof", "lsof"]);
+  });
+
+  it("fails a tunnel binding whose connector outlives unregister or whose provider still holds a marked name", async () => {
+    const connector = await survivor();
+    let held: string[] = [];
+    const { host, inventory } = await fixtureHost({ devfn: { "tunnel unregister qabcdef12-nge": async () => {
+      await writeFile(path.join(host.stateDir, "tunnels.json"), JSON.stringify({ version: 1, bindings: [] }));
+      return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+    } } }, async (_binding, hostname) => hostname === undefined ? held : []);
+    try {
+      const binding = await registerTunnelBinding(host.stateDir, { name: "qabcdef12-nge", provider: "ngrok", domain: ephemeralOriginDomain("qabcdef12-nge"), projectId: "qualification",
+        repositoryIdentity: dir, nonproduction: true, ngrok: { endpoints: "ephemeral", authtokenEnv: "QUAL_NGROK_AUTHTOKEN", apiKeyEnv: "QUAL_NGROK_API_KEY" } });
+      const state = tunnelPaths(host.stateDir, binding.name).state;
+      await mkdir(path.dirname(state), { recursive: true });
+      await writeFile(state, JSON.stringify({ version: 1, binding: binding.name, hostnames: [], retired: [], residue: [],
+        connector: { pid: connector.pid, birthSignature: "fixture", startedAt: new Date().toISOString(), configDigest: "0".repeat(64), metricsPort: 4040, hostnames: [] } }));
+      inventory.record("tunnel-binding", binding.name, "s", { cwd: dir });
+      await inventory.cleanup(host.handlers(), "s");
+      // The connector dropped out of the run state with the binding, yet the read-back still knows its process.
+      expect(inventory.list("s")[0].cleanup?.detail).toBe(`still present on read-back: connector processes: ${connector.pid}`);
+      await connector.stop();
+      held = ["abc123.ngrok-free.app"];
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup?.detail).toBe("still present on read-back: held by ngrok: abc123.ngrok-free.app");
+      held = [];
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup?.absent).toBe(true);
+    } finally { await connector.stop().catch(() => undefined); }
+  });
+
+  it("fails an OAuth relay whose process outlives oauth-relay stop", async () => {
+    const relay = await survivor();
+    const { host, inventory } = await fixtureHost({ devfn: { "oauth-relay stop": { ok: true }, "oauth-relay status": { relay: { running: false, routeActive: false } } } });
+    try {
+      const { service } = relayPaths(host.stateDir);
+      await mkdir(path.dirname(service), { recursive: true });
+      await writeFile(service, JSON.stringify({ version: 1, pid: relay.pid, birthSignature: "fixture", startedAt: new Date().toISOString(), port: 8443, origin: "https://auth.dev.example.test:8443",
+        hostname: "auth.dev.example.test", domain: "dev.example.test", projectId: "qualification", repositoryIdentity: dir, invocationId: "i1" }));
+      const entry = inventory.record("oauth-relay", "dev.example.test", "s", { cwd: dir });
+      expect(entry.kind).toBe("oauth-relay");
+      await inventory.cleanup(host.handlers(), "s");
+      // status alone reports the relay stopped; the process recorded before stop still runs.
+      expect(inventory.list("s")[0].cleanup?.detail).toBe(`still present on read-back: relay processes: ${relay.pid}`);
+      await relay.stop();
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup?.absent).toBe(true);
+    } finally { await relay.stop().catch(() => undefined); }
+  });
+
+  it("records an ngrok-ephemeral public name before up, so a publish that then fails is still read back at the provider", async () => {
+    let published = false;
+    const fail = { code: 1, stdout: JSON.stringify({ ok: false, error: { code: "DEVFN_TUNNEL_PROVIDER_FAILED" } }), stderr: "" };
+    const { host, inventory, calls } = await fixtureHost({ devfn: {
+      status: stopped.status, down: stopped.down, ports: stopped.ports, "tunnel urls": { ok: true, timing: "post-start", urls: {}, assignedAfterStart: ["web"] },
+      "tunnel register": async () => {
+        await registerTunnelBinding(host.stateDir, { name: "qabcdef12-nge", provider: "ngrok", domain: ephemeralOriginDomain("qabcdef12-nge"), projectId: "qualification",
+          repositoryIdentity: dir, nonproduction: true, ngrok: { endpoints: "ephemeral", authtokenEnv: "QUAL_NGROK_AUTHTOKEN", apiKeyEnv: "QUAL_NGROK_API_KEY" } });
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" };
+      },
+      // The provider assigned and served an endpoint, then the start failed.
+      "up --allow-public": async () => { published = true; return fail; },
+      "tunnel status": { tunnel: { hostnames: [], outstanding: [] } }, "tunnel unregister": { ok: true },
+    } }, async (binding) => published && binding.name === "qabcdef12-nge" ? ["abc123.ngrok-free.app"] : []);
+    const scenario = NETWORKING_MATRIX.find((item) => item.id === "tunnel.ngrok-ephemeral")!;
+    const context: ScenarioContext = { scenario, inventory, observe: () => undefined, expect: () => undefined };
+    await expect(liveDrivers(host, parseApproval(approval))[scenario.id](context)).rejects.toThrow(/devfn up in qabcdef12-public failed/);
+    expect(calls.filter((call) => call.startsWith("devfn up"))).toEqual(["devfn up --allow-public"]);
+    const recorded = inventory.list(scenario.id).map((entry) => `${entry.kind} ${entry.id.replace(dir, "<root>")}`);
+    expect(recorded).toEqual(["fixture-repository <root>/qabcdef12-public", "tunnel-binding qabcdef12-nge",
+      expect.stringMatching(/^public-hostname web-qabcdef12-public-[a-f0-9]{20}\.qabcdef12-nge\.ngrok\.devfn\.internal$/), "runtime <root>/qabcdef12-public"]);
+    await inventory.cleanup(host.handlers(), scenario.id);
+    const name = inventory.list(scenario.id).find((entry) => entry.kind === "public-hostname")!;
+    expect(name.cleanup).toMatchObject({ absent: false, detail: "still present on read-back: held by ngrok: abc123.ngrok-free.app" });
+  });
+
   it("reads a public name back through the provider and never treats an unreadable provider as absence", async () => {
     const held = new Set(["held"]);
     let provider: ProviderReadBackFixture = async () => held.has("held") ? ["web-qabcdef12-public.ngrok-free.app"] : [];
@@ -555,8 +689,21 @@ describe("answer predicates", () => {
     expect(accepted(ANSWERS.proxyNotFound)).toEqual(["404 fallback", "404 proxy"]);
     expect(accepted((item) => ANSWERS.httpsRedirect(item, "app-x.localhost"))).toEqual(["308"]);
     expect(ANSWERS.httpsRedirect(failures["308"], "app-y.localhost")).toBe(false);
-    expect(accepted(ANSWERS.edgeUnrouted)).not.toContain("transport error");
-    expect(accepted(ANSWERS.edgeUnrouted)).not.toContain("fixture 404");
+  });
+
+  it("accept for a mismatched Host only the provider edge's own refusal, never a 5xx or an answer the DevFn origin could give", () => {
+    const edge = { server: "cloudflare", "cf-ray": "8f0000000000-LAX" };
+    const answers: Record<string, Answer | undefined> = { ...failures,
+      "cloudflare 1001": answer(530, "error code: 1001", edge), "cloudflare 1003": answer(403, "error code: 1003\n", edge),
+      "cloudflare 1033 (a tunnel matched)": answer(530, "error code: 1033", edge), "cloudflare forwarded 502": answer(502, "error code: 502", edge),
+      "cloudflare forwarded origin 421": answer(421, "", edge), "cloudflare forwarded origin deny": answer(403, "", { ...edge, [header]: "deny" }),
+      "cloudflare 1001 without edge headers": answer(530, "error code: 1001"),
+      "ngrok 3200": answer(404, "", { "ngrok-error-code": "ERR_NGROK_3200" }), "ngrok 8012": answer(502, "", { "ngrok-error-code": "ERR_NGROK_8012" }),
+      "ngrok forwarded origin deny": answer(403, "", { "ngrok-error-code": "ERR_NGROK_3200", [header]: "deny" }),
+    };
+    const edgeAccepted = (provider: TunnelBinding["provider"]) => Object.entries(answers).filter(([, item]) => ANSWERS.edgeUnrouted(item, provider)).map(([name]) => name);
+    expect(edgeAccepted("cloudflare")).toEqual(["cloudflare 1001", "cloudflare 1003"]);
+    expect(edgeAccepted("ngrok")).toEqual(["ngrok 3200"]);
   });
 
   it("require a provider read-back holding nothing for the private route and only the selected public host", () => {

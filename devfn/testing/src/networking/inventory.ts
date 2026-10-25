@@ -69,6 +69,14 @@ export class DisposableInventory {
     return entry;
   }
 
+  /** Add what read-back needs once it is known, such as the URL a provider assigned after the resource was recorded. */
+  public attach(entry: InventoryEntry, context: NonNullable<InventoryEntry["context"]>): void {
+    const recorded = this.entries.find((item) => item.kind === entry.kind && item.id === entry.id && item.scenario === entry.scenario && !item.cleanup?.absent);
+    if (!recorded) throw new InventoryError(`${entry.kind} ${entry.id} is not recorded.`);
+    recorded.context = { ...recorded.context, ...context };
+    this.persist();
+  }
+
   /**
    * Remove every recorded resource not yet confirmed absent, newest first,
    * then read each back. A removal error does not skip the read-back, and a

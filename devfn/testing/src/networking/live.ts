@@ -5,12 +5,13 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { defaultStateDir } from "@devfn/config";
 import { parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus } from "@devfn/ports";
 import { proxyListenerPorts, readRegisteredDomains } from "@devfn/proxy";
 import { readRelayService } from "@devfn/proxy/oauth-relay";
-import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
+import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, ownershipMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { ownerLabel } from "./matrix.js";
 import { loopbackListening } from "./prerequisites.js";
@@ -50,18 +51,41 @@ const run: CommandRunner = async (command, args, options = {}) => await new Prom
  * The public names the provider holds for a run's name or binding: the name
  * when Cloudflare holds a DNS record DevFn owns for it, or the host of every
  * ngrok endpoint or tunnel for the name or carrying the registration's
- * marker. Empty is absence; a failed read throws, it is never absence.
+ * marker. Without a hostname, every name carrying the binding's marker: its
+ * Cloudflare DNS records or its ngrok endpoints and tunnels. Empty is
+ * absence; a failed read throws, it is never absence.
  */
-export type ProviderReadBack = (binding: TunnelBinding, hostname: string, url: string | undefined) => Promise<string[]>;
+export type ProviderReadBack = (binding: TunnelBinding, hostname: string | undefined, url: string | undefined) => Promise<string[]>;
 
 const NGROK_API = "https://api.ngrok.com";
+const CLOUDFLARE_API = "https://api.cloudflare.com/client/v4";
+
+/** Every DNS record name in the binding's zone that carries its DevFn ownership comment. */
+async function cloudflareMarked(binding: TunnelBinding, env: NodeJS.ProcessEnv, fetcher: typeof fetch): Promise<string[]> {
+  if (binding.provider !== "cloudflare") return [];
+  const token = env[binding.cloudflare.apiTokenEnv];
+  if (!token) throw new Error(`Cloudflare binding ${binding.name} has no readable API token, so its DNS records cannot be read back`);
+  const names: string[] = [];
+  for (let page = 1, pages = 1; page <= pages; page += 1) {
+    if (page > 50) throw new Error("Cloudflare DNS record paging is unreadable");
+    const response = await fetcher(`${CLOUDFLARE_API}/zones/${binding.cloudflare.zoneId}/dns_records?per_page=100&page=${page}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
+    const payload = await response.json().catch(() => undefined) as { success?: boolean; result?: Array<{ name?: string; comment?: string | null }>; result_info?: { total_pages?: number } } | undefined;
+    if (!response.ok || payload?.success !== true || !Array.isArray(payload.result) || typeof payload.result_info?.total_pages !== "number") throw new Error(`Cloudflare GET dns_records answered HTTP ${response.status}`);
+    for (const record of payload.result) if (record.comment === ownershipMarker(binding)) names.push(String(record.name));
+    pages = payload.result_info.total_pages;
+  }
+  return names.sort();
+}
 
 export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): ProviderReadBack {
   return async (binding, hostname, url) => {
-    if (binding.provider === "cloudflare") return await new CloudflareTunnelProvider({ env, fetch: fetcher }).ownsDns(binding, hostname) ? [hostname] : [];
+    if (binding.provider === "cloudflare") {
+      if (hostname === undefined) return await cloudflareMarked(binding, env, fetcher);
+      return await new CloudflareTunnelProvider({ env, fetch: fetcher }).ownsDns(binding, hostname) ? [hostname] : [];
+    }
     const key = binding.ngrok.apiKeyEnv ? env[binding.ngrok.apiKeyEnv] : undefined;
     if (!key) throw new Error(`ngrok binding ${binding.name} has no readable API key, so its endpoints cannot be read back`);
-    const names = new Set([hostname, ...(url ? [new URL(url).hostname] : [])]);
+    const names = new Set([...(hostname ? [hostname] : []), ...(url ? [new URL(url).hostname] : [])]);
     const held = new Set<string>();
     for (const [route, list] of [["/endpoints", "endpoints"], ["/tunnels", "tunnels"]] as const) {
       let next: string | undefined = `${NGROK_API}${route}?limit=100`;
@@ -86,6 +110,22 @@ const READ_OR_CLEANUP = /^(down|status|ports|url|tunnel (status|urls|unregister)
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
 
+/** Every reason a resource is still present, or false when there is none. */
+const reasons = (items: ReadonlyArray<string | undefined>): string | false => items.filter(Boolean).join("; ") || false;
+
+/** A lifecycle lock a killed DevFn command held is recoverable only once stale (five minutes); cleanup waits that long for it. */
+const LOCK_STALE_WAIT_MS = 360_000;
+
+/** Times DevFn rewrites without a material change; every other field of a protected record is compared. */
+const VOLATILE = new Set(["createdAt", "updatedAt", "releasedAt"]);
+
+/** A digest of a record's material fields as sorted-key JSON. Protected records hold credential variable names and paths, never values. */
+export function materialDigest(record: unknown): string {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).filter((key) => !VOLATILE.has(key)).sort().map((key) => [key, canonical((value as Record<string, unknown>)[key])])) : value;
+  return createHash("sha256").update(JSON.stringify(canonical(record))).digest("hex").slice(0, 16);
+}
+
 /**
  * The real host a live run drives: the built DevFn CLI against a dedicated
  * state directory under the run root, generic fixture repositories, and
@@ -109,6 +149,8 @@ export class LiveHost {
   private readonly stop = new AbortController();
   /** Compose containers and networks of the run's own owners that a read-back found; reaped only after that read-back was recorded. */
   private readonly composeLeft = new Set<string>();
+  /** The relay and connector processes, and the binding, a resource had when its removal began; its read-back confirms them gone. */
+  private readonly removed = new Map<string, { pids: Set<number>; binding?: TunnelBinding }>();
 
   public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string }) {
     this.stateDir = path.join(options.root, "state");
@@ -125,6 +167,12 @@ export class LiveHost {
   public get aborted(): boolean { return this.stop.signal.aborted; }
 
   private refuseIfAborted(what: string): void { if (this.aborted) throw new Error(`the run was interrupted; ${what} is refused`); }
+
+  /** Wait ms; an interrupt ends the wait by throwing, so no driver keeps waiting once the run is interrupted. */
+  public async wait(ms: number): Promise<void> {
+    this.refuseIfAborted("waiting");
+    await delay(ms, undefined, { signal: this.stop.signal }).catch(() => this.refuseIfAborted("waiting"));
+  }
 
   public get prefix(): string { return this.options.inventory.prefix; }
 
@@ -147,9 +195,18 @@ export class LiveHost {
     return result.json;
   }
 
-  /** A devfn down that an already stopped lifecycle also satisfies. */
+  /**
+   * A devfn down that an already stopped lifecycle also satisfies. A start the
+   * interrupt killed leaves its lifecycle lock until the lock is stale, so a
+   * lock timeout is retried until then rather than leaving the runtime up.
+   */
   private async down(cwd: string): Promise<void> {
-    const result = await this.devfn(cwd, ["down"]);
+    const deadline = Date.now() + LOCK_STALE_WAIT_MS;
+    let result = await this.devfn(cwd, ["down"]);
+    while (result.code !== 0 && result.json.error?.code === "DEVFN_REGISTRY_LOCK_TIMEOUT" && Date.now() < deadline) {
+      await delay(15_000);
+      result = await this.devfn(cwd, ["down"]);
+    }
     if (result.code !== 0 && result.json.error?.code !== "DEVFN_NOT_RUNNING") throw new Error(`devfn down failed: ${JSON.stringify(result.json.error)}`);
   }
 
@@ -270,45 +327,78 @@ export class LiveHost {
     return pids.filter(alive);
   }
 
+  /** Record the processes, and binding, a resource has before its removal begins; repeated removals keep every one seen. */
+  private beforeRemoval(key: string, pids: readonly number[], binding?: TunnelBinding): void {
+    const seen = this.removed.get(key) ?? { pids: new Set<number>() };
+    for (const pid of pids) seen.pids.add(pid);
+    this.removed.set(key, { pids: seen.pids, ...(binding ?? seen.binding ? { binding: binding ?? seen.binding } : {}) });
+  }
+
+  /** The processes recorded for a resource before its removal that still run. */
+  private stillRunning(key: string): number[] { return [...this.removed.get(key)?.pids ?? []].filter(alive).sort((a, b) => a - b); }
+
   /**
-   * Removal and read-back for each recorded kind. A runtime is read back
-   * after devfn down and before anything is reaped, so a process that
-   * survived its lifecycle is reported, never hidden. Read-back failures throw.
+   * Removal and read-back for each recorded kind. Nothing is reaped before
+   * the read-back that would report it: a runtime is read back after devfn
+   * down; a checkout that still runs processes is kept for its read-back;
+   * the relay and connector processes recorded before removal must be gone.
+   * The run reaps leftovers only after every read-back. Read-back failures throw.
    */
   public handlers(): ResourceHandlers {
     const exists = async (file: string) => await access(file).then(() => true, () => false);
     const describe = (what: string, items: readonly unknown[]) => items.length ? `${what}: ${items.join(", ")}` : undefined;
+    const key = (entry: { kind: string; id: string }) => `${entry.kind} ${entry.id}`;
     return {
       remove: async (entry) => {
         const { cwd } = entry.context ?? {};
         if (entry.kind === "runtime" || entry.kind === "public-hostname") await this.down(entry.kind === "runtime" ? entry.id : cwd!);
         if (entry.kind === "fixture-repository") {
-          // Its runtime was read back first; whatever the checkout still runs is reaped before it is deleted.
-          await this.reap(entry.id, await this.sharedLeaders());
+          // Processes left in the checkout are its read-back's evidence: the checkout is kept, and the run reaps them only afterwards.
+          const left = await this.processesIn(entry.id, await this.sharedLeaders());
+          if (left.length) throw new Error(`processes ${left.join(", ")} still run in the checkout, so it is kept`);
           if (cwd) await this.exec("git", ["worktree", "remove", "--force", entry.id], { cwd });
           await rm(entry.id, { recursive: true, force: true });
         }
         // run-processes has nothing to remove: its read-back reports leftovers, which the run reaps only afterwards (reap).
         if (entry.kind === "proxy") await this.stopProxy();
         if (entry.kind === "registered-domain") await this.must(cwd!, ["domains", "unregister", entry.id]);
-        if (entry.kind === "oauth-relay") await this.must(cwd!, ["oauth-relay", "stop"]);
-        if (entry.kind === "tunnel-binding") await this.must(cwd!, ["tunnel", "unregister", entry.id]);
+        if (entry.kind === "oauth-relay") {
+          const relay = await readRelayService(this.stateDir).catch(() => undefined);
+          this.beforeRemoval(key(entry), relay ? [relay.pid] : []);
+          await this.must(cwd!, ["oauth-relay", "stop"]);
+        }
+        if (entry.kind === "tunnel-binding") {
+          const registered = (await readTunnelBindings(this.stateDir)).find((item) => item.name === entry.id);
+          const state = registered ? await readTunnelState(this.stateDir, entry.id).catch(() => undefined) : undefined;
+          this.beforeRemoval(key(entry), [state?.connector, ...(state?.retired ?? [])].flatMap((connector) => connector ? [connector.pid] : []), registered);
+          await this.must(cwd!, ["tunnel", "unregister", entry.id]);
+        }
       },
       present: async (entry) => {
         const { cwd, binding, url } = entry.context ?? {};
-        if (entry.kind === "fixture-repository") return await exists(entry.id) ? "checkout exists" : describe("processes", await this.processesIn(entry.id, await this.sharedLeaders())) ?? false;
+        if (entry.kind === "fixture-repository") return reasons([await exists(entry.id) ? "checkout exists" : undefined, describe("processes", await this.processesIn(entry.id, await this.sharedLeaders()))]);
         if (entry.kind === "run-processes") return describe("processes in the run root", await this.processesIn(entry.id, new Set())) ?? false;
         if (entry.kind === "runtime") {
+          // Every check runs, so a Compose read-back lists what remains even when the lifecycle did not stop.
           const status = await this.must(entry.id, ["status"]);
           const leases = ((await this.must(entry.id, ["ports"])).allocations as Array<{ instanceId: string; port: number }>).filter((item) => item.instanceId === status.instanceId).map((item) => item.port);
-          return (status.state === "stopped" ? undefined : `state ${String(status.state)}`) ?? describe("processes", await this.processesIn(entry.id, await this.sharedLeaders()))
-            ?? describe("fixture processes", await this.survivingFixtures(entry.id)) ?? describe("leases", leases) ?? describe("routes", await this.routesOf(String(status.instanceId)))
-            ?? (await this.usesCompose(entry.id) ? describe("Compose resources", await this.composeLeftovers(String(status.instanceId))) : undefined) ?? false;
+          return reasons([status.state === "stopped" ? undefined : `state ${String(status.state)}`, describe("processes", await this.processesIn(entry.id, await this.sharedLeaders())),
+            describe("fixture processes", await this.survivingFixtures(entry.id)), describe("leases", leases), describe("routes", await this.routesOf(String(status.instanceId))),
+            await this.usesCompose(entry.id) ? describe("Compose resources", await this.composeLeftovers(String(status.instanceId))) : undefined]);
         }
         if (entry.kind === "proxy") return await this.proxyRunning() || await loopbackListening(2019) ? "the run's Caddy still runs or 2019 is held" : false;
         if (entry.kind === "registered-domain") return (await readRegisteredDomains(this.stateDir)).some((item) => item.domain === entry.id);
-        if (entry.kind === "oauth-relay") { const { relay } = await this.must(cwd!, ["oauth-relay", "status"]); return relay.running === true || relay.routeActive === true; }
-        if (entry.kind === "tunnel-binding") return (await readTunnelBindings(this.stateDir)).some((item) => item.name === entry.id);
+        if (entry.kind === "oauth-relay") {
+          const { relay } = await this.must(cwd!, ["oauth-relay", "status"]);
+          return reasons([relay.running === true || relay.routeActive === true ? "the relay runs or is routed" : undefined, describe("relay processes", this.stillRunning(key(entry)))]);
+        }
+        if (entry.kind === "tunnel-binding") {
+          // A binding that was never registered never published; otherwise the provider must hold nothing carrying its marker.
+          const registered = (await readTunnelBindings(this.stateDir)).find((item) => item.name === entry.id);
+          const bound = registered ?? this.removed.get(key(entry))?.binding;
+          return reasons([registered ? "still registered" : undefined, describe("connector processes", this.stillRunning(key(entry))),
+            bound ? describe(`held by ${bound.provider}`, await this.readBack(bound, undefined, undefined)) : undefined]);
+        }
         // A public name is absent when DevFn no longer routes or journals it, the provider read-back holds nothing for it, and its URL no longer serves the run.
         const bound = (await readTunnelBindings(this.stateDir)).find((item) => item.name === binding);
         if (!bound) throw new Error(`binding ${binding} is not readable for ${entry.id}`);
@@ -391,12 +481,22 @@ export class LiveHost {
     }
   }
 
-  /** Certificates in the operating system trust stores, by fingerprint. A failed read throws. */
+  /**
+   * Certificates in the operating system trust stores, by fingerprint, and on
+   * macOS a digest of the user and admin trust settings, so a trust decision
+   * about a certificate already in a keychain is a change too. A failed read throws.
+   */
   public async trustAnchors(): Promise<string[]> {
     if (process.platform === "darwin") {
       const result = await run("security", ["find-certificate", "-a", "-Z", "/Library/Keychains/System.keychain", path.join(os.homedir(), "Library", "Keychains", "login.keychain-db")]);
       if (result.code !== 0) throw new Error("the macOS keychains are unreadable");
-      return result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()).sort();
+      const settings: string[] = [];
+      for (const [domain, args] of [["user", []], ["admin", ["-d"]]] as const) {
+        const dump = await run("security", ["dump-trust-settings", ...args]);
+        if (dump.code !== 0 && !dump.stderr.includes("No Trust Settings were found")) throw new Error(`the macOS ${domain} trust settings are unreadable`);
+        settings.push(`trust-settings:${domain}:${dump.code === 0 ? createHash("sha256").update(dump.stdout).digest("hex") : "none"}`);
+      }
+      return [...result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()), ...settings].sort();
     }
     const anchors: string[] = [];
     for (const location of ["/etc/ssl/certs", "/usr/local/share/ca-certificates", "/etc/pki/ca-trust/source/anchors", "/etc/pki/tls/certs"]) {
@@ -406,7 +506,12 @@ export class LiveHost {
     return anchors.sort();
   }
 
-  /** The operator's own machine state, which a run must leave untouched. */
+  /**
+   * The operator's own machine state, which a run must leave untouched. Each
+   * record is named and carries a digest of its material fields, so a change
+   * under the same name (a route's target, a domain's TLS, a binding's
+   * provider configuration) is reported, not only additions and removals.
+   */
   public async snapshot(): Promise<ProtectedSnapshot> {
     const operator = defaultStateDir(this.options.env);
     const json = async (file: string): Promise<any> => {
@@ -416,10 +521,10 @@ export class LiveHost {
     const registry = await json("registry.json") as { allocations?: Array<{ projectId: string; instanceId: string; service: string; port: number; state: string }> } | undefined;
     const routes = await json("proxy-routes.json") as { routes?: Array<{ id: string; hostname: string }> } | undefined;
     return {
-      allocations: (registry?.allocations ?? []).filter((item) => item.state !== "released").map((item) => `${item.projectId}/${item.instanceId}/${item.service}:${item.port}:${item.state}`),
-      routes: (routes?.routes ?? []).map((item) => `${item.id}@${item.hostname}`),
-      domains: (await readRegisteredDomains(operator)).map((item) => item.domain),
-      tunnelBindings: (await readTunnelBindings(operator)).map((item) => item.name),
+      allocations: (registry?.allocations ?? []).filter((item) => item.state !== "released").map((item) => `${item.projectId}/${item.instanceId}/${item.service}:${item.port}:${item.state} ${materialDigest(item)}`),
+      routes: (routes?.routes ?? []).map((item) => `${item.id}@${item.hostname} ${materialDigest(item)}`),
+      domains: (await readRegisteredDomains(operator)).map((item) => `${item.domain} ${materialDigest(item)}`),
+      tunnelBindings: (await readTunnelBindings(operator)).map((item) => `${item.name} ${materialDigest(item)}`),
       trustStore: await this.trustAnchors(),
     };
   }

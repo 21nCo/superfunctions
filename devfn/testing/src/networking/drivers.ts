@@ -4,10 +4,10 @@ import { lookup } from "node:dns/promises";
 import path from "node:path";
 import tls from "node:tls";
 
-import { createPlan, resolveEndpointTemplates } from "@devfn/core";
+import { createPlan, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity } from "@devfn/core";
 import { validateDevFnConfig } from "@devfn/config";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
-import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings } from "@devfn/proxy/tunnel";
+import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
 import type { Answer, LiveHost } from "./live.js";
@@ -18,12 +18,14 @@ type LiveDriver = (context: ScenarioContext, host: LiveHost) => Promise<void>;
 
 /* Generic fixture manifests. Every one is schema-checked by the contract tests. */
 
+const PROJECT_ID = "qualification";
+
 const serverProcess = (name: string) => ({ adapter: "command" as const, command: [process.execPath, "server.mjs", name, `DEVFN_PORT_${name.toUpperCase()}`], ports: [name],
   health: { type: "http" as const, port: name, timeoutMs: 30_000 } });
 
 /** Two native processes behind TLS .localhost routes: one at /, one at a stripped /api prefix on its own host. */
 export function hostFixture(environment: Record<string, string> = {}): Record<string, unknown> {
-  return { version: 1, project: { id: "qualification" }, ports: { web: {}, api: {} }, processes: { web: serverProcess("web"), api: serverProcess("api") },
+  return { version: 1, project: { id: PROJECT_ID }, ports: { web: {}, api: {} }, processes: { web: serverProcess("web"), api: serverProcess("api") },
     profiles: { default: { processes: ["web", "api"], proxy: true, ...(Object.keys(environment).length ? { environment } : {}) } },
     hostnames: { web: { target: "web", hostname: "app-{instance}.localhost", tls: "internal" }, api: { target: "api", hostname: "svc-{instance}.localhost", path: "/api", stripPrefix: true, tls: "internal" } } };
 }
@@ -41,7 +43,7 @@ export const COMPOSE_FILE = `services:
 
 export function composeFixture(): Record<string, unknown> {
   const health = (port: string) => ({ type: "http" as const, port, timeoutMs: 180_000 });
-  return { version: 1, project: { id: "qualification" }, ports: { echo: {}, client: {} },
+  return { version: 1, project: { id: PROJECT_ID }, ports: { echo: {}, client: {} },
     services: { echo: { adapter: "compose", file: "compose.yaml", service: "echo", ports: { echo: 8080 }, health: health("echo") },
       client: { adapter: "compose", file: "compose.yaml", service: "client", dependsOn: ["echo"], ports: { client: 8080 }, env: { UPSTREAM: "{{env.DEVFN_URL_ECHO}}" }, health: health("client") } },
     profiles: { default: { services: ["echo", "client"] } } };
@@ -49,13 +51,13 @@ export function composeFixture(): Record<string, unknown> {
 
 /** web served on a registered domain; only the primary worktree also gets <host>.<domain>. */
 export function domainFixture(domain: string): Record<string, unknown> {
-  return { version: 1, project: { id: "qualification" }, ports: { web: {} }, processes: { web: serverProcess("web") },
+  return { version: 1, project: { id: PROJECT_ID }, ports: { web: {} }, processes: { web: serverProcess("web") },
     profiles: { default: { processes: ["web"], proxy: true } }, hostnames: { web: { target: "web", domain } } };
 }
 
 /** web published at /app through a tunnel binding; private is routed locally over internal TLS, so Caddy holds its certificate, but never selected for public exposure. */
 export function tunnelFixture(binding: string, ephemeral: boolean): Record<string, unknown> {
-  return { version: 1, project: { id: "qualification" }, ports: { web: {}, private: {} }, processes: { web: serverProcess("web"), private: serverProcess("private") },
+  return { version: 1, project: { id: PROJECT_ID }, ports: { web: {}, private: {} }, processes: { web: serverProcess("web"), private: serverProcess("private") },
     profiles: { default: { processes: ["web", "private"], proxy: true, tunnel: { binding, routes: ["web"], ...(ephemeral ? { ephemeral: true } : {}) } } },
     hostnames: { web: { target: "web", path: "/app", stripPrefix: true }, private: { target: "private", tls: "internal" } } };
 }
@@ -123,7 +125,7 @@ createServer(async (request, response) => {
 }
 
 export function oauthFixture(domain: string, approval: NonNullable<QualificationApproval["oauth"]>): Record<string, unknown> {
-  return { version: 1, project: { id: "qualification" }, ports: { app: {} },
+  return { version: 1, project: { id: PROJECT_ID }, ports: { app: {} },
     processes: { app: { adapter: "command", command: [process.execPath, "oauth.mjs", "DEVFN_PORT_APP", approval.clientIdEnv, approval.clientSecretEnv, OAUTH_CALLBACK_PATH], ports: ["app"],
       envAllowlist: [approval.clientIdEnv, approval.clientSecretEnv], secretEnv: [approval.clientSecretEnv], health: { type: "tcp", port: "app", timeoutMs: 30_000 } } },
     profiles: { default: { processes: ["app"], proxy: true } }, hostnames: { app: { target: "app", domain } } };
@@ -131,7 +133,6 @@ export function oauthFixture(domain: string, approval: NonNullable<Qualification
 
 /* Probes. */
 
-const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
 const exec = async (command: string, args: readonly string[]): Promise<{ code: number; stdout: string }> => await new Promise((resolve) => {
   execFile(command, [...args], { timeout: 60_000 }, (error, stdout) => resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stdout: String(stdout) }));
 });
@@ -175,8 +176,22 @@ export const ANSWERS = {
   },
   /** The relay's rejection of a callback whose state it already consumed. */
   relayReplayRejected: (answer?: Answer) => answer?.status === 403 && /^DEVFN_OAUTH_RELAY_REJECTED: replayed\b/.test(answer.body),
-  /** The edge's own error answer for a Host the run never published; no fixture answered. */
-  edgeUnrouted: (answer?: Answer) => answer !== undefined && answer.status >= 400 && answer.json?.marker === undefined,
+  /**
+   * The provider edge's own refusal of a Host the run never published: a
+   * Cloudflare 1xxx edge error (plain text for a non-browser client, 4xx or
+   * Cloudflare's own 530, never 1033, which means a tunnel did match) or an
+   * ngrok ERR_NGROK error with a 4xx status. A 5xx from an origin path, a
+   * fixture answer and anything shaped like the DevFn origin (its marker
+   * header or its empty 421) mean the edge forwarded the request.
+   */
+  edgeUnrouted: (answer: Answer | undefined, provider: TunnelBinding["provider"]) => {
+    if (!answer || answer.json?.marker !== undefined || originHeader(answer) !== undefined) return false;
+    const client = answer.status >= 400 && answer.status < 500;
+    if (provider === "cloudflare") {
+      return answer.headers.server === "cloudflare" && typeof answer.headers["cf-ray"] === "string" && (client || answer.status === 530) && /^error code: 1(?!033)\d{3}\s*$/.test(answer.body);
+    }
+    return client && /^ERR_NGROK_\d+$/.test(String(answer.headers["ngrok-error-code"] ?? ""));
+  },
   /** The provider read-back holds no name for the private route, and every name it holds for the binding is the selected public host. */
   providerWithheld: (held: readonly string[], publicHost: string, privateName: string) => !held.includes(privateName) && held.every((name) => name === publicHost),
 };
@@ -341,7 +356,7 @@ const googleOAuth = (approval: QualificationApproval | undefined): LiveDriver =>
     evidence = await Promise.all(apps.map(read));
     await replay();
     if (evidence.every((item) => item.evidence.some((record) => record.session === true))) break;
-    await sleep(3_000);
+    await host.wait(3_000);
   }
   await replay();
   const logins = evidence.map((item) => item.evidence.find((record) => record.session === true));
@@ -365,7 +380,7 @@ async function publicAnswer(host: LiveHost, url: string, attempts = 24): Promise
     const answer = await host.request(url, { publicDns: true }).catch(() => undefined);
     if (answer?.json?.marker) return { status: answer.status, marker: String(answer.json.marker), name: String(answer.json.name), path: String(answer.json.path) };
     if (attempt === attempts - 1) return answer ? { status: answer.status } : undefined;
-    await sleep(5_000);
+    await host.wait(5_000);
   }
   return undefined;
 }
@@ -392,15 +407,24 @@ async function binding(context: ScenarioContext, host: LiveHost, approval: Quali
   return cwd;
 }
 
-/** Record and start one public worktree; its public hostname is recorded before it can exist. */
+/**
+ * Record and start one public worktree. Its public name is recorded before up
+ * can publish it: the planned URL's host, or, for a URL the provider assigns
+ * only after start, the origin name DevFn derives for the route, which the
+ * provider read-back finds by the binding's marker whatever URL it got. The
+ * assigned URL is attached once the start reports it.
+ */
 async function publicStart(context: ScenarioContext, host: LiveHost, cwd: string, name: string): Promise<{ hostname: string; url: string; receipt: Record<string, any> }> {
   const planned = (await host.must(cwd, ["tunnel", "urls"])) as { urls: Record<string, string> };
-  const record = (hostname: string, url: string) => { context.inventory.record("public-hostname", hostname, context.scenario.id, { cwd, binding: name, url }); };
-  if (planned.urls.web) record(hostOf(planned.urls.web), planned.urls.web);
+  const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name);
+  if (!bound) throw new Error(`binding ${name} is not readable before start`);
+  const origin = planned.urls.web ? hostOf(planned.urls.web) : domainAliases("web", bound.domain, await resolveInstanceIdentity(PROJECT_ID, cwd))[0];
+  const entry = context.inventory.record("public-hostname", origin, context.scenario.id, { cwd, binding: name, ...(planned.urls.web ? { url: planned.urls.web } : {}) });
   const receipt = await start(context, host, cwd, ["--allow-public"]);
   const hostname = (receipt.tunnel?.hostnames as string[] | undefined)?.[0] ?? "";
   const url = (receipt.publicUrls as Record<string, string> | undefined)?.web ?? "";
-  if (!planned.urls.web && hostname) record(hostname, url);
+  if (hostname !== origin) throw new Error(`DevFn published ${hostname || "no name"} for web, not the recorded ${origin}`);
+  if (!planned.urls.web && url) context.inventory.attach(entry, { url });
   return { hostname, url, receipt };
 }
 
@@ -432,8 +456,9 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   if (bound.provider === "cloudflare") await new CloudflareTunnelProvider({ env: host.options.env }).verifyDns(bound, hostname);
   const resolved = await lookup(hostOf(url), { all: true }).then((items) => items.map((item) => item.address), () => []);
   const misrouted = await host.request(url, { publicDns: true, host: `${host.prefix}-unrouted.${hostOf(url).split(".").slice(1).join(".")}` }).catch(() => undefined);
-  context.expect("dns-host-sni", resolved.length > 0 && ANSWERS.edgeUnrouted(misrouted),
-    `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host answered ${misrouted?.status ?? "nothing"} without a fixture marker`);
+  const edgeError = misrouted ? String(misrouted.headers["ngrok-error-code"] ?? misrouted.body.trim().slice(0, 40)) : "";
+  context.expect("dns-host-sni", resolved.length > 0 && ANSWERS.edgeUnrouted(misrouted, bound.provider),
+    `${hostOf(url)} resolves to ${resolved.join(", ")}; edge certificate verified for the name; mismatched Host answered ${misrouted ? `${misrouted.status} ${edgeError}`.trim() : "nothing"}`);
   await probePublicOrigin(hostname, PUBLIC_ORIGIN_PORT, ca);
   context.observe("origin-tls", true, `origin certificate for ${hostname} verified against the internal root on ${PUBLIC_ORIGIN_PORT}`);
   await host.must(cwd, ["down"]);
@@ -495,7 +520,7 @@ const crash: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "crash", hostFixture());
   await start(context, host, cwd);
   process.kill((await host.seen(cwd, "web")).pid, "SIGKILL");
-  await sleep(500);
+  await host.wait(500);
   const status = await host.devfn(cwd, ["status"]);
   // An interrupted start: the CLI is killed once its first process has recorded its startup.
   const interrupted = await host.repository(context.scenario.id, "interrupted", hostFixture());
@@ -503,7 +528,7 @@ const crash: LiveDriver = async (context, host) => {
   const kill = new AbortController();
   const pending = host.up(context.scenario.id, interrupted, [], kill.signal);
   let orphan: number | undefined;
-  for (let wait = 0; wait < 300 && orphan === undefined; wait += 1) { orphan = (await host.seen(interrupted, "web").catch(() => undefined))?.pid; if (orphan === undefined) await sleep(100); }
+  for (let wait = 0; wait < 300 && orphan === undefined; wait += 1) { orphan = (await host.seen(interrupted, "web").catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
   kill.abort();
   await pending;
   const collected = await host.devfn(interrupted, ["ports", "gc"]);
@@ -513,7 +538,7 @@ const crash: LiveDriver = async (context, host) => {
   // The killed start's lifecycle lock is recoverable only once stale (five minutes); a retry before then fails closed.
   let retried = await host.up(context.scenario.id, interrupted);
   for (const deadline = Date.now() + 420_000; retried.json.state !== "ready" && Date.now() < deadline; retried = await host.up(context.scenario.id, interrupted)) {
-    await sleep(15_000);
+    await host.wait(15_000);
     await host.devfn(interrupted, ["ports", "gc"]);
   }
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -547,7 +572,7 @@ const proxyReload: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "reload", hostFixture());
   let probing = true;
   const answers: boolean[] = [];
-  const probe = (async () => { while (probing) { answers.push(await serves(host, web, sentinelCwd, ca)); await sleep(50); } })();
+  const probe = (async () => { while (probing) { answers.push(await serves(host, web, sentinelCwd, ca)); await host.wait(50); } })();
   try { await start(context, host, cwd); await host.must(cwd, ["down"]); await start(context, host, cwd); await host.must(cwd, ["down"]); }
   finally { probing = false; await probe; }
   context.expect("reload-preserves", answers.length > 0 && answers.every(Boolean), `${answers.filter(Boolean).length}/${answers.length} sentinel probes answered across four route changes`);

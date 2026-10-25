@@ -55,7 +55,7 @@ const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing:
     a("url-timing", timing === "pre-start" ? "devfn tunnel urls reports each selected URL before start, and the started lifecycle publishes exactly that URL." : "Before start the route is listed as assigned after start with no URL; the started lifecycle reports the provider-assigned URL."),
     a("public-route-served", "The selected route answers its own marker at its public URL through real public DNS and the provider edge."),
     a("private-route-denied", "The provider holds no public name for a route the profile did not select; the public origin denies that route's own name (403, deny) and refuses it as a forged Host (421); an unselected path on a public name gets the origin's marked fallback."),
-    a("dns-host-sni", `${dns} The edge certificate verifies for the public hostname (SNI), and a mismatched Host header is not routed.`),
+    a("dns-host-sni", `${dns} The edge certificate verifies for the public hostname (SNI), and a mismatched Host header gets the provider edge's own refusal (a Cloudflare 1xxx edge error or an ngrok ERR_NGROK error), never the DevFn origin or a fixture.`),
     a("origin-tls", "The DevFn public origin presents a certificate for each public hostname that verifies against the Caddy internal root, without OS trust changes."),
     a("withdrawn-absent", "After devfn down the public URL stops serving, tunnel status lists no hostname or outstanding withdrawal, and a provider read-back finds no DevFn-owned record."),
   ],
