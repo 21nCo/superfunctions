@@ -1,0 +1,53 @@
+flowfn/.conduct/python-redis-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_c7b4d84385c347 1-48
+flowfn/.conduct/run-python-redis-ci.py
+  s_e1c5fc1a65c0cf::t_f3e68208e5291b 1-55
+flowfn/.conduct/verify-python-redis-partitions.py
+  s_e1c5fc1a65c0cf::t_bccbf6bfd3563c 1-69
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_8b080fe889618f 138,144-154,194,196,231
+flowfn/python/benchmarks/native_queues.py
+  s_e1c5fc1a65c0cf::t_3c0ff29bae1485 8-9
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_0bbc59cad04769 12,214
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_65d45fcf0c6573 61-62,147-149,151,155-157,161-163,176-177,233-240,262,322-326
+flowfn/python/flowfn/adapters/redis_partition_scripts.py
+  s_e1c5fc1a65c0cf::t_e449f4701dbe31 1-151
+flowfn/python/flowfn/adapters/redis_partition_subscription.py
+  s_e1c5fc1a65c0cf::t_cf95fc9bd16842 1-95
+flowfn/python/flowfn/adapters/redis_partitions.py
+  s_e1c5fc1a65c0cf::t_dcc39815978691 1-237
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_a6821c06c6262d 8,31
+flowfn/python/flowfn/core/owned_wait.py
+  s_e1c5fc1a65c0cf::t_b6ec6905128e2a 1-33
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_546a7ca558fac4 16,210
+flowfn/python/tests/test_durable_stream_ownership.py
+  s_e1c5fc1a65c0cf::t_7a83cedc2565fb 6,128-129
+flowfn/python/tests/test_memory_stream_partitions.py
+  s_e1c5fc1a65c0cf::t_6f724da256992b 156,160
+flowfn/python/tests/test_owned_wait.py
+  s_e1c5fc1a65c0cf::t_4c0b0a79c4f838 1-78
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_a576ab31380dc3 54
+flowfn/python/tests/test_redis_partitions.py
+  s_e1c5fc1a65c0cf::t_c8da0d31c6626f 1-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05ff9b949ffb354c2f516ded48019cac42923da3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
