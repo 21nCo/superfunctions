@@ -1,6 +1,4 @@
 import path from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 
 import type { BrowserContext } from 'playwright';
 
@@ -10,7 +8,7 @@ import type { ArtifactStore } from '@probefn/storage';
 /** Preserves admitted artifacts and exact scratch ownership when finalization fails. */
 export class TraceFinalizationError extends ProbefnError {
   constructor(readonly tracePath: string | null, readonly scratchDirectory: string | null,
-    readonly tracingStopped: boolean, readonly failures: unknown[]) {
+    readonly tracingStopped: boolean, readonly failures: unknown[], readonly scratchId: string | null = null) {
     const primary = failures[0];
     super({ code: isProbefnError(primary) ? primary.code : 'E_STORAGE_WRITE_FAILED',
       message: 'Trace finalization did not complete.', retryable: Boolean(tracePath || scratchDirectory),
@@ -57,27 +55,33 @@ export async function stopTracing(
   if (path.posix.normalize(relativeTracePath) !== relativeTracePath || !relativeTracePath.startsWith(`${runDirectory}/`)) {
     throw createProbefnError({ code: 'E_CONFIG_INVALID', message: 'Trace path must remain inside its owning run.', retryable: false });
   }
-  const scratch = await mkdtemp(path.join(tmpdir(), 'probefn-trace-'));
-  let admitted: string | null = null;
-  let stopped = false;
-  const errors: unknown[] = [];
-  try {
-    const filename = path.join(scratch, 'trace.zip');
-    if (options.chunk) await context.tracing.stopChunk({ path: filename });
-    else await context.tracing.stop({ path: filename });
-    stopped = true;
-    await options.artifactStore.importArtifactFile(relativeTracePath, filename);
-    admitted = relativeTracePath;
-  } catch (error) { errors.push(error); }
-  let pendingScratch: string | null = null;
-  try { await rm(scratch, { recursive: true, force: true }); }
-  catch (error) { pendingScratch = scratch; errors.push(error); }
-  if (!errors.length && options.chunk) {
-    try { await context.tracing.startChunk(); stopped = false; }
-    catch (error) { errors.push(error); }
-  }
-  if (errors.length) {
-    throw new TraceFinalizationError(admitted, pendingScratch, stopped, errors);
-  }
-  return admitted;
+  return options.artifactStore.withTraceScratch(options.runId, relativeTracePath, async scratch => {
+    let admitted: string | null = null;
+    let stopped = false;
+    let sealed = false;
+    const errors: unknown[] = [];
+    try {
+      await scratch.producing();
+      if (options.chunk) await context.tracing.stopChunk({ path: scratch.filename });
+      else await context.tracing.stop({ path: scratch.filename });
+      stopped = true;
+      // Playwright's awaited export has finished writing this exact file.
+      await scratch.seal(); sealed = true;
+      await options.artifactStore.importArtifactFile(relativeTracePath, scratch.filename);
+      admitted = relativeTracePath;
+      await scratch.admitted();
+    } catch (error) { errors.push(error); }
+    let pendingScratch: string | null = path.dirname(scratch.filename);
+    // Failed/unknown producer completion cannot authorize deletion.
+    if (sealed) {
+      try { await scratch.cleanup(admitted === null); pendingScratch = null; }
+      catch (error) { errors.push(error); }
+    }
+    if (!errors.length && options.chunk) {
+      try { await context.tracing.startChunk(); stopped = false; }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length) throw new TraceFinalizationError(admitted, pendingScratch, stopped, errors, pendingScratch ? scratch.id : null);
+    return admitted;
+  });
 }

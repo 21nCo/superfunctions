@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { CaptureScratchRegistry, type CaptureScratchPage } from './capture-scratch.js';
 import { createReadStream } from 'node:fs';
 import { RunQuota, safeDirectory, safeFile } from './run-quota.js';
 import { open, rename, rm } from 'node:fs/promises';
@@ -200,7 +201,7 @@ export class ArtifactStore {
           ? runPaths.eventRoot
         : path.posix.join(runPaths.runRoot, directory);
 
-    if (!relativeDirectory.startsWith(`${runPaths.runRoot}/`) || relativeDirectory.split('/').includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Event directory must remain within its run.', retryable: false });
+    if (!relativeDirectory.startsWith(`${runPaths.runRoot}/`) || relativeDirectory.split('/').some(part => ['.probefn-staging', '.probefn-scratch'].includes(part))) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Event directory must remain within its run.', retryable: false });
     return new NdjsonEventSink({
       repoRoot: this.repoRoot,
       relativeDirectory,
@@ -215,6 +216,52 @@ export class ArtifactStore {
   /** Recover durably admitted appends; report any event rejected before durable admission. */
   public async recoverEventWrites(runId: string): Promise<{ failed: boolean }> {
     return this.runQuota.transaction(runId, this.getRunPaths(runId).runRoot, async quota => ({ failed: quota.hasEventFailure() }));
+  }
+
+  /** Keep native ownership across short registry transactions and the actual producer. */
+  public async withTraceScratch<T>(runId: string, destination: string, operation: (scratch: {
+    id: string; filename: string; producing(): Promise<void>; seal(): Promise<void>; admitted(): Promise<void>; cleanup(discardSealed?: boolean): Promise<void>;
+  }) => Promise<T>): Promise<T> {
+    const registry = new CaptureScratchRegistry(this.repoRoot, this.artifactRoot, this.runQuota);
+    return registry.owned(runId, async () => {
+      const record = await registry.prepare(runId, destination);
+      let active = true;
+      const pending = new Set<Promise<void>>(), failures: unknown[] = [];
+      const invoke = (method: () => Promise<void>): Promise<void> => {
+        if (!active) return Promise.reject(createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Capture scratch callback has ended.', retryable: false }));
+        const promise = method(); pending.add(promise);
+        void promise.then(() => pending.delete(promise), error => { failures.push(error); pending.delete(promise); });
+        return promise;
+      };
+      let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+      try {
+        const value = await operation({ id: record.id, filename: registry.filename(record),
+          producing: () => invoke(async () => { await registry.producing(runId, record.id); }),
+          seal: () => invoke(() => registry.seal(runId, record.id)), admitted: () => invoke(() => registry.admitted(runId, record.id)),
+          cleanup: (discardSealed = false) => invoke(() => registry.cleanup(runId, record.id, discardSealed)) });
+        outcome = { ok: true, value };
+      } catch (error) { outcome = { ok: false, error }; }
+      finally { active = false; await Promise.allSettled([...pending]); }
+      if (!outcome.ok) throw outcome.error;
+      if (failures.length) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Capture scratch operation did not complete.', retryable: false, cause: new AggregateError(failures) });
+      return outcome.value;
+    });
+  }
+  public async cleanupTraceScratch(runId: string, id: string): Promise<void> {
+    const registry = new CaptureScratchRegistry(this.repoRoot, this.artifactRoot, this.runQuota);
+    await registry.owned(runId, () => registry.cleanup(runId, id));
+  }
+  /** Explicitly reconcile sealed output; never overwrite an unrelated destination. */
+  public async reconcileTraceScratch(runId: string, id: string): Promise<string> {
+    return new CaptureScratchRegistry(this.repoRoot, this.artifactRoot, this.runQuota).reconcile(runId, id);
+  }
+  /** Acknowledge only after durably persisting the trace receipt in host session state. */
+  public async acknowledgeTraceScratch(runId: string, destination: string): Promise<void> {
+    await new CaptureScratchRegistry(this.repoRoot, this.artifactRoot, this.runQuota).acknowledge(runId, destination);
+  }
+  /** Producing generations are quarantined, never reclaimed on PID/age assumptions. */
+  public async recoverTraceScratch(runId: string, cursor?: string, limit?: number): Promise<CaptureScratchPage> {
+    return new CaptureScratchRegistry(this.repoRoot, this.artifactRoot, this.runQuota).recover(runId, cursor, limit);
   }
 
   /** Admit a completed external producer file incrementally; caller owns its scratch cleanup. */
@@ -249,7 +296,7 @@ export class ArtifactStore {
       const prefix = path.posix.join(this.artifactRoot, directory) + '/';
       if (folded.startsWith(prefix.toLowerCase()) && !normalized.startsWith(prefix)) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Managed artifact paths must use configured directory casing.', retryable: false });
     }
-    if (folded.split('/').some(segment => segment === '.ownership' || segment === '.probefn-staging' || segment.startsWith('.quota.sqlite'))) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses reserved storage metadata.', retryable: false });
+    if (folded.split('/').some(segment => segment === '.ownership' || segment === '.probefn-staging' || segment === '.probefn-scratch' || segment.startsWith('.quota.sqlite'))) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses reserved storage metadata.', retryable: false });
     return normalized;
   }
 
@@ -258,7 +305,7 @@ export class ArtifactStore {
     if (!relative.startsWith(prefix)) return undefined;
     const [runId, ...rest] = relative.slice(prefix.length).split('/');
     assertArtifactIdentifier(runId!, 'Run id');
-    if (rest.includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses the reserved staging directory.', retryable: false });
+    if (rest.some(part => ['.probefn-staging', '.probefn-scratch'].includes(part))) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses the reserved staging directory.', retryable: false });
     if (!rest.length) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path requires a file within its run.', retryable: false });
     return runId;
   }

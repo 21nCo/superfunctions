@@ -98,15 +98,18 @@ it('preserves per-file event counts across instances, concurrent append and reop
   await expect(append()).rejects.toMatchObject({ code: 'E_STORAGE_WRITE_FAILED' });
 });
 
-it('admits external trace output through capped import and cleans its scratch on rejection', async () => {
+it('admits external trace output with registry reservation and cleans scratch on cap rejection', async () => {
   const directory = await root(); let scratch = '';
-  const context = { tracing: { stop: async ({ path: filename }: {path: string}) => { scratch = filename; await writeFile(filename, '12345678901'); } } };
-  await expect(stopTracing(context as never, { repoRoot: directory, runId: 'run', enabled: true, artifactStore: store(directory) })).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
+  // The cap includes the 4 KiB durable receipt plus scratch and admitted output.
+  const artifacts = store(directory, 10000);
+  const context = { tracing: { stop: async ({ path: filename }: {path: string}) => { scratch = filename; await writeFile(filename, Buffer.alloc(10001)); } } };
+  await expect(stopTracing(context as never, { repoRoot: directory, runId: 'run', enabled: true, artifactStore: artifacts })).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
   await expect(stat(scratch)).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(stat(path.join(directory, target('browser.trace.zip')))).rejects.toMatchObject({ code: 'ENOENT' });
-  context.tracing.stop = async ({ path: filename }) => { scratch = filename; await writeFile(filename, '123456'); };
-  expect(await stopTracing(context as never, { repoRoot: directory, runId: 'run', enabled: true, artifactStore: store(directory) })).toBe(target('browser.trace.zip'));
-  await expect(store(directory).writeArtifact(target('screenshot.png'), Buffer.alloc(5))).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
+  context.tracing.stop = async ({ path: filename }) => { scratch = filename; await writeFile(filename, Buffer.alloc(1000)); };
+  expect(await stopTracing(context as never, { repoRoot: directory, runId: 'run', enabled: true, artifactStore: artifacts })).toBe(target('browser.trace.zip'));
+  await artifacts.acknowledgeTraceScratch('run', target('browser.trace.zip'));
+  await expect(artifacts.writeArtifact(target('screenshot.png'), Buffer.alloc(9001))).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
 });
 
 const childFixture = fileURLToPath(new URL('./fixtures/quota-child.ts', import.meta.url));

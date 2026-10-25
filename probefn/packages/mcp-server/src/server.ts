@@ -321,6 +321,7 @@ export class ProbefnRuntime {
     if (session.status === 'failed' || integrity.failed) await scope.sessionManager.markFailed(sessionId, patch);
     else if (session.status === 'completed') await scope.sessionManager.markCompleted(sessionId, patch);
     else await scope.sessionManager.markRunning(sessionId, patch);
+    await scope.artifactStore.acknowledgeTraceScratch(session.runId, tracePath);
   }
 
   public async flushSessionTrace(sessionId: string): Promise<string | null> {

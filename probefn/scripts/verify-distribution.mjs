@@ -82,11 +82,13 @@ console.log('Installed CLI bin, MCP stdio, config loader and scoped admin persis
   process.stdout.write(run(process.execPath, ['consumer.mjs']));
   await writeFile(join(directory, 'event-journal-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-event-journal-consumer.mjs')));
   process.stdout.write(run(process.execPath, ['event-journal-consumer.mjs']));
+  await writeFile(join(directory, 'scratch-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-scratch-consumer.mjs')));
+  process.stdout.write(run(process.execPath, ['scratch-consumer.mjs']));
   if (process.argv.includes('--browser')) {
     await writeFile(join(directory, 'browser-consumer.mjs'), await readFile(join(root, 'probefn/scripts/installed-browser-consumer.mjs')));
     process.stdout.write(run(process.execPath, ['browser-consumer.mjs']));
   }
-  await writeFile(join(directory, 'consumer.mts'), `import {executeCli} from '@probefn/cli'; import {runMcpCli} from '@probefn/mcp-server'; import {createProbeFnAdminAdapter} from '@probefn/admin'; import {loadConfig} from '@probefn/contracts/config'; import {ArtifactStore} from '@probefn/storage'; const health: Promise<{failed:boolean}> = new ArtifactStore({repoRoot:'.'}).recoverEventWrites('run'); void [executeCli,runMcpCli,createProbeFnAdminAdapter,loadConfig,health];`);
+  await writeFile(join(directory, 'consumer.mts'), `import {executeCli} from '@probefn/cli'; import {runMcpCli} from '@probefn/mcp-server'; import {createProbeFnAdminAdapter} from '@probefn/admin'; import {loadConfig} from '@probefn/contracts/config'; import {ArtifactStore} from '@probefn/storage'; const health: Promise<{failed:boolean}> = new ArtifactStore({repoRoot:'.'}).recoverEventWrites('run'); const store = new ArtifactStore({repoRoot:'.'}); const scratch = store.recoverTraceScratch('run'); const reconcile: Promise<string> = store.reconcileTraceScratch('run','id'); const ack: Promise<void> = store.acknowledgeTraceScratch('run','.artifacts/runs/run/trace.zip'); void [executeCli,runMcpCli,createProbeFnAdminAdapter,loadConfig,health,scratch,reconcile,ack];`);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc','--strict','--noEmit','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','consumer.mts']));
   let audit;
   try { audit = npm(['audit','--omit=dev','--json']); } catch (error) { audit = String(error.stdout); }

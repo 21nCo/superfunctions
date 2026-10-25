@@ -24,6 +24,10 @@ export class RunQuota {
     if (accountingLimit !== undefined && (!Number.isSafeInteger(accountingLimit) || accountingLimit < 65536)) throw new TypeError('Accounting database cap must be a safe integer of at least 65536 bytes.');
   }
 
+  public owned<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    return SessionOwnership.withRun({ repoRoot: this.repoRoot, artifactRoot: this.artifactRoot, runId, ...(this.maxOwnershipSlots === undefined ? {} : { maxOwnershipSlots: this.maxOwnershipSlots }) }, operation);
+  }
+
   public async transaction<T>(runId: string, target: string, operation: (quota: QuotaTransaction) => Promise<T>, external = false, eventWrite = false): Promise<T> {
     if (activeTransaction.getStore()) throw failed('Nested managed storage transactions are unsupported; finish the producer before starting another write.');
     assertArtifactIdentifier(runId, 'Run id');
@@ -70,6 +74,11 @@ export class RunQuota {
         if (!database.prepare('PRAGMA table_info(run_caps)').all().some(row => row.name === 'event_failed')) database.exec('ALTER TABLE run_caps ADD COLUMN event_failed INTEGER NOT NULL DEFAULT 0');
         if (!database.prepare('PRAGMA table_info(sink_counts)').all().some(row => row.name === 'chain_digest')) database.exec("ALTER TABLE sink_counts ADD COLUMN chain_digest TEXT NOT NULL DEFAULT ''");
         database.exec('CREATE TABLE IF NOT EXISTS event_append_intents (run_id TEXT PRIMARY KEY, intent TEXT NOT NULL)');
+        database.exec('CREATE TABLE IF NOT EXISTS capture_scratch_schema (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)');
+        const scratchVersion = database.prepare('SELECT version FROM capture_scratch_schema WHERE id=1').get();
+        if (scratchVersion && scratchVersion.version !== 1) throw failed('Unsupported capture scratch schema version.');
+        database.exec('INSERT OR IGNORE INTO capture_scratch_schema VALUES (1,1)');
+        database.exec('CREATE TABLE IF NOT EXISTS capture_scratch (run_id TEXT NOT NULL, id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(run_id,id))');
         const priorCap = database.prepare('SELECT cap FROM run_caps WHERE run_id=?').get(runId);
         if (!priorCap) database.prepare('INSERT INTO run_caps (run_id,cap,max_events) VALUES (?, ?, ?)').run(runId, this.configuredCap ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes, this.configuredEventCap ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink);
         else if (this.configuredCap !== undefined && this.configuredCap < Number(priorCap.cap)) database.prepare('UPDATE run_caps SET cap=? WHERE run_id=?').run(this.configuredCap, runId);
@@ -88,6 +97,7 @@ export class RunQuota {
         await safeDirectory(this.repoRoot, runRoot);
         const externalPaths = database.prepare('SELECT path FROM external_paths WHERE run_id=?').all(runId).map(row => String(row.path));
         let used = await scan(path.resolve(this.repoRoot, runRoot));
+        used += Number(database.prepare('SELECT count(*) * 4096 AS bytes FROM capture_scratch WHERE run_id=?').get(runId)!.bytes);
         for (const relative of externalPaths) {
           await safeDirectory(this.repoRoot, path.posix.dirname(relative));
           const item = await safeFile(path.resolve(this.repoRoot, relative));
@@ -164,6 +174,22 @@ export class QuotaTransaction {
     private readonly runId: string,
     private readonly runRoot: string,
     private readonly checkpoint: () => Promise<void>) {}
+  public scratchRecord(id: string): string | undefined {
+    const row = this.database.prepare('SELECT record FROM capture_scratch WHERE run_id=? AND id=?').get(this.runId, id);
+    return row ? String(row.record) : undefined;
+  }
+  public scratchPage(after: string, limit: number): string[] {
+    return this.database.prepare('SELECT record FROM capture_scratch WHERE run_id=? AND id>? ORDER BY id LIMIT ?').all(this.runId, after, limit).map(row => String(row.record));
+  }
+  public scratchDestination(destination: string): string[] {
+    return this.database.prepare("SELECT record FROM capture_scratch WHERE run_id=? AND json_extract(record,'$.destination')=? LIMIT 2").all(this.runId, destination).map(row => String(row.record));
+  }
+  public saveScratch(id: string, serialized: string): void {
+    const old = this.scratchRecord(id);
+    if (!old) this.reserve(4096, 'capture scratch registry');
+    this.database.prepare('INSERT INTO capture_scratch VALUES (?,?,?) ON CONFLICT(run_id,id) DO UPDATE SET record=excluded.record').run(this.runId, id, serialized);
+  }
+  public removeScratch(id: string): void { this.database.prepare('DELETE FROM capture_scratch WHERE run_id=? AND id=?').run(this.runId, id); }
   private priorFailed: 0 | 1 = 0;
   public hasEventFailure(): boolean {
     return this.database.prepare('SELECT event_failed FROM run_caps WHERE run_id=?').get(this.runId)!.event_failed !== 0;

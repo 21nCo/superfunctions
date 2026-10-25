@@ -58,6 +58,7 @@ interface ManagedBrowserSession {
   finalizedTracePath?: string;
   pendingEventFlush?: boolean;
   traceScratchDirectory?: string;
+  traceScratchId?: string;
   pendingChunkTracePath?: string;
   videoDirectory?: string;
   browser?: Browser;
@@ -243,14 +244,19 @@ export class BrowserRunner {
       if (chunk) session.pendingChunkTracePath = error.tracePath;
     }
     if (error.scratchDirectory) session.traceScratchDirectory = error.scratchDirectory;
+    if (error.scratchId) session.traceScratchId = error.scratchId;
     if (error.tracingStopped) session.traceEnabled = false;
   }
 
   private async cleanTraceScratch(session: ManagedBrowserSession): Promise<void> {
     if (!session.traceScratchDirectory) return;
-    try { await rm(session.traceScratchDirectory, { recursive: true, force: true }); }
+    try {
+      if (!session.traceScratchId) throw new Error('Missing durable trace scratch identity');
+      await this.artifactStore.cleanupTraceScratch(session.runId, session.traceScratchId);
+    }
     catch (error) { throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Trace scratch cleanup remains pending.', retryable: true, details: { cleanupPending: true, ...(session.finalizedTracePath ? { tracePath: session.finalizedTracePath } : {}) }, cause: error }); }
     delete session.traceScratchDirectory;
+    delete session.traceScratchId;
   }
 
   public async stopSession(sessionId: string, options: { saveTrace?: boolean } = {}): Promise<ClosedBrowserSession> {

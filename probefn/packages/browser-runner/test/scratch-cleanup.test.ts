@@ -14,6 +14,9 @@ vi.mock('node:fs/promises', async original => {
   return { ...fs, rm: async (...args: Parameters<typeof fs.rm>) => {
     if (fault.enabled && path.basename(String(args[0])).startsWith(fault.trace ? 'probefn-trace-' : 'probefn-video-')) { fault.paths.push(String(args[0])); throw new Error('owned scratch removal failed'); }
     return fs.rm(...args);
+  }, rmdir: async (...args: Parameters<typeof fs.rmdir>) => {
+    if (fault.enabled && fault.trace && path.basename(String(args[0])).startsWith('probefn-trace-')) { fault.paths.push(String(args[0])); throw new Error('owned scratch removal failed'); }
+    return fs.rmdir(...args);
   } };
 });
 const roots: string[] = [], browsers: Browser[] = [];
@@ -68,16 +71,20 @@ it('keeps the public runtime owner after video cleanup failure and allows an exp
     await expect(createCheckpointFromSession(runtime, { sessionId: 'cleanup', name: 'blocked' })).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
     await expect(stopSession(other, 'cleanup')).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
     fault.enabled = false;
+    const acknowledge = vi.spyOn(ArtifactStore.prototype, 'acknowledgeTraceScratch');
     const resolveContext = vi.spyOn(runtime, 'resolveSessionContext').mockRejectedValueOnce(new Error('Injected trace receipt persistence failure'));
     await expect(stopSession(runtime, 'cleanup')).rejects.toThrow('Injected trace receipt persistence failure');
+    expect(acknowledge).not.toHaveBeenCalled();
     resolveContext.mockRestore();
     await expect(stopSession(other, 'cleanup')).rejects.toMatchObject({ code: 'E_SESSION_ALREADY_RUNNING' });
     expect((await stopSession(runtime, 'cleanup')).ok).toBe(true);
+    expect(acknowledge).toHaveBeenCalledTimes(1);
     await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
     const state = (await runtime.resolveSessionContext('cleanup')).session;
     expect(state.artifacts.tracePath).toBeTruthy();
     expect((await readFile(path.join(root, state.artifacts.tracePath!))).length).toBeGreaterThan(0);
     expect((await stopSession(other, 'cleanup')).ok).toBe(true);
+    expect((await new ArtifactStore({ repoRoot: root }).recoverTraceScratch('cleanup')).records).toEqual([]);
   } finally {
     fault.enabled = false;
     await stopSession(runtime, 'cleanup').catch(() => undefined);
@@ -150,27 +157,28 @@ it.each(['scratch', 'restart'] as const)('returns the admitted chunk on retry be
   } finally { fault.enabled = false; await runner.stopSession(tracedOptions.sessionId).catch(() => undefined); }
 });
 
-it('does not replace scratch ownership when trace stopping and scratch cleanup both fail', async () => {
+it('quarantines a failed producer without deleting its scratch or starting another capture', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'probe-trace-double-failure-')); roots.push(root);
   const store = new ArtifactStore({ repoRoot: root });
   const runner = new BrowserRunner({ repoRoot: root, artifactStore: store });
   try {
     const started = await runner.startSession(tracedOptions);
-    const stop = vi.spyOn(started.page.context().tracing, 'stopChunk').mockRejectedValueOnce(new Error('Injected stop failure'));
+    const stop = vi.spyOn(started.page.context().tracing, 'stopChunk').mockRejectedValueOnce(new Error('Unknown producer completion'));
     const finalize = vi.spyOn(started.page.context().tracing, 'stop');
     fault.trace = true; fault.enabled = true;
     await expect(runner.flushTrace(tracedOptions.sessionId, store.getRunPaths(tracedOptions.runId).tracePath)).rejects.toThrow();
-    const directory = fault.paths[0]!;
     await expect(runner.flushTrace(tracedOptions.sessionId, store.getRunPaths(tracedOptions.runId).tracePath)).rejects.toThrow();
     expect(stop).toHaveBeenCalledTimes(1);
     await expect(runner.stopSession(tracedOptions.sessionId)).rejects.toMatchObject({ details: { cleanupPending: true } });
     expect(finalize).not.toHaveBeenCalled();
-    expect(new Set(fault.paths)).toEqual(new Set([directory]));
+    expect(fault.paths).toEqual([]);
     expect(runner.hasSession(tracedOptions.sessionId)).toBe(true);
     fault.enabled = false;
-    await runner.stopSession(tracedOptions.sessionId);
-    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(runner.hasSession(tracedOptions.sessionId)).toBe(false);
+    const recovery = await store.recoverTraceScratch(tracedOptions.runId);
+    expect(recovery.records).toHaveLength(1);
+    expect(recovery.records[0]).toMatchObject({ state: 'quarantined', removed: false });
+    await expect(runner.stopSession(tracedOptions.sessionId)).rejects.toMatchObject({ details: { cleanupPending: true } });
+    expect(started.page.context().browser()!.isConnected()).toBe(false);
   } finally { fault.enabled = false; await runner.stopSession(tracedOptions.sessionId).catch(() => undefined); }
 });
 

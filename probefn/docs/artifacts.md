@@ -123,8 +123,9 @@ with working SQLite file locks; arbitrary external writers are not sandboxed.
 This is an admitted-artifact limit, **not a hard quota on total filesystem disk
 usage**. SQLite metadata/journals, filesystem allocation overhead, and opaque
 Playwright recording/trace scratch files are outside the admitted payload budget.
-Trace output is now imported incrementally through the capped store and its owned
-scratch directory is removed on normal success/failure. Screenshot/video evidence
+Trace output is imported incrementally through the capped store. Its run-local
+finalization scratch is registered durably and removed only with proof of producer
+completion; failed or unknown exports are retained for reconciliation. Screenshot/video evidence
 also goes through store admission. A killed browser/host process can leave opaque
 browser scratch behind; OS-enforced scratch quotas and crash reclamation remain
 required before claiming a total-run physical disk bound. No post-hoc file-size
@@ -227,3 +228,41 @@ scratch directory with a new capture.
 This recovery belongs to the live process owner. It is not durable crash
 reclamation, and does not impose an operating-system quota on opaque browser
 profiles or capture scratch.
+
+
+### Durable trace scratch recovery
+
+Stop all older writers before upgrading to capture scratch schema 1. The existing
+SQLite coordinator creates the additive registry; unknown future versions fail
+closed. Mixed old/new writers and adoption of older global temp directories are
+unsupported. Each generation reserves 4 KiB against its run cap, and the existing
+SQLite page cap bounds coordinator growth. These bounds do not prevent an opaque
+browser producer from exceeding physical disk capacity before finalization.
+
+The trace exporter registers a private run-local directory before handing it to
+Playwright. Successful awaited export seals its digest and size. Recovery verifies
+directory identity and ownership marker before cleanup. Interrupted producing
+records are quarantined: process death, age and lock availability do not establish
+producer completion. No global temp directory sweep occurs.
+
+Use `recoverTraceScratch(runId, cursor?, limit?)` for bounded pages (maximum 100).
+It returns each generation's state, destination, digest, removal result and any
+cleanup failure. Sealed output without an admitted destination is retained.
+`reconcileTraceScratch(runId, id)` explicitly admits that sealed output under the
+existing run cap. It never overwrites an unrelated destination; interrupted copies
+resume only against their recorded inode and verified exact prefix. A crash
+between exclusive file creation and identity commit remains a conflict requiring
+host reconciliation, rather than guessing ownership.
+
+After scratch removal, a `cleaned` record still retains the publication receipt.
+Persist its destination in the host's session/report, then call
+`acknowledgeTraceScratch(runId, destination)` to release registry metadata. Repeated
+acknowledgement is harmless; changed destination bytes prevent acknowledgement.
+The MCP runtime acknowledges only after its session update succeeds. Recovery does
+not invent session links or discard unacknowledged receipts. Direct storage/browser
+consumers must perform the same publication acknowledgement. Duplicate destination
+receipts are rejected as ambiguous; use unique capture destinations.
+
+This protocol covers explicit trace ZIP finalization only. Opaque browser profiles,
+video encoder scratch, unknown producer reclamation and OS-enforced total physical
+quotas remain separate requirements.

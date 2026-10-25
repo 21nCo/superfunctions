@@ -55,18 +55,18 @@ state so retry cannot lose a trace that is already present.
    live owner. Retry only that exact scratch directory, and retain the existing
    trace result after retry. Prove import succeeded, removal failed, browser closed,
    retry removed scratch, and public session still references the ZIP. See
-   [trace cleanup receipt](trace-cleanup-readiness.md). The later registry and OS
-   enforcement steps remain prospective.
+   [trace cleanup receipt](trace-cleanup-readiness.md). The registry subset below is now implemented; OS
+   enforcement remains prospective.
    This fixes live-process ownership; it does not establish crash reclamation.
-2. Add a versioned, bounded scratch registry to the existing storage coordinator.
+2. **Implemented for explicit trace ZIP finalization** in [the registry checkpoint](trace-scratch-registry-readiness.md): a versioned, bounded scratch registry to the existing storage coordinator.
    Reserve a unique generation and relative path before creation; persist directory
    dev/inode plus a private ownership marker before giving it to a producer.
    Track prepared, producing, sealed/admitted, cleanup-pending and removed states.
    Persist the admitted destination/digest before deletion. Reuse native run
    ownership and minimum caps; reject links, replaced roots and stale generations.
    Stop older writers before upgrading this ownership protocol.
-3. Reclaim automatically only scratch with durable proof of producer quiescence
-   (never handed to a producer, or sealed after verified producer exit). An unknown
+3. **Implemented for those registered trace generations only:** reclaim automatically only scratch with durable proof of producer quiescence
+   (never handed to a producer, or sealed after successful awaited trace export). An unknown
    producing generation becomes quarantined/recovery-required. Age, a stale PID,
    SQLite lock availability and filename prefixes are insufficient deletion proof.
    Never sweep arbitrary `probefn-*` or `playwright-*` directories in global temp.
