@@ -1,6 +1,7 @@
-import pathlib, subprocess, json, tempfile, shutil, argparse
+import pathlib, subprocess, json, tempfile, shutil, argparse, os
 parser = argparse.ArgumentParser(description='Install the complete built Studio and run native browser acceptance')
 parser.add_argument('--producer-root', type=pathlib.Path, help='Checkout containing the built matching ContentFn server')
+parser.add_argument('--native-safari', action='store_true', help='Use installed Safari WebDriver; host automation must already be enabled')
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[2]
 producer = (args.producer_root or root).resolve()
@@ -29,7 +30,8 @@ subprocess.run(['npx','--yes','npm@11','install'],cwd=out,check=True)
 with (out / 'production-audit.json').open('w') as f:subprocess.run(['npx','--yes','npm@11','audit','--omit=dev','--json'],cwd=out,stdout=f)
 subprocess.run(['npx','--yes','npm@11','install','--save-dev','esbuild@0.25.12','playwright@1.57.0','typescript@5.9.3','@types/react@18','@types/react-dom@18','@types/node@22'],cwd=out,check=True)
 shutil.copy(root/'cmsfn/.conduct/studio-browser-acceptance.mjs',out/'acceptance.mjs')
-subprocess.run(['node','acceptance.mjs'],cwd=out,check=True)
+shutil.copy(root/'cmsfn/.conduct/studio-safari-acceptance.mjs',out/'studio-safari-acceptance.mjs')
+subprocess.run(['node','acceptance.mjs'],cwd=out,check=True,env={**os.environ, **({'CMSFN_NATIVE_SAFARI':'1'} if args.native_safari else {})})
 (out / 'consumer.tsx').write_text("""import { App, boot, type CmsfnStudioConfig } from '@cmsfn/studio';
 import * as React from 'react';
 import { parseReferenceInput, type CmsfnReferenceInput, type CmsfnReferencePage } from 'cmsfn';
