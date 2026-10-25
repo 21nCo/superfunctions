@@ -1,0 +1,878 @@
+[
+  {
+    "label": "baseline",
+    "jobs": 1000,
+    "repeat": 1,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.78733399999999,
+        "jobsPerSecond": 30499.58255221362,
+        "enqueueP99Ms": 1.5284169999999904,
+        "dequeueP99Ms": 0.3602499999999793,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 83214336,
+        "rssAfter": 91389952,
+        "heapDeltaPerRetainedJob": 964.752,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 63.34625,
+        "jobsPerSecond": 15786.254119225685,
+        "enqueueP99Ms": 4.505875000000003,
+        "dequeueP99Ms": 0.6780420000000049,
+        "queueToHandlerP99Ms": 38,
+        "rssBefore": 91504640,
+        "rssAfter": 105054208,
+        "heapDeltaPerRetainedJob": 710.416,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 137.380333,
+        "jobsPerSecond": 7279.062280333823,
+        "enqueueP99Ms": 9.492291000000023,
+        "dequeueP99Ms": 4.225541000000021,
+        "queueToHandlerP99Ms": 56,
+        "rssBefore": 105136128,
+        "rssAfter": 112295936,
+        "heapDeltaPerRetainedJob": 1248.976,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 1000,
+    "repeat": 1,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.200958000000014,
+        "jobsPerSecond": 31054.97668733954,
+        "enqueueP99Ms": 1.582583999999997,
+        "dequeueP99Ms": 0.3603750000000048,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 77578240,
+        "rssAfter": 85688320,
+        "heapDeltaPerRetainedJob": 961.832,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 56.623582999999996,
+        "jobsPerSecond": 17660.486091104478,
+        "enqueueP99Ms": 4.38424999999998,
+        "dequeueP99Ms": 0.6655420000000163,
+        "queueToHandlerP99Ms": 32,
+        "rssBefore": 85278720,
+        "rssAfter": 99647488,
+        "heapDeltaPerRetainedJob": 699.656,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 130.950125,
+        "jobsPerSecond": 7636.495192348994,
+        "enqueueP99Ms": 7.543000000000006,
+        "dequeueP99Ms": 9.566458000000011,
+        "queueToHandlerP99Ms": 55,
+        "rssBefore": 99680256,
+        "rssAfter": 106414080,
+        "heapDeltaPerRetainedJob": 1257,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "baseline",
+    "jobs": 1000,
+    "repeat": 2,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.039958,
+        "jobsPerSecond": 31211.027180497553,
+        "enqueueP99Ms": 1.6815420000000074,
+        "dequeueP99Ms": 0.37862499999999955,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 77266944,
+        "rssAfter": 85114880,
+        "heapDeltaPerRetainedJob": 965.6,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 56.56629100000001,
+        "jobsPerSecond": 17678.37314983229,
+        "enqueueP99Ms": 4.192666000000003,
+        "dequeueP99Ms": 0.7207080000000019,
+        "queueToHandlerP99Ms": 33,
+        "rssBefore": 85213184,
+        "rssAfter": 99713024,
+        "heapDeltaPerRetainedJob": 695.608,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 145.56958300000002,
+        "jobsPerSecond": 6869.566975403095,
+        "enqueueP99Ms": 8.678207999999984,
+        "dequeueP99Ms": 3.9480000000000075,
+        "queueToHandlerP99Ms": 67,
+        "rssBefore": 99827712,
+        "rssAfter": 105676800,
+        "heapDeltaPerRetainedJob": 1254.328,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 1000,
+    "repeat": 2,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 33.50524999999999,
+        "jobsPerSecond": 29846.068899650065,
+        "enqueueP99Ms": 1.6995840000000015,
+        "dequeueP99Ms": 0.4233329999999995,
+        "queueToHandlerP99Ms": 16,
+        "rssBefore": 77086720,
+        "rssAfter": 85164032,
+        "heapDeltaPerRetainedJob": 964.816,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 59.03762499999999,
+        "jobsPerSecond": 16938.35075513285,
+        "enqueueP99Ms": 4.476875000000007,
+        "dequeueP99Ms": 0.6189589999999896,
+        "queueToHandlerP99Ms": 34,
+        "rssBefore": 85295104,
+        "rssAfter": 99876864,
+        "heapDeltaPerRetainedJob": 704.064,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 148.31729200000004,
+        "jobsPerSecond": 6742.302172021856,
+        "enqueueP99Ms": 7.621250000000003,
+        "dequeueP99Ms": 9.849834000000016,
+        "queueToHandlerP99Ms": 70,
+        "rssBefore": 99942400,
+        "rssAfter": 106119168,
+        "heapDeltaPerRetainedJob": 1279.272,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "baseline",
+    "jobs": 1000,
+    "repeat": 3,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 32.935833,
+        "jobsPerSecond": 30362.06796409248,
+        "enqueueP99Ms": 1.6467919999999907,
+        "dequeueP99Ms": 0.3754169999999988,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 76627968,
+        "rssAfter": 84377600,
+        "heapDeltaPerRetainedJob": 961.904,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 56.933333000000005,
+        "jobsPerSecond": 17564.40291314053,
+        "enqueueP99Ms": 4.394915999999995,
+        "dequeueP99Ms": 0.617874999999998,
+        "queueToHandlerP99Ms": 33,
+        "rssBefore": 84492288,
+        "rssAfter": 99401728,
+        "heapDeltaPerRetainedJob": 700.864,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 134.86908300000002,
+        "jobsPerSecond": 7414.597754772307,
+        "enqueueP99Ms": 8.887499999999989,
+        "dequeueP99Ms": 3.9583330000000103,
+        "queueToHandlerP99Ms": 58,
+        "rssBefore": 99450880,
+        "rssAfter": 104726528,
+        "heapDeltaPerRetainedJob": 1255.616,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 1000,
+    "repeat": 3,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 31.80825,
+        "jobsPerSecond": 31438.384695794328,
+        "enqueueP99Ms": 1.6201250000000016,
+        "dequeueP99Ms": 0.38433299999999804,
+        "queueToHandlerP99Ms": 15,
+        "rssBefore": 77037568,
+        "rssAfter": 85426176,
+        "heapDeltaPerRetainedJob": 913.712,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 56.929708000000005,
+        "jobsPerSecond": 17565.521326756145,
+        "enqueueP99Ms": 4.1727909999999895,
+        "dequeueP99Ms": 0.6283329999999978,
+        "queueToHandlerP99Ms": 32,
+        "rssBefore": 85557248,
+        "rssAfter": 98942976,
+        "heapDeltaPerRetainedJob": 700.36,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 1000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 133.29654200000002,
+        "jobsPerSecond": 7502.070083708547,
+        "enqueueP99Ms": 7.488875000000007,
+        "dequeueP99Ms": 9.48908400000002,
+        "queueToHandlerP99Ms": 56,
+        "rssBefore": 98992128,
+        "rssAfter": 105742336,
+        "heapDeltaPerRetainedJob": 1262.968,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": false,
+          "dequeueP99": true,
+          "queueToHandlerP99": true,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "baseline",
+    "jobs": 10000,
+    "repeat": 1,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 490.46966699999996,
+        "jobsPerSecond": 20388.62068915671,
+        "enqueueP99Ms": 1.0863339999999937,
+        "dequeueP99Ms": 0.5085000000000264,
+        "queueToHandlerP99Ms": 335,
+        "rssBefore": 76742656,
+        "rssAfter": 128925696,
+        "heapDeltaPerRetainedJob": 497.276,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 537.565542,
+        "jobsPerSecond": 18602.382814187145,
+        "enqueueP99Ms": 0.9850419999999076,
+        "dequeueP99Ms": 0.5792500000000018,
+        "queueToHandlerP99Ms": 364,
+        "rssBefore": 121487360,
+        "rssAfter": 138248192,
+        "heapDeltaPerRetainedJob": 112.7712,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 995.373292,
+        "jobsPerSecond": 10046.48213928569,
+        "enqueueP99Ms": 3.2841249999999036,
+        "dequeueP99Ms": 2.6245410000001357,
+        "queueToHandlerP99Ms": 500,
+        "rssBefore": 122241024,
+        "rssAfter": 114540544,
+        "heapDeltaPerRetainedJob": 104.3616,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 10000,
+    "repeat": 1,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 504.333625,
+        "jobsPerSecond": 19828.14451445707,
+        "enqueueP99Ms": 1.219208000000009,
+        "dequeueP99Ms": 0.5272499999999809,
+        "queueToHandlerP99Ms": 346,
+        "rssBefore": 76087296,
+        "rssAfter": 128794624,
+        "heapDeltaPerRetainedJob": 497.3448,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 571.6893340000001,
+        "jobsPerSecond": 17492.01778880835,
+        "enqueueP99Ms": 1.0064170000000559,
+        "dequeueP99Ms": 0.6429580000000215,
+        "queueToHandlerP99Ms": 394,
+        "rssBefore": 120520704,
+        "rssAfter": 135479296,
+        "heapDeltaPerRetainedJob": 113.8224,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 1003.7082919999998,
+        "jobsPerSecond": 9963.054086236443,
+        "enqueueP99Ms": 3.495916999999963,
+        "dequeueP99Ms": 2.657709000000068,
+        "queueToHandlerP99Ms": 502,
+        "rssBefore": 124157952,
+        "rssAfter": 114671616,
+        "heapDeltaPerRetainedJob": 105.56,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "baseline",
+    "jobs": 10000,
+    "repeat": 2,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 499.64633299999997,
+        "jobsPerSecond": 20014.15669351065,
+        "enqueueP99Ms": 1.1471659999999986,
+        "dequeueP99Ms": 0.5249160000000188,
+        "queueToHandlerP99Ms": 343,
+        "rssBefore": 76644352,
+        "rssAfter": 128548864,
+        "heapDeltaPerRetainedJob": 493.6976,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 557.1506669999999,
+        "jobsPerSecond": 17948.466352639225,
+        "enqueueP99Ms": 1.16762499999993,
+        "dequeueP99Ms": 0.7154170000000022,
+        "queueToHandlerP99Ms": 371,
+        "rssBefore": 120651776,
+        "rssAfter": 116752384,
+        "heapDeltaPerRetainedJob": 112.5656,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 991.0454579999998,
+        "jobsPerSecond": 10090.35450319374,
+        "enqueueP99Ms": 3.3000409999999647,
+        "dequeueP99Ms": 2.7274159999999483,
+        "queueToHandlerP99Ms": 500,
+        "rssBefore": 115621888,
+        "rssAfter": 115408896,
+        "heapDeltaPerRetainedJob": 104.4392,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 10000,
+    "repeat": 2,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 500.684791,
+        "jobsPerSecond": 19972.645823787367,
+        "enqueueP99Ms": 1.3090410000000077,
+        "dequeueP99Ms": 0.5268330000000105,
+        "queueToHandlerP99Ms": 338,
+        "rssBefore": 76759040,
+        "rssAfter": 129187840,
+        "heapDeltaPerRetainedJob": 492.4096,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 564.607042,
+        "jobsPerSecond": 17711.433361824773,
+        "enqueueP99Ms": 0.9831669999999804,
+        "dequeueP99Ms": 0.7447909999999638,
+        "queueToHandlerP99Ms": 377,
+        "rssBefore": 121913344,
+        "rssAfter": 135446528,
+        "heapDeltaPerRetainedJob": 113.912,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 1063.185333,
+        "jobsPerSecond": 9405.697849294918,
+        "enqueueP99Ms": 3.492332999999917,
+        "dequeueP99Ms": 2.8356669999998303,
+        "queueToHandlerP99Ms": 557,
+        "rssBefore": 125419520,
+        "rssAfter": 115245056,
+        "heapDeltaPerRetainedJob": 105.892,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "baseline",
+    "jobs": 10000,
+    "repeat": 3,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 491.82375,
+        "jobsPerSecond": 20332.486993562226,
+        "enqueueP99Ms": 1.128124999999983,
+        "dequeueP99Ms": 0.5122089999999844,
+        "queueToHandlerP99Ms": 336,
+        "rssBefore": 76660736,
+        "rssAfter": 128876544,
+        "heapDeltaPerRetainedJob": 496.3824,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 556.494208,
+        "jobsPerSecond": 17969.638958039257,
+        "enqueueP99Ms": 1.1428750000000036,
+        "dequeueP99Ms": 0.7117090000000417,
+        "queueToHandlerP99Ms": 367,
+        "rssBefore": 122503168,
+        "rssAfter": 136724480,
+        "heapDeltaPerRetainedJob": 112.7944,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 979.08725,
+        "jobsPerSecond": 10213.594345141355,
+        "enqueueP99Ms": 3.095583999999917,
+        "dequeueP99Ms": 2.510915999999952,
+        "queueToHandlerP99Ms": 488,
+        "rssBefore": 122355712,
+        "rssAfter": 116932608,
+        "heapDeltaPerRetainedJob": 105.3408,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "candidate",
+    "jobs": 10000,
+    "repeat": 3,
+    "records": [
+      {
+        "adapter": "memory",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 499.73241599999994,
+        "jobsPerSecond": 20010.709091162902,
+        "enqueueP99Ms": 1.1550410000000113,
+        "dequeueP99Ms": 0.5173340000000053,
+        "queueToHandlerP99Ms": 342,
+        "rssBefore": 76120064,
+        "rssAfter": 128663552,
+        "heapDeltaPerRetainedJob": 497.112,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": null
+        }
+      },
+      {
+        "adapter": "redis",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 539.0797909999999,
+        "jobsPerSecond": 18550.12962264802,
+        "enqueueP99Ms": 1.1321249999999736,
+        "dequeueP99Ms": 0.6496250000000146,
+        "queueToHandlerP99Ms": 351,
+        "rssBefore": 120946688,
+        "rssAfter": 132595712,
+        "heapDeltaPerRetainedJob": 112.4696,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      },
+      {
+        "adapter": "postgres",
+        "node": "v20.20.0",
+        "jobs": 10000,
+        "producers": 32,
+        "concurrency": 16,
+        "elapsedMs": 999.0109580000001,
+        "jobsPerSecond": 10009.900211725204,
+        "enqueueP99Ms": 3.1032920000000104,
+        "dequeueP99Ms": 2.747000000000071,
+        "queueToHandlerP99Ms": 512,
+        "rssBefore": 120537088,
+        "rssAfter": 114229248,
+        "heapDeltaPerRetainedJob": 106.1496,
+        "gcControlled": true,
+        "targets": {
+          "enqueueP99": true,
+          "dequeueP99": true,
+          "queueToHandlerP99": false,
+          "throughput": true
+        }
+      }
+    ]
+  }
+]
