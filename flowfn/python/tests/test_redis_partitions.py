@@ -10,7 +10,7 @@ import socket
 import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -463,3 +463,66 @@ async def test_adapter_close_joins_callback_and_releases_owned_receipt_immediate
         await captured[0].ack()
     with pytest.raises(RuntimeError, match="closed"):
         await a.configure_stream("orders")
+
+
+async def test_legacy_retention_removes_pending_unread_and_fences_callback(
+    pair: tuple[RedisAdapter, RedisAdapter], redis_url: str,
+) -> None:
+    a, b = pair
+    received: asyncio.Queue[Message] = asyncio.Queue()
+    cancelled = asyncio.Event()
+
+    async def hold(message: Message) -> None:
+        received.put_nowait(message)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    await a.publish('legacy-retention', Message(id='held', stream='legacy-retention', data='held', timestamp=0))
+    await a.publish('legacy-retention', Message(id='unread', stream='legacy-retention', data='unread', timestamp=0))
+    subscription = await a.consume('legacy-retention', 'group', 'first', hold, ConsumerOptions(
+        group_id='group', from_beginning=True, max_in_flight=1, auto_commit=False,
+    ))
+    held = await asyncio.wait_for(received.get(), 1)
+    assert await b.trim_stream('legacy-retention', TrimStrategy(max_length=0)) == 2
+    assert (await b.get_stream_info('legacy-retention')).length == 0
+    assert await b.get_stream_messages('legacy-retention') == []
+    await asyncio.wait_for(cancelled.wait(), 1)
+    await subscription.unsubscribe()
+    for requeue in (False, True):
+        with pytest.raises(RuntimeError, match='ownership changed'):
+            if requeue:
+                await held.nack(True)
+            else:
+                await held.ack()
+    execute: Callable[..., Awaitable[Any]] = a.client.execute_command
+    assert not await execute('HGETALL', subscription._owners_key)
+    # A separately reopened owner must not replay deleted pending or unread data.
+    reopened = RedisAdapter(redis_url, namespace=a.namespace, reclaim_after_ms=100)
+    try:
+        resumed = await reopened.consume('legacy-retention', 'group', 'reopened', hold, ConsumerOptions(
+            group_id='group', from_beginning=True, max_in_flight=1,
+        ))
+        await asyncio.sleep(.12)
+        assert received.empty()
+        assert await reopened.get_stream_messages('legacy-retention') == []
+        await resumed.unsubscribe()
+    finally:
+        await reopened.cleanup()
+
+
+async def test_legacy_retention_fractional_age_uses_redis_clock(
+    pair: tuple[RedisAdapter, RedisAdapter],
+) -> None:
+    a, b = pair
+    key = a._stream('legacy-age')
+    seconds, micros = await a.client.time()
+    now = seconds * 1000 + micros // 1000
+    await a.client.xadd(key, {'payload': Message(id='old', stream='legacy-age', data=1, timestamp=0).model_dump_json()}, id=f'{now - 1000}-0')
+    await a.client.xadd(key, {'payload': Message(id='fresh', stream='legacy-age', data=2, timestamp=0).model_dump_json()})
+    await a.client.xgroup_create(key, 'unread', id='0-0')
+    assert await b.trim_stream('legacy-age', TrimStrategy(max_age_seconds=.5)) == 1
+    assert [message.data for message in await b.get_stream_messages('legacy-age')] == [2]
+    assert await b.trim_stream('legacy-age', TrimStrategy(max_length=0)) == 1
+    assert await b.trim_stream('missing', TrimStrategy(max_length=0)) == 0

@@ -109,7 +109,9 @@ async def assert_pending_retention(adapter: FlowAdapter, *, rejects_stale_ack: b
     await stream.close()
 
 
-async def test_durable_retention_preserves_unread_and_pending(adapters: NativeAdapters) -> None:
+async def test_postgres_retention_preserves_unread_and_pending(adapters: NativeAdapters) -> None:
+    if isinstance(adapters[0], RedisAdapter):
+        pytest.skip('PostgreSQL-only protected retention; Redis bounded retention is covered natively')
     await assert_pending_retention(adapters[0], rejects_stale_ack=True)
 
 

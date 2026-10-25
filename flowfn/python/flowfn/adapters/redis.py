@@ -175,38 +175,18 @@ class RedisAdapter(DurableQueues):
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
         if await self.configure_stream(stream) is not None:
             return await self._partitions.trim(stream, strategy)
-        # Keep entries still unread or pending in any group. Redis XTRIM alone
-        # deletes their payload, making subsequent delivery impossible.
+        # Payload retention is independent from consumer progress. Redis keeps
+        # pending receipt metadata until renewal/claim discovers the deletion.
         script = """
-        local rows = redis.call('XRANGE', KEYS[1], '-', '+')
-        local groups = redis.call('XINFO', 'GROUPS', KEYS[1])
         local removed = 0
-        local clock = redis.call('TIME')
-        local cutoff = tonumber(ARGV[2]) >= 0 and (tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000)-tonumber(ARGV[2])*1000) or -1
-        local function greater(a,b)
-          local am,as = string.match(a, '(%d+)-(%d+)')
-          local bm,bs = string.match(b, '(%d+)-(%d+)')
-          return tonumber(am)>tonumber(bm) or (am==bm and tonumber(as)>tonumber(bs))
+        if tonumber(ARGV[1]) >= 0 then
+          removed = removed + redis.call('XTRIM',KEYS[1],'MAXLEN',ARGV[1])
         end
-        for i,row in ipairs(rows) do
-          local id = row[1]
-          local millis = tonumber(string.match(id, '(%d+)-'))
-          local candidate = (tonumber(ARGV[1])>=0 and i<=#rows-tonumber(ARGV[1]))
-                            or (cutoff>=0 and millis<cutoff)
-          if candidate then
-            local protected = false
-            for _,group in ipairs(groups) do
-              local name,last
-              for j=1,#group,2 do
-                if group[j]=='name' then name=group[j+1] end
-                if group[j]=='last-delivered-id' then last=group[j+1] end
-              end
-              if greater(id,last) or #redis.call('XPENDING',KEYS[1],name,id,id,1)>0 then
-                protected=true
-                break
-              end
-            end
-            if not protected then removed=removed+redis.call('XDEL',KEYS[1],id) end
+        if tonumber(ARGV[2]) >= 0 then
+          local clock = redis.call('TIME')
+          local cutoff = math.floor(tonumber(clock[1])*1000+tonumber(clock[2])/1000-tonumber(ARGV[2])*1000)
+          if cutoff >= 0 then
+            removed = removed + redis.call('XTRIM',KEYS[1],'MINID',string.format('%.0f',cutoff+1)..'-0')
           end
         end
         return removed
@@ -369,8 +349,9 @@ class RedisSubscription:
           redis.call('HDEL',KEYS[2],ARGV[3])
           return redis.call('XACK',KEYS[1],ARGV[1],ARGV[3])
         end
-        redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,ARGV[3],'JUSTID')
-        return 1
+        local claimed=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,ARGV[3],'JUSTID')
+        if #claimed==0 then redis.call('HDEL',KEYS[2],ARGV[3]) end
+        return #claimed
         """
         return bool(await _eval(self.adapter.client,script,2,self.key,self._owners_key,
                             self.group or '',self.consumer,identity,'ack' if acknowledge else 'renew',
