@@ -4,7 +4,7 @@ export { executeRunStep } from './executor/run-step.js';
 export type { RunStepResult } from './executor/run-step.js';
 export { MemoryLogFnClient } from './reporting/logfn-client.js';
 export type { LogEntry, LogFnClient } from './reporting/logfn-client.js';
-export { executeCheckout } from './steps/checkout.js';
+export { executeCheckout, executeOwnedCheckout } from './steps/checkout.js';
 export type { CheckoutOptions, CheckoutResult } from './steps/checkout.js';
 export { executeArtifactUpload } from './steps/artifact-upload.js';
 export type { ArtifactUploadOptions, ArtifactUploadResult } from './steps/artifact-upload.js';

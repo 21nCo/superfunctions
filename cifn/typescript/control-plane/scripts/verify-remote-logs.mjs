@@ -1,9 +1,9 @@
 /** Real built runner, LogFn, control-plane HTTP and SQLite crash/reopen acceptance. */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -62,6 +62,12 @@ async function data(path, body, credential = secret) {
 }
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 try {
+  const source = join(directory, 'checkout-source'), repository = join(directory, 'checkout-bare');
+  await mkdir(source);
+  const gitEnv = { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
+  const git = (...args) => execFileSync('git', args, { cwd: source, env: gitEnv, encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); git('add', '.'); git('commit', '-m', 'owned fixture');
+  const checkoutSha = git('rev-parse', 'HEAD'); git('clone', '--bare', '--', source, repository);
   control = await start();
   const registered = await data('/api/v1/runners/register', { token });
   let dropped = false, logsOffline = false, stepsOffline = false, firstBody, replayBody;
@@ -83,9 +89,9 @@ try {
     } catch { res.writeHead(503); res.end('{}'); }
   });
   await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
-  const options = { baseUrl: `http://127.0.0.1:${proxy.address().port}`, runnerId: registered.runnerId, runnerSecret: registered.runnerSecret, stateDirectory };
-  const js = `require('fs').appendFileSync(${JSON.stringify(witness)},'once\\n');process.stdout.write('stdout '+process.env.TOKEN+'\\n');process.stderr.write('stderr '+process.env.TOKEN+'\\n');`;
-  const input = { trigger: { type: 'workflow_dispatch' }, pipelineSpec: { on: { workflow_dispatch: {} }, env: { TOKEN: '${{ secrets.CIFN_API_KEYS }}' }, jobs: { build: { 'runs-on': 'default', steps: [{ run: `${quote(process.execPath)} -e ${quote(js)}` }] } } } };
+  const options = { baseUrl: `http://127.0.0.1:${proxy.address().port}`, runnerId: registered.runnerId, runnerSecret: registered.runnerSecret, stateDirectory, allowLocalRepositories: true };
+  const js = `if(require('fs').readFileSync('checkout-receipt','utf8')!=='owned exact commit')throw Error('wrong checkout');require('fs').appendFileSync(${JSON.stringify(witness)},'once\\n');process.stdout.write('stdout '+process.env.TOKEN+'\\n');process.stderr.write('stderr '+process.env.TOKEN+'\\n');`;
+  const input = { trigger: { type: 'workflow_dispatch' }, pipelineSpec: { on: { workflow_dispatch: {} }, env: { TOKEN: '${{ secrets.CIFN_API_KEYS }}' }, jobs: { build: { 'runs-on': 'default', steps: [{ uses: 'checkout', with: { repository, ref: checkoutSha } }, { run: `${quote(process.execPath)} -e ${quote(js)}` }] } } } };
   const run = await data('/api/v1/runs', input);
   const runId = run.runId ?? run.id; assert.ok(runId);
   await assert.rejects(new RemoteRunner(options).tick());
@@ -224,7 +230,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }

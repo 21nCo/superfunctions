@@ -1,3 +1,4 @@
+import { ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { StepStatusReportingError } from './step-journal.js';
 import type { ReportedStepStatus } from '@cifn/control-plane';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -14,7 +15,7 @@ import {
   type PipelineSpec,
 } from '@cifn/control-plane';
 import { executeRunStep, type RunStepResult } from './executor/run-step.js';
-import { executeCheckout } from './steps/checkout.js';
+import { executeOwnedCheckout } from './steps/checkout.js';
 import { executeArtifactUpload } from './steps/artifact-upload.js';
 import { executeArtifactDownload } from './steps/artifact-download.js';
 import { executeCacheSave } from './steps/cache-save.js';
@@ -25,6 +26,8 @@ import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
 
 export interface RunnerOptions {
+  /** Host-only opt-in for owned local repository fixtures. */
+  allowLocalRepositories?: boolean;
   /** Awaited at each actual transition; failures stop execution rather than invent outcomes. */
   onStepStatus?: (stepKey: string, status: ReportedStepStatus) => Promise<void>;
   runCommand?: (command: string, workspace: string, env?: Record<string, string>, onLines?: (lines: string[]) => void) => Promise<RunStepResult>;
@@ -55,6 +58,7 @@ export interface RunnerOptions {
 }
 
 export class Runner {
+  private allowLocalRepositories: boolean;
   private onStepStatus?: RunnerOptions['onStepStatus'];
   private runCommand?: RunnerOptions['runCommand'];
   private executionSignal?: AbortSignal;
@@ -77,6 +81,7 @@ export class Runner {
   private getSecret?: (runId: string, name: string) => Promise<string | null>;
 
   constructor(options: RunnerOptions) {
+    this.allowLocalRepositories = options.allowLocalRepositories ?? false;
     this.onStepStatus = options.onStepStatus;
     this.executionEnv = options.executionEnv;
     this.runCommand = options.runCommand;
@@ -157,9 +162,18 @@ export class Runner {
       }
     };
 
-    const github = (run.trigger?.payload?.github as Record<string, string> | undefined) ?? {};
+    const triggerPayload = run.trigger?.payload ?? {};
+    const github = { ...((triggerPayload.github as Record<string, string> | undefined) ?? {}) };
+    // GitHub webhooks retain their raw payload; manual runs may use the normalized github object.
+    if (!github.sha && typeof triggerPayload.after === 'string') github.sha = triggerPayload.after;
+    if (!github.ref && typeof triggerPayload.ref === 'string') github.ref = triggerPayload.ref;
     if (!github.ref && payload.pipelineRef?.ref) github.ref = payload.pipelineRef.ref;
     if (!github.repository && payload.pipelineRef?.repo) github.repository = payload.pipelineRef.repo;
+    const triggerRepository = triggerPayload.repository as { clone_url?: unknown; full_name?: unknown } | undefined;
+    if (!github.repository && triggerRepository && typeof triggerRepository === 'object') {
+      if (typeof triggerRepository.clone_url === 'string') github.repository = triggerRepository.clone_url;
+      else if (typeof triggerRepository.full_name === 'string') github.repository = triggerRepository.full_name;
+    }
     if (!github.event_name && run.trigger?.type) github.event_name = run.trigger.type;
 
     if (jobSpec.if !== undefined && jobSpec.if !== null) {
@@ -197,6 +211,7 @@ export class Runner {
     const workspace = mkdtempSync(join(tmpdir(), `cifn-${runId}-${jobKey}-`));
 
     let jobFailed = false;
+    let uncertainProcess = false;
 
     const interpolateContext = {
       github,
@@ -254,11 +269,22 @@ export class Runner {
               `Step "${step.stepKey}" started: checkout`,
             ]);
 
-            const repo = (stepSpec.with?.repository as string) ?? payload.pipelineRef?.repo ?? '';
-            const ref = (stepSpec.with?.ref as string) ?? payload.pipelineRef?.ref ?? 'main';
-            const token = stepSpec.with?.token as string | undefined;
-
-            const checkoutResult = executeCheckout({ repo, ref, workspace, token });
+            let checkoutResult;
+            try {
+              const values = { repository: stepSpec.with?.repository ?? github.repository ?? '',
+                ref: stepSpec.with?.ref ?? (github.sha || github.ref || 'HEAD'), token: stepSpec.with?.token };
+              const resolved: Record<string, string> = {};
+              for (const [key, value] of Object.entries(values)) {
+                if (value === undefined) continue;
+                const interpolation = await interpolate(String(value), interpolateContext);
+                resolved[key] = interpolation.result; secretVals.push(...interpolation.secretValues);
+              }
+              checkoutResult = await executeOwnedCheckout({ repo: resolved.repository, ref: resolved.ref, token: resolved.token,
+                workspace, signal: this.executionSignal, allowLocalRepositories: this.allowLocalRepositories });
+            } catch (error) {
+              if (error instanceof ProcessGroupUncertainError) throw error;
+              checkoutResult = { success: false, lines: ['Checkout failed'], error: 'Checkout failed' };
+            }
             logLines(step.stepKey, checkoutResult.lines);
 
             if (checkoutResult.success) {
@@ -569,8 +595,11 @@ export class Runner {
           jobFailed = true;
         }
       }
+    } catch (error) {
+      if (error instanceof ProcessGroupUncertainError) uncertainProcess = true;
+      throw error;
     } finally {
-      if (this.cleanWorkspace) {
+      if (this.cleanWorkspace && !uncertainProcess) {
         try {
           rmSync(workspace, { recursive: true, force: true });
         } catch {

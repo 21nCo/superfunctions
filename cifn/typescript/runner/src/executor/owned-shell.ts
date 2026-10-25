@@ -8,10 +8,15 @@ export class ProcessGroupUncertainError extends Error {
 }
 /** POSIX only. Never uses process identities recovered from persistent state. */
 export async function executeOwnedShell(command: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, onLines?: (lines: string[]) => void): Promise<RunStepResult> {
+  return executeOwnedProcess('/bin/sh', ['-c', command], cwd, env, signal, onLines);
+}
+
+/** Same owned-process lifecycle for argv-based tools; no shell interpolation. */
+export async function executeOwnedProcess(executable: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, onLines?: (lines: string[]) => void, timeoutMs = 300_000): Promise<RunStepResult> {
   const empty = { exitCode: 1, stdout: '', stderr: '', lines: [] };
   if (signal?.aborted) return empty;
   if (process.platform === 'win32') throw new ProcessGroupUncertainError();
-  const child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(executable, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let closed = false;
   child.once('close', () => { closed = true; });
   let stdout = ''; let stderr = ''; let bytes = 0; let stopping = false;
@@ -69,7 +74,7 @@ export async function executeOwnedShell(command: string, cwd: string, env: NodeJ
   child.stdout.on('data', chunk => capture(chunk, 'stdout'));
   child.stderr.on('data', chunk => capture(chunk, 'stderr'));
   signal?.addEventListener('abort', stop, { once: true });
-  const timeout = setTimeout(stop, 300_000);
+  const timeout = setTimeout(stop, timeoutMs);
   try {
     const exited = new Promise<number>(resolve => {
       child.once('error', () => resolve(1));

@@ -101,7 +101,7 @@ jobs. Started work without a saved result is never silently re-executed.
 
 Run the built runner with `CIFN_CONTROL_PLANE_URL`, `CIFN_RUNNER_ID`,
 `CIFN_RUNNER_SECRET` and a persistent `CIFN_RUNNER_STATE_DIR`. This remote path
-supports shell steps; Docker and provider steps remain unsupported remotely.
+supports shell and checkout steps; Docker and other provider steps remain unsupported remotely.
 Execution leases/reassignment, cancellation delivery, remote logs/artifacts and
 durable notifications are described below; hosted email delivery remains unverified. See the [remote execution contract](.conduct/remote-execution-readiness.md),
 [dispatch contract](.conduct/durable-dispatch-readiness.md), and
@@ -363,3 +363,14 @@ per dispatch; arbitrary notes, evidence bodies and URLs are not accepted. Known
 configured secrets in attribution fields reject. Run history retention remains
 host-owned. Drain older writers before relying on adjudication receipts; no
 retroactive fencing of old binaries or rewriting of local runner evidence occurs.
+
+
+### Supervised remote checkout
+
+Remote `uses: checkout` runs Git through the same owned POSIX process supervisor as shell steps, with awaited durable step transitions. Repository and ref/token expressions use the accepted secret snapshot. Explicit `with.ref` takes precedence, otherwise the trigger SHA is preferred over its ref (then pipeline ref); `HEAD` is used when neither is present. Set an explicit ref when overriding the repository to a different project. Fetch supports full commit IDs, branches, tags and `HEAD`; the resulting workspace is a detached checkout. Submodules and Git LFS content are not initialized.
+
+An exact safe `owner/repository` shorthand is normalized to GitHub HTTPS. Network checkout accepts HTTPS URLs without embedded credentials, query strings or fragments. SSH, Git helper/ext transports and redirect-following are disabled in this checkpoint. Local absolute repository paths require the trusted library host option `allowLocalRepositories: true` on `RemoteRunner`/`Runner` (or the final policy argument to `executeRemoteShellJob`); pipeline data cannot enable it. The built runner leaves local access disabled.
+
+Git runs with an isolated HOME/config, disabled credential helpers and hooks, and no inherited Git configuration/SSH agent. An optional token is passed only in the owned Git process environment to a private askpass helper. No token enters Git argv, repository URLs, persistent remote configuration or diagnostics. Checkout reports sanitized success/failure lines instead of raw Git output. The workspace must not already contain `.git`. The public synchronous `executeCheckout` API retains its return type and now uses argv calls; remote execution uses the exported asynchronous `executeOwnedCheckout` path.
+
+Checkout has a 120-second operation budget, bounded captured output and owned process-group termination on cancellation. Termination verification adds the existing grace/kill/stdio cleanup bounds. If process disappearance cannot be established, execution remains uncertain: the private workspace/helper location is retained and no completion or replay is invented. A surviving process can still retain its environment; this is not a hard credential-erasure or OS sandbox guarantee. Normal completion/cancellation removes helper files. Workspace/repository bytes are not physically quota-bound by the output cap, and HTTPS provider acceptance, SSH, submodules and LFS remain open requirements where applicable.
