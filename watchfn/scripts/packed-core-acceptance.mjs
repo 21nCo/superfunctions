@@ -21,6 +21,7 @@ try {
   const check = `
 async function check(WatchFn) {
   const notifications=[];
+  let syntheticServer;
   const watch = new WatchFn({name:'packed',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'},alerts:{namedChannels:{operations:{type:'email',recipients:['ops@example.test']}},emailSender:async notification=>{notifications.push(notification);}}});
   const {createLogger} = await import('@logfn/core');
   const logger = createLogger({name:'packed-log', sinks:[()=>{}]});
@@ -46,6 +47,13 @@ async function check(WatchFn) {
     logger.info('payment 42 failed');
     logger.info('payment 99 failed');
     await logger.flush();
+    await watch.business.createFunnel({name:'installed-checkout',steps:[{event:'cart'},{event:'paid'}],timeWindow:'1h'});
+    watch.business.track('cart',{userId:'installed-buyer'});await watch.flush();
+    await new Promise(resolve=>setTimeout(resolve,3));
+    watch.business.track('paid',{userId:'installed-buyer'});await watch.flush();
+    const conversion=await watch.business.getFunnel({name:'installed-checkout',timeRange:'last-1h'});
+    assert.deepEqual(conversion.steps.map(step=>step.count),[1,1]);assert.equal(conversion.overallConversion,100);
+    assert.ok(getBusinessSchema().watchfn_business_definitions);
     const patterns = await watch.logs.detectPatterns({minOccurrences:2});
     assert.equal(patterns.length,1);
     assert.equal(patterns[0].pattern,'payment <number> failed');
@@ -56,19 +64,30 @@ async function check(WatchFn) {
     assert.equal(evaluated.results[0].matched,true);assert.equal(evaluated.results[0].alert.state,'triggered');
     assert.equal(notifications.length,0);await watch.alerts.processNotifications();
     assert.equal(notifications.length,1);assert.equal(notifications[0].value,2);assert.equal(notifications[0].threshold,2);
+    const {createServer}=await import('node:http');
+    syntheticServer=createServer((_request,response)=>{response.statusCode=200;response.end('healthy');});
+    await new Promise(resolve=>syntheticServer.listen(0,'127.0.0.1',resolve));
+    await watch.synthetics.create({name:'installed-health',type:'http',url:'http://127.0.0.1:'+syntheticServer.address().port,interval:'1m',assertions:[{type:'body',operator:'contains',value:'healthy'}]});
+    const syntheticDeadline=Date.now()+5000;let uptime;
+    do{await new Promise(resolve=>setTimeout(resolve,10));uptime=await watch.synthetics.getUptime({checkId:'installed-health'});if(Date.now()>syntheticDeadline)throw new Error('Installed synthetic sample not produced');}while(!uptime.observed);
+    assert.equal(uptime.total,1);assert.equal(uptime.uptime,100);assert.equal(uptime.basis,'completed-checks');
+    assert.equal((await watch.synthetics.getIncidents({checkId:'installed-health'})).length,0);
+    const trend=await watch.synthetics.getPerformanceTrend({checkId:'installed-health',metric:'responseTime',interval:'1h'});
+    assert.equal(trend.buckets.reduce((sum,bucket)=>sum+bucket.count,0),1);
+    await assert.rejects(watch.synthetics.create({name:'unsupported-browser',type:'browser',interval:'1m'}),/browser/);
     const transaction = watch.startTransaction('packed-transaction');
     transaction.startSpan('packed-child').finish(); transaction.finish(); transaction.finish();
     const spans = await watch.query({metric:'trace.span'});
     assert.equal(spans.length,2);
     assert.equal(spans[0].properties.parentId,spans[1].properties.id);
 
-  } finally { await watch.stop(); }
+  } finally { try{await watch.stop();}finally{if(syntheticServer)await new Promise(resolve=>{syntheticServer.closeAllConnections();syntheticServer.close(resolve);});} }
   console.log('packed WatchFn',process.version);
 }
 `;
-  writeFileSync(join(temporary, 'smoke.mjs'), `import assert from 'node:assert/strict'; import {WatchFn} from '@watchfn/core';${check}\nawait check(WatchFn);`);
+  writeFileSync(join(temporary, 'smoke.mjs'), `import assert from 'node:assert/strict'; import {WatchFn,getBusinessSchema} from '@watchfn/core';${check}\nawait check(WatchFn);`);
   // This must remain a real synchronous require, not an async import workaround.
-  writeFileSync(join(temporary, 'smoke.cjs'), `const assert=require('node:assert/strict'); const {WatchFn}=require('@watchfn/core');${check}\ncheck(WatchFn).catch(error=>{console.error(error);process.exitCode=1;});`);
+  writeFileSync(join(temporary, 'smoke.cjs'), `const assert=require('node:assert/strict'); const {WatchFn,getBusinessSchema}=require('@watchfn/core');${check}\ncheck(WatchFn).catch(error=>{console.error(error);process.exitCode=1;});`);
   for (const version of ['18.18.0', '20.19.0', '22']) {
     for (const file of ['smoke.mjs', 'smoke.cjs']) console.log(npm(['exec', '--yes', `--package=node@${version}`, '--', 'node', file]).trim());
   }
@@ -76,7 +95,19 @@ async function check(WatchFn) {
 export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
   writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
   const inferredSchemas = `
-import { ContextSchema } from '@watchfn/core';
+import { ContextSchema, getBusinessSchema } from '@watchfn/core';
+import type {CreateFunnelOptions,FunnelResult,SyntheticCheck,SyntheticReportOptions,SyntheticTrendOptions} from '@watchfn/core';
+const synthetic:SyntheticCheck={name:'typed-health',type:'http',url:'http://127.0.0.1',interval:'1m',retries:1};
+const report:SyntheticReportOptions={checkId:'typed-health',timeRange:'last-1h'};
+const trend:SyntheticTrendOptions={...report,metric:'responseTime',interval:'1h'};
+export const createdCheck=watch.synthetics.create(synthetic);
+export const uptime=watch.synthetics.getUptime(report);
+export const responseTrend=watch.synthetics.getPerformanceTrend(trend);
+const funnel:CreateFunnelOptions={name:'typed-funnel',steps:[{event:'a'},{event:'b'}],timeWindow:'1h'};
+export const businessSchema=getBusinessSchema();
+export const createdFunnel=watch.business.createFunnel(funnel);
+export const funnelResult:Promise<FunnelResult>=watch.business.getFunnel({name:'typed-funnel',timeRange:'last-1h'});
+export const dropoff=watch.business.getDropoffAnalysis({funnel:'typed-funnel',step:1,timeRange:'last-1h'});
 export const discovered = watch.logs.detectPatterns({fields:['message'],minOccurrences:2});
 import type {CreateLogPatternOptions,LogPatternCondition} from '@watchfn/core';
 const registeredPattern:CreateLogPatternOptions={name:'typed-pattern',pattern:/failure/i,threshold:{count:2,window:'5m'},alert:{enabled:true,channels:[]}};

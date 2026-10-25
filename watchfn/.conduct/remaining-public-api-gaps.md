@@ -1,6 +1,6 @@
 # Remaining public facade gaps: business analytics and synthetic reports
 
-Source snapshot: October 25, 2026, following the stored log-pattern alert implementation. This is a bounded source audit of the named public facades, not a full WatchFn audit or readiness verdict. No runtime changes, service execution or additional acceptance tests were performed for this document. All original requirements remain in scope.
+Historical source snapshot: October 25, 2026, following the stored log-pattern alert implementation and before the stored funnel/synthetic reporting changes. Current funnel and synthetic implementation evidence is in stored-funnels-readiness.md and typescript-synthetic-lifecycle-reports.md; the corresponding placeholder descriptions below are the reproduced baseline, not current behavior. Goals, revenue and other noted gaps remain open. This is a bounded source audit of the named public facades, not a full WatchFn audit or readiness verdict. No runtime changes, service execution or additional acceptance tests were performed for this document. All original requirements remain in scope.
 
 ## Exact specification and current behavior
 

@@ -469,3 +469,26 @@ and configured `alerts.maxObservations` also apply. Stateful regex cursors reset
 for each message. Zero matches is observed zero; timeout or overflow fails before
 the affected transition and creates no false healthy result. These are application
 bounds, not OS-wide memory or database-I/O guarantees.
+
+### Stored conversion funnels
+
+`business.createFunnel`, `business.getFunnel` and `business.getDropoffAnalysis` use retained canonical business events. Database hosts must apply the additive tables from `getBusinessSchema()` alongside `getWatchFnSchema()`; WatchFn wraps the shared adapter internally. Names are unique within the Watch application and definitions are immutable. Memory definitions survive only the same instance's lifetime.
+
+```ts
+await watch.business.createFunnel({name:'checkout', steps:[
+  {event:'cart.add'}, {event:'purchase.completed', filters:{paid:true}},
+], timeWindow:'1h'});
+watch.business.track('cart.add', {userId:'buyer', source:'organic'});
+// Capture purchase.completed with the same userId after checkout completes.
+await watch.flush();
+const funnel = await watch.business.getFunnel({
+  name:'checkout', timeRange:'last-30d', groupBy:'source',
+});
+const dropoff = await watch.business.getDropoffAnalysis({
+  funnel:'checkout', step:1, timeRange:'last-30d',
+});
+```
+
+Counts represent unique identified users reaching each ordered step in the retained interval. Timestamps must strictly increase between steps; equal timestamps cannot prove order. Repeated attempts may restart, and the first entry sets cohort membership. A missing identity never contributes a conversion. Dropoff steps are one-based. Empty results have zero rates; query overflow errors instead of returning partial counts. Scans allow10000 candidates/16MiB total/64KiB each and1000 groups; definitions permit2–32steps,16 scalar filters each and32KiB. Windows use positive `m`, `h`, `d`, or `w` durations up to366days.
+
+`business.track` snapshots properties and records trusted application ownership. Matching legacy business events without `app.name` require an explicit ownership migration before funnel evaluation. Different applications are excluded. Hosts remain responsible for historical event retention and tenant-scoped adapters. Goals, revenue and subscription analytics and Python funnel parity remain incomplete.

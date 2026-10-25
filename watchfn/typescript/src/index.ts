@@ -127,3 +127,8 @@ export type { LogFnSource, LogFnIntegrationOptions } from "./integrations/logfn"
 export type { PatternDiscoveryOptions, DiscoveredLogPattern, PatternToken } from "./logs/patterns";
 
 export type { CreateLogPatternOptions, SerializedLogPattern } from './logs/regex';
+
+export { getBusinessSchema } from './business/schema';
+export type { CreateFunnelOptions, StoredFunnelStep, FunnelQueryOptions, DropoffQueryOptions, FunnelResult, FunnelStepResult, FunnelSummary } from './business/stored-funnels';
+
+export type {SyntheticReportOptions,SyntheticIncidentOptions,SyntheticTrendOptions,SyntheticIncident} from './synthetics/reports';

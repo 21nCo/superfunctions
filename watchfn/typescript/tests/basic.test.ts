@@ -189,15 +189,12 @@ describe("watchFn", () => {
   it("should run synthetic checks", async () => {
     // Mock fetch for synthetics
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({
-      status: 200,
-      text: async () => "healthy",
-      headers: new Headers(),
-    }) as any;
+    globalThis.fetch = async () => new Response('healthy', {status:200});
 
     const watch = watchFn({ name: "test-app", storage: "memory" });
     watch.start();
     
+    try {
     await watch.synthetics.create({
         name: "health-check",
         type: "http",
@@ -217,7 +214,6 @@ describe("watchFn", () => {
     expect(events[0].properties.success).toBe(true);
     expect(events[0].properties.response.status).toBe(200);
     
-    watch.stop();
-    globalThis.fetch = originalFetch;
+    } finally { await watch.stop(); globalThis.fetch = originalFetch; }
   });
 });

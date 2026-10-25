@@ -1,3 +1,4 @@
+import { StoredFunnels, businessEvent, type CreateFunnelOptions, type FunnelQueryOptions, type DropoffQueryOptions } from '../business/stored-funnels';
 import { countLogPattern, namedPatternChannels, type CreateLogPatternOptions } from '../logs/regex';
 import { discoverLogPatterns, type PatternDiscoveryOptions } from "../logs/patterns";
 import { validateIndexFields } from "../storage/log-index/values";
@@ -22,6 +23,8 @@ import { logQuery, logAggregate, type LogQueryOptions, type LogAggregateOptions 
 import { SystemMetricsCollector } from "../collectors/infra/system-metrics";
 import { ProcessMetricsCollector } from "../collectors/infra/process-metrics";
 import { SyntheticScheduler } from "../synthetics/scheduler";
+import {SyntheticReports,type SyntheticReportOptions,type SyntheticIncidentOptions,type SyntheticTrendOptions} from "../synthetics/reports";
+import type {SyntheticCheck} from "../synthetics/types";
 import { Router } from "@superfunctions/http";
 import { createWatchFnRouter } from "../http/router";
 
@@ -42,6 +45,7 @@ export class WatchFn implements WatchFnInstance {
   private httpInterceptor: HttpInterceptor;
   private tracer: Tracer;
   private alertManager?: AlertManager;
+  private storedFunnels?: StoredFunnels;
   private queryEngine: QueryEngine | null = null;
   private systemMetrics: SystemMetricsCollector;
   private processMetrics: ProcessMetricsCollector;
@@ -98,6 +102,9 @@ export class WatchFn implements WatchFnInstance {
     return this.isStarted;
   }
 
+  /** Trusted configured application identity for owned integrations. */
+  get applicationName(): string { return this.config.name; }
+
   constructor(config: WatchFnConfig) {
     this.config = WatchFnConfigSchema.parse(config);
     if (this.config.botfn && (this.config.storage !== "database" || !this.config.database || this.config.auth?.enabled === false || (!this.config.auth?.apiKey?.trim() && !this.config.auth?.provider))) {
@@ -111,7 +118,7 @@ export class WatchFn implements WatchFnInstance {
     this.tracer = new Tracer(this, this.config.trace?.serviceName ?? this.config.name, this.config.trace);
     this.systemMetrics = new SystemMetricsCollector(this, this.config.infra?.interval);
     this.processMetrics = new ProcessMetricsCollector(this, this.config.infra?.interval);
-    this.syntheticsScheduler = new SyntheticScheduler(this);
+    this.syntheticsScheduler = new SyntheticScheduler(this,this.config.name);
     
     // Initialize HTTP Router
     this.httpRouter = createWatchFnRouter(this);
@@ -255,7 +262,7 @@ export class WatchFn implements WatchFnInstance {
       () => this.httpInterceptor.uninstall(),
       () => this.systemMetrics.stop(),
       () => this.processMetrics.stop(),
-      () => this.syntheticsScheduler.stop(),
+      () => { this.write(() => this.syntheticsScheduler.stop()); },
     ]) {
       try { cleanup(); } catch (error) { this.write(() => { throw error; }); }
     }
@@ -355,14 +362,30 @@ export class WatchFn implements WatchFnInstance {
       }
   }
   
+  private funnels(): StoredFunnels {
+    if (!this.isStarted || this.stopping || !this.storage) throw new Error('WatchFn storage is unavailable');
+    if (!this.storedFunnels) {
+      const database = this.config.storage === 'database' ? this.config.database : undefined;
+      if (database && !('create' in database)) throw new TypeError('Stored funnels require a shared DB Adapter');
+      this.storedFunnels = new StoredFunnels({name:this.config.name,database:database as import('@superfunctions/db').Adapter | undefined,storage:this.storage,
+        admit: async <T>(operation:()=>Promise<T>):Promise<T> => {
+          if (!this.isStarted || this.stopping) throw new Error('WatchFn storage is unavailable');
+          let result!:T;const record=this.write(async()=>{result=await operation();});await record.completion;if(record.failed)throw record.error;return result;
+        }});
+    }
+    return this.storedFunnels;
+  }
   get business() {
       return {
-          track: (event: string, props: any) => this.track(event, props),
+          track: (event: string, props: Record<string,unknown>) => {
+            if (!this.isStarted || this.stopping) throw new Error('WatchFn storage is unavailable');
+            this.eventRouter.ingest(businessEvent(event,props,this.config.name));
+          },
           createGoal: async (opts: any) => {},
           getGoalProgress: async (opts: any) => ({}),
-          createFunnel: async (opts: any) => ({}),
-          getFunnel: async (opts: any) => ({}),
-          getDropoffAnalysis: async (opts: any) => ({}),
+          createFunnel: async (opts: CreateFunnelOptions) => this.funnels().create(opts),
+          getFunnel: async (opts: FunnelQueryOptions) => this.funnels().get(opts),
+          getDropoffAnalysis: async (opts: DropoffQueryOptions) => this.funnels().dropoff(opts),
           getRevenue: async (opts: any) => ({}),
           getMRR: async (opts: any) => ({}),
           getChurnRate: async (opts: any) => ({}),
@@ -400,12 +423,18 @@ export class WatchFn implements WatchFnInstance {
   
 
   get synthetics() {
+      const report = async <T>(operation:(reports:SyntheticReports)=>Promise<T>):Promise<T> => {
+        if(!this.isStarted||this.stopping||!this.storage)throw new Error('WatchFn storage is unavailable');
+        const reports=new SyntheticReports(this.storage,this.config.name);let value!:T;
+        const record=this.write(async()=>{value=await operation(reports);});
+        await record.completion;if(record.failed)throw record.error;return value;
+      };
       return {
-          create: async (opts: any) => this.syntheticsScheduler.create(opts),
-          getUptime: async (opts: any) => ({}),
-          getIncidents: async (opts: any) => [],
-          getPerformanceTrend: async (opts: any) => ({}),
-      }
+          create: async (opts:SyntheticCheck) => this.syntheticsScheduler.create(opts),
+          getUptime: (opts:SyntheticReportOptions) => report(reports=>reports.getUptime(opts)),
+          getIncidents: (opts:SyntheticIncidentOptions) => report(reports=>reports.getIncidents(opts)),
+          getPerformanceTrend: (opts:SyntheticTrendOptions) => report(reports=>reports.getPerformanceTrend(opts)),
+      };
   }
   
   get dashboard() {
