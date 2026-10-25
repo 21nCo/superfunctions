@@ -416,3 +416,23 @@ Parsed JSON messages receive LogFn's default privacy redaction before their text
 Memory storage maintains scalar equality indexes. Shared database adapters require the current `getWatchFnSchema()` migration: the nullable event `logIndexFields` column and the log index table plus its declared indexes. The legacy `insertEvent`/`queryEvents` bridge cannot provide indexed ingestion. Existing rows and rows written with other policies remain query candidates. To migrate existing rows, stop writers and call `DatabaseStorage.backfillLogIndexes(fields, { after, limit })` until `nextCursor` is null. Each page replaces index entries and coverage atomically.
 
 Index equality queries verify payload predicates after lookup, and fail explicitly above 10,000 metadata rows, 16 MiB metadata, 64 KiB per fetched payload or 16 MiB total payload. These bounds also apply while migration coverage is incomplete. Index keys distinguish scalar types; objects, arrays and missing fields are not indexed. Invalid Unicode scalar strings are rejected. General query paths retain their existing limits.
+
+## Stored log pattern discovery
+
+`await watch.logs.detectPatterns` groups retained log fields into deterministic templates. Standalone
+ASCII numbers and UUIDs become typed tokens; literals remain distinct, including
+literal placeholder text. Stable IDs, complete occurrence counts, first/last
+timestamps and up to three samples accompany each result.
+
+```ts
+const patterns = await watch.logs.detectPatterns({timeRange:'last-24h',minOccurrences:5,fields:['message','error']})
+```
+
+Use a started instance. Default field is `message`, default minimum count is 5,
+and up to eight distinct dotted fields are supported. Queries reject explicitly
+when candidates exceed 10,000 events or 16 MiB, an event exceeds 64 KiB, a field
+exceeds 16 KiB, or output exceeds 1,000 patterns. Counts cover the admitted window
+without truncation by the public raw-query result limit. Storage scan limits and
+retention still apply; this does not guarantee bounded provider I/O. TypeScript
+requires streaming storage. Registration, durable regex thresholds and alert
+channel integration remain separate unfinished parts of the log-pattern API.

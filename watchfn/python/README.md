@@ -654,3 +654,19 @@ silently changing them during UTF-8 encoding.
 Log batches are validated completely before admission. Both producer input and
 the normalized stored event must fit 64 KiB, and a batch must fit 16 MiB; structured
 JSON expansion cannot produce an acknowledged but unreadable stored event.
+
+## Stored log pattern discovery
+
+```python
+patterns = watch.logs.detect_patterns({'timeRange':'last-24h','minOccurrences':5,'fields':['message','error']})
+```
+
+This requires a started instance. Retained log fields are grouped into deterministic
+number/UUID templates with stable IDs, complete occurrence counts, first/last
+timestamps and up to three samples. Literal placeholder text remains distinct.
+Defaults are `message` and minimum count 5; up to eight dotted fields are allowed.
+Scans reject over 10,000 candidates or 16 MiB; each event is limited to 64 KiB
+and each field to 16 KiB. More than 1,000 output patterns rejects. Counts are
+not truncated by the public raw-query limit. Existing storage scan limits and
+retention apply. Registration, durable regex thresholds and alert channels remain
+unfinished parts of the log-pattern API.

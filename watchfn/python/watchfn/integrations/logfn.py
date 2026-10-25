@@ -210,6 +210,12 @@ class Logs:
         query = Query(query_options(options))
         return query.execute(self._events(query.options['where']))
 
+    def detect_patterns(self, options):
+        from ..log_patterns import discover_patterns
+        return discover_patterns(self._events({'type': 'log'}), options)
+
+    detectPatterns = detect_patterns
+
     def aggregate(self, options):
         if not isinstance(options, dict):
             raise QueryValidationError('Invalid log aggregate options')

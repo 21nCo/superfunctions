@@ -1,3 +1,4 @@
+import { discoverLogPatterns, type PatternDiscoveryOptions } from "../logs/patterns";
 import { validateIndexFields } from "../storage/log-index/values";
 import { normalizeLogBatch, resolveLogFnOptions, type LogFnSource, type LogFnIntegrationOptions, type ResolvedLogFnOptions } from "../integrations/logfn";
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -339,8 +340,11 @@ export class WatchFn implements WatchFnInstance {
       return {
           query: async (opts: LogQueryOptions) => this.query(logQuery(opts)),
           aggregate: async (opts: LogAggregateOptions) => this.aggregate(logAggregate(opts)),
-          createPattern: async (opts: any) => {},
-          detectPatterns: async (opts: any) => [],
+          createPattern: async (_opts: any) => { throw new Error("Log pattern registration is unavailable"); },
+          detectPatterns: async (opts: PatternDiscoveryOptions) => {
+            if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
+            return discoverLogPatterns(this.storage, opts);
+          },
       }
   }
   

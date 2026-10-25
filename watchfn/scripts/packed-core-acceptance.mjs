@@ -42,6 +42,13 @@ async function check(WatchFn) {
     const logs = await watch.logs.query({filters:{service:'packed-service'}});
     assert.equal(logs.length,1); assert.equal(logs[0].message,'installed-log');
     assert.equal(JSON.stringify(logs).includes('private-password'),false);
+    logger.info('payment 42 failed');
+    logger.info('payment 99 failed');
+    await logger.flush();
+    const patterns = await watch.logs.detectPatterns({minOccurrences:2});
+    assert.equal(patterns.length,1);
+    assert.equal(patterns[0].pattern,'payment <number> failed');
+    assert.equal(patterns[0].count,2);
     const transaction = watch.startTransaction('packed-transaction');
     transaction.startSpan('packed-child').finish(); transaction.finish(); transaction.finish();
     const spans = await watch.query({metric:'trace.span'});
@@ -63,6 +70,7 @@ export const watch = new WatchFn({name:'typed',storage:'memory'}); export const 
   writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
   const inferredSchemas = `
 import { ContextSchema } from '@watchfn/core';
+export const discovered = watch.logs.detectPatterns({fields:['message'],minOccurrences:2});
 export const optionalContext = ContextSchema.optional();
 export const refinedContext = ContextSchema.refine(value => value.userId !== 'blocked');
 export const partialContext = ContextSchema.partial();

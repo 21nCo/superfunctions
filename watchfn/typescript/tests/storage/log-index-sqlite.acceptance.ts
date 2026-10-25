@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseStorage, getWatchFnSchema } from '../../src/storage/database';
 import { QueryEngine } from '../../src/query/query-engine';
 import { indexValue } from '../../src/storage/log-index/values';
+import { discoverLogPatterns } from '../../src/logs/patterns';
 
 it('atomically persists log indexes, preserves migration coverage and reopens indexed SQLite data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'watch-log-index-'));
@@ -50,5 +51,7 @@ it('atomically persists log indexes, preserves migration coverage and reopens in
     await sql!.destroy(); sql = undefined;
     connection = connect(); storage = new DatabaseStorage(connection.adapter); query = new QueryEngine(storage);
     expect((await query.execute(filter)).data).toHaveLength(3);
+    for (const number of [1,2]) await storage.add({type:'log',message:`payment ${number} failed`},{indexFields:['message']});
+    expect(await discoverLogPatterns(storage,{fields:['message'],minOccurrences:2})).toEqual([expect.objectContaining({pattern:'payment <number> failed',count:2})]);
   } finally { if (sql) await sql.destroy(); await rm(directory, { recursive: true, force: true }); }
 });

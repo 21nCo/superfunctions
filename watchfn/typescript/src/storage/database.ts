@@ -189,6 +189,7 @@ export class DatabaseStorage implements StorageAdapter {
   /** Live keyset scan, not a snapshot across concurrent inserts/updates/deletes. */
   async *iterateQuery(options: any): AsyncGenerator<any> {
     if (this.legacy) {
+      if (options?.requireStreaming) throw new Error("Pattern discovery requires a shared DB Adapter");
       const { resolvedTimeRange: _internalRange, ...legacyOptions } = options ?? {};
       yield* await this.legacy.queryEvents(options && typeof options === "object" ? legacyOptions : options);
       return;

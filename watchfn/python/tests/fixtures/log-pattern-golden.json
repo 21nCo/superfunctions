@@ -1,0 +1,117 @@
+[
+  {
+    "name": "numbers",
+    "values": [
+      "order 123 failed",
+      "order 456 failed"
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "order "
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "literal",
+        "value": " failed"
+      }
+    ],
+    "field": "message",
+    "id": "2930d8f9487ee43708ab159ee2eb856a96188964a156e5079f6a6cf0273e3cc8"
+  },
+  {
+    "name": "uuid",
+    "values": [
+      "job 123e4567-e89b-12d3-a456-426614174000 stopped",
+      "job ABCDEF12-1234-1234-ABCD-123456789ABC stopped"
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "job "
+      },
+      {
+        "type": "uuid"
+      },
+      {
+        "type": "literal",
+        "value": " stopped"
+      }
+    ],
+    "field": "message",
+    "id": "5f2d08d3641b0b4ae71bdd29e858ab55ce03424508aacbfa3322602ed3aea8e4"
+  },
+  {
+    "name": "identifier",
+    "values": [
+      "CODE123 failed"
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "CODE123 failed"
+      }
+    ],
+    "field": "message",
+    "id": "5d72cf476b81252aea510dc8881bb83af24603a5251cd6303281e4df0429e288"
+  },
+  {
+    "name": "literal-placeholder",
+    "values": [
+      "order <number> failed"
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "order <number> failed"
+      }
+    ],
+    "field": "message",
+    "id": "049e68c59f30c2ab752e5184f0debc73f416ff379209e1d685e84054d9a84a2e"
+  },
+  {
+    "name": "unicode-space",
+    "values": [
+      " ödeme\t 123\nfailed "
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "ödeme "
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "literal",
+        "value": " failed"
+      }
+    ],
+    "field": "message",
+    "id": "490dbe57bd9b4e726a43e299caf1be84f829ac92c66a85c591b197d93b75709b"
+  },
+  {
+    "name": "decimal",
+    "values": [
+      "value -12.5e+3 ms",
+      "value +99.25 ms"
+    ],
+    "tokens": [
+      {
+        "type": "literal",
+        "value": "value "
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "literal",
+        "value": " ms"
+      }
+    ],
+    "field": "message",
+    "id": "5f605e9d3ebef6a01dbfa7a0a6b81310238e0f0be8ca2b024e512c954dff3e25"
+  }
+]
