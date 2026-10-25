@@ -1,3 +1,4 @@
+import { normalizeGitHubEvent } from './github-event.js';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
 import type { ControlPlaneStore } from '../store/store.js';
 import { verifyWebhookSignature } from '@superfunctions/webhooks';
@@ -69,20 +70,16 @@ export async function handleWebhook(
     };
   }
 
-  const repository = payload.repository as { clone_url?: string; full_name?: string } | undefined;
-  const ref = payload.ref as string | undefined;
-
-  if (!repository || !ref) {
-    return {
-      status: 400,
-      body: { ok: false, error: { code: 'BAD_REQUEST', message: 'Missing repository or ref in payload' } },
-    };
+  let decision: ReturnType<typeof normalizeGitHubEvent>;
+  try { decision = normalizeGitHubEvent(payload, triggerType as 'push' | 'pull_request'); }
+  catch {
+    return { status: 400, body: { ok: false, error: { code: 'BAD_REQUEST', message: 'Invalid GitHub event identity' } } };
   }
-
-  const repo = repository.clone_url ?? repository.full_name ?? '';
-  const refValue = ref.replace('refs/heads/', '');
-
-  const pipelineRef: PipelineRef = { repo, ref: refValue };
+  if (decision.kind === 'skip') return { status: 200, body: { ok: true, data: { skipped: true, reason: decision.reason } } };
+  if (decision.kind === 'deny') return { status: 403, body: { ok: false, error: { code: 'FORBIDDEN', message: decision.reason } } };
+  const normalized = decision.event;
+  const { repo, sha } = normalized;
+  const pipelineRef: PipelineRef = { repo, ref: sha };
 
   if (!options.pipelineResolver) {
     return {
@@ -98,7 +95,7 @@ export async function handleWebhook(
     doc = result.doc;
     resolvedConfigPath = result.resolvedConfigPath;
   } catch (err) {
-    const message = err instanceof ResolverError ? err.message : (err instanceof Error ? err.message : 'Pipeline resolution failed');
+    const message = err instanceof ResolverError ? err.message : 'Pipeline resolution failed';
     return {
       status: 422,
       body: { ok: false, error: { code: 'RUN_CREATE_FAILED', message } },
@@ -123,15 +120,18 @@ export async function handleWebhook(
     };
   }
 
+  const trigger = validationResult.spec.on[triggerType as 'push' | 'pull_request'];
+  if (!trigger || (trigger.branches !== undefined && !trigger.branches.includes(normalized.branch))) {
+    return { status: 200, body: { ok: true, data: { skipped: true, reason: 'pipeline_trigger_filter' } } };
+  }
+
   const input: CreateRunInput = {
     pipelineSpec: validationResult.spec,
-    pipelineRef: { repo, ref: refValue, configPath: resolvedConfigPath },
-    trigger: { type: triggerType, payload },
+    pipelineRef: { repo, ref: sha, configPath: resolvedConfigPath },
+    trigger: { type: triggerType, payload: { ...payload, github: normalized.github } },
   };
 
-  const prepared = await prepareRun(input, options.secFn, {
-    ref, repository: repository.full_name ?? repo, sha: (payload.after as string) ?? '', event_name: triggerType,
-  });
+  const prepared = await prepareRun(input, options.secFn, normalized.github);
   const run = await acceptRun(options.store, options.queue, prepared);
 
   return {

@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.boundary.json",
-  "include": ["src/store/**/*.ts", "src/pipeline/resolver-native.test.ts", "src/observability/**/*.ts", "src/server.ts"],
+  "include": ["src/store/**/*.ts", "src/pipeline/resolver-native.test.ts", "src/triggers/github-event.test.ts", "src/triggers/triggers.test.ts", "src/observability/**/*.ts", "src/server.ts"],
   "exclude": ["node_modules", "dist"]
 }

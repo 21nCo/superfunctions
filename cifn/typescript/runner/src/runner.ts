@@ -271,7 +271,7 @@ export class Runner {
 
             let checkoutResult;
             try {
-              const values = { repository: stepSpec.with?.repository ?? github.repository ?? '',
+              const values = { repository: stepSpec.with?.repository ?? payload.pipelineRef?.repo ?? github.repository ?? '',
                 ref: stepSpec.with?.ref ?? (github.sha || github.ref || 'HEAD'), token: stepSpec.with?.token };
               const resolved: Record<string, string> = {};
               for (const [key, value] of Object.entries(values)) {

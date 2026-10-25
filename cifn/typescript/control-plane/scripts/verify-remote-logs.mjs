@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { RemoteRunner } from '../../runner/dist/index.mjs';
@@ -47,7 +47,7 @@ async function waitCrashShellExit() {
 async function start() {
   const processChild = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url))], {
     env: { ...process.env, PORT: String(port), CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: join(directory, 'state.sqlite'), CIFN_STORE_ENCRYPTION_KEY: key,
-      CIFN_RUNNER_REGISTRATION_TOKEN: token, CIFN_API_KEYS: secret, CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory' }, stdio: ['ignore', 'pipe', 'pipe'],
+      CIFN_RUNNER_REGISTRATION_TOKEN: token, CIFN_API_KEYS: secret, CIFN_WEBHOOK_SECRET: 'owned-signing', CIFN_PIPELINE_RESOLVER: 'git', CIFN_ALLOW_LOCAL_REPOSITORIES: 'true', CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const child = { process: processChild, exited: once(processChild, 'exit') }; children.push(child);
   let ready;
@@ -66,11 +66,37 @@ try {
   await mkdir(source);
   const gitEnv = { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
   const git = (...args) => execFileSync('git', args, { cwd: source, env: gitEnv, encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); await writeFile(join(source, 'cifn.yml'), 'name: owned resolver'); git('add', '.'); git('commit', '-m', 'owned fixture');
+  const webhookDoc = JSON.stringify({ on: { push: { branches: ['main'] }, pull_request: { branches: ['main'] } }, jobs: { build: { 'runs-on': 'default', steps: [{ uses: 'checkout' }, { run: 'test "$(cat checkout-receipt)" = "owned exact commit"' }] } } });
+  git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); await writeFile(join(source, 'cifn.yml'), webhookDoc); git('add', '.'); git('commit', '-m', 'owned fixture');
   const checkoutSha = git('rev-parse', 'HEAD'); git('clone', '--bare', '--', source, repository);
-  assert.deepEqual(await resolvePipelineDoc({ repo: repository, ref: checkoutSha }, { allowLocalRepositories: true }), { doc: 'name: owned resolver', resolvedConfigPath: 'cifn.yml' });
+  assert.deepEqual(await resolvePipelineDoc({ repo: repository, ref: checkoutSha }, { allowLocalRepositories: true }), { doc: webhookDoc, resolvedConfigPath: 'cifn.yml' });
   control = await start();
   const registered = await data('/api/v1/runners/register', { token });
+  // Move the branch after recording the webhook SHA: both config and checkout must stay pinned.
+  await writeFile(join(source, 'checkout-receipt'), 'wrong newer branch');
+  await writeFile(join(source, 'cifn.yml'), 'invalid later config'); git('add', '.'); git('commit', '-m', 'later branch'); git('push', repository, 'main');
+  const signedRepository = { id: 1, full_name: 'owned/repository', clone_url: repository };
+  const signedPR = { action: 'synchronize', repository: signedRepository, pull_request: {
+    head: { repo: signedRepository, ref: 'main', sha: checkoutSha }, base: { repo: signedRepository, ref: 'main' },
+  } };
+  const sendWebhook = async (payload, event = 'pull_request') => {
+    const body = JSON.stringify(payload);
+    const response = await fetch(`http://127.0.0.1:${port}/webhooks/github`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-GitHub-Event': event,
+      'X-Hub-Signature-256': 'sha256=' + createHmac('sha256', 'owned-signing').update(body).digest('hex') }, body, signal: AbortSignal.timeout(10000) });
+    return { status: response.status, body: await response.json() };
+  };
+  const skipped = await sendWebhook({ ...signedPR, pull_request: { ...signedPR.pull_request, base: { ...signedPR.pull_request.base, ref: 'other' } } });
+  assert.equal(skipped.status, 200); assert.equal(skipped.body.data.skipped, true);
+  const denied = await sendWebhook({ ...signedPR, pull_request: { ...signedPR.pull_request, head: { ...signedPR.pull_request.head, repo: { ...signedRepository, id: 2 } } } });
+  assert.equal(denied.status, 403);
+  const accepted = await sendWebhook(signedPR); assert.equal(accepted.status, 201);
+  const webhookRunId = accepted.body.data.runId;
+  await new RemoteRunner({ baseUrl: `http://127.0.0.1:${port}`, runnerId: registered.runnerId, runnerSecret: registered.runnerSecret, stateDirectory: join(directory, 'webhook-runner'), allowLocalRepositories: true }).tick();
+  assert.equal((await data(`/api/v1/runs/${webhookRunId}`)).status, 'success');
+  await stop(control); control = await start();
+  const persistedWebhook = await data(`/api/v1/runs/${webhookRunId}`);
+  assert.equal(persistedWebhook.status, 'success'); assert.equal(persistedWebhook.pipelineRef.ref, checkoutSha);
+
   let dropped = false, logsOffline = false, stepsOffline = false, firstBody, replayBody;
   const requests = [];
   proxy = createServer(async (req, res) => {
@@ -231,7 +257,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, signedPullRequestPinnedCheckout: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }

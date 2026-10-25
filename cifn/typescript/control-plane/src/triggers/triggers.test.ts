@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { signWebhookPayload } from '@superfunctions/webhooks';
 import { verifySignature, handleWebhook, parseGitHubEvent } from './webhook.js';
 import { CronScheduler } from './cron.js';
@@ -13,7 +13,7 @@ const API_KEY = 'test-key';
 
 const validPipeline: PipelineSpec = {
   name: 'ci',
-  on: { push: { branches: ['main'] } },
+  on: { push: { branches: ['main'] }, pull_request: { branches: ['main'] } },
   jobs: {
     build: { 'runs-on': 'default', steps: [{ run: 'echo build' }] },
   },
@@ -39,8 +39,15 @@ function sign(payload: string, secret: string): string {
 function makePayload(repo: string, ref: string): string {
   return JSON.stringify({
     repository: { clone_url: `https://github.com/${repo}.git`, full_name: repo },
-    ref: `refs/heads/${ref}`,
+    ref: `refs/heads/${ref}`, after: 'a'.repeat(40),
   });
+}
+
+function makePullRequestPayload(repo: string, ref: string): string {
+  const repository = { id: 1, full_name: repo, clone_url: `https://github.com/${repo}.git` };
+  return JSON.stringify({ action: 'synchronize', repository, pull_request: {
+    head: { sha: 'a'.repeat(40), ref, repo: repository }, base: { ref: 'main', repo: repository },
+  } });
 }
 
 function authHeaders() {
@@ -123,7 +130,7 @@ describe('handleWebhook', () => {
     expect(store.listRuns().runs).toHaveLength(1);
     const run = store.listRuns().runs[0];
     expect(run.pipelineRef.repo).toBeDefined();
-    expect(run.pipelineRef.ref).toBe('main');
+    expect(run.pipelineRef.ref).toBe('a'.repeat(40));
     expect(run.pipelineRef.configPath).toBe('.ci/pipeline.yml');
   });
 
@@ -140,7 +147,7 @@ describe('handleWebhook', () => {
   });
 
   it('pull_request event creates run with correct trigger', async () => {
-    const payload = makePayload('org/repo', 'feature');
+    const payload = makePullRequestPayload('org/repo', 'feature');
     const sig = sign(payload, SECRET);
     const result = await handleWebhook(payload, sig, 'pull_request', {
       store, queue, webhookSecret: SECRET,
@@ -319,7 +326,7 @@ describe('TV-PIPE-007: All trigger types', () => {
   it('pull_request via webhook creates run', async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueueClient();
-    const payload = makePayload('org/repo', 'feature');
+    const payload = makePullRequestPayload('org/repo', 'feature');
     const sig = sign(payload, SECRET);
     const result = await handleWebhook(payload, sig, 'pull_request', {
       store, queue, webhookSecret: SECRET,
@@ -339,5 +346,58 @@ describe('TV-PIPE-007: All trigger types', () => {
       cronExpression: '0 0 * * *',
     });
     expect(store.getRun(runId)!.trigger.type).toBe('schedule');
+  });
+});
+
+
+describe('webhook admission policy', () => {
+  it('skips absent event, empty branch list and mismatched PR base before job secrets or persistence', async () => {
+    for (const on of [{ workflow_dispatch: {} }, { pull_request: { branches: [] } }, { pull_request: { branches: ['feature'] } }]) {
+      const store = new MemoryStore(), queue = new MemoryQueueClient(), secFn = new MemorySecFnClient();
+      const secretRead = vi.spyOn(secFn, 'getSecret');
+      const payload = makePullRequestPayload('org/repo', 'feature');
+      const result = await handleWebhook(payload, sign(payload, SECRET), 'pull_request', {
+        store, queue, secFn, webhookSecret: SECRET,
+        pipelineResolver: mockPipelineResolver({ ...validPipeline, on, env: { TOKEN: '${{ secrets.TOKEN }}' } }),
+      });
+      expect(result.status).toBe(200); expect(result.body).toMatchObject({ data: { skipped: true } });
+      expect(secretRead).not.toHaveBeenCalled(); expect(store.listRuns().runs).toEqual([]); expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+    }
+  });
+  it('skips a push branch mismatch and preserves unsupported-event rejection without side effects', async () => {
+    const store = new MemoryStore(), queue = new MemoryQueueClient(), secFn = new MemorySecFnClient();
+    const secretRead = vi.spyOn(secFn, 'getSecret');
+    const resolver = vi.fn(mockPipelineResolver({ ...validPipeline, env: { TOKEN: '${{ secrets.TOKEN }}' } }));
+    const payload = makePayload('org/repo', 'feature');
+    const options = { store, queue, secFn, webhookSecret: SECRET, pipelineResolver: resolver };
+    const result = await handleWebhook(payload, sign(payload, SECRET), 'push', options);
+    expect(result.status).toBe(200); expect(result.body).toMatchObject({ data: { skipped: true } });
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect((await handleWebhook(payload, sign(payload, SECRET), 'issues', options)).status).toBe(400);
+    expect(resolver).toHaveBeenCalledTimes(1); expect(secretRead).not.toHaveBeenCalled();
+    expect(store.listRuns().runs).toEqual([]); expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+  });
+  it('accepts omitted branch filter and stores authoritative normalized context over supplied context', async () => {
+    const store = new MemoryStore(), queue = new MemoryQueueClient();
+    const raw = JSON.parse(makePayload('org/repo', 'feature'));
+    raw.github = { sha: 'b'.repeat(40), repository: 'attacker/repo' };
+    const payload = JSON.stringify(raw);
+    const result = await handleWebhook(payload, sign(payload, SECRET), 'push', { store, queue, webhookSecret: SECRET,
+      pipelineResolver: mockPipelineResolver({ ...validPipeline, on: { push: {} } }),
+    });
+    expect(result.status).toBe(201);
+    expect(store.listRuns().runs[0].trigger.payload).toMatchObject({ github: { sha: 'a'.repeat(40), repository: 'org/repo', ref: 'refs/heads/feature' } });
+  });
+  it('denies signed fork PRs and skips unsupported actions without fetching config or secrets', async () => {
+    for (const fork of [true, false]) {
+      const store = new MemoryStore(), queue = new MemoryQueueClient(), secFn = new MemorySecFnClient();
+      const raw = JSON.parse(makePullRequestPayload('org/repo', 'feature'));
+      if (fork) raw.pull_request.head.repo.id = 2; else raw.action = 'closed';
+      const payload = JSON.stringify(raw), resolver = vi.fn(mockPipelineResolver(validPipeline));
+      const secretRead = vi.spyOn(secFn, 'getSecret');
+      const result = await handleWebhook(payload, sign(payload, SECRET), 'pull_request', { store, queue, secFn, webhookSecret: SECRET, pipelineResolver: resolver });
+      expect(result.status).toBe(fork ? 403 : 200); expect(resolver).not.toHaveBeenCalled(); expect(secretRead).not.toHaveBeenCalled();
+      expect(store.listRuns().runs).toEqual([]); expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+    }
   });
 });

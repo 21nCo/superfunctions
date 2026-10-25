@@ -1,3 +1,4 @@
+import { resolvePipelineDoc } from './pipeline/resolver.js';
 import { LogFnStepOutputDispatcher } from './observability/step-output.js';
 import { sinkConsole } from '@logfn/core';
 import { LogFnLifecycleDispatcher } from './observability/dispatcher.js';
@@ -51,7 +52,19 @@ async function start() {
     await adapters.secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', registrationToken);
   }
 
+  if (adapterConfig.secrets.type === 'memory' && process.env.CIFN_GIT_TOKEN) await adapters.secrets.setSecret('CIFN_GIT_TOKEN', process.env.CIFN_GIT_TOKEN);
+
   const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
+
+  const resolverMode = process.env.CIFN_PIPELINE_RESOLVER ?? 'off';
+  if (!['off', 'git'].includes(resolverMode)) throw new Error('CIFN_PIPELINE_RESOLVER must be off or git');
+  const localRepositories = process.env.CIFN_ALLOW_LOCAL_REPOSITORIES ?? 'false';
+  if (!['true', 'false'].includes(localRepositories)) throw new Error('CIFN_ALLOW_LOCAL_REPOSITORIES must be true or false');
+  const resolverAbort = new AbortController();
+  const pipelineResolver = resolverMode === 'git' ? async (ref: import('./pipeline/resolver.js').PipelineRef) => {
+    const token = await adapters.secrets.getSecret('CIFN_GIT_TOKEN');
+    return resolvePipelineDoc(ref, { signal: resolverAbort.signal, token: token ?? undefined, allowLocalRepositories: localRepositories === 'true' });
+  } : undefined;
 
   let closing = false;
   const lifecycleMode = process.env.CIFN_LIFECYCLE_LOGS ?? 'off';
@@ -79,7 +92,7 @@ async function start() {
       .catch(() => console.error('CiFn lifecycle dispatch failed; inspect durable delivery state'))
       .finally(() => { lifecycleActive = undefined; });
   };
-  const { app, dispatchPublisher, notificationPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store });
+  const { app, dispatchPublisher, notificationPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store, pipelineResolver });
 
   const telemetry = runtimeStore.store as Partial<Pick<DatabaseStore, 'recordApiError'>>;
   const server = createControlPlaneServer(app, telemetry.recordApiError ? { recordApiError: event => telemetry.recordApiError!(event) } : undefined);
@@ -96,7 +109,7 @@ async function start() {
   const retentionTimer = setInterval(retain, 60_000); retentionTimer.unref(); retain();
   const close = () => {
     if (closing) return;
-    closing = true; clearInterval(retentionTimer); clearInterval(lifecycleTimer);
+    closing = true; resolverAbort.abort(); clearInterval(retentionTimer); clearInterval(lifecycleTimer);
     const stepOutputClosing = stepOutput?.close().catch(() => { console.error('CiFn step output shutdown failed'); process.exitCode = 1; });
     const lifecycleClosing = lifecycle?.close().catch(() => { console.error('CiFn lifecycle shutdown failed'); process.exitCode = 1; });
     server.close(async () => {
@@ -116,7 +129,7 @@ async function start() {
   process.once('SIGTERM', close);
   process.once('SIGINT', close);
   server.once('error', () => {
-    process.exitCode = 1; closing = true; clearInterval(retentionTimer); clearInterval(lifecycleTimer);
+    process.exitCode = 1; closing = true; resolverAbort.abort(); clearInterval(retentionTimer); clearInterval(lifecycleTimer);
     void Promise.allSettled([retentionActive, lifecycleActive, lifecycle?.close()]).then(() => runtimeStore.close()).catch(() => console.error('CiFn store shutdown failed'));
   });
 

@@ -312,10 +312,10 @@ describe('real SQLite durable control-plane state', () => {
     const queue = new MemoryQueueClient();
     const scheduler = new CronScheduler({ store, queue, secrets });
     const cronId = await scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' });
-    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main' });
+    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main', after: 'a'.repeat(40) });
     const signature = signWebhookPayload(body, 'signing', { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
     const result = await handleWebhook(body, signature, 'push', { store, queue, secFn: secrets, webhookSecret: 'signing',
-      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) });
+      pipelineResolver: async () => ({ doc: JSON.stringify({ ...input.pipelineSpec, on: { push: {} } }), resolvedConfigPath: 'ci.json' }) });
     expect(result.status).toBe(201);
     expect(queue.peek(DEFAULT_QUEUE_NAME)).toHaveLength(2);
     for (const message of queue.peek(DEFAULT_QUEUE_NAME)) {
@@ -336,10 +336,10 @@ describe('real SQLite durable control-plane state', () => {
     expect(response.status).toBe(500);
     const scheduler = new CronScheduler({ store, queue, secrets });
     await expect(scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' })).rejects.toThrow('Required pipeline secret is unavailable');
-    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main' });
+    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main', after: 'a'.repeat(40) });
     const signature = signWebhookPayload(body, 'signing', { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
     await expect(handleWebhook(body, signature, 'push', { store, queue, secFn: secrets, webhookSecret: 'signing',
-      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('Required pipeline secret is unavailable');
+      pipelineResolver: async () => ({ doc: JSON.stringify({ ...input.pipelineSpec, on: { push: {} } }), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('Required pipeline secret is unavailable');
     expect((await store.listRuns()).runs).toEqual([]);
     expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
   });

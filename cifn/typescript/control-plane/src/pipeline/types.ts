@@ -1,11 +1,11 @@
 export type TriggerType = 'push' | 'pull_request' | 'schedule' | 'workflow_dispatch';
 
 export interface PushTrigger {
-  branches: string[];
+  branches?: string[];
 }
 
 export interface PullRequestTrigger {
-  branches: string[];
+  branches?: string[];
 }
 
 export interface ScheduleTrigger {
