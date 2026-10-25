@@ -7,9 +7,9 @@ from .models import WatchFnConfig, Event
 from .query import Query, Aggregate
 from .trace.tracer import Tracer
 from .trace.queries import StoredTraceQuery
-from .alerts.alert_manager import AlertManager
+from .alerts.memory_durable import MemoryAlertManager
 from .alerts.durable import DurableAlertManager
-from .alerts.observations import observations
+from .alerts.observations import observations_for_requests
 from .storage.memory_storage import MemoryStorage
 from .storage.database import DatabaseStorage
 from .http.routes import create_routes
@@ -69,7 +69,7 @@ class WatchFn:
     @property
     def alerts(self):
         if self._alerts is None:
-            self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name, active=lambda: self.is_started, delivery=self.config.alerts) if isinstance(self.storage, DatabaseStorage) else AlertManager(snapshot=self._alert_snapshot)
+            self._alerts = DurableAlertManager(self.storage, self._alert_snapshot, self.config.name, active=lambda: self.is_started, delivery=self.config.alerts) if isinstance(self.storage, DatabaseStorage) else MemoryAlertManager(self._alert_snapshot, self.config.name, lambda: self.is_started, self.config.alerts)
             if not self.is_started:
                 self._alerts._callbacks.stop()
         return self._alerts
@@ -79,8 +79,7 @@ class WatchFn:
             raise RuntimeError("WatchFn storage is unavailable")
         self.batcher.flush()
         events = self.storage.query()
-        return {key: observations(events, key[0], start, now, maximum)
-                for key, start in requested.items()}
+        return observations_for_requests(events, requested, now, maximum)
 
     def _flush_events(self, events: List[Event]):
         previous = getattr(self._log_integrations.local, 'storing', False)
@@ -101,6 +100,8 @@ class WatchFn:
             self.storage.start()
         if self._alerts is not None:
             self._alerts._callbacks.start()
+            if isinstance(self._alerts, MemoryAlertManager):
+                self._alerts.start_storage()
         with self._trace_admission:
             self.is_started = True
         self.batcher.start()
@@ -118,6 +119,10 @@ class WatchFn:
         self.batcher.flush()
 
     def stop(self):
+        # Rejected callback shutdown must not partially detach another subsystem.
+        self._log_integrations.assert_can_stop()
+        if self._alerts is not None:
+            self._alerts._callbacks.assert_can_stop()
         self._log_integrations.stop()
         if self._alerts is not None:
             self._alerts._callbacks.stop()
@@ -128,6 +133,8 @@ class WatchFn:
         try:
             self.batcher.stop()
         finally:
+            if isinstance(self._alerts, MemoryAlertManager):
+                self._alerts.close_storage()
             if isinstance(self.storage, DatabaseStorage):
                 self.storage.close()
 

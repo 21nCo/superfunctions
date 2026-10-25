@@ -43,6 +43,23 @@ def render(tokens):
                    else '<' + token['type'] + '>' for token in tokens)
 
 
+_MISSING = object()
+
+
+def stored_log_rows(events, time_range=_MISSING):
+    query = StoredPatternQuery({'limit': MAX_EVENTS, 'where': {'type': 'log'}, **({'timeRange': time_range} if time_range is not _MISSING else {})})
+    checked, size = [], 0
+    for event in events:
+        if len(checked) >= MAX_EVENTS:
+            raise QueryValidationError('Pattern scan event limit exceeded')
+        raw = event.model_dump_json().encode('utf-8')
+        size += len(raw)
+        if len(raw) > 65536 or size > MAX_BYTES:
+            raise QueryValidationError('Pattern scan payload limit exceeded')
+        checked.append(event)
+    return query.execute(checked)
+
+
 def discover_patterns(events, options):
     if not isinstance(options, dict) or set(options) - {'timeRange', 'minOccurrences', 'fields'}:
         raise QueryValidationError('Invalid pattern discovery options')
@@ -55,18 +72,9 @@ def discover_patterns(events, options):
         raise QueryValidationError('Invalid pattern fields')
     from .integrations.logfn import LogIntegrationConfig
     fields = LogIntegrationConfig(indexFields=fields).index_fields
-    query = StoredPatternQuery({'limit': MAX_EVENTS, 'where': {'type': 'log'}, **({'timeRange': options['timeRange']} if 'timeRange' in options else {})})
-    checked, size = [], 0
-    for event in events:
-        if len(checked) >= MAX_EVENTS:
-            raise QueryValidationError('Pattern scan event limit exceeded')
-        raw = event.model_dump_json().encode('utf-8')
-        size += len(raw)
-        if len(raw) > 65536 or size > MAX_BYTES:
-            raise QueryValidationError('Pattern scan payload limit exceeded')
-        checked.append(event)
+    rows = stored_log_rows(events, options.get('timeRange', _MISSING))
     groups = {}
-    for event in query.execute(checked):
+    for event in rows:
         for name in fields:
             value = read(event, name)
             if not isinstance(value, str):

@@ -434,5 +434,38 @@ when candidates exceed 10,000 events or 16 MiB, an event exceeds 64 KiB, a field
 exceeds 16 KiB, or output exceeds 1,000 patterns. Counts cover the admitted window
 without truncation by the public raw-query result limit. Storage scan limits and
 retention still apply; this does not guarantee bounded provider I/O. TypeScript
-requires streaming storage. Registration, durable regex thresholds and alert
-channel integration remain separate unfinished parts of the log-pattern API.
+requires streaming storage. Registered expressions and alert delivery use the existing alert lifecycle, as below.
+
+## Registered regex alerts
+
+Configure trusted named routes, register the expression, and evaluate from the host
+scheduler using the same alert lifecycle and notification outbox:
+
+```ts
+const watch = new WatchFn({
+  name: 'api', storage: 'memory', infra: { enabled: false },
+  alerts: { namedChannels: { operations: { type: 'webhook', webhook: trustedEndpoint } } },
+});
+watch.start();
+const pattern = await watch.logs.createPattern({
+  name: 'authentication-failures', pattern: /authentication failed/i,
+  threshold: { count: 10, window: '5m' },
+  alert: { enabled: true, severity: 'warning', channels: ['operations'] },
+});
+await watch.alerts.evaluate();
+await watch.alerts.processNotifications();
+```
+
+Database mode stores definitions in the existing alert schema; memory state is
+process-local. Registration does not start a hidden scheduler. Unknown aliases,
+invalid expressions and thresholds outside 1–10,000 reject. Persisted definitions
+carry `type: 'log-pattern'` and `engine: 'ecmascript'`; upgrade readers before using
+this condition. Python's `python-re` engine has its own syntax and Unicode rules.
+
+Arbitrary matching runs in owned workers with a two-second deadline, awaited
+termination and at most four active workers per loaded module. Sources are capped
+at 4 KiB and individual messages at 16 KiB. The shared candidate/payload scan caps
+and configured `alerts.maxObservations` also apply. Stateful regex cursors reset
+for each message. Zero matches is observed zero; timeout or overflow fails before
+the affected transition and creates no false healthy result. These are application
+bounds, not OS-wide memory or database-I/O guarantees.

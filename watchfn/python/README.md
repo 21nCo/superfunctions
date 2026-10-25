@@ -668,5 +668,53 @@ Defaults are `message` and minimum count 5; up to eight dotted fields are allowe
 Scans reject over 10,000 candidates or 16 MiB; each event is limited to 64 KiB
 and each field to 16 KiB. More than 1,000 output patterns rejects. Counts are
 not truncated by the public raw-query limit. Existing storage scan limits and
-retention apply. Registration, durable regex thresholds and alert channels remain
-unfinished parts of the log-pattern API.
+retention apply. Explicit pattern registration and alert delivery are described below.
+
+## Registered regex alerts
+
+Register a native compiled Python expression, with host-owned named channels:
+
+```python
+import re
+watch = WatchFn("api", alerts={"namedChannels": {
+    "operations": {"type": "webhook", "webhook": trusted_endpoint}
+}})
+watch.start()
+pattern = watch.logs.create_pattern({
+    "name": "authentication-failures",
+    "pattern": re.compile("authentication failed", re.I),
+    "threshold": {"count": 10, "window": "5m"},
+    "alert": {"enabled": True, "severity": "warning", "channels": ["operations"]},
+})
+# Run these from the host's existing scheduler:
+watch.alerts.evaluate_stored()
+watch.alerts.process_notifications()
+```
+
+Definitions use the existing alert schema and outbox. Database mode preserves
+definitions and delivery receipts across instances after the alert schema is
+migrated. Default memory mode uses a private in-memory SQLite database through
+`superfunctions-sqlalchemy`, now a runtime dependency, and the same alert
+manager/dispatcher. It retains created alerts and notification outcomes across
+stop/start of the same instance; process exit loses that private database.
+No hidden evaluation scheduler starts on registration.
+
+Python expressions persist `engine: "python-re"` and native flags. TypeScript
+uses `engine: "ecmascript"`; syntax and Unicode matching are not interchangeable.
+Unsupported engines/flags, unknown channel names and malformed definitions fail
+before registration. Sources are limited to 4 KiB, messages to 16 KiB, candidates
+to 10,000 events/16 MiB and matching text to 16 MiB. Each loaded Python module
+admits at most four regex subprocesses, with a two-second execution deadline and
+owned kill/join cleanup. Registration and evaluation participate in shutdown
+draining. A complete zero-match scan is observed zero; timeout/overflow fails
+before the affected alert transition and never supplies a false healthy value.
+These are application bounds, not a global process-memory or database-I/O quota.
+
+Existing `Alert` registrations retain caller object identity, external mutations
+and legacy explicit-array evaluation behavior. Created-alert `list`, `get_record`
+and notification methods address the created family; `get_all`/`get_triggered`
+combine both families. Stored evaluation processes legacy alerts on the first
+page, followed by the requested created-alert page; these are separate commits.
+Legacy callbacks receive `Alert` objects; created-alert callbacks receive the
+existing public record dictionaries. Both share the same callback drain.
+Readers must support the new `log-pattern` condition before using these definitions.

@@ -8,6 +8,7 @@ authors = [
 ]
 dependencies = [
     "superfunctions-core>=0.1.1,<0.2.0",
+    "superfunctions-sqlalchemy>=0.1.1,<0.2.0",
     "pydantic>=2.6",
 ]
 

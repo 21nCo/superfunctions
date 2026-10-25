@@ -23,7 +23,7 @@ def test_stored_discovery_and_stopped_lifecycle():
 
 
 def test_discovery_rejects_duplicate_fields_and_invalid_scalars():
-    for options in [{'fields': ['message', 'message']}, {'minOccurrences': True}, {'minOccurrences': 0}, {'unknown': 1}]:
+    for options in [{'fields': ['message', 'message']}, {'minOccurrences': True}, {'minOccurrences': 0}, {'unknown': 1}, {'timeRange':None}]:
         with pytest.raises(ValueError):
             discover_patterns([], options)
     with pytest.raises(ValueError):

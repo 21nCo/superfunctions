@@ -167,9 +167,12 @@ class LogRegistrations:
                 if entry['attached'] is None and entry['options'].enabled and entry['options'].auto_ingest:
                     entry['attached'] = entry['logger'].add_sink(entry['sink'])
 
-    def stop(self):
+    def assert_can_stop(self):
         if getattr(self.local, 'delivering', False) or getattr(self.local, 'storing', False):
             raise RuntimeError('Cannot stop WatchFn from its log storage callback')
+
+    def stop(self):
+        self.assert_can_stop()
         with self.lock:
             self.active = False
             for entry in self.entries.values():
@@ -209,6 +212,12 @@ class Logs:
     def query(self, options):
         query = Query(query_options(options))
         return query.execute(self._events(query.options['where']))
+
+    def create_pattern(self, options):
+        from ..log_pattern_alerts import create_pattern
+        return create_pattern(self.watch, options)
+
+    createPattern = create_pattern
 
     def detect_patterns(self, options):
         from ..log_patterns import discover_patterns

@@ -20,7 +20,8 @@ try {
   for (const name of ['express', 'fastify', 'hono', 'next', '@sveltejs/kit']) assert.equal(existsSync(join(temporary, 'node_modules', name)), false, `Core must not install ${name}`);
   const check = `
 async function check(WatchFn) {
-  const watch = new WatchFn({name:'packed',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'}});
+  const notifications=[];
+  const watch = new WatchFn({name:'packed',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'},alerts:{namedChannels:{operations:{type:'email',recipients:['ops@example.test']}},emailSender:async notification=>{notifications.push(notification);}}});
   const {createLogger} = await import('@logfn/core');
   const logger = createLogger({name:'packed-log', sinks:[()=>{}]});
   watch.use(logger);
@@ -49,6 +50,12 @@ async function check(WatchFn) {
     assert.equal(patterns.length,1);
     assert.equal(patterns[0].pattern,'payment <number> failed');
     assert.equal(patterns[0].count,2);
+    const definition=await watch.logs.createPattern({name:'payment-failures',pattern:new RegExp('payment [0-9]+ failed','i'),threshold:{count:2,window:'5m'},alert:{enabled:true,severity:'warning',channels:['operations']}});
+    assert.equal(definition.condition.type,'log-pattern');assert.equal(definition.condition.pattern.engine,'ecmascript');
+    const evaluated=await watch.alerts.evaluate({now:Date.now()+1});
+    assert.equal(evaluated.results[0].matched,true);assert.equal(evaluated.results[0].alert.state,'triggered');
+    assert.equal(notifications.length,0);await watch.alerts.processNotifications();
+    assert.equal(notifications.length,1);assert.equal(notifications[0].value,2);assert.equal(notifications[0].threshold,2);
     const transaction = watch.startTransaction('packed-transaction');
     transaction.startSpan('packed-child').finish(); transaction.finish(); transaction.finish();
     const spans = await watch.query({metric:'trace.span'});
@@ -71,6 +78,10 @@ export const watch = new WatchFn({name:'typed',storage:'memory'}); export const 
   const inferredSchemas = `
 import { ContextSchema } from '@watchfn/core';
 export const discovered = watch.logs.detectPatterns({fields:['message'],minOccurrences:2});
+import type {CreateLogPatternOptions,LogPatternCondition} from '@watchfn/core';
+const registeredPattern:CreateLogPatternOptions={name:'typed-pattern',pattern:/failure/i,threshold:{count:2,window:'5m'},alert:{enabled:true,channels:[]}};
+export const registered=watch.logs.createPattern(registeredPattern);
+export const condition:LogPatternCondition={type:'log-pattern',field:'message',pattern:{engine:'ecmascript',source:'failure',flags:'i'},threshold:2,window:'5m',operator:'gte'};
 export const optionalContext = ContextSchema.optional();
 export const refinedContext = ContextSchema.refine(value => value.userId !== 'blocked');
 export const partialContext = ContextSchema.partial();

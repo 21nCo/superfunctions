@@ -2,7 +2,7 @@ import { EmailCleanupError, loadSesProvider, sendSesEmail, validEmail, validateE
 import { randomUUID } from 'node:crypto';
 import { wrapWithSchema, type Adapter, type TransactionAdapter, type WhereClause } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { ConditionEvaluator, validateAlertCondition, alertWindowMs, type AlertCondition, type AlertMetricPoint } from './conditions';
+import { ConditionEvaluator, validateAlertCondition, alertWindowMs, type AlertCondition, type AlertMetricPoint, type LogPatternCondition, logPatternObservationKey } from './conditions';
 import { ALERTS, ALERT_OUTBOX, ALERT_RUNTIME, getAlertSchema } from './schema';
 import { ReceiptRetention, validateReceiptProjection } from './retention';
 import { pagerDutyRoute, pagerDutyRequest, type PagerDutyJob } from './channels/pagerduty';
@@ -23,6 +23,7 @@ class MarkerCollision extends Error { constructor(readonly original: unknown) { 
 export interface AlertHost {
   database?: Adapter; config?: AlertRuntimeConfig; name: string;
   admit<T>(operation: () => Promise<T>, started?: boolean): Promise<T>;
+  logPatternCount?(condition: LogPatternCondition, from: number, now: number, maximum: number): Promise<number>;
   observations(metric: string, from: number | undefined, now: number, max: number): Promise<AlertMetricPoint[]>;
 }
 
@@ -188,26 +189,33 @@ export class AlertManager {
       const results: { alert: PublicAlert; observed: boolean; matched: boolean | null }[] = [];
       for (const row of rows) {
         if (!row.payload.enabled) continue;
+        const patterns = new Map<string, LogPatternCondition>();
         const ranges = new Map<string, { metric: string; from: number | undefined }>();
         const collect = (condition: AlertCondition): void => {
           if (condition.type === 'composite') { condition.conditions.forEach(collect); return; }
+          if (condition.type === 'log-pattern') { patterns.set(logPatternObservationKey(condition, now - alertWindowMs(condition.window)), condition); return; }
           const from = condition.type === 'anomaly' ? undefined : now - alertWindowMs(condition.window);
           ranges.set(JSON.stringify([condition.metric, from ?? null]), { metric: condition.metric, from });
         };
         collect(row.payload.condition); if (row.payload.autoResolve?.enabled) collect(row.payload.autoResolve.condition);
         const observations = new Map<string, AlertMetricPoint[]>();
         for (const [key, { metric, from }] of ranges) observations.set(key, await this.host.observations(metric, from, now, this.config.maxObservations));
+        const patternCounts = new Map<string, number>();
+        for (const [key, condition] of patterns) {
+          if (!this.host.logPatternCount) throw new Error('Log pattern evaluation is unavailable');
+          patternCounts.set(key, await this.host.logPatternCount(condition, now - alertWindowMs(condition.window), now, this.config.maxObservations));
+        }
         let matched: boolean | null = null;
         const alert = await this.mutate(row.id, record => {
           // Definition edits race safely: re-read observations on a later evaluation.
           if (JSON.stringify(record.condition) !== JSON.stringify(row.payload.condition) || JSON.stringify(record.autoResolve) !== JSON.stringify(row.payload.autoResolve)) throw new Conflict('Alert definition changed during evaluation');
           if (!record.enabled || (record.lastEvaluated ?? -Infinity) > now) return;
-          const result = this.evaluator.evaluateResult(record.condition, new Map(), now, observations); matched = result.matched;
+          const result = this.evaluator.evaluateResult(record.condition, new Map(), now, observations, patternCounts); matched = result.matched;
           record.lastEvaluated = now;
           if (result.matched === true && !active(record)) { this.triggerState(record, now); return { event: 'triggered' as const, value: result.value }; }
           if (active(record) && record.autoResolve?.enabled) {
-            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations);
-            if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value, threshold: record.autoResolve.condition.type === undefined || record.autoResolve.condition.type === 'threshold' ? record.autoResolve.condition.threshold : undefined }; }
+            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations, patternCounts);
+            if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value, threshold: record.autoResolve.condition.type === undefined || record.autoResolve.condition.type === 'threshold' || record.autoResolve.condition.type === 'log-pattern' ? record.autoResolve.condition.threshold : undefined }; }
           }
         }, now, row.revision);
         results.push({ alert, observed: matched !== null, matched });
@@ -222,7 +230,7 @@ export class AlertManager {
       if (expectedRevision !== undefined && row.revision !== expectedRevision) throw new Conflict('Alert changed during evaluation; retry');
       const record = copy(row.payload), transition = change(record, now);
       record.updatedAt = now;
-      if (transition?.event === 'triggered' && (record.condition.type === undefined || record.condition.type === 'threshold')) transition.threshold = record.condition.threshold;
+      if (transition?.event === 'triggered' && (record.condition.type === undefined || record.condition.type === 'threshold' || record.condition.type === 'log-pattern')) transition.threshold = record.condition.threshold;
       if (transition && record.pendingNotifications + record.channels.length > this.config.maxPendingPerAlert) throw new Error('Alert notification capacity reached; reconcile parked obligations');
       const jobs: Job[] = [];
       if (transition) {

@@ -393,3 +393,19 @@ it.each(['memory', 'database'])('queries stored traces, correlation and service 
   await expect(watch.trace.getTrace({ traceId: 't1' })).rejects.toThrow('Duplicate stored span identity');
   await expect(watch.trace.getServiceMap({})).rejects.toThrow('Duplicate stored span identity');
 });
+
+it('persists regex definitions and dispatches named-channel outbox after independent SQLite reopen', async () => {
+  const target = await endpoint();
+  const {watch,create}=await setup({namedChannels:{operations:{type:'webhook',webhook:target.url}}});
+  const now=Date.now();
+  const alert=await watch.logs.createPattern({name:'stored-pattern',pattern:/authentication failed/i,threshold:{count:2,window:'5m'},alert:{enabled:true,severity:'warning',channels:['operations']}});
+  await watch.ingest([{type:'log',message:'authentication failed',timestamp:now-1},{type:'log',message:'AUTHENTICATION FAILED',timestamp:now}]);
+  const reopened=create();
+  expect((await reopened.alerts.get(alert.id)).condition).toMatchObject({type:'log-pattern',pattern:{engine:'ecmascript',flags:'i'}});
+  expect((await reopened.alerts.evaluate({now})).results[0]).toMatchObject({observed:true,matched:true});
+  expect(target.received).toHaveLength(0);
+  await watch.stop();
+  await reopened.alerts.processNotifications();
+  expect(target.received).toHaveLength(1);
+  expect(target.received[0].body).toMatchObject({value:2,threshold:2});
+});

@@ -60,24 +60,7 @@ export async function discoverLogPatterns(storage: StorageAdapter, input: Patter
   const requested = input.fields ?? ['message'];
   if (!Array.isArray(requested) || requested.length < 1 || requested.length > 8 || new Set(requested).size !== requested.length) throw new QueryValidationError('Invalid pattern fields');
   const fields = validateIndexFields(requested);
-  const bounded: StorageAdapter = {
-    add() {throw new Error('Pattern scan is read-only');},
-    query() {throw new Error('Pattern scan requires the query engine');},
-    async *iterateQuery(options) {
-      let count = 0, bytes = 0;
-      if (!storage.iterateQuery) throw new QueryValidationError('Pattern discovery requires streaming storage');
-      const source = storage.iterateQuery({...options,requireStreaming:true});
-      for await (const event of source) {
-        if (++count > MAX_EVENTS) throw new QueryValidationError('Pattern scan event limit exceeded');
-        const size = Buffer.byteLength(JSON.stringify(event), 'utf8'); bytes += size;
-        if (size > 65536 || bytes > MAX_BYTES) throw new QueryValidationError('Pattern scan payload limit exceeded');
-        yield event;
-      }
-    },
-  };
-  // Reuse the canonical event/type/time semantics; no early result cap can
-  // silently lower occurrence counts within the requested window.
-  const events = (await new QueryEngine(bounded).execute({where:{type:'log'},timeRange:input.timeRange})).data;
+  const events = await scanCanonicalLogs(storage, input.timeRange);
   const groups = new Map<string, DiscoveredLogPattern & {first?:number;last?:number}>();
   for (const event of events) {
     for (const field of fields) {
@@ -101,4 +84,26 @@ export async function discoverLogPatterns(storage: StorageAdapter, input: Patter
   const result = [...groups.values()].filter(group => group.count >= min).sort((a,b) => b.count-a.count || compareText(a.field,b.field) || compareText(a.id,b.id));
   if (result.length > 1000) throw new QueryValidationError('Pattern result limit exceeded');
   return result.map(({first,last,...group}) => ({...group,firstSeen:first===undefined?null:new Date(first).toISOString(),lastSeen:last===undefined?null:new Date(last).toISOString()}));
+}
+
+/** Shared bounded scan for discovery and durable regex counting. */
+export async function scanCanonicalLogs(storage: StorageAdapter, timeRange?: QueryOptions['timeRange']): Promise<Record<string, any>[]> {
+  const bounded: StorageAdapter = {
+    add() {throw new Error('Pattern scan is read-only');},
+    query() {throw new Error('Pattern scan requires the query engine');},
+    async *iterateQuery(options) {
+      let count = 0, bytes = 0;
+      if (!storage.iterateQuery) throw new QueryValidationError('Pattern discovery requires streaming storage');
+      const source = storage.iterateQuery({...options,requireStreaming:true});
+      for await (const event of source) {
+        if (++count > MAX_EVENTS) throw new QueryValidationError('Pattern scan event limit exceeded');
+        const size = Buffer.byteLength(JSON.stringify(event), 'utf8'); bytes += size;
+        if (size > 65536 || bytes > MAX_BYTES) throw new QueryValidationError('Pattern scan payload limit exceeded');
+        yield event;
+      }
+    },
+  };
+  // Reuse the canonical event/type/time semantics; no early result cap can
+  // silently lower occurrence counts within the requested window.
+  return (await new QueryEngine(bounded).execute({where:{type:'log'},timeRange})).data;
 }

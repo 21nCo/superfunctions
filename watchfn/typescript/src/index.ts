@@ -76,6 +76,7 @@ export {
   type CompositeCondition,
   type ConditionOperator,
   type ThresholdCondition,
+  type LogPatternCondition,
   type AlertCondition as EvaluatedAlertCondition,
 } from "./alerts/conditions";
 export * from "./alerts/evaluator";
@@ -124,3 +125,5 @@ export type { AuthProvider, AuthSession } from '@superfunctions/auth';
 export type { LogFnSource, LogFnIntegrationOptions } from "./integrations/logfn";
 
 export type { PatternDiscoveryOptions, DiscoveredLogPattern, PatternToken } from "./logs/patterns";
+
+export type { CreateLogPatternOptions, SerializedLogPattern } from './logs/regex';

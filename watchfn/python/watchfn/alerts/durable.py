@@ -257,7 +257,7 @@ class DurableAlertManager:
                     notification['alert']['severity'] = record.get('severity', 'warning')
                     if observations and transition in observations:
                         notification.update(observations[transition])
-                    if transition == 'triggered' and record['condition'].get('type', 'threshold') == 'threshold':
+                    if transition == 'triggered' and record['condition'].get('type', 'threshold') in ('threshold', 'log-pattern'):
                         notification['threshold'] = record['condition']['threshold']
                     payload = {'notification': notification, 'channel': channel}
                     if channel['type'] == 'pagerduty' and 'pagerDuty' in record:
@@ -279,7 +279,7 @@ class DurableAlertManager:
         if transition in ('triggered', 'resolved'):
             context = dict(timestamp=now, triggeredAt=record.get('triggeredAt'), duration=now - record.get('triggeredAt', now))
             context.update((observations or {}).get(transition, {}))
-            if transition == 'triggered' and record['condition'].get('type', 'threshold') == 'threshold':
+            if transition == 'triggered' and record['condition'].get('type', 'threshold') in ('threshold', 'log-pattern'):
                 context['threshold'] = record['condition']['threshold']
             self._callbacks.emit(transition, self._public(record), context)
         return record
@@ -369,7 +369,7 @@ class DurableAlertManager:
             contexts = {}
             for event, measured in [('triggered', observation), ('resolved', recovery)]:
                 contexts[event] = {key: measured[key] for key in ('value',) if key in measured}
-            if recovery['matched'] is True and before['autoResolve']['condition'].get('type', 'threshold') == 'threshold':
+            if recovery['matched'] is True and before['autoResolve']['condition'].get('type', 'threshold') in ('threshold', 'log-pattern'):
                 contexts['resolved']['threshold'] = before['autoResolve']['condition']['threshold']
             record = self._mutate(row['id'], change, row['revision'], now, contexts)
             results.append(EvaluationResult(self._legacy(record), matched is True, now, value=observation.get('value'), matched=matched, observed=matched is not None))

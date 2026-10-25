@@ -1,3 +1,4 @@
+import { countLogPattern, namedPatternChannels, type CreateLogPatternOptions } from '../logs/regex';
 import { discoverLogPatterns, type PatternDiscoveryOptions } from "../logs/patterns";
 import { validateIndexFields } from "../storage/log-index/values";
 import { normalizeLogBatch, resolveLogFnOptions, type LogFnSource, type LogFnIntegrationOptions, type ResolvedLogFnOptions } from "../integrations/logfn";
@@ -340,7 +341,13 @@ export class WatchFn implements WatchFnInstance {
       return {
           query: async (opts: LogQueryOptions) => this.query(logQuery(opts)),
           aggregate: async (opts: LogAggregateOptions) => this.aggregate(logAggregate(opts)),
-          createPattern: async (_opts: any) => { throw new Error("Log pattern registration is unavailable"); },
+          createPattern: async (opts: CreateLogPatternOptions) => {
+            if (!this.isStarted || this.stopping) throw new Error('WatchFn storage is unavailable');
+            if (!opts || !(opts.pattern instanceof RegExp) || !opts.threshold || !opts.alert || typeof opts.alert.enabled !== 'boolean') throw new TypeError('Invalid log pattern registration');
+            return this.alerts.create({name:opts.name,enabled:opts.alert.enabled,severity:opts.alert.severity,
+              condition:{type:'log-pattern',field:'message',pattern:{engine:'ecmascript',source:opts.pattern.source,flags:opts.pattern.flags},operator:'gte',threshold:opts.threshold.count,window:opts.threshold.window},
+              channels:namedPatternChannels(opts.alert.channels,this.config.alerts?.namedChannels)});
+          },
           detectPatterns: async (opts: PatternDiscoveryOptions) => {
             if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
             return discoverLogPatterns(this.storage, opts);
@@ -370,6 +377,10 @@ export class WatchFn implements WatchFnInstance {
       if (database && !('create' in database)) throw new TypeError('Durable alerts require a shared DB Adapter');
       this.alertManager = new AlertManager({
         name: this.config.name, config: this.config.alerts, database: database as import('@superfunctions/db').Adapter | undefined,
+        logPatternCount: (condition, from, now, maximum) => {
+          if (!this.storage) throw new Error('WatchFn storage is unavailable');
+          return countLogPattern(this.storage, condition.pattern, from, now, maximum);
+        },
         observations: (metric, from, now, maximum) => {
           if (!this.queryEngine) throw new Error('WatchFn storage is unavailable');
           return this.queryEngine.alertObservations(metric, from, now, maximum);

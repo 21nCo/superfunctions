@@ -24,6 +24,7 @@ class HttpAuthConfig(BaseModel):
 
 class AlertDeliveryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    named_channels: Dict[str, Dict[str, Any]] = Field(default_factory=dict, alias="namedChannels", exclude=True, repr=False)
     email: Any = Field(None, exclude=True, repr=False)
     pagerduty_endpoint: str = Field("https://events.pagerduty.com/v2/enqueue", alias="pagerDutyEndpoint", strict=True)
 

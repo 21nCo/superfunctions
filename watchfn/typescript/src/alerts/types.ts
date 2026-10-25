@@ -32,6 +32,8 @@ export interface AlertEmailConfig {
   };
 }
 export interface AlertRuntimeConfig {
+  /** Trusted aliases for the existing alert transports; never inferred from user input. */
+  namedChannels?: Record<string, AlertChannel>;
   namespace?: string; maxObservations?: number; maxPendingPerAlert?: number;
   timeoutMs?: number; leaseMs?: number; maxAttempts?: number;
   /** Trusted Events v2 endpoint; default is the official PagerDuty HTTPS endpoint. */

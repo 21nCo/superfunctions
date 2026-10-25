@@ -1,3 +1,4 @@
+import { validateLogPattern } from '../logs/regex';
 /** Windowed alert conditions. Missing observations are distinct from a healthy measurement. */
 export type ConditionOperator = 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne';
 export interface ThresholdCondition {
@@ -11,7 +12,14 @@ export interface AnomalyCondition {
 export interface CompositeCondition {
   type: 'composite'; operator: 'and' | 'or'; conditions: AlertCondition[];
 }
-export type AlertCondition = ThresholdCondition | AnomalyCondition | CompositeCondition;
+export interface LogPatternCondition {
+  type: 'log-pattern'; field: 'message'; pattern: {engine: 'ecmascript'; source: string; flags: string};
+  threshold: number; window: string; operator: 'gte';
+}
+export function logPatternObservationKey(condition: LogPatternCondition, from: number): string {
+  return JSON.stringify([condition.type, condition.field, condition.pattern.engine, condition.pattern.source, condition.pattern.flags, from]);
+}
+export type AlertCondition = ThresholdCondition | AnomalyCondition | CompositeCondition | LogPatternCondition;
 export interface AlertMetricPoint { value: number; timestamp: number; metric?: string }
 export type AlertMetricData = ReadonlyMap<string, readonly AlertMetricPoint[]> | readonly AlertMetricPoint[];
 export interface ConditionResult { matched: boolean | null; value?: number; dataPoints: number }
@@ -31,6 +39,10 @@ export function validateAlertCondition(condition: AlertCondition): void {
       for (const child of value.conditions) visit(child, depth + 1);
       return;
     }
+    if (value.type === 'log-pattern') {
+      if (value.field !== 'message' || value.operator !== 'gte' || !Number.isSafeInteger(value.threshold) || value.threshold < 1 || value.threshold > 10000) throw new TypeError('Invalid log pattern condition');
+      validateLogPattern(value.pattern); alertWindowMs(value.window); return;
+    }
     if (typeof value.metric !== 'string' || !value.metric.trim() || value.metric.length > 255) throw new TypeError('Alert metric is required');
     if (value.type === 'anomaly') {
       if (!Number.isFinite(value.sensitivity) || value.sensitivity < 0 || value.sensitivity > 1 || !Number.isSafeInteger(value.minDataPoints) || value.minDataPoints < 2 || !['moving-average', 'stddev'].includes(value.algorithm)) throw new TypeError('Invalid anomaly condition');
@@ -46,10 +58,10 @@ export class ConditionEvaluator {
   evaluate(condition: AlertCondition, data: AlertMetricData, now = Date.now()): boolean {
     return this.evaluateResult(condition, data, now).matched === true;
   }
-  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now(), windows?: ReadonlyMap<string, readonly AlertMetricPoint[]>): ConditionResult {
+  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now(), windows?: ReadonlyMap<string, readonly AlertMetricPoint[]>, patternCounts?: ReadonlyMap<string, number>): ConditionResult {
     validateAlertCondition(condition);
     if (!Number.isFinite(now)) throw new TypeError('Evaluation time must be finite');
-    const unlabelledMetric = condition.type === 'composite' ? undefined : condition.metric;
+    const unlabelledMetric = condition.type === 'composite' || condition.type === 'log-pattern' ? undefined : condition.metric;
     const evaluate = (rule: AlertCondition): ConditionResult => {
       if (rule.type === 'composite') {
         const results = rule.conditions.map(evaluate);
@@ -58,6 +70,11 @@ export class ConditionEvaluator {
           ? matches.includes(false) ? false : matches.includes(null) ? null : true
           : matches.includes(true) ? true : matches.includes(null) ? null : false;
         return { matched, dataPoints: results.reduce((count, result) => count + result.dataPoints, 0) };
+      }
+      if (rule.type === 'log-pattern') {
+        const count = patternCounts?.get(logPatternObservationKey(rule, now - alertWindowMs(rule.window)));
+        if (count === undefined || !Number.isSafeInteger(count) || count < 0) return {matched:null,dataPoints:0};
+        return {matched:count >= rule.threshold,value:count,dataPoints:count};
       }
       const cutoff = rule.type === 'anomaly' ? -Infinity : now - alertWindowMs(rule.window);
       const raw: readonly AlertMetricPoint[] = windows

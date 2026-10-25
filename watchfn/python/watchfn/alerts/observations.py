@@ -30,6 +30,15 @@ def validate(condition):
                 raise ValueError("Composite alerts require an operator and conditions")
             for child in rule["conditions"]: visit(child, depth + 1)
             return
+        if kind == 'log-pattern':
+            from ..log_pattern_alerts import validate_pattern
+            field(rule.get('field'))
+            validate_pattern(rule.get('pattern'))
+            if (type(rule.get('threshold')) is not int or not 0 <= rule['threshold'] <= 10000
+                    or rule.get('operator') not in ('gt','gte','lt','lte','eq','ne')):
+                raise ValueError('Invalid log pattern threshold')
+            window_ms(rule.get('window'))
+            return
         metric = field(rule.get("metric"))
         if len(metric) > 255: raise ValueError("Alert metric is too long")
         if kind == "anomaly":
@@ -89,6 +98,15 @@ def evaluate_result(condition, data, now):
             decisive = False if rule["operator"] == "and" else True
             matched = decisive if any(value is decisive for value in matches) else None if None in matches else not decisive
             return result(matched, sum(child["dataPoints"] for child in children))
+        if kind == 'log-pattern':
+            count = data.get(log_pattern_key(rule, now))
+            if count is None:
+                return result(None, 0)
+            if type(count) is not int or count < 0:
+                raise ValueError('Invalid log pattern observation')
+            target=rule['threshold']
+            matched={'gt':count>target,'gte':count>=target,'lt':count<target,'lte':count<=target,'eq':count==target,'ne':count!=target}[rule['operator']]
+            return result(matched, count, count)
         cutoff = -math.inf if kind == "anomaly" else now - window_ms(rule["window"])
         points = [point for point in data.get((rule["metric"], None if kind == "anomaly" else cutoff), data.get(rule["metric"], [])) if number(point.get("value")) and number(point.get("timestamp")) and cutoff <= point["timestamp"] <= now]
         if not points: return result(None, 0)
@@ -126,6 +144,27 @@ def ranges(condition, now, result):
     if condition.get("type") == "composite":
         for child in condition["conditions"]: ranges(child, now, result)
         return
+    if condition.get('type') == 'log-pattern':
+        key=log_pattern_key(condition, now)
+        result[key]=key[-1]
+        return
     metric = condition["metric"]
     start = None if condition.get("type") == "anomaly" else now - window_ms(condition["window"])
     result[(metric, start)] = start
+
+
+def log_pattern_key(condition, now):
+    pattern=condition['pattern']
+    return ('log-pattern',condition['field'],pattern['engine'],pattern['source'],pattern['flags'],now-window_ms(condition['window']))
+
+
+def observations_for_requests(events, requested, now, maximum):
+    result={}
+    for key,start in requested.items():
+        if len(key)==6 and key[0]=='log-pattern':
+            from ..log_pattern_alerts import count_log_pattern
+            condition={'field':key[1],'pattern':{'engine':key[2],'source':key[3],'flags':key[4]}}
+            result[key]=count_log_pattern(events,condition,start,now,maximum)
+        else:
+            result[key]=observations(events,key[0],start,now,maximum)
+    return result

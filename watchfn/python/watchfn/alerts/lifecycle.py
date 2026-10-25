@@ -42,11 +42,14 @@ class LifecycleCallbacks:
                 raise RuntimeError('Alert lifecycle operations are still active')
             self._closed = False
 
-    def stop(self):
+    def assert_can_stop(self):
         with self._lock:
             owner = _listener_owner.get()
             if getattr(self._local, 'depth', 0) or (owner is not None and owner['manager'] is self and owner['active']):
                 raise RuntimeError('Cannot stop WatchFn from its alert callback')
+    def stop(self):
+        self.assert_can_stop()
+        with self._lock:
             self._closed = True
             while self._active:
                 self._lock.wait()
