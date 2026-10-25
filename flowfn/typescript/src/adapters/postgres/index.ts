@@ -735,7 +735,11 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
           },
         )
         .catch(() => undefined)
-        .finally(() => { guard.stop(); leases.delete(receipt); callbacks.delete(receipt); });
+        .finally(() => {
+          if (pending.get(row.id) === receipt) guard.stopRenewal();
+          else { guard.stop(); leases.delete(receipt); }
+          callbacks.delete(receipt);
+        });
     };
     const poll = async () => {
       try {

@@ -71,3 +71,28 @@ export async function streamUnsubscribeContract(adapter: FlowAdapter) {
     expect((await stream.getInfo()).lag).toBe(0);
   } finally { release(); await stream.close(); }
 }
+
+/** A returned callback still occupies capacity only until its confirmed receipt expires. */
+export async function streamManualExpiryContract(adapter: FlowAdapter, partitions?: number) {
+  const stream = new StreamImpl<number>(randomUUID(), adapter, partitions === undefined ? {} : { partitions });
+  const seen: Message<number>[] = [];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const consumer = stream.createConsumer('single', { groupId: 'group', fromBeginning: true, autoCommit: false, maxInFlight: 1, visibilityTimeout: 300 });
+  try {
+    const id = await stream.publish(1);
+    await consumer.subscribe(async message => {
+      seen.push(message);
+      if (seen.length > 1) await held;
+    });
+    await vi.waitFor(() => expect(seen).toHaveLength(2), { timeout: 2000 });
+    expect(seen.map(message => message.id)).toEqual([id, id]);
+    expect(seen[0].signal?.aborted).toBe(true);
+    expect(seen[1].signal?.aborted).toBe(false);
+    await seen[0].ack();
+    await seen[0].nack(true);
+    expect((await stream.getInfo()).lag).toBe(1);
+    await seen[1].ack();
+    expect((await stream.getInfo()).lag).toBe(0);
+  } finally { release(); await stream.close(); }
+}

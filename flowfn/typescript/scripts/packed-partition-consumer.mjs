@@ -55,7 +55,27 @@ try {
   assert.deepEqual((await reopened.getMessages('-', '+')).map(message => message.id), [later, other]);
   assert.throws(() => flows[1].stream('installed', { partitions: 4 }), /partition/);
   await assert.rejects(adapters[1].configureStream('installed', 4), /immutable/);
-  console.log(JSON.stringify({ installedPostgresPartitions: 'passed', routing: 'sha256-utf8-u32be-v1', retentionBarrier: 'passed', independentConnections: true }));
+  for (const partitions of [undefined, 2]) {
+    const manual = flows[0].stream(`manual-${partitions ?? 'legacy'}`, partitions === undefined ? {} : { partitions });
+    const id = await manual.publish(1);
+    const receipts = [];
+    const consumer = manual.createConsumer('single', { groupId: 'manual', fromBeginning: true, autoCommit: false, maxInFlight: 1, visibilityTimeout: 300 });
+    let settle;
+    const pending = new Promise(resolve => { settle = resolve; });
+    try {
+      await consumer.subscribe(async message => { receipts.push(message); if (receipts.length > 1) await pending; });
+      await until(() => receipts.length === 2);
+      assert.deepEqual(receipts.map(message => message.id), [id, id]);
+      assert.equal(receipts[0].signal.aborted, true);
+      assert.equal(receipts[1].signal.aborted, false);
+      await receipts[0].ack();
+      await receipts[0].nack(true);
+      assert.equal((await manual.getInfo()).lag, 1);
+      await receipts[1].ack();
+      assert.equal((await manual.getInfo()).lag, 0);
+    } finally { settle(); await consumer.close(); }
+  }
+  console.log(JSON.stringify({ installedPostgresPartitions: 'passed', routing: 'sha256-utf8-u32be-v1', retentionBarrier: 'passed', manualExpiry: 'passed', independentConnections: true }));
 } finally {
   release();
   const closed = await Promise.allSettled(flows.map(flow => flow.close({ timeout: 5000 })));

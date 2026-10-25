@@ -5,7 +5,7 @@ import { queueReplyLeaseContract, queueExpiredReplyContract, queueReleasedReplyC
 import { queueClockContract } from '../../storage/queue-clock-contract.js';
 import { workflowCancelContract } from '../../storage/workflow-cancel-contract.js';
 import { streamFilterContract } from '../../storage/stream-filter-contract.js';
-import { streamRenewalContract, streamLossContract, streamUnsubscribeContract } from '../../storage/stream-lease-contract.js';
+import { streamRenewalContract, streamLossContract, streamUnsubscribeContract, streamManualExpiryContract } from '../../storage/stream-lease-contract.js';
 import { shutdownContract } from '../../storage/shutdown-contract.js';
 import { telemetryContract } from '../../storage/telemetry-contract.js';
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
@@ -32,6 +32,7 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
     it.each([false, true])('delivers remote workflow cancellation across process ownership (restart=%s)', async restart => { await workflowCancelContract(adapter, 'postgres', schema, restart); });
     it('filters subscribers and group deliveries without losing history or retrying skipped messages', async () => { await streamFilterContract(adapter); });
     it('aborts active stream handlers on unsubscribe and requeues their receipt', async () => { await streamUnsubscribeContract(adapter); });
+    it.each([undefined, 2])('expires returned manual callbacks without stranding single-consumer capacity (%s partitions)', async partitions => { await streamManualExpiryContract(adapter, partitions); });
     it('renews active stream handlers across delivery expiry', async () => { await streamRenewalContract(adapter); });
     it('aborts stream handlers after delivery ownership expires and fences late acknowledgment', async () => { await streamLossContract(adapter, (stream, id) => pool.query(`UPDATE "${schema}".flowfn_deliveries SET delivered_at=0 WHERE stream=$1 AND message_id=$2`, [stream, id])); });
     it('bounds global shutdown and fences late callback results', async () => { await shutdownContract(adapter); });

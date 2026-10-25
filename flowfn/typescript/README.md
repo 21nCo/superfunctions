@@ -149,6 +149,8 @@ reclaimed as a new attempt. Redis and PostgreSQL renew the receipt while its
 handler is running. `message.signal` aborts when ownership is lost, renewal cannot
 be confirmed before the last lease deadline, or the consumer unsubscribes.
 Callbacks must cooperate with the signal; late acknowledgments remain fenced.
+After the handler returns, expiry observation releases local consumer capacity and
+aborts the old signal when its receipt expires; polling must obtain a fresh receipt.
 Renewal stops when the handler returns, so delayed manual acknowledgment and
 `commitInterval` must fit within the remaining visibility lease.
 

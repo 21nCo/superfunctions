@@ -531,7 +531,7 @@ return #claimed
         )
         .catch(() => undefined)
         .finally(() => {
-          if (partitioned && pending.get(id) === token) lease.stopRenewal();
+          if (pending.get(id) === token) lease.stopRenewal();
           else { lease.stop(); leases.delete(token); }
           callbacks.delete(token);
         });
