@@ -77,7 +77,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
   private defaultQueueOptions?: QueueOptions;
   private defaultStreamOptions?: StreamOptions;
   private queues: Map<string, Queue> = new Map();
-  private streams: Map<string, Stream> = new Map();
+  private streams: Map<string, StreamImpl> = new Map();
   private _metrics: MetricsManager;
   private _scheduler: DurableScheduler;
   private healthChecker: HealthCheckerImpl;
@@ -262,6 +262,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
 
   stream<T = any>(name: string, options?: StreamOptions): Stream<T> {
     if (this.closed) throw new Error("FlowFn is closed");
+    this.streams.get(name)?.assertPartitionConfiguration(options?.partitions);
     if (!this.streams.has(name)) {
       this.streams.set(
         name,

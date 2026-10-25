@@ -176,6 +176,57 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
         await vi.waitFor(() => expect(next.map(message => message.id)).toContain(laterId));
       } finally { releaseOld(); releaseNext(); await original.unsubscribe(); await successor?.unsubscribe(); await stream.close(); await peer.cleanup(); await peerPool.end(); }
     });
+    it('keeps a live partition barrier after retention removes its payload', async () => {
+      const stream = new StreamImpl('partition-trim', adapter, { partitions: 2 });
+      const first = await stream.publish({}, { partition: 0 });
+      const held: Message[] = [], seen: string[] = [], successor: Message[] = [];
+      let release!: () => void, releaseNext!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const nextGate = new Promise<void>(resolve => { releaseNext = resolve; });
+      const owner = await adapter.consume('partition-trim', 'group', 'held', async message => { held.push(message); await gate; }, { groupId: 'group', fromBeginning: true, autoCommit: false, visibilityTimeout: 1000 });
+      const peerPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const peer = new PostgresAdapter({ schema, db: drizzle(peerPool), pollInterval: 10 });
+      let follower: import('../../stream/types.js').Subscription | undefined;
+      try {
+        await vi.waitFor(() => expect(held).toHaveLength(1));
+        expect(held[0].id).toBe(first);
+        expect(await stream.trim({ maxLength: 0 })).toBe(1);
+        expect(await stream.getMessages('-', '+')).toEqual([]);
+        const expires = (await pool.query(`SELECT expires_at FROM "${schema}".flowfn_partition_barriers WHERE stream=$1 AND partition=0`, ['partition-trim'])).rows[0].expires_at;
+        const later = await stream.publish({}, { partition: 0 });
+        const other = await stream.publish({}, { partition: 1 });
+        follower = await peer.consume('partition-trim', 'group', 'follower', async message => { seen.push(message.id); if (message.id === later) { successor.push(message); await nextGate; } else await message.ack(); }, { groupId: 'group', fromBeginning: true, maxInFlight: 2, visibilityTimeout: 1000 });
+        await vi.waitFor(() => expect(seen).toContain(other));
+        expect(seen).not.toContain(later);
+        await vi.waitFor(() => expect(held[0].signal?.aborted).toBe(true), { timeout: 2000 });
+        expect((await pool.query(`SELECT expires_at FROM "${schema}".flowfn_partition_barriers WHERE stream=$1 AND partition=0`, ['partition-trim'])).rows[0].expires_at).toBe(expires);
+        await vi.waitFor(() => expect(seen).toContain(later), { timeout: 2000 });
+        expect(Number((await pool.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS now')).rows[0].now)).toBeGreaterThanOrEqual(Number(expires));
+        const receipt = (await pool.query(`SELECT receipt FROM "${schema}".flowfn_partition_barriers WHERE stream=$1 AND partition=0`, ['partition-trim'])).rows[0].receipt;
+        await held[0].ack();
+        expect((await pool.query(`SELECT receipt FROM "${schema}".flowfn_partition_barriers WHERE stream=$1 AND partition=0`, ['partition-trim'])).rows[0].receipt).toBe(receipt);
+        await successor[0].ack(); releaseNext();
+        expect(await stream.getInfo()).toMatchObject({ length: 2, lag: 0 });
+      } finally { release(); releaseNext(); await owner.unsubscribe(); await follower?.unsubscribe(); await stream.close(); await peer.cleanup(); await peerPool.end(); }
+    });
+    it('releases a trimmed partition barrier on explicit current acknowledgment', async () => {
+      const stream = new StreamImpl('partition-trim-ack', adapter, { partitions: 1 });
+      await stream.publish({});
+      const held: Message[] = [], seen: string[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const owner = await adapter.consume('partition-trim-ack', 'group', 'held', async message => { held.push(message); await gate; }, { groupId: 'group', fromBeginning: true, autoCommit: false, visibilityTimeout: 5000 });
+      let follower: import('../../stream/types.js').Subscription | undefined;
+      try {
+        await vi.waitFor(() => expect(held).toHaveLength(1));
+        await stream.trim({ maxLength: 0 });
+        const later = await stream.publish({});
+        await held[0].ack();
+        expect((await pool.query(`SELECT count(*)::int AS count FROM "${schema}".flowfn_partition_barriers WHERE stream=$1`, ['partition-trim-ack'])).rows[0].count).toBe(0);
+        follower = await adapter.consume('partition-trim-ack', 'group', 'follower', async message => { seen.push(message.id); await message.ack(); }, { groupId: 'group', fromBeginning: true, visibilityTimeout: 5000 });
+        await vi.waitFor(() => expect(seen).toEqual([later]));
+      } finally { release(); await owner.unsubscribe(); await follower?.unsubscribe(); await stream.close(); }
+    });
     it('recovers the same partition message after SIGKILL before delivering its successor', async () => {
       const stream = new StreamImpl('partition-crash', adapter, { partitions: 2 });
       const first = await stream.publish({}, { partition: 0 });

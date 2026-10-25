@@ -57,6 +57,14 @@ export function getPostgresSchema(namespace?: string) {
     partition: integer('partition').notNull(),
     lastOffset: bigint('last_offset', { mode: 'number' }).notNull(),
   }, value => ({ pk: primaryKey({ columns: [value.stream, value.groupId, value.partition] }) }));
+  const partitionBarriers = table('flowfn_partition_barriers', {
+    stream: text('stream').notNull(),
+    groupId: text('group_id').notNull(),
+    partition: integer('partition').notNull(),
+    messageId: text('message_id').notNull(),
+    receipt: text('receipt').notNull(),
+    expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+  }, value => ({ pk: primaryKey({ columns: [value.stream, value.groupId, value.partition] }) }));
   const messages = table(
     "flowfn_messages",
     {
@@ -103,7 +111,7 @@ export function getPostgresSchema(namespace?: string) {
     workflowId: text("workflow_id").notNull(),
     state: jsonb("state").notNull(),
   });
-  return { jobs, messages, consumerGroups, deliveries, workflowExecutions, streamPolicies, partitionProgress };
+  return { jobs, messages, consumerGroups, deliveries, workflowExecutions, streamPolicies, partitionProgress, partitionBarriers };
 }
 export const {
   jobs,
@@ -113,4 +121,5 @@ export const {
   workflowExecutions,
   streamPolicies,
   partitionProgress,
+  partitionBarriers,
 } = getPostgresSchema();

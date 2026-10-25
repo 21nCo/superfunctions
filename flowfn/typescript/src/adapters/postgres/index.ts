@@ -67,6 +67,7 @@ CREATE INDEX IF NOT EXISTS flowfn_jobs_ready ON "${this.schema}".flowfn_jobs(que
 CREATE INDEX IF NOT EXISTS flowfn_jobs_claim_order ON "${this.schema}".flowfn_jobs(queue,priority DESC,(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN 0 ELSE 1 END),(CASE WHEN COALESCE((data->'opts'->>'lifo')::boolean,false) THEN enqueue_order END) DESC,enqueue_order ASC) WHERE state IN ('waiting','delayed');
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_stream_policies (stream text PRIMARY KEY,partitions integer CHECK(partitions>0),routing text);
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_partition_progress (stream text NOT NULL,group_id text NOT NULL,partition integer NOT NULL,last_offset bigint NOT NULL,PRIMARY KEY(stream,group_id,partition));
+CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_partition_barriers (stream text NOT NULL,group_id text NOT NULL,partition integer NOT NULL,message_id text NOT NULL,receipt text NOT NULL,expires_at bigint NOT NULL,PRIMARY KEY(stream,group_id,partition));
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_messages (id text PRIMARY KEY,stream text NOT NULL,position bigserial UNIQUE,timestamp bigint NOT NULL,data jsonb NOT NULL);
 CREATE INDEX IF NOT EXISTS flowfn_messages_stream_offset ON "${this.schema}".flowfn_messages(stream,position);
 CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_consumer_groups (id text PRIMARY KEY,stream text NOT NULL,group_id text NOT NULL,last_offset bigint NOT NULL);
@@ -621,6 +622,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     const callbacks = new Set<string>();
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
+    const barriers = this.table("flowfn_partition_barriers");
     const deliveries = this.table("flowfn_deliveries"),
       messages = this.table("flowfn_messages"),
       groups = this.table("flowfn_consumer_groups");
@@ -642,6 +644,8 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
             partitioned ? sql`SELECT m.* FROM ${messages} m JOIN ${groups} g ON g.id=${this.groupId(stream, group)}
               LEFT JOIN ${this.table('flowfn_partition_progress')} p ON p.stream=m.stream AND p.group_id=${group} AND p.partition=(m.data->>'partition')::integer
               WHERE m.stream=${stream} AND m.position>COALESCE(p.last_offset,g.last_offset)
+                AND NOT EXISTS(SELECT 1 FROM ${barriers} b WHERE b.stream=${stream} AND b.group_id=${group}
+                  AND b.partition=(m.data->>'partition')::integer AND b.expires_at>${serverNow})
                 AND NOT EXISTS(SELECT 1 FROM ${deliveries} d JOIN ${messages} held ON held.id=d.message_id
                   WHERE d.stream=${stream} AND d.group_id=${group} AND d.state!='completed' AND held.data->>'partition'=m.data->>'partition')
               ORDER BY m.position LIMIT 1`
@@ -661,24 +665,47 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
         await tx.execute(
           sql`INSERT INTO ${deliveries} (stream,group_id,message_id,consumer_id,receipt,state,delivered_at) VALUES (${stream},${group},${row.id},${consumer},${receipt},'active',${serverNow}) ON CONFLICT(stream,group_id,message_id) DO UPDATE SET consumer_id=EXCLUDED.consumer_id,receipt=EXCLUDED.receipt,state='active',delivered_at=EXCLUDED.delivered_at`,
         );
+        if (partitioned) await tx.execute(sql`INSERT INTO ${barriers} (stream,group_id,partition,message_id,receipt,expires_at)
+          VALUES (${stream},${group},${row.data.partition},${row.id},${receipt},${serverNow}+${lease})
+          ON CONFLICT(stream,group_id,partition) DO UPDATE SET message_id=EXCLUDED.message_id,receipt=EXCLUDED.receipt,expires_at=EXCLUDED.expires_at`);
         return { row, receipt, acquiredAt };
+      });
+    };
+    // The barrier has no payload FK: retention cannot release a live partition.
+    // Every partition mutation takes the group lock before delivery/barrier rows.
+    const renew = async (id: string, receipt: string): Promise<boolean> => {
+      const update = (tx: any) => this.rows(sql`UPDATE ${deliveries} SET delivered_at=${serverNow} WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`, tx);
+      if (!partitioned) return (await update(this.db)).length > 0;
+      return this.db.transaction(async (tx: any) => {
+        await this.rows(sql`SELECT id FROM ${groups} WHERE id=${this.groupId(stream, group)} FOR UPDATE`, tx);
+        const owned = await this.rows(sql`SELECT receipt FROM ${barriers} WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND expires_at>${serverNow}`, tx);
+        if (!owned.length || !(await update(tx)).length) return false;
+        await tx.execute(sql`UPDATE ${barriers} SET expires_at=${serverNow}+${lease} WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt}`);
+        return true;
+      });
+    };
+    const changeDelivery = async (id: string, receipt: string, requeue: boolean) => {
+      const update = (tx: any) => this.rows(sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`, tx);
+      if (!partitioned) return update(this.db);
+      return this.db.transaction(async (tx: any) => {
+        await this.rows(sql`SELECT id FROM ${groups} WHERE id=${this.groupId(stream, group)} FOR UPDATE`, tx);
+        const changed = await update(tx);
+        const released = await this.rows(sql`DELETE FROM ${barriers} WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND expires_at>${serverNow}
+          AND (${changed.length > 0} OR NOT EXISTS(SELECT 1 FROM ${deliveries} WHERE stream=${stream} AND group_id=${group} AND message_id=${id})) RETURNING receipt`, tx);
+        return changed.length ? changed : released;
       });
     };
     const deliver = ({ row, receipt, acquiredAt }: { row: any; receipt: string; acquiredAt: number }) => {
       pending.set(row.id, receipt);
       callbacks.add(receipt);
-      const guard = new DeliveryLease(lease, acquiredAt, async () => (await this.rows(
-        sql`UPDATE ${deliveries} SET delivered_at=${serverNow} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`,
-      )).length > 0, () => {
+      const guard = new DeliveryLease(lease, acquiredAt, () => renew(row.id, receipt), () => {
         if (pending.get(row.id) === receipt) pending.delete(row.id);
         leases.delete(receipt);
       });
       leases.set(receipt, guard);
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(row.id) !== receipt) return;
-        const task = this.rows(
-          sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`,
-        );
+        const task = changeDelivery(row.id, receipt, requeue);
         settlements.add(task);
         try { const changed = await task; if (changed.length) guard.stop(); else guard.abort(); leases.delete(receipt); if (pending.get(row.id) === receipt) pending.delete(row.id); }
         finally { settlements.delete(task); }
@@ -716,9 +743,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
           const result = await claim();
           if (!result) break;
           if (!active || paused) {
-            await this.db.execute(
-              sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${result.row.id} AND receipt=${result.receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
-            );
+            await changeDelivery(result.row.id, result.receipt, true);
             break;
           }
           deliver(result);
@@ -745,9 +770,7 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
         await pollTask;
         await Promise.allSettled([...settlements]);
         for (const [id, receipt] of pending)
-          await this.db.execute(
-            sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
-          );
+          await changeDelivery(id, receipt, true);
         pending.clear();
         this.subscriptions.delete(subscription);
       },
@@ -788,4 +811,3 @@ ALTER SEQUENCE "${this.schema}".flowfn_jobs_enqueue_order_seq OWNED BY "${this.s
     await boundedShutdown(Promise.all([...this.subscriptions].map(subscription => subscription.unsubscribe())), timeout, 'PostgreSQL adapter');
   }
 }
-export { getPostgresSchema } from './schema.js';

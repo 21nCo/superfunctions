@@ -50,6 +50,11 @@ export class StreamImpl<T = any> implements Stream<T> {
   private open() {
     if (this.closed) throw new Error("Stream is closed");
   }
+  /** Reusing a cached handle must not silently discard a requested count. */
+  assertPartitionConfiguration(partitions?: number): void {
+    if (partitions !== undefined && partitions !== this.options.partitions)
+      throw new Error('Stream partition settings cannot change on an existing handle; use a new FlowFn instance to validate persisted policy');
+  }
   async publish(data: T, options: PublishOptions = {}): Promise<string> {
     this.open();
     if (options.partition !== undefined && !this.adapter.configureStream)

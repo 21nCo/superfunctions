@@ -81,10 +81,15 @@ must close their own pool after closing the flow.
 PostgreSQL supports `flow.stream('orders', { partitions: 3 })`. Configure the
 count before publishing or creating a consumer group. The persisted count is
 immutable; reopening without a count adopts the stored policy. A conflicting
-count or an attempt to partition a populated legacy stream fails. Drain all old
+count or an attempt to partition a populated legacy stream fails. A FlowFn instance
+caches stream handles: repeating `stream(name)` reuses the handle, while changing
+its explicit partition setting fails instead of being ignored. Use a new FlowFn
+instance to validate an explicit count against an already persisted policy. Drain all old
 writers before enabling this feature: older binaries do not enforce the policy.
-`initialize()` adds the policy and partition-progress tables; applications using
-managed migrations must install the equivalent exported schema first. Existing
+`initialize()` adds policy, partition-progress and partition-barrier tables. Run
+it in a controlled migration window before starting new workers. The repository
+retains equivalent Drizzle schema metadata for migration tooling; it is not a
+published package export. Existing
 streams remain unpartitioned, and historical explicit labels are not rerouted.
 
 Keys route by SHA-256 of exact UTF-8 bytes, using the unsigned big-endian first
@@ -92,6 +97,11 @@ four bytes modulo the partition count. Explicit `partition` overrides the key;
 unkeyed messages use their generated ID. Invalid ranges and malformed Unicode
 are rejected. Each group has independent partition progress. An unacknowledged
 message blocks later messages in its partition while other partitions can run.
+A bounded receipt/expiry barrier survives payload retention, so trimming an active
+message does not release its partition early. Its lease cannot renew after payload
+deletion; an authorized acknowledgment/requeue or storage-clock expiry releases
+the barrier. Payload retention is not extended. Drain partition consumers when
+upgrading from builds without this barrier table before initializing and resuming.
 Expired receipts can be reassigned; stale acknowledgments are fenced, but
 uncooperative handler side effects cannot be forcibly stopped. Public message
 IDs, global offsets, ranges and retention remain unchanged.

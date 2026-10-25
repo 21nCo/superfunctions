@@ -48,6 +48,15 @@ describe("flowfn", () => {
     expect(received[0]).toEqual({ event: "test" });
   });
 
+  it('rejects changing the partition setting of an existing stream handle', () => {
+    const configured = flow.stream('partitioned', { partitions: 3 });
+    expect(flow.stream('partitioned')).toBe(configured);
+    expect(flow.stream('partitioned', { partitions: 3 })).toBe(configured);
+    expect(() => flow.stream('partitioned', { partitions: 4 })).toThrow(/partition/i);
+    flow.stream('discovered');
+    expect(() => flow.stream('discovered', { partitions: 3 })).toThrow(/partition/i);
+  });
+
   it("should execute a simple workflow", async () => {
     const workflow = flow
       .workflow("test-workflow")

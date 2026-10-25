@@ -23,7 +23,7 @@ try {
   });
   writeFileSync(join(fixture, 'package.json'), JSON.stringify({ name: 'flowfn-packed-acceptance', private: true, version: '1.0.0' }));
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tars]);
-  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', 'typescript@5.9.3', '@types/node@20']);
+  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', 'typescript@5.9.3', '@types/node@20', ...(process.env.FLOWFN_POSTGRES_URL ? ['pg@8.23.1'] : [])]);
   npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
   const installed = JSON.parse(npm(['ls', '--omit=dev', '--all', '--json']));
   assert.ok(installed.dependencies['@flowfn/core']);
@@ -76,6 +76,12 @@ try {
   for (const version of (process.env.FLOWFN_NODE_VERSIONS ?? '20.0.0,20.20.0,22.23.3').split(',')) {
     for (const consumer of ['consumer.mjs','consumer.cjs','admin.mjs','admin.cjs']) npm(['exec','--yes',`--package=node@${version}`,'--','node',consumer]);
     console.log(JSON.stringify({node:version,coreESM:'passed',coreCJS:'passed',adminESM:'passed',adminDynamicCJS:'passed'}));
+  }
+  if (process.env.FLOWFN_POSTGRES_URL) {
+    writeFileSync(join(fixture, 'partition-consumer.mjs'), readFileSync(new URL('./packed-partition-consumer.mjs', import.meta.url)));
+    const result = spawnSync(process.execPath, ['partition-consumer.mjs'], { cwd: fixture, encoding: 'utf8', timeout: 30_000 });
+    if (result.status !== 0) throw new Error(`Installed partition consumer failed\n${result.stdout}\n${result.stderr}`);
+    console.log(result.stdout.trim());
   }
   const audit = JSON.parse(npm(['audit', '--omit=dev', '--json']));
   assert.equal(audit.metadata.vulnerabilities.total,0);
