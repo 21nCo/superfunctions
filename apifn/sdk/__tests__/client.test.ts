@@ -3,6 +3,8 @@
 
 import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
 import { writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
@@ -578,7 +580,8 @@ describe("HEAD operations", () => {
 
   /**
    * HEAD clones of tasks.delete: one documents 404 and a 5XX range, one only `default`, all with bodies;
-   * two document a success, exact or a range, only as application/pdf, which the client cannot decode.
+   * three document a success, exact or a range, only as application/pdf, which the client cannot decode,
+   * two of them with a problem+json error too.
    */
   function headCatalog(): OperationCatalog {
     const catalog: OperationCatalog = fixtureCatalog();
@@ -591,7 +594,11 @@ describe("HEAD operations", () => {
       clone("tasks.exists", "taskExists", [del.responses[0]!, notFound, { status: "5XX", kind: "error", description: "Problem", contents: problem }]),
       clone("tasks.probe", "probeTask", [del.responses[0]!, { status: "default", kind: "default", description: "Problem", contents: problem }]),
       clone("tasks.document", "taskDocument", [{ status: "200", kind: "success", description: "The document's headers", contents: pdf }, notFound]),
-      clone("tasks.any", "anyTask", [{ status: "2XX", kind: "success", description: "The document's headers", contents: pdf }])
+      clone("tasks.any", "anyTask", [{ status: "2XX", kind: "success", description: "The document's headers", contents: pdf }]),
+      clone("tasks.headers", "taskHeaders", [
+        { status: "2XX", kind: "success", description: "The document's headers", contents: pdf },
+        { status: "default", kind: "default", description: "Problem", contents: problem },
+      ])
     );
     catalog.operations.sort((a, b) => (a.id < b.id ? -1 : 1));
     return catalog;
@@ -646,17 +653,14 @@ export function bodies(error: unknown): undefined {
 
     const { dir, sdk: head } = await buildFixtureSdk(fixtureConfig(), catalog);
     const target = new head.TasksClient({ baseUrl: server.baseUrl, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
-    // As for any operation, Accept lists only the documented media types the client can decode; with
-    // none, the client sets no Accept and fetch sends its default.
     const calls = [
-      { call: () => target.taskDocument({ projectId: "p", taskId: "t" }), status: 200, accept: "application/problem+json" },
-      { call: () => target.anyTask({ projectId: "p", taskId: "t" }), status: 206, accept: "*/*" },
+      { call: () => target.taskDocument({ projectId: "p", taskId: "t" }), status: 200 },
+      { call: () => target.anyTask({ projectId: "p", taskId: "t" }), status: 206 },
     ];
-    for (const { call, status, accept } of calls) {
+    for (const { call, status } of calls) {
       server.reset([{ status, headers: { "content-type": "application/pdf", "content-length": "1024" } }]);
       expect(await call()).toBeUndefined();
       expect(server.requests.map((request) => request.method)).toEqual(["HEAD"]);
-      expect(server.requests[0].headers.accept).toBe(accept);
     }
 
     writeFileSync(
@@ -666,6 +670,69 @@ export async function results(client: TasksClient): Promise<undefined> {
   const document: undefined = await client.taskDocument({ projectId: "p", taskId: "t" });
   const any: undefined = await client.anyTask({ projectId: "p", taskId: "t" });
   return document ?? any;
+}
+`
+    );
+    expect(compile(dir)).toEqual([]);
+  });
+  it("accepts every media type a HEAD operation documents, so a negotiating server serves the representation", async () => {
+    // A server that honours Accept: it answers 406 unless Accept admits application/pdf, the document's only representation.
+    const accepts: Array<string | undefined> = [];
+    const negotiating = createServer((request, response) => {
+      const accept = request.headers.accept;
+      accepts.push(accept);
+      const ranges = (accept ?? "*/*").split(",").map((range) => range.split(";")[0]!.trim().toLowerCase());
+      const admits = ranges.some((range) => range === "*/*" || range === "application/*" || range === "application/pdf");
+      response.writeHead(admits ? 200 : 406, admits ? { "content-type": "application/pdf", "content-length": "1024" } : { "content-type": "application/problem+json" });
+      response.end();
+    });
+    await new Promise<void>((resolve) => negotiating.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = negotiating.address() as AddressInfo;
+      const { sdk: head } = await buildFixtureSdk(fixtureConfig(), headCatalog());
+      const target = new head.TasksClient({ baseUrl: `http://127.0.0.1:${port}/v1`, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
+      const params = { projectId: "p", taskId: "t" };
+      // An exact 200 with a 404, a 2XX range alone and a 2XX range with `default`.
+      expect(await target.taskDocument(params)).toBeUndefined();
+      expect(await target.anyTask(params)).toBeUndefined();
+      expect(await target.taskHeaders(params)).toBeUndefined();
+      expect(accepts).toEqual(["application/pdf, application/problem+json", "application/pdf", "application/pdf, application/problem+json"]);
+    } finally {
+      await new Promise<void>((resolve) => negotiating.close(() => resolve()));
+    }
+  });
+});
+
+describe("statuses that never have content", () => {
+  it("types and matches a 204, 205 or 304 as no content whatever content it documents", async () => {
+    // GET clones of tasks.get whose 204 or 304 documents JSON content; the response has none.
+    const catalog: OperationCatalog = fixtureCatalog();
+    const get = catalog.operations.find((operation) => operation.id === "tasks.get");
+    const json = get?.responses.find((response) => response.status === "200")?.contents;
+    if (!get || !json) throw new Error("the fixture catalog has no tasks.get documenting 200");
+    const clone = (id: string, name: string, responses: CatalogResponse[]): CatalogOperation => ({ ...structuredClone(get), id, name, openapiOperationId: name, path: `${get.path}/${name}`, responses });
+    catalog.operations.push(
+      clone("tasks.touch", "touchTask", [{ status: "204", kind: "success", description: "Touched", contents: json }]),
+      clone("tasks.cached", "cachedTask", [get.responses.find((response) => response.status === "200")!, { status: "304", kind: "success", description: "Not modified", contents: json }])
+    );
+    catalog.operations.sort((a, b) => (a.id < b.id ? -1 : 1));
+    const { dir, sdk: built } = await buildFixtureSdk(fixtureConfig(), catalog);
+    const target = new built.TasksClient({ baseUrl: server.baseUrl, credentials: { bearerAuth: "t" }, retry: { maxAttempts: 1 } });
+    const params = { projectId: "p", taskId: "t" };
+
+    server.reset([{ status: 204, headers: { "content-type": "application/json" } }]);
+    expect(await target.touchTask(params)).toBeUndefined();
+    server.reset([{ status: 304, headers: { "content-type": "application/json" } }]);
+    const error = await target.cachedTask(params).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(built.ApiHttpError);
+    const { status, declared, body } = error as { status: number; declared: boolean; body: unknown };
+    expect({ status, declared, body }).toEqual({ status: 304, declared: true, body: undefined });
+
+    writeFileSync(
+      path.join(dir, "src/custom/bodyless-statuses.ts"),
+      `import type { TasksClient } from "../index.js";
+export async function touched(client: TasksClient): Promise<undefined> {
+  return client.touchTask({ projectId: "p", taskId: "t" });
 }
 `
     );

@@ -110,16 +110,29 @@ export function aliasCycleCuts(schemas: Readonly<Record<string, unknown>>): Map<
   const edges = new Map(names.map((name) => [name, [...directReferences(schemas[name], new Set())].filter((target) => Object.prototype.hasOwnProperty.call(schemas, target)).sort(compareCodeUnits)]));
   const state = new Map<string, "open" | "done">();
   const cuts = new Map<string, string[]>();
-  const visit = (name: string) => {
-    state.set(name, "open");
-    for (const target of edges.get(name) ?? []) {
+  // An explicit stack of (schema, next reference) frames, not recursion, so a reference chain of any
+  // length cannot exhaust the call stack; it visits in the same order a recursive search would.
+  for (const root of names) {
+    if (state.has(root)) continue;
+    state.set(root, "open");
+    const stack: Array<{ name: string; next: number }> = [{ name: root, next: 0 }];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]!;
+      const targets = edges.get(frame.name) ?? [];
+      if (frame.next === targets.length) {
+        state.set(frame.name, "done");
+        stack.pop();
+        continue;
+      }
+      const target = targets[frame.next++]!;
       const seen = state.get(target);
-      if (seen === "open") cuts.set(name, [...(cuts.get(name) ?? []), target]);
-      else if (seen === undefined) visit(target);
+      if (seen === "open") cuts.set(frame.name, [...(cuts.get(frame.name) ?? []), target]);
+      else if (seen === undefined) {
+        state.set(target, "open");
+        stack.push({ name: target, next: 0 });
+      }
     }
-    state.set(name, "done");
-  };
-  for (const name of names) if (!state.has(name)) visit(name);
+  }
   return cuts;
 }
 

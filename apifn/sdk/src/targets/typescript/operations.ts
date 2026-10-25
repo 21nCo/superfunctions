@@ -148,6 +148,18 @@ export function parameterSupport(parameter: CatalogParameter, schemas: Readonly<
   return { reasons: [...reasons], narrowing: reasons.size > 0 || !narrow ? null : deepObject ? "deepObject" : "value" };
 }
 
+/** Statuses whose responses never have content. */
+const BODYLESS_STATUSES = new Set(["204", "205", "304"]);
+
+/**
+ * Whether a documented response never has a body, whatever content it documents: every response to HEAD,
+ * and 204, 205 and 304. The client reads such a response as no content, so it is matched, and typed, as
+ * no content, and its media types never make the operation unsupported.
+ */
+function isBodyless(method: string, status: string): boolean {
+  return method === "head" || BODYLESS_STATUSES.has(status);
+}
+
 export function analyzeOperation(operation: CatalogOperation, catalog: OperationCatalog): OperationShape {
   const reasons: string[] = [];
   if (FORBIDDEN_METHODS.has(operation.method)) reasons.push(`fetch cannot send ${operation.method.toUpperCase()} requests.`);
@@ -185,13 +197,13 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
   let success: ResponseShape | null = null;
   const errors: OperationShape["errors"] = [];
   const accept = new Set<string>();
-  // A HEAD response never has a body, whatever its documented content, so every documented status
-  // (success, error, range or `default`) is matched, and typed, as no content, and its media types are
-  // never checked for support.
-  const bodyless = operation.method === "head";
+  const head = operation.method === "head";
   for (const response of operation.responses) {
-    for (const content of response.contents) if (mediaKind(content.mediaType) !== null) accept.add(content.mediaType);
-    const { shape, unsupported } = bodyless ? responseShape([]) : responseShape(response.contents);
+    // Accept lists the documented media types the client decodes. A HEAD operation decodes none: its
+    // media types name the representation it describes, so Accept lists every one, decodable or not, and
+    // a server that negotiates never refuses the representation the operation documents.
+    for (const content of response.contents) if (head || mediaKind(content.mediaType) !== null) accept.add(content.mediaType);
+    const { shape, unsupported } = isBodyless(operation.method, response.status) ? responseShape([]) : responseShape(response.contents);
     // Only 2xx responses resolve a call; every other documented status (redirects are not followed) and
     // `default`, which documents every status not listed, become typed errors.
     if (!/^2(?:\d\d|XX)$/.test(response.status)) {
@@ -200,10 +212,6 @@ export function analyzeOperation(operation: CatalogOperation, catalog: Operation
     }
     if (shape.kinds.length === 0) {
       reasons.push(`success response ${response.status} media types ${unsupported.join(", ")} are not supported.`);
-      continue;
-    }
-    if (bodyless) {
-      success = shape;
       continue;
     }
     success ??= { kinds: [], contents: [] };

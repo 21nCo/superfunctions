@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { GENERATOR_VERSION, SDK_ARTIFACT_MANIFEST_FILE, TYPESCRIPT_TARGET_VERSION, writeSdk } from "../src/index.js";
 import { parameterSupport } from "../src/targets/typescript/operations.js";
 import { RUNTIME_SOURCE } from "../src/targets/typescript/runtime-source.js";
+import { aliasCycleCuts } from "../src/targets/typescript/schema.js";
 import { cleanupTemp, clone, compile, fixtureCatalog, fixtureConfig, FIXTURES, generate, PACKAGE_DIR, readJson, tempDir } from "./helpers.js";
 
 afterAll(cleanupTemp);
@@ -630,6 +631,65 @@ export async function use(): Promise<void> {
     expect(result.manifest!.operations.excluded.find((entry) => entry.id === "vectors.v1")!.details).toEqual([reason(100), reason(1900)]);
     const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
     expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).not.toMatch(/\bDeepObjectValue</);
+  });
+
+  /** Components `<prefix>0` … `<prefix><length>`, each an alias of the next, ending in `last`. */
+  function links(prefix: string, length: number, last: unknown): Record<string, unknown> {
+    const schemas: Record<string, unknown> = { [`${prefix}${length}`]: last };
+    for (let level = 0; level < length; level++) schemas[`${prefix}${level}`] = { $ref: `#/components/schemas/${prefix}${level + 1}` };
+    return schemas;
+  }
+
+  it("follows component reference chains of any length, used or not, without exhausting the call stack", () => {
+    // Chains of 12,000 references: one a parameter uses, one a response uses that closes a cycle back to
+    // its start, and one nothing uses. A recursive search overflowed the stack at about 4,000.
+    const length = 12_000;
+    const ring = links("Ring", length, { $ref: "#/components/schemas/Ring0" });
+    const vector = { name: "a long alias chain", schemas: { ...links("Link", length, { type: "string" }), ...ring, ...links("Spare", length, { type: "string" }) }, parameter: { in: "query", name: "tag", style: "form", explode: true, required: false, schema: { $ref: "#/components/schemas/Link0" } } };
+    const catalog = vectorCatalog([{ vector, index: 0 }]);
+    const operation = catalog.operations.find((entry: any) => entry.id === "vectors.v0");
+    operation.responses.find((response: any) => response.status === "200").contents[0].schema = { $ref: "#/components/schemas/Ring0" };
+
+    expect(aliasCycleCuts(ring)).toEqual(new Map([[`Ring${length}`, ["Ring0"]]]));
+    const result = generate(catalog);
+    expect(result.ok).toBe(true);
+    expect(result.manifest!.operations.included.map((entry) => entry.id)).toContain("vectors.v0");
+    const client = result.files.find((file) => file.path === "src/client.ts")!.contents;
+    expect(client.match(/export interface Vector0Params \{[\s\S]*?\n\}/)![0]).not.toMatch(/\bParamValue</);
+  });
+
+  it("cuts alias cycles exactly where a recursive depth-first search in sorted order would", () => {
+    /** The recursive search the iterative one replaced, as the reference. */
+    const recursiveCuts = (schemas: Record<string, unknown>) => {
+      const names = Object.keys(schemas).sort();
+      const edges = new Map(names.map((name) => [name, [...new Set(((schemas[name] as { allOf: Array<{ $ref: string }> }).allOf).map((member) => member.$ref.slice("#/components/schemas/".length)))].filter((target) => target in schemas).sort()]));
+      const state = new Map<string, string>();
+      const cuts = new Map<string, string[]>();
+      const visit = (name: string) => {
+        state.set(name, "open");
+        for (const target of edges.get(name)!) {
+          if (state.get(target) === "open") cuts.set(name, [...(cuts.get(name) ?? []), target]);
+          else if (!state.has(target)) visit(target);
+        }
+        state.set(name, "done");
+      };
+      for (const name of names) if (!state.has(name)) visit(name);
+      return cuts;
+    };
+    // Seeded random graphs of up to 12 components with up to 4 references each, some to missing components.
+    let seed = 7;
+    const random = (bound: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % bound;
+    };
+    for (let graph = 0; graph < 300; graph++) {
+      const size = 1 + random(12);
+      const schemas: Record<string, unknown> = {};
+      for (let node = 0; node < size; node++) {
+        schemas[`S${node}`] = { allOf: Array.from({ length: random(5) }, () => ({ $ref: `#/components/schemas/S${random(size + 2)}` })) };
+      }
+      expect([...aliasCycleCuts(schemas)]).toEqual([...recursiveCuts(schemas)]);
+    }
   });
 
   it("types a cut alias cycle as unknown in the analysis, as in the emitted types", async () => {
