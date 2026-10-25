@@ -35,7 +35,7 @@ See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic
 deduplication and at-least-once delivery; [retry strategies](docs/retry-strategies.md)
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
-D1, SQS and Kafka adapters are not implemented. Stream partition assignment outside PostgreSQL,
+D1, SQS and Kafka adapters are not implemented. Stream partition assignment outside PostgreSQL and Memory,
 distributed trace propagation and the original performance targets
 remain incomplete. Workflow ownership and scheduler coordination are durable on
 Redis and PostgreSQL. This package is not yet a production-readiness claim.
@@ -106,7 +106,19 @@ Expired receipts can be reassigned; stale acknowledgments are fenced, but
 uncooperative handler side effects cannot be forcibly stopped. Public message
 IDs, global offsets, ranges and retention remain unchanged.
 
-Memory, Redis and Python partition support remains unfinished. The TypeScript
+Memory supports the same configured partition routing, immutable count, group
+progress and current-receipt fencing within one adapter instance. Reopening a
+stream handle on that instance preserves its policy/cursors; a new adapter or
+process has no durable history. Configured Memory partition consumers renew a
+monotonic local lease while their handler runs. Manual unacknowledged deliveries
+expire after the handler returns; trimming prevents renewal without releasing the
+barrier early. Active callbacks still own their delivered snapshots. Pending/retry
+registries retain identities, not additional payload copies. Unsubscribe aborts
+owned signals and releases current receipts; stale settlement cannot affect a
+successor. Visibility timeout for legacy unpartitioned Memory streams remains an
+unfinished behavior and is not implied by this partition support.
+
+Redis and Python partition support remains unfinished. The TypeScript
 stream API rejects configured partitioning or explicit partition publication
 when the adapter lacks this capability. PostgreSQL policy coordination adds
 transactional work to publication; stream throughput has not been qualified by

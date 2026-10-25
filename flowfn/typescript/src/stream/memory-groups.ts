@@ -1,3 +1,4 @@
+import { DeliveryLease } from "./delivery-lease.js";
 import type {
   Message,
   MessageHandler,
@@ -26,24 +27,28 @@ interface Member {
   commits: Set<ReturnType<typeof setTimeout>>;
 }
 interface Pending {
-  message: Message;
+  message: Pick<Message, "id" | "partition" | "offset">;
   member: Member;
   token: symbol;
+  deadline?: number;
+  expiry?: ReturnType<typeof setTimeout>;
+  lease?: DeliveryLease;
 }
 interface Group {
   stream: string;
   name: string;
   cursor: number;
+  partitions: Map<number, number>;
   members: Map<string, Member>;
   pending: Map<string, Pending>;
-  retry: Message[];
+  retry: string[];
   round: number;
   timer?: ReturnType<typeof setTimeout>;
   dispatching: boolean;
 }
 export class MemoryConsumerGroups {
   private groups = new Map<string, Group>();
-  constructor(private history: (stream: string) => Message[]) {}
+  constructor(private history: (stream: string) => Message[], private partitionCount: (stream: string) => number | undefined = () => undefined) {}
   private get(stream: string, name: string, fromBeginning = false): Group {
     const key = JSON.stringify([stream, name]);
     let group = this.groups.get(key);
@@ -54,6 +59,7 @@ export class MemoryConsumerGroups {
         cursor: fromBeginning
           ? -1
           : (this.history(stream).at(-1)?.offset ?? -1),
+        partitions: new Map(),
         members: new Map(),
         pending: new Map(),
         retry: [],
@@ -77,13 +83,26 @@ export class MemoryConsumerGroups {
       .reduce(
         (sum, group) =>
           sum +
-          group.pending.size +
+          [...group.pending.values()].filter(p => this.history(stream).some(m => m.id === p.message.id)).length +
           group.retry.length +
           this.history(stream).filter(
-            (message) => (message.offset ?? 0) > group.cursor,
+            (message) => (message.offset ?? 0) > this.cursor(group, message),
           ).length,
         0,
       );
+  }
+  private cursor(group: Group, message: Message): number {
+    return this.partitionCount(group.stream) === undefined ? group.cursor : group.partitions.get(message.partition!) ?? group.cursor;
+  }
+  private clearPending(pending: Pending): void {
+    if (pending.expiry) clearTimeout(pending.expiry);
+    pending.lease?.stop();
+  }
+  trim(stream: string): void {
+    const retained = new Set(this.history(stream).map(m => m.id));
+    for (const group of this.groups.values()) if (group.stream === stream) {
+      group.retry = group.retry.filter(id => retained.has(id));
+    }
   }
   notify(stream: string) {
     for (const group of this.groups.values())
@@ -108,22 +127,47 @@ export class MemoryConsumerGroups {
             new Set([...member.busy.keys(), ...[...group.pending.values()].filter(p => p.member === member).map(p => p.token)]).size < (member.options.maxInFlight ?? 1),
         );
         if (!members.length) return;
-        const message =
-          group.retry.shift() ??
-          this.history(group.stream).find(
-            (message) => (message.offset ?? 0) > group.cursor,
-          );
+        const partitioned = this.partitionCount(group.stream) !== undefined;
+        const available = (message: Message) => !partitioned || ![...group.pending.values()].some(p => p.message.partition === message.partition);
+        const history = this.history(group.stream);
+        const retryIndex = group.retry.findIndex(id => { const m = history.find(m => m.id === id); return m !== undefined && available(m); });
+        const retryId = retryIndex >= 0 ? group.retry.splice(retryIndex, 1)[0] : undefined;
+        const message = retryId !== undefined ? history.find(m => m.id === retryId) :
+          history.find(message => (message.offset ?? 0) > this.cursor(group, message) && available(message));
         if (!message) return;
-        group.cursor = Math.max(group.cursor, message.offset ?? 0);
-        const member = members[group.round++ % members.length],
-          token = Symbol();
-        group.pending.set(message.id, { message, member, token });
-        const controller = new AbortController();
+        if (partitioned) group.partitions.set(message.partition!, Math.max(this.cursor(group, message), message.offset ?? 0));
+        else group.cursor = Math.max(group.cursor, message.offset ?? 0);
+        const member = members[group.round++ % members.length], token = Symbol();
+        const pending: Pending = { message: { id: message.id, partition: message.partition, offset: message.offset }, member, token };
+        group.pending.set(message.id, pending);
+        let controller = new AbortController();
+        if (partitioned) {
+          const duration = member.options.visibilityTimeout ?? 30000;
+          const arm = () => {
+            if (pending.expiry) clearTimeout(pending.expiry);
+            pending.deadline = performance.now() + duration;
+            pending.expiry = setTimeout(() => {
+              if (group.pending.get(message.id)?.token !== token) return;
+              group.pending.delete(message.id);
+              pending.lease?.abort();
+              if (this.history(group.stream).some(m => m.id === message.id)) group.retry.push(message.id);
+              this.dispatch(group);
+            }, duration);
+          };
+          arm();
+          pending.lease = new DeliveryLease(duration, performance.now(), async () => {
+            if (group.pending.get(message.id)?.token !== token || performance.now() >= pending.deadline! || !this.history(group.stream).some(m => m.id === message.id)) return false;
+            arm(); return true;
+          }, () => {});
+          controller = pending.lease.controller;
+        }
         member.busy.set(token, controller);
         const settle = async (requeue: boolean) => {
           if (group.pending.get(message.id)?.token !== token) return;
+          if (pending.deadline !== undefined && performance.now() >= pending.deadline) return;
           group.pending.delete(message.id);
-          if (requeue) group.retry.push(message);
+          this.clearPending(pending);
+          if (requeue && this.history(group.stream).some(m => m.id === message.id)) group.retry.push(message.id);
           if (requeue) this.schedule(group);
           else this.dispatch(group);
         };
@@ -152,6 +196,7 @@ export class MemoryConsumerGroups {
             },
           )
           .finally(() => {
+            pending.lease?.stop();
             member.busy.delete(token);
             if (!member.active) return;
             if (group.retry.length) this.schedule(group);
@@ -183,6 +228,8 @@ export class MemoryConsumerGroups {
       (!Number.isFinite(options.commitInterval) || options.commitInterval < 0)
     )
       throw new Error("commitInterval must be nonnegative");
+    if (options.visibilityTimeout !== undefined && (!Number.isFinite(options.visibilityTimeout) || options.visibilityTimeout <= 0))
+      throw new Error("visibilityTimeout must be positive");
     const group = this.get(stream, name, options.fromBeginning);
     if (group.members.has(id))
       throw new Error("Consumer is already subscribed");
@@ -214,7 +261,8 @@ export class MemoryConsumerGroups {
         for (const [key, pending] of group.pending)
           if (pending.member === member) {
             group.pending.delete(key);
-            group.retry.push(pending.message);
+            this.clearPending(pending);
+            if (this.history(group.stream).some(m => m.id === pending.message.id)) group.retry.push(pending.message.id);
           }
         this.dispatch(group);
       },
@@ -229,6 +277,7 @@ export class MemoryConsumerGroups {
         for (const timer of member.commits) clearTimeout(timer);
       }
       group.members.clear();
+      for (const pending of group.pending.values()) this.clearPending(pending);
       group.pending.clear();
       group.retry = [];
     }

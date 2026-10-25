@@ -14,15 +14,18 @@ import {
 import { WorkflowExecution } from "../workflow/types.js";
 import { MemoryConsumerGroups, copyMessage } from "../stream/memory-groups.js";
 import { snapshotJob } from "../queue/job.js";
+import { partitionFor, validatePartitions } from "../stream/partition.js";
 import { EventEmitter } from "eventemitter3";
 
 export class MemoryAdapter implements FlowAdapter {
   private queues = new Map<string, Map<string, Job>>();
   private streams: Map<string, Message[]> = new Map();
   private streamEmitters: Map<string, EventEmitter> = new Map();
+  private partitionPolicies = new Map<string, number | null>();
   private sequence = new Map<string, number>();
   private groups = new MemoryConsumerGroups(
     (stream) => this.streams.get(stream) ?? [],
+    (stream) => this.partitionPolicies.get(stream) ?? undefined,
   );
   protected workflowStates: Map<string, WorkflowExecution> = new Map();
   private queue(queue: string): Map<string, Job> {
@@ -163,7 +166,23 @@ export class MemoryAdapter implements FlowAdapter {
     return count;
   }
 
+  async configureStream(stream: string, partitions?: number): Promise<number | undefined> {
+    const current = this.partitionPolicies.get(stream);
+    if (partitions === undefined) return current ?? undefined;
+    validatePartitions(partitions);
+    if (this.partitionPolicies.has(stream) && current !== partitions)
+      throw new Error("Stream partition policy is immutable; migration required");
+    if (!this.partitionPolicies.has(stream) && (this.sequence.has(stream) || this.groups.count(stream)))
+      throw new Error("Legacy stream partition migration required before configuration");
+    this.partitionPolicies.set(stream, partitions);
+    return partitions;
+  }
   async publish(stream: string, message: Message): Promise<string> {
+    const partitions = this.partitionPolicies.get(stream);
+    if (partitions == null && message.partition !== undefined)
+      throw new Error("Explicit partition requires configured stream partitioning");
+    const partition = partitions == null ? undefined : partitionFor(partitions, message.id, message.key, message.partition);
+    if (!this.partitionPolicies.has(stream)) this.partitionPolicies.set(stream, null);
     if (!this.streams.has(stream)) this.streams.set(stream, []);
     if (!this.streamEmitters.has(stream))
       this.streamEmitters.set(stream, new EventEmitter());
@@ -171,6 +190,7 @@ export class MemoryAdapter implements FlowAdapter {
     this.sequence.set(stream, offset);
     const stored = copyMessage(message);
     stored.offset = offset;
+    stored.partition = partition;
     stored.id = `${String(Date.now()).padStart(16, "0")}-${String(offset).padStart(16, "0")}`;
     this.streams.get(stream)!.push(stored);
     this.streamEmitters.get(stream)!.emit("message", stored);
@@ -211,9 +231,11 @@ export class MemoryAdapter implements FlowAdapter {
     handler: MessageHandler<any>,
     options: ConsumerOptions = { groupId: group },
   ): Promise<Subscription> {
+    if (!this.partitionPolicies.has(stream)) this.partitionPolicies.set(stream, null);
     return this.groups.subscribe(stream, group, consumer, handler, options);
   }
   async createConsumerGroup(stream: string, group: string): Promise<void> {
+    if (!this.partitionPolicies.has(stream)) this.partitionPolicies.set(stream, null);
     this.groups.create(stream, group);
   }
   async getMessages(
@@ -250,6 +272,7 @@ export class MemoryAdapter implements FlowAdapter {
       retained =
         strategy.maxLength === 0 ? [] : retained.slice(-strategy.maxLength);
     this.streams.set(stream, retained);
+    this.groups.trim(stream);
     return original.length - retained.length;
   }
 
@@ -290,6 +313,7 @@ export class MemoryAdapter implements FlowAdapter {
     const length = this.streams.get(streamName)?.length || 0;
     return {
       name: streamName,
+      partitions: this.partitionPolicies.get(streamName) ?? undefined,
       length,
       groups: this.groups.count(streamName),
       lag: this.groups.lag(streamName),
@@ -299,6 +323,7 @@ export class MemoryAdapter implements FlowAdapter {
   async cleanup(): Promise<void> {
     this.groups.close();
     this.sequence.clear();
+    this.partitionPolicies.clear();
     this.queues.clear();
     this.streams.clear();
     this.workflowStates.clear();

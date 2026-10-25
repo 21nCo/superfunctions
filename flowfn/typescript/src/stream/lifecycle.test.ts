@@ -16,8 +16,13 @@ afterEach(async () => {
 });
 it('rejects unsupported partition configuration and explicit labels before writing', async () => {
   const storage = adapter();
-  const configured = new StreamImpl('partitioned', storage, { partitions: 3 });
-  const legacy = new StreamImpl('legacy', storage);
+  const unsupported = new Proxy(storage, { get(target, key) {
+    if (key === 'configureStream') return undefined;
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const configured = new StreamImpl('partitioned', unsupported, { partitions: 3 });
+  const legacy = new StreamImpl('legacy', unsupported);
   await expect(configured.publish(1, { key: 'tenant' })).rejects.toThrow('does not support durable stream partitioning');
   await expect(legacy.publish(2, { partition: 0 })).rejects.toThrow('does not support durable stream partitioning');
   expect(await storage.getMessages('partitioned', '-', '+')).toEqual([]);
