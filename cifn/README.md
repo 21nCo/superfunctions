@@ -324,3 +324,42 @@ started arbitrary sink I/O cannot be forcibly cancelled: hosts must supply bound
 transports, and `close()` waits for their settlement. Storage payload expiry does
 not revoke bytes already handed to a sink or an in-flight caller. API log reads
 continue using CiFn's authoritative durable ledger, separately from sink receipts.
+
+### Explicit execution adjudication
+
+A `.started` marker, stale heartbeat or missing completion receipt does not prove
+that a shell stopped. Automatic recovery still refuses to rerun that execution.
+Trusted hosts can call `inspectExecution(runId, dispatchId)` to obtain the current
+execution identity, redacted job/step state and a relevant-state fingerprint,
+without the claim token, script, environment or secret list.
+
+After independently establishing that the owner stopped and deciding the actual
+result, a privileged operator can call `adjudicateExecution` with:
+
+- The exact `executionId` and `expectedFingerprint` from inspection.
+- An opaque `decisionId`, `actorId`, and explicit `ownerStopped: true`.
+- `evidence: {kind, referenceId, digest, observedAt}`: a fixed evidence category,
+  bounded opaque reference, SHA-256 digest and epoch-millisecond observation time.
+- `action: 'complete'` and the exact terminal job/step `result`, or
+  `action: 'cancel-stopped'` only for an already cancelled run.
+
+Evidence categories are `observed-owner-exit`, `durable-exit-receipt` and
+`operator-investigation`. The package does not fetch evidence or verify a digest
+against an external process supervisor. This is an explicit trusted operator
+assertion, not autonomous execution recovery. No process is killed, reassigned or
+rerun by either API. No operator HTTP endpoint is exposed; the host must enforce
+its own operator authorization before invoking this privileged library API.
+
+The immutable encrypted receipt, completion, dependent-job transitions,
+notifications and lifecycle records commit together. Exact decision replay is
+idempotent. A different actor/evidence/result, changed owner or relevant execution
+state, or a conflicting terminal/cancellation transition rejects. Unrelated log
+replay and heartbeat updates do not invalidate the fingerprint. A later matching
+runner completion remains idempotent; a divergent result rejects.
+
+Cancellation acknowledgement records stopped ownership without changing the
+cancelled run or inventing terminal step results. One bounded receipt is retained
+per dispatch; arbitrary notes, evidence bodies and URLs are not accepted. Known
+configured secrets in attribution fields reject. Run history retention remains
+host-owned. Drain older writers before relying on adjudication receipts; no
+retroactive fencing of old binaries or rewriting of local runner evidence occurs.

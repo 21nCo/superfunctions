@@ -9,6 +9,7 @@ export interface PreparedRun {
   secretValues: string[];
 }
 export interface DispatchIntent {
+  adjudication?: import('./adjudication.js').ExecutionAdjudication;
   stepEvents?: import('./step-events.js').StepEvent[];
   id: string;
   payload: JobPayload;

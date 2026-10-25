@@ -42,7 +42,7 @@ try {
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
   await writeFile(join(directory, 'consumer.ts'), `import {Runner, type RunnerOptions} from '@cifn/runner';
-import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
+import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
   if (!validateStepEvent(event)) throw new Error('invalid');
@@ -58,6 +58,10 @@ export async function telemetry(store: DatabaseStore, owner: LifecycleOwner, eve
 export async function output(store: DatabaseStore, runId: string, dispatchId: string) {
   const status: StepOutputCheckpoint | undefined = await store.getStepOutputStatus(runId, dispatchId);
   return {status, dispatcher: new LogFnStepOutputDispatcher(store, async events => { void events; })};
+}
+export async function adjudication(store: DatabaseStore, runId: string, dispatchId: string, decision: ExecutionDecision) {
+  const snapshot: ExecutionInspection | undefined = await store.inspectExecution(runId, dispatchId);
+  return {snapshot, receipt: await store.adjudicateExecution(runId, dispatchId, decision)};
 }
 export const typed = {Runner, observer};
 `);

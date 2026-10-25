@@ -1,3 +1,4 @@
+import { canonicalDecision, executionDigest, type ExecutionDecision, type ExecutionInspection, type ExecutionAdjudication } from '../dispatch/adjudication.js';
 import { expireLogLedger, stepOutputCheckpoint, stepOutputId, type StepOutputCheckpoint, type StepOutputDelivery } from '../log-delivery/forwarding.js';
 import { validateApiErrorTelemetry, type ApiErrorTelemetry } from '../observability/error-context.js';
 import { captureLifecycle, appendLifecycle, emptyLifecycle, LIFECYCLE_MAX_EVENTS, type LifecycleOwner, type LifecycleLedger, type LifecycleRecord } from '../observability/lifecycle.js';
@@ -601,6 +602,86 @@ export class DatabaseStore implements ControlPlaneStore {
     if (!result) throw new ClaimConflictError();
     return result;
   }
+  private applyCompletion(state: RunState, intent: DispatchIntent, canonical: JobCompletion, digest: string): void {
+    const job = state.run.jobs.find(value => value.jobKey === intent.payload.jobKey)!;
+    if (canonical.steps.length !== job.steps.length || canonical.steps.some((step, index) => step.stepKey !== job.steps[index].stepKey)
+      || (canonical.status === 'success' && canonical.steps.some(step => step.status === 'failure'))
+      || (canonical.status === 'skipped' && canonical.steps.some(step => step.status !== 'skipped'))
+      || (canonical.status === 'failure' && !canonical.steps.some(step => step.status === 'failure'))) throw new ClaimConflictError();
+    if (canonical.steps.some((step, index) => ['success', 'failure', 'skipped'].includes(job.steps[index].status) && job.steps[index].status !== step.status)) throw new ClaimConflictError();
+    const now = new Date().toISOString();
+    canonical.steps.forEach((step, index) => { job.steps[index].status = step.status; job.steps[index].completedAt ??= now; });
+    job.status = canonical.status; job.completedAt = now;
+    intent.state = 'completed'; intent.completion = { digest, result: clone(canonical) };
+    // Dependency outcomes and newly ready intents commit with the completion.
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (const next of state.dispatches ?? []) {
+        if (next.state !== 'blocked') continue;
+        const needs = state.definition.pipelineSpec.jobs[next.payload.jobKey].needs ?? [];
+        const dependencies = needs.map(key => state.run.jobs.find(value => value.jobKey === key)!);
+        if (dependencies.some(value => value.status === 'failure' || state.dispatches?.find(item => item.payload.jobKey === value.jobKey)?.blockedByFailure)) {
+          const blocked = state.run.jobs.find(value => value.jobKey === next.payload.jobKey)!;
+          blocked.status = 'skipped'; blocked.completedAt = now;
+          blocked.steps.forEach(step => { step.status = 'skipped'; step.completedAt = now; });
+          next.state = 'completed'; next.blockedByFailure = true; progressed = true;
+        } else if (dependencies.every(value => value.status === 'success' || value.status === 'skipped')) {
+          next.state = 'ready'; progressed = true;
+        }
+      }
+    }
+    const done = state.run.jobs.every(value => ['success', 'failure', 'skipped'].includes(value.status));
+    state.run.status = done ? (state.run.jobs.some(value => value.status === 'failure') ? 'failure' : 'success') : 'running';
+    state.run.updatedAt = now;
+  }
+  private executionFingerprint(state: RunState, intent: DispatchIntent): string {
+    const job = state.run.jobs.find(value => value.jobKey === intent.payload.jobKey);
+    return executionDigest({ protocol: state.dispatchProtocolVersion, runStatus: state.run.status, intentState: intent.state,
+      claim: intent.claim, completion: intent.completion?.digest, adjudication: intent.adjudication?.digest,
+      jobStatus: job?.status, steps: job?.steps.map(step => ({ stepKey: step.stepKey, status: step.status })),
+      stepEvents: intent.stepEvents?.map(event => event.digest) });
+  }
+  /** Privileged host inspection; no payload, environment, claim token, secret list or raw evidence. */
+  async inspectExecution(runId: string, dispatchId: string): Promise<ExecutionInspection | undefined> {
+    const state = await this.read<RunState>('run', runId);
+    const intent = state?.dispatches?.find(item => item.id === dispatchId);
+    if (!state || !intent?.claim) return undefined;
+    const job = state.run.jobs.find(value => value.jobKey === intent.payload.jobKey)!;
+    return clone({ fingerprint: this.executionFingerprint(state, intent), runId, jobKey: redactSecrets([job.jobKey], state.secretValues)[0],
+      runStatus: state.run.status, jobStatus: job.status, dispatchState: intent.state, runnerId: intent.claim.runnerId,
+      executionId: intent.claim.executionId, acknowledgedAt: intent.claim.acknowledgedAt, stoppedAt: intent.claim.stoppedAt,
+      steps: job.steps.map(step => ({ stepKey: step.stepKey, status: step.status })), adjudication: intent.adjudication });
+  }
+  /** Host-only trusted operator decision; never infers process termination or authorizes shell replay. */
+  async adjudicateExecution(runId: string, dispatchId: string, requested: ExecutionDecision): Promise<ExecutionAdjudication> {
+    const decision = canonicalDecision(requested);
+    const digest = executionDigest({ runId, dispatchId, decision });
+    const receipt = await this.mutate<RunState, ExecutionAdjudication>('run', runId, state => {
+      const intent = state.dispatches?.find(item => item.id === dispatchId);
+      if (!intent?.claim || state.dispatchProtocolVersion !== 2 || intent.claim.protocolVersion !== 1 || intent.claim.executionId !== decision.executionId) throw new ClaimConflictError();
+      if (intent.adjudication) {
+        if (intent.adjudication.digest !== digest) throw new ClaimConflictError();
+        return { result: clone(intent.adjudication), changed: false };
+      }
+      if (this.executionFingerprint(state, intent) !== decision.expectedFingerprint || intent.state !== 'claimed' || intent.completion) throw new ClaimConflictError();
+      if (decision.evidence.observedAt > Date.now() || decision.evidence.observedAt < Date.parse(intent.claim.acknowledgedAt ?? intent.claim.claimedAt)) throw new Error('Invalid execution evidence time');
+      // Reject known secret values in bounded host attribution fields rather than persisting them in receipt projections.
+      const attribution = JSON.stringify({ actorId: decision.actorId, evidence: decision.evidence, decisionId: decision.decisionId });
+      if (redactSecrets([attribution], state.secretValues)[0] !== attribution) throw new Error('Execution attribution contains a configured secret');
+      if (decision.action === 'complete') {
+        if (TERMINAL.includes(state.run.status)) throw new ClaimConflictError();
+        this.applyCompletion(state, intent, decision.result, executionDigest(decision.result));
+      } else {
+        if (state.run.status !== 'cancelled') throw new ClaimConflictError();
+        intent.claim.stoppedAt ??= new Date().toISOString();
+      }
+      intent.adjudication = { version: 1, digest, acceptedAt: new Date().toISOString(), decision: clone(decision) };
+      return { result: clone(intent.adjudication), changed: true, status: state.run.status };
+    });
+    if (!receipt) throw new ClaimConflictError();
+    return receipt;
+  }
   async completeDispatch(identity: ClaimIdentity, completion: JobCompletion): Promise<{ accepted: true }> {
     if (!validateCompletion(completion)) throw new ClaimConflictError();
     const canonical: JobCompletion = { status: completion.status, steps: completion.steps.map(step => ({ stepKey: step.stepKey, status: step.status })) };
@@ -613,37 +694,7 @@ export class DatabaseStore implements ControlPlaneStore {
         return { result: { accepted: true }, changed: false };
       }
       if (TERMINAL.includes(state.run.status) || intent.state !== 'claimed') throw new ClaimConflictError();
-      const job = state.run.jobs.find(value => value.jobKey === intent.payload.jobKey)!;
-      if (canonical.steps.length !== job.steps.length || canonical.steps.some((step, index) => step.stepKey !== job.steps[index].stepKey)
-        || (canonical.status === 'success' && canonical.steps.some(step => step.status === 'failure'))
-        || (canonical.status === 'skipped' && canonical.steps.some(step => step.status !== 'skipped'))
-        || (canonical.status === 'failure' && !canonical.steps.some(step => step.status === 'failure'))) throw new ClaimConflictError();
-      if (canonical.steps.some((step, index) => ['success', 'failure', 'skipped'].includes(job.steps[index].status) && job.steps[index].status !== step.status)) throw new ClaimConflictError();
-      const now = new Date().toISOString();
-      canonical.steps.forEach((step, index) => { job.steps[index].status = step.status; job.steps[index].completedAt ??= now; });
-      job.status = canonical.status; job.completedAt = now;
-      intent.state = 'completed'; intent.completion = { digest, result: clone(canonical) };
-      // Dependency outcomes and newly ready intents commit with the completion.
-      let progressed = true;
-      while (progressed) {
-        progressed = false;
-        for (const next of state.dispatches ?? []) {
-          if (next.state !== 'blocked') continue;
-          const needs = state.definition.pipelineSpec.jobs[next.payload.jobKey].needs ?? [];
-          const dependencies = needs.map(key => state.run.jobs.find(value => value.jobKey === key)!);
-          if (dependencies.some(value => value.status === 'failure' || state.dispatches?.find(item => item.payload.jobKey === value.jobKey)?.blockedByFailure)) {
-            const blocked = state.run.jobs.find(value => value.jobKey === next.payload.jobKey)!;
-            blocked.status = 'skipped'; blocked.completedAt = now;
-            blocked.steps.forEach(step => { step.status = 'skipped'; step.completedAt = now; });
-            next.state = 'completed'; next.blockedByFailure = true; progressed = true;
-          } else if (dependencies.every(value => value.status === 'success' || value.status === 'skipped')) {
-            next.state = 'ready'; progressed = true;
-          }
-        }
-      }
-      const done = state.run.jobs.every(value => ['success', 'failure', 'skipped'].includes(value.status));
-      state.run.status = done ? (state.run.jobs.some(value => value.status === 'failure') ? 'failure' : 'success') : 'running';
-      state.run.updatedAt = now;
+      this.applyCompletion(state, intent, canonical, digest);
       return { result: { accepted: true }, changed: true, status: state.run.status };
     });
     if (!result) throw new ClaimConflictError();

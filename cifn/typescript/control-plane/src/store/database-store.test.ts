@@ -973,3 +973,101 @@ describe('durable LogFn step output forwarding', () => {
     expect((await opened.store.getStepOutputStatus(fixture.run.id, fixture.identity.dispatchId))!.claim?.state).toBe('unknown');
   });
 });
+
+describe('host execution adjudication', () => {
+  async function claimed(store: DatabaseStore) {
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret);
+    const run = await store.createPreparedRun(await prepareRun(input, secrets));
+    const dispatchId = JSON.stringify([run.id, 'build', 1]);
+    const payload = await store.claimDispatch(run.id, dispatchId, 'owned-runner', ['default']);
+    const identity = { runId: run.id, dispatchId, runnerId: 'owned-runner', executionId: 'owned-execution', claimToken: payload!.claimToken! };
+    await store.acknowledgeDispatch(identity);
+    return { run, identity };
+  }
+  async function decision(store: DatabaseStore, runId: string, dispatchId: string) {
+    const inspection = (await store.inspectExecution(runId, dispatchId))!;
+    return { decisionId: 'owned-decision', expectedFingerprint: inspection.fingerprint, executionId: inspection.executionId!, actorId: 'operator-1', ownerStopped: true as const,
+      evidence: { kind: 'observed-owner-exit' as const, referenceId: 'owned-exit-1', digest: 'a'.repeat(64), observedAt: Date.now() },
+      action: 'complete' as const, result: { status: 'failure' as const, steps: [{ stepKey: 'step-0', status: 'failure' as const }, { stepKey: 'step-1', status: 'skipped' as const }] } };
+  }
+  it('atomically adjudicates with exact replay, durable receipt, dependency completion and no credential projection', async () => {
+    const { path } = await location(); let opened = await open(path); const fixture = await claimed(opened.store);
+    const before = (await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!;
+    expect(JSON.stringify(before)).not.toContain(secret); expect(JSON.stringify(before)).not.toContain(fixture.identity.claimToken);
+    const request = await decision(opened.store, fixture.run.id, fixture.identity.dispatchId);
+    const receipt = await opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request);
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    expect(await opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request)).toEqual(receipt);
+    vi.restoreAllMocks();
+    const run = (await opened.store.getRun(fixture.run.id))!;
+    expect(run.status).toBe('failure'); expect(run.jobs.map(job => job.status)).toEqual(['failure', 'skipped']);
+    expect((await opened.store.getLifecycleRecords(run.id)).some(record => record.event.type === 'job.completed')).toBe(true);
+    await close(opened.sql); opened = await open(path);
+    expect((await opened.store.inspectExecution(run.id, fixture.identity.dispatchId))!.adjudication).toEqual(receipt);
+    expect(await opened.store.completeDispatch(fixture.identity, request.result)).toEqual({ accepted: true });
+    await expect(opened.store.completeDispatch(fixture.identity, { status: 'success', steps: request.result.steps.map(step => ({ ...step, status: 'success' })) })).rejects.toThrow('conflicts');
+    await expect(opened.store.adjudicateExecution(run.id, fixture.identity.dispatchId, { ...request, actorId: 'operator-2' })).rejects.toThrow('conflicts');
+    expect((await opened.store.listRunnerClaims('owned-runner')).claims).toEqual([]);
+  });
+  it('rejects unstopped assertions, missing evidence, wrong ownership and stale step-state fingerprints', async () => {
+    const { stepEventDigest } = await import('../dispatch/step-events.js');
+    const { path } = await location(); const opened = await open(path); const fixture = await claimed(opened.store);
+    const request = await decision(opened.store, fixture.run.id, fixture.identity.dispatchId);
+    for (const invalid of [{ ...request, ownerStopped: false }, { ...request, evidence: {} }, { ...request, evidence: { ...request.evidence, observedAt: Date.now() + 10000 } }, { ...request, evidence: { ...request.evidence, observedAt: 0 } }]) {
+      await expect(opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, invalid as any)).rejects.toThrow('Invalid');
+    }
+    await expect(opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, { ...request, executionId: 'another-owner' })).rejects.toThrow('conflicts');
+    const event = { sequence: 0, stepKey: 'step-0', status: 'running' as const };
+    await opened.store.appendStepEvent(fixture.identity, { ...event, digest: stepEventDigest(event) });
+    await expect(opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request)).rejects.toThrow('conflicts');
+    expect((await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!.adjudication).toBeUndefined();
+    expect((await opened.store.getRun(fixture.run.id))!.status).toBe('running');
+  });
+  it('permits unrelated durable log activity but rolls back the whole decision if storage rejects it', async () => {
+    const { logDigest } = await import('../log-delivery/protocol.js');
+    const { path } = await location(); const opened = await open(path); const fixture = await claimed(opened.store);
+    const request = await decision(opened.store, fixture.run.id, fixture.identity.dispatchId);
+    const packet = { sequence: 0, events: [{ ts: new Date().toISOString(), level: 'info' as const, name: 'cifn' as const, msg: 'redacted ***', version: '1', ctx: { stepKey: 'step-0' } }] };
+    await opened.store.appendDispatchLogs(fixture.identity, { ...packet, digest: logDigest(packet) });
+    expect((await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!.fingerprint).toBe(request.expectedFingerprint);
+    opened.native.exec("CREATE TRIGGER deny_decision BEFORE UPDATE ON cifn_state BEGIN SELECT RAISE(ABORT, 'owned rollback'); END");
+    await expect(opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request)).rejects.toThrow();
+    expect((await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!.adjudication).toBeUndefined();
+    expect((await opened.store.getRun(fixture.run.id))!.status).toBe('running');
+    opened.native.exec('DROP TRIGGER deny_decision');
+    await opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request);
+    expect((await opened.store.getRun(fixture.run.id))!.status).toBe('failure');
+  });
+  it('serializes opposing operators and preserves cancellation under a racing decision', async () => {
+    const { path } = await location(); const first = await open(path); const second = await open(path);
+    const fixture = await claimed(first.store); const request = await decision(first.store, fixture.run.id, fixture.identity.dispatchId);
+    const outcomes = await Promise.allSettled([first.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, request), second.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, { ...request, actorId: 'operator-2' })]);
+    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const cancelled = await claimed(first.store); const pending = await decision(first.store, cancelled.run.id, cancelled.identity.dispatchId);
+    const raced = await Promise.allSettled([first.store.adjudicateExecution(cancelled.run.id, cancelled.identity.dispatchId, pending), second.store.cancelRun(cancelled.run.id)]);
+    const state = (await first.store.getRun(cancelled.run.id))!;
+    if (state.status === 'failure') expect(raced[0].status).toBe('fulfilled');
+    else {
+      expect(state.status).toBe('cancelled'); expect(raced[0].status).toBe('rejected');
+      const inspect = (await first.store.inspectExecution(cancelled.run.id, cancelled.identity.dispatchId))!;
+      const { result: _result, ...base } = pending;
+      const stopped = { ...base, action: 'cancel-stopped' as const, expectedFingerprint: inspect.fingerprint };
+      await first.store.adjudicateExecution(cancelled.run.id, cancelled.identity.dispatchId, stopped);
+      expect((await first.store.getRun(cancelled.run.id))!.status).toBe('cancelled');
+      expect((await first.store.observeDispatch(cancelled.identity)).stopped).toBe(true);
+    }
+  });
+  it('acknowledges only a cancelled owner without altering terminal state or inventing step results', async () => {
+    const { path } = await location(); const opened = await open(path); const fixture = await claimed(opened.store);
+    const { result: _result, ...request } = await decision(opened.store, fixture.run.id, fixture.identity.dispatchId);
+    await expect(opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, { ...request, action: 'cancel-stopped' })).rejects.toThrow('conflicts');
+    await opened.store.cancelRun(fixture.run.id);
+    const snapshot = (await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!;
+    const stopped = { ...request, action: 'cancel-stopped' as const, expectedFingerprint: snapshot.fingerprint };
+    const receipt = await opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, stopped);
+    expect(await opened.store.adjudicateExecution(fixture.run.id, fixture.identity.dispatchId, stopped)).toEqual(receipt);
+    const after = (await opened.store.inspectExecution(fixture.run.id, fixture.identity.dispatchId))!;
+    expect(after.runStatus).toBe('cancelled'); expect(after.steps).toEqual(snapshot.steps); expect(after.stoppedAt).toBeTruthy();
+  });
+});

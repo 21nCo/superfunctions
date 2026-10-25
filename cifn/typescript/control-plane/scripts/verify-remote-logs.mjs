@@ -6,9 +6,15 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { RemoteRunner } from '../../runner/dist/index.mjs';
+const require = createRequire(import.meta.url);
+const { DatabaseStore, CIFN_STATE_TABLE } = require('../dist/index.js');
+const SQLite = require('better-sqlite3');
+const { Kysely, SqliteDialect } = require('kysely');
+const { kyselyAdapter } = await import('@superfunctions/db/adapters');
 const directory = await mkdtemp(join(tmpdir(), 'cifn-log-acceptance-'));
 const key = randomBytes(32).toString('base64');
 const secret = 'configured-log-secret-ascii';
@@ -139,7 +145,7 @@ try {
   // Kill a real runner after its line checkpoint but before any log acknowledgement.
   logsOffline = true; stepsOffline = true;
   const crashWitness = join(directory, 'crash-executions');
-  const crashJs = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(crashPid)},String(process.pid));fs.appendFileSync(${JSON.stringify(crashWitness)},'once\\n');process.on('exit',()=>fs.writeFileSync(${JSON.stringify(crashDone)},'done'));process.stdout.write('started stdout '+process.env.TOKEN+'\\n');process.stderr.write('started stderr '+process.env.TOKEN+'\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(crashGate)})){clearInterval(timer);process.exit(0)}},20);setTimeout(()=>process.exit(9),15000);`;
+  const crashJs = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(crashPid)},String(process.pid));fs.appendFileSync(${JSON.stringify(crashWitness)},'once\\n');process.on('exit',code=>fs.writeFileSync(${JSON.stringify(crashDone)},JSON.stringify({code,pid:process.pid,at:Date.now()})));process.stdout.write('started stdout '+process.env.TOKEN+'\\n');process.stderr.write('started stderr '+process.env.TOKEN+'\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(crashGate)})){clearInterval(timer);process.exit(0)}},20);setTimeout(()=>process.exit(9),15000);`;
   const crashInput = structuredClone(input);
   crashInput.pipelineSpec.jobs.build.steps = [{ run: `${quote(process.execPath)} -e ${quote(crashJs)}` }];
   const crashRun = await data('/api/v1/runs', crashInput); const crashId = crashRun.runId ?? crashRun.id;
@@ -187,6 +193,30 @@ try {
   const retained = journalEntries.find(entry => entry.runId === crashId);
   assert.equal(retained.phase, 'started'); assert.equal(retained.result, undefined); assert.equal(retained.logOutcome, undefined);
   await stop(control); control = undefined;
+  const exitBytes = await readFile(crashDone);
+  const observedExit = JSON.parse(exitBytes.toString());
+  assert.equal(observedExit.code, 0); assert.equal(observedExit.pid, Number(await readFile(crashPid, 'utf8')));
+  // This owned fixture has independently observed exit; production callers must supply their own evidence.
+  const native = new SQLite(join(directory, 'state.sqlite')); native.pragma('journal_mode = WAL'); native.pragma('synchronous = FULL');
+  const sql = new Kysely({ dialect: new SqliteDialect({ database: native }) });
+  let decision;
+  try {
+    const store = await DatabaseStore.open({ database: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { [CIFN_STATE_TABLE]: CIFN_STATE_TABLE } }), encryptionKey: Buffer.from(key, 'base64') });
+    const snapshot = await store.inspectExecution(crashId, retained.dispatchId);
+    assert.equal(snapshot.runStatus, 'running'); assert.equal(snapshot.executionId, retained.executionId);
+    decision = { decisionId: 'owned-exit-decision', expectedFingerprint: snapshot.fingerprint, executionId: snapshot.executionId, actorId: 'owned-fixture-operator', ownerStopped: true,
+      evidence: { kind: 'observed-owner-exit', referenceId: 'owned-shell-exit', digest: createHash('sha256').update(exitBytes).digest('hex'), observedAt: observedExit.at },
+      action: 'complete', result: { status: 'success', steps: [{ stepKey: 'step-0', status: 'success' }] } };
+    const receipt = await store.adjudicateExecution(crashId, retained.dispatchId, decision);
+    assert.deepEqual(await store.adjudicateExecution(crashId, retained.dispatchId, decision), receipt);
+    assert.equal((await store.getRun(crashId)).status, 'success');
+  } finally { await sql.destroy(); }
+  control = await start();
+  assert.equal((await data(`/api/v1/runs/${crashId}`)).status, 'success');
+  await new RemoteRunner(options).tick(); await new RemoteRunner(options).tick();
+  assert.equal(await readFile(crashWitness, 'utf8'), 'once\n', 'operator adjudication never reexecutes a shell');
+  assert.deepEqual(await readFile(stepFile), stepBefore, 'operator decision does not rewrite runner evidence');
+  await stop(control); control = undefined;
   async function inspect(path) {
     for (const name of await readdir(path)) {
       const file = join(path, name); if ((await stat(file)).isDirectory()) await inspect(file);
@@ -194,7 +224,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionStillUncertain: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }
