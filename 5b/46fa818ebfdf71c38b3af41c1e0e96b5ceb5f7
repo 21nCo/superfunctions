@@ -1,0 +1,33 @@
+cmsfn/.conduct/literal-save-readiness.md
+  s_e1c5fc1a65c0cf::t_91e7b2e02fdd29 1-21
+cmsfn/.conduct/native-safari-readiness.md
+  s_e1c5fc1a65c0cf::t_7644b18c4cd147 1-39
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e6d83f15b1eb63 20,85-88,103-106,111-114,519,521
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_a48536d531559a 1,4,33-34
+cmsfn/.conduct/studio-safari-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_fb82e19df4e44e 1-97
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_ef6482bee0feab 35-36
+cmsfn/studio/src/__tests__/patch-literal-fields.test.ts
+  s_e1c5fc1a65c0cf::t_9952cf38f58069 1-15
+cmsfn/studio/src/editor/save/buildPatchOps.ts
+  s_e1c5fc1a65c0cf::t_221bf4e9706b0c 1-2,4-8,10-14,16-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b46fa818ebfdf71c38b3af41c1e0e96b5ceb5f7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
