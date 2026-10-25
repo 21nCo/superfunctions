@@ -1,0 +1,162 @@
+[
+  {
+    "id": "abc",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "abc",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "abc",
+    "rate": 0.5,
+    "sampled": false
+  },
+  {
+    "id": "abc",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "hello",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "hello",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "hello",
+    "rate": 0.5,
+    "sampled": true
+  },
+  {
+    "id": "hello",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "trace-1",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "trace-1",
+    "rate": 0.1,
+    "sampled": true
+  },
+  {
+    "id": "trace-1",
+    "rate": 0.5,
+    "sampled": true
+  },
+  {
+    "id": "trace-1",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "trace-2",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "trace-2",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "trace-2",
+    "rate": 0.5,
+    "sampled": false
+  },
+  {
+    "id": "trace-2",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "trace-3",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "trace-3",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "trace-3",
+    "rate": 0.5,
+    "sampled": false
+  },
+  {
+    "id": "trace-3",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "日本語",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "日本語",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "日本語",
+    "rate": 0.5,
+    "sampled": true
+  },
+  {
+    "id": "日本語",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "🙂",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "🙂",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "🙂",
+    "rate": 0.5,
+    "sampled": false
+  },
+  {
+    "id": "🙂",
+    "rate": 1,
+    "sampled": true
+  },
+  {
+    "id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "rate": 0,
+    "sampled": false
+  },
+  {
+    "id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "rate": 0.1,
+    "sampled": false
+  },
+  {
+    "id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "rate": 0.5,
+    "sampled": true
+  },
+  {
+    "id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "rate": 1,
+    "sampled": true
+  }
+]

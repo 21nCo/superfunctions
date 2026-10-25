@@ -47,8 +47,8 @@ export const WatchFnConfigSchema = z.object({
 
   trace: z.object({
     enabled: z.boolean().default(true),
-    sampleRate: z.number().default(0.1),
-    serviceName: z.string().optional(),
+    sampleRate: z.number().finite().min(0).max(1).default(0.1),
+    serviceName: z.string().trim().min(1).optional(),
   }).optional(),
   
   infra: z.object({

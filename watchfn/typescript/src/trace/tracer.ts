@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { sampleTrace } from "./sampling";
 import { AsyncLocalStorage } from "async_hooks";
 import type { WatchFn } from "../core/watch-fn";
 import { Span, SpanOptions } from "./span";
@@ -7,7 +9,9 @@ export class Tracer {
   private watch: WatchFn;
   private context: AsyncLocalStorage<Span | undefined>;
 
-  constructor(watch: WatchFn, private readonly service?: string) {
+  constructor(watch: WatchFn, private readonly service?: string, private readonly policy: { enabled?: boolean; sampleRate?: number } = {}) {
+    sampleTrace("validation", policy.sampleRate ?? 1);
+    if (policy.enabled !== undefined && typeof policy.enabled !== "boolean") throw new TypeError("Invalid tracing enabled flag");
     this.watch = watch;
     this.context = new AsyncLocalStorage<Span | undefined>();
   }
@@ -19,14 +23,17 @@ export class Tracer {
     // Use parent from options or from context
     const sameTrace = options.traceId === undefined || options.traceId === parentSpan?.traceId;
     const parentId = options.parentId ?? (sameTrace ? parentSpan?.id : undefined);
-    const traceId = options.traceId || parentSpan?.traceId;
+    const traceId = options.traceId || parentSpan?.traceId || randomBytes(16).toString("hex");
+    const inheritedFlags = options.traceFlags ?? (sameTrace ? parentSpan?.traceFlags : undefined);
+    if (inheritedFlags !== undefined && (!Number.isInteger(inheritedFlags) || inheritedFlags < 0 || inheritedFlags > 255)) throw new TypeError("Invalid trace flags");
+    const traceFlags = this.policy.enabled === false ? 0 : inheritedFlags === undefined ? (sampleTrace(traceId, this.policy.sampleRate ?? 1) ? 1 : 0) : inheritedFlags & 1;
 
     const span = new Span({
       name,
       ...options,
       parentId,
       traceId,
-      traceFlags: options.traceFlags ?? (sameTrace ? parentSpan?.traceFlags : undefined),
+      traceFlags,
       traceState: options.traceState ?? (sameTrace ? parentSpan?.traceState : undefined),
     }, finished => this.record(finished));
 
@@ -76,6 +83,7 @@ export class Tracer {
   }
 
   record(span: Span) {
+      if (!(span.traceFlags & 1)) return;
       this.watch.track("trace.span", { ...span.toJSON(), ...(this.service ? { service: this.service } : {}) });
   }
   

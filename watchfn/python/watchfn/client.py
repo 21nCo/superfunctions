@@ -39,7 +39,11 @@ class WatchFn:
         self.process_metrics = ProcessMetricsCollector(self)
 
         self._alerts = None
-        self.trace = Tracer(self.config.name, self._record_trace, self._query_traces)
+        trace_config = self.config.trace
+        trace_service = (trace_config.service_name or self.config.name) if trace_config else self.config.name
+        self.trace = Tracer(trace_service, self._record_trace, self._query_traces,
+                            enabled=self.config.trace_enabled and (trace_config.enabled if trace_config else True),
+                            sample_rate=trace_config.sample_rate if trace_config else 1.0)
 
         # HTTP Routes
         self.http_routes: List[Route] = create_routes(self)

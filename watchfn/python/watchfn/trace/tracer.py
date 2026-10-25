@@ -6,6 +6,7 @@ from threading import RLock
 from secrets import token_hex
 from copy import deepcopy
 from .queries import TraceQueries
+from .sampling import sample_trace
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -68,7 +69,10 @@ class Span:
 class Tracer(TraceQueries):
     """Tracer for distributed tracing."""
     
-    def __init__(self, service_name: str, track_callback, query=None):
+    def __init__(self, service_name: str, track_callback, query=None, *, enabled=True, sample_rate=1.0):
+        sample_trace("validation", sample_rate)
+        if type(enabled) is not bool: raise ValueError("Invalid tracing enabled flag")
+        self.enabled, self.sample_rate = enabled, sample_rate
         super().__init__(query or self._unavailable_query)
         self.service_name = service_name
         self.track_callback = track_callback
@@ -99,6 +103,9 @@ class Tracer(TraceQueries):
             if trace_state is None: trace_state = parent.trace_state
         if trace_id is None:
             trace_id = token_hex(16)
+        if trace_flags is not None and (type(trace_flags) is not int or not 0 <= trace_flags <= 255):
+            raise ValueError("Invalid trace flags")
+        trace_flags = 0 if not self.enabled else (int(sample_trace(trace_id, self.sample_rate)) if trace_flags is None else trace_flags & 1)
         span_id = token_hex(8)
 
         span = Span(
@@ -123,6 +130,9 @@ class Tracer(TraceQueries):
         span.finish()
 
     def _record_span(self, span: Span):
+        if not span.trace_flags & 1:
+            self.active_spans.pop(span.span_id, None)
+            return
         tags = deepcopy(span.tags or {})
         if span.status == "error":
             tags["error"] = True

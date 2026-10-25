@@ -44,6 +44,21 @@ class AlertDeliveryConfig(BaseModel):
         return self
 
 
+class TraceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    enabled: bool = Field(True, strict=True)
+    sample_rate: float = Field(0.1, alias="sampleRate", ge=0, le=1, allow_inf_nan=False, strict=True)
+    service_name: Optional[str] = Field(None, alias="serviceName", strict=True, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_service(self):
+        if self.service_name is not None:
+            self.service_name = self.service_name.strip()
+            if not self.service_name:
+                raise ValueError("Invalid trace service name")
+        return self
+
+
 class WatchFnConfig(BaseModel):
     name: str
     auth: Optional[HttpAuthConfig] = None
@@ -52,7 +67,8 @@ class WatchFnConfig(BaseModel):
     storage: Literal["memory", "database"] = "memory"
     apm_enabled: bool = True
     errors_enabled: bool = True
-    trace_enabled: bool = True
+    trace_enabled: bool = Field(True, strict=True)
+    trace: Optional[TraceConfig] = None
 
 class Event(BaseModel):
     _storage_id: str = PrivateAttr(default_factory=lambda: str(uuid4()))

@@ -1,0 +1,11 @@
+# Trace sampling policy
+
+The existing trace enabled/sampleRate settings previously did not control span recording. Regression tests reproduce disabled recording in both language baselines. WatchFn now applies the configured policy when creating a span and retains that decision through local children and propagated context.
+
+New roots use the first unsigned 32 bits of SHA-256 over the UTF-8 trace ID, divided by 2^32, compared with the configured rate. Both languages share 32 vectors including Unicode IDs. Valid incoming sampled flags override the local root rate; explicitly disabled tracing overrides incoming sampling. Unsampled spans still propagate context but do not enter WatchFn storage. Rate values must be finite and between zero and one. Invalid Unicode and invalid explicit flags are rejected.
+
+Without trace configuration, existing manual tracing records all spans. An explicit trace configuration defaults to the existing documented 0.1 rate. Python also honors its legacy trace_enabled switch and accepts nested snake_case or camelCase fields. Configured service names label spans without changing the application storage namespace. Manually submitted events remain outside this tracer policy.
+
+Validation: all 340 TypeScript tests and 275 Python source tests pass, with TypeScript declaration checking. Native HTTP tests cover incoming sampled and unsampled contexts; stored-query checks verify configured service labels. Python reports 22 dependency warnings. Logs: /tmp/watch-sampling-full-ts.log, /tmp/watch-sampling-full-python.log, /tmp/watch-sampling-types.log. Core build and fresh seven-tarball strict ESM/CommonJS consumers pass, including zero-rate root omission, retained incoming sampling and stored service names. A fresh six-wheel Python 3.12 installation passes all 275 tests. Installed Python warnings include the existing naive-datetime capacity fixtures; this is not a warning-free run. Logs: /tmp/watch-sampling-build.log, /tmp/watch-sampling-packed.log, /tmp/watch-sampling-wheel.log.
+
+The broader SPEC adaptive/error/slow-trace sampling policy is not implemented by this fixed root-rate checkpoint. Automatic instrumentation, baggage, broader tracing API examples, physical scan/memory bounds, other public placeholder APIs, and original production acceptance gates remain open.

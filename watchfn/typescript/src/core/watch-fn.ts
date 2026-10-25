@@ -97,7 +97,7 @@ export class WatchFn implements WatchFnInstance {
     this.eventRouter = new EventRouter();
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
-    this.tracer = new Tracer(this, this.config.name);
+    this.tracer = new Tracer(this, this.config.trace?.serviceName ?? this.config.name, this.config.trace);
     this.systemMetrics = new SystemMetricsCollector(this, this.config.infra?.interval);
     this.processMetrics = new ProcessMetricsCollector(this, this.config.infra?.interval);
     this.syntheticsScheduler = new SyntheticScheduler(this);

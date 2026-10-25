@@ -375,6 +375,12 @@ await watch.trace.startWithHeaders('checkout', incomingHeaders, async (span) => 
 });
 ```
 
-The parser validates W3C Trace Context level 1 IDs, flags and state. Invalid incoming context starts an independent trace; invalid explicit injection throws before changing headers. Header names are case insensitive; output replaces existing trace headers with lowercase names. Each field is limited to 512 characters. Valid parent flags and vendor state propagate to child spans; flags do not by themselves suppress recording. Closed spans cannot supply outbound context, and late async work does not inherit a completed parent. Explicit non-W3C manual IDs remain usable locally but cannot be injected.
+The parser validates W3C Trace Context level 1 IDs, flags and state. Invalid incoming context starts an independent trace; invalid explicit injection throws before changing headers. Header names are case insensitive; output replaces existing trace headers with lowercase names. Each field is limited to 512 characters. Valid parent flags and vendor state propagate to child spans; the sampled flag controls trace recording. Closed spans cannot supply outbound context, and late async work does not inherit a completed parent. Explicit non-W3C manual IDs remain usable locally but cannot be injected.
 
-This API does not patch HTTP clients or framework middleware automatically. Baggage, automatic instrumentation and configured sample-rate enforcement remain separate requirements. Flush before querying buffered completed spans outside callbacks. Stored trace APIs and their result/scan limits are documented in `../.conduct/stored-trace-queries.md`.
+This API does not patch HTTP clients or framework middleware automatically. Baggage and automatic instrumentation remain separate requirements. Flush before querying buffered completed spans outside callbacks. Stored trace APIs and their result/scan limits are documented in `../.conduct/stored-trace-queries.md`.
+
+### Trace sampling
+
+`trace: { enabled: true, sampleRate: 0.1, serviceName: "api" }` controls tracing. Rates must be finite numbers from0 through1. New roots make a deterministic SHA-256/UTF-8 decision from their trace ID; child spans inherit that decision instead of resampling. Valid incoming context supplies its parent decision, even when the local root rate is0. `enabled: false` overrides all decisions, emits unsampled outbound context and suppresses trace recording.
+
+Omitting the entire trace configuration preserves the previous manual-tracing default of recording all spans. Providing a trace configuration without a rate uses0.1. Unsampled scopes still provide parentage and outbound context but produce no stored spans. This applies only to the tracer, not arbitrary explicit event ingestion. The configured service name labels recorded spans without changing the WatchFn storage/application namespace.

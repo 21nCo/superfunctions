@@ -48,7 +48,8 @@ it('propagates real HTTP parentage, flags and state across concurrent async call
         const body = await response.json() as any;
         expect(body.parentId).toBe(span.id); expect(body.traceId).toBe(parent.traceId); expect(body.flags).toBe(flag);
         expect(body.headers.tracestate).toBe(parent.traceState);
-        expect(events.find(event => event.name === 'remote-child' && event.traceId === parent.traceId)?.parentId).toBe(body.id);
+        if (flag) expect(events.find(event => event.name === 'remote-child' && event.traceId === parent.traceId)?.parentId).toBe(body.id);
+        else expect(events.filter(event => event.traceId === parent.traceId)).toEqual([]);
       });
     }));
     expect(() => client.injectHeaders()).toThrow('No active');
