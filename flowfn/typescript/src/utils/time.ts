@@ -88,15 +88,15 @@ export async function sleepDuration(duration: Duration): Promise<void> {
 export function timeout<T>(
   promise: Promise<T>,
   ms: number,
-  message?: string
+  message?: string,
 ): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) =>
       setTimeout(
         () => reject(new Error(message || `Timeout after ${ms}ms`)),
-        ms
-      )
+        ms,
+      ),
     ),
   ]);
 }

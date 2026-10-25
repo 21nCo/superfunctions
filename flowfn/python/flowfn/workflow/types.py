@@ -1,12 +1,15 @@
 """Workflow type definitions."""
 
-from typing import Any, Optional, Callable, Awaitable
-from pydantic import BaseModel, Field
+from collections.abc import Awaitable
 from enum import Enum
+from typing import Any, Callable, Optional
+
+from pydantic import BaseModel, Field
 
 
 class ExecutionStatus(str, Enum):
     """Workflow execution status."""
+
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -15,9 +18,15 @@ class ExecutionStatus(str, Enum):
 
 class WorkflowExecution(BaseModel):
     """Workflow execution state."""
+
     id: str
     workflow_id: str
     input: Any
+    trace_context: Optional[dict[str, str]] = None
+    definition_version: str = "1"
+    definition_hash: str = ""
+    lease_token: Optional[str] = None
+    lease_expires_at: Optional[int] = None
     status: ExecutionStatus
     context: dict[str, Any] = Field(default_factory=dict)
     result: Optional[Any] = None
@@ -27,13 +36,14 @@ class WorkflowExecution(BaseModel):
     created_at: int
     updated_at: int
     state: dict[str, Any] = Field(default_factory=dict)
-    
+
     class Config:
         arbitrary_types_allowed = True
 
 
 class WorkflowEvent(BaseModel):
     """Workflow execution event."""
+
     id: str
     execution_id: str
     type: str
@@ -43,6 +53,7 @@ class WorkflowEvent(BaseModel):
 
 class ListOptions(BaseModel):
     """List query options."""
+
     status: Optional[ExecutionStatus] = None
     limit: int = 100
     offset: int = 0
@@ -55,27 +66,27 @@ ConditionFunc = Callable[[Any], bool]
 
 class WorkflowContext:
     """Execution context for workflow steps."""
-    
+
     def __init__(self, input_data: Any, state: dict[str, Any]):
         self.input = input_data
         self._state = state
-    
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get value from context."""
         return self._state.get(key, default)
-    
+
     def set(self, key: str, value: Any) -> None:
         """Set value in context."""
         self._state[key] = value
-    
+
     def has(self, key: str) -> bool:
         """Check if key exists."""
         return key in self._state
-    
+
     def delete(self, key: str) -> None:
         """Delete key from context."""
         self._state.pop(key, None)
-    
+
     @property
     def state(self) -> dict[str, Any]:
         """Get full state."""

@@ -94,7 +94,7 @@ export class PriorityQueue<T> {
       if (
         this.compareFn(
           this.heap[index].priority,
-          this.heap[parentIndex].priority
+          this.heap[parentIndex].priority,
         ) <= 0
       ) {
         break;
@@ -118,7 +118,7 @@ export class PriorityQueue<T> {
         leftChild < this.heap.length &&
         this.compareFn(
           this.heap[leftChild].priority,
-          this.heap[largest].priority
+          this.heap[largest].priority,
         ) > 0
       ) {
         largest = leftChild;
@@ -128,7 +128,7 @@ export class PriorityQueue<T> {
         rightChild < this.heap.length &&
         this.compareFn(
           this.heap[rightChild].priority,
-          this.heap[largest].priority
+          this.heap[largest].priority,
         ) > 0
       ) {
         largest = rightChild;

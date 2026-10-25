@@ -1,0 +1,6 @@
+{"node":"20.0.0","coreESM":"passed","coreCJS":"passed","adminESM":"passed","adminDynamicCJS":"passed"}
+{"node":"20.20.0","coreESM":"passed","coreCJS":"passed","adminESM":"passed","adminDynamicCJS":"passed"}
+{"node":"22.23.3","coreESM":"passed","coreCJS":"passed","adminESM":"passed","adminDynamicCJS":"passed"}
+{"installedPostgresPartitions":"passed","routing":"sha256-utf8-u32be-v1","retentionBarrier":"passed","independentConnections":true}
+{"runtime":"v20.20.0","esm":"passed","commonjs":"passed","types":"passed","audit":{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0},"localPrerequisites":["packages/observability","packages/http","mcpfn/core","packages/admin"]}
+{"nativeProcessesStopped": [93627, 93628], "temporaryDataRemoved": "/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/flow-owned-native-mkrgd0d5"}

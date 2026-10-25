@@ -1,0 +1,40 @@
+{
+  "ancestor": "963620651fca736ad5792f3c2b24d2c78c8ccf54",
+  "baseline": {
+    "failed": 2,
+    "failures": [
+      "configured count ignored",
+      "concurrent same-partition delivery"
+    ]
+  },
+  "normal_ci": {
+    "python": "3.11.14",
+    "build": [
+      "wheel",
+      "sdist"
+    ],
+    "ruff": "passed",
+    "strict_mypy_files": 88,
+    "tests_passed": 117,
+    "tests_skipped": 126,
+    "test_seconds": 7.52
+  },
+  "isolated_wheels": [
+    {
+      "python": "3.9.6",
+      "partition_tests": 26,
+      "seconds": 2.71,
+      "strict_consumer": "passed"
+    },
+    {
+      "python": "3.11.14",
+      "partition_tests": 26,
+      "seconds": 3.05,
+      "strict_consumer": "passed"
+    }
+  ],
+  "temporary_consumers_removed": true,
+  "native_provider_services": false,
+  "python_durable_partition_parity": "incomplete",
+  "performance_gates": "open"
+}

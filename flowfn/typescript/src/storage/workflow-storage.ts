@@ -72,7 +72,7 @@ export class MemoryWorkflowStorage implements WorkflowStorage {
 
   async list(
     workflowId: string,
-    options: ListOptions = {}
+    options: ListOptions = {},
   ): Promise<WorkflowExecution[]> {
     const executionIds = this.workflowIndex.get(workflowId) || new Set();
     let executions: WorkflowExecution[] = [];
@@ -106,7 +106,7 @@ export class MemoryWorkflowStorage implements WorkflowStorage {
 
   async updateStatus(
     executionId: string,
-    status: ExecutionStatus
+    status: ExecutionStatus,
   ): Promise<void> {
     const execution = this.executions.get(executionId);
     if (execution) {
@@ -125,7 +125,7 @@ export class MemoryWorkflowStorage implements WorkflowStorage {
 
   async updateState(
     executionId: string,
-    state: Record<string, any>
+    state: Record<string, any>,
   ): Promise<void> {
     const execution = this.executions.get(executionId);
     if (execution) {

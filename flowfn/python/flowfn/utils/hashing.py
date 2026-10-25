@@ -9,9 +9,9 @@ def hash_job(data: Any) -> str:
     """Generate SHA-256 hash of job data."""
     # Convert to stable JSON string
     json_str = json.dumps(data, sort_keys=True, default=str)
-    
+
     # Create hash
-    hash_obj = hashlib.sha256(json_str.encode('utf-8'))
+    hash_obj = hashlib.sha256(json_str.encode("utf-8"))
     return hash_obj.hexdigest()
 
 

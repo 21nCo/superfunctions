@@ -1,9 +1,11 @@
 export * from "./core/flow-fn.js";
 export * from "./core/scheduler.js";
+export * from "./core/durable-scheduler.js";
 export * from "./core/metrics.js";
 
 export * from "./queue/types.js";
 export * from "./queue/worker.js";
+export * from "./queue/worker-pool.js";
 export * from "./queue/dlq.js";
 export * from "./stream/types.js";
 export * from "./workflow/types.js";
@@ -55,3 +57,5 @@ export {
   type ListOptions as StorageListOptions,
 } from "./storage/workflow-storage.js";
 export * from "./storage/event-log.js";
+
+export { ShutdownTimeoutError, type ShutdownOptions } from "./core/shutdown.js";

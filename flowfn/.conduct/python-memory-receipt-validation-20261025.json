@@ -1,0 +1,42 @@
+{
+  "ancestor": "50c2823c29597fea8daef277552f578baa21f21b",
+  "baseline_failures": [
+    "returned manual callback did not expire",
+    "held and unread payloads resisted trim"
+  ],
+  "normal_ci": {
+    "build": [
+      "wheel",
+      "sdist"
+    ],
+    "ruff": "passed",
+    "strict_mypy_files": 88,
+    "tests_passed": 121,
+    "tests_skipped": 126,
+    "test_seconds": 7.81
+  },
+  "discarded_package_evidence": {
+    "reason": "incremental setuptools build included deleted internal module",
+    "runtime_tests_passed": true,
+    "final_acceptance": false
+  },
+  "clean_source_wheels": [
+    {
+      "python": "3.9.6",
+      "tests": 30,
+      "seconds": 2.31,
+      "strict_consumer_files": 2
+    },
+    {
+      "python": "3.11.14",
+      "tests": 30,
+      "seconds": 2.25,
+      "strict_consumer_files": 2
+    }
+  ],
+  "removed_module_absent": true,
+  "import_origin_verified": true,
+  "temporary_consumers_removed": true,
+  "durable_provider_parity": "incomplete",
+  "performance_gates": "open"
+}

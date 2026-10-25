@@ -1,154 +1,187 @@
-import parser from 'cron-parser';
-
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from './shutdown.js';
+import parser from "cron-parser";
 export interface ScheduleOptions {
-    pattern?: string;
-    timezone?: string;
-    data?: any;
-    startDate?: Date;
-    endDate?: Date;
-    limit?: number;
-    every?: number; // ms
+  /** Change to start a new durable schedule generation when handler behavior changes. */
+  version?: string;
+  pattern?: string;
+  timezone?: string;
+  data?: any;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+  every?: number;
 }
-
+interface Task {
+  options: ScheduleOptions;
+  handler: (data: any) => any;
+  nextRun: number;
+  timer?: ReturnType<typeof setTimeout>;
+  count: number;
+  paused: boolean;
+  running?: Promise<void>;
+  lastError?: string;
+}
 export class Scheduler {
-    private tasks: Map<string, {
-        pattern: string | ScheduleOptions;
-        handler: Function;
-        nextRun: number;
-        timer?: NodeJS.Timeout;
-        count: number;
-        paused: boolean;
-    }> = new Map();
-
-    async schedule(name: string, pattern: string | ScheduleOptions, handler: Function): Promise<void> {
-        await this.cancel(name);
-        
-        const options: ScheduleOptions = typeof pattern === 'string' ? { pattern } : pattern;
-        const now = Date.now();
-        let nextRun = 0;
-
-        if (options.pattern) {
-            const interval = parser.parseExpression(options.pattern, {
-                currentDate: options.startDate || new Date(),
-                tz: options.timezone
-            });
-            nextRun = interval.next().getTime();
-        } else if (options.every) {
-            nextRun = (options.startDate?.getTime() || now) + options.every;
+  private tasks = new Map<string, Task>();
+  private active = new Set<Promise<void>>();
+  private closed = false;
+  private closing?: Promise<void>;
+  private next(options: ScheduleOptions, now: number): number {
+    return options.pattern
+      ? parser
+          .parseExpression(options.pattern, {
+            currentDate: new Date(now),
+            tz: options.timezone,
+          })
+          .next()
+          .getTime()
+      : now + options.every!;
+  }
+  async schedule(
+    name: string,
+    pattern: string | ScheduleOptions,
+    handler: (data: any) => any,
+  ): Promise<void> {
+    if (this.closed) throw new Error("Scheduler is closed");
+    const options = typeof pattern === "string" ? { pattern } : { ...pattern };
+    if (!name.trim() || typeof handler !== "function")
+      throw new Error("Schedule requires a name and handler");
+    if (Boolean(options.pattern) === (options.every !== undefined))
+      throw new Error("Schedule requires exactly one cron pattern or interval");
+    if (
+      options.every !== undefined &&
+      (!Number.isFinite(options.every) || options.every <= 0)
+    )
+      throw new Error("Interval must be positive");
+    if (
+      options.limit !== undefined &&
+      (!Number.isInteger(options.limit) || options.limit < 0)
+    )
+      throw new Error("Limit must be a nonnegative integer");
+    for (const date of [options.startDate, options.endDate])
+      if (date !== undefined && !Number.isFinite(date.getTime()))
+        throw new Error("Schedule dates must be valid");
+    if (
+      options.startDate &&
+      options.endDate &&
+      options.startDate > options.endDate
+    )
+      throw new Error("Schedule start must precede end");
+    const nextRun = this.next(
+      options,
+      Math.max(Date.now(), options.startDate?.getTime() ?? 0),
+    );
+    await this.cancel(name);
+    if (
+      options.limit === 0 ||
+      (options.endDate && nextRun > options.endDate.getTime())
+    )
+      return;
+    const task: Task = { options, handler, nextRun, count: 0, paused: false };
+    this.tasks.set(name, task);
+    this.plan(name, task);
+  }
+  repeat(name: string, options: ScheduleOptions, handler: (data: any) => any) {
+    return this.schedule(name, options, handler);
+  }
+  private plan(name: string, task: Task) {
+    if (
+      this.closed ||
+      task.paused ||
+      this.tasks.get(name) !== task ||
+      task.running
+    )
+      return;
+    if (task.timer) clearTimeout(task.timer);
+    const delay = Math.max(0, task.nextRun - Date.now());
+    task.timer = setTimeout(
+      () => {
+        if (this.closed || task.paused || this.tasks.get(name) !== task) return;
+        // Node timers cannot represent waits beyond 2^31-1 milliseconds.
+        if (Date.now() < task.nextRun) {
+          this.plan(name, task);
+          return;
         }
-
-        this.tasks.set(name, {
-            pattern,
-            handler,
-            nextRun,
-            count: 0,
-            paused: false
-        });
-
-        this.plan(name);
-    }
-    
-    async repeat(name: string, options: any, handler: Function): Promise<void> {
-        return this.schedule(name, options, handler);
-    }
-
-    private plan(name: string) {
-        const task = this.tasks.get(name);
-        if (!task || task.paused) return;
-
-        const now = Date.now();
-        const delay = Math.max(0, task.nextRun - now);
-
-        if (task.timer) clearTimeout(task.timer);
-
-        task.timer = setTimeout(async () => {
-            if (task.paused) return;
-            
+        const run = Promise.resolve()
+          .then(async () => {
             try {
-                const options: ScheduleOptions = typeof task.pattern === 'string' ? { pattern: task.pattern } : task.pattern;
-                await task.handler(options.data);
-                task.count++;
-
-                // Check limits
-                if (options.limit && task.count >= options.limit) {
-                    this.tasks.delete(name);
-                    return;
-                }
-
-                // Plan next run
-                if (options.pattern) {
-                    const interval = parser.parseExpression(options.pattern, {
-                        currentDate: new Date(),
-                        tz: options.timezone
-                    });
-                    task.nextRun = interval.next().getTime();
-                } else if (options.every) {
-                    task.nextRun = Date.now() + options.every;
-                }
-
-                if (options.endDate && task.nextRun > options.endDate.getTime()) {
-                    this.tasks.delete(name);
-                    return;
-                }
-
-                this.plan(name);
-            } catch (err) {
-                console.error(`Scheduler task "${name}" failed:`, err);
-                // Still plan next run? Usually yes.
-                this.plan(name);
+              await task.handler(task.options.data);
+              delete task.lastError;
+            } catch (error) {
+              task.lastError =
+                error instanceof Error ? error.message : String(error);
+            } finally {
+              task.count++;
             }
-        }, delay);
-    }
-
-    async list(): Promise<any[]> {
-        return Array.from(this.tasks.entries()).map(([name, task]) => ({
-            name,
-            nextRun: new Date(task.nextRun),
-            count: task.count,
-            paused: task.paused
-        }));
-    }
-
-    async cancel(name: string): Promise<void> {
-        const task = this.tasks.get(name);
-        if (task) {
-            if (task.timer) clearTimeout(task.timer);
-            this.tasks.delete(name);
-        }
-    }
-
-    async pause(name: string): Promise<void> {
-        const task = this.tasks.get(name);
-        if (task) {
-            task.paused = true;
-            if (task.timer) clearTimeout(task.timer);
-        }
-    }
-
-    async resume(name: string): Promise<void> {
-        const task = this.tasks.get(name);
-        if (task && task.paused) {
-            task.paused = false;
-            // Recalculate next run if it passed while paused?
-            // For cron, we just find the next occurrence from now.
-            const options: ScheduleOptions = typeof task.pattern === 'string' ? { pattern: task.pattern } : task.pattern;
-            if (options.pattern) {
-                const interval = parser.parseExpression(options.pattern, {
-                    currentDate: new Date(),
-                    tz: options.timezone
-                });
-                task.nextRun = interval.next().getTime();
-            } else if (options.every) {
-                task.nextRun = Date.now() + options.every;
+          })
+          .finally(() => {
+            task.running = undefined;
+            this.active.delete(run);
+            if (this.tasks.get(name) !== task || this.closed) return;
+            if (
+              task.options.limit !== undefined &&
+              task.count >= task.options.limit
+            ) {
+              this.tasks.delete(name);
+              return;
             }
-            this.plan(name);
-        }
+            try {
+              task.nextRun = this.next(task.options, Date.now());
+            } catch (error) {
+              task.lastError = String(error);
+              task.paused = true;
+              return;
+            }
+            if (
+              task.options.endDate &&
+              task.nextRun > task.options.endDate.getTime()
+            ) {
+              this.tasks.delete(name);
+              return;
+            }
+            this.plan(name, task);
+          });
+        task.running = run;
+        this.active.add(run);
+      },
+      Math.min(delay, 2147483647),
+    );
+  }
+  async list() {
+    return [...this.tasks].map(([name, task]) => ({
+      name,
+      nextRun: new Date(task.nextRun),
+      count: task.count,
+      paused: task.paused,
+      lastError: task.lastError,
+    }));
+  }
+  async cancel(name: string) {
+    const task = this.tasks.get(name);
+    if (task?.timer) clearTimeout(task.timer);
+    this.tasks.delete(name);
+  }
+  async pause(name: string) {
+    const task = this.tasks.get(name);
+    if (task) {
+      task.paused = true;
+      if (task.timer) clearTimeout(task.timer);
     }
-
-    async close(): Promise<void> {
-        for (const task of this.tasks.values()) {
-            if (task.timer) clearTimeout(task.timer);
-        }
-        this.tasks.clear();
+  }
+  async resume(name: string) {
+    const task = this.tasks.get(name);
+    if (task?.paused) {
+      task.paused = false;
+      task.nextRun = this.next(task.options, Date.now());
+      this.plan(name, task);
     }
+  }
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
+    this.closed = true;
+    for (const task of this.tasks.values()) if (task.timer) clearTimeout(task.timer);
+    this.tasks.clear();
+    return this.closing = boundedShutdown(Promise.all([...this.active]), timeout, 'Scheduler', () => this.active.clear());
+  }
 }

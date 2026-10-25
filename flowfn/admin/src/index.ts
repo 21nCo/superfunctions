@@ -10,7 +10,9 @@ import { flowFnAdminCapability } from "./capability.js";
 import { createFlowFnDomainAdminService } from "./domain-service.js";
 import type { FlowFnDomainAdminServiceOptions } from "./types.js";
 
-export function createFlowFnDomainAdminAdapter(options: FlowFnDomainAdminServiceOptions): AdminCapabilityAdapter<typeof flowFnAdminCapability> {
+export function createFlowFnDomainAdminAdapter(
+  options: FlowFnDomainAdminServiceOptions,
+): AdminCapabilityAdapter<typeof flowFnAdminCapability> {
   return createFlowFnAdminAdapter(createFlowFnDomainAdminService(options));
 }
 

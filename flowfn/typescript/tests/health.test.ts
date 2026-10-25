@@ -2,7 +2,7 @@
  * Tests for Health Monitoring
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   HealthCheckerImpl,
   MemoryEventTracker,
@@ -225,4 +225,33 @@ describe("Event Tracker", () => {
       count: 42,
     });
   });
+});
+
+it("expires tracked events at the boundary, including zero-age events", () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    const tracker = new MemoryEventTracker();
+    tracker.track({ type: "old", category: "system", severity: "info", message: "old" });
+    clock.mockReturnValue(1050);
+    tracker.track({ type: "young", category: "system", severity: "info", message: "young" });
+    clock.mockReturnValue(1100);
+    expect(tracker.cleanup(100)).toBe(1);
+    expect(tracker.getEvents().map(event => event.type)).toEqual(["young"]);
+    tracker.track({ type: "now", category: "system", severity: "info", message: "now" });
+    expect(tracker.cleanup(0)).toBe(2);
+    expect(() => tracker.cleanup(NaN)).toThrow("nonnegative");
+  } finally { clock.mockRestore(); }
+});
+
+it("filters tracked event types and isolates stored event metadata", () => {
+  const tracker = new MemoryEventTracker();
+  const metadata = { value: 1 };
+  tracker.track({ type: "first", category: "system", severity: "info", message: "first", metadata });
+  tracker.track({ type: "second", category: "system", severity: "info", message: "second" });
+  metadata.value = 2;
+  const selected = tracker.getEvents({ type: "first" });
+  expect(selected).toHaveLength(1); expect(selected[0].metadata).toEqual({ value: 1 });
+  selected[0].metadata!.value = 3;
+  expect(tracker.getEvents({ type: "first" })[0].metadata).toEqual({ value: 1 });
+  expect(tracker.getEvents({ limit: 0 })).toEqual([]);
 });

@@ -99,7 +99,7 @@ export function generateMessageId(prefix?: string): string {
  */
 export function generateDeterministicId(
   content: string | object,
-  prefix?: string
+  prefix?: string,
 ): string {
   const hash = createHash("sha256");
   const data = typeof content === "string" ? content : JSON.stringify(content);

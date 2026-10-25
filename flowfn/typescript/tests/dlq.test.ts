@@ -2,7 +2,7 @@
  * Tests for Dead Letter Queue (DLQ)
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MemoryDLQManager, DLQJob } from "../src/queue/dlq.js";
 import { Job } from "../src/queue/types.js";
 
@@ -199,7 +199,22 @@ describe("DLQ Manager", () => {
     await dlqWithCallback.moveToDLQ(job as Job, "Test reason");
 
     expect(callbackCalled).toBe(true);
-    expect(callbackJob?.id).toBe("job-1");
+    expect((callbackJob as Job | null)?.id).toBe("job-1");
     expect(callbackReason).toBe("Test reason");
   });
+});
+
+it("expires DLQ jobs at the exact retention boundary while preserving younger jobs", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    const manager = new MemoryDLQManager();
+    await manager.moveToDLQ({ id: "old", name: "queue", data: {}, state: "failed" } as Job, "failure");
+    clock.mockReturnValue(1050);
+    await manager.moveToDLQ({ id: "young", name: "queue", data: {}, state: "failed" } as Job, "failure");
+    clock.mockReturnValue(1100);
+    expect(await manager.clean(100)).toBe(1);
+    expect((await manager.getAll()).map(job => job.id)).toEqual(["young"]);
+    expect(await manager.clean(0)).toBe(1);
+    await expect(manager.clean(-1)).rejects.toThrow("nonnegative");
+  } finally { clock.mockRestore(); }
 });

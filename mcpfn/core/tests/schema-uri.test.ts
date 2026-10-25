@@ -31,3 +31,22 @@ describe("patched URI resolver JSON Pointer compatibility", () => {
     expect(originalFragment).toBeDefined();
   });
 });
+
+describe("URI scheme authority validation", () => {
+  it.each(["%6Aavascript:alert(1)", "%u006Aavascript:alert(1)"])("rejects encoded scheme %s before schema resolution", reference => {
+    expect(schemaUriResolver.parse(reference)).toMatchObject({ error: "URI scheme is malformed.", scheme: reference.split(":")[0] });
+    expect(() => createSchemaCompiler("ajv").compile({ type: "object", $ref: reference })).toThrow();
+  });
+});
+
+it("limits anonymous-root adaptation to literal relative dot segments", () => {
+  for (const reference of [".", "./", "../", "../../", "./../"]) {
+    expect(schemaUriResolver.resolve("", reference)).toBe("");
+    expect(schemaUriResolver.resolve("#", reference + "#node")).toBe("#node");
+  }
+  for (const reference of ["/", "//authority.test/", "%2e", ".?query", "a/..", "https://schema-collection.mcpfn.invalid/0-0"]) {
+    expect(schemaUriResolver.resolve("", reference)).toBe(uri.resolve("", reference));
+    expect(schemaUriResolver.resolve("", reference)).not.toBe("");
+  }
+  expect(schemaUriResolver.resolve("https://example.test/path/", "../")).toBe(uri.resolve("https://example.test/path/", "../"));
+});

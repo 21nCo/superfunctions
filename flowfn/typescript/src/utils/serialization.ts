@@ -13,7 +13,7 @@ export interface SerializationOptions {
  */
 export function serialize<T = any>(
   data: T,
-  options: SerializationOptions = {}
+  options: SerializationOptions = {},
 ): string {
   const { pretty = false, dateFormat = "iso" } = options;
 
@@ -65,7 +65,7 @@ export function deserialize<T = any>(json: string): T {
  */
 export function serializeSafe<T = any>(
   data: T,
-  options: SerializationOptions = {}
+  options: SerializationOptions = {},
 ): string {
   const seen = new WeakSet();
   const { pretty = false } = options;
