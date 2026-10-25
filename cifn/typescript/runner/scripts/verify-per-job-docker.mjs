@@ -1,6 +1,13 @@
 /** Actual local Engine acceptance: requires an explicit context and cached POSIX image. */
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, mkdir, readFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  rm,
+  mkdir,
+  readFile,
+  unlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, execFileSync } from "node:child_process";
@@ -209,8 +216,75 @@ try {
     const state = inspect();
     assert.equal(state.running, true);
     assert.ok(state.execIds.includes(receipt.execId));
-    // Fixture-only operator cleanup after observing this exact owned child exit.
-    await cleanupCrash();
+    // Trusted host adjudication is distinct from knowing the original shell result.
+    const operator = new OwnedDockerExecutor({
+      context,
+      stateDirectory: crashState,
+    });
+    const snapshot = operator.inspectReceipt(receipt.id);
+    assert.equal(snapshot.execId, receipt.execId);
+    const decision = {
+      id: receipt.id,
+      fingerprint: snapshot.fingerprint,
+      owner: snapshot.owner,
+      operatorId: "native-operator",
+      stoppedOwner: true,
+    };
+    const lockOwner = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import {OwnedDockerExecutor} from ${JSON.stringify(modulePath)};const keep=setInterval(()=>{},1000);const operator=new OwnedDockerExecutor(${JSON.stringify({ context, stateDirectory: crashState })},async()=>{process.stdout.write('locked');return new Promise(()=>{});});await operator.cleanupReceipt(${JSON.stringify(decision)});clearInterval(keep);`,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const lockExit = new Promise((resolve) => lockOwner.once("exit", resolve));
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(Error("Operator lock deadline")),
+          5000,
+        );
+        lockOwner.stdout.once("data", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        lockOwner.once("error", reject);
+        lockOwner.once("exit", () => {
+          clearTimeout(timer);
+          reject(Error("Operator exited before lock"));
+        });
+      });
+      await assert.rejects(operator.cleanupReceipt(decision), /EEXIST/);
+    } finally {
+      lockOwner.kill("SIGKILL");
+      await Promise.race([
+        lockExit,
+        new Promise((_, reject) => {
+          const timer = setTimeout(
+            () => reject(Error("Operator exit deadline")),
+            3000,
+          );
+          timer.unref();
+        }),
+      ]);
+    }
+    await assert.rejects(operator.cleanupReceipt(decision), /EEXIST/);
+    // Explicit fixture-only offline repair after this exact lock owner's exit, never stale-lock stealing in the API.
+    await unlink(join(crashState, receipt.id, "cleanup.lock"));
+    const cleaned = await operator.cleanupReceipt(decision);
+    assert.equal(cleaned.containerRemoved, true);
+    assert.equal(cleaned.executionOutcome, "unknown");
+    assert.deepEqual(
+      await new OwnedDockerExecutor({
+        context,
+        stateDirectory: crashState,
+      }).cleanupReceipt(decision),
+      cleaned,
+    );
+    cleanupCrash = undefined;
+    await rm(crashState, { recursive: true });
   } catch (error) {
     retain = true;
     throw error;
@@ -237,6 +311,9 @@ try {
       killedOwnerReceipt: true,
       liveExecIdentityAfterReopen: true,
       fixtureOnlyOperatorCleanup: true,
+      publicReceiptCleanup: true,
+      independentOperatorLock: true,
+      killedOperatorLockRetained: true,
       ownedContainersRemoved: true,
       context,
       image,

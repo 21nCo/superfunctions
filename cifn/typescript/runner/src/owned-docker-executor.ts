@@ -1,3 +1,8 @@
+import {
+  inspectDockerReceipt,
+  cleanupDockerReceipt,
+  type DockerReceiptDecision,
+} from "./docker-receipts.js";
 import { UnixDockerEngine, type DockerEngine } from "./docker-engine.js";
 import {
   DockerExecutionInterruptedError,
@@ -129,52 +134,76 @@ export class OwnedDockerExecutor {
           timeoutMs,
         ));
   }
+  inspectReceipt(id: string) {
+    return inspectDockerReceipt(this.directory, this.context, id);
+  }
+  cleanupReceipt(decision: DockerReceiptDecision) {
+    return cleanupDockerReceipt(this.directory, this.context, decision, () =>
+      this.connectEngine(),
+    );
+  }
+  private async connectEngine(
+    signal?: AbortSignal,
+    workspace = this.directory,
+  ): Promise<{
+    engine: DockerEngine;
+    daemonId: string;
+  }> {
+    const context = await this.command(
+      [
+        "context",
+        "inspect",
+        this.context,
+        "--format",
+        "{{json .Endpoints.docker.Host}}",
+      ],
+      workspace,
+      signal,
+      undefined,
+      5000,
+    );
+    let endpoint: unknown;
+    try {
+      endpoint = JSON.parse(context.stdout);
+    } catch {
+      throw new Error("Docker context endpoint unavailable");
+    }
+    if (
+      context.exitCode !== 0 ||
+      context.truncated ||
+      typeof endpoint !== "string" ||
+      !endpoint.startsWith("unix://") ||
+      !isAbsolute(endpoint.slice(7)) ||
+      /[\0\r\n]/.test(endpoint)
+    )
+      throw new Error(
+        "Owned job containers require a local Unix Docker context",
+      );
+    const info = await this.command(
+      ["info", "--format", "{{.ID}}"],
+      workspace,
+      signal,
+      undefined,
+      5000,
+    );
+    if (info.exitCode !== 0 || info.truncated || !info.stdout.trim())
+      throw new Error("Docker daemon unavailable");
+    return {
+      engine: this.engineFactory(endpoint.slice(7)),
+      daemonId: info.stdout.trim(),
+    };
+  }
   async openJob(job: DockerJobOptions): Promise<OwnedDockerJob> {
     try {
-      const context = await this.command(
-        [
-          "context",
-          "inspect",
-          this.context,
-          "--format",
-          "{{json .Endpoints.docker.Host}}",
-        ],
-        job.workspace,
+      const { engine, daemonId } = await this.connectEngine(
         job.signal,
-        undefined,
-        5000,
-      );
-      let endpoint: unknown;
-      try {
-        endpoint = JSON.parse(context.stdout);
-      } catch {
-        throw new Error("Docker context endpoint unavailable");
-      }
-      if (
-        context.exitCode !== 0 ||
-        context.truncated ||
-        typeof endpoint !== "string" ||
-        !endpoint.startsWith("unix://") ||
-        !isAbsolute(endpoint.slice(7)) ||
-        /[\0\r\n]/.test(endpoint)
-      )
-        throw new Error(
-          "Owned job containers require a local Unix Docker context",
-        );
-      const info = await this.command(
-        ["info", "--format", "{{.ID}}"],
         job.workspace,
-        job.signal,
-        undefined,
-        5000,
       );
-      if (info.exitCode !== 0 || info.truncated || !info.stdout.trim())
-        throw new Error("Docker daemon unavailable");
       return await openOwnedDockerJob(
-        this.engineFactory(endpoint.slice(7)),
+        engine,
         this.directory,
         this.context,
-        info.stdout.trim(),
+        daemonId,
         this.timeout,
         job,
       );

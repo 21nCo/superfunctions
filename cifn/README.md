@@ -430,3 +430,27 @@ CIFN_DOCKER_CONTEXT=owned-context CIFN_DOCKER_IMAGE=already-cached-image \
 ```
 
 The fixture exercises persistent container/workspace state, known failure with an `always()` successor, multiline environment, active cancellation, and a killed owner whose retained exec receipt is checked against the still-running container. Its last cleanup is explicitly performed by the fixture after observing its own child exit; it does not establish an automatic product recovery API. Cleanup uncertainty retains evidence. Native success cases do not establish every daemon-loss/host-crash scenario or hostile-fork isolation.
+
+### Host-only retained container cleanup
+
+After the host has independently established that the original execution owner is stopped, it can inspect and clean an exact retained **version-2 per-job** receipt:
+
+```ts
+const snapshot = executor.inspectReceipt(receiptId);
+const result = await executor.cleanupReceipt({
+  id: snapshot.id,
+  fingerprint: snapshot.fingerprint,
+  owner: snapshot.owner,
+  operatorId: 'operations-incident-123',
+  stoppedOwner: true,
+});
+// result.containerRemoved === true; result.executionOutcome === 'unknown'
+```
+
+This is a trusted host API, with no HTTP route. `stoppedOwner` is an explicit operator attestation, not a PID/heartbeat inference or an assertion the library can independently prove. Stop every original writer before using it. The exact fingerprint fences a changed receipt, and a durable exclusive lock serializes cooperating cleanup callers. It does not sandbox a hostile local filesystem writer or fence an old execution owner that ignores the attestation.
+
+Inspection reads one exact UUID directory and at most 16 KiB from a private regular receipt file, rejecting symlinks, unsupported versions and malformed identity. It exposes no command/environment or workspace path. There is no unbounded inventory scan. Cleanup requires the expected context/daemon and container ownership label, then proves both container ID and name absent. A missing container is sufficient only for cleanup, never for knowing the original command's result. An incomplete create receipt without a container ID remains parked.
+
+The original receipt and a separate immutable `cleanup.json` remain retained. Exact decision replay returns that terminal receipt without another daemon request; a different operator/decision rejects. Cleanup never deletes the workspace, executes steps, changes claim status, or supplies a completion result. Use the separate control-plane adjudication contract only with its required evidence.
+
+Interrupted or uncertain cleanup retains `cleanup.lock`; subsequent calls fail closed rather than stealing it by age/PID. Offline lock repair must establish that its actual owner has stopped and inspect the state first. No public automatic stale-lock recovery, inventory pagination, terminal pruning or total disk quota is provided. These operational limits remain explicit; the original dated requirements do not prescribe a particular receipt TTL or mandate autonomous recovery. The native fixture separately demonstrates killed cleanup-owner lock retention and uses explicit fixture-only offline repair before exercising public cleanup and reopen replay.

@@ -68,7 +68,7 @@ try{
   assert.equal(audit.metadata.vulnerabilities.total, 0);
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
-  await writeFile(join(directory, 'consumer.ts'), `import {Runner, OwnedDockerExecutor, type OwnedDockerOptions, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
+  await writeFile(join(directory, 'consumer.ts'), `import {Runner, OwnedDockerExecutor, type OwnedDockerOptions, type DockerReceiptDecision, type DockerCleanupReceipt, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
 import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, resolvePipelineDoc, type ResolveOptions, type ForkApproval, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
@@ -94,6 +94,7 @@ export const approval: ForkApproval = { id: "owned", baseRepositoryId: 1, baseRe
 export function resolve(options: ResolveOptions) { return resolvePipelineDoc({repo:'owner/repo',ref:'HEAD'}, options); }
 export async function checkout(options: CheckoutOptions) { return executeOwnedCheckout(options); }
 export function ownedDocker(options: OwnedDockerOptions) { return new OwnedDockerExecutor(options); }
+export async function cleanupDocker(executor: OwnedDockerExecutor, decision: DockerReceiptDecision): Promise<DockerCleanupReceipt> { executor.inspectReceipt(decision.id); return executor.cleanupReceipt(decision); }
 export const typed = {Runner, observer};
 `);
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts']);
