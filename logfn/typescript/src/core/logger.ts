@@ -8,6 +8,7 @@ import type {
   LoggerOptions,
   ChildLoggerOptions,
   ErrorHandler,
+  Sink,
 } from "../types.js";
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { defaultRedactor } from "../pipeline/default-redaction.js";
@@ -29,6 +30,30 @@ export class Logger {
   private delivery: { pending: Set<Promise<void>>; failure?: { reason: unknown } } = {
     pending: new Set(),
   };
+
+  private attachedSinks = new Map<Sink, number>();
+
+  /**
+   * Attach a sink to this logger family, including existing and future children.
+   * Detach affects future events; flush still joins previously admitted async work.
+   * Flush a buffering sink before detaching it to drain its private buffer.
+   */
+  addSink(sink: Sink): () => void {
+    if (typeof sink !== "function" || (sink.flush !== undefined && typeof sink.flush !== "function")) throw new TypeError("Invalid log sink");
+    const attached = this.attachedSinks;
+    attached.set(sink, (attached.get(sink) ?? 0) + 1);
+    let detached = false;
+    return () => {
+      if (detached) return;
+      detached = true;
+      const count = attached.get(sink)!;
+      if (count === 1) attached.delete(sink); else attached.set(sink, count - 1);
+    };
+  }
+
+  private sinks(): Sink[] {
+    return [...this.options.sinks, ...[...this.attachedSinks.keys()].filter(sink => !this.options.sinks.includes(sink))];
+  }
 
   constructor(options: LoggerOptions) {
     this.redact = defaultRedactor(options.redaction);
@@ -150,7 +175,7 @@ export class Logger {
     }
 
     // Send to sinks
-    for (const sink of this.options.sinks) {
+    for (const sink of this.sinks()) {
       try {
         const result = sink([sanitizeValue(finalEvent) as LogEvent]);
         if (result && typeof result.then === "function") {
@@ -165,6 +190,7 @@ export class Logger {
           this.delivery.pending.add(task);
         }
       } catch (error) {
+        this.delivery.failure ??= { reason: error };
         this.errorHandler(error as Error, { sink: sink.name || "unknown" });
       }
     }
@@ -234,6 +260,7 @@ export class Logger {
 
     const child = new Logger(childOptions);
     child.delivery = this.delivery;
+    child.attachedSinks = this.attachedSinks;
     return child;
   }
 
@@ -241,11 +268,12 @@ export class Logger {
    * Flush all sinks
    */
   async flush(): Promise<void> {
+    const sinks = this.sinks();
     while (this.delivery.pending.size) {
       await Promise.all([...this.delivery.pending]);
     }
     const results = await Promise.allSettled(
-      this.options.sinks.map(sink => Promise.resolve().then(() => sink.flush?.()).catch(error => {
+      sinks.map(sink => Promise.resolve().then(() => sink.flush?.()).catch(error => {
         this.errorHandler(error as Error, { sink: sink.name || "unknown" });
         throw error;
       }))

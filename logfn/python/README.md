@@ -248,3 +248,23 @@ with this middleware there. This does not provide a persistent async delivery
 loop or durable background queue for Flask. Only routes with this middleware are
 instrumented; native framework routes, routing failures before it, and WebSocket
 routes are outside this shared HTTP contract.
+
+### Attaching an integration sink
+
+`logger.add_sink(sink)` attaches to the whole logger family, including existing
+children, and returns an idempotent detach callback. Repeated attachment of the
+same callable is reference-counted and delivers once. Each sink receives an
+independent, serialized and redacted event copy.
+
+```python
+detach = logger.add_sink(persist_logs)
+logger.child(name="payments").info("paid")
+await logger.flush()
+detach()
+```
+
+Detach prevents future admission; already admitted asynchronous delivery remains
+owned by `flush()`. Flush a buffering sink before detaching to drain its private
+buffer. Both synchronous and asynchronous sink failures reach the next flush
+without stopping other sinks. Async sinks require a running event loop. This
+producer contract does not itself configure WatchFn or provide durable retries.

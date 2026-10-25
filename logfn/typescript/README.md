@@ -608,3 +608,24 @@ const evictedRecords = transport.overflowEvictions;
 
 
 Lifecycle and background-delivery console diagnostics use fixed failure messages; raw transport, storage and sink errors are not printed there. Explicit `flush()`/`close()` callers still receive failures and must handle them according to their application privacy policy.
+
+### Attaching an integration sink
+
+`logger.addSink(sink)` attaches a sink to the entire logger family, including
+children created before attachment. It returns an idempotent detach function.
+Repeated attachment of the same sink is reference-counted and delivers once.
+Sinks receive independent copies after filtering, redaction and serialization.
+
+```typescript
+const detach = logger.addSink(async events => { await persistLogs(events); });
+logger.child({ name: 'payments' }).info('paid');
+await logger.flush();
+detach();
+```
+
+Detach prevents future event admission to that sink. Previously admitted async
+work remains owned by `logger.flush()`, including failures. Flush a buffering
+sink before detaching to drain its private buffer. Synchronous sink exceptions
+also reach the next flush without interrupting other sinks or application logging.
+This API provides the producer contract for integrations; it does not itself
+configure WatchFn or provide durable storage/retry.

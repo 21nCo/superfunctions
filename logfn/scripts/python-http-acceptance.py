@@ -43,11 +43,15 @@ with tempfile.TemporaryDirectory(prefix="logfn-http-wheels-") as directory:
     run(python, "-I", "-c", IMPORT_CHECK, str(http_env), "logfn", "logfn.http", "superfunctions", "superfunctions.http", "superfunctions_fastapi", "superfunctions_flask", cwd=owned)
     run(python, "-I", "-m", "pytest", str(tests), "--no-cov", "-q", cwd=owned)
     consumer = owned / "consumer.py"
-    consumer.write_text('''from logfn import Logger, SinkConsole
+    consumer.write_text('''from typing import Callable
+from logfn import Logger, SinkConsole
 from logfn.http import request_logger, get_request_logger
 from superfunctions.http import Middleware
 middleware: Middleware = request_logger(logger=Logger("installed", sinks=[SinkConsole()]))
 assert get_request_logger() is None
+logger = Logger("attached", sinks=[SinkConsole()])
+detach: Callable[[], None] = logger.add_sink(lambda events: None)
+detach()
 ''')
     run(python, "-I", "-m", "mypy", "--strict", str(consumer), cwd=owned)
     run(python, "-I", str(consumer), cwd=owned)

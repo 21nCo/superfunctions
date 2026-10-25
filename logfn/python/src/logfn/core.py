@@ -3,6 +3,7 @@ import inspect
 import os
 import sys
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Callable, Optional
 
 from .default_redaction import default_redactor
@@ -69,6 +70,12 @@ class _DeliveryState:
             self.reporter.report(error, context)
 
 
+class _AttachedSinks:
+    def __init__(self) -> None:
+        self.lock = RLock()
+        self.entries: dict[int, tuple[Sink, int]] = {}
+
+
 class Logger:
     def __init__(
         self,
@@ -89,6 +96,7 @@ class Logger:
         self._delivery = _DeliveryState(self._reporter)
         self.name = name
         self.sinks = sinks
+        self._attached_sinks = _AttachedSinks()
         self.level = level or get_default_level()
         self.pipeline = pipeline or []
         self.now = now or default_now
@@ -99,6 +107,39 @@ class Logger:
         if not sinks:
             # We don't throw here to avoid breaking apps, but it's bad practice
             print("Warning: Logger created without sinks", file=sys.stderr)
+
+    def add_sink(self, sink: Sink) -> Callable[[], None]:
+        """Attach to the whole logger family; detach only affects future events.
+
+        Admitted async delivery remains owned by flush. Flush a buffering sink
+        before detaching to drain its private buffer.
+        """
+        flush = getattr(sink, "flush", None)
+        if not callable(sink) or (flush is not None and not callable(flush)):
+            raise TypeError("Invalid log sink")
+        attached = self._attached_sinks
+        key = id(sink)
+        with attached.lock:
+            old = attached.entries.get(key)
+            attached.entries[key] = (sink, old[1] + 1 if old else 1)
+        detached = False
+        def detach() -> None:
+            nonlocal detached
+            with attached.lock:
+                if detached:
+                    return
+                detached = True
+                current, count = attached.entries[key]
+                if count == 1:
+                    del attached.entries[key]
+                else:
+                    attached.entries[key] = (current, count - 1)
+        return detach
+
+    def _all_sinks(self) -> list[Sink]:
+        with self._attached_sinks.lock:
+            return [*self.sinks, *(sink for sink, _ in self._attached_sinks.entries.values()
+                                  if not any(sink is existing for existing in self.sinks))]
 
     def should_log(self, level: LogLevel) -> bool:
         return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[self.level]
@@ -169,7 +210,7 @@ class Logger:
         except Exception:
             self._reporter.report(RuntimeError("Log event could not be safely redacted"), {"stage": "defaultRedaction"})
             return
-        for sink in self.sinks:
+        for sink in self._all_sinks():
             try:
                 res = sink([sanitize_value(final_event)])
                 if inspect.isawaitable(res):
@@ -188,6 +229,8 @@ class Logger:
                         self._delivery.contexts[task] = {"sink": getattr(sink, "__name__", type(sink).__name__)}
                         task.add_done_callback(self._delivery.completed)
             except Exception as e:
+                if self._delivery.error is None:
+                    self._delivery.error = e
                 self._reporter.report(e, {"sink": getattr(sink, "__name__", type(sink).__name__)})
 
     def trace(self, msg: str, ctx: Optional[dict[str, Any]] = None, tags: Optional[list[str]] = None, **kwargs: Any) -> None:
@@ -231,9 +274,11 @@ class Logger:
         )
         child._reporter = self._reporter
         child._delivery = self._delivery
+        child._attached_sinks = self._attached_sinks
         return child
 
     async def flush(self) -> None:
+        sinks = self._all_sinks()
         # Parent and children share delivery ownership. Shield application sink
         # tasks so cancelling a flush waiter does not discard accepted events.
         while self._delivery.pending:
@@ -254,7 +299,7 @@ class Logger:
                     raise
 
         results = await asyncio.gather(
-            *(flush_sink(sink) for sink in self.sinks), return_exceptions=True
+            *(flush_sink(sink) for sink in sinks), return_exceptions=True
         )
         error = self._delivery.error
         self._delivery.error = None
