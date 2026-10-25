@@ -1,0 +1,51 @@
+watchfn/.conduct/trace-sampling-policy.md
+  s_e1c5fc1a65c0cf::t_4e50cecd2ea051 1-11
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_26c93bd58120c2 559,561-567
+watchfn/python/tests/fixtures/trace-sampling-golden.json
+  s_e1c5fc1a65c0cf::t_0ef8a623027ca7 1-162
+watchfn/python/tests/test_trace_sampling.py
+  s_e1c5fc1a65c0cf::t_0515ab35a9323d 1-71
+watchfn/python/watchfn/__init__.py
+  s_e1c5fc1a65c0cf::t_108548c0dfae89 2,5
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_5606404be56468 42-46
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_ae26bc521af389 47-61,70-71
+watchfn/python/watchfn/trace/sampling.py
+  s_e1c5fc1a65c0cf::t_13b37a4dd38019 1-15
+watchfn/python/watchfn/trace/tracer.py
+  s_e1c5fc1a65c0cf::t_9466e1ce72aa44 9,72-75,106-108,133-135
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_c09d2ed67e2d24 378,380-386
+watchfn/typescript/scripts/verify-alert-package.mjs
+  s_e1c5fc1a65c0cf::t_454fa8d2226b95 70
+watchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_309cdb561cd91c 50-51
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_3b50424efb3876 100
+watchfn/typescript/src/trace/sampling.ts
+  s_e1c5fc1a65c0cf::t_a5cb3a8d30b8aa 1-7
+watchfn/typescript/src/trace/tracer.ts
+  s_e1c5fc1a65c0cf::t_a9fc4b01136050 1-2,12-14,26-29,36,86
+watchfn/typescript/tests/trace/context-propagation.test.ts
+  s_e1c5fc1a65c0cf::t_bf6ce08e64e24d 51-52
+watchfn/typescript/tests/trace/sampling.test.ts
+  s_e1c5fc1a65c0cf::t_f0b3c3a347994e 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af091a0ac4b51d1bf6214fd52c721ef42421205e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
