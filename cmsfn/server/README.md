@@ -219,7 +219,11 @@ must supply the verified resolver. Scheduled records use the verified execution 
 Authentication routes are deployment-defined. After the host completes a login or
 logout, call `server.reportSessionEvent('session.login' | 'session.logout',
 { subject, succeeded })` with verified metadata only. CMS does not invent a session or
-claim that this hook performs authentication.
+claim that this hook performs authentication. Runtime calls require one of those exact
+actions, a plain input object with an own boolean `succeeded`, and an optional nonempty
+subject string of at most 512 UTF-8 bytes without control characters. Unknown keys
+(including credentials), symbols, inherited inputs and accessor properties are rejected
+before any log event is admitted, using a generic `TypeError` without input echoes.
 
 Synchronous sink throws and asynchronous rejection increment
 `server.loggingStatus().failures`; they never turn an already committed operation into

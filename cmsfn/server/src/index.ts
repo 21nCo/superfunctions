@@ -1,4 +1,4 @@
-import { createLogger, type CmsfnLoggerConfig, type Operation, type OperationAction } from './logging/logger.js';
+import { createLogger, parseSessionReport, type CmsfnLoggerConfig, type Operation, type OperationAction } from './logging/logger.js';
 export { createLogger } from './logging/logger.js';
 export type { CmsfnLoggerConfig, LogSink } from './logging/logger.js';
 import { handleReferenceQuery } from './http/references.js';
@@ -359,8 +359,9 @@ export function createCmsfnServer(config: CmsfnServerConfig) {
   return Object.assign(server, { readiness, loggingStatus: logger.status,
     /** Call after the host completes its deployment-defined login/logout; never pass credentials. */
     reportSessionEvent: (action: 'session.login' | 'session.logout', input: { subject?: string; succeeded: boolean }) => {
-      const operation = logger.operation(action, { subject: input.subject });
-      operation.finish(input.succeeded ? ok({}) : err('AUTH_REQUIRED', 'Session operation failed'));
+      const report = parseSessionReport(action, input);
+      const operation = logger.operation(report.action, { subject: report.subject });
+      operation.finish(report.succeeded ? ok({}) : err('AUTH_REQUIRED', 'Session operation failed'));
     }, executeDueReleases: (options?: { limit?: number; maxDocuments?: number }) => {
     if (!config.db) throw new Error("Release execution requires a database");
     return executeDueReleases({ db: config.db, contentfnBaseUrl: config.contentfn.baseUrl, allowedDatasets: config.datasets.map(dataset => dataset.name), resolveIdentity: config.resolveReleaseExecutionIdentity, schemaVersion: config.releaseExecutionSchemaVersion, logger }, options);

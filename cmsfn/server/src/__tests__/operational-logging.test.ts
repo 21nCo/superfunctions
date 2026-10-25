@@ -138,3 +138,27 @@ it('logs actual manual release success and lost acknowledgement as distinct outc
     expect(JSON.stringify(records)).not.toMatch(/document-secret|secret-revision|hidden-title/);
   }finally{await close(server);await close(producer);}
 });
+
+it('rejects malformed public JavaScript session reports before admitting any log event', () => {
+  const records: Record<string, unknown>[] = [];
+  const server = createCmsfnServer({contentfn:{baseUrl:'http://127.0.0.1:1'},datasets:[],desk:{kind:'divider'},auth:{kind:'custom'},
+    logging:{sink:(_level,_message,meta)=>{records.push(meta);}}});
+  const invalid: Array<[unknown, unknown]> = [
+    ['unknown', {succeeded:true}], ['session.login', {succeeded:'false'}],
+    ['session.logout', {succeeded:1}], ['session.login', {}], ['session.login', null],
+    ['session.login', []], ['session.login', {succeeded:true,token:'credential-secret'}],
+    ['session.login', {succeeded:true,password:'credential-secret'}],
+    ['session.login', {succeeded:true,subject:123}], ['session.login', {succeeded:true,subject:'x'.repeat(513)}],
+    ['session.login', {succeeded:true,subject:'bad\nactor'}], ['session.login', {succeeded:true,subject:'   '}],
+    ['session.login', {succeeded:true,[Symbol('secret')]:true}],
+    ['session.login', Object.create({succeeded:true})],
+    ['session.login', Object.defineProperty({}, 'succeeded', {get(){throw new Error('getter-secret');}})],
+  ];
+  for (const [action,input] of invalid) {
+    expect(()=>Reflect.apply(server.reportSessionEvent,server,[action,input])).toThrow('Invalid session report');
+    expect(records).toHaveLength(0);
+  }
+  server.reportSessionEvent('session.login',{succeeded:false});
+  server.reportSessionEvent('session.logout',{subject:'verified',succeeded:true});
+  expect(records.filter(record=>record.phase==='result')).toMatchObject([{outcome:'failed',code:'AUTH_REQUIRED'},{outcome:'succeeded',subject:'verified'}]);
+});

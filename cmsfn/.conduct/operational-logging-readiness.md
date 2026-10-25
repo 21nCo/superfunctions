@@ -74,3 +74,41 @@ Native Safari retains its earlier blocked receipt with settings restored OFF; no
 Safari attempt was made. Live deployment identity, CORS, providers and external storage
 acceptance remain open. This checkpoint closes the selected operational instrumentation
 gap, not whole-function readiness. No deployment, release or push was performed.
+
+## Public JavaScript session-report validation
+
+A follow-up regression against `56fe9bbe67fc9084dd3dfba5e23c9b727d759298` reproduced
+that an unknown action or truthy string `succeeded` could be admitted as a session event.
+The public hook now validates its runtime boundary before creating an operation:
+exact login/logout action, a plain object with an own boolean `succeeded`, and an
+optional nonempty subject string of at most 512 UTF-8 bytes without control characters.
+Unknown keys (including token/password), symbols, inherited inputs and accessor
+properties are rejected without invoking accessors or echoing values. Every invalid
+input throws the same generic `TypeError` and admits no event.
+
+The focused regression checks 15 malformed JavaScript inputs through `Reflect.apply`,
+then verifies legitimate false and true outcomes. Nine selected logging/HTTP tests and
+server typecheck passed. Existing compiler settings were preserved. Server ESM/CJS and
+declaration builds passed. The fresh 32-package fixture's `--operational-only` mode
+verified both actual installed module formats, eight malformed JavaScript calls with
+zero admission, valid outcomes, strict TypeScript consumers and SSR. Production-only
+and tooling-install audits again reported zero vulnerabilities. This follow-up did not
+repeat the browser/full-suite matrix; the preceding checkpoint's full App evidence is
+retained separately.
+
+Commands:
+
+```sh
+# From cmsfn/server
+npx vitest run src/__tests__/operational-logging.test.ts src/__tests__/logging.test.ts
+npm run typecheck
+# From the repository
+npm run build --workspace=@cmsfn/server
+python3 cmsfn/.conduct/studio-packed-acceptance.py --operational-only --producer-root /Volumes/Dev/n/worktrees/superfunctions/contentfn-sf-next-readiness
+```
+
+Receipts: `/tmp/cms-session-report-{baseline,focused,types,build,packed}.log` and
+`/tmp/cms-session-report-production-audit.json`. The owned consumer
+`/tmp/cms-studio-packed-o22gi0t8` was removed and verified absent; no owned processes
+remain. The matching ContentFn producer, Safari state and remaining deployment gates
+are unchanged.

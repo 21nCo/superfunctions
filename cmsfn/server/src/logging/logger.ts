@@ -67,4 +67,22 @@ export function createLogger(config: CmsfnLoggerConfig = {}) {
     },
   };
 }
+/** Validate the public JavaScript boundary without reading accessors or echoing values. */
+export function parseSessionReport(action: unknown, input: unknown): { action: 'session.login' | 'session.logout'; subject?: string; succeeded: boolean } {
+  try {
+    if (action !== 'session.login' && action !== 'session.logout') throw new Error();
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error();
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    if (Reflect.ownKeys(descriptors).some(key => key !== 'subject' && key !== 'succeeded')) throw new Error();
+    const succeeded = Object.prototype.hasOwnProperty.call(descriptors, 'succeeded') ? descriptors.succeeded : undefined;
+    const subject = Object.prototype.hasOwnProperty.call(descriptors, 'subject') ? descriptors.subject : undefined;
+    if (!succeeded || !('value' in succeeded) || typeof succeeded.value !== 'boolean') throw new Error();
+    if (subject && !('value' in subject)) throw new Error();
+    const value: unknown = subject?.value;
+    if (value !== undefined && (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > 512 || /[\u0000-\u001f\u007f]/.test(value))) throw new Error();
+    return { action, succeeded: succeeded.value, ...(typeof value === 'string' ? { subject: value } : {}) };
+  } catch { throw new TypeError('Invalid session report'); }
+}
 export type CmsfnLogger = ReturnType<typeof createLogger>;
