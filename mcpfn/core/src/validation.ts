@@ -1,7 +1,6 @@
 import { schemaUriResolver } from "./schema-uri.js";
 import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
-import uri from "fast-uri";
 import {
   dereference,
   encodePointer,
@@ -149,7 +148,7 @@ const authoredResourceBase = "https://authored-schema.mcpfn.invalid/";
 // Ajv uses RFC 3986 URI resolution. Keep that identity separate from the
 // WHATWG-only URI index used by @cfworker/json-schema.
 function resolveSchemaUri(reference: string, base: string): string {
-  return uri.resolve(base, reference);
+  return schemaUriResolver.resolve(base, reference);
 }
 
 function schemaResourceUri(reference: string): string {
