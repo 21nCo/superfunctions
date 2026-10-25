@@ -50,6 +50,18 @@ describe("canonical bug report ingestion", () => {
     await client.close();
   });
 
+  it("retains legacy timestamp forms and literal metadata through HTTP persistence", async () => {
+    const { watch } = setup();
+    const events = ['2026-10-25T12:00Z', '2026-10-25T12:00:00+0530'].map(timestamp => ({
+      ...report(), timestamp, context: { 'literal.key': { retained: true } },
+      report: { ...report().report, title: '  Original title  ' },
+    }));
+    expect((await watch.httpRouter.handle(request(events))).status).toBe(202);
+    const stored = await watch.query({ metric: 'bug_report' });
+    expect(stored).toHaveLength(events.length);
+    expect(stored).toEqual(expect.arrayContaining(events));
+  });
+
   it("rejects authentication and storage failures, retains capture, and waits for persistence on retry", async () => {
     const { watch, database } = setup();
     let key = "wrong";

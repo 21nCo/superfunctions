@@ -8,60 +8,72 @@
   "exports": {
     ".": {
       "import": {
+        "types@>=5.4": "./dist/modern/index.d.mts",
         "types": "./dist/index.d.mts",
         "default": "./dist/index.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/index.d.ts",
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       }
     },
     "./adapters/express": {
       "import": {
+        "types@>=5.4": "./dist/modern/adapters/express.d.mts",
         "types": "./dist/adapters/express.d.mts",
         "default": "./dist/adapters/express.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/adapters/express.d.ts",
         "types": "./dist/adapters/express.d.ts",
         "default": "./dist/adapters/express.js"
       }
     },
     "./adapters/fastify": {
       "import": {
+        "types@>=5.4": "./dist/modern/adapters/fastify.d.mts",
         "types": "./dist/adapters/fastify.d.mts",
         "default": "./dist/adapters/fastify.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/adapters/fastify.d.ts",
         "types": "./dist/adapters/fastify.d.ts",
         "default": "./dist/adapters/fastify.js"
       }
     },
     "./adapters/hono": {
       "import": {
+        "types@>=5.4": "./dist/modern/adapters/hono.d.mts",
         "types": "./dist/adapters/hono.d.mts",
         "default": "./dist/adapters/hono.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/adapters/hono.d.ts",
         "types": "./dist/adapters/hono.d.ts",
         "default": "./dist/adapters/hono.js"
       }
     },
     "./adapters/next": {
       "import": {
+        "types@>=5.4": "./dist/modern/adapters/next.d.mts",
         "types": "./dist/adapters/next.d.mts",
         "default": "./dist/adapters/next.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/adapters/next.d.ts",
         "types": "./dist/adapters/next.d.ts",
         "default": "./dist/adapters/next.js"
       }
     },
     "./adapters/sveltekit": {
       "import": {
+        "types@>=5.4": "./dist/modern/adapters/sveltekit.d.mts",
         "types": "./dist/adapters/sveltekit.d.mts",
         "default": "./dist/adapters/sveltekit.mjs"
       },
       "require": {
+        "types@>=5.4": "./dist/modern/adapters/sveltekit.d.ts",
         "types": "./dist/adapters/sveltekit.d.ts",
         "default": "./dist/adapters/sveltekit.js"
       }
@@ -76,7 +88,7 @@
   "dependencies": {
     "@superfunctions/db": "0.4.0",
     "@superfunctions/http": "0.3.1",
-    "zod": "^3.22.4",
+    "zod": "^4.6.6",
     "@superfunctions/auth": "0.1.2"
   },
   "devDependencies": {
@@ -173,6 +185,21 @@
     },
     "sendfn": {
       "optional": true
+    }
+  },
+  "typesVersions": {
+    ">=5.4": {
+      "dist/*": [
+        "dist/modern/*"
+      ],
+      "adapters/*": [
+        "dist/modern/adapters/*"
+      ]
+    },
+    "*": {
+      "adapters/*": [
+        "dist/adapters/*"
+      ]
     }
   }
 }

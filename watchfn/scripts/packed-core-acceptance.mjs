@@ -1,7 +1,7 @@
 /** Build the shared closure and WatchFn before running this isolated consumer check. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,12 +52,46 @@ async function check(WatchFn) {
   writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core';
 export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
   writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
+  const inferredSchemas = `
+import { ContextSchema } from '@watchfn/core';
+export const optionalContext = ContextSchema.optional();
+export const refinedContext = ContextSchema.refine(value => value.userId !== 'blocked');
+export const partialContext = ContextSchema.partial();
+export const contextArray = ContextSchema.array();
+export const nullableContext = ContextSchema.nullable();
+export const brandedContext = ContextSchema.brand<'Context'>();
+export const contextLength = ContextSchema.transform(value => Object.keys(value).length);
+`;
+  for (const extension of ['mts', 'cts']) writeFileSync(join(temporary, `consumer.${extension}`), readFileSync(join(temporary, `consumer.${extension}`), 'utf8') + inferredSchemas);
   for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  // Modern consumers compose the actual public schemas with their Zod instance.
+  // Bundling all Zod declarations duplicates brands/registry symbols and can make
+  // recursive ZodType assignment fail even when a basic import compiles.
+  const composition = `import { WatchFnConfigSchema, ContextSchema } from '@watchfn/core';
+import { z } from 'zod';
+export const nested = z.object({ watch: WatchFnConfigSchema });
+export const extended = ContextSchema.extend({ extra: z.string() });
+export const union = z.union([ContextSchema, z.string()]);
+export const structural: z.ZodType = ContextSchema;
+const branded = ContextSchema.brand<'Context'>();
+declare const output: z.output<typeof branded>;
+export const externalBrand: z.output<typeof ContextSchema> & z.core.$brand<'Context'> = output;
+const registry = z.registry<{ example: z.$output }>();
+ContextSchema.register(registry, { example: ContextSchema.parse({}) });`;
+  for (const extension of ['mts', 'cts']) writeFileSync(join(temporary, `composition.${extension}`), composition);
+  for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'composition.mts', 'composition.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', 'CommonJS', '--moduleResolution', 'Node10', '--esModuleInterop', 'composition.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  console.log('External Zod schema, brand and registry composition passed');
   // Use Node declarations contemporary with the promised compiler floor;
   // current @types/node releases can independently require a newer compiler.
   npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', '@types/node@18.16.19']);
-  for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', '--package=typescript@5.0.4', '--', 'tsc', '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts']);
-  console.log('TypeScript 5.0.4 consumer declarations passed');
+  for (const version of ['5.0.4', '5.3.3', '5.4.5']) {
+    for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', `--package=typescript@${version}`, '--', 'tsc', '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts']);
+    npm(['exec', '--yes', `--package=typescript@${version}`, '--', 'tsc', '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', 'CommonJS', '--moduleResolution', 'Node10', '--esModuleInterop', 'consumer.cts']);
+    console.log(`TypeScript ${version} consumer declarations passed`);
+  }
+  // Check the first compiler receiving the ordinary external-Zod declaration path.
+  for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', '--package=typescript@5.4.5', '--', 'tsc', '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'composition.mts', 'composition.cts']);
   let audit;
   try { audit = JSON.parse(npm(['audit', '--omit=dev', '--json'])); }
   catch (error) {

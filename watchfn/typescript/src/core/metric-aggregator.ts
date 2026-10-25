@@ -8,7 +8,7 @@ export const AggregationIntervalSchema = z.enum([
   "6h",
   "1d",
 ]);
-export type AggregationInterval = z.infer<typeof AggregationIntervalSchema>;
+export type AggregationInterval = z.output<typeof AggregationIntervalSchema>;
 
 export const AggregationFunctionSchema = z.enum([
   "count",
@@ -22,7 +22,7 @@ export const AggregationFunctionSchema = z.enum([
   "p95",
   "p99",
 ]);
-export type AggregationFunction = z.infer<typeof AggregationFunctionSchema>;
+export type AggregationFunction = z.output<typeof AggregationFunctionSchema>;
 
 export interface MetricPoint {
   timestamp: number;

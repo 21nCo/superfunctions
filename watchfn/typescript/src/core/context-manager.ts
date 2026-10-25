@@ -11,7 +11,7 @@ export const ContextSchema = z.object({
   metadata: z.record(z.string(), z.any()).optional(),
 });
 
-export type Context = z.infer<typeof ContextSchema>;
+export type Context = z.output<typeof ContextSchema>;
 
 export interface ContextStore {
   context: Context;

@@ -58,7 +58,7 @@ export const WatchFnConfigSchema = z.object({
       process: z.boolean().default(true),
   }).optional(),
 
-  integrations: z.record(z.any()).optional(),
+  integrations: z.record(z.string(), z.any()).optional(),
   
   auth: z.object({
       enabled: z.boolean().optional(),
@@ -68,7 +68,7 @@ export const WatchFnConfigSchema = z.object({
   }).optional(),
 });
 
-export type WatchFnConfig = z.infer<typeof WatchFnConfigSchema>;
+export type WatchFnConfig = z.output<typeof WatchFnConfigSchema>;
 
 export interface WatchFnInstance {
   start(): void;

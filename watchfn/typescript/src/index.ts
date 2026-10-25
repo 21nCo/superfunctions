@@ -106,3 +106,17 @@ export type { AlertConfig, AlertChannel, AlertRuntimeConfig, AlertEmailConfig, A
 export type { LogQueryOptions, LogAggregateOptions } from './query/logs';
 
 export type { TraceQueryOptions, TraceDetailsOptions, ServiceMapOptions, StoredTraceSpan, TraceDetails } from './query/traces';
+
+// Public schema types keep inferred consumer declarations nameable on TS5.0.
+// These are type-only exports; schema construction remains owned by Zod.
+export type {
+  ZodType, ZodString, ZodNumber, ZodBoolean, ZodBigInt, ZodSymbol,
+  ZodUndefined, ZodNull, ZodAny, ZodUnknown, ZodNever, ZodVoid, ZodDate,
+  ZodArray, ZodObject, ZodUnion, ZodDiscriminatedUnion, ZodIntersection,
+  ZodTuple, ZodRecord, ZodMap, ZodSet, ZodEnum, ZodLiteral, ZodFile,
+  ZodTransform, ZodOptional, ZodExactOptional, ZodNullable, ZodDefault,
+  ZodPrefault, ZodNonOptional, ZodSuccess, ZodCatch, ZodNaN, ZodPipe,
+  ZodCodec, ZodPreprocess, ZodReadonly, ZodTemplateLiteral, ZodLazy,
+  ZodPromise, ZodFunction, ZodCustom, ZodInstanceOf,
+} from 'zod';
+export type { AuthProvider, AuthSession } from '@superfunctions/auth';

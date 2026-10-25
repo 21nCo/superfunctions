@@ -11,6 +11,10 @@ watch.start();
 // Before shutdown, await watch.stop() to finish admitted writes.
 ```
 
+TypeScript 5.0+ is supported. TypeScript 5.4+ receives declarations that retain the original Zod type identities for composition with external Zod schemas. Older compilers receive compatible schema declarations with the same runtime APIs; direct imports from Zod itself follow Zod's compiler requirements. Both Node16/NodeNext resolution and legacy Node resolution are supported (use `esModuleInterop` with the latter).
+
+Validation uses Zod 4. Nonfinite collector intervals and thresholds are rejected. Omitted collectors remain disabled/unconfigured; explicit collector objects retain their defaults. Bug-report timestamps retain supported minute precision and compact numeric offsets without changing the persisted envelope.
+
 For Express, install `express` and `@superfunctions/http-express`. Mount the shared router with its adapter and import request tracking separately:
 
 ```ts
