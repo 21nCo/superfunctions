@@ -1,3 +1,5 @@
+import { StepStatusReportingError } from './step-journal.js';
+import type { ReportedStepStatus } from '@cifn/control-plane';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +25,8 @@ import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
 
 export interface RunnerOptions {
+  /** Awaited at each actual transition; failures stop execution rather than invent outcomes. */
+  onStepStatus?: (stepKey: string, status: ReportedStepStatus) => Promise<void>;
   runCommand?: (command: string, workspace: string, env?: Record<string, string>, onLines?: (lines: string[]) => void) => Promise<RunStepResult>;
   executionSignal?: AbortSignal;
   executionEnv?: NodeJS.ProcessEnv;
@@ -51,6 +55,7 @@ export interface RunnerOptions {
 }
 
 export class Runner {
+  private onStepStatus?: RunnerOptions['onStepStatus'];
   private runCommand?: RunnerOptions['runCommand'];
   private executionSignal?: AbortSignal;
   private executionEnv?: NodeJS.ProcessEnv;
@@ -72,6 +77,7 @@ export class Runner {
   private getSecret?: (runId: string, name: string) => Promise<string | null>;
 
   constructor(options: RunnerOptions) {
+    this.onStepStatus = options.onStepStatus;
     this.executionEnv = options.executionEnv;
     this.runCommand = options.runCommand;
     this.executionSignal = options.executionSignal;
@@ -143,6 +149,14 @@ export class Runner {
     const job = run.jobs.find(j => j.jobKey === jobKey);
     if (!job) return;
 
+    const transition = async (step: { stepKey: string; status: string }, status: ReportedStepStatus) => {
+      step.status = status;
+      if (this.onStepStatus) {
+        try { await this.onStepStatus(step.stepKey, status); }
+        catch { throw new StepStatusReportingError(); }
+      }
+    };
+
     const github = (run.trigger?.payload?.github as Record<string, string> | undefined) ?? {};
     if (!github.ref && payload.pipelineRef?.ref) github.ref = payload.pipelineRef.ref;
     if (!github.repository && payload.pipelineRef?.repo) github.repository = payload.pipelineRef.repo;
@@ -152,6 +166,7 @@ export class Runner {
       try {
         const runJob = evaluateConditionSync(String(jobSpec.if).trim(), { github, stepOutcomes: [] });
         if (!runJob) {
+          if (this.onStepStatus) for (const step of job.steps) await transition(step, 'skipped');
           job.status = 'skipped';
           job.completedAt = new Date().toISOString();
           logLines('__job__', [`Job "${jobKey}" skipped (if: false)`]);
@@ -159,7 +174,9 @@ export class Runner {
           this.checkRunCompletion(runId);
           return;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof StepStatusReportingError) throw error;
+        if (this.onStepStatus) for (const [index, step] of job.steps.entries()) await transition(step, index === 0 ? 'failure' : 'skipped');
         job.status = 'failure';
         job.completedAt = new Date().toISOString();
         logLines('__job__', [`Job "${jobKey}" failed (invalid if expression)`]);
@@ -203,7 +220,7 @@ export class Runner {
     try {
       for (let i = 0; i < jobSpec.steps.length; i++) {
         if (this.executionSignal?.aborted) {
-          job.steps.slice(i).forEach(step => { step.status = 'skipped'; });
+          for (const step of job.steps.slice(i)) await transition(step, 'skipped');
           jobFailed = true; break;
         }
         const stepSpec = jobSpec.steps[i];
@@ -215,13 +232,14 @@ export class Runner {
         try {
           const runStep = evaluateConditionSync(effectiveIf, { github, stepOutcomes });
           if (!runStep) {
-            step.status = 'skipped';
+            await transition(step, 'skipped');
             step.completedAt = new Date().toISOString();
             logLines(step.stepKey, [`Step "${step.stepKey}" skipped (if: false)`]);
             continue;
           }
-        } catch {
-          step.status = 'failure';
+        } catch (error) {
+          if (error instanceof StepStatusReportingError) throw error;
+          await transition(step, 'failure');
           step.completedAt = new Date().toISOString();
           logLines(step.stepKey, [`Step "${step.stepKey}" failed (invalid if expression)`]);
           jobFailed = true;
@@ -230,7 +248,7 @@ export class Runner {
 
         if ('uses' in stepSpec) {
           if (stepSpec.uses === 'checkout') {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             logLines(step.stepKey, [
               `Step "${step.stepKey}" started: checkout`,
@@ -244,13 +262,13 @@ export class Runner {
             logLines(step.stepKey, checkoutResult.lines);
 
             if (checkoutResult.success) {
-              step.status = 'success';
+              await transition(step, 'success');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" completed successfully`,
               ]);
             } else {
-              step.status = 'failure';
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" failed: ${checkoutResult.error}`,
@@ -261,7 +279,7 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'artifact/upload' && this.fileFnClient) {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             let artName = (stepSpec.with?.name as string) ?? 'default';
             let artPath = (stepSpec.with?.path as string) ?? '.';
@@ -272,8 +290,9 @@ export class Runner {
               const pathRes = await interpolate(artPath, interpolateContext);
               artPath = pathRes.result;
               secretVals.push(...pathRes.secretValues);
-            } catch {
-              step.status = 'failure';
+            } catch (error) {
+              if (error instanceof StepStatusReportingError) throw error;
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [`Step "${step.stepKey}" failed: interpolation error`]);
               jobFailed = true;
@@ -292,13 +311,13 @@ export class Runner {
               if (uploadResult.fileId && this.artifactStore) {
                 this.artifactStore.addArtifact(runId, { name: artName, fileId: uploadResult.fileId });
               }
-              step.status = 'success';
+              await transition(step, 'success');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" completed successfully`,
               ]);
             } else {
-              step.status = 'failure';
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" failed: ${uploadResult.error}`,
@@ -309,15 +328,16 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'artifact/download' && this.fileFnClient) {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             let artName = (stepSpec.with?.name as string) ?? 'default';
             try {
               const nameRes = await interpolate(artName, interpolateContext);
               artName = nameRes.result;
               secretVals.push(...nameRes.secretValues);
-            } catch {
-              step.status = 'failure';
+            } catch (error) {
+              if (error instanceof StepStatusReportingError) throw error;
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [`Step "${step.stepKey}" failed: interpolation error`]);
               jobFailed = true;
@@ -333,13 +353,13 @@ export class Runner {
             logLines(step.stepKey, downloadResult.lines);
 
             if (downloadResult.success) {
-              step.status = 'success';
+              await transition(step, 'success');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" completed successfully`,
               ]);
             } else {
-              step.status = 'failure';
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" failed: ${downloadResult.error}`,
@@ -350,15 +370,16 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'cache/save' && this.fileFnClient) {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             let cacheKey = (stepSpec.with?.key as string) ?? '';
             try {
               const keyRes = await interpolate(cacheKey, interpolateContext);
               cacheKey = keyRes.result;
               secretVals.push(...keyRes.secretValues);
-            } catch {
-              step.status = 'failure';
+            } catch (error) {
+              if (error instanceof StepStatusReportingError) throw error;
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [`Step "${step.stepKey}" failed: interpolation error`]);
               jobFailed = true;
@@ -374,7 +395,7 @@ export class Runner {
             });
             logLines(step.stepKey, saveResult.lines);
 
-            step.status = saveResult.success ? 'success' : 'failure';
+            await transition(step, saveResult.success ? 'success' : 'failure');
             step.completedAt = new Date().toISOString();
             if (!saveResult.success) {
               logLines(step.stepKey, [
@@ -390,15 +411,16 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'cache/restore' && this.fileFnClient) {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             let cacheKey = (stepSpec.with?.key as string) ?? '';
             try {
               const keyRes = await interpolate(cacheKey, interpolateContext);
               cacheKey = keyRes.result;
               secretVals.push(...keyRes.secretValues);
-            } catch {
-              step.status = 'failure';
+            } catch (error) {
+              if (error instanceof StepStatusReportingError) throw error;
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [`Step "${step.stepKey}" failed: interpolation error`]);
               jobFailed = true;
@@ -413,7 +435,7 @@ export class Runner {
             });
             logLines(step.stepKey, restoreResult.lines);
 
-            step.status = 'success';
+            await transition(step, 'success');
             step.completedAt = new Date().toISOString();
             logLines(step.stepKey, [
               `Step "${step.stepKey}" completed successfully${restoreResult.hit ? ' (cache hit)' : ' (cache miss)'}`,
@@ -422,7 +444,7 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'testfn/run') {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             const framework = stepSpec.with?.framework as string | undefined;
             const testPattern = stepSpec.with?.testPattern as string | undefined;
@@ -450,13 +472,13 @@ export class Runner {
             logLines(step.stepKey, testResult.lines);
 
             if (testResult.success) {
-              step.status = 'success';
+              await transition(step, 'success');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" completed successfully`,
               ]);
             } else {
-              step.status = 'failure';
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" failed: ${testResult.error}`,
@@ -467,7 +489,7 @@ export class Runner {
           }
 
           if (stepSpec.uses === 'hostfn/deploy') {
-            step.status = 'running';
+            await transition(step, 'running');
             step.startedAt = new Date().toISOString();
             const environment = (stepSpec.with?.environment as string) ?? '';
             const ci = (stepSpec.with?.ci as boolean) ?? true;
@@ -484,13 +506,13 @@ export class Runner {
             logLines(step.stepKey, deployResult.lines);
 
             if (deployResult.success) {
-              step.status = 'success';
+              await transition(step, 'success');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" completed successfully`,
               ]);
             } else {
-              step.status = 'failure';
+              await transition(step, 'failure');
               step.completedAt = new Date().toISOString();
               logLines(step.stepKey, [
                 `Step "${step.stepKey}" failed: ${deployResult.error}`,
@@ -500,14 +522,14 @@ export class Runner {
             continue;
           }
 
-          step.status = 'skipped';
+          await transition(step, 'skipped');
           logLines(step.stepKey, [
             `Step "${step.stepKey}" skipped (unsupported uses: ${stepSpec.uses})`,
           ]);
           continue;
         }
 
-        step.status = 'running';
+        await transition(step, 'running');
         step.startedAt = new Date().toISOString();
 
         let runCommand = stepSpec.run;
@@ -515,8 +537,9 @@ export class Runner {
           const runRes = await interpolate(stepSpec.run, interpolateContext);
           runCommand = runRes.result;
           secretVals.push(...runRes.secretValues);
-        } catch {
-          step.status = 'failure';
+        } catch (error) {
+          if (error instanceof StepStatusReportingError) throw error;
+          await transition(step, 'failure');
           step.completedAt = new Date().toISOString();
           logLines(step.stepKey, [`Step "${step.stepKey}" failed: interpolation error`]);
           jobFailed = true;
@@ -532,13 +555,13 @@ export class Runner {
         if (!result.streamed) logLines(step.stepKey, result.lines);
 
         if (result.exitCode === 0) {
-          step.status = 'success';
+          await transition(step, 'success');
           step.completedAt = new Date().toISOString();
           logLines(step.stepKey, [
             `Step "${step.stepKey}" completed successfully`,
           ]);
         } else {
-          step.status = 'failure';
+          await transition(step, 'failure');
           step.completedAt = new Date().toISOString();
           logLines(step.stepKey, [
             `Step "${step.stepKey}" failed with exit code ${result.exitCode}`,

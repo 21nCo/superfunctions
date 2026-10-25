@@ -58,12 +58,13 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 try {
   control = await start();
   const registered = await data('/api/v1/runners/register', { token });
-  let dropped = false, logsOffline = false, firstBody, replayBody;
+  let dropped = false, logsOffline = false, stepsOffline = false, firstBody, replayBody;
   const requests = [];
   proxy = createServer(async (req, res) => {
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
       const body = Buffer.concat(chunks); const text = body.toString();
+      if (stepsOffline && req.url.endsWith('/step')) { res.writeHead(503); res.end('{}'); return; }
       if (req.url.endsWith('/logs')) {
         assert.ok(!text.includes(secret), 'Configured secret must not reach log transport'); requests.push(JSON.parse(text).packet);
         if (logsOffline) { res.writeHead(503); res.end('{}'); return; }
@@ -136,7 +137,7 @@ try {
   assert.equal(liveLogs.lines.filter(line => line.line === 'live stderr ***').length, 1);
   assert.ok(!JSON.stringify(requests).includes('live stdout '+secret.slice(0,8)), 'partial secret prefix withheld across captures');
   // Kill a real runner after its line checkpoint but before any log acknowledgement.
-  logsOffline = true;
+  logsOffline = true; stepsOffline = true;
   const crashWitness = join(directory, 'crash-executions');
   const crashJs = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(crashPid)},String(process.pid));fs.appendFileSync(${JSON.stringify(crashWitness)},'once\\n');process.on('exit',()=>fs.writeFileSync(${JSON.stringify(crashDone)},'done'));process.stdout.write('started stdout '+process.env.TOKEN+'\\n');process.stderr.write('started stderr '+process.env.TOKEN+'\\n');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(crashGate)})){clearInterval(timer);process.exit(0)}},20);setTimeout(()=>process.exit(9),15000);`;
   const crashInput = structuredClone(input);
@@ -168,13 +169,18 @@ try {
   assert.ok(await stat(crashDone), 'owned orphan shell exited through its release gate');
   await waitCrashShellExit();
   const spoolBefore = await readFile(startedFile);
+  const stepFile = join(stateDirectory, 'steps', startedFile.split('/').at(-1));
+  const stepBefore = await readFile(stepFile);
+  assert.equal((await data(`/api/v1/runs/${crashId}`)).jobs[0].steps[0].status, 'pending');
   assert.equal((await data(`/api/v1/runs/${crashId}/jobs/build/logs`)).lines.length, 0);
-  await stop(control); control = await start(); logsOffline = false;
+  await stop(control); control = await start(); logsOffline = false; stepsOffline = false;
   await new RemoteRunner(options).tick(); await new RemoteRunner(options).tick();
   const recovered = await data(`/api/v1/runs/${crashId}/jobs/build/logs`);
   assert.equal(recovered.transfer.status, 'pending');
   for (const line of ['started stdout ***', 'started stderr ***']) assert.equal(recovered.lines.filter(entry => entry.line === line).length, 1);
   assert.equal((await data(`/api/v1/runs/${crashId}`)).status, 'running');
+  assert.equal((await data(`/api/v1/runs/${crashId}`)).jobs[0].steps[0].status, 'running');
+  assert.deepEqual(await readFile(stepFile), stepBefore, 'recovery never rewrites step journal or infers terminal status');
   assert.equal(await readFile(crashWitness, 'utf8'), 'once\n');
   assert.deepEqual(await readFile(startedFile), spoolBefore, 'recovery never writes stale spool ACKs or status');
   const journalEntries = await Promise.all((await readdir(stateDirectory)).filter(name => name.endsWith('.json')).map(name => readFile(join(stateDirectory, name), 'utf8').then(JSON.parse)));
@@ -188,7 +194,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, startedExecutionStillUncertain: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionStillUncertain: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }

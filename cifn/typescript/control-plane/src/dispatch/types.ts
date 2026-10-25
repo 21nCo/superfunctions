@@ -9,6 +9,7 @@ export interface PreparedRun {
   secretValues: string[];
 }
 export interface DispatchIntent {
+  stepEvents?: import('./step-events.js').StepEvent[];
   id: string;
   payload: JobPayload;
   state: 'blocked' | 'ready' | 'claimed' | 'completed';

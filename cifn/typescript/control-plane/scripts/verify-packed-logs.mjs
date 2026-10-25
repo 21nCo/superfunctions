@@ -32,10 +32,25 @@ try {
   run(process.execPath, ['consumer.mjs']);
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
   process.stdout.write(receipt);
+  process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-step-status.mjs']));
   let auditOutput;
   try { auditOutput = run('npm', ['audit', '--omit=dev', '--json']); }
   catch (error) { if (!error.stdout) throw error; auditOutput = error.stdout; }
   const audit = JSON.parse(auditOutput);
   assert.equal(audit.metadata.vulnerabilities.total, 0);
-  console.log(JSON.stringify({passed:true, installedPackages:packages.size, cjs:true, esm:true, productionAudit:0, node:process.version}));
+  // Consumer tooling is installed only after recording the normal production closure.
+  run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
+  await writeFile(join(directory, 'consumer.ts'), `import {Runner, type RunnerOptions} from '@cifn/runner';
+import {DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
+const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
+  const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
+  if (!validateStepEvent(event)) throw new Error('invalid');
+};
+export async function report(store: DatabaseStore, identity: ClaimIdentity, event: StepEvent): Promise<number> {
+  return (await store.appendStepEvent(identity,event)).nextSequence;
+}
+export const typed = {Runner, observer};
+`);
+  run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts']);
+  console.log(JSON.stringify({passed:true, strictDeclarations:true, installedPackages:packages.size, cjs:true, esm:true, productionAudit:0, node:process.version}));
 } finally { await rm(directory, {recursive:true, force:true}); }

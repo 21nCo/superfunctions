@@ -1,3 +1,4 @@
+import { StepJournal, replayStepSnapshot, StepStatusReportingError } from './step-journal.js';
 import { LogSpool, replayStartedLogSnapshot } from "./log-spool.js";
 import type { LogFnClient } from "./reporting/logfn-client.js";
 import { executeOwnedShell, ProcessGroupUncertainError } from './executor/owned-shell.js';
@@ -11,7 +12,7 @@ export interface RemoteRunnerOptions { baseUrl: string; runnerId: string; runner
 interface ResumableClaim { payload?: JobPayload; runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean }
 
 /** Reuses the real shell executor. The memory projection is scratch state only. */
-export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void, onLogFailure?: () => void): Promise<JobCompletion> {
+export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void, onLogFailure?: () => void, onStepStatus?: import('./runner.js').RunnerOptions['onStepStatus']): Promise<JobCompletion> {
   const failed = (): JobCompletion => ({ status: 'failure', steps: payload.jobSpec.steps.map((_, index) => ({ stepKey: `step-${index}`, status: index === 0 ? 'failure' : 'skipped' })) });
   if (payload.jobSpec.image || payload.jobSpec.steps.some(step => !('run' in step))) {
     console.error('Remote job requires an unsupported executor/provider'); return failed();
@@ -23,13 +24,13 @@ export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortS
   const run = store.createRun({ pipelineSpec: spec, pipelineRef: payload.pipelineRef, trigger: { type: (payload.trigger?.type ?? 'workflow_dispatch') as 'workflow_dispatch', payload: payload.trigger?.payload } });
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
   const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
-  const runner = new Runner({ executionSignal: signal, runCommand: async (command, workspace, env, onLines) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal, lines => { try { onLines?.(lines); } catch { onLogFailure?.(); } }); if (result.truncated) onTruncated?.(); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
+  const runner = new Runner({ onStepStatus, executionSignal: signal, runCommand: async (command, workspace, env, onLines) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal, lines => { try { onLines?.(lines); } catch { onLogFailure?.(); } }); if (result.truncated) onTruncated?.(); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
     getSecret: async (_runId, name) => {
       if (!payload.secretSnapshot || !Object.prototype.hasOwnProperty.call(payload.secretSnapshot, name)) throw new Error('Required prepared secret is unavailable');
       return payload.secretSnapshot[name];
     },
     pipelineSpecs: new Map([[run.id, spec]]), secretValues: new Map([[run.id, [...Object.values(payload.env ?? {}), ...Object.values(payload.secretSnapshot ?? {})].filter(Boolean)]]) });
-  try { await runner.processNextJob(); } catch (cause) { if (cause instanceof ProcessGroupUncertainError) throw cause; return failed(); }
+  try { await runner.processNextJob(); } catch (cause) { if (cause instanceof ProcessGroupUncertainError || cause instanceof StepStatusReportingError) throw cause; if (onStepStatus) throw new StepStatusReportingError(); return failed(); }
   const result = store.getRun(run.id)!.jobs[0];
   const status = ['success', 'failure', 'skipped'].includes(result.status) ? result.status as JobCompletion['status'] : 'failure';
   const steps: JobCompletion['steps'] = result.steps.map(step => ({ stepKey: step.stepKey, status: ['success', 'failure', 'skipped'].includes(step.status) ? step.status as JobCompletion['status'] : 'skipped' }));
@@ -68,6 +69,8 @@ export class RemoteRunner {
   }
   private async finish(entry: ClaimJournalEntry): Promise<void> {
     try {
+      const { runId, dispatchId, runnerId, claimToken, executionId } = entry;
+      await replayStepSnapshot(this.options.stateDirectory, { runId, dispatchId, runnerId, claimToken, executionId }, event => this.request('/api/v1/runners/claims/step', { runId, dispatchId, runnerId, claimToken, executionId, event }));
       await this.request('/api/v1/runners/claims/complete', { ...entry, runnerId: this.options.runnerId, result: entry.result });
       this.journal.save({ ...entry, phase: 'finished' });
     } catch (cause) {
@@ -127,6 +130,7 @@ export class RemoteRunner {
     const timer = setInterval(observe, 1_000);
     try {
       observe();
+      const stepJournal = new StepJournal(this.options.stateDirectory, entry);
       const spool = this.spool(entry);
       // One spool instance owns appends and acknowledgements throughout execution.
       // Never reopen it concurrently: a stale copy could overwrite newly captured packets.
@@ -141,7 +145,14 @@ export class RemoteRunner {
       let result: JobCompletion;
       try {
         try {
-          result = await executeRemoteShellJob(claim.payload, cancellation.signal, spool, () => spool.markTruncated(), () => spool.markFailed());
+          result = await executeRemoteShellJob(claim.payload, cancellation.signal, spool, () => spool.markTruncated(), () => spool.markFailed(), async (stepKey, status) => {
+            stepJournal.append(stepKey, status);
+            try { await stepJournal.deliver(event => this.request('/api/v1/runners/claims/step', { ...entry, event })); }
+            catch (error) {
+              if (error instanceof StepStatusReportingError || (error instanceof RunnerProtocolError && error.status >= 400 && error.status < 500 && !cancellation.signal.aborted)) throw new StepStatusReportingError();
+              console.error('CiFn step status delivery pending; durable events retained');
+            }
+          });
         } finally {
           clearInterval(logTimer);
           await sending;
@@ -168,6 +179,12 @@ export class RemoteRunner {
   async tick(): Promise<number> {
     let processed = 0;
     for (const entry of this.journal.list()) {
+      if (entry.runnerId === this.options.runnerId && entry.phase !== 'finished' && this.journal.hasStarted(entry.dispatchId)) {
+        const { runId, dispatchId, runnerId, claimToken, executionId } = entry;
+        try { await replayStepSnapshot(this.options.stateDirectory, { runId, dispatchId, runnerId, claimToken, executionId },
+          event => this.request('/api/v1/runners/claims/step', { runId, dispatchId, runnerId, claimToken, executionId, event })); }
+        catch { console.error('CiFn step status replay pending; execution state unchanged'); }
+      }
       if (entry.runnerId === this.options.runnerId && entry.logOutcome && this.journal.hasStarted(entry.dispatchId)) await this.transferLogs(entry);
       else if (entry.runnerId === this.options.runnerId && entry.phase === 'started' && this.journal.hasStarted(entry.dispatchId)) {
         const { runId, dispatchId, runnerId, claimToken, executionId } = entry;

@@ -215,3 +215,15 @@ CLI selection and execution use that workspace; JSON report paths remain tied to
 it even if unrelated host code changes cwd. This requires the accompanying
 TestFn core0.0.4 workspace implementation. It does not sandbox test code or
 isolate simultaneous writes into the same workspace.
+
+## Durable remote step status
+
+Updated remote shell runners persist each step transition before sending it to the authenticated control-plane claim endpoint. Run details can show an earlier step as `success` while a later step is still `running`. A lost acknowledgement replays the same sequence and digest; control-plane updates are durable before acknowledgement. Step timestamps are control-plane acceptance times, including delayed delivery after an outage.
+
+Each claim retains at most 200 step events (two per configured step) in a private, atomically written journal capped at 128 KiB. Transport failure retains events; local persistence failure or an authenticated protocol conflict stops further execution without fabricating a terminal result. Whole-job completion waits for its pending step events. Restart readers can replay events without changing execution ownership or rerunning a shell.
+
+Deploy the updated control plane before updated runners: an older server lacking the step endpoint cannot support this protocol. Stop/drain old writers when relying on the new guarantees; old runners can still report aggregate completion without intermediate events. No new database schema is required: event receipts live in the existing encrypted, revision-controlled run record.
+
+Cancellation remains terminal. Previously accepted duplicate events are acknowledged, but new events arriving after cancellation or completion are rejected and retained locally. A `running` step records admitted execution intent, not proof that a process is currently alive. Unknown execution results still require reconciliation. Per-claim journal bounds are not an aggregate runner-disk retention policy; claim/history cleanup remains a separate operational requirement. The Python SDK already consumes these step states through its existing `Run`/`Step` models; it is not a remote executor.
+
+See [.conduct/step-status-readiness.md](.conduct/step-status-readiness.md) for the acceptance evidence and remaining scope.

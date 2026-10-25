@@ -78,3 +78,5 @@ export type { SendFnConfig, SendFnNotification } from './sendfn/sendfn-client.js
 export { redactSecrets } from './secrets/redact.js';
 
 export * from "./log-delivery/protocol.js";
+
+export * from './dispatch/step-events.js';

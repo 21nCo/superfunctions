@@ -1,5 +1,7 @@
 # Required remote step-status follow-up
 
+Implemented by the later [durable remote step transition checkpoint](step-status-readiness.md). The historical baseline below is preserved; its standalone helper now delegates to actual acceptance of `[success,running]` while the second shell is active.
+
 ## Reproduced baseline
 
 At source checkpoint `c307a7643e603677d8efea5bb693f6cdc875a60b`, a real two-step remote shell job completes step 0 and holds step 1 on an owned filesystem gate. The control-plane HTTP API reports the run/job as running but both steps as pending. Releasing the gate completes the job and updates both steps to success together.

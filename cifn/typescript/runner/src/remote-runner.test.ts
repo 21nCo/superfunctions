@@ -140,6 +140,7 @@ it('does not interpret an in-flight observation failure as cancellation', async 
     else if (url.endsWith('/heartbeat')) {
       data = { job: offered ? null : { runId: 'run', jobKey: 'job', dispatchId: 'dispatch', claimToken: 'token', jobSpec: { 'runs-on': 'default', steps: [{ run: 'sleep 0.1; true' }] } } }; offered = true;
     } else if (url.endsWith('/status')) { if (++statuses > 2) throw Error('Temporary transport loss'); data = { cancelRequested: false }; }
+    else if (url.endsWith('/step')) data = { nextSequence: JSON.parse(String(init?.body)).event.sequence + 1 };
     else if (url.endsWith('/complete')) {
       completions++; expect(JSON.parse(String(init?.body)).result.status).toBe('success');
     } else if (url.endsWith('/stopped')) throw Error('Must not acknowledge cancellation');
@@ -204,6 +205,7 @@ it('keeps captured secrets and expanded scripts out of durable journal entries a
     else if (url.endsWith('/status')) data = { cancelRequested: false };
     else if (url.endsWith('/ack')) data = { acknowledged: true };
     else if (url.endsWith('/logs')) { const packet = JSON.parse(String(init?.body)).packet; data = { status: packet.terminal ?? 'pending', nextSequence: packet.sequence + 1, expiresAt: Date.now() + 86400000 }; }
+    else if (url.endsWith('/step')) data = { nextSequence: JSON.parse(String(init?.body)).event.sequence + 1 };
     else if (url.endsWith('/complete')) { completed = true; expect(JSON.parse(String(init?.body)).result.status).toBe('success'); data = { accepted: true }; }
     else throw Error('Unexpected request');
     return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
@@ -285,4 +287,26 @@ it('replays started logs without execution, journal transition or local ACK writ
     expect(journal.get('dispatch')?.result).toBeUndefined();
     expect(error.mock.calls.flat().join(' ')).not.toContain('credential');
   } finally { error.mockRestore(); }
+});
+
+it('retains completed result during step transport outage and retries without executing the shell again', async () => {
+  const path = directory(), witness = join(path, 'executions');
+  let offline = true, offered = false, completions = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = String(input), body = JSON.parse(String(init?.body)); let data: unknown = {};
+    if (url.endsWith('/resume')) data = { claims: [] };
+    else if (url.endsWith('/heartbeat')) { data = { job: offered ? null : { runId: 'run', jobKey: 'job', dispatchId: 'dispatch', claimToken: 'claim', jobSpec: { 'runs-on': 'default', steps: [{ run: `printf once >> '${witness}'` }] } } }; offered = true; }
+    else if (url.endsWith('/status')) data = { cancelRequested: false };
+    else if (url.endsWith('/step')) { if (offline) return new Response('{}', { status: 503 }); data = { nextSequence: body.event.sequence + 1 }; }
+    else if (url.endsWith('/logs')) data = { status: body.packet.terminal ?? 'pending', nextSequence: body.packet.sequence + 1, expiresAt: Date.now() + 86400000 };
+    else if (url.endsWith('/complete')) { completions++; data = { accepted: true }; }
+    return new Response(JSON.stringify({ ok: true, data }));
+  };
+  const options = { baseUrl: 'http://localhost', runnerId: 'runner', runnerSecret: 'secret', stateDirectory: path, fetch: fetcher };
+  await expect(new RemoteRunner(options).tick()).rejects.toThrow('503');
+  expect(new ClaimJournal(path).get('dispatch')?.phase).toBe('completed');
+  expect(completions).toBe(0); expect(readFileSync(witness, 'utf8')).toBe('once');
+  offline = false; await new RemoteRunner(options).tick();
+  expect(completions).toBe(1); expect(readFileSync(witness, 'utf8')).toBe('once');
+  expect(new ClaimJournal(path).get('dispatch')?.phase).toBe('finished');
 });

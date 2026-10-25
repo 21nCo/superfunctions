@@ -1,3 +1,4 @@
+import { MAX_STEP_EVENTS, validateStepEvent, type StepEvent } from '../dispatch/step-events.js';
 import { redactSecrets } from "../secrets/redact.js";
 import { LOG_JOB_BYTES, LOG_MAX_EVENTS, LOG_RETENTION_MS, validateLogPacket, type LogPacket, type LogLedger } from "../log-delivery/protocol.js";
 import type { EmailDeliveryResult } from '../sendfn/email-transport.js';
@@ -376,6 +377,37 @@ export class DatabaseStore implements ControlPlaneStore {
     });
     return result ?? { lines: [], transfer: { status: 'unavailable' as const, eventCount: 0 } };
   }
+  /** Acknowledgement follows the existing run-row CAS; no subprocess outcome is inferred. */
+  async appendStepEvent(identity: ClaimIdentity, event: StepEvent): Promise<{ nextSequence: number }> {
+    identity = clone(identity); event = clone(event);
+    if (!validateStepEvent(event)) throw new ClaimConflictError();
+    const result = await this.mutate<RunState, { nextSequence: number }>('run', identity.runId, state => {
+      const intent = this.boundClaim(state, identity);
+      if (intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+      const events = intent.stepEvents ??= [];
+      const existing = events[event.sequence];
+      if (existing) {
+        if (existing.digest !== event.digest) throw new ClaimConflictError();
+        return { result: { nextSequence: events.length }, changed: false };
+      }
+      if (TERMINAL.includes(state.run.status) || intent.state !== 'claimed' || intent.completion || event.sequence !== events.length || events.length >= MAX_STEP_EVENTS) throw new ClaimConflictError();
+      const job = state.run.jobs.find(job => job.jobKey === intent.payload.jobKey)!;
+      const index = job.steps.findIndex(step => step.stepKey === event.stepKey);
+      const step = job.steps[index];
+      if (!step || job.status !== 'running' || job.steps.slice(0, index).some(prior => !['success', 'failure', 'skipped'].includes(prior.status))) throw new ClaimConflictError();
+      if (step.status !== 'pending' && step.status !== 'running') throw new ClaimConflictError();
+      if ((step.status === 'running' && event.status === 'running') || (step.status === 'pending' && event.status === 'success')) throw new ClaimConflictError();
+      const now = new Date().toISOString();
+      step.status = event.status;
+      if (event.status === 'running') step.startedAt = now;
+      else step.completedAt = now;
+      events.push(event);
+      state.run.updatedAt = now;
+      return { result: { nextSequence: events.length }, changed: true };
+    });
+    if (!result) throw new ClaimConflictError();
+    return result;
+  }
   async completeDispatch(identity: ClaimIdentity, completion: JobCompletion): Promise<{ accepted: true }> {
     if (!validateCompletion(completion)) throw new ClaimConflictError();
     const canonical: JobCompletion = { status: completion.status, steps: completion.steps.map(step => ({ stepKey: step.stepKey, status: step.status })) };
@@ -393,8 +425,9 @@ export class DatabaseStore implements ControlPlaneStore {
         || (canonical.status === 'success' && canonical.steps.some(step => step.status === 'failure'))
         || (canonical.status === 'skipped' && canonical.steps.some(step => step.status !== 'skipped'))
         || (canonical.status === 'failure' && !canonical.steps.some(step => step.status === 'failure'))) throw new ClaimConflictError();
+      if (canonical.steps.some((step, index) => ['success', 'failure', 'skipped'].includes(job.steps[index].status) && job.steps[index].status !== step.status)) throw new ClaimConflictError();
       const now = new Date().toISOString();
-      canonical.steps.forEach((step, index) => { job.steps[index].status = step.status; job.steps[index].completedAt = now; });
+      canonical.steps.forEach((step, index) => { job.steps[index].status = step.status; job.steps[index].completedAt ??= now; });
       job.status = canonical.status; job.completedAt = now;
       intent.state = 'completed'; intent.completion = { digest, result: clone(canonical) };
       // Dependency outcomes and newly ready intents commit with the completion.

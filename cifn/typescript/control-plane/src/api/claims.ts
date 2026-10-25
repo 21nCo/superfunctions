@@ -1,3 +1,4 @@
+import { validateStepEvent } from '../dispatch/step-events.js';
 import { validateLogPacket } from "../log-delivery/protocol.js";
 import type { Hono } from 'hono';
 import type { ControlPlaneStore } from '../store/store.js';
@@ -8,7 +9,7 @@ import { ClaimConflictError, validateCompletion, type ClaimIdentity } from '../d
 import { success, error } from './envelope.js';
 
 export function registerClaimRoutes(api: Hono, store: ControlPlaneStore): void {
-  for (const action of ['resume', 'ack', 'complete', 'status', 'stopped', 'logs'] as const) {
+  for (const action of ['resume', 'ack', 'complete', 'status', 'stopped', 'logs', 'step'] as const) {
     api.post(`/runners/claims/${action}`, async c => {
       let body: Record<string, unknown>;
       try { body = await readJsonBody(c.req.raw); }
@@ -28,6 +29,10 @@ export function registerClaimRoutes(api: Hono, store: ControlPlaneStore): void {
           if (typeof body[field] !== 'string' || !body[field] || (body[field] as string).length > 512) return c.json(error('BAD_REQUEST', 'Invalid claim identity'), 400);
         }
         const identity: ClaimIdentity = { runId: body.runId as string, dispatchId: body.dispatchId as string, claimToken: body.claimToken as string, executionId: body.executionId as string, runnerId: runner.id };
+        if (action === 'step') {
+          if (!validateStepEvent(body.event)) return c.json(error('BAD_REQUEST', 'Invalid step event'), 400);
+          return c.json(success(await durable.appendStepEvent(identity, body.event)));
+        }
         if (action === 'logs') {
           if (!validateLogPacket(body.packet)) return c.json(error('BAD_REQUEST', 'Invalid log packet'), 400);
           return c.json(success(await durable.appendDispatchLogs(identity, body.packet)));
