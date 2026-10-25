@@ -227,3 +227,38 @@ Deploy the updated control plane before updated runners: an older server lacking
 Cancellation remains terminal. Previously accepted duplicate events are acknowledged, but new events arriving after cancellation or completion are rejected and retained locally. A `running` step records admitted execution intent, not proof that a process is currently alive. Unknown execution results still require reconciliation. Per-claim journal bounds are not an aggregate runner-disk retention policy; claim/history cleanup remains a separate operational requirement. The Python SDK already consumes these step states through its existing `Run`/`Step` models; it is not a remote executor.
 
 See [.conduct/step-status-readiness.md](.conduct/step-status-readiness.md) for the acceptance evidence and remaining scope.
+
+### Durable control-plane lifecycle events
+
+SQLite storage records new run creation and subsequent run/job/step status changes
+atomically with the state change. To deliver these events through LogFn's console
+sink in the built server, set `CIFN_LIFECYCLE_LOGS=console` (default `off`). This
+requires `CIFN_STORE_ADAPTER=sqlite`. Existing job-log HTTP queries continue reading
+CiFn's durable log storage; LogFn is a logger/sink library, not an HTTP query server.
+
+Programmatic hosts can construct `LogFnLifecycleDispatcher(store, sink)` with an
+actual `@logfn/core` `Sink`, call `tick(cursor)` and carry the returned cursor until
+it wraps, then repeat. Each tick scans at most ten runs and admits one event per
+run. Call `close()` to stop admission and join in-flight sink work. A sink must
+provide its own I/O deadline; arbitrary sinks cannot be forcibly cancelled.
+
+Events carry stable `ctx.eventId` values. A delivered receipt means the sink and
+its flush resolved, not that an external service durably stored the event. Any
+sink failure, expired claim or missing crash-time receipt parks the event as
+`unknown`; later events in that run wait. Inspect `getLifecycleRecords(runId)` and
+use privileged `reconcileLifecycle(runId, eventId, 'delivered' | 'retry', now)` only
+after investigating. Explicit retry can duplicate an already accepted effect.
+
+Hosts must maintain retention using `pruneLifecycle(runId, completedBefore, limit)`
+(`limit` at most 100). Only delivered records older than the supplied cutoff are
+removed; unknown/pending/in-flight records stay pinned and sequence IDs never
+reset. At 25,000 retained records or 8 MiB per run (including reserved receipt metadata), a new lifecycle-producing state
+transition rejects until maintenance frees capacity. These are per-run bounds;
+aggregate database/run-history capacity remains a deployment responsibility.
+
+Drain older control-plane writers before relying on lifecycle coverage. Existing
+runs are not retroactively backfilled: only subsequent committed transitions are
+recorded. This slice covers run/job/step lifecycle; durable runner registration,
+heartbeat and API/parse-error telemetry from original OBS-001 remain open. Remote
+step output already uses the real LogFn pipeline and its private durable sink;
+configurable external forwarding of that output remains separate unfinished work.

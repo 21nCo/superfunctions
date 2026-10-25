@@ -1,3 +1,4 @@
+import { captureLifecycle, emptyLifecycle, type LifecycleLedger, type LifecycleRecord } from '../observability/lifecycle.js';
 import { MAX_STEP_EVENTS, validateStepEvent, type StepEvent } from '../dispatch/step-events.js';
 import { redactSecrets } from "../secrets/redact.js";
 import { LOG_JOB_BYTES, LOG_MAX_EVENTS, LOG_RETENTION_MS, validateLogPacket, type LogPacket, type LogLedger } from "../log-delivery/protocol.js";
@@ -21,7 +22,7 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent; logs?: Record<string, LogLedger> }
+interface RunState { lifecycle?: LifecycleLedger; run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent; logs?: Record<string, LogLedger> }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
@@ -129,8 +130,13 @@ export class DatabaseStore implements ControlPlaneStore {
       const row = await this.database.findOne<StateRow>({ model: CIFN_STATE_TABLE, where: this.where(this.id(kind, id)) });
       if (!row) return undefined;
       const value = this.decode<T>(row);
+      const beforeRun = kind === 'run' ? clone((value as RunState).run) : undefined;
       const change = update(value);
       if (!change.changed) return change.result;
+      if (kind === 'run') {
+        const state = value as RunState;
+        captureLifecycle(this.namespace, state.lifecycle ??= emptyLifecycle(), beforeRun, state.run, state.secretValues);
+      }
       if (kind === 'run' && !TERMINAL.includes(row.status as RunStatus)) {
         const state = value as RunState;
         if (TERMINAL.includes(state.run.status)) this.prepareNotification(state);
@@ -149,6 +155,7 @@ export class DatabaseStore implements ControlPlaneStore {
     const definition = clone(input);
     const run = createRunRecord(definition);
     const state: RunState = { run, definition, artifacts: [], secretValues: [], notificationDestination: this.notificationUrl };
+    captureLifecycle(this.namespace, state.lifecycle = emptyLifecycle(), undefined, run, state.secretValues);
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
   }
@@ -160,8 +167,67 @@ export class DatabaseStore implements ControlPlaneStore {
       return { id, payload: { ...clone(job), runId: run.id, dispatchId: id, trigger: clone(definition.trigger) }, state: (definition.pipelineSpec.jobs[job.jobKey].needs?.length ?? 0) > 0 ? 'blocked' : 'ready', nextDeliveryAt: 0 };
     });
     const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches, dispatchProtocolVersion: 2, notificationDestination: this.notificationUrl };
+    captureLifecycle(this.namespace, state.lifecycle = emptyLifecycle(), undefined, run, state.secretValues);
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
+  }
+  /** Privileged metadata: no sink credentials or raw provider errors. */
+  async getLifecycleRecords(runId: string): Promise<LifecycleRecord[]> {
+    return clone((await this.read<RunState>('run', runId))?.lifecycle?.records ?? []);
+  }
+  async listLifecycleRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
+    const page = await this.page({ limit: 10, cursor });
+    return { runIds: page.rows.filter(row => this.decode<RunState>(row).lifecycle?.records.some(record => record.state === 'pending' || record.state === 'sending')).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
+  }
+  async claimLifecycle(runId: string, now: number, leaseMs: number): Promise<LifecycleRecord | undefined> {
+    if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) throw new Error('Invalid lifecycle claim bounds');
+    return this.mutate<RunState, LifecycleRecord | undefined>('run', runId, state => {
+      const record = state.lifecycle?.records.find(item => item.state !== 'delivered');
+      if (!record || record.state === 'unknown') return { result: undefined, changed: false };
+      if (record.state === 'sending') {
+        if (!record.claim) throw new Error('Invalid lifecycle claim state');
+        if (record.claim.expiresAt > now) return { result: undefined, changed: false };
+        record.state = 'unknown'; delete record.claim;
+        return { result: undefined, changed: true };
+      }
+      record.state = 'sending'; record.claim = { token: randomUUID(), expiresAt: now + leaseMs };
+      return { result: clone(record), changed: true };
+    });
+  }
+  async finishLifecycle(runId: string, eventId: string, token: string, outcome: 'delivered' | 'unknown', now: number): Promise<boolean> {
+    if (!Number.isSafeInteger(now) || now < 0 || !['delivered', 'unknown'].includes(outcome)) throw new Error('Invalid lifecycle receipt');
+    return await this.mutate<RunState, boolean>('run', runId, state => {
+      const record = state.lifecycle?.records.find(item => item.event.id === eventId);
+      if (!record || record.state !== 'sending' || record.claim?.token !== token) return { result: false, changed: false };
+      record.state = record.claim.expiresAt <= now ? 'unknown' : outcome;
+      if (record.state === 'delivered') record.completedAt = now;
+      delete record.claim;
+      return { result: true, changed: true };
+    }) ?? false;
+  }
+  /** Operator-only decision. Retrying an unknown event can duplicate a prior sink effect. */
+  async reconcileLifecycle(runId: string, eventId: string, resolution: 'delivered' | 'retry', now: number): Promise<boolean> {
+    if (!['delivered', 'retry'].includes(resolution) || !Number.isSafeInteger(now) || now < 0) throw new Error('Invalid lifecycle reconciliation');
+    return await this.mutate<RunState, boolean>('run', runId, state => {
+      const record = state.lifecycle?.records.find(item => item.event.id === eventId);
+      if (!record || record.state !== 'unknown') return { result: false, changed: false };
+      record.state = resolution === 'retry' ? 'pending' : 'delivered';
+      if (resolution === 'delivered') record.completedAt = now;
+      return { result: true, changed: true };
+    }) ?? false;
+  }
+  /** Explicit host maintenance; unresolved records are never discarded. */
+  async pruneLifecycle(runId: string, completedBefore: number, limit = 100): Promise<number> {
+    if (!Number.isSafeInteger(completedBefore) || completedBefore < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid lifecycle pruning bounds');
+    return await this.mutate<RunState, number>('run', runId, state => {
+      if (!state.lifecycle) return { result: 0, changed: false };
+      let removed = 0;
+      state.lifecycle.records = state.lifecycle.records.filter(record => {
+        if (removed < limit && record.state === 'delivered' && record.completedAt !== undefined && record.completedAt < completedBefore) { removed++; return false; }
+        return true;
+      });
+      return { result: removed, changed: removed > 0 };
+    }) ?? 0;
   }
   configureNotifications(config: SendFnConfig): void { this.notificationUrl = notificationDestination(config); }
   private prepareNotification(state: RunState): void {

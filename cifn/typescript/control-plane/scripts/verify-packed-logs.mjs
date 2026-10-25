@@ -22,17 +22,18 @@ try {
   await writeFile(join(directory,'package.json'),JSON.stringify({name:'cifn-owned-packed-logs',version:'1.0.0',private:true,type:'module',dependencies},null,2));
   run('npm',['install','--omit=dev','--no-fund']);
   const moduleRoot = await realpath(join(directory, 'node_modules'));
-  for (const name of ['@cifn/runner', '@cifn/control-plane']) {
+  for (const name of ['@cifn/runner', '@cifn/control-plane', '@logfn/core']) {
     const installed = await realpath(join(directory, 'node_modules', name));
     assert.ok(installed.startsWith(moduleRoot + '/'), 'Consumer must use its installed package');
   }
   await writeFile(join(directory, 'consumer.cjs'), "const assert=require('node:assert/strict');assert.equal(typeof require('@cifn/runner').RemoteRunner,'function');assert.equal(typeof require('@cifn/control-plane').createApp,'function');");
-  await writeFile(join(directory, 'consumer.mjs'), "import assert from 'node:assert/strict';import * as runner from './node_modules/@cifn/runner/dist/index.mjs';import * as control from './node_modules/@cifn/control-plane/dist/index.mjs';assert.equal(typeof runner.RemoteRunner,'function');assert.equal(typeof control.createApp,'function');");
+  await writeFile(join(directory, 'consumer.mjs'), "import assert from 'node:assert/strict';import * as runner from './node_modules/@cifn/runner/dist/index.mjs';import * as control from './node_modules/@cifn/control-plane/dist/index.mjs';assert.equal(typeof runner.RemoteRunner,'function');assert.equal(typeof control.createApp,'function');const {createLogger}=await import('@logfn/core');const events=[];const logger=createLogger({name:'installed',sinks:[batch=>events.push(...batch)]});logger.info('installed logfn');await logger.flush();assert.equal(events[0].msg,'installed logfn');");
   run(process.execPath, ['consumer.cjs']);
   run(process.execPath, ['consumer.mjs']);
   const receipt = run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-remote-logs.mjs']);
   process.stdout.write(receipt);
   process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-step-status.mjs']));
+  process.stdout.write(run(process.execPath, ['node_modules/@cifn/control-plane/scripts/verify-lifecycle.mjs']));
   let auditOutput;
   try { auditOutput = run('npm', ['audit', '--omit=dev', '--json']); }
   catch (error) { if (!error.stdout) throw error; auditOutput = error.stdout; }
@@ -41,7 +42,7 @@ try {
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
   await writeFile(join(directory, 'consumer.ts'), `import {Runner, type RunnerOptions} from '@cifn/runner';
-import {DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
+import {LogFnLifecycleDispatcher, type LifecycleEvent, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
   if (!validateStepEvent(event)) throw new Error('invalid');
@@ -49,6 +50,7 @@ const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, sta
 export async function report(store: DatabaseStore, identity: ClaimIdentity, event: StepEvent): Promise<number> {
   return (await store.appendStepEvent(identity,event)).nextSequence;
 }
+export function lifecycle(store: DatabaseStore) { return new LogFnLifecycleDispatcher(store, async events => { const id: unknown = events[0]?.ctx?.eventId; void id; }); }
 export const typed = {Runner, observer};
 `);
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts']);

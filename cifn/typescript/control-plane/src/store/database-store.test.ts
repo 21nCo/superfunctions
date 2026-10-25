@@ -684,3 +684,73 @@ it('keeps cancellation terminal while acknowledging only previously accepted ste
   expect((await store.getRun(run.id))!.status).toBe('cancelled');
   expect((await store.getRun(run.id))!.jobs[0].steps[0].status).toBe('running');
 });
+
+describe('durable LogFn lifecycle delivery', () => {
+  it('commits lifecycle alongside state, survives reopen, and arbitrates independent dispatchers', async () => {
+    const { LogFnLifecycleDispatcher } = await import('../observability/dispatcher.js');
+    const { path } = await location();
+    let opened = await open(path);
+    const run = await opened.store.createRun(input);
+    await opened.store.updateRunStatus(run.id, 'running');
+    await opened.store.updateJobStatus(run.id, 'build', 'running');
+    await opened.store.updateStepStatus(run.id, 'build', 'step-0', 'success');
+    expect((await opened.store.getLifecycleRecords(run.id)).map(record => record.event.type)).toEqual(['run.created', 'run.status_changed', 'job.started', 'step.completed']);
+    await close(opened.sql); opened = await open(path);
+    const other = await open(path);
+    const events: unknown[] = [];
+    const sink = async (batch: unknown[]) => { events.push(...batch); };
+    const first = new LogFnLifecycleDispatcher(opened.store, sink);
+    const second = new LogFnLifecycleDispatcher(other.store, sink);
+    for (let index = 0; index < 4; index++) await Promise.all([first.tick(), second.tick()]);
+    expect(events).toHaveLength(4);
+    expect(new Set(events.map(event => (event as any).ctx.eventId)).size).toBe(4);
+    expect((await opened.store.getLifecycleRecords(run.id)).every(record => record.state === 'delivered')).toBe(true);
+    expect(await opened.store.pruneLifecycle(run.id, Date.now() + 1, 2)).toBe(2);
+    await opened.store.updateStepStatus(run.id, 'build', 'step-1', 'running');
+    expect((await opened.store.getLifecycleRecords(run.id)).at(-1)?.event.sequence).toBe(4);
+    await Promise.all([first.close(), second.close()]);
+  });
+  it('parks expired and failed sink effects, pins unresolved history and requires explicit retry', async () => {
+    const { LogFnLifecycleDispatcher } = await import('../observability/dispatcher.js');
+    const { path } = await location(); const opened = await open(path);
+    const run = await opened.store.createRun(input);
+    const claimed = await opened.store.claimLifecycle(run.id, 100, 10);
+    expect(claimed?.state).toBe('sending');
+    expect(await opened.store.claimLifecycle(run.id, 111, 10)).toBeUndefined();
+    expect((await opened.store.getLifecycleRecords(run.id))[0].state).toBe('unknown');
+    expect(await opened.store.pruneLifecycle(run.id, Date.now())).toBe(0);
+    expect(await opened.store.finishLifecycle(run.id, claimed!.event.id, claimed!.claim!.token, 'delivered', 112)).toBe(false);
+    expect(await opened.store.reconcileLifecycle(run.id, claimed!.event.id, 'retry', 113)).toBe(true);
+    let sends = 0;
+    const dispatcher = new LogFnLifecycleDispatcher(opened.store, () => { sends++; throw new Error('sensitive-provider-response'); });
+    await dispatcher.tick(); await dispatcher.tick();
+    expect(sends).toBe(1);
+    expect((await opened.store.getLifecycleRecords(run.id))[0].state).toBe('unknown');
+    expect(JSON.stringify(await opened.store.getLifecycleRecords(run.id))).not.toContain('sensitive-provider-response');
+    await dispatcher.close();
+  });
+  it('keeps a concurrent transition while shutdown joins an admitted sink', async () => {
+    const { LogFnLifecycleDispatcher } = await import('../observability/dispatcher.js');
+    const { path } = await location(); const first = await open(path); const other = await open(path);
+    const run = await first.store.createRun(input);
+    let release!: () => void; let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const dispatcher = new LogFnLifecycleDispatcher(first.store, () => { entered(); return new Promise<void>(resolve => { release = resolve; }); });
+    const tick = dispatcher.tick(); await started;
+    await other.store.updateRunStatus(run.id, 'running');
+    let closed = false; const closing = dispatcher.close().then(() => { closed = true; });
+    await Promise.resolve(); expect(closed).toBe(false);
+    await expect(dispatcher.tick()).rejects.toThrow('closed');
+    release(); await Promise.all([tick, closing]);
+    const retained = await other.store.getLifecycleRecords(run.id);
+    expect(retained.map(record => record.state)).toEqual(['delivered', 'pending']);
+    expect((await other.store.getRun(run.id))?.status).toBe('running');
+  });
+  it('does not persist lifecycle when the state CAS fails', async () => {
+    const { path } = await location(); const opened = await open(path); const run = await opened.store.createRun(input);
+    opened.native.exec("CREATE TRIGGER fail_lifecycle BEFORE UPDATE ON cifn_state BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+    await expect(opened.store.updateRunStatus(run.id, 'running')).rejects.toThrow();
+    expect((await opened.store.getRun(run.id))?.status).toBe('queued');
+    expect(await opened.store.getLifecycleRecords(run.id)).toHaveLength(1);
+  });
+});

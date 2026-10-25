@@ -7,7 +7,7 @@ export default defineConfig({
   banner: ({ format }) => format === 'esm'
     ? { js: "import { createRequire as __cifnCreateRequire } from 'node:module'; const require = __cifnCreateRequire(import.meta.url);" }
     : undefined,
-  noExternal: ['@superfunctions/http', '@superfunctions/observability', '@superfunctions/envelope', '@superfunctions/errors', '@superfunctions/webhooks', '@superfunctions/queue', '@superfunctions/db/schema'],
+  noExternal: ['@logfn/core', '@superfunctions/http', '@superfunctions/observability', '@superfunctions/envelope', '@superfunctions/errors', '@superfunctions/webhooks', '@superfunctions/queue', '@superfunctions/db/schema'],
   external: ['better-sqlite3', 'kysely', '@superfunctions/db/adapters'],
   splitting: false,
   sourcemap: true,
