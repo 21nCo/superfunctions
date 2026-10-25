@@ -51,7 +51,7 @@ export async function acceptRun(store: ControlPlaneStore, queue: QueueClient, pr
   const roots = new Set(resolveDAG(prepared.input.pipelineSpec).rootJobs);
   for (const job of prepared.jobs) {
     await store.registerJobSecretValues(run.id, job.jobKey, prepared.secretValues);
-    if (roots.has(job.jobKey)) await queue.enqueue(DEFAULT_QUEUE_NAME, { ...job, runId: run.id });
+    if (roots.has(job.jobKey)) await queue.enqueue(DEFAULT_QUEUE_NAME, { ...job, runId: run.id, trigger: prepared.input.trigger });
   }
   return run;
 }

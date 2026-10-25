@@ -26,6 +26,7 @@ const crashDone = join(directory, 'crash-done');
 const crashPid = join(directory, 'crash-pid');
 let crashShellStarted = false;
 let control, proxy, port = 0, output = '';
+let forkApprovals = [];
 const children = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function stop(child, signal = 'SIGTERM') {
@@ -47,7 +48,7 @@ async function waitCrashShellExit() {
 async function start() {
   const processChild = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url))], {
     env: { ...process.env, PORT: String(port), CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: join(directory, 'state.sqlite'), CIFN_STORE_ENCRYPTION_KEY: key,
-      CIFN_RUNNER_REGISTRATION_TOKEN: token, CIFN_API_KEYS: secret, CIFN_WEBHOOK_SECRET: 'owned-signing', CIFN_PIPELINE_RESOLVER: 'git', CIFN_ALLOW_LOCAL_REPOSITORIES: 'true', CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory' }, stdio: ['ignore', 'pipe', 'pipe'],
+      CIFN_RUNNER_REGISTRATION_TOKEN: token, CIFN_API_KEYS: secret, CIFN_WEBHOOK_SECRET: 'owned-signing', CIFN_PIPELINE_RESOLVER: 'git', CIFN_ALLOW_LOCAL_REPOSITORIES: 'true', CIFN_FORK_APPROVALS: JSON.stringify(forkApprovals), CIFN_QUEUE_ADAPTER: 'memory', CIFN_ARTIFACTS_ADAPTER: 'memory', CIFN_SECRETS_ADAPTER: 'memory', CIFN_LOGS_ADAPTER: 'memory' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const child = { process: processChild, exited: once(processChild, 'exit') }; children.push(child);
   let ready;
@@ -66,7 +67,7 @@ try {
   await mkdir(source);
   const gitEnv = { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
   const git = (...args) => execFileSync('git', args, { cwd: source, env: gitEnv, encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  const webhookDoc = JSON.stringify({ on: { push: { branches: ['main'] }, pull_request: { branches: ['main'] } }, jobs: { build: { 'runs-on': 'default', steps: [{ uses: 'checkout' }, { run: 'test "$(cat checkout-receipt)" = "owned exact commit"' }] } } });
+  const webhookDoc = JSON.stringify({ on: { push: { branches: ['main'] }, pull_request: { branches: ['main'] } }, jobs: { build: { 'runs-on': 'default', steps: [{ uses: 'checkout' }, { run: 'test "$(cat checkout-receipt)" = "owned exact commit" && test "$(git rev-parse HEAD)" = "${{ github.sha }}"' }] } } });
   git('init', '-b', 'main'); await writeFile(join(source, 'checkout-receipt'), 'owned exact commit'); await writeFile(join(source, 'cifn.yml'), webhookDoc); git('add', '.'); git('commit', '-m', 'owned fixture');
   const checkoutSha = git('rev-parse', 'HEAD'); git('clone', '--bare', '--', source, repository);
   assert.deepEqual(await resolvePipelineDoc({ repo: repository, ref: checkoutSha }, { allowLocalRepositories: true }), { doc: webhookDoc, resolvedConfigPath: 'cifn.yml' });
@@ -96,6 +97,33 @@ try {
   await stop(control); control = await start();
   const persistedWebhook = await data(`/api/v1/runs/${webhookRunId}`);
   assert.equal(persistedWebhook.status, 'success'); assert.equal(persistedWebhook.pipelineRef.ref, checkoutSha);
+  const forkSource = join(directory, 'fork-source'), forkRepository = join(directory, 'fork-bare');
+  git('clone', '--', repository, forkSource); git('-C', forkSource, 'checkout', '--detach', checkoutSha);
+  await writeFile(join(forkSource, 'fork-proof'), 'approved fork code');
+  await writeFile(join(forkSource, 'cifn.yml'), 'invalid fork-controlled config');
+  git('-C', forkSource, 'add', '.'); git('-C', forkSource, 'commit', '-m', 'fork code');
+  const forkSha = git('-C', forkSource, 'rev-parse', 'HEAD'); git('clone', '--bare', '--', forkSource, forkRepository);
+  const forkPayload = { ...signedPR, pull_request: {
+    base: { ...signedPR.pull_request.base, sha: checkoutSha },
+    head: { repo: { id: 2, full_name: 'owned/fork', clone_url: forkRepository }, ref: 'feature', sha: forkSha },
+  }, forkApprovals: [{ id: 'payload-cannot-approve' }] };
+  assert.equal((await sendWebhook(forkPayload)).status, 403);
+  await stop(control);
+  forkApprovals = [{ id: 'owned-exact-code', baseRepositoryId: 1, baseRepository: 'owned/repository', baseRepositoryUrl: repository, baseSha: checkoutSha,
+    headRepositoryId: 2, headRepository: 'owned/fork', headRepositoryUrl: forkRepository, headSha: forkSha, allowedSecrets: [] }];
+  control = await start();
+  assert.equal((await sendWebhook({ ...forkPayload, pull_request: { ...forkPayload.pull_request, head: { ...forkPayload.pull_request.head, sha: 'c'.repeat(40) } } })).status, 403);
+  const approvedFork = await sendWebhook(forkPayload); assert.equal(approvedFork.status, 201);
+  const forkRunId = approvedFork.body.data.runId;
+  await new RemoteRunner({ baseUrl: `http://127.0.0.1:${port}`, runnerId: registered.runnerId, runnerSecret: registered.runnerSecret, stateDirectory: join(directory, 'fork-runner'), allowLocalRepositories: true }).tick();
+  assert.equal((await data(`/api/v1/runs/${forkRunId}`)).status, 'success');
+  await stop(control); control = await start();
+  const forkRun = await data(`/api/v1/runs/${forkRunId}`);
+  assert.equal(forkRun.status, 'success'); assert.equal(forkRun.pipelineRef.repo, forkRepository); assert.equal(forkRun.pipelineRef.ref, forkSha);
+  assert.deepEqual(forkRun.trigger.payload.cifnAdmission.configuration, { repo: repository, ref: checkoutSha, configPath: 'cifn.yml' });
+  assert.deepEqual(forkRun.trigger.payload.cifnAdmission.execution, { repo: forkRepository, ref: forkSha });
+  assert.equal(forkRun.trigger.payload.cifnAdmission.forkApproval.id, 'owned-exact-code');
+
 
   let dropped = false, logsOffline = false, stepsOffline = false, firstBody, replayBody;
   const requests = [];
@@ -257,7 +285,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, signedPullRequestPinnedCheckout: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, signedPullRequestPinnedCheckout: true, exactForkApproval: true, distinctForkConfigAndExecution: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }

@@ -1,3 +1,4 @@
+import { snapshotForkApprovals } from './triggers/fork-approval.js';
 import { resolvePipelineDoc } from './pipeline/resolver.js';
 import { LogFnStepOutputDispatcher } from './observability/step-output.js';
 import { sinkConsole } from '@logfn/core';
@@ -60,6 +61,11 @@ async function start() {
   if (!['off', 'git'].includes(resolverMode)) throw new Error('CIFN_PIPELINE_RESOLVER must be off or git');
   const localRepositories = process.env.CIFN_ALLOW_LOCAL_REPOSITORIES ?? 'false';
   if (!['true', 'false'].includes(localRepositories)) throw new Error('CIFN_ALLOW_LOCAL_REPOSITORIES must be true or false');
+  const forkPolicy = process.env.CIFN_FORK_APPROVALS;
+  if (forkPolicy && Buffer.byteLength(forkPolicy, 'utf8') > 65536) throw new Error('Fork approval configuration exceeds limit');
+  let forkApprovals;
+  try { forkApprovals = snapshotForkApprovals(forkPolicy ? JSON.parse(forkPolicy) : undefined); }
+  catch { throw new Error('Invalid fork approval configuration'); }
   const resolverAbort = new AbortController();
   const pipelineResolver = resolverMode === 'git' ? async (ref: import('./pipeline/resolver.js').PipelineRef) => {
     const token = await adapters.secrets.getSecret('CIFN_GIT_TOKEN');
@@ -92,7 +98,7 @@ async function start() {
       .catch(() => console.error('CiFn lifecycle dispatch failed; inspect durable delivery state'))
       .finally(() => { lifecycleActive = undefined; });
   };
-  const { app, dispatchPublisher, notificationPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store, pipelineResolver });
+  const { app, dispatchPublisher, notificationPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store, pipelineResolver, forkApprovals });
 
   const telemetry = runtimeStore.store as Partial<Pick<DatabaseStore, 'recordApiError'>>;
   const server = createControlPlaneServer(app, telemetry.recordApiError ? { recordApiError: event => telemetry.recordApiError!(event) } : undefined);

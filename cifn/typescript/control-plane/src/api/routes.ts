@@ -1,3 +1,4 @@
+import { snapshotForkApprovals, type ForkApproval } from '../triggers/fork-approval.js';
 import { apiErrorTelemetry } from '../observability/http.js';
 import type { DatabaseStore } from "../store/database-store.js";
 import { redactSecrets } from '../secrets/redact.js';
@@ -34,6 +35,8 @@ export interface CreateAppOptions<TStore extends ControlPlaneStore = ControlPlan
   /** @deprecated Use adapters.logs instead */
   logClient?: { getLines(runId: string, jobKey: string): Array<{ line: string; timestamp: string; stepKey: string }> };
   webhookSecret?: string;
+  /** Host-owned exact fork commit trust; never supplied by webhook payload. */
+  forkApprovals?: readonly ForkApproval[];
   /** Resolves pipelineRef to pipeline document string. Required for pipelineRef and webhook run creation. */
   pipelineResolver?: PipelineDocResolver;
   /** @deprecated Use adapters.secrets instead */
@@ -45,6 +48,7 @@ export interface CreateAppOptions<TStore extends ControlPlaneStore = ControlPlan
 }
 
 export function createApp<TStore extends ControlPlaneStore = MemoryStore>(options: CreateAppOptions<TStore> = {}) {
+  const forkApprovals = snapshotForkApprovals(options.forkApprovals);
   const app = new Hono();
   const runStore = (options.store ?? new MemoryStore()) as TStore;
   
@@ -400,6 +404,7 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
         queue,
         webhookSecret: secret,
         pipelineResolver: options.pipelineResolver,
+        forkApprovals,
         secFn,
       });
       return c.json(result.body, result.status as any);

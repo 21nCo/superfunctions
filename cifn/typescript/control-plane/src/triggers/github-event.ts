@@ -1,8 +1,11 @@
+import { safeRepositoryUrl, type ForkApproval } from './fork-approval.js';
 /** Signed GitHub delivery normalization. Branch filters are literal names, not globs. */
 export interface NormalizedGitHubEvent {
   repo: string;
   sha: string;
   branch: string;
+  configRef?: { repo: string; ref: string };
+  approval?: ForkApproval;
   github: { ref: string; repository: string; sha: string; event_name: 'push' | 'pull_request' };
 }
 export type GitHubEventDecision =
@@ -19,10 +22,12 @@ function repository(value: unknown) {
   const repo = object(value);
   if (!repo || !name(repo.full_name)) throw new Error('Invalid repository identity');
   if (repo.clone_url !== undefined && (typeof repo.clone_url !== 'string' || repo.clone_url.length === 0 || repo.clone_url.length > 4096)) throw new Error('Invalid repository URL');
-  return { fullName: repo.full_name, url: (repo.clone_url as string | undefined) ?? repo.full_name, id: repo.id };
+  const url = (repo.clone_url as string | undefined) ?? repo.full_name;
+  if (!safeRepositoryUrl(url)) throw new Error('Invalid repository URL');
+  return { fullName: repo.full_name, url, id: repo.id };
 }
 
-export function normalizeGitHubEvent(payload: unknown, type: 'push' | 'pull_request'): GitHubEventDecision {
+export function normalizeGitHubEvent(payload: unknown, type: 'push' | 'pull_request', approvals: readonly ForkApproval[] = []): GitHubEventDecision {
   const event = object(payload);
   if (!event) throw new Error('Invalid webhook payload');
   const repo = repository(event.repository);
@@ -39,6 +44,12 @@ export function normalizeGitHubEvent(payload: unknown, type: 'push' | 'pull_requ
   if (!pr || !head || !base || !branch(head.ref) || !branch(base.ref) || !sha(head.sha)) throw new Error('Invalid pull request head or base');
   const headRepo = repository(head.repo), baseRepo = repository(base.repo);
   if (!Number.isSafeInteger(repo.id) || Number(repo.id) <= 0 || repo.id !== baseRepo.id || repo.fullName.toLowerCase() !== baseRepo.fullName.toLowerCase()) throw new Error('Pull request base identity mismatch');
-  if (repo.id !== headRepo.id || repo.fullName.toLowerCase() !== headRepo.fullName.toLowerCase()) return { kind: 'deny', reason: 'fork_pull_request_not_authorized' };
+  if (repo.id !== headRepo.id || repo.fullName.toLowerCase() !== headRepo.fullName.toLowerCase()) {
+    if (!sha(base.sha) || baseRepo.url !== repo.url) return { kind: 'deny', reason: 'fork_pull_request_not_authorized' };
+    const approval = approvals.find(value => value.baseRepositoryId === repo.id && value.baseRepository.toLowerCase() === repo.fullName.toLowerCase() && value.baseRepositoryUrl === repo.url && value.baseSha === (base.sha as string).toLowerCase() && value.headRepositoryId === headRepo.id && value.headRepository.toLowerCase() === headRepo.fullName.toLowerCase() && value.headRepositoryUrl === headRepo.url && value.headSha === (head.sha as string).toLowerCase());
+    if (!approval) return { kind: 'deny', reason: 'fork_pull_request_not_authorized' };
+    return { kind: 'run', event: { repo: approval.headRepositoryUrl, sha: approval.headSha, branch: base.ref, configRef: { repo: approval.baseRepositoryUrl, ref: approval.baseSha }, approval,
+      github: { ref: `refs/heads/${head.ref}`, repository: approval.headRepository, sha: approval.headSha, event_name: type } } };
+  }
   return { kind: 'run', event: { repo: repo.url, sha: head.sha.toLowerCase(), branch: base.ref, github: { ref: `refs/heads/${head.ref}`, repository: repo.fullName, sha: head.sha.toLowerCase(), event_name: type } } };
 }

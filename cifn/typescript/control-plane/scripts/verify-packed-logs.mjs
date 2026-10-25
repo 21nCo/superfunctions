@@ -42,7 +42,7 @@ try {
   // Consumer tooling is installed only after recording the normal production closure.
   run('npm', ['install', '--save-dev', 'typescript@5.9.3', '@types/node@20.19.25', '--no-fund']);
   await writeFile(join(directory, 'consumer.ts'), `import {Runner, executeOwnedCheckout, type CheckoutOptions, type RunnerOptions} from '@cifn/runner';
-import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, resolvePipelineDoc, type ResolveOptions, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
+import {LogFnStepOutputDispatcher, type StepOutputCheckpoint, resolvePipelineDoc, type ResolveOptions, type ForkApproval, type ExecutionDecision, type ExecutionInspection, LogFnLifecycleDispatcher, type LifecycleEvent, type LifecycleOwner, type ApiErrorTelemetry, DatabaseStore, stepEventDigest, validateStepEvent, type ClaimIdentity, type StepEvent} from '@cifn/control-plane';
 const observer: NonNullable<RunnerOptions['onStepStatus']> = async (stepKey, status) => {
   const value = {sequence:0,stepKey,status}; const event: StepEvent = {...value,digest:stepEventDigest(value)};
   if (!validateStepEvent(event)) throw new Error('invalid');
@@ -63,6 +63,7 @@ export async function adjudication(store: DatabaseStore, runId: string, dispatch
   const snapshot: ExecutionInspection | undefined = await store.inspectExecution(runId, dispatchId);
   return {snapshot, receipt: await store.adjudicateExecution(runId, dispatchId, decision)};
 }
+export const approval: ForkApproval = { id: "owned", baseRepositoryId: 1, baseRepository: "base/repo", baseRepositoryUrl: "https://github.com/base/repo.git", baseSha: "a".repeat(40), headRepositoryId: 2, headRepository: "fork/repo", headRepositoryUrl: "https://github.com/fork/repo.git", headSha: "b".repeat(40), allowedSecrets: [] };
 export function resolve(options: ResolveOptions) { return resolvePipelineDoc({repo:'owner/repo',ref:'HEAD'}, options); }
 export async function checkout(options: CheckoutOptions) { return executeOwnedCheckout(options); }
 export const typed = {Runner, observer};

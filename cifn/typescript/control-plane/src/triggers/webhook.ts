@@ -1,3 +1,5 @@
+import { snapshotForkApprovals, type ForkApproval } from './fork-approval.js';
+import { discoverSecrets } from '../secrets/discover.js';
 import { normalizeGitHubEvent } from './github-event.js';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
 import type { ControlPlaneStore } from '../store/store.js';
@@ -18,6 +20,7 @@ export interface WebhookOptions {
   webhookSecret: string;
   pipelineResolver?: PipelineDocResolver;
   secFn?: SecFnClient;
+  forkApprovals?: readonly ForkApproval[];
 }
 
 export function verifySignature(payload: string, signature: string, secret: string): boolean {
@@ -52,6 +55,7 @@ export async function handleWebhook(
     };
   }
 
+  const approvals = snapshotForkApprovals(options.forkApprovals);
   const triggerType = parseGitHubEvent(eventType);
   if (!triggerType) {
     return {
@@ -71,7 +75,7 @@ export async function handleWebhook(
   }
 
   let decision: ReturnType<typeof normalizeGitHubEvent>;
-  try { decision = normalizeGitHubEvent(payload, triggerType as 'push' | 'pull_request'); }
+  try { decision = normalizeGitHubEvent(payload, triggerType as 'push' | 'pull_request', approvals); }
   catch {
     return { status: 400, body: { ok: false, error: { code: 'BAD_REQUEST', message: 'Invalid GitHub event identity' } } };
   }
@@ -79,7 +83,7 @@ export async function handleWebhook(
   if (decision.kind === 'deny') return { status: 403, body: { ok: false, error: { code: 'FORBIDDEN', message: decision.reason } } };
   const normalized = decision.event;
   const { repo, sha } = normalized;
-  const pipelineRef: PipelineRef = { repo, ref: sha };
+  const pipelineRef: PipelineRef = normalized.configRef ?? { repo, ref: sha };
 
   if (!options.pipelineResolver) {
     return {
@@ -125,10 +129,16 @@ export async function handleWebhook(
     return { status: 200, body: { ok: true, data: { skipped: true, reason: 'pipeline_trigger_filter' } } };
   }
 
+  if (normalized.approval) {
+    const allowed = new Set(normalized.approval.allowedSecrets);
+    if ([...discoverSecrets(validationResult.spec)].some(name => !allowed.has(name))) return { status: 403, body: { ok: false, error: { code: 'FORBIDDEN', message: 'Fork pipeline secret access not authorized' } } };
+  }
+  const provenance = { configuration: { ...pipelineRef, configPath: resolvedConfigPath }, execution: { repo, ref: sha },
+    ...(normalized.approval ? { forkApproval: { ...normalized.approval } } : {}) };
   const input: CreateRunInput = {
     pipelineSpec: validationResult.spec,
     pipelineRef: { repo, ref: sha, configPath: resolvedConfigPath },
-    trigger: { type: triggerType, payload: { ...payload, github: normalized.github } },
+    trigger: { type: triggerType, payload: { ...payload, github: normalized.github, cifnAdmission: provenance } },
   };
 
   const prepared = await prepareRun(input, options.secFn, normalized.github);

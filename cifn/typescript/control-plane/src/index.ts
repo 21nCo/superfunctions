@@ -97,3 +97,5 @@ export { executeCheckout, executeOwnedCheckout } from './pipeline/git-checkout.j
 export type { CheckoutOptions, CheckoutResult } from './pipeline/git-checkout.js';
 export { resolvePipelineDoc, ResolverError } from './pipeline/resolver.js';
 export type { ResolveOptions, ResolveResult, PipelineRef, PipelineFetcher } from './pipeline/resolver.js';
+
+export type { ForkApproval } from './triggers/fork-approval.js';
