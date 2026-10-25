@@ -1,0 +1,55 @@
+cifn/.conduct/scripts/reproduce-step-status-gap.mjs
+  s_e1c5fc1a65c0cf::t_ff7f1da58491a7 1-2
+cifn/.conduct/step-status-next-slice.md
+  s_e1c5fc1a65c0cf::t_799bd9400b9578 3-4
+cifn/.conduct/step-status-readiness.md
+  s_e1c5fc1a65c0cf::t_2e9833ce978fcd 1-46
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_89fb8460a3fb97 218-229
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_391ea2da9b4ede 35,41-55
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_a7af5170202335 61,67,140,172-174,176,182-183,197
+cifn/typescript/control-plane/scripts/verify-step-status.mjs
+  s_e1c5fc1a65c0cf::t_7fa762a70ab688 1-91
+cifn/typescript/control-plane/src/api/claims.ts
+  s_e1c5fc1a65c0cf::t_6c81dfda96109f 1,12,32-35
+cifn/typescript/control-plane/src/dispatch/step-events.ts
+  s_e1c5fc1a65c0cf::t_538edbd0e973dc 1-15
+cifn/typescript/control-plane/src/dispatch/types.ts
+  s_e1c5fc1a65c0cf::t_672e3afdf31a9c 12
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_8b630dba699fb3 81-82
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_d9ea0a8ddeda24 622-686
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_743feb2758e204 1,380-410,428,430
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_545aa65381ce5b 143,208,291-312
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_be87904b96a84c 1,15,27,33,72-73,133,148-155,182-187
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_9904676a8fe2f3 1-2,28-29,58,80,152-159,169,177-179,223,235,240-242,251,265,271,282,293-295,314,320,331,338-340,356,362,373,380-382,398,414,421-423,438,447,475,481,492,509,515,525,532,540-542,558,564
+cifn/typescript/runner/src/step-journal.test.ts
+  s_e1c5fc1a65c0cf::t_4902dc4fe2f973 1-68
+cifn/typescript/runner/src/step-journal.ts
+  s_e1c5fc1a65c0cf::t_0318bcaef2ccfd 1-74
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_de0f7e2fc3bef2 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cd3189772c33c38b600ca82a747dfec72d411d6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
