@@ -104,3 +104,5 @@ export { AlertManager } from './alerts/alert-manager';
 export type { AlertConfig, AlertChannel, AlertRuntimeConfig, AlertEmailConfig, AlertSender, AlertNotification, PublicAlert, AlertLifecycleContext, AlertLifecycleListener } from './alerts/types';
 
 export type { LogQueryOptions, LogAggregateOptions } from './query/logs';
+
+export type { TraceQueryOptions, TraceDetailsOptions, ServiceMapOptions, StoredTraceSpan, TraceDetails } from './query/traces';

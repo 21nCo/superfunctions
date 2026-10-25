@@ -62,6 +62,10 @@ try {
  await first.ingest([{type:'log',message:'packed error',level:'error',service:'api',timestamp:Date.now()},{type:'track',message:'packed error',level:'error',service:'api',timestamp:Date.now()}]);
  assert.equal((await first.logs.query({level:'error',search:'packed error',filters:{service:'api'}})).length,1);
  assert.deepEqual(await first.logs.aggregate({groupBy:['level'],aggregation:'count'}),[{level:'error',value:1}]);
+ const traceNow=Date.now();await first.ingest([{type:'track',name:'trace.span',timestamp:traceNow,properties:{id:'packed-root',traceId:'packed-trace',name:'checkout',service:'api',startTime:traceNow-20,endTime:traceNow,duration:20,tags:{},logs:[]}},{type:'track',name:'trace.span',timestamp:traceNow,properties:{id:'packed-child',parentId:'packed-root',traceId:'packed-trace',name:'lookup',service:'db',startTime:traceNow-10,endTime:traceNow,duration:10,tags:{error:true},logs:[]}},{type:'log',message:'trace error',traceId:'packed-trace',timestamp:traceNow}]);
+ assert.equal((await first.trace.query({operation:'lookup',status:'error',duration:{gte:10}}))[0].id,'packed-child');
+ const trace=await first.trace.getTrace({traceId:'packed-trace',includeSpans:true,includeLogs:true});assert.equal(trace.spans.length,2);assert.equal(trace.logs[0].message,'trace error');assert.equal(trace.status,'error');
+ assert.deepEqual((await first.trace.getServiceMap({})).edges,[{source:'api',target:'db',calls:1,errors:1,averageDuration:10}]);
  const contexts=[];first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){alert.name='modified';context.value=-1;}});
  first.alerts.onTrigger((alert,context)=>{if(alert.id===measured.id){assert.equal(alert.name,'calculated context');contexts.push(context);}});
  first.alerts.onResolve((alert,context)=>{if(alert.id===measured.id)contexts.push(context);});
@@ -76,10 +80,11 @@ try {
  for(const [extension,imports] of [['mjs',"import assert from 'node:assert/strict';import {WatchFn} from '@watchfn/core';"],['cjs',"const assert=require('node:assert/strict');const {WatchFn}=require('@watchfn/core');"]]){
   const path=join(temporary,'consumer.'+extension);await writeFile(path,imports+'\n(async()=>{'+body+'})().catch(error=>{console.error(error);process.exitCode=1;});');execFileSync(process.execPath,[path],{cwd:temporary,stdio:'inherit',timeout:30000});
  }
- await writeFile(join(temporary,'consumer.ts'), `import {WatchFn, type AlertLifecycleContext, type AlertLifecycleListener} from '@watchfn/core';
+ await writeFile(join(temporary,'consumer.ts'), `import {WatchFn, type AlertLifecycleContext, type AlertLifecycleListener, type TraceQueryOptions, type TraceDetailsOptions, type ServiceMapOptions} from '@watchfn/core';
  const callback:AlertLifecycleListener=(_alert,context:AlertLifecycleContext)=>{const threshold:number|undefined=context.threshold;return threshold;};
  const watch=new WatchFn({name:'typed',storage:'memory',alerts:{email:{from:'alerts@example.test',awsSes:{region:'us-east-1',accessKeyId:'local',secretAccessKey:'local',timeoutMs:1000,maxResponseBytes:1024}}}});
  watch.alerts.onTrigger(callback);watch.alerts.onResolve(callback);
+ const tq:TraceQueryOptions={operation:'checkout',duration:{gt:10}};const td:TraceDetailsOptions={traceId:'t',includeSpans:true};const sm:ServiceMapOptions={minCalls:2};void watch.trace.query(tq);void watch.trace.getTrace(td);void watch.trace.getServiceMap(sm);
  async function maintenance(){const status=await watch.alerts.receiptRetentionStatus();const migration=await watch.alerts.migrateReceiptRetention({limit:1});const page=await watch.alerts.pruneNotifications({completedBefore:Date.now(),limit:1});if(page.nextCursor)await watch.alerts.pruneNotifications({completedBefore:Date.now(),after:page.nextCursor});const done:boolean=migration.done;const protocol:string|undefined=status?.protocol;return {done,protocol};}void maintenance;`);
  execFileSync(process.execPath,[resolve(root,'node_modules/typescript/bin/tsc'),'--strict','--skipLibCheck','--noEmit','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','consumer.ts'],{cwd:temporary,stdio:'inherit',timeout:30000});
  await rm(join(temporary,'node_modules/sendfn'),{recursive:true,force:true});

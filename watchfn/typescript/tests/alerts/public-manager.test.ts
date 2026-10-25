@@ -350,3 +350,46 @@ it.each(['memory', 'database'])('queries and aggregates stored logs with correla
   await observe(watch, 20, now); await watch.alerts.evaluate({ now });
   expect((await watch.alerts.get(alert.id)).notes[0].content).toBe('Related errors: 1');
 });
+
+it.each(['memory', 'database'])('queries stored traces, correlation and service edges without joining callbacks (%s)', async storage => {
+  const watch = storage === 'database' ? (await setup()).watch : new WatchFn({ name: 'api', storage: 'memory', infra: { enabled: false } });
+  if (storage === 'memory') { watches.push(watch); watch.start(); }
+  const now = Date.now();
+  const span = (id: string, traceId: string, service: string, parentId?: string, error = false) => ({ type: 'track', name: 'trace.span', timestamp: now, properties: { id, traceId, service, parentId, name: 'checkout', startTime: now - 100, endTime: now, duration: 100, tags: { error }, logs: [] } });
+  await watch.ingest([
+    span('root', 't1', 'api'), span('child', 't1', 'db', 'root', true), span('local', 't1', 'api', 'root'),
+    span('orphan', 't2', 'worker', 'root'),
+    { type: 'log', message: 'related', traceId: 't1', timestamp: now },
+    { type: 'log', message: 'unrelated', traceId: 't2', timestamp: now },
+    { type: 'track', name: 'other', timestamp: now, properties: { name: 'checkout' } },
+  ]);
+  const rows = await watch.trace.query({ operation: 'checkout', status: 'error', duration: { gte: 100 }, timeRange: [now, now], orderBy: { field: 'duration', direction: 'desc' } });
+  expect(rows).toMatchObject([{ id: 'child', service: 'db' }]);
+  rows[0].tags.error = false;
+  expect(await watch.trace.query({ service: 'db', status: 'error' })).toHaveLength(1);
+  expect(await watch.trace.query({ duration: { gt: 100 } })).toEqual([]);
+  const detail = await watch.trace.getTrace({ traceId: 't1', includeSpans: true, includeLogs: true });
+  expect(detail).toMatchObject({ traceId: 't1', duration: 100, status: 'error', logs: [{ message: 'related' }] });
+  expect(detail!.spans).toHaveLength(3);
+  expect(await watch.trace.getTrace({ traceId: 'missing' })).toBeNull();
+  expect(await watch.trace.getTrace({ traceId: 't1' })).not.toHaveProperty('spans');
+  expect(await watch.trace.getServiceMap({})).toEqual({ nodes: [{ service: 'api' }, { service: 'db' }, { service: 'worker' }], edges: [{ source: 'api', target: 'db', calls: 1, errors: 1, averageDuration: 100 }], unlinkedSpans: 1 });
+  expect((await watch.trace.getServiceMap({ minCalls: 2 })).edges).toEqual([]);
+  for (const duration of [NaN, -1, {}, { gt: '1' }, { contains: 1 }]) await expect(watch.trace.query({ duration: duration as any })).rejects.toThrow('Invalid trace duration');
+  await expect(watch.trace.query({ orderBy: { field: 'unknown', direction: 'asc' } })).rejects.toThrow('Invalid trace order');
+  const alert = await watch.alerts.create({ name: 'trace-correlation', condition: rule, channels: [] });
+  watch.alerts.onTrigger(async value => {
+    const traces = await watch.trace.query({ status: 'error' });
+    await watch.alerts.addNote(value.id, { content: 'Related traces: ' + traces.length, createdBy: 'callback' });
+  });
+  await observe(watch, 20, now); await watch.alerts.evaluate({ now });
+  expect((await watch.alerts.get(alert.id)).notes[0].content).toBe('Related traces: 1');
+  const recorded = watch.trace.startSpan('recorded', { traceId: 'recorded-trace', startTime: now });
+  recorded.finish(now + 5); await watch.flush();
+  expect(await watch.trace.query({ traceId: 'recorded-trace' })).toMatchObject([{ name: 'recorded', service: storage === 'memory' ? 'api' : 'test', duration: 5 }]);
+  await expect(watch.trace.getServiceMap({ minCalls: 0 })).rejects.toThrow('positive integer');
+  await expect(watch.trace.getTrace({ traceId: 't1', includeLogs: 'yes' as any })).rejects.toThrow('includeLogs');
+  await watch.ingest([span('root', 't1', 'api')]);
+  await expect(watch.trace.getTrace({ traceId: 't1' })).rejects.toThrow('Duplicate stored span identity');
+  await expect(watch.trace.getServiceMap({})).rejects.toThrow('Duplicate stored span identity');
+});

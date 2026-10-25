@@ -6,7 +6,7 @@ export class Tracer {
   private watch: WatchFn;
   private context: AsyncLocalStorage<Span>;
 
-  constructor(watch: WatchFn) {
+  constructor(watch: WatchFn, private readonly service?: string) {
     this.watch = watch;
     this.context = new AsyncLocalStorage<Span>();
   }
@@ -61,7 +61,7 @@ export class Tracer {
   }
 
   record(span: Span) {
-      this.watch.track("trace.span", span.toJSON());
+      this.watch.track("trace.span", { ...span.toJSON(), ...(this.service ? { service: this.service } : {}) });
   }
   
   currentSpan(): Span | undefined {

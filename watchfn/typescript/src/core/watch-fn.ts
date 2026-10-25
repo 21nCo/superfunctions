@@ -11,6 +11,7 @@ import { ExceptionHandler } from "../collectors/errors/exception-handler";
 import { HttpInterceptor } from "../collectors/apm/http-interceptor";
 import { Tracer } from "../trace/tracer";
 import { AlertManager } from "../alerts/alert-manager";
+import { TraceQueries, type TraceQueryOptions, type TraceDetailsOptions, type ServiceMapOptions } from '../query/traces';
 import { QueryEngine } from "../query/query-engine";
 import type { AggregateOptions } from "../query/types";
 import { logQuery, logAggregate, type LogQueryOptions, type LogAggregateOptions } from "../query/logs";
@@ -96,7 +97,7 @@ export class WatchFn implements WatchFnInstance {
     this.eventRouter = new EventRouter();
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
-    this.tracer = new Tracer(this);
+    this.tracer = new Tracer(this, this.config.name);
     this.systemMetrics = new SystemMetricsCollector(this, this.config.infra?.interval);
     this.processMetrics = new ProcessMetricsCollector(this, this.config.infra?.interval);
     this.syntheticsScheduler = new SyntheticScheduler(this);
@@ -306,9 +307,9 @@ export class WatchFn implements WatchFnInstance {
     return {
         start: (name: string, cb: Function, opts?: any) => this.tracer.start(name, cb as any, opts),
         startSpan: (name: string, opts?: any) => this.tracer.startSpan(name, opts),
-        query: async (opts: any) => [], // Stub for query
-        getTrace: async (opts: any) => ({}), // Stub
-        getServiceMap: async (opts: any) => ({}), // Stub
+        query: (opts: TraceQueryOptions) => new TraceQueries(options => this.query(options)).query(opts),
+        getTrace: (opts: TraceDetailsOptions) => new TraceQueries(options => this.query(options)).getTrace(opts),
+        getServiceMap: (opts: ServiceMapOptions) => new TraceQueries(options => this.query(options)).getServiceMap(opts),
     }
   }
   
