@@ -629,6 +629,9 @@ export class Runner {
     env?: Record<string, string>,
     onLines?: (lines: string[]) => void,
   ) {
+    if (this.shouldUseDocker(jobSpec) && !this.dockerExecutor) {
+      return { exitCode: 1, stdout: '', stderr: '', lines: ['Job image requires a configured container executor; host execution refused'] };
+    }
     if (this.shouldUseDocker(jobSpec) && this.dockerExecutor) {
       return this.dockerExecutor.execute({
         image: jobSpec.image ?? this.defaultDockerImage,
@@ -643,8 +646,7 @@ export class Runner {
   }
 
   private shouldUseDocker(jobSpec: JobPayload['jobSpec']): boolean {
-    if (!this.dockerExecutor) return false;
-    if (typeof jobSpec.image === 'string' && jobSpec.image.length > 0) return true;
+    if (jobSpec.image !== undefined) return true;
     if (jobSpec['runs-on'] === 'default' && this.dockerForDefault) return true;
     return this.dockerRunOnLabels.has(jobSpec['runs-on']);
   }

@@ -9,9 +9,9 @@ import { join } from 'node:path';
 import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { RemoteRunner } from '../../runner/dist/index.mjs';
+import { RemoteRunner, Runner, MemoryLogFnClient } from '../../runner/dist/index.mjs';
 const require = createRequire(import.meta.url);
-const { DatabaseStore, CIFN_STATE_TABLE, resolvePipelineDoc } = require('../dist/index.js');
+const { DatabaseStore, CIFN_STATE_TABLE, resolvePipelineDoc, MemoryStore, MemoryQueueClient, DEFAULT_QUEUE_NAME } = require('../dist/index.js');
 const SQLite = require('better-sqlite3');
 const { Kysely, SqliteDialect } = require('kysely');
 const { kyselyAdapter } = await import('@superfunctions/db/adapters');
@@ -63,6 +63,16 @@ async function data(path, body, credential = secret) {
 }
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 try {
+  const hostWitness = join(directory, 'forbidden-host-fallback');
+  const localStore = new MemoryStore(), localQueue = new MemoryQueueClient();
+  const imageSpec = { on: { workflow_dispatch: {} }, jobs: { build: { 'runs-on': 'default', image: 'owned-unavailable-image:never-pull', steps: [{ run: `printf host > ${quote(hostWitness)}` }] } } };
+  const localRun = localStore.createRun({ pipelineSpec: imageSpec, trigger: { type: 'workflow_dispatch' } });
+  const localRunner = new Runner({ store: localStore, queue: localQueue, logClient: new MemoryLogFnClient() });
+  localRunner.registerPipelineSpec(localRun.id, imageSpec);
+  await localQueue.enqueue(DEFAULT_QUEUE_NAME, { runId: localRun.id, jobKey: 'build', jobSpec: imageSpec.jobs.build });
+  await localRunner.processAllJobs();
+  assert.equal(localStore.getRun(localRun.id).status, 'failure');
+  await assert.rejects(readFile(hostWitness), { code: 'ENOENT' });
   const source = join(directory, 'checkout-source'), repository = join(directory, 'checkout-bare');
   await mkdir(source);
   const gitEnv = { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
@@ -285,7 +295,7 @@ try {
     }
   }
   await inspect(directory); assert.ok(!output.includes(secret));
-  console.log(JSON.stringify({ passed: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, signedPullRequestPinnedCheckout: true, exactForkApproval: true, distinctForkConfigAndExecution: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
+  console.log(JSON.stringify({ passed: true, containerHostFallbackDenied: true, localBareRepositoryCheckout: true, actualPinnedPipelineResolution: true, signedPullRequestPinnedCheckout: true, exactForkApproval: true, distinctForkConfigAndExecution: true, checkoutReplayWithoutReexecution: true, killedRunnerLogRecovery: true, killedRunnerStepRecovery: true, startedExecutionInitiallyUncertain: true, explicitOwnedExitAdjudication: true, noExecutionReplay: true, readonlyReplay: true, liveBeforeCompletion: true, streamedSecretBoundary: true, transportRequests: requests.length, retrievedLines: logs.lines.length, transfer: logs.transfer.status, executionCount: 2, logOnlyOutageRecovered: true, sqliteReopen: true, configuredSecretAbsent: true }));
 } finally {
   const failures = [];
   try { await writeFile(crashGate, 'release'); } catch (error) { failures.push(error); }
