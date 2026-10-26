@@ -111,13 +111,14 @@ describe('committed IndexedDB pattern deletion', () => {
     const storage = new IndexedDBStorage<number>({ name: name() });
     await storage.set('a', 1, metadata());
     await storage.set('b', 2, metadata());
+    await storage.set('keep', 3, metadata());
     const original = IDBObjectStore.prototype.delete;
     const deletion = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (this: IDBObjectStore, key) {
       const request = original.call(this, key);
       if (key === 'b') request.addEventListener('success', () => this.transaction.abort());
       return request;
     });
-    await expect(storage.deleteMatching(() => true)).rejects.toThrow('aborted');
+    await expect(storage.deleteMatching(key => key !== 'keep')).rejects.toThrow('aborted');
     deletion.mockRestore();
     expect(await storage.get('a')).toBe(1);
     expect(await storage.get('b')).toBe(2);
@@ -154,14 +155,14 @@ describe('committed IndexedDB pattern deletion', () => {
     cache.dispose(); child.dispose();
   });
 
-  it('rejects an aborted public invalidation without success events or delete statistics', async () => {
-    const cache = new CacheFn<number>({ name: name(), storage: 'indexeddb' });
+  it.each(['indexeddb', 'auto'] as const)('rejects an aborted %s public invalidation without success events or delete statistics', async storage => {
+    const cache = new CacheFn<number>({ name: name(), storage });
     await cache.set('match:a', 1); await cache.set('match:b', 2);
     const events = vi.fn(); cache.on('delete', events); cache.on('invalidate', events);
-    const original = IDBObjectStore.prototype.delete;
-    const deletion = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (this: IDBObjectStore, key) {
-      const request = original.call(this, key);
-      if (String(key).endsWith('match:b')) request.addEventListener('success', () => this.transaction.abort());
+    const original = IDBObjectStore.prototype.clear;
+    const deletion = vi.spyOn(IDBObjectStore.prototype, 'clear').mockImplementation(function (this: IDBObjectStore) {
+      const request = original.call(this);
+      request.addEventListener('success', () => this.transaction.abort());
       return request;
     });
     await expect(cache.invalidateByPattern('match:*')).rejects.toThrow('aborted');
@@ -202,8 +203,8 @@ describe('committed IndexedDB pattern deletion', () => {
     cache.dispose();
   });
 
-  it('fences a refresh admitted while the matching transaction is opening', async () => {
-    const cache = new CacheFn<number>({ name: name(), storage: 'indexeddb' });
+  it.each(['indexeddb', 'auto'] as const)('fences a refresh admitted while the %s matching transaction is opening', async storage => {
+    const cache = new CacheFn<number>({ name: name(), storage });
     await cache.set('key', 1);
     let deliver!: (value: number) => void;
     let fetched!: () => void;
@@ -247,4 +248,28 @@ it('preserves the fallback for backends without transactional pattern deletion',
   expect(await cache.get('keep')).toBe(3);
   expect((await cache.getStats()).deletes).toBe(2);
   cache.dispose();
+});
+
+it.each(['indexeddb', 'auto'] as const)('preserves foreign namespace and unmatched keys through %s bulk deletion', async storage => {
+  const database = name();
+  const first = new CacheFn<number>({ name: database, namespace: 'a', storage });
+  const foreign = new CacheFn<number>({ name: database, namespace: 'b', storage });
+  await first.set('match', 1); await first.set('keep', 2); await foreign.set('match', 3);
+  const clear = vi.spyOn(IDBObjectStore.prototype, 'clear');
+  await first.invalidateByPattern('match');
+  expect(clear).not.toHaveBeenCalled();
+  expect(await first.get('keep')).toBe(2); expect(await foreign.get('match')).toBe(3);
+  first.dispose(); foreign.dispose();
+});
+
+it('clears only after every live predicate succeeds and excludes expired keys from receipt', async () => {
+  const storage = new IndexedDBStorage<number>({ name: name() });
+  await storage.set('a', 1, metadata()); await storage.set('z', 2, metadata());
+  await storage.set('expired', 3, { ...metadata(), expiresAt: Date.now() - 1 });
+  const clear = vi.spyOn(IDBObjectStore.prototype, 'clear');
+  await expect(storage.deleteMatching(key => { if (key === 'z') throw Error('predicate failed'); return true; })).rejects.toThrow('predicate failed');
+  expect(clear).not.toHaveBeenCalled(); expect(await storage.get('a')).toBe(1);
+  expect(await storage.deleteMatching(() => true)).toEqual(['a', 'z']);
+  expect(clear).toHaveBeenCalledTimes(1); expect(await storage.size()).toBe(0);
+  storage.close();
 });

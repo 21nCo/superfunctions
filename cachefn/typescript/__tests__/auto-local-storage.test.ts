@@ -151,3 +151,13 @@ describe('automatic storage fallback', () => {
     expect(() => new CacheFn({ name: name(), storage: 'auto', fallbackOrder: ['invalid'] as any })).toThrow();
   });
 });
+
+it.each(['localstorage', 'memory'] as const)('retains ordinary pattern fallback on selected %s tier', async tier => {
+  const cache = new CacheFn<number>({ name: name(), storage: 'auto', fallbackOrder: [tier] });
+  await cache.set('match', 1); await cache.set('keep', 2);
+  const event = vi.fn(); cache.on('invalidate', event);
+  await cache.invalidateByPattern('match');
+  expect(await cache.get('match')).toBeUndefined(); expect(await cache.get('keep')).toBe(2);
+  expect(event).toHaveBeenCalledWith({ pattern: 'match', count: 1 });
+  cache.dispose();
+});

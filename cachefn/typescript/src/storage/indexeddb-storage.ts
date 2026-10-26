@@ -133,15 +133,18 @@ export class IndexedDBStorage<T = any> implements StorageBackend<T> {
           const expired = expiry.getAllKeys(IDBKeyRange.upperBound(Date.now()));
           expired.onsuccess = guard(() => {
             const expiredKeys = new Set(expired.result);
-            for (const key of expiredKeys) store.delete(key);
             const deleted: string[] = [];
             for (const key of keys.result) {
               if (expiredKeys.has(key)) continue;
               if (typeof key !== 'string') throw new TypeError('Cache keys must be strings');
               if (matches(key)) {
-                store.delete(key);
                 deleted.push(key);
               }
+            }
+            if (deleted.length + expiredKeys.size === keys.result.length) store.clear();
+            else {
+              for (const key of expiredKeys) store.delete(key);
+              for (const key of deleted) store.delete(key);
             }
             result(deleted);
           });
@@ -151,12 +154,15 @@ export class IndexedDBStorage<T = any> implements StorageBackend<T> {
         const request = store.getAll();
         request.onsuccess = guard(() => {
           const deleted: string[] = [];
+          const expired: string[] = [];
           for (const entry of request.result as IndexedDBEntry<T>[]) {
-            if (this.expired(entry)) store.delete(entry.key);
-            else if (matches(entry.key)) {
-              store.delete(entry.key);
-              deleted.push(entry.key);
-            }
+            if (this.expired(entry)) expired.push(entry.key);
+            else if (matches(entry.key)) deleted.push(entry.key);
+          }
+          if (deleted.length + expired.length === request.result.length) store.clear();
+          else {
+            for (const key of expired) store.delete(key);
+            for (const key of deleted) store.delete(key);
           }
           result(deleted);
         });

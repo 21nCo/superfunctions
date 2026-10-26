@@ -137,6 +137,36 @@ export async function storageContract() {
           await autoIdb.set('key', 5);
           assert(await autoIdb.get('key') === 5, 'automatic IndexedDB works');
           if (typeof indexedDB.databases === 'function') assert(!(await indexedDB.databases()).some(db => db.name?.includes(':probe:')), 'IndexedDB probe databases removed');
+          // Bulk auto operations must remain on their selected transactional tier.
+          const bulkName = `auto-bulk-${crypto.randomUUID()}`;
+          const bulk = new CacheFn({ name: bulkName, namespace: 'one', storage: 'auto' });
+          const other = new CacheFn({ name: bulkName, namespace: 'two', storage: 'auto' });
+          await bulk.set('match', 1); await bulk.set('keep', 2); await other.set('match', 3);
+          await bulk.invalidateByPattern('match');
+          assert(await bulk.get('keep') === 2 && await other.get('match') === 3, 'auto bulk preserves unmatched and foreign keys');
+          await bulk.set('match', 4);
+          let events = 0;
+          bulk.on('delete', () => events++); bulk.on('invalidate', () => events++);
+          const originalDelete = IDBObjectStore.prototype.delete;
+          let aborted = false;
+          IDBObjectStore.prototype.delete = function(key) {
+            const request = originalDelete.call(this, key);
+            request.addEventListener('success', () => this.transaction.abort());
+            return request;
+          };
+          try { await bulk.invalidateByPattern('match'); } catch { aborted = true; }
+          finally { IDBObjectStore.prototype.delete = originalDelete; }
+          assert(aborted && events === 0, 'auto bulk abort emits no committed event');
+          assert(await bulk.get('match') === 4, 'auto bulk abort does not replay into fallback');
+          const complete = new IndexedDBStorage({ name: `complete-${crypto.randomUUID()}` });
+          await complete.set('a', 1, metadata); await complete.set('z', 2, metadata);
+          await complete.set('expired', 3, { ...metadata, expiresAt: Date.now() - 1 });
+          let predicateRejected = false;
+          try { await complete.deleteMatching(key => { if (key === 'z') throw Error('predicate'); return true; }); }
+          catch { predicateRejected = true; }
+          assert(predicateRejected && await complete.get('a') === 1, 'complete scan rejects before clear');
+          assert((await complete.deleteMatching(() => true)).join() === 'a,z' && await complete.size() === 0, 'clear receipt excludes expired keys');
+          complete.close(); bulk.dispose(); other.dispose();
           const heapDescriptor = Object.getOwnPropertyDescriptor(performance, 'memory');
           const heap = { usedJSHeapSize: 90, jsHeapSizeLimit: 100 };
           Object.defineProperty(performance, 'memory', { configurable: true, value: heap });

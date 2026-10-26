@@ -43,6 +43,9 @@ export interface StorageBackend<T = any> {
   /** Optional atomic live-entry matching/deletion; return removed keys after commit. */
   deleteMatching?(matches: (key: string) => boolean): Promise<string[]>;
 
+  /** Optional runtime capability: undefined means no atomic operation was attempted. */
+  tryDeleteMatching?(matches: (key: string) => boolean): Promise<string[] | undefined>;
+
   /**
    * Clear all values from storage
    */

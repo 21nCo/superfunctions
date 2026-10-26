@@ -104,6 +104,17 @@ export class AutoStorage<T = any> implements StorageBackend<T> {
     this.tail = task.catch(() => {});
     return task;
   }
+  /** Atomic only on a selected capable tier; never replay an aborted bulk operation. */
+  tryDeleteMatching(matches: (key: string) => boolean): Promise<string[] | undefined> {
+    const task = this.tail.then(async () => {
+      if (!this.backend) await this.select();
+      // Capability is checked after prior queued operations/failover have settled.
+      if (!this.backend?.deleteMatching) return undefined;
+      return this.backend.deleteMatching(matches);
+    });
+    this.tail = task.catch(() => {});
+    return task;
+  }
   get(key: string): Promise<T | undefined> { return this.run(storage => storage.get(key)); }
   set(key: string, value: T, metadata: EntryMetadata): Promise<void> { return this.run(storage => storage.set(key, value, metadata)); }
   has(key: string): Promise<boolean> { return this.run(storage => storage.has(key)); }

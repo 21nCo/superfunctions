@@ -365,10 +365,17 @@ sequence, including when explicitly placed earlier. Memory is also the default
 backend when `storage` is omitted. Explicit backend modes never silently switch.
 
 Security restrictions, quota exhaustion, and storage availability errors cause
-an automatic instance to advance and retry the operation on the next tier.
+an automatic instance to advance and retry ordinary operations on the next tier.
 Unsupported values and programming errors propagate. Selection and operations
 are serialized within the instance; it never returns to a failed tier. Probe
 timeouts allow selection to continue, with cleanup when the pending probe settles.
+
+Pattern invalidation uses one committed transaction when the selected tier is
+IndexedDB. An aborted bulk transaction propagates its error without replaying the
+operation into another tier or emitting successful deletion events. Other tiers
+retain their ordinary per-key invalidation behavior. If every stored key is
+expired or matches the namespace-scoped pattern, IndexedDB clears the store after
+the complete predicate scan; an unmatched key prevents this fast path.
 
 Failover does not migrate existing data: entries in the previous tier become cold
 misses. Each new instance probes independently and may reuse older persistent data
