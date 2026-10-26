@@ -1,0 +1,172 @@
+---
+name: publish-superfunctions-packages
+description: Inventory, version, and publish a user-selected group of Superfunctions npm packages through a repository GitHub Actions tag workflow. Use when asked to release, publish, version, or run a publishing spree for one or more npm packages while publishing only packages whose publishable code changed since their relevant npm release, coordinating internal dependencies, choosing stable versus alpha, beta, rc, next, or another prerelease channel, and verifying the resulting registry state.
+---
+
+# Publish Superfunctions packages
+
+Release packages from any Superfunctions repository branch without assuming a fixed branch, remote, package layout, or package group.
+
+## Non-negotiable outcomes
+
+- Treat npm as the authority for published versions and GitHub as the authority for workflow state.
+- Publish only explicitly selected packages whose publishable contents changed since the relevant registry release, plus explicitly approved dependency dependents whose manifests must change.
+- Never include private packages or user-specified exclusions.
+- Ask for the release channel before changing versions or creating release tags unless the user already chose it.
+- Publish through the repository's GitHub Actions workflow. Do not substitute a local `npm publish` unless the user explicitly requests it.
+- Preserve unrelated dirty work. Use an isolated worktree at the exact remote release ref when the current checkout is dirty or based on another branch.
+- Treat git tags and npm versions as immutable. Never move or delete a failed release tag to reuse its version.
+- Verify every release directly on npm after CI succeeds.
+
+## 1. Resolve scope and release machinery
+
+Read repository instructions and inspect, without mutation:
+
+- selected package names, paths, group, or discovery rule;
+- explicit inclusions and exclusions;
+- remote repository and release branch/ref;
+- package manager, workspace configuration, lockfile, and internal dependency conventions;
+- GitHub Actions publish workflow, tag grammar, resolver script, npm dist-tag behavior, and required secrets;
+- current worktree dirtiness and whether an isolated worktree is required.
+
+Do not infer a branch such as `next`, `dev`, or `main`. If the user names a remote branch, fetch and resolve that exact ref. If selection remains materially ambiguous after repository discovery, ask for the missing scope.
+
+## 2. Inventory before asking for a channel
+
+Run `scripts/inventory-npm-packages.mjs` with the selected package paths when available, then independently inspect edge cases.
+
+For each package record:
+
+- package name, path, manifest version, privacy, and publish files;
+- stable `latest` version and selected-channel version when one exists;
+- registry `gitHead` for the relevant baseline;
+- whether that commit exists locally and is an ancestor of the release ref;
+- publishable changes under the package path;
+- uncommitted changes under that path;
+- internal dependencies on other selected packages;
+- exact reason for `changed`, `unchanged`, `initial`, `excluded`, or `unknown`.
+
+Use the selected channel's published version as the direct baseline when it exists. Also inspect stable `latest` when planning a prerelease base. If the selected prerelease channel has no release but `latest` exists, compare code against `latest` and record `channel release absent`; do not mislabel the package as never published.
+
+Prefer registry `gitHead` plus `git diff <gitHead>..<release-ref> -- <package-path>`. If `gitHead` is missing, unreachable, or divergent, compare normalized package tarball contents between the registry version and the release ref. Ignore registry-generated metadata and the intended version-only change during normalization. If evidence remains inconclusive, mark the package `unknown` and ask before publishing it; do not guess.
+
+For a never-published package, use `initial`, not `changed`, and require explicit inclusion. An explicit user request to include that package is sufficient approval.
+
+Inspect dependency closure after the first pass. A selected package that has no source change may still need a release when its manifest must change to reference another selected package's new exact version. Explain this separately as `dependency-manifest change`.
+
+Present a compact proposed inventory before mutation:
+
+- publish candidates and reasons;
+- unchanged packages to skip;
+- private, excluded, or out-of-scope packages;
+- unknown baselines needing a decision;
+- proposed dependency rounds.
+
+## 3. Ask for stable or prerelease
+
+If there are no release candidates, report the no-op result and do not ask for a channel. Otherwise, if the user has not already specified release policy, stop after the read-only inventory and ask one concise question:
+
+> Publish these as stable releases, or use a prerelease channel such as alpha, beta, rc, next, or a custom tag?
+
+If stable versus prerelease is answered but bump intent remains material, ask whether to use patch, minor, or major. Recommend patch for compatible fixes and internal packaging repairs; recommend minor for backward-compatible features; require explicit confirmation for major releases.
+
+Map policy as follows:
+
+- stable: ordinary SemVer and npm dist-tag `latest`;
+- prerelease: `X.Y.Z-<channel>.<n>` and npm dist-tag `<channel>`;
+- never allow a prerelease publish to move `latest`;
+- continue an existing channel by incrementing its numeric suffix when its base is still appropriate;
+- otherwise select the next approved stable base and start at `<channel>.0`.
+
+Report the exact proposed versions and dist-tags before applying them.
+
+## 4. Apply coordinated versions
+
+From an isolated branch/worktree based on the exact release ref:
+
+1. Update only approved changed packages and approved dependency dependents.
+2. Update exact internal dependency versions or ranges consistently.
+3. Regenerate the lockfile using the repository package manager.
+4. Keep unrelated files untouched.
+5. Confirm every proposed npm version is absent before landing it.
+6. Confirm every proposed release tag resolves unambiguously to the intended package and version.
+
+Do not bump unchanged packages merely to align versions. Do not use the local manifest as evidence that a version is unpublished.
+
+## 5. Validate packages in publish-like isolation
+
+For every candidate, reproduce the workflow as closely as practical:
+
+- install package dependencies without relying on sibling workspace source links when the workflow installs package-locally;
+- build and typecheck when configured;
+- run package tests;
+- run `npm pack --dry-run` and inspect the included files;
+- validate executable bins and package-local test runners resolve declared dependencies;
+- verify internal dependency versions already exist on npm or are scheduled in an earlier release round;
+- run registry absence and tag-resolution preflights again.
+
+Do not let a green monorepo test mask a package-isolated failure. Conversely, keep unrelated pre-existing monorepo, deployment, billing, or account-plan failures separate from package-local evidence.
+
+## 6. Land the release plan
+
+Commit only the intentional version, dependency, lockfile, workflow, resolver, or package-isolation repairs. Push the release branch, open the repository's normal pull request, and merge only when allowed by repository policy and user authorization.
+
+If publication exposes a package-local defect:
+
+1. inspect the failed run logs;
+2. fix the narrow root cause;
+3. bump to a fresh version because the pushed tag is burned;
+4. validate again;
+5. land the repair normally;
+6. tag the new merge commit.
+
+Never force-update the failed tag, even when npm shows that version as absent.
+
+## 7. Publish in dependency-safe rounds
+
+Topologically sort candidates by internal npm dependencies. Publish foundations before adapters, clients, CLIs, servers, or applications that consume them.
+
+For each round:
+
+1. create annotated or lightweight tags using the repository's existing grammar at the exact landed commit;
+2. push no more than three tags in one git push so GitHub creates tag-push events reliably;
+3. confirm one expected workflow run exists per tag;
+4. wait for build, test, pack, and publish completion;
+5. verify the exact versions on npm before starting dependents.
+
+If a push event does not create a run and the workflow supports manual dispatch, dispatch at the exact tag ref and record that fallback.
+
+## 8. Verify registry truth
+
+For every intended release, query the exact package version and confirm:
+
+- exact version exists;
+- expected dist-tag points to it;
+- `gitHead` matches the tagged landed commit when npm exposes it;
+- prereleases did not alter `latest`;
+- dependent package manifests resolve only to available versions.
+
+Do not declare success from GitHub Actions alone. A completed run is workflow evidence; npm is publication evidence.
+
+Return a final summary containing:
+
+- requested and actually published package/version pairs;
+- skipped unchanged, private, and excluded packages;
+- dependency-driven releases;
+- failed/burned versions and their replacements;
+- GitHub workflow or PR links;
+- registry verification count and any missing `gitHead` evidence;
+- unrelated CI failures kept outside the release result;
+- confirmation that unrelated dirty work was preserved.
+
+Remain engaged until all authorized candidates are verified or a concrete external blocker requires user action.
+
+## Inventory helper
+
+Use the bundled script for a read-only first pass:
+
+```bash
+node scripts/inventory-npm-packages.mjs --ref <release-ref> --tag <latest|alpha|beta|rc|next|custom> <package-dir>...
+```
+
+The helper never changes files, versions, tags, or registry state. Treat `unknown` results as prompts for deeper tarball comparison, not permission to publish.

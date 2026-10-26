@@ -1,0 +1,1327 @@
+{
+  "metadata": {
+    "research_date": "2026-10-23",
+    "connection_alias": "tron",
+    "connection_word_id": "notion_drake-chint",
+    "archive_parent_id": "3edc4524-d52e-814e-92dc-f7b1a29a7ff8",
+    "archive_parent_url": "https://www.notion.so/3edc4524d52e814e92dcf7b1a29a7ff8",
+    "repo_head": "523c66ae8",
+    "archive_days": 18,
+    "records": 15964,
+    "unique_post_urls": 15963,
+    "unique_nonempty_product_urls": 15747,
+    "functions": 37,
+    "additional_surfaces": [
+      "superconsole"
+    ],
+    "mapped_products": 81,
+    "official_pages_read": 19,
+    "official_pages_unavailable": 2,
+    "method": "Composio Notion title search and complete parent enumeration; full page markdown; all 18 attached JSON archives; attachment hashes/count checks; corpus-wide keyword screening across name/tagline/summary/tags followed by manual candidate selection and function mapping; targeted official-site checks; repository documentation and selected public contract inspection.",
+    "limits": [
+      "Archive coverage is 2026-10-02 through 2026-10-19, not current-day Product Hunt coverage.",
+      "15,964 records were mechanically screened; selected candidates and mappings were read and synthesized. This is not a manual deep read of every product.",
+      "Product descriptions, prices and performance claims remain archival unless a specific live-check note says otherwise. Official marketing claims are not independently benchmarked.",
+      "Repository baseline is documentation and selected public contract inspection at the local checkout, not a comprehensive implementation-gap audit or release/deployment verification.",
+      "Enhancements and priorities are proposals, not confirmed missing features or a delivery commitment.",
+      "One post URL, ChickyTutor, occurs on two archive days. Product page URLs can repeat across distinct launches."
+    ]
+  },
+  "mappings": [
+    {
+      "function": "authfn",
+      "group": "Identity, security and compliance",
+      "priority": "P2",
+      "current_baseline": "Session/identity kernel with optional password, OTP, OAuth, API-key, 2FA and native/multi-region plugins; TypeScript and Python contracts.",
+      "repo_sources": [
+        "authfn/core/README.md",
+        "authfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "loginos",
+          "relationship": "direct",
+          "transferable_pattern": "Cross-domain identity and passkey sign-in."
+        },
+        {
+          "name": "SecondFactor",
+          "relationship": "adjacent",
+          "transferable_pattern": "OTP channel selection and delivery fallback."
+        },
+        {
+          "name": "GBrain Tools",
+          "relationship": "adjacent",
+          "transferable_pattern": "Separate agent permissions from account credentials."
+        }
+      ],
+      "proposed_enhancement": "Evaluate a passkey plugin and explicit cross-domain account-linking flow. Add a delegated-agent principal contract with audience, expiry and revocation, composed with PlugFn; let SendFn own OTP delivery routing.",
+      "acceptance_example": "A revoked agent grant fails on the next action; an unrelated custom domain cannot reuse another domain\u2019s login handoff. Keep TS/Python authorization cases aligned.",
+      "product_ids": [
+        "P34",
+        "P61",
+        "P19"
+      ],
+      "python_project_files": [
+        "authfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "secfn",
+      "group": "Identity, security and compliance",
+      "priority": "P1",
+      "current_baseline": "Secret scanning and environment CLI; core rules are extensible.",
+      "repo_sources": [
+        "secfn/cli/README.md",
+        "secfn/SPEC.md"
+      ],
+      "products": [
+        {
+          "name": "shim-cli",
+          "relationship": "direct",
+          "transferable_pattern": "Redact sensitive tool results before model ingestion."
+        },
+        {
+          "name": "Context Trace",
+          "relationship": "direct",
+          "transferable_pattern": "Audit agent-session records with explicit coverage gaps."
+        },
+        {
+          "name": "HiddenContent.ai",
+          "relationship": "adjacent",
+          "transferable_pattern": "Find machine-readable hidden instructions in documents."
+        }
+      ],
+      "proposed_enhancement": "Extend scanner rule packs to agent transcripts, MCP results and outbound model payloads. Return redacted location evidence and a coverage report; publish client-specific enforcement capabilities rather than claiming universal masking.",
+      "acceptance_example": "Synthetic secrets in terminal/MCP fixtures are detected without appearing in reports. A client that cannot intercept payloads is labeled audit-only. Hidden-document instructions remain untrusted data.",
+      "product_ids": [
+        "P64",
+        "P07",
+        "P21"
+      ],
+      "python_project_files": [
+        "secfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "compfn",
+      "group": "Identity, security and compliance",
+      "priority": "P2",
+      "current_baseline": "Controls, framework mappings, immutable evidence, continuous checks and auditor exports.",
+      "repo_sources": [
+        "compfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Strac Comply",
+          "relationship": "direct",
+          "transferable_pattern": "Automated evidence collectors and recurring tests."
+        },
+        {
+          "name": "Attestlane",
+          "relationship": "direct",
+          "transferable_pattern": "Risk-ranked readiness and provenance-bearing evidence."
+        }
+      ],
+      "proposed_enhancement": "Add PlugFn-powered evidence collectors with collection time, source account, scope, expiry and control linkage. Rank missing/stale evidence by operational risk and produce a reproducible auditor pack.",
+      "acceptance_example": "Revoking a collector stops refreshes and marks evidence stale; an export can trace every included item to an immutable source record. Readiness is distinct from certification.",
+      "product_ids": [
+        "P67",
+        "P02"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "plugfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P1",
+      "current_baseline": "Provider registration, connection/OAuth/webhook lifecycle and workflow execution; provider-specific readiness and an experimental Python package.",
+      "repo_sources": [
+        "plugfn/README.md",
+        "plugfn/docs/provider-readiness-matrix.md"
+      ],
+      "products": [
+        {
+          "name": "GBrain Tools",
+          "relationship": "direct",
+          "transferable_pattern": "Credential-held execution with per-agent permissions, expiry, limits and kill switch."
+        },
+        {
+          "name": "Verirow",
+          "relationship": "adjacent",
+          "transferable_pattern": "Verify a sync\u2019s outcome against source and target."
+        },
+        {
+          "name": "Pancake",
+          "relationship": "adjacent",
+          "transferable_pattern": "Package coherent domain capabilities behind one agent connection."
+        }
+      ],
+      "proposed_enhancement": "Build a delegated connection policy layer over existing provider execution: per-agent/provider/action grants, expiry, daily budgets and immediate revocation. Add optional post-sync reconciliation receipts. Credentials stay at the execution boundary.",
+      "acceptance_example": "A read-only grant cannot send email even with a forged tool request; revocation takes effect without restarting the worker; a successful sync with missing target rows reports reconciliation failure.",
+      "product_ids": [
+        "P19",
+        "P78",
+        "P47"
+      ],
+      "python_project_files": [
+        "plugfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "mcpfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P1",
+      "current_baseline": "Official-SDK runtime, manifests and compatibility diffs, auth matrices, host profiles, semantic scenarios, conformance and bounded DataFn tools.",
+      "repo_sources": [
+        "mcpfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "NitroStack",
+          "relationship": "direct",
+          "transferable_pattern": "Integrated build/test/deploy workflow for MCP developers."
+        },
+        {
+          "name": "SineFrame M3",
+          "relationship": "direct",
+          "transferable_pattern": "Assert which tools real agent clients actually select."
+        },
+        {
+          "name": "mcpgawk",
+          "relationship": "adjacent",
+          "transferable_pattern": "Re-approval when approved tools change."
+        }
+      ],
+      "proposed_enhancement": "Extend existing host/scenario coverage with real-client tool-selection assertions and approval-baseline drift checks. Produce a portable release evidence bundle and a HostFn deployment recipe; keep an interactive inspector as a separate optional product.",
+      "acceptance_example": "A scenario fails when a host answers without calling the required tool, even if server protocol tests pass. Changed scope/description invalidates an approval baseline. Do not rebuild current manifest/conformance support.",
+      "product_ids": [
+        "P42",
+        "P65",
+        "P38"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "langfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P1",
+      "current_baseline": "Aligned TS/Python model, tool, graph, agent, RAG, evaluation, observability and MCP surfaces.",
+      "repo_sources": [
+        "langfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "FastRouter.ai",
+          "relationship": "direct",
+          "transferable_pattern": "Route by cost, latency and quality with fallback."
+        },
+        {
+          "name": "Inferock",
+          "relationship": "adjacent",
+          "transferable_pattern": "Per-call cost/failure evidence."
+        },
+        {
+          "name": "Crescent Trace",
+          "relationship": "adjacent",
+          "transferable_pattern": "Deterministic diagnoses of loops and retry storms."
+        }
+      ],
+      "proposed_enhancement": "Add or harden policy-based routing with quality floors, task budgets and normalized usage receipts. Explain route/fallback choices; diagnose repeated tool loops from traces without another model call. Compose caching through CacheFn.",
+      "acceptance_example": "A failed primary provider falls back within the same budget, records both attempts and bills usage once per defined policy. The same trace fixture yields equivalent TS/Python loop diagnoses.",
+      "product_ids": [
+        "P16",
+        "P24",
+        "P09"
+      ],
+      "python_project_files": [
+        "langfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "memoryfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P1",
+      "current_baseline": "Initial memory ingest/search runtime; durable/vector/graph and advanced merging are marked planned or in progress. Admin currently exposes scoped search and ingest.",
+      "repo_sources": [
+        "memoryfn/README.md",
+        "memoryfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Hindsight 1.0 + Memlake",
+          "relationship": "direct",
+          "transferable_pattern": "Learn from failures and corrections."
+        },
+        {
+          "name": "SuperLocalMemory",
+          "relationship": "direct",
+          "transferable_pattern": "Time, attribution and answer-support classification."
+        },
+        {
+          "name": "Provena",
+          "relationship": "direct",
+          "transferable_pattern": "Claims retain evidence and reversible conflict decisions."
+        },
+        {
+          "name": "MuscleMemory",
+          "relationship": "direct",
+          "transferable_pattern": "Promote repeatedly verified procedures."
+        },
+        {
+          "name": "SupraCortex",
+          "relationship": "direct",
+          "transferable_pattern": "Invalidate context when its source changes."
+        }
+      ],
+      "proposed_enhancement": "Prioritize evidence-backed memories: source/revision, author, valid time, scope, supersession and contradiction links. Return supports/related/insufficient classifications; invalidate changed evidence. Treat procedural skill promotion as a later evaluation-backed layer.",
+      "acceptance_example": "A superseded fact remains inspectable but is not returned as current. A changed source revision marks its claims stale. Restart-durable behavior is tested using a durable backend, separately from process-local defaults.",
+      "product_ids": [
+        "P22",
+        "P68",
+        "P53",
+        "P40",
+        "P69"
+      ],
+      "python_project_files": [
+        "memoryfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "flowfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P1",
+      "current_baseline": "Runtime exports queues, streams, retries, storage, scheduler and Redis/Postgres adapters; Python has comparable categories. Root README still labels the project specification.",
+      "repo_sources": [
+        "flowfn/typescript/src/index.ts",
+        "flowfn/python/README.md",
+        "flowfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Trigora",
+          "relationship": "direct",
+          "transferable_pattern": "Recover at durable boundaries and verify recovery through fault injection."
+        },
+        {
+          "name": "Pipemesh",
+          "relationship": "adjacent",
+          "transferable_pattern": "Supersede obsolete revisions and expose execution state."
+        }
+      ],
+      "proposed_enhancement": "Define an explicit durable-effect contract for long-running agents: checkpoints, external-effect idempotency, timed waits, cancellation and child joins. Add restart/fault-injection evidence before promising recovery semantics; update stale status docs.",
+      "acceptance_example": "Kill a workflow before and after each committed boundary. It resumes without losing committed state or duplicating externally visible effects under the documented idempotency contract; a canceled wait cannot later perform its side effect.",
+      "product_ids": [
+        "P74",
+        "P51"
+      ],
+      "python_project_files": [
+        "flowfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "botfn",
+      "group": "Agents, integrations and execution",
+      "priority": "P2",
+      "current_baseline": "Platform-specific Discord/Slack packages, shared types, persistence, GitHub and Linear integrations.",
+      "repo_sources": [
+        "botfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "DogeBot",
+          "relationship": "direct",
+          "transferable_pattern": "Reusable event/command modules and per-contact flows."
+        },
+        {
+          "name": "Lookout (for Slack)",
+          "relationship": "adjacent",
+          "transferable_pattern": "Natural-language conditions routed to scoped actions."
+        }
+      ],
+      "proposed_enhancement": "Provide typed, composable command/event recipes with a simulator and event replay. Add an optional natural-language trigger compiler that previews the exact condition and proposed action, using PlugFn and FlowFn for execution.",
+      "acceptance_example": "Replay a recorded event through the simulator and show the matching rule plus action payload. Duplicate delivery cannot repeat a mutation; channel/server scope is enforced.",
+      "product_ids": [
+        "P11",
+        "P35"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "datafn",
+      "group": "Data, files and retrieval",
+      "priority": "P1",
+      "current_baseline": "Offline client; DFQL, transactions, idempotency, concurrency guards, tenant isolation and clone/pull/push/reconcile/seed sync are documented today.",
+      "repo_sources": [
+        "datafn/client/README.md",
+        "datafn/server/README.md"
+      ],
+      "products": [
+        {
+          "name": "Verirow",
+          "relationship": "adjacent",
+          "transferable_pattern": "Independent post-sync row/field reconciliation."
+        },
+        {
+          "name": "ReviveDB",
+          "relationship": "adjacent",
+          "transferable_pattern": "Recovery evidence covers more than a database dump."
+        },
+        {
+          "name": "rsync.ai",
+          "relationship": "adjacent",
+          "transferable_pattern": "Inspectable data pipeline plans and CDC."
+        }
+      ],
+      "proposed_enhancement": "Build an operator-visible integrity and recovery layer over existing reconcile: missing/duplicate/changed-field reports, schema/revision-aware snapshots, and restore drills coordinating AuthFn/FileFn. Offer previewable CDC connector plans through PlugFn.",
+      "acceptance_example": "A deliberately dropped or duplicated mutation is found by the verification report. Restore a fixture app\u2019s records, users and files into a fresh environment and verify references and access scope. Do not re-add existing sync APIs.",
+      "product_ids": [
+        "P78",
+        "P57",
+        "P58"
+      ],
+      "python_project_files": [
+        "datafn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "cachefn",
+      "group": "Data, files and retrieval",
+      "priority": "P2",
+      "current_baseline": "Multi-tier caching, TTL, tags, memoization and analytics in TS/Python.",
+      "repo_sources": [
+        "cachefn/README.md",
+        "cachefn/typescript/README.md"
+      ],
+      "products": [
+        {
+          "name": "Weir",
+          "relationship": "direct",
+          "transferable_pattern": "Semantic reuse coupled to cost/latency accounting."
+        }
+      ],
+      "proposed_enhancement": "Offer an optional semantic-cache adapter for LangFn/RAG. Cache identity must include tenant, authorization scope, model/prompt version and retrieval-corpus revision; expose semantic false-hit evaluation and actual avoided-cost estimates.",
+      "acceptance_example": "Similar wording from two tenants never shares an answer. A corpus or permission revision invalidates the entry. An evaluation set reports incorrect reuse as well as hit rate; benefit remains an experiment until measured.",
+      "product_ids": [
+        "P81"
+      ],
+      "python_project_files": [
+        "cachefn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "searchfn",
+      "group": "Data, files and retrieval",
+      "priority": "P2",
+      "current_baseline": "Adapter-first lexical search, resource searchAll, fuzzy/prefix/field boosts and namespace/region filters; browser and server adapters.",
+      "repo_sources": [
+        "searchfn/client/README.md",
+        "searchfn/adapter-contracts/src/index.ts",
+        "searchfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Quello",
+          "relationship": "adjacent",
+          "transferable_pattern": "Cited cross-source answers with explicit file scoping."
+        },
+        {
+          "name": "SuperLocalMemory",
+          "relationship": "adjacent",
+          "transferable_pattern": "Recall should distinguish evidence support from relevance."
+        }
+      ],
+      "proposed_enhancement": "Extend result contracts through an optional retrieval layer with snippets/source spans, source revision, ranking diagnostics and pluggable lexical+vector fusion. Preserve permission filtering before retrieval and offer resource/@-scope controls.",
+      "acceptance_example": "A result cites the exact source span and revision; a deleted or forbidden document contributes no snippet, embedding hit or answer citation. Evaluate relevance and unsupported-answer rate separately.",
+      "product_ids": [
+        "P54",
+        "P68"
+      ],
+      "python_project_files": [
+        "searchfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "filefn",
+      "group": "Data, files and retrieval",
+      "priority": "P2",
+      "current_baseline": "Resumable uploads, storage adapters, processing, grants and signed shares; TypeScript packages plus Python and Swift surfaces.",
+      "repo_sources": [
+        "filefn/python/README.md",
+        "filefn/server/package.json",
+        "filefn/swift/README.md"
+      ],
+      "products": [
+        {
+          "name": "UploadCN",
+          "relationship": "direct",
+          "transferable_pattern": "Composable upload UI communicates the full transfer lifecycle."
+        },
+        {
+          "name": "SendShield Files",
+          "relationship": "adjacent",
+          "transferable_pattern": "Browser-encrypted request portals."
+        },
+        {
+          "name": "Exostor",
+          "relationship": "adjacent",
+          "transferable_pattern": "Re-check entitlement on every file access."
+        }
+      ],
+      "proposed_enhancement": "Ship UIFn-backed upload patterns showing queue, scan, retry and resume states over existing FileFn capabilities. Explore an optional client-encrypted request portal and a BillFn entitlement hook for download grants.",
+      "acceptance_example": "A reload resumes an upload with honest progress and scan status. Revoked entitlement blocks the next authorized access. Encryption mode documents which server-side scanning/search features become unavailable.",
+      "product_ids": [
+        "P76",
+        "P62",
+        "P15"
+      ],
+      "python_project_files": [
+        "filefn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "browsefn",
+      "group": "Data, files and retrieval",
+      "priority": "P2",
+      "current_baseline": "Retrieval, batch metadata, images and geo SDK; TS has multiple web providers, Python currently emits the cheerio/bs4 path.",
+      "repo_sources": [
+        "browsefn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Scrape Anything by Context.dev",
+          "relationship": "direct",
+          "transferable_pattern": "Consistent structured web data, batches, mapping and monitors."
+        },
+        {
+          "name": "CrawlForge MCP",
+          "relationship": "direct",
+          "transferable_pattern": "Agent-callable web extraction with persistent sessions."
+        },
+        {
+          "name": "Tabductor",
+          "relationship": "adjacent",
+          "transferable_pattern": "Compile a successful browser run into replayable automation."
+        }
+      ],
+      "proposed_enhancement": "Normalize extraction schemas and provenance across providers: final URL, capture time, source span, render mode and failure classification. Add bounded crawl/change-monitor recipes; consider deterministic replay as an optional bridge to ProbeFn. Publish per-language/provider support explicitly.",
+      "acceptance_example": "The same extraction contract works across supported TS providers, while unsupported Python behavior fails explicitly. Changed-page output identifies the changed evidence; a replay failing its assertions requires regeneration.",
+      "product_ids": [
+        "P60",
+        "P08",
+        "P70"
+      ],
+      "python_project_files": [
+        "browsefn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "apifn",
+      "group": "API contracts and documentation",
+      "priority": "P2",
+      "current_baseline": "OpenAPI generation/diff, existing OpenCollection YAML, collection tests, mocks, snippets and interactive docs.",
+      "repo_sources": [
+        "apifn/README.md",
+        "apifn/collections/README.md"
+      ],
+      "products": [
+        {
+          "name": "Probe",
+          "relationship": "direct",
+          "transferable_pattern": "The same file-backed collection works in desktop, CLI, agents and CI."
+        },
+        {
+          "name": "Request Eagle",
+          "relationship": "direct",
+          "transferable_pattern": "Local request files and migration compatibility."
+        },
+        {
+          "name": "Octri.dev",
+          "relationship": "adjacent",
+          "transferable_pattern": "One API spec drives docs, SDKs, MCP and diagnostics."
+        }
+      ],
+      "proposed_enhancement": "Strengthen the existing OpenCollection workflow with migration/import fixtures and deterministic agent/CI execution. Add one release manifest connecting OpenAPI compatibility, generated examples and McpFn tool contracts.",
+      "acceptance_example": "A checked-in collection gives the same assertions locally and in CI. A breaking endpoint change identifies affected examples and tools. OpenCollection support is already present and should be extended.",
+      "product_ids": [
+        "P52",
+        "P56",
+        "P44"
+      ],
+      "python_project_files": [
+        "apifn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "docsfn",
+      "group": "API contracts and documentation",
+      "priority": "P2",
+      "current_baseline": "Canonical docs manifest/search/OpenAPI pipelines, filesystem provider, React/Svelte sites and migration validation.",
+      "repo_sources": [
+        "docsfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Mintlify Desktop",
+          "relationship": "direct",
+          "transferable_pattern": "Keep documentation current as code changes."
+        },
+        {
+          "name": "Octri.dev",
+          "relationship": "direct",
+          "transferable_pattern": "Synchronize API outputs from one source."
+        },
+        {
+          "name": "Quello",
+          "relationship": "adjacent",
+          "transferable_pattern": "Answers cite the exact source."
+        }
+      ],
+      "proposed_enhancement": "Add a documentation freshness graph linking pages/examples to exported symbols and API revisions. Draft updates as inspectable patches; validate examples and produce agent-readable source slices with citations.",
+      "acceptance_example": "Changing an exported signature marks dependent pages stale and fails an example check. Suggested updates retain source links and require the project\u2019s normal publishing flow.",
+      "product_ids": [
+        "P39",
+        "P44",
+        "P54"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "mdfn",
+      "group": "Content, editing and design",
+      "priority": "P2",
+      "current_baseline": "Markdown as canonical durable source; source-preserving visual edits, comments/suggestions/history sidecars, authenticated collaboration and TS framework bindings.",
+      "repo_sources": [
+        "mdfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Markdoc",
+          "relationship": "direct",
+          "transferable_pattern": "Shared Markdown editing by humans and their agents."
+        },
+        {
+          "name": "Figma Specs",
+          "relationship": "adjacent",
+          "transferable_pattern": "Keep structured specifications beside design evidence."
+        }
+      ],
+      "proposed_enhancement": "Expose source-span-scoped agent transactions and suggestion bundles with an optimistic source revision. Attach design references and requirement IDs through existing sidecars; preserve unknown syntax and no-edit round trips.",
+      "acceptance_example": "A concurrent human edit causes a stale agent patch to conflict rather than overwrite. An accepted suggestion changes only its mapped regions and retains linked design/requirement provenance. Reuse existing comments and collaboration.",
+      "product_ids": [
+        "P36",
+        "P17"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "contentfn",
+      "group": "Content, editing and design",
+      "priority": "P2",
+      "current_baseline": "Schema/CFQL/patch contracts and server storage for drafts, published records, revisions, assets and webhook events.",
+      "repo_sources": [
+        "contentfn/core/src/index.ts",
+        "contentfn/server/src/index.ts"
+      ],
+      "products": [
+        {
+          "name": "Diggama",
+          "relationship": "direct",
+          "transferable_pattern": "Schema blueprints, APIs and agent-addressable content."
+        },
+        {
+          "name": "Octri.dev",
+          "relationship": "adjacent",
+          "transferable_pattern": "Derive useful developer surfaces from one contract."
+        }
+      ],
+      "proposed_enhancement": "Add a schema-derived content-tool manifest and dry-run patch plans exposing exact document revisions and validation errors to agents. Package reusable blueprint examples and outbound change events without duplicating CMS workflow ownership.",
+      "acceptance_example": "A schema change previews impacted documents and migration steps. Invalid or stale patches cannot publish; the same validation result appears through HTTP, CLI and MCP.",
+      "product_ids": [
+        "P10",
+        "P44"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "cmsfn",
+      "group": "Content, editing and design",
+      "priority": "P2",
+      "current_baseline": "Permissions/desk/workflow/release contracts; server publish, preview, audit and release endpoints; Studio is described as a skeleton.",
+      "repo_sources": [
+        "cmsfn/core/src/index.ts",
+        "cmsfn/server/src/index.ts",
+        "cmsfn/studio/package.json"
+      ],
+      "products": [
+        {
+          "name": "Diggama",
+          "relationship": "direct",
+          "transferable_pattern": "Authoring backend for agent-built sites."
+        },
+        {
+          "name": "Figma Specs",
+          "relationship": "adjacent",
+          "transferable_pattern": "Authors and agents discuss changes beside their context."
+        }
+      ],
+      "proposed_enhancement": "Build an author-ready workflow over ContentFn: schema-driven forms, agent draft proposals, side-by-side preview, locale/release validation and scoped publish approval. Reuse Mdfn editing instead of building another editor.",
+      "acceptance_example": "A content author can draft, preview and publish a small site without editing JSON. An agent can propose a release but cannot bypass the same permissions, preview scope or revision checks.",
+      "product_ids": [
+        "P10",
+        "P17"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "drawfn",
+      "group": "Content, editing and design",
+      "priority": "P2",
+      "current_baseline": "Cross-framework retained scene, drawing tools, scene JSON, undo/redo and PNG/SVG export.",
+      "repo_sources": [
+        "drawfn/core/README.md"
+      ],
+      "products": [
+        {
+          "name": "ExcaliClaw",
+          "relationship": "direct",
+          "transferable_pattern": "Human/agent co-editing of diagrams."
+        },
+        {
+          "name": "OpenFlowKit 2",
+          "relationship": "direct",
+          "transferable_pattern": "Text/diagram interchange, source references and drift detection."
+        }
+      ],
+      "proposed_enhancement": "Add optional structured diagram nodes/edges with source references and reversible agent scene transactions. Start with one bounded text format importer and a semantic change diff; keep freehand scene behavior intact.",
+      "acceptance_example": "An agent changes one node label without re-laying out untouched elements. Source references survive export/import; a changed source can flag an architecture diagram as stale.",
+      "product_ids": [
+        "P14",
+        "P45"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "uifn",
+      "group": "Content, editing and design",
+      "priority": "P2",
+      "current_baseline": "Framework-neutral controller/DOM/token contracts, equal React/Svelte/Solid bindings, registry delivery, and separate experimental patterns.",
+      "repo_sources": [
+        "uifn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Thinking Orbs",
+          "relationship": "direct",
+          "transferable_pattern": "Expose truthful agent lifecycle states."
+        },
+        {
+          "name": "Chai UI",
+          "relationship": "direct",
+          "transferable_pattern": "Reusable prompt/model/tool interaction components."
+        },
+        {
+          "name": "UploadCN",
+          "relationship": "adjacent",
+          "transferable_pattern": "Task-specific components over a reusable engine."
+        }
+      ],
+      "proposed_enhancement": "Create experimental patterns for agent run timelines, tool approvals, structured results, token budgets and upload queues using existing core contracts. Include accessibility/reduced-motion states and framework parity before promoting patterns.",
+      "acceptance_example": "A single event fixture renders equivalent run state in React, Svelte and Solid. Waiting, retrying, failed and completed states are distinguishable without motion or color alone; experimental work stays in its current release lane.",
+      "product_ids": [
+        "P72",
+        "P04",
+        "P76"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "chartfn",
+      "group": "Content, editing and design",
+      "priority": "P3",
+      "current_baseline": "Small charting surface with React/Svelte bindings and ChartSpec v1; README recommends ECharts.",
+      "repo_sources": [
+        "chartfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "SankeyFlow",
+          "relationship": "adjacent",
+          "transferable_pattern": "Build/export diagrams from text or spreadsheet data."
+        },
+        {
+          "name": "Crescent Trace",
+          "relationship": "adjacent",
+          "transferable_pattern": "Visualize tool loops and wasted work."
+        }
+      ],
+      "proposed_enhancement": "Keep the ECharts adapter focus. Add validated presets for token/cost flows, retries, latency distributions and Sankey-style execution paths; include source labels and export fixtures rather than growing a new renderer.",
+      "acceptance_example": "A trace fixture maps into a documented ChartSpec without raw sensitive payloads. Export preserves labels and units, and unsupported adapter features return an explicit diagnostic.",
+      "product_ids": [
+        "P59",
+        "P09"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "iconfn",
+      "group": "Content, editing and design",
+      "priority": "P3",
+      "current_baseline": "Minimal placeholder library; README recommends Iconify.",
+      "repo_sources": [
+        "iconfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "Energy Icons",
+          "relationship": "direct",
+          "transferable_pattern": "Deep domain taxonomy, weights and optical masters."
+        }
+      ],
+      "proposed_enhancement": "Provide a thin Iconify-compatible resolver/catalog contract with semantic aliases, accessible labels, license/source metadata and consistent sizing. Add relevant infrastructure-domain collections as adapters.",
+      "acceptance_example": "The same alias resolves deterministically across frameworks, unknown icons have a documented fallback, and source/license metadata accompanies installed assets. Validate demand before creating a bespoke icon catalog.",
+      "product_ids": [
+        "P13"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "testfn",
+      "group": "Testing and delivery",
+      "priority": "P1",
+      "current_baseline": "Multi-framework execution, flaky/performance analytics and visual testing; TS and pytest-oriented Python surfaces exist despite older spec wording.",
+      "repo_sources": [
+        "testfn/typescript/README.md",
+        "testfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Tiden",
+          "relationship": "direct",
+          "transferable_pattern": "Versioned requirements mapped to executed evidence."
+        },
+        {
+          "name": "Kerno 1.0",
+          "relationship": "direct",
+          "transferable_pattern": "Test a running app and real dependencies, including jobs/MCP."
+        },
+        {
+          "name": "kinora",
+          "relationship": "direct",
+          "transferable_pattern": "Compare runs and inspect historical browser traces."
+        }
+      ],
+      "proposed_enhancement": "Add requirement-to-test linkage and revision-bound evidence. Capture dependency/runtime provenance for acceptance runs, plus stable links from regressions to browser traces and backend job evidence.",
+      "acceptance_example": "A requirement with no executed assertion is visibly unverified even when the suite is green. Unit success is distinguishable from real-dependency acceptance evidence; a stale commit\u2019s result cannot satisfy a new release gate.",
+      "product_ids": [
+        "P73",
+        "P26",
+        "P28"
+      ],
+      "python_project_files": [
+        "testfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "probefn",
+      "group": "Testing and delivery",
+      "priority": "P1",
+      "current_baseline": "Local Playwright evidence sessions, checkpoints, deltas, design/visual artifacts and auth profiles; admin exposes a deliberately narrower subset.",
+      "repo_sources": [
+        "probefn/README.md"
+      ],
+      "products": [
+        {
+          "name": "TestDog",
+          "relationship": "direct",
+          "transferable_pattern": "Editable generated tests with deterministic replay."
+        },
+        {
+          "name": "EditUI",
+          "relationship": "adjacent",
+          "transferable_pattern": "Point to a live element and bundle requested edits."
+        },
+        {
+          "name": "LocaPilot",
+          "relationship": "adjacent",
+          "transferable_pattern": "Validated locator candidates."
+        },
+        {
+          "name": "Tabductor",
+          "relationship": "adjacent",
+          "transferable_pattern": "Reuse a verified browser execution as a script."
+        }
+      ],
+      "proposed_enhancement": "Turn a captured checkpoint into an editable reproduction/test draft with URL, viewport, assertions and scored locator candidates. Add a human annotation-to-task bridge; promote recorded flows only after deterministic replay passes.",
+      "acceptance_example": "The exported reproduction fails before a known fix and passes after it. Captured secrets remain redacted, ambiguous locators are surfaced, and the exact profile/scope used is recorded.",
+      "product_ids": [
+        "P71",
+        "P12",
+        "P33",
+        "P70"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "cifn",
+      "group": "Testing and delivery",
+      "priority": "P2",
+      "current_baseline": "Self-hosted control plane, runner, CLI, dashboard, pipelines and deployment documentation composing other functions.",
+      "repo_sources": [
+        "cifn/README.md",
+        "cifn/deploy/README.md"
+      ],
+      "products": [
+        {
+          "name": "Pipemesh",
+          "relationship": "direct",
+          "transferable_pattern": "Revision-oriented pipelines, supersession and fingerprint reuse."
+        },
+        {
+          "name": "Kinhin",
+          "relationship": "direct",
+          "transferable_pattern": "Ephemeral runners with host capacity reservations."
+        },
+        {
+          "name": "Tiden",
+          "relationship": "adjacent",
+          "transferable_pattern": "Gate releases on requirement evidence."
+        }
+      ],
+      "proposed_enhancement": "Add a revision-centric execution graph and optional ephemeral VM/container runner adapters with capacity limits. Attach TestFn requirement evidence and artifact fingerprints to the exact revision, with explicit supersession behavior.",
+      "acceptance_example": "An older run cannot deploy after a newer revision supersedes it. A runner is removed after its job; a cache hit is reusable only when inputs and required environment evidence match.",
+      "product_ids": [
+        "P51",
+        "P27",
+        "P73"
+      ],
+      "python_project_files": [
+        "cifn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "hostfn",
+      "group": "Testing and delivery",
+      "priority": "P2",
+      "current_baseline": "VPS deploy CLI with health checks, rollback, Nginx/SSL and scoped operator service; production executor/store are injected.",
+      "repo_sources": [
+        "hostfn/cli/README.md"
+      ],
+      "products": [
+        {
+          "name": "Levelrail",
+          "relationship": "direct",
+          "transferable_pattern": "PR previews and readiness-gated deployment operations."
+        },
+        {
+          "name": "Phelix",
+          "relationship": "direct",
+          "transferable_pattern": "Versioned binaries/config and staged traffic shifts."
+        },
+        {
+          "name": "Vimonto Deploy",
+          "relationship": "direct",
+          "transferable_pattern": "Useful server/domain/log/backup operator workflows."
+        }
+      ],
+      "proposed_enhancement": "Package preview environments and staged promotion around existing deployments. Add an inspectable plan containing exact target/revision, health gates, migration ordering and rollback scope; expose failure explanations from evidence.",
+      "acceptance_example": "A failed health gate leaves the current release serving traffic. Promotion is bound to its reviewed target/revision; rollback states explicitly whether database migrations are reversible. Keep provider/account selection explicit.",
+      "product_ids": [
+        "P32",
+        "P49",
+        "P80"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "extfn",
+      "group": "Developer interfaces",
+      "priority": "P2",
+      "current_baseline": "Vite/code-first Chromium and Firefox MV3 extension framework, messaging/ports/content mounts, scanning and deterministic packaging.",
+      "repo_sources": [
+        "extfn/README.md"
+      ],
+      "products": [
+        {
+          "name": "EditUI",
+          "relationship": "adjacent",
+          "transferable_pattern": "Element annotation extension as a reusable application recipe."
+        },
+        {
+          "name": "UI Context for Agents",
+          "relationship": "adjacent",
+          "transferable_pattern": "Capture selectors/component context for agent instructions."
+        },
+        {
+          "name": "GitSync",
+          "relationship": "adjacent",
+          "transferable_pattern": "Local browser-only integration using device authorization."
+        }
+      ],
+      "proposed_enhancement": "Ship example recipes for element capture, sidepanel agent work, scoped credential handoff and typed background/content communication. Add cross-browser contract fixtures and permission explanations to the existing scanner.",
+      "acceptance_example": "The same recipe runs on supported Chromium/Firefox targets with documented permission differences. Captures exclude sensitive fields and use existing messaging boundaries. These are application inspirations, not rival extension frameworks.",
+      "product_ids": [
+        "P12",
+        "P75",
+        "P20"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "clifn",
+      "group": "Developer interfaces",
+      "priority": "P2",
+      "current_baseline": "Shared parser-agnostic credentials/config/client/UI/stdio plus output, diagnostics, exec and scaffold primitives.",
+      "repo_sources": [
+        "clifn/core/README.md"
+      ],
+      "products": [
+        {
+          "name": "Lazy AWS",
+          "relationship": "adjacent",
+          "transferable_pattern": "Show exact account/target/command before execution."
+        },
+        {
+          "name": "Request Eagle",
+          "relationship": "adjacent",
+          "transferable_pattern": "File-backed workflows are scriptable by agents."
+        }
+      ],
+      "proposed_enhancement": "Standardize structured command plans, dry-run output, typed error/fix codes, account/environment display and capability discovery. Each owning CLI keeps command semantics and executes the same plan shown to the caller.",
+      "acceptance_example": "JSON stdout stays parseable while progress uses stderr. Mutating commands expose the selected account, target and planned effect; execution cannot silently drift from the plan. No strong direct CLI-primitives peer was identified.",
+      "product_ids": [
+        "P31",
+        "P56"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "superconsole",
+      "group": "Developer interfaces",
+      "priority": "P2",
+      "current_baseline": "Manifest-driven operator shell projects supplied capabilities into UI/REST/OpenAPI/TS/MCP with injected auth/audit/idempotency/confirmation infrastructure.",
+      "repo_sources": [
+        "superconsole/README.md"
+      ],
+      "products": [
+        {
+          "name": "vibesmonitor.com",
+          "relationship": "adjacent",
+          "transferable_pattern": "A cross-project inbox of actionable operational signals."
+        },
+        {
+          "name": "Lazy AWS",
+          "relationship": "adjacent",
+          "transferable_pattern": "Inspectable exact action context."
+        },
+        {
+          "name": "GBrain Tools",
+          "relationship": "adjacent",
+          "transferable_pattern": "Central visibility and revocation of delegated tool access."
+        }
+      ],
+      "proposed_enhancement": "Add an optional attention inbox over configured module capabilities: failed deployments, stale evidence, agent grants and unmet gates. Show linked evidence and an exact scoped action plan. Reuse function-owned manifests and current confirmation/audit machinery.",
+      "acceptance_example": "Every inbox item links to the authoritative function record and exact environment. An unavailable capability is not invented; the same permitted action and audit record appear via console, CLI/SDK and MCP.",
+      "product_ids": [
+        "P79",
+        "P31",
+        "P19"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "logfn",
+      "group": "Operations, feedback and growth",
+      "priority": "P2",
+      "current_baseline": "Structured TS/Python logging with contextual enrichment, redaction/sampling stages and pluggable sinks.",
+      "repo_sources": [
+        "logfn/python/README.md",
+        "logfn/typescript/package.json"
+      ],
+      "products": [
+        {
+          "name": "NestJS Observe",
+          "relationship": "adjacent",
+          "transferable_pattern": "Correlate logs with request/provider/query traces."
+        },
+        {
+          "name": "Vectory",
+          "relationship": "adjacent",
+          "transferable_pattern": "Version and explain processing pipelines."
+        },
+        {
+          "name": "Crescent Trace",
+          "relationship": "adjacent",
+          "transferable_pattern": "Diagnose agent tool-loop patterns from structured events."
+        }
+      ],
+      "proposed_enhancement": "Define an interoperable event envelope linking trace/span, workflow/job, release and tool-call IDs. Add versioned pipeline configuration, redaction coverage diagnostics and deterministic agent-loop analyzers as optional stages.",
+      "acceptance_example": "A single request can be followed into a job and tool call across TS/Python sinks. Redacted data never reappears in a retry or export; the report identifies which pipeline version processed each event.",
+      "product_ids": [
+        "P41",
+        "P77",
+        "P09"
+      ],
+      "python_project_files": [
+        "logfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "watchfn",
+      "group": "Operations, feedback and growth",
+      "priority": "P2",
+      "current_baseline": "Exports APM/RUM, tracing, metrics, synthetics, storage/query/alerts and adapters; Python package exists. Old root spec alone understates implementation.",
+      "repo_sources": [
+        "watchfn/typescript/src/index.ts",
+        "watchfn/python/watchfn/__init__.py",
+        "watchfn/SPEC.md"
+      ],
+      "products": [
+        {
+          "name": "KloudMate 2.0",
+          "relationship": "direct",
+          "transferable_pattern": "Correlate metrics, logs and traces for investigation."
+        },
+        {
+          "name": "NestJS Observe",
+          "relationship": "direct",
+          "transferable_pattern": "Low-configuration framework instrumentation."
+        },
+        {
+          "name": "3AM Super Intelligence",
+          "relationship": "adjacent",
+          "transferable_pattern": "Evidence-led incident diagnosis and proposed remediation."
+        }
+      ],
+      "proposed_enhancement": "Add framework instrumentation presets and a release-aware incident evidence graph joining alerts, logs, traces, deployment changes and affected users. Start with a read-only investigation report with explicit hypotheses and supporting/contradicting evidence.",
+      "acceptance_example": "A simulated incident report points to the exact trace/log/release facts and distinguishes observed cause evidence from a suggestion. Silence/stuck-job alerts work; remediation remains a separately authorized operation.",
+      "product_ids": [
+        "P29",
+        "P41",
+        "P01"
+      ],
+      "python_project_files": [
+        "watchfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "catchfn",
+      "group": "Operations, feedback and growth",
+      "priority": "P2",
+      "current_baseline": "Bug capture with breadcrumbs, console/network/device context, hooks, redaction and payload limits; server surfaces also exist.",
+      "repo_sources": [
+        "catchfn/typescript/README.md",
+        "catchfn/server/typescript/README.md"
+      ],
+      "products": [
+        {
+          "name": "Notarus",
+          "relationship": "direct",
+          "transferable_pattern": "Feedback reports include visual/runtime evidence and task workflow."
+        },
+        {
+          "name": "BugHarbor",
+          "relationship": "direct",
+          "transferable_pattern": "Route reports to code-aware investigation."
+        },
+        {
+          "name": "Kai Resolve by Gleap",
+          "relationship": "adjacent",
+          "transferable_pattern": "Read-only diagnosis from recordings/logs/code before a coding handoff."
+        }
+      ],
+      "proposed_enhancement": "Build an evidence-preserving report-to-reproduction workflow: annotate screenshots, correlate logs/releases, group duplicates, generate a scoped coding task and attach a ProbeFn/TestFn reproduction. Use PlugFn for tracker sync.",
+      "acceptance_example": "A report links its original redacted evidence, relevant release and replay/test artifact. Diagnosis cites files or events and labels uncertainty; creating a task does not imply that a fix or reproduction has passed.",
+      "product_ids": [
+        "P43",
+        "P03",
+        "P25"
+      ],
+      "python_project_files": [
+        "catchfn/server/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "userfn",
+      "group": "Operations, feedback and growth",
+      "priority": "P2",
+      "current_baseline": "TS identity/segments, flags, messaging, surveys and feedback; Python evaluates flags/segments/messaging eligibility.",
+      "repo_sources": [
+        "userfn/typescript/README.md",
+        "userfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Confidence by Spotify",
+          "relationship": "direct",
+          "transferable_pattern": "Link flags/experiments to warehouse metrics and guardrails."
+        },
+        {
+          "name": "Holdy",
+          "relationship": "adjacent",
+          "transferable_pattern": "Measure activation interventions against held-out controls."
+        }
+      ],
+      "proposed_enhancement": "Extend feature rollout with exposure events, outcome metric definitions, holdout cohorts and stop/rollback guardrails. Join feedback with rollout context. Keep local evaluation fast and make statistical analysis a distinct optional service.",
+      "acceptance_example": "Stable bucketing remains consistent across languages. A sample-ratio mismatch or guardrail breach is visible; an apparent conversion gain is not labeled causal without the defined experimental evidence.",
+      "product_ids": [
+        "P06",
+        "P23"
+      ],
+      "python_project_files": [
+        "userfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "billfn",
+      "group": "Operations, feedback and growth",
+      "priority": "P2",
+      "current_baseline": "Entitlement-first core; provider money movement is distinct from internal entitlement/quota state; TS/Python/Swift surfaces.",
+      "repo_sources": [
+        "billfn/README.md",
+        "billfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Inferock",
+          "relationship": "adjacent",
+          "transferable_pattern": "Usage/failure receipts and defined credit remedies."
+        },
+        {
+          "name": "Codemind",
+          "relationship": "adjacent",
+          "transferable_pattern": "Charge for a verified outcome rather than a failed attempt."
+        },
+        {
+          "name": "Quota",
+          "relationship": "adjacent",
+          "transferable_pattern": "Visible limits and reset windows."
+        },
+        {
+          "name": "Lancetta",
+          "relationship": "adjacent",
+          "transferable_pattern": "Forecast exhaustion and advise pacing."
+        }
+      ],
+      "proposed_enhancement": "Add auditable AI-work usage receipts and configurable reserve/commit/refund semantics tied to a verifiable outcome. Surface budget/reset forecasts to LangFn/FlowFn callers without letting provider responses directly determine entitlement.",
+      "acceptance_example": "Retried work shares an idempotency key, produces one committed usage record and releases a reservation on defined failure. A credit adjustment links to evidence. No close full billing-infrastructure peer was found in this archive window.",
+      "product_ids": [
+        "P24",
+        "P05",
+        "P55",
+        "P30"
+      ],
+      "python_project_files": [
+        "billfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "mailfn",
+      "group": "Communications and recording",
+      "priority": "P2",
+      "current_baseline": "Programmable inboxes, MIME/attachment evidence, waits/OTP/links/search, typed client, CLI/MCP, domains/webhooks, retention/audit/quotas and SendFn composition.",
+      "repo_sources": [
+        "mailfn/README.md",
+        "mailfn/SPEC.md"
+      ],
+      "products": [
+        {
+          "name": "FutureMail",
+          "relationship": "direct",
+          "transferable_pattern": "One domain/inbox experience spans humans, API, CLI and agents."
+        },
+        {
+          "name": "HiddenContent.ai",
+          "relationship": "adjacent",
+          "transferable_pattern": "Inspect potentially hostile machine-readable message/attachment content."
+        }
+      ],
+      "proposed_enhancement": "Package the already broad primitives into a complete agent-inbox quickstart: domain diagnosis, narrowly scoped identity, webhook/wait/OTP examples and a visible message lifecycle. Add optional attachment/content trust analysis and Resend-compatible outbound composition via SendFn.",
+      "acceptance_example": "A fresh install completes a documented receive/wait/OTP/send journey with the same inbox scope across surfaces. Webhook retry and email text never bypass action authorization. Scoped inboxes and MCP are existing features, not new gaps.",
+      "product_ids": [
+        "P18",
+        "P21"
+      ],
+      "python_project_files": []
+    },
+    {
+      "function": "sendfn",
+      "group": "Communications and recording",
+      "priority": "P2",
+      "current_baseline": "TS/Python communications SDKs; email/SMS/WhatsApp/push adapters, templates, router and bounce/complaint suppression.",
+      "repo_sources": [
+        "sendfn/typescript/README.md",
+        "sendfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "opensend.cc",
+          "relationship": "direct",
+          "transferable_pattern": "Self-hosted/BYO-SES email with familiar migration API."
+        },
+        {
+          "name": "PigeonAtlas",
+          "relationship": "direct",
+          "transferable_pattern": "Keep transactional delivery separate from broadcasts."
+        },
+        {
+          "name": "Senviok",
+          "relationship": "direct",
+          "transferable_pattern": "Unified multichannel developer workflow."
+        },
+        {
+          "name": "SecondFactor",
+          "relationship": "adjacent",
+          "transferable_pattern": "Delivery-aware OTP channel fallback."
+        }
+      ],
+      "proposed_enhancement": "Add explicit transactional/broadcast queue lanes and delivery-receipt events, with priority reservations and idempotent retries. Offer an optional Resend-compatible facade and SendFn-owned OTP fallback policy used by AuthFn.",
+      "acceptance_example": "A saturated campaign queue does not delay a reserved OTP lane. Delayed provider acknowledgments cannot trigger duplicate sends; suppression and opt-out state remain authoritative across fallback channels.",
+      "product_ids": [
+        "P46",
+        "P50",
+        "P63",
+        "P61"
+      ],
+      "python_project_files": [
+        "sendfn/python/pyproject.toml"
+      ]
+    },
+    {
+      "function": "recfn",
+      "group": "Communications and recording",
+      "priority": "P2",
+      "current_baseline": "Meeting capture/platform adapters, ASR providers, transcript search, webhooks, desktop and Python packages.",
+      "repo_sources": [
+        "recfn/README.md",
+        "recfn/python/README.md"
+      ],
+      "products": [
+        {
+          "name": "Parrot",
+          "relationship": "direct",
+          "transferable_pattern": "Botless local capture and in-call grounded help."
+        },
+        {
+          "name": "Sirina: private & local meeting recorder",
+          "relationship": "direct",
+          "transferable_pattern": "Local transcription and summarization with clear mode boundaries."
+        },
+        {
+          "name": "Maybloc",
+          "relationship": "direct",
+          "transferable_pattern": "Word timing, overlapping speakers and diarization contracts."
+        }
+      ],
+      "proposed_enhancement": "Harden local/botless capture as a selectable product path with explicit consent/recording state, ASR capability metadata and transcript provenance. Add optional in-call retrieval and post-call commitments grounded in timestamped transcript spans.",
+      "acceptance_example": "Offline mode sends no audio externally. Every action item links to a transcript span; unavailable diarization or cloud-only summarization is visible. Benchmark accuracy/latency on a consented fixture set before making comparative claims.",
+      "product_ids": [
+        "P48",
+        "P66",
+        "P37"
+      ],
+      "python_project_files": [
+        "recfn/python/pyproject.toml"
+      ]
+    }
+  ]
+}

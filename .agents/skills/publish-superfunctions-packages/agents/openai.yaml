@@ -1,0 +1,4 @@
+interface:
+  display_name: "Publish Superfunctions Packages"
+  short_description: "Publish changed packages safely through Actions"
+  default_prompt: "Use $publish-superfunctions-packages to inventory and publish the selected npm packages safely."
