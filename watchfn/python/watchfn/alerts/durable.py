@@ -170,6 +170,44 @@ class DurableAlertManager:
                      condition=deepcopy(record['condition']), severity=record.get('severity', 'warning'), channels=[channel['type'] for channel in record['channels']],
                      state=record['state'], triggered_at=record.get('triggeredAt'), last_evaluated=record.get('lastEvaluated'), auto_resolve=deepcopy(record.get('autoResolve')))
 
+    @owned_operation
+    def create_goal(self, source, app):
+        from ..business.goals import validate_goal, goal_id
+        from ..business.stored_funnels import TABLE
+        goal = validate_goal(source)
+        enabled = goal.get('alerts', {}).get('notify_below_pace', False)
+        definition = None
+        if enabled:
+            channels = []
+            for alias in goal['alerts']['channels']:
+                if alias not in self.delivery.named_channels: raise ValueError('Unknown goal alert channel')
+                channels.append(deepcopy(self.delivery.named_channels[alias]))
+            condition = {'type':'business-goal','goal':goal,'app':app,'operator':'below-pace'}
+            definition = self._definition({'name':goal['name'],'condition':condition,'channels':channels,'autoResolve':{'enabled':True,'condition':dict(condition,operator='on-pace')}})
+        async def action(tx):
+            await tx.create(CreateParams(model=TABLE, data={'id':goal_id(app,goal['name']),'namespace':app,'kind':'goal','name':goal['name'],'payload':encode({'protocol':'goal-v1','config':goal})}))
+            if definition is not None:
+                now=int(time.time()*1000);identifier=goal_id(app,goal['name'],'goal-alert')
+                record=dict(definition,id=identifier,enabled=True,state='normal',createdAt=now,updatedAt=now,notes=[],pendingNotifications=0)
+                await tx.create(CreateParams(model=ALERTS,data={'id':identifier,'namespace':self.namespace,'state':'normal','revision':0,'payload':encode(record)}))
+            return deepcopy(goal)
+        return self._run(action,mutating=definition is not None)
+
+    @owned_operation
+    def get_goal(self, name, app):
+        from ..business.goals import validate_goal, goal_id
+        from ..business.stored_funnels import TABLE, text as valid_text
+        if not valid_text(name): raise ValueError('Invalid goal name')
+        async def action(tx):
+            row=await tx.find_one(FindOneParams(model=TABLE,where=[WhereClause(field='id',value=goal_id(app,name)),WhereClause(field='namespace',value=app)]))
+            if row is None:raise ValueError('Goal not found')
+            payload=json.loads(row['payload']) if isinstance(row['payload'],str) else row['payload']
+            if row['name']!=name or row['kind']!='goal' or row['namespace']!=app or payload.get('protocol')!='goal-v1':raise ValueError('Invalid stored goal')
+            goal=validate_goal(payload['config'])
+            if goal['name']!=name:raise ValueError('Invalid stored goal identity')
+            return goal
+        return self._run(action)
+
     def create(self, definition):
         return self._create(self._definition(definition), str(uuid4()), False)
 
@@ -356,6 +394,23 @@ class DurableAlertManager:
         for row in rows:
             before = self._decode(row)
             if not before['enabled']: continue
+            if before['condition'].get('type') == 'business-goal':
+                from ..business.goals import goal_key
+                measured = data.get(goal_key(before['condition']))
+                period = measured['periodStart'] if measured else None
+                if period is not None and before.get('goalPeriodStart') != period:
+                    def rollover(record, moment):
+                        if record.get('lastEvaluated', -float('inf')) > moment: raise AlertConflict('Evaluation time moved backwards')
+                        record.update(goalPeriodStart=period, lastEvaluated=moment)
+                        if record['state'] in ('triggered','acknowledged'):
+                            record.update(state='resolved',resolvedBy='goal-period-ended',resolvedAt=moment)
+                            return 'resolved'
+                    expected_revision = row['revision'] + 1
+                    self._mutate(row['id'],rollover,row['revision'],now)
+                    row = self._run(lambda tx: self._row(tx,row['id']))
+                    if row['revision'] != expected_revision:
+                        raise AlertConflict('Alert changed during goal period rollover')
+                    before = self._decode(row)
             observation = evaluate_result(before['condition'], data, now)
             matched = observation['matched']
             recovery = evaluate_result(before['autoResolve']['condition'], data, now) if before.get('autoResolve', {}).get('enabled') else {'matched': None}

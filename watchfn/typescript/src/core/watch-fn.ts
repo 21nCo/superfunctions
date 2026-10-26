@@ -1,3 +1,4 @@
+import {goalProgress,type GoalConfig} from '../business/goals';
 import { StoredFunnels, businessEvent, type CreateFunnelOptions, type FunnelQueryOptions, type DropoffQueryOptions } from '../business/stored-funnels';
 import { countLogPattern, namedPatternChannels, type CreateLogPatternOptions } from '../logs/regex';
 import { discoverLogPatterns, type PatternDiscoveryOptions } from "../logs/patterns";
@@ -381,8 +382,8 @@ export class WatchFn implements WatchFnInstance {
             if (!this.isStarted || this.stopping) throw new Error('WatchFn storage is unavailable');
             this.eventRouter.ingest(businessEvent(event,props,this.config.name));
           },
-          createGoal: async (opts: any) => {},
-          getGoalProgress: async (opts: any) => ({}),
+          createGoal: async (opts:GoalConfig) => this.alerts.createGoal(opts),
+          getGoalProgress: async (opts:{name:string;date:string|number}) => {if(!opts||Object.keys(opts).some(key=>!['name','date'].includes(key)))throw new TypeError('Invalid goal progress query');const input={name:opts.name,date:opts.date};const goal=await this.alerts.getGoal(input.name);if(!this.storage||!this.isStarted||this.stopping)throw new Error('WatchFn storage is unavailable');let result!:Awaited<ReturnType<typeof goalProgress>>;const record=this.write(async()=>{result=await goalProgress(this.storage!,this.config.name,goal,input.date);});await record.completion;if(record.failed)throw record.error;return result;},
           createFunnel: async (opts: CreateFunnelOptions) => this.funnels().create(opts),
           getFunnel: async (opts: FunnelQueryOptions) => this.funnels().get(opts),
           getDropoffAnalysis: async (opts: DropoffQueryOptions) => this.funnels().dropoff(opts),
@@ -400,6 +401,7 @@ export class WatchFn implements WatchFnInstance {
       if (database && !('create' in database)) throw new TypeError('Durable alerts require a shared DB Adapter');
       this.alertManager = new AlertManager({
         name: this.config.name, config: this.config.alerts, database: database as import('@superfunctions/db').Adapter | undefined,
+        goalProgress:(goal,now,maximum)=>{if(!this.storage)throw new Error('Storage unavailable');return goalProgress(this.storage,this.config.name,goal,now,maximum);},
         logPatternCount: (condition, from, now, maximum) => {
           if (!this.storage) throw new Error('WatchFn storage is unavailable');
           return countLogPattern(this.storage, condition.pattern, from, now, maximum);

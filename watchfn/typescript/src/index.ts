@@ -132,3 +132,5 @@ export { getBusinessSchema } from './business/schema';
 export type { CreateFunnelOptions, StoredFunnelStep, FunnelQueryOptions, DropoffQueryOptions, FunnelResult, FunnelStepResult, FunnelSummary } from './business/stored-funnels';
 
 export type {SyntheticReportOptions,SyntheticIncidentOptions,SyntheticTrendOptions,SyntheticIncident} from './synthetics/reports';
+
+export type {GoalConfig,GoalProgress,GoalCondition} from './business/goals';

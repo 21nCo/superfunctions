@@ -40,6 +40,10 @@ try{
  await watch.ingest([['bound-a',4001],['bound-b',64001]].map(([name,timestamp])=>({type:'track',name,timestamp,app:{name:'wire-✓'},properties:{userId:'boundary'}})));
  assert.deepEqual((await watch.business.getFunnel({name:'exact-window',timeRange:{from:4001,to:64001}})).steps.map(step=>step.count),[1,1]);
  assert.deepEqual((await watch.business.getFunnel({name:'exact-window',timeRange:{from:4001.5,to:64001}})).steps.map(step=>step.count),[0,0]);
+ const goal={name:'typescript-goal',target:100,metric:'purchase.completed.total',aggregation:'sum',period:'month',startDate:'2026-01-31'};
+ await watch.business.createGoal(goal);
+ await watch.ingest([25,-5].map((total,index)=>({type:'track',name:'purchase.completed',app:{name:'wire-✓'},timestamp:`2026-02-0${index+1}T00:00:00Z`,properties:{total}})));
+ assert.equal((await watch.business.getGoalProgress({name:goal.name,date:'2026-02-14'})).actual,20);
  const python=String.raw`
 import json,sys
 from sqlalchemy import create_engine
@@ -52,6 +56,9 @@ watch.system_metrics.start=lambda:None
 watch.process_metrics.start=lambda:None
 watch.start()
 try:
+ progress=watch.business.get_goal_progress({'name':'typescript-goal','date':'2026-02-14'})
+ assert (progress['actual'],progress['elapsedPercent'],progress['expected'])==(20,50,50),progress
+ watch.business.create_goal({'name':'python-goal','target':100,'metric':'purchase.completed.total','aggregation':'sum','period':'month','startDate':'2026-01-31'})
  boundary=watch.business.get_funnel({'name':'exact-window','timeRange':{'from':4001,'to':64001}})
  assert [step['count'] for step in boundary['steps']]==[1,1],boundary
  fractional=watch.business.get_funnel({'name':'exact-window','timeRange':{'from':4001.5,'to':64001}})
@@ -80,6 +87,8 @@ finally:
  assert.equal(run.status,0,run.stdout+'\n'+run.stderr);process.stdout.write(run.stdout);
  const result=await watch.business.getFunnel({name:'typescript-definition',timeRange:'last-1h'});assert.deepEqual(result.steps.map(step=>step.count),[1,1,1]);
  assert.deepEqual((await watch.business.getFunnel({name:'python-definition',timeRange:'last-1h'})).steps.map(step=>step.count),[1,1]);
+ assert.equal((await watch.business.getGoalProgress({name:'python-goal',date:'2026-02-14'})).actual,20);
+ console.log('Installed bilateral stored goals and calendar progress passed');
  console.log('Actual shared SQLite: TS and Python definitions/events/query roundtrip passed');
 }finally{
  try{if(watch)await watch.stop();}finally{try{if(db)await db.destroy();}finally{await rm(directory,{recursive:true,force:true});}}

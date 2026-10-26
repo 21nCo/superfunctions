@@ -1,3 +1,6 @@
+import {validateGoal,goalId,type GoalConfig,type GoalProgress,type GoalCondition} from '../business/goals';
+import {getBusinessSchema,BUSINESS_DEFINITIONS} from '../business/schema';
+import {namedPatternChannels} from '../logs/regex';
 import { EmailCleanupError, loadSesProvider, sendSesEmail, validEmail, validateEmailConfig } from './channels/email-ses';
 import { randomUUID } from 'node:crypto';
 import { wrapWithSchema, type Adapter, type TransactionAdapter, type WhereClause } from '@superfunctions/db';
@@ -24,6 +27,7 @@ export interface AlertHost {
   database?: Adapter; config?: AlertRuntimeConfig; name: string;
   admit<T>(operation: () => Promise<T>, started?: boolean): Promise<T>;
   logPatternCount?(condition: LogPatternCondition, from: number, now: number, maximum: number): Promise<number>;
+  goalProgress?(goal:GoalConfig,now:number,maximum:number):Promise<GoalProgress>;
   observations(metric: string, from: number | undefined, now: number, max: number): Promise<AlertMetricPoint[]>;
 }
 
@@ -37,7 +41,7 @@ export class AlertManager {
   constructor(private readonly host: AlertHost) {
     const database = host.database ?? memoryAdapter();
     if (!database.capabilities?.transactions?.supported || typeof database.transaction !== 'function') throw new TypeError('Alerts require a shared DB adapter with transactions');
-    this.db = wrapWithSchema(database, getAlertSchema());
+    this.db = wrapWithSchema(database, {...getAlertSchema(),...getBusinessSchema()});
     this.namespace = host.config?.namespace ?? host.name;
     if (!text(this.namespace, 128)) throw new TypeError('Invalid alert namespace');
     this.config = { pagerDutyEndpoint: 'https://events.pagerduty.com/v2/enqueue', maxObservations: 10000, maxPendingPerAlert: 100, timeoutMs: 10000, leaseMs: 30000, maxAttempts: 5, ...host.config };
@@ -120,6 +124,19 @@ export class AlertManager {
       return this.public(record);
     });
   }
+  createGoal(input:GoalConfig):Promise<GoalConfig>{
+    const goal=validateGoal(input),id=goalId(this.host.name,goal.name),condition:GoalCondition={type:'business-goal',goal,app:this.host.name,operator:'below-pace'};
+    const enabled=goal.alerts?.notify_below_pace===true;
+    const config=enabled?this.validate({name:goal.name,condition,channels:namedPatternChannels(goal.alerts!.channels,this.config.namedChannels),autoResolve:{enabled:true,condition:{...condition,operator:'on-pace'}}}):undefined;
+    return this.host.admit(async()=>{if(config)await this.assertDispatchProtocol();await this.transaction(async tx=>{
+      await tx.create({model:BUSINESS_DEFINITIONS,data:{id,namespace:this.host.name,kind:'goal',name:goal.name,payload:{protocol:'goal-v1',config:goal}}});
+      if(config){const now=Date.now(),alertId=goalId(this.host.name,goal.name,'goal-alert');const record:AlertRecord={...config,id:alertId,enabled:true,state:'normal',createdAt:now,updatedAt:now,notes:[],pendingNotifications:0};await tx.create({model:ALERTS,data:{id:alertId,namespace:this.namespace,state:'normal',revision:0,payload:record}});}
+    },!config);return copy(goal);},true);
+  }
+  getGoal(name:string):Promise<GoalConfig>{
+    if(!text(name,255))throw new TypeError('Invalid goal name');
+    return this.host.admit(async()=>{const row=await this.db.findOne<{id:string;namespace:string;kind:string;name:string;payload:{protocol:string;config:GoalConfig}}>({model:BUSINESS_DEFINITIONS,where:[{field:'id',operator:'eq',value:goalId(this.host.name,name)},{field:'namespace',operator:'eq',value:this.host.name}]});if(!row)throw new Error('Goal not found');if(row.kind!=='goal'||row.name!==name||row.namespace!==this.host.name||row.payload?.protocol!=='goal-v1')throw new Error('Invalid stored goal');const config=validateGoal(row.payload.config);if(config.name!==name)throw new Error('Invalid stored goal identity');return config;},true);
+  }
   get(id: string): Promise<PublicAlert> { return this.host.admit(async () => this.public((await this.row(id)).payload)); }
   list(filter: { status?: string; after?: string; limit?: number } = {}): Promise<PublicAlert[]> {
     const limit = this.limit(filter.limit);
@@ -187,11 +204,13 @@ export class AlertManager {
     return this.host.admit(async () => {
       const rows = await this.db.findMany<Row>({ model: ALERTS, where: [...this.where(), ...(options.after ? [{ field: 'id', operator: 'gt' as const, value: options.after }] : [])], orderBy: [{ field: 'id', direction: 'asc' }], limit });
       const results: { alert: PublicAlert; observed: boolean; matched: boolean | null }[] = [];
-      for (const row of rows) {
+      for (let row of rows) {
         if (!row.payload.enabled) continue;
+        const goalDefinitions=new Map<string,GoalConfig>();
         const patterns = new Map<string, LogPatternCondition>();
         const ranges = new Map<string, { metric: string; from: number | undefined }>();
         const collect = (condition: AlertCondition): void => {
+          if(condition.type==='business-goal'){if(condition.app!==this.host.name)throw new Error('Goal application mismatch');goalDefinitions.set(JSON.stringify(condition.goal),condition.goal);return;}
           if (condition.type === 'composite') { condition.conditions.forEach(collect); return; }
           if (condition.type === 'log-pattern') { patterns.set(logPatternObservationKey(condition, now - alertWindowMs(condition.window)), condition); return; }
           const from = condition.type === 'anomaly' ? undefined : now - alertWindowMs(condition.window);
@@ -205,16 +224,31 @@ export class AlertManager {
           if (!this.host.logPatternCount) throw new Error('Log pattern evaluation is unavailable');
           patternCounts.set(key, await this.host.logPatternCount(condition, now - alertWindowMs(condition.window), now, this.config.maxObservations));
         }
+        const goalValues=new Map<string,GoalProgress>();
+        for(const [key,goal]of goalDefinitions){if(!this.host.goalProgress)throw new Error('Goal observations unavailable');if(now>=Date.parse(goal.startDate))goalValues.set(key,await this.host.goalProgress(goal,now,this.config.maxObservations));}
+        if(row.payload.condition.type==='business-goal'){
+          const period=goalValues.get(JSON.stringify(row.payload.condition.goal))?.periodStart;
+          if(period!==undefined&&row.payload.goalPeriodStart!==period){
+            const expectedRevision=row.revision+1;
+            await this.mutate(row.id,record=>{
+              if((record.lastEvaluated??-Infinity)>now)throw new Error('Goal evaluation time moved backwards');
+              record.goalPeriodStart=period;record.lastEvaluated=now;
+              if(active(record)){record.state='resolved';record.resolvedAt=now;record.resolvedBy='goal-period-ended';return {event:'resolved' as const};}
+            },now,row.revision);
+            row=await this.row(row.id);
+            if(row.revision!==expectedRevision)throw new Conflict('Alert changed during goal period rollover');
+          }
+        }
         let matched: boolean | null = null;
         const alert = await this.mutate(row.id, record => {
           // Definition edits race safely: re-read observations on a later evaluation.
           if (JSON.stringify(record.condition) !== JSON.stringify(row.payload.condition) || JSON.stringify(record.autoResolve) !== JSON.stringify(row.payload.autoResolve)) throw new Conflict('Alert definition changed during evaluation');
           if (!record.enabled || (record.lastEvaluated ?? -Infinity) > now) return;
-          const result = this.evaluator.evaluateResult(record.condition, new Map(), now, observations, patternCounts); matched = result.matched;
+          const result = this.evaluator.evaluateResult(record.condition, new Map(), now, observations, patternCounts,goalValues); matched = result.matched;
           record.lastEvaluated = now;
           if (result.matched === true && !active(record)) { this.triggerState(record, now); return { event: 'triggered' as const, value: result.value }; }
           if (active(record) && record.autoResolve?.enabled) {
-            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations, patternCounts);
+            const recovery = this.evaluator.evaluateResult(record.autoResolve.condition, new Map(), now, observations, patternCounts,goalValues);
             if (recovery.matched === true) { record.state = 'resolved'; record.resolvedAt = now; record.resolvedBy = 'autoResolve'; return { event: 'resolved' as const, value: recovery.value, threshold: record.autoResolve.condition.type === undefined || record.autoResolve.condition.type === 'threshold' || record.autoResolve.condition.type === 'log-pattern' ? record.autoResolve.condition.threshold : undefined }; }
           }
         }, now, row.revision);

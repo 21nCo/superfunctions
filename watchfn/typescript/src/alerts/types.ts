@@ -51,6 +51,7 @@ export interface AlertRecord extends AlertConfig {
   id: string; enabled: boolean; state: 'normal' | 'triggered' | 'acknowledged' | 'resolved';
   createdAt: number; updatedAt: number; triggeredAt?: number; resolvedAt?: number;
   acknowledgedBy?: string; resolvedBy?: string; lastEvaluated?: number;
+  goalPeriodStart?:number;
   pagerDuty?: PagerDutySequence;
   notes: AlertNote[]; pendingNotifications: number; lastNotification?: { event: string; deliveredAt: number };
 }

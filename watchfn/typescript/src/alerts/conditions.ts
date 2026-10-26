@@ -1,3 +1,4 @@
+import {validateGoal,goalDecision,type GoalCondition,type GoalProgress} from '../business/goals';
 import { validateLogPattern } from '../logs/regex';
 /** Windowed alert conditions. Missing observations are distinct from a healthy measurement. */
 export type ConditionOperator = 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne';
@@ -19,7 +20,7 @@ export interface LogPatternCondition {
 export function logPatternObservationKey(condition: LogPatternCondition, from: number): string {
   return JSON.stringify([condition.type, condition.field, condition.pattern.engine, condition.pattern.source, condition.pattern.flags, from]);
 }
-export type AlertCondition = ThresholdCondition | AnomalyCondition | CompositeCondition | LogPatternCondition;
+export type AlertCondition = ThresholdCondition | AnomalyCondition | CompositeCondition | LogPatternCondition | GoalCondition;
 export interface AlertMetricPoint { value: number; timestamp: number; metric?: string }
 export type AlertMetricData = ReadonlyMap<string, readonly AlertMetricPoint[]> | readonly AlertMetricPoint[];
 export interface ConditionResult { matched: boolean | null; value?: number; dataPoints: number }
@@ -39,6 +40,7 @@ export function validateAlertCondition(condition: AlertCondition): void {
       for (const child of value.conditions) visit(child, depth + 1);
       return;
     }
+    if(value.type==='business-goal'){if(depth!==0||typeof value.app!=='string'||!value.app.trim())throw new TypeError('Goal condition must be top-level and app-owned');validateGoal(value.goal);if(!['below-pace','on-pace'].includes(value.operator))throw new TypeError('Invalid goal operator');return;}
     if (value.type === 'log-pattern') {
       if (value.field !== 'message' || value.operator !== 'gte' || !Number.isSafeInteger(value.threshold) || value.threshold < 1 || value.threshold > 10000) throw new TypeError('Invalid log pattern condition');
       validateLogPattern(value.pattern); alertWindowMs(value.window); return;
@@ -58,10 +60,10 @@ export class ConditionEvaluator {
   evaluate(condition: AlertCondition, data: AlertMetricData, now = Date.now()): boolean {
     return this.evaluateResult(condition, data, now).matched === true;
   }
-  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now(), windows?: ReadonlyMap<string, readonly AlertMetricPoint[]>, patternCounts?: ReadonlyMap<string, number>): ConditionResult {
+  evaluateResult(condition: AlertCondition, data: AlertMetricData, now = Date.now(), windows?: ReadonlyMap<string, readonly AlertMetricPoint[]>, patternCounts?: ReadonlyMap<string, number>, goals?:ReadonlyMap<string,GoalProgress>): ConditionResult {
     validateAlertCondition(condition);
     if (!Number.isFinite(now)) throw new TypeError('Evaluation time must be finite');
-    const unlabelledMetric = condition.type === 'composite' || condition.type === 'log-pattern' ? undefined : condition.metric;
+    const unlabelledMetric = condition.type === 'composite' || condition.type === 'log-pattern' || condition.type==='business-goal' ? undefined : condition.metric;
     const evaluate = (rule: AlertCondition): ConditionResult => {
       if (rule.type === 'composite') {
         const results = rule.conditions.map(evaluate);
@@ -71,6 +73,7 @@ export class ConditionEvaluator {
           : matches.includes(true) ? true : matches.includes(null) ? null : false;
         return { matched, dataPoints: results.reduce((count, result) => count + result.dataPoints, 0) };
       }
+      if(rule.type==='business-goal')return goalDecision(rule,goals?.get(JSON.stringify(rule.goal)));
       if (rule.type === 'log-pattern') {
         const count = patternCounts?.get(logPatternObservationKey(rule, now - alertWindowMs(rule.window)));
         if (count === undefined || !Number.isSafeInteger(count) || count < 0) return {matched:null,dataPoints:0};

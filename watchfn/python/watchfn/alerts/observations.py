@@ -30,6 +30,11 @@ def validate(condition):
                 raise ValueError("Composite alerts require an operator and conditions")
             for child in rule["conditions"]: visit(child, depth + 1)
             return
+        if kind == 'business-goal':
+            from ..business.goals import validate_goal
+            validate_goal(rule.get('goal'))
+            if depth != 0 or rule.get('operator') not in ('below-pace','on-pace') or not isinstance(rule.get('app'),str) or not rule['app']:raise ValueError('Invalid goal condition')
+            return
         if kind == 'log-pattern':
             from ..log_pattern_alerts import validate_pattern
             field(rule.get('field'))
@@ -98,6 +103,11 @@ def evaluate_result(condition, data, now):
             decisive = False if rule["operator"] == "and" else True
             matched = decisive if any(value is decisive for value in matches) else None if None in matches else not decisive
             return result(matched, sum(child["dataPoints"] for child in children))
+        if kind == 'business-goal':
+            from ..business.goals import goal_key
+            progress=data.get(goal_key(rule))
+            if not progress or progress['belowPace'] is None:return result(None,0 if not progress else progress['eventCount'])
+            return result(progress['belowPace'] if rule['operator']=='below-pace' else not progress['belowPace'],progress['eventCount'],progress['actual'])
         if kind == 'log-pattern':
             count = data.get(log_pattern_key(rule, now))
             if count is None:
@@ -148,6 +158,10 @@ def ranges(condition, now, result):
         key=log_pattern_key(condition, now)
         result[key]=key[-1]
         return
+    if condition.get('type')=='business-goal':
+        from ..business.goals import goal_key
+        result[goal_key(condition)] = condition
+        return
     metric = condition["metric"]
     start = None if condition.get("type") == "anomaly" else now - window_ms(condition["window"])
     result[(metric, start)] = start
@@ -161,7 +175,10 @@ def log_pattern_key(condition, now):
 def observations_for_requests(events, requested, now, maximum):
     result={}
     for key,start in requested.items():
-        if len(key)==6 and key[0]=='log-pattern':
+        if key[0]=='business-goal':
+            from ..business.goals import progress,goal_date
+            result[key]=None if now<goal_date(start['goal']['startDate']) else progress(events,start['app'],start['goal'],now,maximum)
+        elif len(key)==6 and key[0]=='log-pattern':
             from ..log_pattern_alerts import count_log_pattern
             condition={'field':key[1],'pattern':{'engine':key[2],'source':key[3],'flags':key[4]}}
             result[key]=count_log_pattern(events,condition,start,now,maximum)

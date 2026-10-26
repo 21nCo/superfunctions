@@ -17,7 +17,8 @@ TABLE = 'watchfn_business_definitions'
 
 
 def get_business_schema():
-    return {TABLE: TableSchema(name=TABLE, fields=[
+    from ..alerts.schema import get_alert_schema
+    return {**get_alert_schema(), TABLE: TableSchema(name=TABLE, fields=[
         FieldSchema(name='id', type='string', primary_key=True, unique=True),
         *[FieldSchema(name=key, type='string') for key in ('namespace', 'kind', 'name')],
         FieldSchema(name='payload', type='text'),
@@ -111,6 +112,21 @@ class StoredFunnels:
 
     def _id(self, name):
         return hashlib.sha256(packed([self.watch.config.name, 'funnel', name]).encode('utf-8')).hexdigest()
+
+    @owned_operation
+    def create_goal(self, options):
+        self._active()
+        return self.watch.alerts.create_goal(options, self.watch.config.name)
+
+    @owned_operation
+    def get_goal_progress(self, options):
+        self._active()
+        if not isinstance(options, dict) or set(options) != {'name','date'}: raise ValueError('Invalid goal progress query')
+        options = deepcopy(options)
+        from .goals import progress
+        goal = self.watch.alerts.get_goal(options['name'], self.watch.config.name)
+        self.watch.flush()
+        return progress(self.watch.storage.query(), self.watch.config.name, goal, options['date'])
 
     @owned_operation
     def track(self, name, properties):

@@ -37,7 +37,8 @@ class MemoryAlertManager(AlertManager):
                 engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
                 try:
                     metadata = MetaData()
-                    for schema in get_alert_schema().values():
+                    from ..business.stored_funnels import get_business_schema
+                    for schema in get_business_schema().values():
                         table = Table(schema.name, metadata, *[
                             Column(field.name, Text if field.type == 'text' else BigInteger if field.type == 'bigint' else String,
                                    primary_key=field.primary_key, nullable=field.nullable, unique=field.unique)
@@ -55,6 +56,20 @@ class MemoryAlertManager(AlertManager):
                     raise
                 self._engine, self._created = engine, created
             return self._created
+
+    @owned_operation
+    def create_goal(self, options, app):
+        from ..business.goals import goal_id,validate_goal
+        goal=validate_goal(options);identifier=goal_id(app,goal['name'],'goal-alert')
+        with self._ownership:
+            if identifier in self.alerts:raise ValueError('Goal alert identity collides with legacy registration')
+            result=self._backend().create_goal(goal, app)
+            if goal.get('alerts',{}).get('notify_below_pace'):self._created_ids.add(identifier)
+            return result
+
+    @owned_operation
+    def get_goal(self, name, app):
+        return self._backend().get_goal(name, app)
 
     def start_storage(self):
         with self._ownership:

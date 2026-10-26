@@ -79,6 +79,8 @@ class WatchFn:
     def _alert_snapshot(self, requested, now, maximum):
         if not self.is_started:
             raise RuntimeError("WatchFn storage is unavailable")
+        for key, condition in requested.items():
+            if key[0] == 'business-goal' and condition['app'] != self.config.name: raise ValueError('Goal application mismatch')
         self.batcher.flush()
         events = self.storage.query()
         return observations_for_requests(events, requested, now, maximum)
