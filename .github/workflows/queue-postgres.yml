@@ -1,0 +1,60 @@
+name: Queue Postgres Integration
+
+on:
+  push:
+    branches: [dev, next, main]
+    paths:
+      - "packages/queue/**"
+      - "package-lock.json"
+      - ".github/workflows/queue-postgres.yml"
+  pull_request:
+    branches: [dev, next, main]
+    paths:
+      - "packages/queue/**"
+      - "package-lock.json"
+      - ".github/workflows/queue-postgres.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Queue tests with a Postgres server
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: queue_test
+          POSTGRES_DB: queue_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install queue workspace from the root lockfile
+        run: npm ci --ignore-scripts --workspace @superfunctions/queue --include-workspace-root=false
+
+      - name: Build trusted native bindings
+        run: npm rebuild esbuild better-sqlite3
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Run queue tests, including the Postgres server suite
+        env:
+          SUPERFUNCTIONS_QUEUE_POSTGRES_URL: postgres://postgres:queue_test@localhost:5432/queue_test
+        run: npm --workspace @superfunctions/queue test

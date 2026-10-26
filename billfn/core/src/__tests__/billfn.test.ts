@@ -3,7 +3,7 @@ import type { TransactionAdapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { MemoryQueueAdapter } from '@superfunctions/queue';
 import { createBillFn, createBillFnReconciliationWorker, getSchema } from '../index.js';
-import type { BillFnCatalog, BillFnProviderAdapter } from '../types.js';
+import type { BillFnCatalog, BillFnProviderAdapter, BillFnQueuedJob } from '../types.js';
 
 const catalog: BillFnCatalog = {
   plans: [
@@ -1258,7 +1258,7 @@ describe('@billfn/core', () => {
 
     expect(deliveries.map((delivery) => delivery.ok ? delivery.data.processed : -1).sort()).toEqual([0, 1]);
     expect(jobs).toHaveLength(1);
-    expect(queue.size('billfn-reconciliation')).toBe(1);
+    expect(await queue.size('billfn-reconciliation')).toBe(1);
   });
 
   it('reclaims an unfinished webhook receipt after its processing lease expires', async () => {
@@ -1285,7 +1285,8 @@ describe('@billfn/core', () => {
     });
 
     await billfn.handleWebhook({ provider: 'dodo', rawBody: '{}', headers: new Headers() });
-    await queue.dequeue('billfn-reconciliation');
+    const claimed = await queue.claim('billfn-reconciliation', { leaseMs: 60_000 });
+    await queue.ack(claimed!.id);
     const firstReceipt = await db.findOne<{ processingJobId: string; processingClaimedAt: string }>({
       model: 'webhookReceipts',
       where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_stale_claim' }],
@@ -1309,7 +1310,7 @@ describe('@billfn/core', () => {
     expect(reclaimedReceipt?.processingJobId).not.toBe(firstReceipt?.processingJobId);
     expect(reclaimedReceipt?.processingClaimedAt).toBe('2026-04-20T00:16:00.000Z');
     expect(jobs).toHaveLength(2);
-    expect(queue.size('billfn-reconciliation')).toBe(1);
+    expect(await queue.size('billfn-reconciliation')).toBe(1);
   });
 
   it('re-enqueues an unfinished webhook receipt after its prior job failed', async () => {
@@ -1340,7 +1341,8 @@ describe('@billfn/core', () => {
       providers: { dodo: provider }
     });
     await billfn.handleWebhook({ provider: 'dodo', rawBody: '{}', headers: new Headers() });
-    await queue.dequeue('billfn-reconciliation');
+    const claimed = await queue.claim('billfn-reconciliation', { leaseMs: 60_000 });
+    await queue.ack(claimed!.id);
     const firstJob = await db.findOne<{ id: string }>({
       model: 'reconciliationJobs',
       where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_failed_redelivery' }],
@@ -1359,7 +1361,7 @@ describe('@billfn/core', () => {
 
     expect(retried.ok && retried.data.processed).toBe(1);
     expect(jobs).toHaveLength(2);
-    expect(queue.size('billfn-reconciliation')).toBe(1);
+    expect(await queue.size('billfn-reconciliation')).toBe(1);
   });
 
   it('fails a webhook job when another worker replaces its receipt lease before finalization', async () => {
@@ -1539,6 +1541,29 @@ describe('@billfn/core', () => {
       throw new Error('expected success');
     }
     expect(jobAfter.data.job.status).toBe('succeeded');
+    expect(await queue.size('billfn-reconciliation')).toBe(0);
+    expect(await worker.runNext()).toBeNull();
+  });
+
+  it('dead-letters a queued job whose run throws instead of redelivering it', async () => {
+    const db = memoryAdapter({ debug: false });
+    const queue = new MemoryQueueAdapter<BillFnQueuedJob>();
+    const worker = createBillFnReconciliationWorker({
+      db,
+      catalog,
+      queue,
+      providers: { dodo: createMockProvider('dodo') }
+    });
+    await queue.enqueue('billfn-reconciliation', {
+      type: 'subscription-sync',
+      jobId: 'job_missing',
+      provider: 'dodo',
+      subscriptionId: 'sub_missing'
+    });
+
+    await expect(worker.runNext()).rejects.toMatchObject({ code: 'BILLFN_NOT_FOUND' });
+    expect(await queue.size('billfn-reconciliation')).toBe(0);
+    expect(await worker.runNext()).toBeNull();
   });
 
   it('allows only one runner to claim and process a reconciliation job', async () => {

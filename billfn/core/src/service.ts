@@ -1208,11 +1208,28 @@ export function createBillFnReconciliationWorker(config: BillFnConfig) {
       if (!queue) {
         return null;
       }
-      const job = await queue.dequeue('billfn-reconciliation');
-      if (!job) {
+      const claimed = await queue.claim('billfn-reconciliation', { leaseMs: RECONCILIATION_JOB_CLAIM_LEASE_MS });
+      if (!claimed) {
         return null;
       }
-      return this.run(job);
+      let result: BillFnReconciliationJob | null;
+      try {
+        result = await this.run(claimed.payload);
+      } catch (error) {
+        // Failed runs are not redelivered; the reconciliation job record keeps its own status.
+        try {
+          await queue.fail(claimed.id, {
+            deadLetter: true,
+            reason: error instanceof Error ? error.message || error.name : String(error),
+            attempt: claimed.attempt
+          });
+        } catch {
+          // The lease was already lost to another worker; report the run's own error.
+        }
+        throw error;
+      }
+      await queue.ack(claimed.id, { attempt: claimed.attempt });
+      return result;
     }
   };
 }
