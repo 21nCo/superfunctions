@@ -1,0 +1,55 @@
+watchfn/.conduct/stored-goals-readiness.md
+  s_e1c5fc1a65c0cf::t_df47733083111b 1-46
+watchfn/python/scripts/verify-http-wheel.py
+  s_e1c5fc1a65c0cf::t_4537e4e09e0031 15-23
+watchfn/python/tests/test_stored_goals.py
+  s_e1c5fc1a65c0cf::t_ed23fcd8192f1f 1-126
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_e5f6d95c818045 173-210,397-413
+watchfn/python/watchfn/alerts/memory_durable.py
+  s_e1c5fc1a65c0cf::t_7469359ac51d64 40-41,60-73
+watchfn/python/watchfn/alerts/observations.py
+  s_e1c5fc1a65c0cf::t_2e003a61501323 33-37,106-110,161-164,178-181
+watchfn/python/watchfn/business/goals.py
+  s_e1c5fc1a65c0cf::t_621b8c021014ab 1-103
+watchfn/python/watchfn/business/stored_funnels.py
+  s_e1c5fc1a65c0cf::t_a11b40a15aca05 20-21,116-130
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_9dc3c0d99f081c 82-83
+watchfn/scripts/funnel-cross-language-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_0c97805edd0308 43-46,59-61,90-91
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_c5220035a056ee 57-58,111-114
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_8e7370572939ff 1-3,30,44,127-139,207,209,213,227-241,247,251
+watchfn/typescript/src/alerts/conditions.ts
+  s_e1c5fc1a65c0cf::t_c76509f078c81b 1,23,43,63,66,76
+watchfn/typescript/src/alerts/types.ts
+  s_e1c5fc1a65c0cf::t_e1b7b528367d56 54
+watchfn/typescript/src/business/goals.ts
+  s_e1c5fc1a65c0cf::t_b48e73061d4a09 1-40
+watchfn/typescript/src/business/schema.ts
+  s_e1c5fc1a65c0cf::t_61ef1878a347c5 1,6
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_0f2480af4d7ef9 1,385-386,404
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_8e1993da744f42 135-136
+watchfn/typescript/tests/stored-goals.test.ts
+  s_e1c5fc1a65c0cf::t_9cd33603d2efb3 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46758eaef626b5f332fed064fa8a32eb290f7f34",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
