@@ -1,0 +1,37 @@
+flowfn/.conduct/python-postgres-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_19b7416122a786 1-43
+flowfn/.conduct/run-python-postgres-ci.py
+  s_e1c5fc1a65c0cf::t_93b06a16515a06 1-29
+flowfn/.conduct/run-python-redis-ci.py
+  s_e1c5fc1a65c0cf::t_af3c8908bda734 18,43-44
+flowfn/.conduct/verify-python-redis-partitions.py
+  s_e1c5fc1a65c0cf::t_cdfa7f4be67693 24,48,57
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_66344695cc553b 138,144-164
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_7239f61059c7a3 2,14,43-45,47-48,51-54,61-63,70-77,84-107,168,177-178,181-186,192,208-209,221-222,226-234,245-264,267-270
+flowfn/python/flowfn/adapters/postgres_partition_subscription.py
+  s_e1c5fc1a65c0cf::t_72ad4220057eff 1-86
+flowfn/python/flowfn/adapters/postgres_partitions.py
+  s_e1c5fc1a65c0cf::t_5718aed1e1b905 1-138
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_0ec430fe2a8882 102,104
+flowfn/python/tests/test_postgres_partitions.py
+  s_e1c5fc1a65c0cf::t_bf7234f00b5b3f 1-346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bdccf4ac9badbf29ef124ab71f9055fba717d27",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
