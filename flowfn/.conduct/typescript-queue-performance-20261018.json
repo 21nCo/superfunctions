@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-18",
+  "scope": "Local standalone queue workload; not production certification",
+  "command": "FLOWFN_BENCHMARK=1 FLOWFN_BENCHMARK_PRODUCERS=32 node flowfn/typescript/scripts/provider-acceptance.mjs",
+  "latest": [
+    {
+      "adapter": "memory",
+      "node": "v20.20.0",
+      "jobs": 1000,
+      "producers": 32,
+      "concurrency": 16,
+      "elapsedMs": 51.56016699999998,
+      "jobsPerSecond": 19394.816933001795,
+      "enqueueP99Ms": 1.8275420000001077,
+      "dequeueP99Ms": 1.2362080000000333,
+      "queueToHandlerP99Ms": 31,
+      "rssBefore": 74629120,
+      "rssAfter": 87408640,
+      "heapDeltaPerRetainedJob": 1742.28,
+      "gcControlled": true,
+      "targets": {
+        "enqueueP99": true,
+        "dequeueP99": true,
+        "queueToHandlerP99": true,
+        "throughput": null
+      }
+    },
+    {
+      "adapter": "redis",
+      "node": "v20.20.0",
+      "jobs": 1000,
+      "producers": 32,
+      "concurrency": 16,
+      "elapsedMs": 315.4800419999999,
+      "jobsPerSecond": 3169.7726222567203,
+      "enqueueP99Ms": 11.420375000000035,
+      "dequeueP99Ms": 11.301375000000007,
+      "queueToHandlerP99Ms": 219,
+      "rssBefore": 87506944,
+      "rssAfter": 99991552,
+      "heapDeltaPerRetainedJob": 836.736,
+      "gcControlled": true,
+      "targets": {
+        "enqueueP99": false,
+        "dequeueP99": false,
+        "queueToHandlerP99": false,
+        "throughput": false
+      }
+    },
+    {
+      "adapter": "postgres",
+      "node": "v20.20.0",
+      "jobs": 1000,
+      "producers": 32,
+      "concurrency": 16,
+      "elapsedMs": 2690.809458,
+      "jobsPerSecond": 371.6353816978444,
+      "enqueueP99Ms": 204.093791,
+      "dequeueP99Ms": 145.71779200000037,
+      "queueToHandlerP99Ms": 1447,
+      "rssBefore": 98566144,
+      "rssAfter": 93306880,
+      "heapDeltaPerRetainedJob": 1443.872,
+      "gcControlled": true,
+      "targets": {
+        "enqueueP99": false,
+        "dequeueP99": false,
+        "queueToHandlerP99": false,
+        "throughput": false
+      }
+    }
+  ],
+  "previous": [
+    {
+      "variant": "before ready index; sequential producer; no controlled GC",
+      "redisJobsPerSecond": 70.56468827272744,
+      "postgresJobsPerSecond": 149.88241912322223
+    },
+    {
+      "variant": "ready index; sequential producer; controlled GC",
+      "redisJobsPerSecond": 1279.4108568886197,
+      "redisEnqueueP99Ms": 3.827207999999928,
+      "redisDequeueP99Ms": 3.00262500000008,
+      "postgresJobsPerSecond": 14.223343679138692,
+      "postgresElapsedMs": 70306.956125
+    },
+    {
+      "variant": "32 producers; ready index before PostgreSQL write optimization",
+      "redisJobsPerSecond": 4061.7879178056605,
+      "postgresJobsPerSecond": 241.15471147807438
+    }
+  ],
+  "limitations": [
+    "Single 1000-job local trials, not warmed repeated load certification; other host workload may vary.",
+    "Queue memory delta includes metrics, code/runtime effects and retained jobs; not an isolated per-job allocation proof.",
+    "Original Redis >=10000 jobs/sec and PostgreSQL >=1000 jobs/sec targets remain failed in these fixtures.",
+    "Stream/workflow throughput, idle CPU, startup/shutdown duration and sustained concurrency targets remain unmeasured."
+  ],
+  "verification": [
+    "24 native Redis/PostgreSQL tests passed after ready-index and conditional-save changes.",
+    "122 core tests plus strict source/test typechecks passed before final conditional-save optimization; final regression rerun required.",
+    "Packed ESM/CommonJS and strict NodeNext consumers passed on exact Node20.0.0/20.20.0 with audit0 before ready-index optimization."
+  ],
+  "failuresRetained": [
+    "Earlier native PostgreSQL history fixture took7392ms and exceeded5000ms test timeout; deadline raised30000ms for functional integration, not product targets.",
+    "One PostgreSQL run failed during initialization with connections terminated; runner now checks final TCP listener rather than initialization Unix socket.",
+    "One teardown deadlock exposed in-flight consumer transactions outliving unsubscribe; fixed with awaited DB work and deterministic real-transaction regression."
+  ],
+  "cleanup": "Each native/benchmark runner removes its own loopback-bound containers and verifies absence."
+}
