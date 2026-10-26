@@ -120,15 +120,16 @@ class SQLAlchemyAdapter:
 
         return combined
 
-    def _get_table(self, model: str, namespace: Optional[str] = None) -> Table:
+    def _get_table(self, model: str, namespace: Optional[str] = None, connection: Optional[Connection] = None) -> Table:
         """Get or reflect table from database."""
         table_name = self._get_table_name(model, namespace)
 
         if table_name in self.metadata.tables:
             return self.metadata.tables[table_name]
 
-        # Reflect table from database
-        return Table(table_name, self.metadata, autoload_with=self.engine)
+        # Engine reflection may check out and roll back the same DBAPI connection
+        # (notably SQLite StaticPool). Preserve the active transaction owner.
+        return Table(table_name, self.metadata, autoload_with=connection if connection is not None else self.engine)
 
     def _apply_where(self, query: Any, where_clause: Any) -> Any:
         if where_clause is None:
@@ -240,7 +241,7 @@ class SQLAlchemyAdapter:
     async def _create(self, params: CreateParams, connection=None) -> Dict[str, Any]:
         """Create a single record."""
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(params.model, params.namespace, connection)
             conn = connection
             if conn is not None:
                 result = conn.execute(insert(table).values(**params.data))
@@ -285,7 +286,7 @@ class SQLAlchemyAdapter:
     async def _find_one(self, params: FindOneParams, connection=None) -> Optional[Dict[str, Any]]:
         """Find a single record."""
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(params.model, params.namespace, connection)
             where_clause = self._build_where_clause(table, params.where) if params.where else None
             query = self._apply_where(self._apply_select(table, params), where_clause)
 
@@ -309,7 +310,7 @@ class SQLAlchemyAdapter:
     async def _find_many(self, params: FindManyParams, connection=None) -> List[Dict[str, Any]]:
         """Find multiple records."""
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(params.model, params.namespace, connection)
             where_clause = self._build_where_clause(table, params.where) if params.where else None
             query = self._apply_where(self._apply_select(table, params), where_clause)
 
@@ -344,7 +345,7 @@ class SQLAlchemyAdapter:
     async def _update(self, params: UpdateParams, connection=None) -> Dict[str, Any]:
         """Update a single record."""
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(params.model, params.namespace, connection)
             where_clause = self._build_where_clause(table, params.where)
 
             conn = connection
@@ -380,7 +381,7 @@ class SQLAlchemyAdapter:
     async def _delete(self, params: DeleteParams, connection=None) -> None:
         """Delete a single record."""
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(params.model, params.namespace, connection)
             where_clause = self._build_where_clause(table, params.where)
 
             conn = connection
@@ -443,7 +444,7 @@ class SQLAlchemyAdapter:
     async def _update_many(self, normalized: UpdateManyParams, connection: Optional[Connection] = None) -> int:
         """Update multiple records."""
         try:
-            table = self._get_table(normalized.model, normalized.namespace)
+            table = self._get_table(normalized.model, normalized.namespace, connection)
             where_clause = self._build_where_clause(table, normalized.where)
             if where_clause is None:
                 raise QueryFailedError("UpdateMany failed: update_many requires a where clause")
@@ -532,17 +533,18 @@ class SQLAlchemyAdapter:
                 )
             )
 
-    async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
-        """Count records."""
-        normalized = self._coerce_params(CountParams, params, kwargs)
+    async def _count(self, normalized: CountParams, connection: Optional[Connection] = None) -> int:
+        """Count records on the caller-owned connection when in a transaction."""
         try:
-            table = self._get_table(normalized.model, normalized.namespace)
+            table = self._get_table(normalized.model, normalized.namespace, connection)
             query = select(func.count()).select_from(table)
 
             if normalized.where:
                 where_clause = self._build_where_clause(table, normalized.where)
                 query = query.where(where_clause)
 
+            if connection is not None:
+                return connection.execute(query).scalar() or 0
             with self.engine.connect() as conn:
                 result = conn.execute(query)
                 return result.scalar() or 0
@@ -552,6 +554,9 @@ class SQLAlchemyAdapter:
             raise
         except Exception as e:
             raise QueryFailedError(f"Count failed: {str(e)}", cause=e)
+
+    async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
+        return await self._count(self._coerce_params(CountParams, params, kwargs))
 
     async def transaction(self, callback: Callable) -> Any:
         """Execute operations within a transaction."""
@@ -642,6 +647,9 @@ class SQLAlchemyTransactionAdapter:
 
     async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
         await self.parent._delete(self.parent._coerce_params(DeleteParams, params, kwargs), self.connection)
+
+    async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
+        return await self.parent._count(self.parent._coerce_params(CountParams, params, kwargs), self.connection)
 
 
 def create_adapter(engine: Engine, namespace_prefix: str = "") -> Adapter:
