@@ -718,3 +718,40 @@ page, followed by the requested created-alert page; these are separate commits.
 Legacy callbacks receive `Alert` objects; created-alert callbacks receive the
 existing public record dictionaries. Both share the same callback drain.
 Readers must support the new `log-pattern` condition before using these definitions.
+
+### HTTP synthetic checks and stored reports
+
+Install `watchfn[synthetics]` to execute HTTP checks. Stored reports work with the
+base package and do not require the optional HTTP client or LogFn dependency.
+
+```python
+watch.start()
+watch.synthetics.create({
+    "name": "api-health",
+    "type": "http",
+    "url": "https://example.com/health",
+    "interval": "1m",
+    "timeout": 5000,
+    "retries": 2,
+    "assertions": [{"type": "status", "operator": "eq", "value": 200}],
+})
+uptime = watch.synthetics.get_uptime({"checkId": "api-health", "timeRange": "last-24h"})
+incidents = watch.synthetics.get_incidents({"checkId": "api-health", "status": "resolved"})
+trend = watch.synthetics.get_performance_trend({
+    "checkId": "api-health", "metric": "responseTime", "interval": "1h",
+})
+watch.stop()
+```
+
+The first run starts immediately. Subsequent runs wait until the prior run and
+its persistence complete, then wait the configured interval. Stop cancels and
+joins owned HTTP work before closing storage. Persistence failures surface after
+cleanup. Response bodies are bounded and never stored; response headers use the
+shared redactor. Stored application-owned results remain queryable after database
+reopen. Uptime counts completed observations; absent data yields null, not 100%.
+Incident reports expose left-censoring when retained history begins in failure.
+
+Definitions are process-local. Browser execution, multiple locations and
+consecutive-failure alert configuration are explicitly unsupported and remain
+separate requirements. Arbitrary blocking host storage callbacks and resolver
+cleanup remain joins; stop does not detach them to pretend cleanup completed.

@@ -1,5 +1,6 @@
 /** Build WatchFn first. Uses owned local SQLite and a configured installed Python. */
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -10,7 +11,7 @@ import {Kysely,SqliteDialect} from 'kysely';
 import {kyselyAdapter} from '@superfunctions/db/adapters';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const directory=await mkdtemp(join(tmpdir(),'watch-funnel-wire-'));
-let db,watch;
+let db,watch,syntheticServer;
 try{
  const npm=(args,cwd=directory)=>execFileSync(process.env.NPM_CLI?process.execPath:'npm',process.env.NPM_CLI?[process.env.NPM_CLI,...args]:args,{cwd,encoding:'utf8'});
  const tarballs=['packages/observability','packages/http','packages/db','logfn/typescript','watchfn/typescript'].map(path=>{const [pack]=JSON.parse(npm(['pack','--json','--ignore-scripts','--pack-destination',directory],join(root,path)));return join(directory,pack.filename);});
@@ -44,6 +45,11 @@ try{
  await watch.business.createGoal(goal);
  await watch.ingest([25,-5].map((total,index)=>({type:'track',name:'purchase.completed',app:{name:'wire-✓'},timestamp:`2026-02-0${index+1}T00:00:00Z`,properties:{total}})));
  assert.equal((await watch.business.getGoalProgress({name:goal.name,date:'2026-02-14'})).actual,20);
+ syntheticServer=createServer((_req,res)=>{res.end('healthy');});
+ await new Promise(resolve=>syntheticServer.listen(0,'127.0.0.1',resolve));
+ await watch.synthetics.create({name:'wire-http',type:'http',url:`http://127.0.0.1:${syntheticServer.address().port}`,interval:'1h',assertions:[{type:'status',operator:'eq',value:200}]});
+ const deadline=Date.now()+5000;
+ while(!(await watch.synthetics.getUptime({checkId:'wire-http'})).observed){assert.ok(Date.now()<deadline,'synthetic result not persisted');await new Promise(resolve=>setTimeout(resolve,10));}
  const python=String.raw`
 import json,sys
 from sqlalchemy import create_engine
@@ -56,6 +62,9 @@ watch.system_metrics.start=lambda:None
 watch.process_metrics.start=lambda:None
 watch.start()
 try:
+ assert watch.synthetics.get_uptime({'checkId':'wire-http'})['uptime']==100
+ assert watch.synthetics.get_incidents({'checkId':'wire-http'})==[]
+ assert sum(bucket['count'] for bucket in watch.synthetics.get_performance_trend({'checkId':'wire-http','metric':'responseTime'})['buckets'])==1
  progress=watch.business.get_goal_progress({'name':'typescript-goal','date':'2026-02-14'})
  assert (progress['actual'],progress['elapsedPercent'],progress['expected'])==(20,50,50),progress
  watch.business.create_goal({'name':'python-goal','target':100,'metric':'purchase.completed.total','aggregation':'sum','period':'month','startDate':'2026-01-31'})
@@ -88,8 +97,9 @@ finally:
  const result=await watch.business.getFunnel({name:'typescript-definition',timeRange:'last-1h'});assert.deepEqual(result.steps.map(step=>step.count),[1,1,1]);
  assert.deepEqual((await watch.business.getFunnel({name:'python-definition',timeRange:'last-1h'})).steps.map(step=>step.count),[1,1]);
  assert.equal((await watch.business.getGoalProgress({name:'python-goal',date:'2026-02-14'})).actual,20);
+ console.log('Installed Python reports read an actual TypeScript scheduled HTTP result');
  console.log('Installed bilateral stored goals and calendar progress passed');
  console.log('Actual shared SQLite: TS and Python definitions/events/query roundtrip passed');
 }finally{
- try{if(watch)await watch.stop();}finally{try{if(db)await db.destroy();}finally{await rm(directory,{recursive:true,force:true});}}
+ try{if(watch)await watch.stop();}finally{try{if(db)await db.destroy();}finally{try{if(syntheticServer?.listening)await new Promise(resolve=>syntheticServer.close(resolve));}finally{await rm(directory,{recursive:true,force:true});}}}
 }

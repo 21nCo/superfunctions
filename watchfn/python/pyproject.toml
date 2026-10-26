@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+synthetics = ["httpx>=0.27,<1", "logfn>=0.0.1,<0.2.0"]
 logfn = ["logfn>=0.0.1,<0.2.0"]
 email = ["sendfn[email]>=0.0.1,<0.2.0"]
 dispatch = ["httpx>=0.27,<1"]

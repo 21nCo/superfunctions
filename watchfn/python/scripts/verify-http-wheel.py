@@ -20,11 +20,11 @@ with tempfile.TemporaryDirectory(prefix="watchfn-http-wheel-") as temporary:
     subprocess.run(["uv", "pip", "install", "--python", str(base_python), *base_wheels], check=True)
     base_env = dict(os.environ)
     base_env.pop("PYTHONPATH", None)
-    subprocess.run([str(base_python), "-c", "import importlib.util; assert importlib.util.find_spec('httpx') is None; from watchfn import WatchFn; w=WatchFn('base-goals'); w.system_metrics.start=lambda:None; w.process_metrics.start=lambda:None; w.start(); w.business.create_goal(dict(name='sales',target=100,metric='purchase.total',aggregation='sum',period='month',startDate='2026-01-31')); assert w.business.get_goal_progress(dict(name='sales',date='2026-02-14'))['actual']==0; w.stop(); print('base-only stored goals: no httpx installed')"], cwd=directory, env=base_env, check=True)
+    subprocess.run([str(base_python), "-c", "import importlib.util; assert importlib.util.find_spec('httpx') is None; from watchfn import WatchFn; w=WatchFn('base-goals'); w.system_metrics.start=lambda:None; w.process_metrics.start=lambda:None; w.start(); w.business.create_goal(dict(name='sales',target=100,metric='purchase.total',aggregation='sum',period='month',startDate='2026-01-31')); assert w.business.get_goal_progress(dict(name='sales',date='2026-02-14'))['actual']==0; assert w.synthetics.get_uptime(dict(checkId='absent'))['uptime'] is None; w.stop(); print('base-only stored goals and synthetic reports: no httpx installed')"], cwd=directory, env=base_env, check=True)
     environment = directory / "venv"
     subprocess.run(["uv", "venv", "--python", "3.11", str(environment)], check=True)
     python = environment / "bin/python"
-    subprocess.run(["uv", "pip", "install", "--python", str(python), *[str(wheel) + ("[dispatch,email,logfn]" if wheel.name.startswith("watchfn-") else "") for wheel in wheels.glob("*.whl")], "pytest", "pytest-asyncio"], check=True)
+    subprocess.run(["uv", "pip", "install", "--python", str(python), *[str(wheel) + ("[dispatch,email,logfn,synthetics]" if wheel.name.startswith("watchfn-") else "") for wheel in wheels.glob("*.whl")], "pytest", "pytest-asyncio"], check=True)
     shutil.copytree(root / "watchfn/python/tests", directory / "tests")
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)

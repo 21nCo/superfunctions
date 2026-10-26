@@ -5,6 +5,7 @@ from superfunctions.http import Route
 
 from .models import WatchFnConfig, Event
 from .business.stored_funnels import StoredFunnels
+from .synthetics import Synthetics
 from .query import Query, Aggregate
 from .trace.tracer import Tracer
 from .trace.queries import StoredTraceQuery
@@ -41,6 +42,7 @@ class WatchFn:
         self._log_integrations = LogRegistrations(self)
         self.logs = Logs(self)
         self.business = StoredFunnels(self)
+        self.synthetics = Synthetics(self)
 
         # Collectors
         self.system_metrics = SystemMetricsCollector(self)
@@ -109,6 +111,7 @@ class WatchFn:
         with self._trace_admission:
             self.is_started = True
         self.business._callbacks.start()
+        self.synthetics.start()
         self.batcher.start()
         self._log_integrations.start()
         # Enable collectors based on config
@@ -125,10 +128,16 @@ class WatchFn:
 
     def stop(self):
         # Rejected callback shutdown must not partially detach another subsystem.
+        self.synthetics.assert_can_stop()
         self.business._callbacks.assert_can_stop()
         self._log_integrations.assert_can_stop()
         if self._alerts is not None:
             self._alerts._callbacks.assert_can_stop()
+        synthetic_error = None
+        try:
+            self.synthetics.stop()
+        except Exception as error:
+            synthetic_error = error
         self.business._callbacks.stop()
         self._log_integrations.stop()
         if self._alerts is not None:
@@ -144,6 +153,8 @@ class WatchFn:
                 self._alerts.close_storage()
             if isinstance(self.storage, DatabaseStorage):
                 self.storage.close()
+        if synthetic_error is not None:
+            raise synthetic_error
 
     def track(self, name: str, properties: Optional[Dict[str, Any]] = None):
         if not self.is_started:
