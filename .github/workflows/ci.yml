@@ -224,7 +224,7 @@ jobs:
     name: McpFn release gate
     needs: plan
     if: needs.plan.outputs.run_mcpfn == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.59 does not support ubuntu-latest (26.04)
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
