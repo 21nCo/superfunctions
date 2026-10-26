@@ -1,0 +1,49 @@
+browsefn/.conduct/batch-admission-readiness.md
+  s_e1c5fc1a65c0cf::t_1959c3530b43c1 1-19
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_4ab7410a369d84 251,253,375
+browsefn/python/browsefn/http/router.py
+  s_e1c5fc1a65c0cf::t_59625a284b5de6 8,87-88
+browsefn/python/browsefn/images/browser.py
+  s_e1c5fc1a65c0cf::t_460167b16c44a5 98-103
+browsefn/python/browsefn/web/scraper.py
+  s_e1c5fc1a65c0cf::t_52cecf36ff82a3 35,131-133,135-140
+browsefn/python/tests/test_metadata_bounds.py
+  s_e1c5fc1a65c0cf::t_89b79cd9d3a8d1 1-160
+browsefn/scripts/packed-batch-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_27b5d24b1e9b31 1-38
+browsefn/typescript/src/images/browser.ts
+  s_e1c5fc1a65c0cf::t_f16aa4135a62a6 145-155
+browsefn/typescript/src/web/scraper.ts
+  s_e1c5fc1a65c0cf::t_9710f3c27782bd 31,98-108
+browsefn/typescript/tests/image-browser.test.ts
+  s_e1c5fc1a65c0cf::t_df13d9d194765c 45-68
+browsefn/typescript/tests/metadata-bounds.test.ts
+  s_e1c5fc1a65c0cf::t_9f5bea3fd5d191 1-66
+browsefn/README.md
+  s_10842b7fe57156::t_9b853dcdfb5bb7 575-578
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf468e37a48064a049b10afe8dfbaaceaf0a85d8",
+  "prompts": {},
+  "sessions": {
+    "s_10842b7fe57156": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16274-df23-7ab0-9634-10005b5c4151",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
