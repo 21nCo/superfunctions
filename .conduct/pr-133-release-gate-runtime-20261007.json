@@ -1,0 +1,956 @@
+{
+  "schemaVersion": 1,
+  "schemaPath": "docsfn/scripts/release-gate-summary.schema.json",
+  "generatedAt": "2026-10-07T12:08:06.516Z",
+  "docsfnRoot": "docsfn",
+  "repoRoot": ".",
+  "status": "PASS",
+  "code": "OK",
+  "bootstrap": {
+    "cleanCheckoutCommands": [
+      "npm ci",
+      "node docsfn/scripts/release-preflight.mjs",
+      "node docsfn/scripts/release-gate.mjs"
+    ]
+  },
+  "artifacts": {
+    "summaryPath": "docsfn/.tmp/release-gate/summary.json",
+    "migrationSummaryPath": "docsfn/.tmp/migration-check/summary.json"
+  },
+  "steps": [
+    {
+      "id": "preflight",
+      "status": "PASS",
+      "code": "OK",
+      "detail": "0 failing bootstrap checks",
+      "commands": [
+        "node docsfn/scripts/release-preflight.mjs"
+      ]
+    },
+    {
+      "id": "docs-contract",
+      "status": "PASS",
+      "code": "OK",
+      "detail": "0 docs contract violation(s)",
+      "commands": [
+        "node docsfn/scripts/docs-contract-check.mjs"
+      ]
+    },
+    {
+      "id": "shared-search-runtime-builds",
+      "status": "PASS",
+      "code": null,
+      "detail": "built 5 shared search runtime packages",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/core run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-contracts run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-memory run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-indexeddb run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/client run build"
+      ]
+    },
+    {
+      "id": "shared-content-runtime-builds",
+      "status": "PASS",
+      "code": null,
+      "detail": "built 8 shared content runtime packages",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/core run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/extensions run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/markdown run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/render run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/core run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/dom run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/adapter-kit run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/svelte run build"
+      ]
+    },
+    {
+      "id": "package-builds",
+      "status": "PASS",
+      "code": null,
+      "detail": "built 10 docsfn packages",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mcpfn/core run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/packages/admin run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/core run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/provider-fs run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/react run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/svelte run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/next run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/sveltekit run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run build"
+      ]
+    },
+    {
+      "id": "package-metadata",
+      "status": "PASS",
+      "code": null,
+      "detail": "package metadata and built artifacts verified",
+      "commands": []
+    },
+    {
+      "id": "tests",
+      "status": "PASS",
+      "code": null,
+      "detail": "executed 8 parity and runtime test commands",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/core run test -- --run",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/provider-fs run test -- --run",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run test -- --run",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run typecheck",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/react run test -- --run src/DocsContent.test.tsx src/DocsSearch.test.tsx src/Pagination.test.tsx src/ApiReferenceRenderer.test.tsx",
+        "npm exec -- vitest run docsfn/svelte/src/DocsContent.test.ts docsfn/svelte/src/ApiReferenceRenderer.test.ts",
+        "npm exec -- vitest --config docsfn/sveltekit/vitest.config.ts run src/route-helpers.test.ts",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/client run test -- --run __tests__/in-memory-search.test.ts __tests__/constructors.test.ts __tests__/legacy-guard.test.ts"
+      ]
+    },
+    {
+      "id": "dogfood-site",
+      "status": "PASS",
+      "code": null,
+      "detail": "dogfood site tests and build passed",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/docs run test -- --run src/lib/server/docs-site-source.test.ts",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/docs run build"
+      ]
+    },
+    {
+      "id": "fixture-builds",
+      "status": "PASS",
+      "code": null,
+      "detail": "canonical fixtures validated and built",
+      "commands": [
+        "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js validate --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs",
+        "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js validate --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs",
+        "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/release-gate/datafn-default",
+        "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/release-gate/searchfn-default"
+      ]
+    },
+    {
+      "id": "example-tests",
+      "status": "PASS",
+      "code": null,
+      "detail": "example proof-route test suites passed",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run test -- --run",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run test -- --run"
+      ]
+    },
+    {
+      "id": "example-builds",
+      "status": "PASS",
+      "code": null,
+      "detail": "Next and SvelteKit example builds passed for both canonical fixtures",
+      "commands": [
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-hybrid-site run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run build",
+        "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run build"
+      ]
+    },
+    {
+      "id": "migration-check",
+      "status": "PASS",
+      "code": "OK",
+      "detail": "verified 8 proof routes across 2 fixtures",
+      "commands": [
+        "node docsfn/scripts/migration-check.mjs"
+      ]
+    }
+  ],
+  "checks": {
+    "preflight": {
+      "code": "OK",
+      "suggestedBootstrap": "npm ci",
+      "checks": [
+        {
+          "id": "node-version",
+          "ok": true,
+          "detail": "node v22.22.1 satisfies >=18.17.0",
+          "fix": null
+        },
+        {
+          "id": "npm-version",
+          "ok": true,
+          "detail": "npm 10.9.4 satisfies npm@10.2.0",
+          "fix": null
+        },
+        {
+          "id": "repo-package-json",
+          "ok": true,
+          "detail": "repo package.json found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/package.json",
+          "fix": null
+        },
+        {
+          "id": "repo-node-modules",
+          "ok": true,
+          "detail": "repo node_modules found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/node_modules",
+          "fix": null
+        },
+        {
+          "id": "docsfn-cli-bin",
+          "ok": true,
+          "detail": "docsfn CLI source entrypoint found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/src/index.ts",
+          "fix": null
+        },
+        {
+          "id": "canonical-fixture-datafn",
+          "ok": true,
+          "detail": "datafn canonical fixture root found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs",
+          "fix": null
+        },
+        {
+          "id": "canonical-fixture-searchfn",
+          "ok": true,
+          "detail": "searchfn canonical fixture root found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs",
+          "fix": null
+        },
+        {
+          "id": "bin:tsup",
+          "ok": true,
+          "detail": "tsup found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/node_modules/.bin/tsup (required by @docsfn/core, @docsfn/provider-fs, @docsfn/react, @docsfn/svelte, @docsfn/next, @docsfn/sveltekit, and @docsfn/cli build scripts)",
+          "fix": null
+        },
+        {
+          "id": "bin:vite",
+          "ok": true,
+          "detail": "vite found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/node_modules/.bin/vite (required by @docsfn/docs and @docsfn/example-sveltekit-docs-site build scripts)",
+          "fix": null
+        },
+        {
+          "id": "bin:vitest",
+          "ok": true,
+          "detail": "vitest found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/node_modules/.bin/vitest (required by the release-gate test matrix)",
+          "fix": null
+        },
+        {
+          "id": "bin:next",
+          "ok": true,
+          "detail": "next found at /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/node_modules/.bin/next (required by @docsfn/example-next-docs-site build script)",
+          "fix": null
+        }
+      ]
+    },
+    "docsContract": {
+      "code": "OK",
+      "checkedFiles": [
+        "docsfn/docs/content/docs/api/cli/index.md",
+        "docsfn/docs/content/docs/api/core/analytics.md",
+        "docsfn/docs/content/docs/api/core/blog.md",
+        "docsfn/docs/content/docs/api/core/config.md",
+        "docsfn/docs/content/docs/api/core/diagnostics.md",
+        "docsfn/docs/content/docs/api/core/helpers.md",
+        "docsfn/docs/content/docs/api/core/index.md",
+        "docsfn/docs/content/docs/api/core/manifest.md",
+        "docsfn/docs/content/docs/api/core/markdown.md",
+        "docsfn/docs/content/docs/api/core/navigation.md",
+        "docsfn/docs/content/docs/api/core/openapi.md",
+        "docsfn/docs/content/docs/api/core/routing.md",
+        "docsfn/docs/content/docs/api/core/rss.md",
+        "docsfn/docs/content/docs/api/core/search-runtime.md",
+        "docsfn/docs/content/docs/api/core/search.md",
+        "docsfn/docs/content/docs/api/core/security.md",
+        "docsfn/docs/content/docs/api/core/theme.md",
+        "docsfn/docs/content/docs/api/core/types.md",
+        "docsfn/docs/content/docs/api/index.md",
+        "docsfn/docs/content/docs/api/next/index.md",
+        "docsfn/docs/content/docs/api/provider-fs/index.md",
+        "docsfn/docs/content/docs/api/react/components.md",
+        "docsfn/docs/content/docs/api/react/index.md",
+        "docsfn/docs/content/docs/api/svelte/components.md",
+        "docsfn/docs/content/docs/api/svelte/index.md",
+        "docsfn/docs/content/docs/api/sveltekit/index.md",
+        "docsfn/docs/content/docs/core-concepts/analytics.md",
+        "docsfn/docs/content/docs/core-concepts/blog.md",
+        "docsfn/docs/content/docs/core-concepts/cli.md",
+        "docsfn/docs/content/docs/core-concepts/configuration.md",
+        "docsfn/docs/content/docs/core-concepts/content-format.md",
+        "docsfn/docs/content/docs/core-concepts/content-providers.md",
+        "docsfn/docs/content/docs/core-concepts/diagnostics.md",
+        "docsfn/docs/content/docs/core-concepts/index.md",
+        "docsfn/docs/content/docs/core-concepts/markdown-extensions.md",
+        "docsfn/docs/content/docs/core-concepts/navigation.md",
+        "docsfn/docs/content/docs/core-concepts/nested/index.md",
+        "docsfn/docs/content/docs/core-concepts/openapi.md",
+        "docsfn/docs/content/docs/core-concepts/rss.md",
+        "docsfn/docs/content/docs/core-concepts/search.md",
+        "docsfn/docs/content/docs/core-concepts/security.md",
+        "docsfn/docs/content/docs/core-concepts/seo.md",
+        "docsfn/docs/content/docs/core-concepts/sidebars.md",
+        "docsfn/docs/content/docs/core-concepts/theming.md",
+        "docsfn/docs/content/docs/core-concepts/versioning.md",
+        "docsfn/docs/content/docs/getting-started/index.md",
+        "docsfn/docs/content/docs/getting-started/installation.md",
+        "docsfn/docs/content/docs/getting-started/project-structure.md",
+        "docsfn/docs/content/docs/getting-started/quick-start.md",
+        "docsfn/docs/content/docs/guides/customizing-components.md",
+        "docsfn/docs/content/docs/guides/index.md",
+        "docsfn/docs/content/docs/guides/nextjs.md",
+        "docsfn/docs/content/docs/guides/sveltekit.md",
+        "docsfn/docs/content/docs/index.md",
+        "docsfn/examples/README.md",
+        "docsfn/next/README.md",
+        "docsfn/README.md",
+        "docsfn/sveltekit/README.md"
+      ],
+      "violations": []
+    },
+    "sharedSearchRuntimeBuilds": [
+      {
+        "name": "@searchfn/core",
+        "prefix": "searchfn/core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/core run build"
+      },
+      {
+        "name": "@searchfn/adapter-contracts",
+        "prefix": "searchfn/adapter-contracts",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-contracts run build"
+      },
+      {
+        "name": "@searchfn/adapter-memory",
+        "prefix": "searchfn/adapter-memory",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-memory run build"
+      },
+      {
+        "name": "@searchfn/adapter-indexeddb",
+        "prefix": "searchfn/adapter-indexeddb",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-indexeddb run build"
+      },
+      {
+        "name": "@searchfn/client",
+        "prefix": "searchfn/client",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/client run build"
+      }
+    ],
+    "sharedContentRuntimeBuilds": [
+      {
+        "name": "@mdfn/core",
+        "prefix": "mdfn/core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/core run build"
+      },
+      {
+        "name": "@mdfn/extensions",
+        "prefix": "mdfn/extensions",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/extensions run build"
+      },
+      {
+        "name": "@mdfn/markdown",
+        "prefix": "mdfn/markdown",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/markdown run build"
+      },
+      {
+        "name": "@mdfn/render",
+        "prefix": "mdfn/render",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mdfn/render run build"
+      },
+      {
+        "name": "@uifn/core",
+        "prefix": "uifn/core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/core run build"
+      },
+      {
+        "name": "@uifn/dom",
+        "prefix": "uifn/dom",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/dom run build"
+      },
+      {
+        "name": "@uifn/adapter-kit",
+        "prefix": "uifn/adapter-kit",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/adapter-kit run build"
+      },
+      {
+        "name": "@uifn/svelte",
+        "prefix": "uifn/svelte",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/uifn/svelte run build"
+      }
+    ],
+    "packageBuilds": [
+      {
+        "name": "@mcpfn/core",
+        "prefix": "mcpfn/core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/mcpfn/core run build"
+      },
+      {
+        "name": "@superfunctions/admin",
+        "prefix": "packages/admin",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/packages/admin run build"
+      },
+      {
+        "name": "@docsfn/core",
+        "prefix": "docsfn/core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/core run build"
+      },
+      {
+        "name": "@docsfn/provider-fs",
+        "prefix": "docsfn/provider-fs",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/provider-fs run build"
+      },
+      {
+        "name": "@docsfn/react",
+        "prefix": "docsfn/react",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/react run build"
+      },
+      {
+        "name": "@docsfn/svelte",
+        "prefix": "docsfn/svelte",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/svelte run build"
+      },
+      {
+        "name": "@docsfn/next",
+        "prefix": "docsfn/next",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/next run build"
+      },
+      {
+        "name": "@docsfn/sveltekit",
+        "prefix": "docsfn/sveltekit",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/sveltekit run build"
+      },
+      {
+        "name": "@docsfn/cli",
+        "prefix": "docsfn/cli",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli run build"
+      },
+      {
+        "name": "@docsfn/admin",
+        "prefix": "docsfn/admin",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run build"
+      }
+    ],
+    "packageMetadata": {
+      "verifiedPackages": [
+        {
+          "name": "@mcpfn/core",
+          "path": "mcpfn/core/package.json",
+          "verifiedExports": [
+            "./dist/index.cjs",
+            "./dist/index.d.cts",
+            "./dist/index.d.ts",
+            "./dist/index.js"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@superfunctions/admin",
+          "path": "packages/admin/package.json",
+          "verifiedExports": [
+            "./dist/index.d.ts",
+            "./dist/index.js"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/core",
+          "path": "docsfn/core/package.json",
+          "verifiedExports": [
+            "./dist/analytics.cjs",
+            "./dist/analytics.d.ts",
+            "./dist/analytics.js",
+            "./dist/browser.cjs",
+            "./dist/browser.d.ts",
+            "./dist/browser.js",
+            "./dist/index.cjs",
+            "./dist/index.d.ts",
+            "./dist/index.js",
+            "./dist/search-adapter.cjs",
+            "./dist/search-adapter.d.ts",
+            "./dist/search-adapter.js",
+            "./dist/search-runtime.cjs",
+            "./dist/search-runtime.d.ts",
+            "./dist/search-runtime.js",
+            "./dist/search.cjs",
+            "./dist/search.d.ts",
+            "./dist/search.js"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/provider-fs",
+          "path": "docsfn/provider-fs/package.json",
+          "verifiedExports": [
+            "./dist/index.cjs",
+            "./dist/index.d.ts",
+            "./dist/index.js"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/react",
+          "path": "docsfn/react/package.json",
+          "verifiedExports": [
+            "./dist/ApiReferenceRenderer.cjs",
+            "./dist/ApiReferenceRenderer.d.ts",
+            "./dist/ApiReferenceRenderer.js",
+            "./dist/DocsContent.cjs",
+            "./dist/DocsContent.d.ts",
+            "./dist/DocsContent.js",
+            "./dist/EmbeddedPage.cjs",
+            "./dist/EmbeddedPage.d.ts",
+            "./dist/EmbeddedPage.js",
+            "./dist/index.cjs",
+            "./dist/index.d.ts",
+            "./dist/index.js",
+            "./dist/theme-base.css",
+            "./dist/theme.css",
+            "./dist/YouTubeEmbed.cjs",
+            "./dist/YouTubeEmbed.d.ts",
+            "./dist/YouTubeEmbed.js"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/svelte",
+          "path": "docsfn/svelte/package.json",
+          "verifiedExports": [
+            "./dist/ApiReferenceRenderer.cjs",
+            "./dist/ApiReferenceRenderer.d.ts",
+            "./dist/ApiReferenceRenderer.js",
+            "./dist/Breadcrumbs.cjs",
+            "./dist/Breadcrumbs.d.ts",
+            "./dist/Breadcrumbs.js",
+            "./dist/ChangelogEntry.cjs",
+            "./dist/ChangelogEntry.d.ts",
+            "./dist/ChangelogEntry.js",
+            "./dist/ChangelogList.cjs",
+            "./dist/ChangelogList.d.ts",
+            "./dist/ChangelogList.js",
+            "./dist/DatedCollectionEntry.cjs",
+            "./dist/DatedCollectionEntry.d.ts",
+            "./dist/DatedCollectionEntry.js",
+            "./dist/DatedCollectionList.cjs",
+            "./dist/DatedCollectionList.d.ts",
+            "./dist/DatedCollectionList.js",
+            "./dist/DocsContent.cjs",
+            "./dist/DocsContent.d.ts",
+            "./dist/DocsContent.js",
+            "./dist/DocsFooter.cjs",
+            "./dist/DocsFooter.d.ts",
+            "./dist/DocsFooter.js",
+            "./dist/DocsLayout.cjs",
+            "./dist/DocsLayout.d.ts",
+            "./dist/DocsLayout.js",
+            "./dist/DocsSearch.cjs",
+            "./dist/DocsSearch.d.ts",
+            "./dist/DocsSearch.js",
+            "./dist/DocsSidebar.cjs",
+            "./dist/DocsSidebar.d.ts",
+            "./dist/DocsSidebar.js",
+            "./dist/DocsSiteShell.cjs",
+            "./dist/DocsSiteShell.d.ts",
+            "./dist/DocsSiteShell.js",
+            "./dist/DocsToc.cjs",
+            "./dist/DocsToc.d.ts",
+            "./dist/DocsToc.js",
+            "./dist/EmbeddedPage.cjs",
+            "./dist/EmbeddedPage.d.ts",
+            "./dist/EmbeddedPage.js",
+            "./dist/index.cjs",
+            "./dist/index.d.ts",
+            "./dist/index.js",
+            "./dist/PageActions.cjs",
+            "./dist/PageActions.d.ts",
+            "./dist/PageActions.js",
+            "./dist/Pagination.cjs",
+            "./dist/Pagination.d.ts",
+            "./dist/Pagination.js",
+            "./dist/SidebarGroup.cjs",
+            "./dist/SidebarGroup.d.ts",
+            "./dist/SidebarGroup.js",
+            "./dist/theme-base.css",
+            "./dist/theme.css",
+            "./dist/TopBar.cjs",
+            "./dist/TopBar.d.ts",
+            "./dist/TopBar.js",
+            "./dist/VersionSwitcher.cjs",
+            "./dist/VersionSwitcher.d.ts",
+            "./dist/VersionSwitcher.js",
+            "./dist/YouTubeEmbed.cjs",
+            "./dist/YouTubeEmbed.d.ts",
+            "./dist/YouTubeEmbed.js",
+            "./src/ApiReferenceRenderer.svelte",
+            "./src/Breadcrumbs.svelte",
+            "./src/ChangelogEntry.svelte",
+            "./src/ChangelogList.svelte",
+            "./src/DatedCollectionEntry.svelte",
+            "./src/DatedCollectionList.svelte",
+            "./src/DocsContent.svelte",
+            "./src/DocsFooter.svelte",
+            "./src/DocsLayout.svelte",
+            "./src/DocsSearch.svelte",
+            "./src/DocsSidebar.svelte",
+            "./src/DocsSiteShell.svelte",
+            "./src/DocsToc.svelte",
+            "./src/EmbeddedPage.svelte",
+            "./src/index.ts",
+            "./src/PageActions.svelte",
+            "./src/Pagination.svelte",
+            "./src/SidebarGroup.svelte",
+            "./src/TopBar.svelte",
+            "./src/VersionSwitcher.svelte",
+            "./src/YouTubeEmbed.svelte"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/next",
+          "path": "docsfn/next/package.json",
+          "verifiedExports": [
+            "./dist/index.d.ts",
+            "./dist/index.js",
+            "./dist/index.mjs"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/sveltekit",
+          "path": "docsfn/sveltekit/package.json",
+          "verifiedExports": [
+            "./dist/index.d.ts",
+            "./dist/index.js",
+            "./dist/index.mjs"
+          ],
+          "verifiedBins": []
+        },
+        {
+          "name": "@docsfn/cli",
+          "path": "docsfn/cli/package.json",
+          "verifiedExports": [],
+          "verifiedBins": [
+            "./dist/index.js"
+          ]
+        },
+        {
+          "name": "@docsfn/admin",
+          "path": "docsfn/admin/package.json",
+          "verifiedExports": [
+            "./dist/index.d.ts",
+            "./dist/index.js"
+          ],
+          "verifiedBins": []
+        }
+      ]
+    },
+    "tests": [
+      {
+        "id": "core",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/core run test -- --run"
+      },
+      {
+        "id": "provider-fs",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/provider-fs run test -- --run"
+      },
+      {
+        "id": "admin",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run test -- --run"
+      },
+      {
+        "id": "admin-types",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/admin run typecheck"
+      },
+      {
+        "id": "react-parity",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/react run test -- --run src/DocsContent.test.tsx src/DocsSearch.test.tsx src/Pagination.test.tsx src/ApiReferenceRenderer.test.tsx"
+      },
+      {
+        "id": "svelte-parity",
+        "command": "npm exec -- vitest run docsfn/svelte/src/DocsContent.test.ts docsfn/svelte/src/ApiReferenceRenderer.test.ts"
+      },
+      {
+        "id": "sveltekit-route-helpers",
+        "command": "npm exec -- vitest --config docsfn/sveltekit/vitest.config.ts run src/route-helpers.test.ts"
+      },
+      {
+        "id": "searchfn-client",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/client run test -- --run __tests__/in-memory-search.test.ts __tests__/constructors.test.ts __tests__/legacy-guard.test.ts"
+      }
+    ],
+    "dogfoodSite": [
+      {
+        "id": "docs-test",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/docs run test -- --run src/lib/server/docs-site-source.test.ts"
+      },
+      {
+        "id": "docs-build",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/docs run build"
+      }
+    ],
+    "fixtureBuilds": [
+      {
+        "id": "validate-datafn",
+        "command": "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js validate --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs",
+        "outputs": []
+      },
+      {
+        "id": "validate-searchfn",
+        "command": "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js validate --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs",
+        "outputs": []
+      },
+      {
+        "id": "build-datafn",
+        "command": "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/release-gate/datafn-default",
+        "outputs": [
+          "docsfn/.tmp/release-gate/datafn-default/manifest.json",
+          "docsfn/.tmp/release-gate/datafn-default/search.json",
+          "docsfn/.tmp/release-gate/datafn-default/diagnostics.json",
+          "docsfn/.tmp/release-gate/datafn-default/compat-report.json"
+        ]
+      },
+      {
+        "id": "build-searchfn",
+        "command": "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/release-gate/searchfn-default",
+        "outputs": [
+          "docsfn/.tmp/release-gate/searchfn-default/manifest.json",
+          "docsfn/.tmp/release-gate/searchfn-default/search.json",
+          "docsfn/.tmp/release-gate/searchfn-default/diagnostics.json",
+          "docsfn/.tmp/release-gate/searchfn-default/compat-report.json"
+        ]
+      }
+    ],
+    "exampleTests": [
+      {
+        "id": "next-proof-tests",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run test -- --run"
+      },
+      {
+        "id": "sveltekit-proof-tests",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run test -- --run"
+      }
+    ],
+    "exampleBuilds": [
+      {
+        "id": "sveltekit-hybrid",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-hybrid-site run build"
+      },
+      {
+        "id": "next-searchfn",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run build"
+      },
+      {
+        "id": "next-datafn",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/next-docs-site run build"
+      },
+      {
+        "id": "sveltekit-searchfn",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run build"
+      },
+      {
+        "id": "sveltekit-datafn",
+        "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/examples/sveltekit-docs-site run build"
+      }
+    ],
+    "migrationCheck": {
+      "ok": true,
+      "code": "OK",
+      "schemaVersion": 1,
+      "generatedAt": "2026-10-07T12:11:38.103Z",
+      "summaryPath": "docsfn/.tmp/migration-check/summary.json",
+      "status": "PASS",
+      "proofRoutes": [
+        {
+          "id": "next-api",
+          "framework": "next",
+          "surface": "api",
+          "routePattern": "/docs/api/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/next-docs-site/app/docs/[[...slug]]/page.tsx"
+          ],
+          "requiredMarkers": [
+            "routeEntry.kind === \"api\"",
+            "ApiReferenceRenderer"
+          ]
+        },
+        {
+          "id": "next-blog",
+          "framework": "next",
+          "surface": "blog",
+          "routePattern": "/blog/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/next-docs-site/app/blog/[...slug]/page.tsx"
+          ],
+          "requiredMarkers": [
+            "data-docsfn-blog-post",
+            "DocsContent"
+          ]
+        },
+        {
+          "id": "next-docs",
+          "framework": "next",
+          "surface": "docs",
+          "routePattern": "/docs/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/next-docs-site/app/docs/[[...slug]]/page.tsx"
+          ],
+          "requiredMarkers": [
+            "resolveDocsRouteData",
+            "DocsContent",
+            "data-docsfn-search-runtime"
+          ]
+        },
+        {
+          "id": "next-embedded",
+          "framework": "next",
+          "surface": "embedded",
+          "routePattern": "/embedded/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/next-docs-site/app/embedded/[[...slug]]/page.tsx"
+          ],
+          "requiredMarkers": [
+            "data-docsfn-proof-surface=\"embedded\"",
+            "ReactEmbeddedPage"
+          ]
+        },
+        {
+          "id": "sveltekit-api",
+          "framework": "sveltekit",
+          "surface": "api",
+          "routePattern": "/docs/api/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/sveltekit-docs-site/src/routes/docs/[...slug]/+page.server.ts",
+            "docsfn/examples/sveltekit-docs-site/src/routes/docs/[...slug]/+page.svelte"
+          ],
+          "requiredMarkers": [
+            "resolveDocsRouteDataOrThrow",
+            "ApiReferenceRenderer"
+          ]
+        },
+        {
+          "id": "sveltekit-blog",
+          "framework": "sveltekit",
+          "surface": "blog",
+          "routePattern": "/blog/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.server.ts",
+            "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.svelte"
+          ],
+          "requiredMarkers": [
+            "data-docsfn-blog-post",
+            "DocsContent"
+          ]
+        },
+        {
+          "id": "sveltekit-docs",
+          "framework": "sveltekit",
+          "surface": "docs",
+          "routePattern": "/docs/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/sveltekit-docs-site/src/routes/docs/[...slug]/+page.server.ts",
+            "docsfn/examples/sveltekit-docs-site/src/routes/docs/[...slug]/+page.svelte"
+          ],
+          "requiredMarkers": [
+            "resolveDocsRouteDataOrThrow",
+            "DocsContent",
+            "data-docsfn-search-runtime"
+          ]
+        },
+        {
+          "id": "sveltekit-embedded",
+          "framework": "sveltekit",
+          "surface": "embedded",
+          "routePattern": "/embedded/{...slug}",
+          "routeFiles": [
+            "docsfn/examples/sveltekit-docs-site/src/routes/embedded/[...slug]/+page.server.ts",
+            "docsfn/examples/sveltekit-docs-site/src/routes/embedded/[...slug]/+page.svelte"
+          ],
+          "requiredMarkers": [
+            "data-docsfn-proof-surface=\"embedded\"",
+            "EmbeddedPage"
+          ]
+        }
+      ],
+      "sharedSearchRuntimeBuilds": [
+        {
+          "name": "@searchfn/core",
+          "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/core run build",
+          "prefix": "searchfn/core"
+        },
+        {
+          "name": "@searchfn/adapter-contracts",
+          "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-contracts run build",
+          "prefix": "searchfn/adapter-contracts"
+        },
+        {
+          "name": "@searchfn/adapter-memory",
+          "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-memory run build",
+          "prefix": "searchfn/adapter-memory"
+        },
+        {
+          "name": "@searchfn/adapter-indexeddb",
+          "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/adapter-indexeddb run build",
+          "prefix": "searchfn/adapter-indexeddb"
+        },
+        {
+          "name": "@searchfn/client",
+          "command": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/searchfn/client run build",
+          "prefix": "searchfn/client"
+        }
+      ],
+      "cliBuildCommand": "npm --prefix /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli run build",
+      "fixtures": [
+        {
+          "fixture": "datafn-docs",
+          "commands": [
+            "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/datafn-docs --config /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/migration-check/config/datafn-docs.config.mjs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/migration-check/out/datafn-docs"
+          ],
+          "routes": [
+            "/docs",
+            "/docs/documentation/server/routes"
+          ],
+          "topLabels": [
+            "DataFn",
+            "Documentation",
+            "Concepts",
+            "Client",
+            "Server",
+            "Sync",
+            "Migrations",
+            "Use Cases",
+            "Storage",
+            "Plugins"
+          ],
+          "compatibilitySignals": {
+            "controlFiles": 19,
+            "tabsCount": 22,
+            "mermaidCount": 4
+          },
+          "outputs": [
+            "docsfn/.tmp/migration-check/out/datafn-docs/manifest.json",
+            "docsfn/.tmp/migration-check/out/datafn-docs/search.json",
+            "docsfn/.tmp/migration-check/out/datafn-docs/diagnostics.json",
+            "docsfn/.tmp/migration-check/out/datafn-docs/compat-report.json"
+          ]
+        },
+        {
+          "fixture": "searchfn-docs",
+          "commands": [
+            "node /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/cli/dist/index.js build --root /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/test-fixtures/repo/searchfn-docs --config /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/migration-check/config/searchfn-docs.config.mjs --out-dir /Volumes/OS/private/tmp/pr133-validation-l5q1px7k/repo/docsfn/.tmp/migration-check/out/searchfn-docs"
+          ],
+          "routes": [
+            "/docs",
+            "/docs/reference/client"
+          ],
+          "topLabels": [
+            "SearchFn",
+            "Getting Started",
+            "Architecture",
+            "Reference",
+            "Integrations",
+            "Operations"
+          ],
+          "compatibilitySignals": {
+            "controlFiles": 5,
+            "tabsCount": 0,
+            "mermaidCount": 2
+          },
+          "outputs": [
+            "docsfn/.tmp/migration-check/out/searchfn-docs/manifest.json",
+            "docsfn/.tmp/migration-check/out/searchfn-docs/search.json",
+            "docsfn/.tmp/migration-check/out/searchfn-docs/diagnostics.json",
+            "docsfn/.tmp/migration-check/out/searchfn-docs/compat-report.json"
+          ]
+        }
+      ]
+    }
+  }
+}

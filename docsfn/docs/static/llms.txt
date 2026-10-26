@@ -1,0 +1,70 @@
+# docsfn
+
+> The documentation toolchain for superfunctions
+
+## Documentation
+
+- [@docsfn/cli](https://docsfn.superfunctions.dev/docs/api/cli) — docsfn command-line interface reference.
+- [core — Analytics](https://docsfn.superfunctions.dev/docs/api/core/analytics) — Canonical analytics event names and emit helpers in @docsfn/core.
+- [core — Blog](https://docsfn.superfunctions.dev/docs/api/core/blog) — Dated collection canonicalization types and helpers in @docsfn/core.
+- [core — Config](https://docsfn.superfunctions.dev/docs/api/core/config) — loadDocsConfig, defaults, and config validation in @docsfn/core.
+- [core — Diagnostics](https://docsfn.superfunctions.dev/docs/api/core/diagnostics) — DocsError, DocsDiagnostic, and error codes in @docsfn/core.
+- [core — Helpers](https://docsfn.superfunctions.dev/docs/api/core/helpers) — High-level navigation helper exports from @docsfn/core.
+- [@docsfn/core](https://docsfn.superfunctions.dev/docs/api/core) — Framework-agnostic docsfn pipeline — config, manifest, search, compile, and types.
+- [core — Manifest](https://docsfn.superfunctions.dev/docs/api/core/manifest) — buildManifest and DocsManifest in @docsfn/core.
+- [core — Markdown](https://docsfn.superfunctions.dev/docs/api/core/markdown) — Markdown compilation and CompiledContentBlock types in @docsfn/core.
+- [core — Navigation](https://docsfn.superfunctions.dev/docs/api/core/navigation) — Sidebar and breadcrumb helpers in @docsfn/core.
+- [core — OpenAPI](https://docsfn.superfunctions.dev/docs/api/core/openapi) — OpenAPI parsing and CanonicalOpenApiReference in @docsfn/core.
+- [core — Routing](https://docsfn.superfunctions.dev/docs/api/core/routing) — URL slugs, route building, and static param helpers in @docsfn/core.
+- [core — RSS](https://docsfn.superfunctions.dev/docs/api/core/rss) — generateRSSFeed in @docsfn/core.
+- [core — Search Runtime](https://docsfn.superfunctions.dev/docs/api/core/search-runtime) — Client-side search runtime for querying DocsSearchArtifact in @docsfn/core.
+- [core — Search](https://docsfn.superfunctions.dev/docs/api/core/search) — buildSearchIndex and search artifact types in @docsfn/core.
+- [core — Security](https://docsfn.superfunctions.dev/docs/api/core/security) — HTML trust, auth, and redaction helpers in @docsfn/core.
+- [core — Theme](https://docsfn.superfunctions.dev/docs/api/core/theme) — ThemeConfig and CSS generation in @docsfn/core.
+- [core — Types](https://docsfn.superfunctions.dev/docs/api/core/types) — Primary TypeScript types exported from @docsfn/core.
+- [API Reference](https://docsfn.superfunctions.dev/docs/api) — Package-level API reference for docsfn TypeScript packages.
+- [@docsfn/next](https://docsfn.superfunctions.dev/docs/api/next) — Next.js App Router helpers for resolving docs routes, static params, page metadata, and search JSON responses.
+- [@docsfn/provider-fs](https://docsfn.superfunctions.dev/docs/api/provider-fs) — Filesystem DocsContentProvider for docsfn.
+- [@docsfn/react — components](https://docsfn.superfunctions.dev/docs/api/react/components) — Props and usage for DocsLayout, DocsSidebar, DocsContent, DocsSearch, ApiReferenceRenderer, and other React exports.
+- [@docsfn/react](https://docsfn.superfunctions.dev/docs/api/react) — React UI primitives for docsfn layouts, navigation, search, API reference, blog, and theming.
+- [@docsfn/svelte — Components](https://docsfn.superfunctions.dev/docs/api/svelte/components) — Props and behavior for docsfn Svelte UI components.
+- [@docsfn/svelte](https://docsfn.superfunctions.dev/docs/api/svelte) — Svelte 5 UI components for docsfn documentation sites.
+- [@docsfn/sveltekit](https://docsfn.superfunctions.dev/docs/api/sveltekit) — SvelteKit loaders, route resolution, static params, and search responses for docsfn.
+- [Analytics](https://docsfn.superfunctions.dev/docs/core-concepts/analytics) — Canonical docsfn analytics events, DNT, watchfn provider, and URL sanitization.
+- [Blog](https://docsfn.superfunctions.dev/docs/core-concepts/blog) — Blog posts, frontmatter, drafts, tags, archives, and manifest surfaces in docsfn.
+- [CLI](https://docsfn.superfunctions.dev/docs/core-concepts/cli) — docsfn validate, build, and dev commands, options, artifacts, and pipeline overview.
+- [Configuration](https://docsfn.superfunctions.dev/docs/core-concepts/configuration) — Exhaustive reference for docsfn.config.ts — every DocsConfig field, defaults, and examples.
+- [Content Format](https://docsfn.superfunctions.dev/docs/core-concepts/content-format) — Native Markdown, frontmatter, meta.json, URLs, and docsfn extensions.
+- [Content Providers](https://docsfn.superfunctions.dev/docs/core-concepts/content-providers) — The DocsContentProvider interface, FsContentProvider, and how to implement custom sources.
+- [Diagnostics](https://docsfn.superfunctions.dev/docs/core-concepts/diagnostics) — docsfn diagnostic codes, severities, JSON output, and common fixes.
+- [Core Concepts](https://docsfn.superfunctions.dev/docs/core-concepts) — Configuration, content format, navigation, search, and the rest of the docsfn mental model.
+- [Markdown extensions](https://docsfn.superfunctions.dev/docs/core-concepts/markdown-extensions) — Callouts, Mermaid, tabs, code fences, and custom components in docsfn Markdown.
+- [Navigation](https://docsfn.superfunctions.dev/docs/core-concepts/navigation) — Top navigation, breadcrumbs, pagination, active states, and keyboard shortcuts in docsfn.
+- [Nested](https://docsfn.superfunctions.dev/docs/core-concepts/nested) — Nested
+- [OpenAPI](https://docsfn.superfunctions.dev/docs/core-concepts/openapi) — Adding OpenAPI 3.x specs to the api collection, generated routes, and rendering with ApiReferenceRenderer.
+- [RSS](https://docsfn.superfunctions.dev/docs/core-concepts/rss) — RSS 2.0 blog feeds from the manifest, channel fields, and serving in SvelteKit.
+- [Search](https://docsfn.superfunctions.dev/docs/core-concepts/search) — Configure docsfn search scopes, body indexing, artifacts, and the DocsSearch UI.
+- [Security](https://docsfn.superfunctions.dev/docs/core-concepts/security) — HTML sanitization, authentication modes, private routes, sensitive redaction, and allowlists.
+- [SEO](https://docsfn.superfunctions.dev/docs/core-concepts/seo) — Site metadata, canonical URLs, base paths, and how to wire head tags in SvelteKit.
+- [Sidebars](https://docsfn.superfunctions.dev/docs/core-concepts/sidebars) — How docsfn builds sidebars from meta.json, directory trees, and navigation.sidebars in your config.
+- [Theming](https://docsfn.superfunctions.dev/docs/core-concepts/theming) — docsfn theme configuration, CSS custom properties, Tailwind, and dark mode.
+- [Versioning](https://docsfn.superfunctions.dev/docs/core-concepts/versioning) — docsfn version modes, URLs, frontmatter, static params, and the VersionSwitcher component.
+- [Getting Started](https://docsfn.superfunctions.dev/docs/getting-started) — Install docsfn, create a minimal site, and understand how content maps to URLs.
+- [Installation](https://docsfn.superfunctions.dev/docs/getting-started/installation) — Add docsfn packages with npm, pnpm, or yarn; peer dependencies for SvelteKit and Next.js.
+- [Project Structure](https://docsfn.superfunctions.dev/docs/getting-started/project-structure) — Typical directories for a docsfn-powered app and how they map to URLs and collections.
+- [Quick Start](https://docsfn.superfunctions.dev/docs/getting-started/quick-start) — Minimal docsfn config, first Markdown page, meta.json, and dev workflow for SvelteKit and Next.js.
+- [Customizing Components](https://docsfn.superfunctions.dev/docs/guides/customizing-components) — Override docsfn UI primitives in Svelte and React without forking the toolchain.
+- [Guides](https://docsfn.superfunctions.dev/docs/guides) — End-to-end integration and customization guides for docsfn.
+- [Next.js Integration](https://docsfn.superfunctions.dev/docs/guides/nextjs) — Build a docsfn documentation site on the Next.js App Router.
+- [SvelteKit Integration](https://docsfn.superfunctions.dev/docs/guides/sveltekit) — Build a docsfn documentation site on SvelteKit 2 with Svelte 5.
+- [docsfn Documentation](https://docsfn.superfunctions.dev/docs) — Overview of the docsfn documentation toolchain and how to use this site.
+
+## Blog
+
+- [Introducing docsfn](https://docsfn.superfunctions.dev/blog/introducing-docsfn) — docsfn is a self hosted documentation toolchain for the superfunctions ecosystem and any project that wants the same building blocks: a single content tree, a typed manifest, full text search, optional blog and OpenAPI…
+- [Docsfn v0.1.0 Changelog Foundation](https://docsfn.superfunctions.dev/changelog/docsfn-v0-1-0) — First-class changelog collections now use the shared dated-content engine without pretending to be blog posts.
+
+## API Reference
+
+- [Svelte components (search QA)](https://docsfn.superfunctions.dev/docs/api/search-qa-stub.openapi)
+  - GET /health — Health check

@@ -1,0 +1,2128 @@
+{
+  "head": "ed435258eb56d640395561b44f415fcf9445d730",
+  "threads": 472,
+  "unresolved": 264,
+  "reviewBodies": 168,
+  "issueComments": 53,
+  "counts": {
+    "Skipped (Already Fixed / Stale)": 185,
+    "Fixed": 59,
+    "Invalid": 12,
+    "Not Attempted": 8
+  },
+  "unassessed": 0,
+  "dispositions": [
+    {
+      "snapshotIndex": 0,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3Q",
+      "path": "docsfn/cli/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335938",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 1,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3Z",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335951",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 2,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3g",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335960",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 3,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3m",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335971",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 4,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3o",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335975",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 5,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3t",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335984",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 6,
+      "threadId": "PRRT_kwDOP-e7KM6dtw3z",
+      "path": "docsfn/core/src/security.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3894335991",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 7,
+      "threadId": "PRRT_kwDOP-e7KM6eATU4",
+      "path": "docsfn/scripts/migration-check.mjs",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3901663513",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 8,
+      "threadId": "PRRT_kwDOP-e7KM6eATVF",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3901663527",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "The explicitly selected host-restart contract supersedes same-process config refresh: direct hosts cache live values, CLI dev runs fresh whole consumers, and external/computed roots require explicit watch-root opt-in. Config identity/recovery/watch tests cover this boundary."
+    },
+    {
+      "snapshotIndex": 9,
+      "threadId": "PRRT_kwDOP-e7KM6eATVN",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3901663538",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 10,
+      "threadId": "PRRT_kwDOP-e7KM6eATVR",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3901663543",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 11,
+      "threadId": "PRRT_kwDOP-e7KM6eBPYo",
+      "path": "docsfn/react/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902029940",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 12,
+      "threadId": "PRRT_kwDOP-e7KM6eBPYt",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902029946",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 13,
+      "threadId": "PRRT_kwDOP-e7KM6eBPYy",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902029954",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 14,
+      "threadId": "PRRT_kwDOP-e7KM6eBPY1",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902029961",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 15,
+      "threadId": "PRRT_kwDOP-e7KM6eBbhG",
+      "path": "docsfn/docs/src/routes/changelog/rss.xml/+server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902103972",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 16,
+      "threadId": "PRRT_kwDOP-e7KM6eBbhS",
+      "path": "docsfn/docs/docsfn.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902103988",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 17,
+      "threadId": "PRRT_kwDOP-e7KM6eBbhb",
+      "path": "docsfn/cli/tsup.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902104002",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 18,
+      "threadId": "PRRT_kwDOP-e7KM6eBbho",
+      "path": "docsfn/examples/sveltekit-hybrid-site/src/lib/server/site-source.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902104021",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 19,
+      "threadId": "PRRT_kwDOP-e7KM6eBbkP",
+      "path": "docsfn/examples/next-docs-site/app/docs/SearchArtifactStatus.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3902104254",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 20,
+      "threadId": "PRRT_kwDOP-e7KM6eET4D",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903222626",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 21,
+      "threadId": "PRRT_kwDOP-e7KM6eET4G",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903222631",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 22,
+      "threadId": "PRRT_kwDOP-e7KM6eET4L",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903222639",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 23,
+      "threadId": "PRRT_kwDOP-e7KM6eET4R",
+      "path": "docsfn/core/src/blog.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903222647",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 24,
+      "threadId": "PRRT_kwDOP-e7KM6eEtUX",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/embedded/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903377349",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 25,
+      "threadId": "PRRT_kwDOP-e7KM6eEtUe",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/+layout.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903377358",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 26,
+      "threadId": "PRRT_kwDOP-e7KM6eEtUm",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903377373",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 27,
+      "threadId": "PRRT_kwDOP-e7KM6eEtVJ",
+      "path": "docsfn/examples/sveltekit-docs-site/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3903377427",
+      "status": "Fixed",
+      "evidence": "The gate now owns shared MarkdownFn/UiFn/SearchFn bootstrap before DocsFn and sites; verified without prior dist outputs."
+    },
+    {
+      "snapshotIndex": 28,
+      "threadId": "PRRT_kwDOP-e7KM6eZL6m",
+      "path": "docsfn/cli/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3911425421",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 29,
+      "threadId": "PRRT_kwDOP-e7KM6eZL6v",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3911425430",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 30,
+      "threadId": "PRRT_kwDOP-e7KM6eZL6x",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3911425437",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 31,
+      "threadId": "PRRT_kwDOP-e7KM6eZL61",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3911425441",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 32,
+      "threadId": "PRRT_kwDOP-e7KM6earX6",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3912013150",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 33,
+      "threadId": "PRRT_kwDOP-e7KM6earYA",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3912013157",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 34,
+      "threadId": "PRRT_kwDOP-e7KM6earYD",
+      "path": "docsfn/docs/src/lib/server/docs-site-source.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3912013164",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 35,
+      "threadId": "PRRT_kwDOP-e7KM6eaxIk",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3912048789",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 36,
+      "threadId": "PRRT_kwDOP-e7KM6eaxJI",
+      "path": "docsfn/examples/next-docs-site/source.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3912048837",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 37,
+      "threadId": "PRRT_kwDOP-e7KM6ef00W",
+      "path": "docsfn/svelte/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914019228",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 38,
+      "threadId": "PRRT_kwDOP-e7KM6ef00b",
+      "path": "docsfn/react/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914019236",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 39,
+      "threadId": "PRRT_kwDOP-e7KM6ef00f",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914019241",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 40,
+      "threadId": "PRRT_kwDOP-e7KM6ef00j",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914019248",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 41,
+      "threadId": "PRRT_kwDOP-e7KM6ehl51",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914706664",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 42,
+      "threadId": "PRRT_kwDOP-e7KM6ehl6B",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914706677",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 43,
+      "threadId": "PRRT_kwDOP-e7KM6ehl6H",
+      "path": "docsfn/core/src/analytics.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914706685",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 44,
+      "threadId": "PRRT_kwDOP-e7KM6ehqwY",
+      "path": "docsfn/svelte/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914736073",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 45,
+      "threadId": "PRRT_kwDOP-e7KM6ehqwo",
+      "path": "docsfn/core/src/sanitize.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3914736091",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 46,
+      "threadId": "PRRT_kwDOP-e7KM6ewwHH",
+      "path": "docsfn/core/src/sanitize.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3920723039",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 47,
+      "threadId": "PRRT_kwDOP-e7KM6ewwHN",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3920723046",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 48,
+      "threadId": "PRRT_kwDOP-e7KM6exuo9",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3921113515",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 49,
+      "threadId": "PRRT_kwDOP-e7KM6exuo_",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3921113518",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 50,
+      "threadId": "PRRT_kwDOP-e7KM6exupC",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3921113522",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "The explicitly selected host-restart contract supersedes same-process config refresh: direct hosts cache live values, CLI dev runs fresh whole consumers, and external/computed roots require explicit watch-root opt-in. Config identity/recovery/watch tests cover this boundary."
+    },
+    {
+      "snapshotIndex": 51,
+      "threadId": "PRRT_kwDOP-e7KM6exupE",
+      "path": "docsfn/core/src/searchfn-adapter.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3921113525",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 52,
+      "threadId": "PRRT_kwDOP-e7KM6fJ7X8",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930637069",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 53,
+      "threadId": "PRRT_kwDOP-e7KM6fJ7YA",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930637074",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 54,
+      "threadId": "PRRT_kwDOP-e7KM6fKKfK",
+      "path": "docsfn/scripts/release-gate.mjs",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930731387",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 55,
+      "threadId": "PRRT_kwDOP-e7KM6fKKfM",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930731389",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 56,
+      "threadId": "PRRT_kwDOP-e7KM6fKKfN",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930731391",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 57,
+      "threadId": "PRRT_kwDOP-e7KM6fKb6s",
+      "path": "docsfn/react/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930838202",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 58,
+      "threadId": "PRRT_kwDOP-e7KM6fKb6v",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930838205",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 59,
+      "threadId": "PRRT_kwDOP-e7KM6fKb6z",
+      "path": "docsfn/sveltekit/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930838209",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 60,
+      "threadId": "PRRT_kwDOP-e7KM6fKskA",
+      "path": "docsfn/core/src/navigation.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930942525",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 61,
+      "threadId": "PRRT_kwDOP-e7KM6fKskF",
+      "path": "docsfn/core/src/blog.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930942531",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 62,
+      "threadId": "PRRT_kwDOP-e7KM6fKskL",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3930942539",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 63,
+      "threadId": "PRRT_kwDOP-e7KM6fLEyP",
+      "path": "vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931093145",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Both package.json test:filefn-server-contract and scripts/run-tests.mjs select filefn/server/vitest.config.ts explicitly, so the root DocsFn project list does not suppress this suite."
+    },
+    {
+      "snapshotIndex": 64,
+      "threadId": "PRRT_kwDOP-e7KM6fLEyR",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931093147",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 65,
+      "threadId": "PRRT_kwDOP-e7KM6fLb1s",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931239345",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 66,
+      "threadId": "PRRT_kwDOP-e7KM6fLb1v",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931239350",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 67,
+      "threadId": "PRRT_kwDOP-e7KM6fLb1w",
+      "path": "docsfn/react/src/VersionSwitcher.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931239353",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 68,
+      "threadId": "PRRT_kwDOP-e7KM6fLb1y",
+      "path": "docsfn/svelte/src/public-types.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931239356",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 69,
+      "threadId": "PRRT_kwDOP-e7KM6fLyGg",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931376449",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 70,
+      "threadId": "PRRT_kwDOP-e7KM6fLyGn",
+      "path": "docsfn/docs/content/docs/guides/nextjs.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931376457",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 71,
+      "threadId": "PRRT_kwDOP-e7KM6fLyGp",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931376459",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 72,
+      "threadId": "PRRT_kwDOP-e7KM6fMYTY",
+      "path": "docsfn/core/src/sanitize.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931608371",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 73,
+      "threadId": "PRRT_kwDOP-e7KM6fMYTg",
+      "path": "docsfn/examples/next-docs-site/app/blog/[...slug]/page.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931608384",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 74,
+      "threadId": "PRRT_kwDOP-e7KM6fMYTi",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931608391",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 75,
+      "threadId": "PRRT_kwDOP-e7KM6fMYTl",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931608395",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 76,
+      "threadId": "PRRT_kwDOP-e7KM6fNKYc",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931914846",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 77,
+      "threadId": "PRRT_kwDOP-e7KM6fNKYh",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931914853",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 78,
+      "threadId": "PRRT_kwDOP-e7KM6fNKYk",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3931914857",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 79,
+      "threadId": "PRRT_kwDOP-e7KM6fN9T2",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932227799",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 80,
+      "threadId": "PRRT_kwDOP-e7KM6fN9T7",
+      "path": "docsfn/core/src/helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932227808",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 81,
+      "threadId": "PRRT_kwDOP-e7KM6fN9UA",
+      "path": "docsfn/docs/src/routes/docs/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932227816",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 82,
+      "threadId": "PRRT_kwDOP-e7KM6fOiz1",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932458196",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 83,
+      "threadId": "PRRT_kwDOP-e7KM6fOiz-",
+      "path": "docsfn/svelte/src/DocsToc.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932458211",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 84,
+      "threadId": "PRRT_kwDOP-e7KM6fPJ1o",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932699485",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 85,
+      "threadId": "PRRT_kwDOP-e7KM6fPJ1q",
+      "path": "docsfn/react/src/BlogList.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3932699487",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 86,
+      "threadId": "PRRT_kwDOP-e7KM6fQN4y",
+      "path": "docsfn/scripts/release-gate.mjs",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933114255",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 87,
+      "threadId": "PRRT_kwDOP-e7KM6fQN40",
+      "path": "docsfn/scripts/release-gate.mjs",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933114258",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 88,
+      "threadId": "PRRT_kwDOP-e7KM6fQuwf",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933315545",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 89,
+      "threadId": "PRRT_kwDOP-e7KM6fQuwm",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933315556",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 90,
+      "threadId": "PRRT_kwDOP-e7KM6fQuwt",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933315566",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 91,
+      "threadId": "PRRT_kwDOP-e7KM6fQuwz",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3933315575",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 92,
+      "threadId": "PRRT_kwDOP-e7KM6hfGjK",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989608137",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 93,
+      "threadId": "PRRT_kwDOP-e7KM6hfGjQ",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989608146",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 94,
+      "threadId": "PRRT_kwDOP-e7KM6hfGjb",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989608160",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 95,
+      "threadId": "PRRT_kwDOP-e7KM6hfGjk",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989608168",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 96,
+      "threadId": "PRRT_kwDOP-e7KM6hfeaN",
+      "path": "docsfn/core/src/blog.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752057",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 97,
+      "threadId": "PRRT_kwDOP-e7KM6hfea4",
+      "path": "docsfn/react/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752109",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 98,
+      "threadId": "PRRT_kwDOP-e7KM6hfebp",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752181",
+      "status": "Invalid",
+      "evidence": "API roots contain API sources, including valid specs named meta.json; navigation control-file detection is intentionally excluded (the opposite bug is finding 76)."
+    },
+    {
+      "snapshotIndex": 99,
+      "threadId": "PRRT_kwDOP-e7KM6hfebv",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752190",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 100,
+      "threadId": "PRRT_kwDOP-e7KM6hfebx",
+      "path": "docsfn/sveltekit/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752192",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 101,
+      "threadId": "PRRT_kwDOP-e7KM6hfeb2",
+      "path": "docsfn/examples/sveltekit-docs-site/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752199",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 102,
+      "threadId": "PRRT_kwDOP-e7KM6hfecQ",
+      "path": "docsfn/docs/src/lib/server/docs-site-source.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3989752228",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 103,
+      "threadId": "PRRT_kwDOP-e7KM6hjZ54",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3991288220",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 104,
+      "threadId": "PRRT_kwDOP-e7KM6hjZ5-",
+      "path": "docsfn/core/src/markdown.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3991288227",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 105,
+      "threadId": "PRRT_kwDOP-e7KM6hjZ6F",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3991288238",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 106,
+      "threadId": "PRRT_kwDOP-e7KM6hjatD",
+      "path": "docsfn/react/src/ApiReferenceRenderer.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3991293186",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 107,
+      "threadId": "PRRT_kwDOP-e7KM6hjatr",
+      "path": "docsfn/react/src/VersionSwitcher.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3991293235",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 108,
+      "threadId": "PRRT_kwDOP-e7KM6htxCB",
+      "path": "docsfn/core/src/analytics.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995337539",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 109,
+      "threadId": "PRRT_kwDOP-e7KM6htxCD",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995337541",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 110,
+      "threadId": "PRRT_kwDOP-e7KM6htxCH",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995337546",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 111,
+      "threadId": "PRRT_kwDOP-e7KM6htxCJ",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995337549",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 112,
+      "threadId": "PRRT_kwDOP-e7KM6hvWfg",
+      "path": "docsfn/react/src/VersionSwitcher.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995942341",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 113,
+      "threadId": "PRRT_kwDOP-e7KM6hvWfi",
+      "path": "docsfn/core/src/markdown.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995942343",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 114,
+      "threadId": "PRRT_kwDOP-e7KM6hvWfm",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3995942349",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 115,
+      "threadId": "PRRT_kwDOP-e7KM6hwITP",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3996239179",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 116,
+      "threadId": "PRRT_kwDOP-e7KM6hwITR",
+      "path": "docsfn/examples/proof-routes.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3996239183",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 117,
+      "threadId": "PRRT_kwDOP-e7KM6hwITT",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3996239185",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 118,
+      "threadId": "PRRT_kwDOP-e7KM6hyabS",
+      "path": "docsfn/core/src/manifest.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997125940",
+      "status": "Invalid",
+      "evidence": "Generated embedded routes share the global namespace; cross-resource collisions are intentionally rejected, not silently overwritten."
+    },
+    {
+      "snapshotIndex": 119,
+      "threadId": "PRRT_kwDOP-e7KM6hyabZ",
+      "path": "docsfn/examples/proof-routes.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997125948",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 120,
+      "threadId": "PRRT_kwDOP-e7KM6hybUa",
+      "path": "docsfn/core/src/links.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997131565",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 121,
+      "threadId": "PRRT_kwDOP-e7KM6hybUb",
+      "path": "docsfn/core/src/links.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997131566",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 122,
+      "threadId": "PRRT_kwDOP-e7KM6hybUd",
+      "path": "docsfn/svelte/src/DocsSearch.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997131568",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 123,
+      "threadId": "PRRT_kwDOP-e7KM6hysSA",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997235305",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 124,
+      "threadId": "PRRT_kwDOP-e7KM6hysSF",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997235310",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 125,
+      "threadId": "PRRT_kwDOP-e7KM6hysSH",
+      "path": "docsfn/svelte/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3997235312",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 126,
+      "threadId": "PRRT_kwDOP-e7KM6h2cAF",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3998730136",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 127,
+      "threadId": "PRRT_kwDOP-e7KM6h2cAG",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3998730137",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 128,
+      "threadId": "PRRT_kwDOP-e7KM6h2cAJ",
+      "path": "docsfn/sveltekit/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3998730141",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 129,
+      "threadId": "PRRT_kwDOP-e7KM6h2cAM",
+      "path": "docsfn/admin/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r3998730144",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 130,
+      "threadId": "PRRT_kwDOP-e7KM6h6jLW",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000317677",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "The existing LLM Path Item reference regression constructs a canonical API and checks GET summaries in both short/full output."
+    },
+    {
+      "snapshotIndex": 131,
+      "threadId": "PRRT_kwDOP-e7KM6h6lMq",
+      "path": "docsfn/next/src/route-helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000330105",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 132,
+      "threadId": "PRRT_kwDOP-e7KM6h6lMu",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000330112",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 133,
+      "threadId": "PRRT_kwDOP-e7KM6h7F1v",
+      "path": "docsfn/react/src/ApiReferenceRenderer.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000527073",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 134,
+      "threadId": "PRRT_kwDOP-e7KM6h7F1x",
+      "path": "docsfn/docs/docsfn.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000527075",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 135,
+      "threadId": "PRRT_kwDOP-e7KM6h7F10",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000527079",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 136,
+      "threadId": "PRRT_kwDOP-e7KM6h7YtW",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000643165",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 137,
+      "threadId": "PRRT_kwDOP-e7KM6h7YtZ",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000643168",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 138,
+      "threadId": "PRRT_kwDOP-e7KM6h7Ytb",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000643173",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 139,
+      "threadId": "PRRT_kwDOP-e7KM6h7rUq",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000758180",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 140,
+      "threadId": "PRRT_kwDOP-e7KM6h7rUr",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000758183",
+      "status": "Invalid",
+      "evidence": "Child state updates do not recreate a factory prop owned by a parent. A replaced factory must recreate the runtime; current tests verify factory/input replacement."
+    },
+    {
+      "snapshotIndex": 141,
+      "threadId": "PRRT_kwDOP-e7KM6h7rUs",
+      "path": "docsfn/core/src/routing.test.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000758185",
+      "status": "Invalid",
+      "evidence": "Current routing.test.ts already uses double quotes throughout its imports and initial suite; the premise of a single-quote-only file is false."
+    },
+    {
+      "snapshotIndex": 142,
+      "threadId": "PRRT_kwDOP-e7KM6h7sX2",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000764642",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 143,
+      "threadId": "PRRT_kwDOP-e7KM6h7sX4",
+      "path": "docsfn/react/src/DocsContent.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000764645",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 144,
+      "threadId": "PRRT_kwDOP-e7KM6h7sX5",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000764646",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 145,
+      "threadId": "PRRT_kwDOP-e7KM6h798x",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000873138",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 146,
+      "threadId": "PRRT_kwDOP-e7KM6h798y",
+      "path": "docsfn/svelte/src/ApiReferenceRenderer.test.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000873139",
+      "status": "Fixed",
+      "evidence": "The real UiFn integration activates Request and Responses tabs and asserts both positive and opposite-side negative payload checks."
+    },
+    {
+      "snapshotIndex": 147,
+      "threadId": "PRRT_kwDOP-e7KM6h8BRe",
+      "path": "docsfn/core/src/helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000893453",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 148,
+      "threadId": "PRRT_kwDOP-e7KM6h8BRh",
+      "path": "docsfn/core/src/navigation.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000893458",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 149,
+      "threadId": "PRRT_kwDOP-e7KM6h8BRi",
+      "path": "docsfn/react/src/EmbeddedPage.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000893459",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 150,
+      "threadId": "PRRT_kwDOP-e7KM6h8BRk",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4000893461",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "The explicitly selected host-restart contract supersedes same-process config refresh: direct hosts cache live values, CLI dev runs fresh whole consumers, and external/computed roots require explicit watch-root opt-in. Config identity/recovery/watch tests cover this boundary."
+    },
+    {
+      "snapshotIndex": 151,
+      "threadId": "PRRT_kwDOP-e7KM6h_vX1",
+      "path": "docsfn/core/src/markdown.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002367020",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 152,
+      "threadId": "PRRT_kwDOP-e7KM6h_veL",
+      "path": "docsfn/svelte/src/EmbeddedPage.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002367605",
+      "status": "Fixed",
+      "evidence": "EmbeddedPage route and sourcePath inputs are documented against the renderer contract."
+    },
+    {
+      "snapshotIndex": 153,
+      "threadId": "PRRT_kwDOP-e7KM6h_veP",
+      "path": "docsfn/core/src/helpers.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002367610",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Legitimate spaces in pagination hrefs are now encoded; backslashes, control characters and executable schemes intentionally remain rejected."
+    },
+    {
+      "snapshotIndex": 154,
+      "threadId": "PRRT_kwDOP-e7KM6h_veU",
+      "path": "docsfn/react/src/EmbeddedPage.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002367619",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "findUnsafeHtml strips fenced/inline code samples before scanning; the existing embedded fenced-code regression passes."
+    },
+    {
+      "snapshotIndex": 155,
+      "threadId": "PRRT_kwDOP-e7KM6iASdg",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002584769",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 156,
+      "threadId": "PRRT_kwDOP-e7KM6iASdm",
+      "path": "docsfn/core/src/compat/fumadocs.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002584776",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 157,
+      "threadId": "PRRT_kwDOP-e7KM6iASdo",
+      "path": "docsfn/core/src/searchfn-adapter.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002584779",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 158,
+      "threadId": "PRRT_kwDOP-e7KM6iASdq",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002584783",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 159,
+      "threadId": "PRRT_kwDOP-e7KM6iA3D1",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002808070",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 160,
+      "threadId": "PRRT_kwDOP-e7KM6iA3D5",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4002808076",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 161,
+      "threadId": "PRRT_kwDOP-e7KM6iBesa",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003049655",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 162,
+      "threadId": "PRRT_kwDOP-e7KM6iBese",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003049660",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 163,
+      "threadId": "PRRT_kwDOP-e7KM6iCbbJ",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003425745",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 164,
+      "threadId": "PRRT_kwDOP-e7KM6iCbbR",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003425758",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 165,
+      "threadId": "PRRT_kwDOP-e7KM6iCbbT",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003425762",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 166,
+      "threadId": "PRRT_kwDOP-e7KM6iDYz1",
+      "path": "docsfn/core/src/security.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003804863",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 167,
+      "threadId": "PRRT_kwDOP-e7KM6iDYz_",
+      "path": "docsfn/core/src/routing.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4003804877",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 168,
+      "threadId": "PRRT_kwDOP-e7KM6iEMgi",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004121053",
+      "status": "Invalid",
+      "evidence": "The selected-root contract explicitly permits ancestor aliases and rejects links at or below the destination root; the existing regression verifies confinement."
+    },
+    {
+      "snapshotIndex": 169,
+      "threadId": "PRRT_kwDOP-e7KM6iEMhF",
+      "path": "docsfn/examples/sveltekit-hybrid-site/src/lib/server/site-source.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004121107",
+      "status": "Invalid",
+      "evidence": "The comparator preserves default code-unit ordering and documents intent; it does not cause a behavioral defect."
+    },
+    {
+      "snapshotIndex": 170,
+      "threadId": "PRRT_kwDOP-e7KM6iEPc4",
+      "path": "docsfn/core/src/security.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004138951",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 171,
+      "threadId": "PRRT_kwDOP-e7KM6iEPc9",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004138960",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 172,
+      "threadId": "PRRT_kwDOP-e7KM6iEPdA",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004138967",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 173,
+      "threadId": "PRRT_kwDOP-e7KM6iEPdE",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004138973",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 174,
+      "threadId": "PRRT_kwDOP-e7KM6iFGcD",
+      "path": "docsfn/core/src/security.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004479200",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 175,
+      "threadId": "PRRT_kwDOP-e7KM6iFGcJ",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004479210",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 176,
+      "threadId": "PRRT_kwDOP-e7KM6iFGcR",
+      "path": "docsfn/docs/content/docs/guides/nextjs.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004479220",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 177,
+      "threadId": "PRRT_kwDOP-e7KM6iF4ne",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004787440",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 178,
+      "threadId": "PRRT_kwDOP-e7KM6iF4nk",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004787447",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 179,
+      "threadId": "PRRT_kwDOP-e7KM6iF4no",
+      "path": "docsfn/core/src/llms.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004787453",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 180,
+      "threadId": "PRRT_kwDOP-e7KM6iF4nq",
+      "path": "docsfn/react/src/Pagination.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004787455",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 181,
+      "threadId": "PRRT_kwDOP-e7KM6iGONc",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004919398",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 182,
+      "threadId": "PRRT_kwDOP-e7KM6iGSN1",
+      "path": "docsfn/core/src/markdown.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4004944270",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 183,
+      "threadId": "PRRT_kwDOP-e7KM6iHNvb",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005315338",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 184,
+      "threadId": "PRRT_kwDOP-e7KM6iHNvp",
+      "path": "docsfn/core/src/openapi.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005315356",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 185,
+      "threadId": "PRRT_kwDOP-e7KM6iHNvv",
+      "path": "docsfn/svelte/src/DocsSiteShell.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005315366",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 186,
+      "threadId": "PRRT_kwDOP-e7KM6iHNv7",
+      "path": "docsfn/react/src/DocsSearch.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005315384",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 187,
+      "threadId": "PRRT_kwDOP-e7KM6iIIKx",
+      "path": "docsfn/core/src/rss.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005674846",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 188,
+      "threadId": "PRRT_kwDOP-e7KM6iIIK5",
+      "path": "docsfn/react/src/DocsSearch.test.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005674855",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 189,
+      "threadId": "PRRT_kwDOP-e7KM6iIIK-",
+      "path": "docsfn/core/src/collection-json.test.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005674861",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 190,
+      "threadId": "PRRT_kwDOP-e7KM6iIUza",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005751794",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 191,
+      "threadId": "PRRT_kwDOP-e7KM6iIUzg",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005751805",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 192,
+      "threadId": "PRRT_kwDOP-e7KM6iIUzn",
+      "path": "docsfn/core/src/search.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4005751815",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "Reported historical path is superseded in the current implementation; traced the source/callers and existing regression coverage in the core, provider, CLI, adapter, renderer and site suites."
+    },
+    {
+      "snapshotIndex": 193,
+      "threadId": "PRRT_kwDOP-e7KM6oWogV",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166186009",
+      "status": "Fixed",
+      "evidence": "Docs-local migration publication is limited to referenced supported media; secrets/config/unreferenced files stay behind."
+    },
+    {
+      "snapshotIndex": 194,
+      "threadId": "PRRT_kwDOP-e7KM6oWogg",
+      "path": "docsfn/cli/src/migrate-docusaurus.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166186024",
+      "status": "Fixed",
+      "evidence": "Every interpolated route base is serialized with JSON.stringify; the generated config loads with quoted routes."
+    },
+    {
+      "snapshotIndex": 195,
+      "threadId": "PRRT_kwDOP-e7KM6oWogq",
+      "path": "docsfn/provider-fs/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166186037",
+      "status": "Fixed",
+      "evidence": "Explicit dot-prefixed control files are discovered without enabling hidden content or hidden ancestor trees."
+    },
+    {
+      "snapshotIndex": 196,
+      "threadId": "PRRT_kwDOP-e7KM6oWrRX",
+      "path": "package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166203781",
+      "status": "Not Attempted",
+      "evidence": "Valid security dependency finding. A complete fix requires Vitest 4.1.11 or newer across the affected workspace tool graph; a 3.x-only bump leaves GHSA-82fw-gwwq-j7x9 unresolved. Defer the repository-wide major migration and cross-workspace compatibility checks, outside this DocsFn repair batch."
+    },
+    {
+      "snapshotIndex": 197,
+      "threadId": "PRRT_kwDOP-e7KM6oWxIO",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241072",
+      "status": "Fixed",
+      "evidence": "Svelte blog lookup uses the shared draft-filtered helper and rejects draft routes."
+    },
+    {
+      "snapshotIndex": 198,
+      "threadId": "PRRT_kwDOP-e7KM6oWxIe",
+      "path": "docsfn/examples/next-docs-site/app/blog/[...slug]/page.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241089",
+      "status": "Fixed",
+      "evidence": "Next blog compiles server-side, resolves Markdown links with the post route and supplies the compiled artifact."
+    },
+    {
+      "snapshotIndex": 199,
+      "threadId": "PRRT_kwDOP-e7KM6oWxIl",
+      "path": "docsfn/examples/sveltekit-docs-site/src/lib/server/docs-site-source.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241099",
+      "status": "Skipped (Already Fixed / Stale)",
+      "evidence": "The explicitly selected host-restart contract supersedes same-process config refresh: direct hosts cache live values, CLI dev runs fresh whole consumers, and external/computed roots require explicit watch-root opt-in. Config identity/recovery/watch tests cover this boundary."
+    },
+    {
+      "snapshotIndex": 200,
+      "threadId": "PRRT_kwDOP-e7KM6oWxIr",
+      "path": "docsfn/docs/src/routes/docs/[...slug]/+page.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241108",
+      "status": "Fixed",
+      "evidence": "Dogfood docs emit a title when compiled content has no H1, preserving authored H1s."
+    },
+    {
+      "snapshotIndex": 201,
+      "threadId": "PRRT_kwDOP-e7KM6oWxI5",
+      "path": "docsfn/examples/next-docs-site/app/embedded/[[...slug]]/page.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241124",
+      "status": "Fixed",
+      "evidence": "Optional embedded static params come from actual page slugs and include the root."
+    },
+    {
+      "snapshotIndex": 202,
+      "threadId": "PRRT_kwDOP-e7KM6oWxI9",
+      "path": "docsfn/docs/src/routes/docs/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241131",
+      "status": "Fixed",
+      "evidence": "Docs/blog/changelog compilation reuses the parent source manifest cache in development."
+    },
+    {
+      "snapshotIndex": 203,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJD",
+      "path": "docsfn/examples/sveltekit-docs-site/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241139",
+      "status": "Fixed",
+      "evidence": "Stable Svelte 5 is paired with vite-plugin-svelte 4."
+    },
+    {
+      "snapshotIndex": 204,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJJ",
+      "path": "docsfn/admin/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241147",
+      "status": "Fixed",
+      "evidence": "Admin dependency now matches the current workspace 0.1.3, removing the stale registry adapter."
+    },
+    {
+      "snapshotIndex": 205,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJS",
+      "path": "docsfn/examples/next-docs-site/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241159",
+      "status": "Fixed",
+      "evidence": "Next example declares its DocsFn packages and required default SearchFn engine."
+    },
+    {
+      "snapshotIndex": 206,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJa",
+      "path": "docsfn/docs/content/docs/api/core/rss.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241167",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 207,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJe",
+      "path": "docsfn/docs/content/docs/core-concepts/nested/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241175",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 208,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJj",
+      "path": "docsfn/docs/content/docs/core-concepts/navigation.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241181",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 209,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJq",
+      "path": "docsfn/docs/content/docs/getting-started/installation.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241189",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 210,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJu",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/+layout.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241198",
+      "status": "Fixed",
+      "evidence": "Svelte docs enumerate manifest routes as explicit prerender entries, including an empty-string root slug."
+    },
+    {
+      "snapshotIndex": 211,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJw",
+      "path": "docsfn/core/src/html-attributes.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241203",
+      "status": "Fixed",
+      "evidence": "The attribute scanner uses HTML ASCII whitespace at every attribute/value boundary."
+    },
+    {
+      "snapshotIndex": 212,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJ0",
+      "path": "docsfn/examples/next-docs-site/app/blog/[...slug]/page.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241211",
+      "status": "Fixed",
+      "evidence": "Blog compilation uses a normalized source path; Mermaid identifiers verify the source identity."
+    },
+    {
+      "snapshotIndex": 213,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJ5",
+      "path": "docsfn/docs/content/docs/core-concepts/analytics.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241215",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 214,
+      "threadId": "PRRT_kwDOP-e7KM6oWxJ9",
+      "path": "authfn/api-keys/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241222",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 215,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKB",
+      "path": "docsfn/docs/content/docs/getting-started/project-structure.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241229",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 216,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKD",
+      "path": "botfn/slack-core/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241233",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 217,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKG",
+      "path": "docsfn/docs/content/docs/core-concepts/markdown-extensions.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241234",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 218,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKL",
+      "path": "docsfn/docs/tsconfig.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241242",
+      "status": "Fixed",
+      "evidence": "Docs tsconfig extends SvelteKit generated config, and dev/build/test explicitly sync before loading it."
+    },
+    {
+      "snapshotIndex": 219,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKQ",
+      "path": "docsfn/docs/src/routes/docs/[...slug]/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241251",
+      "status": "Fixed",
+      "evidence": "API surface descriptions fall back to canonical OpenAPI info descriptions."
+    },
+    {
+      "snapshotIndex": 220,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKV",
+      "path": "docsfn/examples/sveltekit-docs-site/vite.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241258",
+      "status": "Fixed",
+      "evidence": "The gate builds shared content prerequisites before source-alias app consumers; script preprocessing is enabled explicitly."
+    },
+    {
+      "snapshotIndex": 221,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKa",
+      "path": "docsfn/examples/sveltekit-hybrid-site/src/routes/+layout.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241267",
+      "status": "Fixed",
+      "evidence": "Hybrid docs, papers, blog, API children and standalone routes have explicit prerender entries; all build successfully."
+    },
+    {
+      "snapshotIndex": 222,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKe",
+      "path": "docsfn/docs/content/docs/getting-started/quick-start.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241271",
+      "status": "Invalid",
+      "evidence": "Both adapter barrels export all original route helpers and their framework aliases, so the guide import is public."
+    },
+    {
+      "snapshotIndex": 223,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKj",
+      "path": "docsfn/docs/content/docs/api/core/rss.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241278",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 224,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKm",
+      "path": "docsfn/docs/content/docs/guides/customizing-components.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241283",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 225,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKr",
+      "path": "botfn/bot-slack/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241292",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 226,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKu",
+      "path": "docsfn/admin/tsconfig.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241300",
+      "status": "Fixed",
+      "evidence": "Admin tests have a separate no-emit tsconfig; the typecheck script and release gate run it. A fetch mock was corrected to its actual function type."
+    },
+    {
+      "snapshotIndex": 227,
+      "threadId": "PRRT_kwDOP-e7KM6oWxKy",
+      "path": "docsfn/examples/sveltekit-docs-site/src/routes/blog/[...slug]/+page.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241306",
+      "status": "Fixed",
+      "evidence": "Svelte blog transports compiled server artifacts instead of recompiling raw content at rendering time."
+    },
+    {
+      "snapshotIndex": 228,
+      "threadId": "PRRT_kwDOP-e7KM6oWxK4",
+      "path": "docsfn/examples/sveltekit-docs-site/vite.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241316",
+      "status": "Fixed",
+      "evidence": "The reference app resolves real UiFn components; the unit adapter override is explicit and real tabs have integration coverage."
+    },
+    {
+      "snapshotIndex": 229,
+      "threadId": "PRRT_kwDOP-e7KM6oWxK6",
+      "path": "docsfn/docs/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241323",
+      "status": "Invalid",
+      "evidence": "The docs manifest directly declares @docsfn/sveltekit; its source alias and cold tests resolve it successfully."
+    },
+    {
+      "snapshotIndex": 230,
+      "threadId": "PRRT_kwDOP-e7KM6oWxK-",
+      "path": "docsfn/examples/sveltekit-hybrid-site/src/routes/blog/+page.server.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241328",
+      "status": "Fixed",
+      "evidence": "Hybrid blog uses the shared draft-filtered collection selector."
+    },
+    {
+      "snapshotIndex": 231,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLC",
+      "path": "docsfn/examples/sveltekit-hybrid-site/content/docs/product/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241337",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 232,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLI",
+      "path": "docsfn/docs/content/docs/core-concepts/diagnostics.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241343",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 233,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLL",
+      "path": "docsfn/docs/content/docs/api/core/navigation.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241349",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 234,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLN",
+      "path": "docsfn/docs/content/docs/api/core/config.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241354",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 235,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLQ",
+      "path": "docsfn/docs/content/docs/api/core/types.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241357",
+      "status": "Fixed",
+      "evidence": "DOCS_MARKDOWN_DIAGNOSTIC is present in the public canonical code list as well as the type union and docs."
+    },
+    {
+      "snapshotIndex": 236,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLW",
+      "path": "docsfn/docs/content/docs/api/core/markdown.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241364",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 237,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLc",
+      "path": "docsfn/docs/content/docs/api/sveltekit/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241377",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 238,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLj",
+      "path": "docsfn/docs/content/docs/api/core/search-runtime.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241389",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 239,
+      "threadId": "PRRT_kwDOP-e7KM6oWxLr",
+      "path": "docsfn/docs/content/docs/api/core/search-runtime.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241398",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 240,
+      "threadId": "PRRT_kwDOP-e7KM6oWxL2",
+      "path": "docsfn/docs/content/docs/api/cli/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241409",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 241,
+      "threadId": "PRRT_kwDOP-e7KM6oWxL6",
+      "path": "docsfn/examples/next-docs-site/app/docs/SearchArtifactStatus.tsx",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241416",
+      "status": "Fixed",
+      "evidence": "Search status uses a live status region."
+    },
+    {
+      "snapshotIndex": 242,
+      "threadId": "PRRT_kwDOP-e7KM6oWxL9",
+      "path": "docsfn/examples/README.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241421",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 243,
+      "threadId": "PRRT_kwDOP-e7KM6oWxME",
+      "path": "docsfn/docs/svelte.config.js",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241432",
+      "status": "Fixed",
+      "evidence": "Kit, Vite and Vitest share one source-alias module instead of duplicate declarations."
+    },
+    {
+      "snapshotIndex": 244,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMJ",
+      "path": "docsfn/docs/content/docs/api/core/meta.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241439",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 245,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMM",
+      "path": "authfn/password/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241449",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 246,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMR",
+      "path": "datafn/cli/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241455",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 247,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMW",
+      "path": "docsfn/examples/sveltekit-hybrid-site/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241462",
+      "status": "Fixed",
+      "evidence": "Hybrid Svelte dependency matches the supported >=5.20.0 <6 range."
+    },
+    {
+      "snapshotIndex": 248,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMe",
+      "path": "billfn/swift-bridge/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241471",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 249,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMj",
+      "path": "billfn/core/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241475",
+      "status": "Not Attempted",
+      "evidence": "Valid provider declaration/version gap: this package declares v8 coverage without a matching direct coverage-v8 dependency. Outside DocsFn scope; align each affected package with the repository-wide test-tool migration and verify its coverage command."
+    },
+    {
+      "snapshotIndex": 250,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMm",
+      "path": "docsfn/examples/sveltekit-docs-site/vitest.config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241482",
+      "status": "Fixed",
+      "evidence": "App and test source aliases are shared, with one explicit unit-only UI adapter override."
+    },
+    {
+      "snapshotIndex": 251,
+      "threadId": "PRRT_kwDOP-e7KM6oWxMs",
+      "path": "docsfn/docs/content/docs/api/cli/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241489",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 252,
+      "threadId": "PRRT_kwDOP-e7KM6oWxM1",
+      "path": "docsfn/docs/content/docs/api/core/openapi.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241498",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 253,
+      "threadId": "PRRT_kwDOP-e7KM6oWxM6",
+      "path": "docsfn/cli/package.json",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241506",
+      "status": "Invalid",
+      "evidence": "CLI buildSearchIndex uses the default adapter; core declares the search client as an optional peer, making this direct CLI dependency necessary."
+    },
+    {
+      "snapshotIndex": 254,
+      "threadId": "PRRT_kwDOP-e7KM6oWxM_",
+      "path": "docsfn/docs/content/docs/api/react/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241515",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 255,
+      "threadId": "PRRT_kwDOP-e7KM6oWxNH",
+      "path": "docsfn/docs/content/docs/api/provider-fs/index.md",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241524",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 256,
+      "threadId": "PRRT_kwDOP-e7KM6oWxNN",
+      "path": "docsfn/core/src/browser.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166241531",
+      "status": "Fixed",
+      "evidence": "Public documentation/navigation reference now matches the current exported type, behavior, support range or route; checked against source and the docs contract/build."
+    },
+    {
+      "snapshotIndex": 257,
+      "threadId": "PRRT_kwDOP-e7KM6oXBQi",
+      "path": "docsfn/core/src/config.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166345482",
+      "status": "Fixed",
+      "evidence": "Jiti transformed imports, computed imports, requires, module.require and resolvers receive startup custom/default conditions; six new regression cases cover mode and default-flag parity."
+    },
+    {
+      "snapshotIndex": 258,
+      "threadId": "PRRT_kwDOP-e7KM6oXBQp",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166345495",
+      "status": "Fixed",
+      "evidence": "Lexical symlinks are watched without following them, physical provider roots are subscribed separately, and added roots queue reconciliation."
+    },
+    {
+      "snapshotIndex": 259,
+      "threadId": "PRRT_kwDOP-e7KM6oXBQv",
+      "path": "docsfn/cli/src/index.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166345509",
+      "status": "Fixed",
+      "evidence": "Worker errors are captured, but abort completion settles only after the child closes."
+    },
+    {
+      "snapshotIndex": 260,
+      "threadId": "PRRT_kwDOP-e7KM6oXEus",
+      "path": "docsfn/admin/src/operator-service.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166367938",
+      "status": "Invalid",
+      "evidence": "The store interface has no column-length constraints and the included MemoryDocsFnOperatorStore uses Maps; inventing a 255 limit changes the contract."
+    },
+    {
+      "snapshotIndex": 261,
+      "threadId": "PRRT_kwDOP-e7KM6oXEzY",
+      "path": "docsfn/core/src/search.test.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166368401",
+      "status": "Invalid",
+      "evidence": "The strings are deliberately synthetic redaction inputs with assertions that they are removed from public output, not real credentials."
+    },
+    {
+      "snapshotIndex": 262,
+      "threadId": "PRRT_kwDOP-e7KM6oXE4N",
+      "path": "docsfn/core/src/search.test.ts",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166368861",
+      "status": "Invalid",
+      "evidence": "Duplicate synthetic-redaction finding; no credential is present."
+    },
+    {
+      "snapshotIndex": 263,
+      "threadId": "PRRT_kwDOP-e7KM6oXE8k",
+      "path": "docsfn/svelte/src/Breadcrumbs.svelte",
+      "url": "https://github.com/21nCo/super-functions/pull/133#discussion_r4166369293",
+      "status": "Fixed",
+      "evidence": "The separator source prop has a Svelte Component type instead of any."
+    }
+  ]
+}

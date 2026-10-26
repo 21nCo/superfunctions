@@ -1,0 +1,5330 @@
+# docsfn
+
+> The documentation toolchain for superfunctions
+
+This file concatenates the full text of every documentation page so it can be loaded into
+an LLM-based assistant in a single shot. For programmatic access, prefer the MCP server
+or the structured manifest emitted alongside this file.
+
+# Documentation
+
+<!-- page:docs:api/cli/index.md path:/docs/api/cli -->
+# @docsfn/cli
+
+> docsfn command-line interface reference.
+
+
+# @docsfn/cli
+
+Binary: **`docsfn`** (package **`@docsfn/cli`**).
+
+## Global options pattern
+
+Commands accept an optional positional **`[root]`** (defaults to `.`) plus flags below.
+
+## `docsfn validate [root]`
+
+Validates config + content pipeline **without** writing artifacts.
+
+| Flag | Description |
+| --- | --- |
+| **`--root <dir>`** | Working directory containing config. |
+| **`--config <path>`** | Explicit config file. |
+
+**Exit code:** `0` when no **error** diagnostics; `1` otherwise.
+
+**Output:** Colored diagnostics + summary counts.
+
+## `docsfn build [root]`
+
+Runs pipeline and writes **`.docsfn/`** (or **`--out-dir`**).
+
+| Flag | Description |
+| --- | --- |
+| **`--root`** / **`--config`** | Same as validate. |
+| **`--out <dir>`** | Legacy alias for output directory. |
+| **`--out-dir <dir>`** | Output directory (default **`.docsfn`**). |
+
+**Artifacts:** `manifest.json`, `search.json` (when enabled), `diagnostics.json`, `compat-report.json`.
+
+**Exit code:** `0` on success without errors; `1` on errors.
+
+**Console:** Prints timing + search artifact byte size when applicable.
+
+## `docsfn dev [root]`
+
+Initial build + **chokidar** watch on config file + content directories (skips output dir).
+
+| Flag | Description |
+| --- | --- |
+| **`--root`** / **`--config`** / **`--out-dir`** | Same semantics as `build`. |
+
+**Exit code:** `1` if initial build has errors.
+
+**Behavior:** Queued rebuilds on change; prints `dev:rebuild` summaries.
+
+## Pipeline internals (summary)
+
+`loadDocsConfig` → **`FsContentProvider`** → **`buildManifest`** → **`buildSearchIndex`** → collect diagnostics → **`writeArtifacts`** (build/dev only).
+
+---
+
+<!-- page:docs:api/core/analytics.md path:/docs/api/core/analytics -->
+# core — Analytics
+
+> Canonical analytics event names and emit helpers in @docsfn/core.
+
+
+# Analytics (`@docsfn/core`)
+
+## Event names
+
+**`CANONICAL_DOCS_ANALYTICS_EVENT_NAMES`:**
+
+- `docs.pageview`
+- `docs.search`
+- `docs.search_result_click`
+- `docs.external_click`
+
+**`DocsAnalyticsEventName`** — union of the above.
+
+## `DocsAnalyticsEvent`
+
+Fields include **`name`**, ISO **`timestamp`**, **`route`**, optional **`version`**, **`sidebarId`**, **`searchScope`**, **`resultCount`**, **`targetUrl`**.
+
+## Emit pipeline
+
+| Function | Role |
+| --- | --- |
+| **`maybeEmitAnalyticsEvent`** | Respects **`respectDnt`** + optional explicit DNT value; calls your **`emit`** callback. |
+| **`createDocsAnalyticsEmitter`** | Factory for a reusable emitter with defaults. |
+| **`isCanonicalDocsAnalyticsEventName(value)`** | Type guard — returns `true` when `value` is one of the canonical event names. |
+| **`sanitizeDocsAnalyticsEvent(event)`** | Redacts sensitive URL query params from event fields. Returns sanitized event or `null` if the event is invalid. |
+
+URL-like fields are sanitized to drop sensitive query keys before emission (see implementation in `analytics.ts`).
+
+## Input types
+
+**`DocsAnalyticsEmitInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Master switch. |
+| `respectDnt` | `boolean` | When `true`, suppresses emit if Do Not Track is active. |
+| `event` | `DocsAnalyticsEvent` | The event payload. |
+| `emit` | `(event: DocsAnalyticsEvent) => void` | Your emit callback. |
+| `doNotTrackValue?` | `string \| null` | Explicit DNT header value override. |
+
+**`CreateDocsAnalyticsEmitterInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled?` | `boolean` | Default `false`. |
+| `respectDnt?` | `boolean` | Default `true`. |
+| `emit` | `(event: DocsAnalyticsEvent) => void` | Your emit callback. |
+| `doNotTrackValue?` | `string \| null` | Explicit DNT header value override. |
+
+---
+
+<!-- page:docs:api/core/blog.md path:/docs/api/core/blog -->
+# core — Blog
+
+> Dated collection canonicalization types and helpers in @docsfn/core.
+
+
+# Blog (`@docsfn/core`)
+
+## `buildCanonicalDatedCollectionRecords(input)`
+
+Generic dated-content canonicalizer for blog, changelog, release notes, and similar one-file-per-update collections.
+
+**`BuildCanonicalDatedCollectionRecordsInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `posts` | `NormalizedPostRecord[]` | Normalized dated sources from manifest pipeline. |
+| `collectionId?` | `string` | Collection id such as `blog` or `changelog`. |
+| `label?` | `string` | Display label such as `Blog` or `Changelog`. |
+| `searchScope?` | `string` | Search scope assigned to this collection. |
+| `routeBase?` | `string` | Public list/post/tag route base. |
+| `feedPath?` | `string` | Public RSS route. |
+| `basePath?` | `string` | Defaults to `/docs` normalization for list routes. |
+| `preview?` | `boolean` | When true, **draft** posts are retained. |
+| `pageSize?` | `number` | Archive size (minimum **1**, default **10**). |
+
+**Returns:** `CanonicalDatedCollectionBuildResult` — `{ id, label, scope, posts, listRoute, feedPath, postOrder, tags, archives }`.
+
+## `buildCanonicalBlogRecords(input)`
+
+Compatibility wrapper around **`buildCanonicalDatedCollectionRecords`** for the legacy blog surface.
+
+**`BuildCanonicalBlogRecordsInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `posts` | `NormalizedPostRecord[]` | Normalized blog sources from manifest pipeline. |
+| `routeBase?` | `string` | Public blog route base. |
+| `feedPath?` | `string` | Public blog RSS route. |
+| `basePath?` | `string` | Defaults to `/docs` normalization for list routes. |
+| `preview?` | `boolean` | When true, **draft** posts are retained. |
+| `pageSize?` | `number` | Archive size (minimum **1**, default **10**). |
+
+**Returns:** `CanonicalBlogBuildResult` — `{ posts, listRoute, feedPath, postOrder, tags, archives }` (plus the posts array matches **`BlogPost`** shape).
+
+## `BlogManifestSurface`
+
+| Field | Description |
+| --- | --- |
+| `listRoute` | Blog index path. |
+| `feedPath` | RSS path suffix used by **`generateRSSFeed`**. |
+| `postOrder` | Ordered post ids (newest first). |
+| `tags` | Map tag label → **`BlogTagIndex`**. |
+| `archives` | `BlogArchivePage[]` pagination descriptors. |
+
+## `BlogTagIndex` / `BlogArchivePage`
+
+See **`types.ts`** — include `path`, `slug`, `postIds`, and archive `page` / `totalPages` / `pageSize`.
+
+## Helpers
+
+- **`assertValidBlogPublishMetadata(post)`** — validates date fields.
+- **`resolveBlogLastBuildDate(posts)`** — RSS **`lastBuildDate`**.
+
+---
+
+<!-- page:docs:api/core/config.md path:/docs/api/core/config -->
+# core — Config
+
+> loadDocsConfig, defaults, and config validation in @docsfn/core.
+
+
+# Config (`@docsfn/core`)
+
+## `DEFAULT_CONFIG_FILENAMES`
+
+Readonly list of filenames tried under `cwd` when no explicit path is given:
+
+- `docsfn.config.ts`
+- `docsfn.config.mjs`
+- `docsfn.config.js`
+
+## `LoadDocsConfigInput`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `cwd` | `string` | Working directory to resolve from. |
+| `configPath` | `string` (optional) | Explicit config file path (absolute or relative to `cwd`). |
+
+## `loadDocsConfig(input)`
+
+- **Returns:** `Promise<DocsConfig>`
+- **Behavior:** Discovers a config module, imports it (TypeScript supported via optional `typescript` transpile when native import fails), validates with the internal Zod schema, and returns a typed **`DocsConfig`**. If no file exists, returns **`createDefaultDocsConfig({ cwd })`**.
+- **Throws:** **`DocsError`** with code **`DOCS_CONFIG_INVALID`** when the file is missing (explicit path), unloadable, or fails schema validation.
+
+There is **no separate public `validateConfig` export**; validation runs inside **`loadDocsConfig`**. Use **`isDocsConfigError`** to narrow caught errors.
+
+## `createDefaultDocsConfig({ cwd })`
+
+Builds a minimal valid **`DocsConfig`** for tooling and tests (default dirs, search on, auth off).
+
+## `isDocsConfigError(value)`
+
+Type guard: returns true when `value` is a **`DocsError`** (`name === "DocsError"` with `code`).
+
+## Related types
+
+Full schema fields are described under **[Types](./types)** and **[Configuration](../../core-concepts/configuration)**.
+
+---
+
+<!-- page:docs:api/core/diagnostics.md path:/docs/api/core/diagnostics -->
+# core — Diagnostics
+
+> DocsError, DocsDiagnostic, and error codes in @docsfn/core.
+
+
+# Diagnostics (`@docsfn/core`)
+
+## `DocsError`
+
+Subclass of **`Error`** with **`code`**, **`diagnostics`**, optional **`cause`**.
+
+## `createDocsError` / `createDiagnostic`
+
+Factory helpers used across the pipeline to attach structured **`DocsDiagnostic`** rows.
+
+## `DocsDiagnostic`
+
+| Field | Type |
+| --- | --- |
+| `code` | `DocsErrorCode` |
+| `severity` | `error` \| `warning` \| `info` |
+| `message` | Human-readable summary |
+| `location?` | `sourceId`, `absolutePath`, optional line/column |
+| `details?` | JSON-serializable bag |
+| `suggestion?` | Fix hint |
+
+## CLI helpers
+
+- **`hasErrorDiagnostics`**
+- **`formatDiagnosticsForCli`**
+- **`redactDiagnostics`**
+- **`assertNoErrorDiagnostics`**
+- **`diagnosticsFromUnknownError`**
+
+## `DocsErrorCode` values
+
+`DOCS_CONFIG_INVALID`, `DOCS_CONFIG_UNSUPPORTED`, `DOCS_PROVIDER_ERROR`, `DOCS_ENTRY_INVALID`, `DOCS_META_INVALID`, `DOCS_ROUTE_CONFLICT`, `DOCS_ROUTE_NOT_FOUND`, `DOCS_VERSION_INVALID`, `DOCS_COMPAT_UNSUPPORTED`, `DOCS_MDX_COMPILE_FAILED`, `DOCS_HTML_UNSAFE`, `DOCS_SEARCH_BUILD_FAILED`, `DOCS_OPENAPI_PARSE_FAILED`, `DOCS_REMOTE_FETCH_FAILED`, `DOCS_AUTH_REQUIRED`, `DOCS_AUTH_FORBIDDEN`, `DOCS_ARTIFACT_INVALID`.
+
+Legacy code normalization: **`normalizeDocsErrorCode`**, **`CANONICAL_DOCS_ERROR_CODES`**.
+
+---
+
+<!-- page:docs:api/core/helpers.md path:/docs/api/core/helpers -->
+# core — Helpers
+
+> High-level navigation helper exports from @docsfn/core.
+
+
+# Helpers (`@docsfn/core`)
+
+The **`helpers.ts`** module composes navigation primitives for adapters:
+
+| Function | Description |
+| --- | --- |
+| **`generateBreadcrumbs`** | Sidebar-aware or page-walking breadcrumbs (see [Navigation](./navigation)). |
+| **`getPaginationFromSidebar`** | Safe wrapper around **`resolvePaginationFromSidebar`** (swallows not-found). |
+| **`getPaginationFromSidebarWithTitles`** | Adds titles from manifest pages + frontmatter overrides. |
+| **`getTopNavigation`** | Returns manifest top nav array. |
+
+Types **`BreadcrumbItem`** and **`PaginationLinks`** are exported alongside these functions.
+
+---
+
+<!-- page:docs:api/core/index.md path:/docs/api/core -->
+# @docsfn/core
+
+> Framework-agnostic docsfn pipeline — config, manifest, search, compile, and types.
+
+
+# @docsfn/core
+
+Framework-agnostic engine for loading configuration, ingesting content through a **`DocsContentProvider`**, building a **`DocsManifest`**, compiling Markdown, generating search artifacts, and shared security/analytics helpers.
+
+## Installation
+
+```bash
+npm install @docsfn/core
+```
+
+## Export areas
+
+| Area | Topics |
+| --- | --- |
+| Config | [Config](./config) — `loadDocsConfig`, defaults, filenames |
+| Manifest | [Manifest](./manifest) — `buildManifest`, manifest shape |
+| Search | [Search](./search) — `buildSearchIndex`, artifact types |
+| Types | [Types](./types) — pages, posts, config, sidebars |
+| Navigation | [Navigation](./navigation) — sidebars, breadcrumbs, pagination |
+| Routing | [Routing](./routing) — slugs, routes, static param helpers |
+| Blog | [Blog](./blog) — canonical blog records |
+| Markdown | [Markdown](./markdown) — compile pipelines, block types |
+| Security | [Security](./security) — HTML trust, auth gates, redaction |
+| Analytics | [Analytics](./analytics) — canonical event types |
+| RSS | [RSS](./rss) — `generateRSSFeed` |
+| OpenAPI | [OpenAPI](./openapi) — canonical reference model |
+| Search Runtime | [Search Runtime](./search-runtime) — `createDocsSearchRuntime`, client-side querying |
+| Diagnostics | [Diagnostics](./diagnostics) — `DocsError`, codes, legacy code migration |
+| Theme | [Theme](./theme) — `ThemeConfig`, CSS vars |
+| Helpers | [Helpers](./helpers) — breadcrumb/pagination helpers |
+| Compat | Fumadocs v15 compatibility: `transformFumadocsV15` rewrites Fumadocs syntax before compile |
+| Normalize | Internal pipeline: `normalizeSourceEntries` transforms raw entries into page/post/api records |
+
+## Entry points
+
+| Entry | Purpose |
+| --- | --- |
+| `@docsfn/core` | Full server-side API |
+| `@docsfn/core/browser` | Browser-safe types plus diagnostics, sanitizing, Markdown/link compilation, security, and theme utilities. Search runtime and analytics use their dedicated subpath exports. |
+
+---
+
+<!-- page:docs:api/core/manifest.md path:/docs/api/core/manifest -->
+# core — Manifest
+
+> buildManifest and DocsManifest in @docsfn/core.
+
+
+# Manifest (`@docsfn/core`)
+
+## `buildManifest(provider, config, options?)`
+
+- **`provider`:** `DocsContentProvider` — typically **`FsContentProvider`**.
+- **`config`:** `ManifestConfig` — either a full **`DocsConfig`** (`schemaVersion: 1`) or a **legacy** object with `content` partial + top-level fields (see source `LegacyManifestConfig`).
+- **`options`:** `BuildManifestOptions`
+  - **`preview?: boolean`** — passed through blog canonicalization (include drafts when true).
+  - **`blogPageSize?: number`** — archive page size (default **10**).
+
+**Returns:** `Promise<DocsManifest>`.
+
+**Pipeline (summary):** list entries → trust/sanitize source → normalize pages/posts/apis/meta → build routes (conflict-checked) → OpenAPI references → sidebars → blog surface → optional embedded route table.
+
+## `DocsManifest` (fields)
+
+| Field | Description |
+| --- | --- |
+| `site` | `title`, optional `description`. |
+| `versions` | Optional version list for UI. |
+| `topNav` | From `navigation.topNav`. |
+| `pages` | Map id → **`DocPage`**. |
+| `posts` | Map id → **`BlogPost`**. |
+| `apis` | Map id → **`ApiReference`** (`spec` holds **`CanonicalOpenApiReference`**). |
+| `sidebars` | Map sidebar id → **`Sidebar`**. |
+| `routes` | Map **route path** → **source id**. |
+| `blog` | Optional **`BlogManifestSurface`**. |
+| `collections` | Map dated collection id → **`DatedCollectionManifestSurface`** for sections like changelog. |
+| `embedded` | Optional embedded route catalog for iframe-style hosts. |
+
+See **[Types](./types)** for nested interfaces.
+
+---
+
+<!-- page:docs:api/core/markdown.md path:/docs/api/core/markdown -->
+# core — Markdown
+
+> Markdown compilation and CompiledContentBlock types in @docsfn/core.
+
+
+# Markdown (`@docsfn/core`)
+
+## Pipelines
+
+| Function | Output |
+| --- | --- |
+| **`compileMarkdown(input)`** | `CompiledContentArtifact` — base compiler (framework-agnostic). |
+| **`compileSvelteContent(input)`** | `CompiledContentArtifact` with `framework: "svelte"`. |
+| **`compileReactContent(input)`** | `CompiledContentArtifact` with `framework: "react"`. |
+
+`compileSvelteContent` and `compileReactContent` are thin wrappers around **`compileMarkdown`** that set the `framework` field.
+
+**`CompileMarkdownInput`:** `source`, optional `sourcePath`, `framework`, **`compatPreset`**, **`allowRawHtml`**.
+
+## `extractHeadings`
+
+```ts
+extractHeadings(markdown: string): DocHeading[]
+```
+
+Parses raw Markdown and returns an array of **`DocHeading`** objects (`{ level, text, slug }`) without running the full compile pipeline. Useful for building a table of contents from source text before compilation.
+
+## `CompiledContentArtifact`
+
+| Field | Description |
+| --- | --- |
+| `framework` | `core` \| `svelte` \| `react`. |
+| `source` / `transformedSource` | Original and compat-transformed Markdown. |
+| `blocks` | Ordered **`CompiledContentBlock[]`**. |
+| `headings` / `toc` | Extracted heading metadata. |
+| `componentsUsed` | PascalCase components detected. |
+| `diagnostics` | Compile-time issues. |
+
+## `CompiledContentBlock` union
+
+| `type` | Payload |
+| --- | --- |
+| `heading` | `level`, `text`, `slug`. |
+| `paragraph` | `text`. |
+| `list` | `ordered`, `items[]` (each `{ text }`), `html`. |
+| `code` | `lang?`, `code`. |
+| `mermaid` | `code` (diagram source). |
+| `tabs` | `items`, `tabs[]` with `value` + `content`. |
+| `callout` | `kind`: note \| tip \| warning \| info \| caution; `text`. |
+| `table` | `html` (rendered HTML table). |
+| `component` | `name`, optional `body`, `selfClosing`. |
+
+Fumadocs preset may rewrite `Tabs`/`Tab` imports to docsfn component names before parsing.
+
+---
+
+<!-- page:docs:api/core/navigation.md path:/docs/api/core/navigation -->
+# core — Navigation
+
+> Sidebar and breadcrumb helpers in @docsfn/core.
+
+
+# Navigation (`@docsfn/core`)
+
+## Building sidebars
+
+### `buildSidebarFromPages(input)`
+
+Builds a single **`Sidebar`** from normalized pages + per-directory **`meta.json`** rules.
+
+### `buildSidebars(input)`
+
+Produces **`Record<string, Sidebar>`**: always includes **`default`**, then one entry per **`config.navigation.sidebars`** key filtered by `include` globs.
+
+### `buildAutoSidebar(pages)`
+
+Convenience function: builds a **`Sidebar`** directly from an array of **`DocPage`** objects without config or meta rules. Useful for programmatic sidebar construction.
+
+## Sidebar utilities
+
+### `flattenSidebarLinks(sidebar)`
+
+Depth-first list of `{ label, path }` link leaves (skips separators).
+
+### `resolveSidebarForRoute({ sidebars, route })`
+
+Returns the **first** sidebar id (alphabetical id order) whose flattened links contain **`route`**, or **`null`**.
+
+## Breadcrumbs
+
+### `resolveBreadcrumbsFromSidebar({ sidebar, route, rootLabel?, rootHref? })`
+
+Builds breadcrumb items from the active sidebar trail.
+
+### `generateBreadcrumbs(path, pagesOrManifest, options?)`
+
+High-level API: when given a manifest with sidebars, delegates to sidebar resolution; otherwise falls back to path/page walking.
+
+## Pagination
+
+### `resolvePaginationFromSidebar({ sidebar, route })`
+
+Prev/next links from flattened sidebar order; throws **`DOCS_ROUTE_NOT_FOUND`** if the route is not in that sidebar.
+
+### `getPaginationFromSidebar(currentPath, sidebar)` / `getPaginationFromSidebarWithTitles(...)`
+
+**`getPaginationFromSidebarWithTitles`** applies **`frontmatter.prev` / `frontmatter.next`** overrides when present.
+
+## Top navigation
+
+### `getTopNavigation(manifest)`
+
+Returns **`manifest.topNav ?? []`**.
+
+---
+
+<!-- page:docs:api/core/openapi.md path:/docs/api/core/openapi -->
+# core — OpenAPI
+
+> OpenAPI parsing and CanonicalOpenApiReference in @docsfn/core.
+
+
+# OpenAPI (`@docsfn/core`)
+
+## Pipeline functions
+
+| Function | Role |
+| --- | --- |
+| **`parseOpenApiSource`** | Detect JSON vs YAML, parse to object, validate top-level shape. |
+| **`normalizeOpenApiReference`** | Transform parsed spec → canonical reference (+ diagnostics for unsupported sections like webhooks). |
+| **`buildOpenApiReference`** | High-level builder used by **`buildManifest`** (`body` string in). |
+| **`resolveOpenApiRoute(reference, route)`** | Classify a path against `reference.routes` (overview, tag, operation, schema). |
+
+## `CanonicalOpenApiReference` (summary)
+
+| Area | Content |
+| --- | --- |
+| Identity | `schemaVersion`, `sourceId`, `sourcePath`, `sourceFormat`, `openapiVersion`. |
+| Info | `title`, `description`, `version`, `info`, `servers`. |
+| Model | `tags[]` (**`CanonicalOpenApiTagGroup`**), `operations[]`, `schemas[]`. |
+| Routes | **`routes`**: `overview`, maps for `tags`, `operations`, `schemas`, plus **`all`**. |
+| Meta | `sourceMeta` (etag, sha256, remoteUrl, …). |
+| Diagnostics | OpenAPI-level warnings. |
+
+Operation paths follow **`{apiRoot}/operations/{method}-{slug}`**; tags **`.../tags/{slug}`**; schemas **`.../schemas/{slug}`**.
+
+---
+
+<!-- page:docs:api/core/routing.md path:/docs/api/core/routing -->
+# core — Routing
+
+> URL slugs, route building, and static param helpers in @docsfn/core.
+
+
+# Routing (`@docsfn/core`)
+
+## Slug utilities
+
+| Function | Role |
+| --- | --- |
+| **`normalizeSlug(value)`** | Normalize a slug string (POSIX-style, trimmed segments). |
+| **`slugToSegments` / `segmentsToSlug`** | Split/join path segments. |
+| **`stripSourceExtension`** | Remove `.md` / `.mdx` etc. for logical paths. |
+| **`deriveLogicalPathFromSourcePath`** | Map provider relative path → logical slug path. |
+
+## `buildRoute(input)`
+
+**`RouteBuildInput`:** collection, `sourcePath`, `frontmatter`, `config`.
+
+**Returns** `RouteBuildResult`: `slug`, **`path`** (full app path), optional **`version`**, **`logicalPath`**.
+
+- **Docs:** applies **version** segments when `config.versions.mode` is `path-prefix` or `path-segment` (version inferred from path + frontmatter via internal **`resolveVersionContext`** — not exported).
+- **Pages:** base path `""` with page slug.
+- **Blog:** `/blog/...` prefix.
+- **API:** `/api/...` style logical prefix from OpenAPI layout.
+
+## `assertRouteAvailability({ routes, path, sourceId })`
+
+Ensures a single owner per URL; throws **`DOCS_ROUTE_CONFLICT`** on duplicates.
+
+## `buildDocsStaticParams({ routes, basePath, versions? })`
+
+Maps manifest route strings to `{ slug?: string[]; version?: string }` entries for adapters (SvelteKit / Next).
+
+---
+
+<!-- page:docs:api/core/rss.md path:/docs/api/core/rss -->
+# core — RSS
+
+> generateRSSFeed in @docsfn/core.
+
+
+# RSS (`@docsfn/core`)
+
+## `generateRSSFeed(manifest, options)`
+
+**`RSSFeedOptions`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | `string` | Channel title. |
+| `description` | `string` | Channel description. |
+| `link` | `string` | Public site/blog base URL (no trailing slash required; normalized). |
+| `language?` | `string` | Default **`en`**. |
+| `feedHref?` | `string` | Overrides the **`atom:link rel="self"`** URL (use when the served feed path differs from **`manifest.blog.feedPath`** under **`link`**). |
+| `itemHref?` | `(post) => string` | Overrides per-item **`link`** / **`guid`** when public post URLs differ from **`link` + `post.path`**. |
+
+**Returns:** `string` — RSS 2.0 XML with Atom **`atom:link rel="self"`** (default: **`link`** + **`manifest.blog.feedPath`** unless **`feedHref`** is set).
+
+Ordering prefers **`manifest.blog.postOrder`**; otherwise sorts posts by publish timestamp.
+
+**Note:** The public function name is **`generateRSSFeed`** (not `buildRssFeed`).
+
+---
+
+<!-- page:docs:api/core/search-runtime.md path:/docs/api/core/search-runtime -->
+# core — Search Runtime
+
+> Client-side search runtime for querying DocsSearchArtifact in @docsfn/core.
+
+
+# Search Runtime (`@docsfn/core`)
+
+The search runtime provides client-side querying over a **`DocsSearchArtifact`**. Import from `@docsfn/core/search-runtime` or `@docsfn/core`.
+
+## `createDocsSearchRuntime(input)`
+
+Factory that returns a **`DocsSearchRuntime`** instance.
+
+**`CreateDocsSearchRuntimeInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| **`artifact`** | `DocsSearchArtifact?` | Inline artifact |
+| **`loadArtifact`** | `() => Promise<DocsSearchArtifact>?` | Lazy loader |
+
+Provide either `artifact` or `loadArtifact`. If neither is given, methods throw `DOCS_ARTIFACT_INVALID`.
+
+## `DocsSearchRuntime`
+
+| Method | Returns | Description |
+| --- | --- | --- |
+| **`ensureReady()`** | `Promise<void>` | Loads and validates the artifact, initializes the search engine. |
+| **`query(input)`** | `Promise<DocsSearchRuntimeResultItem[]>` | Executes a search query with optional scope filter and limit. |
+| **`getScopes()`** | `Promise<DocsSearchScope[]>` | Returns available scopes from the loaded artifact. |
+
+## `DocsSearchRuntimeQueryInput`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| **`query`** | `string` | Search query text |
+| **`scope`** | `DocsSearchScopeFilter?` | `"docs"` \| `"api"` \| `"blog"` \| `"all"` (default `"all"`) |
+| **`limit`** | `number?` | Max results (default 20) |
+
+## `DocsSearchRuntimeResultItem`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| **`id`** | `string` | Document id |
+| **`scope`** | `DocsSearchScope` | `"docs"` \| `"api"` \| `"blog"` |
+| **`kind`** | `"page"` \| `"api"` \| `"post"` | Content kind |
+| **`path`** | `string` | Route path |
+| **`title`** | `string` | Document title |
+| **`summary`** | `string` | Short text snippet |
+| **`score`** | `number` | Relevance score (higher is better) |
+
+Results are sorted by score descending, then title, then path, then id for deterministic ordering.
+
+## `DocsSearchScopeFilter`
+
+```ts
+type DocsSearchScopeFilter = DocsSearchScope | "all";
+```
+
+## Search index types
+
+### `DocsSearchBodyIndexing`
+
+```ts
+type DocsSearchBodyIndexing = "full" | "summary" | "disabled";
+```
+
+Controls the granularity of body text stored in the search index. Maps to `search.bodyIndexing` in **`DocsConfig`**.
+
+### `DocsSearchDocumentKind`
+
+```ts
+type DocsSearchDocumentKind = "page" | "api" | "post";
+```
+
+Discriminant for the kind of content a search document represents.
+
+### `DocsSearchDocument`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Stable document identifier. |
+| `scope` | `DocsSearchScope` | Which collection scope (`"docs"`, `"api"`, `"blog"`). |
+| `kind` | `DocsSearchDocumentKind` | Content kind. |
+| `path` | `string` | Route path. |
+| `title` | `string` | Document title. |
+| `summary` | `string` | Short text summary. |
+| `headings` | `string[]` | Extracted heading texts. |
+| `tags` | `string[]` | Associated tags. |
+| `body` | `string` | Indexed body text (depth depends on `bodyIndexing`). |
+
+## `resolveSearchScopeForRoute`
+
+```ts
+resolveSearchScopeForRoute(input: {
+  route: string;
+  kind: DocsSearchDocumentKind;
+  routeScopeOverrides?: DocsSearchRouteScopeOverride[];
+}): DocsSearchScope
+```
+
+Resolves the effective search scope for a given route. If `routeScopeOverrides` contains a pattern matching the route, the override scope is returned; otherwise the scope is inferred from `kind` (`"page"` → `"docs"`, `"api"` → `"api"`, `"post"` → `"blog"`). Used internally by **`buildSearchIndex`** and available for custom index pipelines.
+
+---
+
+<!-- page:docs:api/core/search.md path:/docs/api/core/search -->
+# core — Search
+
+> buildSearchIndex and search artifact types in @docsfn/core.
+
+
+# Search (`@docsfn/core`)
+
+## `buildSearchIndex(manifest, options?)`
+
+- **`manifest`:** `DocsManifest`
+- **`options`:** `BuildSearchIndexOptions` — `{ search?: DocsConfig["search"]; auth?: DocsConfig["auth"] }`
+
+**Returns:** `Promise<DocsSearchArtifact>` with **`bytes`** set to UTF-8 JSON length.
+
+When **`search.enabled`** is false (or resolved false), returns an empty artifact with zero documents and a minimal snapshot.
+
+When enabled, collects **`DocsSearchDocument`** rows per scope, enforces unique ids across scopes, builds a **searchfn** snapshot, and may attach **warnings** if **`maxArtifactBytes`** would be exceeded.
+
+## `DocsSearchScope`
+
+`"docs" | "api" | "blog"`
+
+## `DocsSearchDocument`
+
+Typical fields (see `search.ts`): `id`, `scope`, `kind` (`page` | `api` | `post`), `path`, `title`, `summary`, `headings`, `tags`.
+
+## `DocsSearchArtifact`
+
+| Field | Description |
+| --- | --- |
+| `schemaVersion` | `1` |
+| `engine` | `"searchfn"` |
+| `fields` | Indexed field names (title, summary, headings, tags, body). |
+| `scopes` | Active scopes. |
+| `bodyIndexing` | Resolved mode: `full` \| `summary` \| `disabled`. |
+| `documents` | Serializable document list. |
+| `snapshot` | Engine snapshot for browser runtime. |
+| `diagnostics` | Non-fatal issues. |
+| `bytes` | Serialized size. |
+
+Runtime querying lives in **`createDocsSearchRuntime`** (see [Search](../../core-concepts/search) in Core concepts).
+
+---
+
+<!-- page:docs:api/core/security.md path:/docs/api/core/security -->
+# core — Security
+
+> HTML trust, auth, and redaction helpers in @docsfn/core.
+
+
+# Security (`@docsfn/core`)
+
+## HTML sanitization (`sanitize.ts`)
+
+| Export | Role |
+| --- | --- |
+| **`BLOCKED_HTML_TAGS`** | Tags rejected in Markdown sources (`script`, `iframe`, `object`, `embed`, `link`, `meta`). |
+| **`BLOCKED_HTML_PATTERNS`** | Event-handler attributes and unsafe URL schemes. |
+| **`findUnsafeHtml(source)`** | Returns match metadata. |
+| **`assertSafeSource(input)`** | Throws **`DOCS_HTML_UNSAFE`** when matches exist (unless raw HTML allowed). |
+
+## Trust assertions
+
+| Function | Role |
+| --- | --- |
+| **`assertSourceEntriesTrusted`** | Validates Markdown entries before manifest compile. |
+| **`assertCompiledContentTrusted`** | Validates transformed Markdown prior to UI compile. |
+| **`collectUnsafeHtmlDiagnostics`** | Non-throwing diagnostic collector. |
+
+**`resolveUnsafeHtmlAllowlist`** merges env **`DOCSFN_HTML_UNSAFE_ALLOWLIST`** (comma-separated globs).
+
+## Type shapes
+
+**`SourceTrustPolicy`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `allowUnsafeHtml?` | `boolean` | Permit raw HTML in sources. |
+| `allowUnsafeHtmlAllowlist?` | `string[]` | Glob patterns for paths that may contain raw HTML. |
+
+**`AssertSourceEntriesTrustedInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `entries` | `DocsSourceEntry[]` | Source entries to validate. |
+| `policy?` | `SourceTrustPolicy` | Trust configuration. |
+
+**`AssertCompiledContentTrustedInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `source` | `string` | Transformed Markdown source. |
+| `sourcePath?` | `string` | Path for diagnostics. |
+| `policy?` | `SourceTrustPolicy` | Trust configuration. |
+
+**`AssertDocsRouteAccessInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `config` | `Pick<DocsConfig, "auth">` | Auth portion of docs config. |
+| `route` | `string` | Route path to check. |
+| `session?` | `unknown \| null` | Current session object. |
+| `resolveSession?` | `() => unknown \| Promise<unknown>` | Lazy session resolver. |
+| `isRoutePrivate?` | `(route: string) => boolean` | Custom private-route predicate. |
+| `authorize?` | `(input: { route, session }) => boolean \| Promise<boolean>` | Custom authorization check. |
+
+**`DocsRouteAccessResult`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | `DocsAuthMode` | Resolved auth mode (`public`, `private`, `mixed`). |
+| `route` | `string` | The checked route. |
+| `requiresAuth` | `boolean` | Whether the route needs authentication. |
+| `allowed` | `boolean` | Whether access is granted. |
+
+**`ResolveUnsafeHtmlAllowlistInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `value?` | `string` | Explicit allowlist string (overrides env). |
+
+## Auth
+
+| Export | Role |
+| --- | --- |
+| **`CANONICAL_DOCS_AUTH_MODES`** | `["public","private","mixed"]`. |
+| **`resolveDocsAuthMode`** | Maps config → mode (disabled auth → `public`). |
+| **`assertDocsRouteAccess`** | Async gate: throws **`DOCS_AUTH_REQUIRED`** / **`DOCS_AUTH_FORBIDDEN`**. |
+
+## Redaction
+
+**`redactSensitiveText`**, **`redactSensitivePayload`** — strip common secret patterns from strings and nested objects (used by search + analytics).
+
+
+For mixed-mode sites with a custom `isRoutePrivate` predicate, pass that same
+predicate and `auth` configuration to `buildSearchIndex`, `buildLlmsTxt`,
+`buildLlmsFullTxt`, and `buildLlmsTxtArtifacts`. Public artifacts are built outside
+the HTTP request gate and must use the same route classification to omit protected
+content. Private frontmatter and `/private` routes remain excluded as well.
+If the classifier is omitted with enabled mixed-mode auth, these programmatic
+artifact APIs also treat every route as private; they do not infer public routes.
+
+An API overview can contain every child operation's content. If any canonical
+operation, schema, or tag route is protected, public search and LLM artifacts omit
+that API entirely. With a custom mixed-mode classifier, normalize raw OpenAPI input
+into a canonical reference before artifact generation; unclassified raw API specs
+are omitted conservatively. Search artifacts also omit draft posts from preview
+manifests.
+
+The standard CLI cannot load a host route classifier. For enabled mixed-mode auth, `docsfn build` and `docsfn llms` warn and omit all routes from public search/LLM artifacts. Generate selected public content through the programmatic API with the same `isRoutePrivate` predicate as the runtime. Canonical API child arrays must all exist and each child must carry an absolute route; malformed or incomplete API route inventories are omitted.
+
+---
+
+<!-- page:docs:api/core/theme.md path:/docs/api/core/theme -->
+# core — Theme
+
+> ThemeConfig and CSS generation in @docsfn/core.
+
+
+# Theme (`@docsfn/core`)
+
+## `ThemeConfig`
+
+Optional nested object:
+
+- **`colors`** — `primary`, `secondary`, `background`, `foreground`, `muted`, `accent`, `destructive`, `border`.
+- **`fonts`** — `sans`, `mono`.
+- **`spacing`** — `container`, `section`.
+- **`darkMode`** — `"class"` \| `"media"` \| `false`.
+
+## `generateThemeCSS(config)`
+
+Returns a `:root { ... }` string of **`--docsfn-*`** custom properties for every provided key (see [Theming](../../core-concepts/theming)).
+
+**Note:** `destructive` color is accepted on **`ThemeConfig`** but may not yet emit a CSS variable — set manually if needed.
+
+## Presets
+
+- **`defaultLightTheme`**
+- **`defaultDarkTheme`**
+
+## `DocsTheme`
+
+`{ config: ThemeConfig; className: string }` — used when bundling class-based dark mode toggles.
+
+---
+
+<!-- page:docs:api/core/types.md path:/docs/api/core/types -->
+# core — Types
+
+> Primary TypeScript types exported from @docsfn/core.
+
+
+# Types (`@docsfn/core`)
+
+## Content models
+
+| Type | Purpose |
+| --- | --- |
+| **`DocPage`** | Docs collection page: `kind: "page"`, `id`, `slug`, `path`, `title`, `body`, `headings`, `frontmatter`, optional `version`, `lastUpdated`, `description`. |
+| **`BlogPost`** | Blog entry: `kind: "post"`, `id`, `slug`, `path`, `title`, `date`, `tags`, `draft`, `excerpt`/`summary`, `body`, `frontmatter`, optional `version`, `publishedAt`, `author`. |
+| **`ApiReference`** | API entry: `kind: "api"`, `id`, `slug`, `path`, `title`, `spec` (canonical OpenAPI object), `frontmatter`, optional `version`. |
+| **`DocHeading`** | TOC node: level, text, slug. |
+
+## Provider / source
+
+| Type | Purpose |
+| --- | --- |
+| **`DocsSourceEntry`** | Normalized file row from a provider: `id`, `collection`, `relativePath`, `absolutePath?`, `entryType` (`"content"` \| `"control"` \| `"asset"`), `frontmatter`, `body?`, `bytes?`, `sha256?`, `etag?`, `updatedAt?`, `meta?`. |
+| **`DocsContentProvider`** | Interface: `listEntries`, `loadEntry`, optional `loadAsset` / `watch`, legacy **`list()`**. |
+
+## Navigation
+
+| Type | Purpose |
+| --- | --- |
+| **`SidebarItem`** | `type`: `link` \| `group` \| `separator`; text; optional `link`, `items`, `expanded`. |
+| **`Sidebar`** | `id` + `items[]`. |
+| **`DocsTopNavItem`** | Top nav node with optional nested **`children`**. |
+
+## Config
+
+| Type | Purpose |
+| --- | --- |
+| **`DocsConfig`** | Root config (`schemaVersion: 1`, `site`, `content`, `navigation`, `search`, `auth`, `analytics`, …). Full field list: **[Config](./config)** + **[Configuration](../../core-concepts/configuration)**. |
+| **`DocsCompatPreset`** | `"none"` \| `"fumadocs-v15"`. |
+
+## Embedded
+
+| Type | Purpose |
+| --- | --- |
+| **`EmbeddedPageRoute`** | `pageId`, `sourcePath`, `pageRoute`, `surfaceRoute`, `title`, `tocCount`. |
+| **`EmbeddedManifestSurface`** | `pageRoutePrefix`, `surfaceRoutePrefix`, `hasSidebar`, `hasSearchTrigger`, `hasTopNavSlot`, `pages` (map id → `EmbeddedPageRoute`). |
+
+## Errors
+
+**`DocsErrorCode`** — string union of all 17 **`DOCS_*`** codes (see **[Diagnostics](./diagnostics)**).
+
+**`DocsDiagnostic`** — `code`, `severity`, `message`, optional `location`, `details`, `suggestion`.
+
+**`LegacyDocsErrorCode`** — `"DOCS_PROVIDER_INVALID"` | `"DOCS_ROUTE_INVALID"` | `"DOCS_COMPILE_FAILED"` | `"DOCS_SEARCH_FAILED"`. Mapped to current codes via **`normalizeDocsErrorCode`**.
+
+**`AnyDocsErrorCode`** — `DocsErrorCode | LegacyDocsErrorCode`.
+
+---
+
+<!-- page:docs:api/index.md path:/docs/api -->
+# API Reference
+
+> Package-level API reference for docsfn TypeScript packages.
+
+
+# API Reference
+
+docsfn ships as npm workspaces. This section documents the **primary runtime packages** used to build documentation sites.
+
+| Package | Role | Reference |
+| --- | --- | --- |
+| **@docsfn/core** | Config loading, manifest build, search index, routing, Markdown compile, security, OpenAPI normalization | [Core](./core) |
+| **@docsfn/sveltekit** | SvelteKit loaders, static params, route resolution, page surface, search response helper | [SvelteKit](./sveltekit) |
+| **@docsfn/svelte** | Svelte 5 UI components (sidebar, top bar, search, content renderer, …) | [Svelte](./svelte) |
+| **@docsfn/provider-fs** | Filesystem `DocsContentProvider` implementation | [Provider FS](./provider-fs) |
+| **@docsfn/cli** | `validate`, `build`, and `dev` commands | [CLI](./cli) |
+| **@docsfn/next** | Next.js App Router helpers (parity with SvelteKit kit) | [Next.js](./next) |
+| **@docsfn/react** | React UI components (parity with `@docsfn/svelte`) | [React](./react) |
+
+Conceptual guides (configuration, navigation, theming, integration) live under **[Guides](../guides)** and **[Core concepts](../core-concepts)**.
+
+---
+
+<!-- page:docs:api/next/index.md path:/docs/api/next -->
+# @docsfn/next
+
+> Next.js App Router helpers for resolving docs routes, static params, page metadata, and search JSON responses.
+
+
+# @docsfn/next
+
+Bridge between **`DocsManifest`** data and **Next.js App Router** (`generateStaticParams`, `generateMetadata`, route handlers).
+
+```bash
+npm install @docsfn/next
+```
+
+Peer: **`@docsfn/core`**. Use with a generated manifest (see **`@docsfn/cli`**).
+
+## Types
+
+### `DocsRouteEntry`
+
+Discriminated union:
+
+- `{ kind: "page"; id; route; page: DocPage }`
+- `{ kind: "api"; id; route; api: ApiReference }`
+- `{ kind: "post"; id; route; post: BlogPost }`
+
+### `NextDocsPageSurface`
+
+Resolved UI surface for React layouts: `route`, optional `title` / `description`, **`canonicalPath`**, **`canonicalUrl`**, optional `sidebarId`, `headings`, `breadcrumbs`, `pagination`, `topNav`, `versions`, `currentVersion`, `versionLinks`, optional `editLink` / `pageActions`.
+
+Supporting types: **`NextDocsPageLink`**, **`NextDocsPageBreadcrumbItem`**, **`NextDocsPagePagination`**.
+
+### Options types
+
+| Type | Fields |
+| --- | --- |
+| **`GenerateStaticParamsOptions`** | `basePath?`, `includeApiRoutes?` (default `true`) |
+| **`GenerateVersionedStaticParamsOptions`** | `basePath?`, `mode?` (`"path-prefix"` \| `"path-segment"`) |
+| **`ResolvePageOptions`** | `basePath?` (defaults normalize to `/docs`) |
+| **`ResolveVersionedPageOptions`** | `basePath?`, `mode?` |
+| **`GenerateMetadataOptions`** | `siteTitle?`, `canonicalUrl?` |
+| **`ResolvePageSurfaceOptions`** | `basePath?`, `sidebarId?`, `homeLabel?`, `homeHref?`, `canonicalUrl?`, `pageActions?`, `editLink?`, `versionMode?` |
+| **`SearchArtifactResponseInput`** | `artifact?`, `loadArtifact?`, `cacheControl?` |
+| **`CollectionPostOptions`** | `includeDrafts?` |
+| **`EmbedModeOptions`** | `param?` |
+
+`SlugParam` accepted by slug-based helpers is `string | string[] | readonly string[] | undefined`.
+
+## Route resolution
+
+| Function | Returns |
+| --- | --- |
+| **`resolveDocsRouteData(slug, manifest, options?)`** | `DocsRouteEntry \| null` |
+| **`resolveDocsRouteDataOrThrow(slug, manifest, options?)`** | `DocsRouteEntry` — throws **`DOCS_ROUTE_NOT_FOUND`** on miss |
+
+## Page, API, and blog data
+
+| Function | Returns |
+| --- | --- |
+| **`getPageData` / `getPageDataOrThrow`** | `DocPage` from slug under `basePath` |
+| **`getVersionedPageData` / `getVersionedPageDataOrThrow`** | `DocPage` for versioned routes (`version` + `slug`) |
+| **`getPostData` / `getPostDataOrThrow`** | `BlogPost` by normalized blog slug |
+| **`getCollectionPosts(collectionId, manifest, options?)`** | Ordered dated entries for a named collection like `blog` or `changelog` |
+| **`getCollectionPostData` / `getCollectionPostDataOrThrow`** | Single dated entry by collection + slug |
+| **`getApiData(slug, manifest, options?)`** | `ApiReference \| null` — treats slug segments under `{basePath}/api/...` |
+
+There is no `getApiDataOrThrow` variant in this package; handle `null` or use `resolveDocsRouteDataOrThrow` and branch on `kind`.
+
+## Embed mode
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| **`resolveEmbedMode(searchParams, options?)`** | `boolean` | Reads `?embed=1` by default; accepts Next-style `searchParams` objects. |
+| **`isEmbedModeValue(value)`** | `boolean` | Normalizes raw query values such as `1`, `true`, `yes`, `on`, or an empty present param. |
+
+## Static generation
+
+| Function | Purpose |
+| --- | --- |
+| **`generateStaticParams(manifest, options?)`** | `Array<{ slug?: string[] }>` for `[...slug]` (or similar) catch-all segments |
+| **`generateVersionedStaticParams(manifest, options?)`** | Adds `version` alongside optional `slug` |
+| **`generateBlogParams(manifest)`** | `{ slug: string }[]` sorted by slug |
+| **`generateCollectionParams(collectionId, manifest, options?)`** | `{ slug: string }[]` for any dated collection, e.g. `changelog` |
+| **`generateApiParams(manifest, { catchAll: true })`** | Overview and child routes as `{ slug?: string[] }[]` for `[[...slug]]`, with `{}` for the root overview; omit `catchAll` for slash-delimited strings |
+
+## Page metadata
+
+**`generatePageMetadata(page, site)`**
+
+- **`page`:** `DocPage`
+- **`site`:** either a **`string`** (used as `siteTitle`) or **`GenerateMetadataOptions`**
+
+Returns an object compatible with Next **`Metadata`**: `title`, `description`, `alternates.canonical`, `openGraph` (`title`, `description`, `url`).
+
+## Surface for layouts
+
+**`resolveDocsPageSurface(input)`**
+
+- **`input`:** `{ manifest, route, page?, options? }`
+- If **`page`** is omitted, the page is resolved from **`route`** via the manifest.
+
+Returns **`NextDocsPageSurface`** (sidebar, breadcrumbs, pagination, version links, etc.).
+
+**Aliases (same implementation):** **`resolveEmbeddedDocsSurface`**.
+
+## Search route handler
+
+**`createSearchArtifactResponse({ artifact?, loadArtifact?, cacheControl? })`**
+
+Async; returns a Web **`Response`** with JSON (`DocsSearchArtifact`) and `content-type: application/json`. On failure, returns **500** with `{ code, message }`.
+
+**Alias:** **`createDocsSearchArtifactResponse`**.
+
+## Convenience aliases
+
+| Alias | Underlying export |
+| --- | --- |
+| **`resolveEmbeddedDocsRouteData`** | `resolveDocsRouteData` |
+| **`getDocsBlogPostData`** | `getPostData` |
+| **`getDocsCollectionPostData`** | `getCollectionPostData` |
+| **`getDocsCollectionPosts`** | `getCollectionPosts` |
+| **`generateDocsBlogParams`** | `generateBlogParams` |
+| **`generateDocsCollectionParams`** | `generateCollectionParams` |
+| **`resolveDocsEmbedMode`** | `resolveEmbedMode` |
+
+## Re-exports from `@docsfn/core`
+
+**`assertDocsRouteAccess`**, **`maybeEmitAnalyticsEvent`**, **`createDocsAnalyticsEmitter`**, **`resolveDocsAuthMode`**, **`CANONICAL_DOCS_ANALYTICS_EVENT_NAMES`**, **`CANONICAL_DOCS_AUTH_MODES`**, and types **`DocsAnalyticsEvent`**, **`DocsAuthMode`**.
+
+## Example: doc page + metadata
+
+```tsx
+import {
+  generateStaticParams as docsGenerateStaticParams,
+  getPageDataOrThrow,
+  generatePageMetadata,
+  resolveDocsPageSurface,
+} from "@docsfn/next";
+import manifest from "../docsfn-manifest.json";
+
+type Props = { params: Promise<{ slug?: string[] }> };
+
+export async function generateStaticParams() {
+  return docsGenerateStaticParams(manifest);
+}
+
+export async function generateMetadata({ params }: Props) {
+  const { slug } = await params;
+  const page = getPageDataOrThrow(slug, manifest);
+  return generatePageMetadata(page, { siteTitle: "My Docs" });
+}
+
+export default async function DocsPage({ params }: Props) {
+  const { slug } = await params;
+  const page = getPageDataOrThrow(slug, manifest);
+  const route = page.path;
+  const surface = resolveDocsPageSurface({ manifest, route, page });
+  // pass surface to @docsfn/react DocsLayout, etc.
+  return null;
+}
+```
+
+---
+
+<!-- page:docs:api/provider-fs/index.md path:/docs/api/provider-fs -->
+# @docsfn/provider-fs
+
+> Filesystem DocsContentProvider for docsfn.
+
+
+# @docsfn/provider-fs
+
+## `FsContentProvider`
+
+### Constructor
+
+```ts
+new FsContentProvider({
+  root: string;
+  docsDir?: string;
+  pagesDir?: string;
+  blogDir?: string;
+  apiDir?: string;
+  assetsDir?: string;
+})
+```
+
+Paths in **`FsProviderOptions`** override config defaults when passed from your bootstrap (CLI mirrors **`DocsConfig.content`** into these fields).
+
+### `DocsContentProvider` methods
+
+| Method | Description |
+| --- | --- |
+| **`listEntries({ config, collections })`** | Walks configured directories with **fast-glob** `**/*`, returns **`DocsSourceEntry[]`**. |
+| **`loadEntry({ config, entry })`** | Identity pass-through for FS (entry already hydrated). |
+| **`loadAsset({ config, relativePath })`** | Reads bytes from assets root, returns length + sha256. |
+| **`watch({ config, onChange, collections? })`** | Returns subscription metadata for watched dirs (CLI dev uses metadata paths). Optional `collections` (`DocsCollection[]`) limits which collection directories are watched. |
+| **`list()`** | Legacy: loads default collections and maps to **`RawContentEntry[]`**. |
+
+### Collection directory resolution
+
+Relative to **`config.content.root`** (or `options.root`):
+
+| Collection | Config key | Default candidates |
+| --- | --- | --- |
+| docs | `content.docsDir` | `content/docs`, `docs` |
+| pages | `content.pagesDir` | `pages` |
+| blog | `content.blogDir` | `blog` |
+| api | `content.apiDir` | `api` |
+| assets | `content.assetsDir` | `public`, `assets` |
+
+### File types
+
+- Markdown **`.md` / `.mdx`** — docs, pages, blog.
+- **`.json` / `.yaml` / `.yml`** — api collection (OpenAPI).
+- **`meta.json`** (or `metaFileName`) — control files.
+- **Assets** — opaque binary/text files.
+
+## `DocsContentProvider` interface (core)
+
+Defined in **`@docsfn/core`**: `providerId`, `listEntries`, `loadEntry`, optional `loadAsset` / `watch`, and legacy **`list()`**.
+
+## Provider utility functions (`@docsfn/core`)
+
+These helpers are useful when implementing custom content providers:
+
+| Function | Description |
+| --- | --- |
+| **`normalizeProviderPath(inputPath)`** | Normalizes a file path to POSIX forward-slash format. |
+| **`createSourceEntryId(collection, relativePath)`** | Generates a stable, unique id for a source entry. |
+| **`stableSortSourceEntries(entries)`** | Deterministic sort by collection then relativePath. |
+| **`assertUniqueSourceEntryIds(entries)`** | Throws `DOCS_PROVIDER_ERROR` on duplicate ids. |
+| **`validateSourceEntries(entries)`** | Returns `DocsDiagnostic[]` for invalid entries (non-throwing). |
+| **`assertValidSourceEntries(entries)`** | Validates and returns entries; throws on errors. |
+| **`createProviderError(input)`** | Factory for `DOCS_PROVIDER_ERROR` `DocsError`. |
+| **`createProviderRemoteFetchError(input)`** | Factory for `DOCS_REMOTE_FETCH_FAILED` `DocsError`. |
+| **`sha256FromBuffer(buffer)`** | Computes SHA-256 hex digest from a `Buffer`. |
+| **`normalizeToPosixPath(value)`** | Converts backslashes to forward slashes. |
+| **`toLegacyRawEntries(entries)`** | Maps `DocsSourceEntry[]` to `RawContentEntry[]` for legacy consumers. |
+
+---
+
+<!-- page:docs:api/react/components.md path:/docs/api/react/components -->
+# @docsfn/react — components
+
+> Props and usage for DocsLayout, DocsSidebar, DocsContent, DocsSearch, ApiReferenceRenderer, and other React exports.
+
+
+# Components
+
+Reference for **`@docsfn/react`** exports. Types come from **`./DocsLayout`** or **`@docsfn/core`** as noted.
+
+## Quick usage snippets
+
+```tsx
+// DocsLayout + TopBar + surface from @docsfn/next / @docsfn/sveltekit
+<DocsLayout surface={surface} topbar={<TopBar surface={surface} searchTrigger={searchTriggerNode} />}>
+  <Breadcrumbs surface={surface} />
+  <DocsContent compiled={page.compiled} pageActionsSlot={editLinkSlot} />
+  <Pagination surface={surface} />
+</DocsLayout>
+```
+
+```tsx
+// Standalone sidebar / TOC
+<DocsSidebar sidebar={manifest.sidebars.default} activePath={page.path} />
+<DocsToc headings={page.headings} />
+```
+
+```tsx
+<DocsSearch loadSearchArtifact={() => fetch("/search.json").then((r) => r.json())} />
+<ApiReferenceRenderer api={api} />
+<BlogList posts={Object.values(manifest.posts)} />
+<VersionSwitcher surface={surface} />
+```
+
+```tsx
+<ThemeProvider defaultTheme="system">
+  <ThemeToggle />
+</ThemeProvider>
+<EmbeddedPage page={{ title: "Embed", body: markdownSource, headings }} compiled={compiledArtifact} />
+```
+
+## `DocsLayout`
+
+**Props (`DocsLayoutProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`children`** | `ReactNode` | Main column body |
+| **`surface`** | `DocsPageSurface?` | Optional aggregated nav/content metadata |
+| **`sidebar`** | `Sidebar?` | Overrides `surface.sidebar` |
+| **`headings`** | `DocHeading[]?` | Overrides `surface.headings` for TOC |
+| **`activePath`** | `string?` | Active sidebar href; default `surface.route` |
+| **`topbar`** | `ReactNode?` | Rendered in **`docsfn-topbar`** above the container |
+
+Renders **`docsfn-layout`**: optional top bar, sidebar column (**`DocsSidebar`**), main (**`children`**), TOC column (**`DocsToc`**) when headings exist.
+
+## `DocsSidebar`
+
+**Props (`DocsSidebarProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | Supplies `sidebar` and `route` when props below omitted |
+| **`sidebar`** | `Sidebar?` | From manifest; required unless on `surface` |
+| **`activePath`** | `string?` | Highlights current item |
+
+Uses **`@uifn/react`** **`Collapsible`** + **`ScrollArea`** for nested sidebar items. Groups expand when `item.expanded === true` or when a descendant link matches `activePath`.
+
+## `Breadcrumbs`
+
+**Props (`BreadcrumbsProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | Uses `surface.breadcrumbs` when `items` empty |
+| **`items`** | `BreadcrumbItem[]?` | `{ label, href? }` — explicit trail wins |
+| **`separator`** | `ReactNode?` | Between crumbs |
+| **`className`** | `string?` | Wrapper class |
+
+Returns **`null`** if there are no items.
+
+## `DocsContent`
+
+Renders compiled markdown blocks (headings, paragraphs, code, mermaid placeholders, callouts, tabs) or compiles **`content`** on the client via **`compileReactContent`**.
+
+**Props (`DocsContentProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`compiled`** | `CompiledContentArtifact?` | Pre-compiled blocks from core |
+| **`content`** | `string?` | Raw markdown / MDX source to compile |
+| **`sourcePath`** | `string?` | Passed to compiler for diagnostics |
+| **`compatPreset`** | `DocsCompatPreset?` | Default **`"none"`** |
+| **`allowUnsafeHtml`** | `boolean?` | Default **`false`** |
+| **`unsafeHtmlAllowlist`** | `string[]?` | Tag allowlist when unsafe HTML enabled |
+| **`components`** | `Record<string, ComponentType<{children?}>>?` | Custom MDX-style components by name |
+| **`renderMermaid`** | `(block: MermaidBlock) => ReactNode?` | Custom render function for Mermaid diagram blocks |
+| **`pageActionsSlot`** | `ReactNode?` | Injected near the article actions region |
+
+Trust path: when using **`compiled`**, core’s **`assertCompiledContentTrusted`** applies.
+
+## `DocsToc`
+
+**Props (`DocsTocProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | Default headings from `surface.headings` |
+| **`headings`** | `DocHeading[]?` | Explicit outline |
+| **`activeHash`** | `string?` | Controlled hash for active section |
+
+Uses **`IntersectionObserver`** (when no controlled `activeHash`) to highlight the visible heading.
+
+## `Pagination`
+
+**Props (`PaginationProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | Uses `surface.pagination.prev` / `next` |
+| **`prevPage`** / **`nextPage`** | `DocsPageLink?` | `{ title, path }` overrides |
+| **`sectionContext`** | `string?` | Optional label for a11y |
+| **`className`** | `string?` | Wrapper class |
+
+Registers **`Alt+ArrowLeft` / `Alt+ArrowRight`** to navigate prev/next when defined.
+
+## `DocsSearch`
+
+Client search UI over a **`DocsSearchArtifact`** (or async loader). Uses **`createDocsSearchRuntime`** from core.
+
+**Props (`DocsSearchProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`searchArtifact`** | `DocsSearchArtifact?` | Inline index |
+| **`searchIndex`** | `DocsSearchArtifact?` | Alias of artifact |
+| **`loadSearchArtifact`** | `() => Promise<DocsSearchArtifact>?` | Lazy load |
+| **`placeholder`** | `string?` | Default **`"Search docs..."`** |
+| **`initialScope`** | `DocsSearchScope \| "all"` | Default **`"all"`** |
+| **`scopes`** | Array of scope or **`"all"`** | Default all scopes |
+| **`analytics`** | `{ enabled?, respectDnt?, route?, onEvent? }` | Forwards to **`maybeEmitAnalyticsEvent`** |
+
+Either provide an artifact or **`loadSearchArtifact`**.
+
+## `ApiReferenceRenderer`
+
+Renders an **`ApiReference`** (OpenAPI-derived) with tabs for paths, schemas, etc.
+
+**Props (`ApiReferenceRendererProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`api`** | `ApiReference` | Required |
+| **`className`** | `string?` | Root wrapper class |
+
+Depends on **`@uifn/react`** **`Tabs`** and **`ScrollArea`**.
+
+## `BlogList`
+
+**Props (`BlogListProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`posts`** | `BlogPost[]` | Required |
+| **`selectedTag`** | `string?` | Filter posts whose tags include this (case-insensitive) |
+| **`onTagClick`** | `(tag: string) => void?` | Tag chip handler |
+
+Sorts by date (newest first) when parseable, else by slug.
+
+## `VersionSwitcher`
+
+**Props (`VersionSwitcherProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | `versions`, `currentVersion`, `versionLinks` |
+| **`versions`** | `Version[]?` | Override list |
+| **`currentVersion`** | `string?` | Active slug |
+| **`onVersionChange`** | `(versionSlug: string) => void?` | Selection callback (e.g. router push) |
+| **`className`** | `string?` | Wrapper class |
+
+Uses the **`@uifn/react`** **`Menu`** primitive.
+
+## `ThemeProvider`
+
+**Props (`ThemeProviderProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`children`** | `ReactNode` | Required |
+| **`defaultTheme`** | **`Theme`** (`"light"` \| `"dark"` \| `"system"`) | Default **`"system"`** |
+| **`storageKey`** | `string?` | **`localStorage`** key; default **`"docsfn-theme"`** |
+
+Sets **`document.documentElement`** classes **`light`/`dark`** and **`data-docsfn-theme`**.
+
+Also exported:
+
+- **`useTheme()`** → **`ThemeContextValue`**: `{ theme, setTheme, actualTheme }` — throws if used outside provider.
+- **`ThemeToggle({ className? })`** — simple toggle control.
+
+## `TopBar`
+
+**Props (`TopBarProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`surface`** | `DocsPageSurface?` | Maps `topNav` to items when `items` omitted |
+| **`logo`** | `ReactNode?` | Brand slot |
+| **`items`** | **`TopBarItem[]?`** | Links or dropdowns (**`TopBarLink`**, **`TopBarDropdown`**) |
+| **`searchTrigger`** | `ReactNode?` | e.g. button opening search |
+| **`versionSelector`** | `ReactNode?` | e.g. **`VersionSwitcher`** |
+| **`mobileMenuTrigger`** | `ReactNode?` | Hamburger / drawer trigger |
+| **`className`** | `string?` | Appended to **`docsfn-topbar`** |
+
+**`TopBarLink`:** `label`, `href`, `external?`. **Dropdown:** `label`, `items: TopBarLink[]`.
+
+## `EmbeddedPage`
+
+For docs or marketing surfaces that are not full **`DocsLayout`** pages: article + optional TOC + **`DocsContent`**.
+
+**Props (`EmbeddedPageProps`):**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`page`** | **`EmbeddedPageModel`** | `title`, `description?`, `body`, `headings?` |
+| **`compiled`** | `CompiledContentArtifact?` | Passed through to **`DocsContent`** |
+| **`compatPreset`** | `DocsCompatPreset?` | Default **`"none"`** |
+| **`components`** | Custom component map | Same as **`DocsContent`** |
+| **`showToc`** | `boolean?` | Default **`true`** |
+| **`tocLabel`** | `string?` | Default **`"On this page"`** |
+| **`pageActionsSlot`** | `ReactNode?` | Forwarded to **`DocsContent`** |
+
+### VersionSwitcher path configuration
+
+`basePath` is the site mount (default `/docs`). `versionMode` accepts `path-prefix` (default) or `path-segment`. When no version-link override is available, `path-prefix` replaces the version immediately after the mount; `path-segment` replaces the trailing version segment. Navigation preserves the remaining path, trailing slash, query, and hash.
+
+---
+
+<!-- page:docs:api/react/index.md path:/docs/api/react -->
+# @docsfn/react
+
+> React UI primitives for docsfn layouts, navigation, search, API reference, blog, and theming.
+
+
+# @docsfn/react
+
+Present **`DocsManifest`**-backed documentation in React: sidebar, TOC, content rendering, search dialog, top bar, and OpenAPI-style API pages.
+
+```bash
+npm install @docsfn/react
+```
+
+## Peer dependencies
+
+- **`react`** — UI components are React function components.
+- **`@docsfn/core`** — types and runtime (`DocPage`, `Sidebar`, `ApiReference`, search runtime, markdown compile helpers, etc.).
+- **`@uifn/react`** — primitives used by search, sidebar collapsibles, scroll areas, and menus.
+
+Ensure your bundler resolves **`@uifn/react`** and applies the same React instance as your app.
+
+## Package layout
+
+| Concern | Where |
+| --- | --- |
+| Page chrome | **`DocsLayout`**, **`TopBar`**, **`DocsSidebar`**, **`DocsToc`**, **`Breadcrumbs`**, **`Pagination`**, **`VersionSwitcher`** |
+| Content | **`DocsContent`**, **`EmbeddedPage`** |
+| API reference | **`ApiReferenceRenderer`** |
+| Blog | **`BlogList`** |
+| Search | **`DocsSearch`** |
+| Theming | **`ThemeProvider`**, **`useTheme`**, **`ThemeToggle`** |
+
+See **[Components](./components)** for props and usage patterns for each export.
+
+## `DocsPageSurface`
+
+Many components accept an optional **`surface`** shaped like the object returned by framework helpers (e.g. **`resolveDocsPageSurface`** from **`@docsfn/next`** or **`@docsfn/sveltekit`**): `route`, `title`, `description`, `sidebar`, `headings`, `breadcrumbs`, `pagination`, `topNav`, version fields, `editLink`, `pageActions`. You can omit **`surface`** and pass explicit props instead (e.g. **`DocsSidebar`** with **`sidebar`** + **`activePath`**).
+
+## Styles
+
+Components rely on **`docsfn-*`** class names (e.g. **`docsfn-layout`**, **`docsfn-sidebar`**). Import your docs site CSS that targets these classes, or the default theme package your starter uses.
+
+### Embedded article route context
+
+Pass `route` as the actual URL hosting the embedded article, which can differ from its canonical docs URL. Pass the original source identity as Svelte `sourcePath` (React `page.id`) so index-page links resolve correctly. React uses `page.path` only as a fallback when `route` is omitted. For raw Markdown, these values let EmbeddedPage compile and resolve relative links before rendering.
+
+---
+
+<!-- page:docs:api/svelte/components.md path:/docs/api/svelte/components -->
+# @docsfn/svelte — Components
+
+> Props and behavior for docsfn Svelte UI components.
+
+
+# Components (`@docsfn/svelte`)
+
+Types **`DocsPageSurface`**, **`DocsPageLink`**, etc., are defined alongside **`DocsLayout.svelte`** and re-exported from the package.
+
+## DocsLayout
+
+**Props:** `surface?`, `sidebar?`, `headings?`, `activePath?`.
+
+**Slots:**
+
+- **`topbar`** — place **`TopBar`** or branding.
+- **Default slot** — main page content.
+
+Renders **`DocsSidebar`** when a sidebar resolves, and **`DocsToc`** when headings exist.
+
+## DocsContent
+
+**Props:**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`compiled`** | `CompiledContentArtifact?` | Pre-compiled blocks from core |
+| **`blocks`** | `CompiledContentBlock[]?` | Pass blocks directly, bypassing artifact |
+| **`content`** | `string` | Raw Markdown source (default `""`) |
+| **`sourcePath`** | `string?` | Passed to compiler for diagnostics |
+| **`compatPreset`** | `DocsCompatPreset` | Default **`"none"`** |
+| **`allowUnsafeHtml`** | `boolean` | Default **`false`** |
+| **`unsafeHtmlAllowlist`** | `string[]` | Tag allowlist when unsafe HTML enabled |
+| **`components`** | `Record<string, ComponentType \| undefined>` | Custom PascalCase tag → Svelte component |
+| **`renderMermaid`** | `ComponentType<{ block: CompiledMermaidBlock }>?` | Custom Mermaid diagram renderer component |
+
+**Slots:** **`page-actions`** — rendered after blocks inside **`data-docsfn-page-actions`**.
+
+Trust: when `compiled` is passed, runs **`assertCompiledContentTrusted`** against transformed source.
+
+## DocsSidebar
+
+**Props:** `surface?`, `sidebar?`, `activePath?`.
+
+Groups expand when `item.expanded === true` or when a descendant link matches `activePath`.
+
+## SidebarGroup
+
+**Props:** **`item`** (`SidebarItem`), **`activePath?`**, **`depth`** (internal recursion).
+
+Renders collapsible groups, separators (`hr`), and active link states (`aria-current`).
+
+## DocsToc
+
+**Props:** `surface?`, `headings?`, **`activeHash?`**.
+
+When **`activeHash`** is unset, mounts **IntersectionObserver** to highlight the visible heading.
+
+## DocsSearch
+
+**Props:** `searchArtifact?`, **`searchIndex`** (alias), **`loadSearchArtifact?`**, `placeholder`, **`initialScope`**, **`scopes`**, **`analytics`** (`enabled`, `respectDnt`, `route`, `onEvent`).
+
+**Behavior:** Global **Cmd/Ctrl+K** opens dialog; scope filters map to runtime scopes; results navigate via full page load by default.
+
+## TopBar
+
+**Props:** `surface?`, **`logo`**, **`items`** (override nav), **`searchTrigger`**, **`versionSelector`**, **`mobileMenuTrigger`** (each a component constructor).
+
+Derives **`items`** from **`surface.topNav`** when omitted.
+
+## Pagination
+
+**Props:** `surface?`, **`prevPage`**, **`nextPage`**, **`sectionContext`**.
+
+**Keyboard:** **Alt+ArrowLeft** / **Alt+ArrowRight** when prev/next exist.
+
+## Breadcrumbs
+
+**Props:** `surface?`, **`items`** (explicit `{ label, href? }[]`), **`separator`** (component).
+
+## VersionSwitcher
+
+**Props:** `surface?`, **`versions`**, **`currentVersion`**, **`onVersionChange`**.
+
+Default navigation uses **`surface.versionLinks`** or regex rewrite of the first version path segment.
+
+## EmbeddedPage
+
+**Props:** `title`, `description?`, `content`, `headings`, `compiled?`, **`compatPreset`**, **`components`**, **`showToc`**, **`tocLabel`**.
+
+Delegates body rendering to **`DocsContent`**.
+
+## ApiReferenceRenderer
+
+**Props:** **`api`** (`ApiReference`).
+
+Renders operations, parameters, and responses from **`api.spec`** (**`CanonicalOpenApiReference`**).
+
+---
+
+<!-- page:docs:api/svelte/index.md path:/docs/api/svelte -->
+# @docsfn/svelte
+
+> Svelte 5 UI components for docsfn documentation sites.
+
+
+# @docsfn/svelte
+
+Shipped components wrap **`@uifn/svelte`** primitives (dialogs, tabs, scroll areas) and expect a resolved **`DocsPageSurface`** (or explicit props) from your layout loader.
+
+```bash
+npm install @docsfn/svelte
+```
+
+## Package exports
+
+Default exports (Svelte files) are re-exported from the package entry — for Vite client bundles, prefer **direct `.svelte` file imports** or **`@site/*` aliases** (see [SvelteKit guide](../../guides/sveltekit)).
+
+## Component index
+
+Detailed props: **[Components](./components)**.
+
+| Component | Summary |
+| --- | --- |
+| **DocsLayout** | Shell with sidebar column, main slot, TOC column; **`topbar`** slot. |
+| **DocsContent** | Renders **`CompiledContentArtifact`** or compiles raw Markdown. |
+| **DocsSidebar** | Recursive sidebar from **`Sidebar`**. |
+| **SidebarGroup** | Single **`SidebarItem`** renderer (link / group / separator). |
+| **DocsToc** | Heading list + optional **IntersectionObserver** active tracking. |
+| **DocsSearch** | Dialog search UI, Cmd/Ctrl+K. |
+| **TopBar** | Header nav + action slots. |
+| **Pagination** | Prev/next + Alt+Arrow shortcuts. |
+| **Breadcrumbs** | Trail with optional custom separator component. |
+| **VersionSwitcher** | Dropdown for **`manifest.versions`**. |
+| **EmbeddedPage** | Compact article + optional mini TOC. |
+| **ApiReferenceRenderer** | OpenAPI reference layout. |
+
+### Embedded article route context
+
+Pass `route` as the actual URL hosting the embedded article, which can differ from its canonical docs URL. Pass the original source identity as Svelte `sourcePath` (React `page.id`) so index-page links resolve correctly. React uses `page.path` only as a fallback when `route` is omitted. For raw Markdown, these values let EmbeddedPage compile and resolve relative links before rendering.
+
+---
+
+<!-- page:docs:api/sveltekit/index.md path:/docs/api/sveltekit -->
+# @docsfn/sveltekit
+
+> SvelteKit loaders, route resolution, static params, and search responses for docsfn.
+
+
+# @docsfn/sveltekit
+
+Bridge between **`DocsManifest`** data and **SvelteKit `Load` functions**, plus helpers for static adapters.
+
+```bash
+npm install @docsfn/sveltekit
+```
+
+## Types
+
+### `DocsRouteEntry`
+
+Discriminated union:
+
+- `{ kind: "page"; id; route; page: DocPage }`
+- `{ kind: "api"; id; route; api: ApiReference }`
+- `{ kind: "post"; id; route; post: BlogPost }`
+
+### `SvelteDocsPageSurface`
+
+Resolved UI surface: `route`, optional `title`/`description`, `canonicalPath`, `canonicalUrl`, `sidebarId`, `headings`, `breadcrumbs`, `pagination`, `topNav`, version fields, optional `editLink` / `pageActions`.
+
+Supporting types: **`DocsPageLink`**, **`DocsPageBreadcrumbItem`**, **`DocsPagePagination`**.
+
+## Route resolution
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| **`resolveDocsRouteData(slug, manifest, options?)`** | `DocsRouteEntry \| null` | `slug` may be `string`, `string[]`, or undefined (root). |
+| **`resolveDocsRouteDataOrThrow`** | `DocsRouteEntry` | Throws **`DOCS_ROUTE_NOT_FOUND`** on miss. |
+
+**`ResolvePageOptions`:** `{ basePath?: string }` (defaults normalize to `/docs`).
+
+## Page / API / post getters
+
+| Function | Returns |
+| --- | --- |
+| **`getPageData` / `getPageDataOrThrow`** | `DocPage` |
+| **`getVersionedPageData` / `getVersionedPageDataOrThrow`** | `DocPage` within a versioned path |
+| **`getApiData` / `getApiDataOrThrow`** | `ApiReference` |
+| **`getPostData` / `getPostDataOrThrow`** | `BlogPost` by blog slug |
+| **`getCollectionPosts(collectionId, manifest, options?)`** | Ordered dated entries for a named collection like `blog` or `changelog` |
+| **`getCollectionPostData` / `getCollectionPostDataOrThrow`** | Single dated entry by collection + slug |
+
+**`CollectionPostOptions`:** `{ includeDrafts?: boolean }`.
+
+## Embed mode
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| **`resolveEmbedMode(urlOrSearchParams, options?)`** | `boolean` | Reads `?embed=1` by default; useful for hiding site chrome inside product apps. |
+| **`isEmbedModeValue(value)`** | `boolean` | Normalizes raw query values such as `1`, `true`, `yes`, `on`, or an empty present param. |
+
+**`EmbedModeOptions`:** `{ param?: string }`.
+
+## Loader wrappers (`load*`)
+
+Thin wrappers mapping errors to SvelteKit **`error(404, ...)`**:
+
+- **`loadPageData`**, **`loadVersionedPageData`**, **`loadPostData`**, **`loadCollectionPostData`**, **`loadApiData`**
+
+## Static generation
+
+| Function | Purpose |
+| --- | --- |
+| **`generateStaticParams(manifest, options?)`** | `{ slug?: string }[]` for `[...slug]` routes. |
+| **`generateVersionedStaticParams`** | Adds `version` param. |
+| **`getStaticPaths` / `getVersionedStaticPaths`** | `{ params }[]` convenience. |
+| **`generateBlogParams` / `generateApiParams`** | Param lists for blog/api segments. |
+| **`generateCollectionParams(collectionId, manifest, options?)`** | Param list for any dated collection, e.g. `changelog`. |
+| **`getBlogPaths` / `getApiPaths`** | `{ params: { slug } }[]` helpers. |
+| **`getCollectionPaths(collectionId, manifest, options?)`** | `{ params: { slug } }[]` for any dated collection. |
+
+**`GenerateStaticParamsOptions`:** `basePath?`, `includeApiRoutes?` (default true).
+
+## Surface
+
+**`resolveDocsPageSurface({ manifest, route, page?, options? })`**
+
+**`ResolvePageSurfaceOptions`:** `basePath`, `sidebarId`, `homeLabel`/`homeHref`, `canonicalUrl`, `pageActions`, `editLink`, **`versionMode`**.
+
+## Load factories
+
+| Factory | Params event | Returns (success) |
+| --- | --- | --- |
+| **`createPageLoad(manifest, options?)`** | `{ slug?: string }` | `{ page, route, surface, manifest }` |
+| **`createVersionedPageLoad(manifest, options?)`** | `{ version, slug?: string }` | Adds `version`. |
+| **`createPostLoad(manifest)`** | `{ slug: string }` | `{ post, manifest }` |
+| **`createCollectionPostLoad(collectionId, manifest, options?)`** | `{ slug: string }` | `{ collection, post, manifest }` |
+| **`createApiLoad(manifest, options?)`** | `{ slug?: string }` | `{ api, manifest }` |
+
+All map **`DOCS_ROUTE_NOT_FOUND`** to HTTP 404 via SvelteKit **`error`**.
+
+## Search endpoint
+
+**`createSearchArtifactResponse({ artifact?, loadArtifact?, cacheControl? })`**
+
+Returns a **`Response`** with JSON body, appropriate content type, and default cache headers. Provide either **`artifact`** or async **`loadArtifact`**.
+
+## Re-exports
+
+Security + analytics symbols from **`@docsfn/core`** (`assertDocsRouteAccess`, `maybeEmitAnalyticsEvent`, …) for convenience.
+
+---
+
+<!-- page:docs:core-concepts/analytics.md path:/docs/core-concepts/analytics -->
+# Analytics
+
+> Canonical docsfn analytics events, DNT, watchfn provider, and URL sanitization.
+
+
+# Analytics
+
+docsfn defines a small **canonical event vocabulary** and helpers to emit events only when analytics is enabled and **Do Not Track** is respected.
+
+See also: [Configuration](./configuration), [Search](./search), [Security](./security).
+
+## Event types
+
+**`CANONICAL_DOCS_ANALYTICS_EVENT_NAMES`** in core:
+
+| Name | Typical use |
+| --- | --- |
+| `docs.pageview` | Route viewed. |
+| `docs.search` | Search query executed. |
+| `docs.search_result_click` | User opened a result. |
+| `docs.external_click` | Outbound link from docs UI. |
+
+## Event shape
+
+**`DocsAnalyticsEvent`** fields:
+
+- **`name`** — One of the canonical names above.
+- **`timestamp`** — ISO string.
+- **`route`** — Current docs route (sanitized).
+- **`version`**, **`sidebarId`**, **`searchScope`**, **`resultCount`**, **`targetUrl`** — Optional context.
+
+## Config
+
+```ts
+analytics: {
+  enabled: true,
+  provider: "watchfn",
+  respectDnt: true,
+},
+```
+
+Only **`watchfn`** is defined as the provider enum today; your **`emit`** callback receives structured events for forwarding to WatchFn or another backend.
+
+## DNT respect
+
+**`maybeEmitAnalyticsEvent`** checks **`respectDnt`**. When true, it resolves **`navigator.doNotTrack`** / **`window.doNotTrack`** (string `"1"` / `"yes"` semantics) and **skips** emission if the user has DNT enabled.
+
+You may pass **`doNotTrackValue`** explicitly in tests or SSR stubs.
+
+## URL sanitization
+
+Before emit, path-like fields run through **`sanitizePathLikeValue`**:
+
+- Parses URLs (absolute or relative against a dummy origin).
+- **Drops** query parameters whose names match sensitive patterns (`token`, `secret`, `key`, `authorization`, `cookie`, `session`, `password`, `sig`, …).
+- Runs values through **`redactSensitivePayload`** so hazardous values are removed rather than logged.
+
+This reduces accidental leakage of signed URLs or API keys in analytics payloads.
+
+## Components
+
+**`DocsSearch`** accepts an **`analytics`** prop and calls **`maybeEmitAnalyticsEvent`** for search-related actions when configured.
+
+---
+
+<!-- page:docs:core-concepts/blog.md path:/docs/core-concepts/blog -->
+# Blog
+
+> Blog posts, frontmatter, drafts, tags, archives, and manifest surfaces in docsfn.
+
+
+# Blog
+
+Blog content lives in the legacy **blog** collection (by default `content/blog/` or the path set in `content.blogDir`). Posts are Markdown files; the dated-content engine turns them into **`BlogPost`** records and a **`BlogManifestSurface`** on the docs manifest.
+
+For product changelog, use `collections.changelog` so changelog is represented as its own collection instead of being configured as a fake blog.
+
+See also: [Content format](./content-format), [RSS](./rss), [Search](./search).
+
+## Directory setup
+
+Point `content.blogDir` at a folder of `.md` / `.mdx` files for a normal blog. Each file becomes a post with a URL derived from its path. The default public section is `{site.basePath}/blog`.
+
+```ts
+content: {
+  blogDir: "content/blog",
+},
+blog: {
+  routeBase: "/docs/blog",
+},
+```
+
+For changelog:
+
+```ts
+collections: {
+  changelog: {
+    dir: "content/changelog",
+    routeBase: "/changelog",
+    feedPath: "/changelog/rss.xml",
+    label: "Changelog",
+    scope: "changelog",
+  },
+},
+```
+
+## Required frontmatter
+
+- **`title`** — Display title (also used in listings and RSS).
+- **`date`** — Publish date string; must parse to a finite timestamp (ISO-8601 dates like `2026-03-22` work).
+
+Missing or invalid `date` fails manifest build with **`DOCS_ARTIFACT_INVALID`**.
+
+## Optional frontmatter
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `author` | string or `{ name: string }` | Normalized to a single author string. |
+| `tags` | string array | Trimmed, lowercased, deduped, sorted (see below). |
+| `excerpt` | string | Preferred short text; else body is summarized (~220 chars). |
+| `summary` | string | May be carried on normalized posts; canonical build primarily uses **`excerpt`** plus body summarization for listing/RSS text. |
+| `draft` | boolean / string / number | See drafts below. |
+
+## Draft filtering
+
+Internally, the build pipeline treats a post as draft when:
+
+- `draft: true` (boolean), or
+- string **`"true"`**, **`"yes"`** (case-insensitive), or **`"1"`**, or
+- number **`1`**.
+
+**`buildCanonicalBlogRecords`** accepts **`preview`**: when `preview: true`, drafts are **included**; otherwise they are **filtered out** of listings, tags, archives, and RSS ordering.
+
+## Tag normalization
+
+Tags are trimmed, compared **case-insensitively**, deduped, then **sorted** for stable manifests. Each tag gets a **slug** for URLs (`toTagSlug`: lowercase, non-alphanumerics → `-`).
+
+## Archives and page size
+
+Archives default to **`pageSize: 10`** (minimum 1). Pages are:
+
+- **Page 1:** `{listRoute}` (e.g. `/docs/blog` when `basePath` is `/docs`).
+- **Page N:** `{listRoute}/page/{N}`.
+
+Each **`BlogArchivePage`** records `postIds`, `totalPages`, `totalPosts`, and `pageSize`.
+
+## Tag index pages
+
+For each tag, **`BlogTagIndex`** includes `tag`, `slug`, `path` (`{listRoute}/tags/{slug}`), and ordered `postIds`.
+
+## Listing and post routes
+
+Typical app routes (exact prefixes depend on `site.basePath`, `blog.routeBase`, or `collections.<id>.routeBase`):
+
+- **Index / paginated list** — `listRoute` and `.../page/:page`
+- **Post** — `{listRoute}/{postSlug}`
+- **Tag** — `{listRoute}/tags/:slug`
+
+Your SvelteKit or Next adapter should use **`manifest.blog`** for legacy blog params and links. For changelog or other dated sections, use **`manifest.collections.<id>`**.
+
+## `BlogManifestSurface`
+
+Exposed on **`DocsManifest.blog`**:
+
+| Field | Role |
+| --- | --- |
+| `listRoute` | Base path for the blog section. |
+| `feedPath` | RSS path (e.g. `/docs/blog/rss.xml`). |
+| `postOrder` | Stable ordered post ids (newest first by publish time). |
+| `tags` | Map of tag string → tag index metadata. |
+| `archives` | Paginated archive descriptors. |
+
+Posts themselves live in **`manifest.posts`** keyed by id.
+
+Named dated collections are exposed on **`DocsManifest.collections`** with the same surface shape plus `id`, `label`, and `scope`.
+
+---
+
+<!-- page:docs:core-concepts/cli.md path:/docs/core-concepts/cli -->
+# CLI
+
+> docsfn validate, build, and dev commands, options, artifacts, and pipeline overview.
+
+
+# CLI
+
+The **`docsfn`** CLI (`@docsfn/cli`) loads your config, runs the **manifest + search** pipeline, prints **diagnostics**, and writes **artifacts** to disk.
+
+## Installation
+
+- **One-off:** `npx docsfn <command>` from your docs site root.
+- **Project dependency:** add `@docsfn/cli` to `devDependencies` and run `npx docsfn` or a package script.
+
+## `docsfn validate [root]`
+
+Validates configuration and content **without** writing artifacts (beyond what the pipeline needs in memory).
+
+**Options:**
+
+| Flag | Description |
+| --- | --- |
+| `--root <dir>` | Working directory containing `docsfn.config.*` (defaults to positional `[root]` or `.`). |
+| `--config <path>` | Explicit config file path. |
+
+**Output:** Human-readable diagnostics (errors, warnings, info) via `formatDiagnosticsForCli`, plus a summary line with counts.
+
+**Exit code:** **`0`** when there are no error-severity diagnostics; **`1`** when any **error** exists (`hasErrorDiagnostics`).
+
+## `docsfn build [root]`
+
+Runs the full pipeline and writes output under **`--out-dir`** (default **`.docsfn`**). Legacy **`--out`** is accepted as an alias for the output directory.
+
+**Artifacts** (`writeArtifacts`):
+
+| File | Contents |
+| --- | --- |
+| `manifest.json` | Resolved `DocsManifest` (pages, routes, sidebars, blog, apis, …). |
+| `search.json` | `DocsSearchArtifact` when `search.enabled` is true and the index builds successfully. |
+| `diagnostics.json` | Array of `DocsDiagnostic` objects from the run. |
+| `compat-report.json` | Compatibility preset report (e.g. fumadocs parity hints). |
+
+**Console:** On success with a search artifact, the CLI prints build duration and **`search artifact` size in bytes**.
+
+**Exit code:** Same rule as validate—**`1`** on error diagnostics.
+
+## `docsfn dev [root]`
+
+1. Runs an **initial** pipeline + `writeArtifacts` (same as build).
+2. If errors occur, exits with code **`1`**.
+3. Computes **watch targets**: config file candidates, content collection directories from config (and optional provider watch metadata), **excluding** the output directory.
+4. Starts **chokidar** on those paths with `ignoreInitial: true`.
+5. On any change, queues a **rebuild** (`runPipeline` with `changedPaths`), rewrites artifacts, and prints diagnostics + `dev:rebuild` summary.
+
+**Output directory exclusion:** Changes **inside** `.docsfn` (or your chosen `--out-dir`) do **not** trigger rebuilds, preventing feedback loops.
+
+## Pipeline overview
+
+1. **Load config** — `loadDocsConfig` from `docsfn.config.ts` / `.mjs` / `.js`.
+2. **Create provider** — default CLI uses **`FsContentProvider`** rooted at the site.
+3. **Build manifest** — `buildManifest(provider, config)` resolves pages, meta, navigation, routes.
+4. **Build search index** — `buildSearchIndex(manifest, { search, auth })` when enabled.
+5. **Collect diagnostics** — config, content, compat, and search stages surface structured issues.
+6. **Write artifacts** — on `build` / `dev` only.
+
+For day-to-day authoring, run **`docsfn dev`** in one terminal and your framework dev server in another so JSON artifacts stay fresh.
+
+See also: [Search](./search), [Content providers](./content-providers).
+
+## Output ownership and failure recovery
+
+Build/dev record ownership in `.docsfn-build-outputs.json`; `docsfn llms` uses
+`.docsfn-llms-outputs.json`. Records identify generated files by content hash and
+filesystem identity. Legacy LLM hash-only records remain readable, with their
+older hash-only identity guarantees until successful regeneration.
+
+Files are staged completely, journaled, then renamed into place. Publication is
+atomic per file, not across the output set. A failed publication attempts to
+remove all still-owned outputs; cleanup failures are reported. The next invocation
+can recover staged files recorded by an interrupted publication.
+
+Removal preserves edited outputs, manual replacements and older files without an
+ownership record, and reports preserved artifact names. Inspect these warnings:
+unmanaged files can remain stale. Successful generation can replace regular files
+at the requested output names and establishes ownership for subsequent cleanup.
+Artifact and marker symlinks are rejected. The chosen directory must be trusted;
+this does not protect against concurrent filesystem replacement. A crash before
+the journal is written may leave an unrecorded temporary file.
+
+## Config loading
+
+Config import graphs are compiled into a temporary directory, so deployment
+source directories can be read-only. Static local imports and literal dynamic
+imports are staged together. Package-local aliases and package self references
+resolve using Node's import/require conditions; their package manifest is tracked
+as a config dependency. Only missing paths permit discovery to continue; access
+errors fail loading instead of silently selecting default configuration.
+
+The temporary graph is removed after the config export resolves, including on
+failure. Configuration is trusted executable JavaScript, not a sandbox. Computed
+runtime imports are not dependency-tracked; ordinary external packages retain
+Node's cache behavior. CommonJS staging cache entries are evicted, but Node's ESM
+module cache cannot be unloaded: repeated reloads can retain memory in a long-lived
+watch process. Graph limits bound each load, not lifetime process memory.
+
+Module-relative `import.meta.dirname`, `import.meta.filename`,
+`import.meta.resolve()` and `require.resolve()` retain the source module context.
+ESM resolver subprocesses preserve custom `--conditions`/`-C` flags. File-URL imports
+with query strings or fragments are rejected explicitly; remove those suffixes
+from config dependencies. First-run failure cleanup creates no output directory
+or marker when no ownership record exists.
+
+---
+
+<!-- page:docs:core-concepts/configuration.md path:/docs/core-concepts/configuration -->
+# Configuration
+
+> Exhaustive reference for docsfn.config.ts — every DocsConfig field, defaults, and examples.
+
+
+# Configuration
+
+docsfn loads **`docsfn.config.ts`**, **`docsfn.config.mjs`**, or **`docsfn.config.js`** from your project root (or `--config`). The loaded object must satisfy **`DocsConfig`** and is validated with **schema version `1`**.
+
+## Config file names
+
+| File | Notes |
+| --- | --- |
+| `docsfn.config.ts` | Recommended; TypeScript, `export default` object or factory. |
+| `docsfn.config.mjs` | ESM JavaScript. |
+| `docsfn.config.js` | CommonJS or ESM depending on your package `"type"`. |
+
+Config modules may use static imports and string-literal `import("./settings.js")` or `require("./settings.cjs")` calls. Local dependencies are reloaded with the config. Computed specifiers such as `const file = "./settings.js"; await import(file)` are **not supported**: the loader rejects them with `DOCS_CONFIG_INVALID` before evaluating the staged graph. Use a literal specifier so dependency discovery and dev-mode watches can track the file reliably. `require.resolve()` and `import.meta.resolve()` retain their original module-relative resolution context.
+
+If no file is found, docsfn uses **built-in defaults** (see [`createDefaultDocsConfig`](https://github.com/21nCo/super-functions/tree/dev/docsfn/core) behavior in `@docsfn/core`).
+
+---
+
+## `schemaVersion`
+
+| | |
+| --- | --- |
+| **Type** | literal `1` |
+| **Required** | yes |
+| **Default** | none (must be set explicitly in real configs) |
+| **Description** | Locks the config document to the v1 schema understood by the CLI and manifest. |
+
+**Example**
+
+```typescript
+schemaVersion: 1,
+```
+
+---
+
+## `site`
+
+Top-level site metadata and presentation hints.
+
+### `site.title`
+
+| | |
+| --- | --- |
+| **Type** | `string` (non-empty) |
+| **Required** | yes |
+| **Default** (implicit default config) | `"Docs"` |
+| **Description** | Short site name; used in manifests, sidebars, and chrome. |
+
+**Example:** `title: "docsfn"`
+
+### `site.description`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | One-line summary for SEO and search snippets. |
+
+**Example:** `description: "The documentation toolchain for superfunctions"`
+
+### `site.basePath`
+
+| | |
+| --- | --- |
+| **Type** | `` `/${string}` `` (must start with `/`) |
+| **Required** | no |
+| **Default** | `"/docs"` |
+| **Description** | URL prefix for the **docs** collection. |
+
+**Example:** `basePath: "/docs"`
+
+### `site.canonicalUrl`
+
+| | |
+| --- | --- |
+| **Type** | absolute URL `string` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Origin used when resolving canonical URLs for pages. |
+
+**Example:** `canonicalUrl: "https://docs.example.com"`
+
+### `site.defaultLocale`
+
+| | |
+| --- | --- |
+| **Type** | `string` (non-empty) |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Reserved for future i18n; pass-through in config today. |
+
+### `site.theme`
+
+| | |
+| --- | --- |
+| **Type** | `Record<string, unknown>` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Opaque theme tokens for UI adapters (structure is product-specific). |
+
+**Example:** `theme: { primary: "#2563eb" }`
+
+### `site.editLink`
+
+| | |
+| --- | --- |
+| **Type** | `Record<string, unknown>` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Edit-on-GitHub style metadata; often includes a `pattern` with `{path}` placeholder. |
+
+**Example:**
+
+```typescript
+editLink: {
+  pattern: "https://github.com/org/repo/edit/main/docs/{path}",
+},
+```
+
+### `site.pageActions`
+
+| | |
+| --- | --- |
+| **Type** | `Array<Record<string, unknown>>` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Declarative actions surfaced by UI packages. Each entry is passed through to the page surface as-is. Adapters expose them via `surface.pageActions` and components like `DocsContent` render them in the `pageActionsSlot` region. Common use: edit links, “View source” buttons, or feedback widgets. |
+
+---
+
+## `compat`
+
+Controls compatibility transforms for legacy content.
+
+### `compat.preset`
+
+| | |
+| --- | --- |
+| **Type** | `"none"` \| `"fumadocs-v15"` |
+| **Required** | no (object optional) |
+| **Default** | `"none"` when compat block present |
+| **Description** | `"none"` = native Markdown pipeline; `"fumadocs-v15"` enables Fumadocs-oriented transforms where supported. |
+
+### `compat.allowRawHtml`
+
+| | |
+| --- | --- |
+| **Type** | only `false` allowed when set |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Explicit opt-out hook for raw HTML policies in stricter modes. |
+
+**Example**
+
+```typescript
+compat: { preset: "none" },
+```
+
+---
+
+## `versions`
+
+Optional **versioned documentation**.
+
+### `versions.mode`
+
+| | |
+| --- | --- |
+| **Type** | `"none"` \| `"path-prefix"` \| `"path-segment"` |
+| **Required** | yes (when `versions` is set) |
+| **Default** | n/a |
+| **Description** | How version slugs appear in URLs (prefix vs segment). |
+
+### `versions.versions`
+
+| | |
+| --- | --- |
+| **Type** | `Array<{ slug: string; label: string; default?: boolean }>` (min 1 entry) |
+| **Required** | yes (when `versions` is set) |
+| **Default** | n/a |
+| **Description** | Catalog of versions. In `path-prefix` and `path-segment` modes, exactly one entry must set `default: true`. In `none` mode, at most one entry may set it. |
+
+**Example**
+
+```typescript
+versions: {
+  mode: "path-prefix",
+  versions: [
+    { slug: "v1", label: "1.x", default: true },
+    { slug: "v2", label: "2.x" },
+  ],
+},
+```
+
+---
+
+## `content`
+
+All paths are resolved relative to **`content.root`** unless already absolute.
+
+### `content.root`
+
+| | |
+| --- | --- |
+| **Type** | `string` (non-empty) |
+| **Required** | yes |
+| **Default** | process cwd when using implicit default config |
+| **Description** | Workspace root for collections. Often `"."`. |
+
+### `content.docsDir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"content/docs"` |
+| **Description** | Directory for documentation Markdown. |
+
+### `content.pagesDir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"pages"` |
+| **Description** | Optional standalone **pages** collection. |
+
+### `content.blogDir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"blog"` |
+| **Description** | Legacy blog Markdown directory. For changelog or other first-class dated sections, prefer `collections.<id>.dir`. |
+
+### `content.apiDir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"api"` |
+| **Description** | OpenAPI spec files (`.json`, `.yaml`, `.yml`). Not for hand-written API Markdown. |
+
+### `content.assetsDir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"public"` |
+| **Description** | Static assets root for the FS provider. |
+
+### `content.metaFileName`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | `"meta.json"` |
+| **Description** | Control file name for sidebar ordering per folder. |
+
+---
+
+## `navigation`
+
+### `navigation.topNav`
+
+| | |
+| --- | --- |
+| **Type** | `DocsTopNavItem[]` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Top bar links. Each item: `label`, `href`, optional `external`, optional nested `children`. |
+
+**Example**
+
+```typescript
+topNav: [
+  { label: "Docs", href: "/docs" },
+  { label: "GitHub", href: "https://github.com/org/repo", external: true },
+],
+```
+
+### `navigation.sidebars`
+
+| | |
+| --- | --- |
+| **Type** | `Record<string, { title?: string; root?: boolean; include?: string[] }>` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Named sidebars. **`include`** globs match internal paths like `docs/<sourcePath>` (not `content/docs/...`). A built-in **`default`** sidebar includes all docs pages. |
+
+**Example**
+
+```typescript
+sidebars: {
+  docs: { title: "Documentation", root: true, include: ["docs/**"] },
+  api: { title: "API Reference", root: true, include: ["docs/api/**"] },
+},
+```
+
+---
+
+## `collections`
+
+Named collections let docsfn reuse the dated Markdown engine for product sections that are not blogs, such as changelog.
+
+Each key becomes a collection id. For example, `collections.changelog` creates `manifest.collections.changelog`, reads from its own folder, and can use the `changelog` search scope.
+
+### `collections.<id>.dir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | yes |
+| **Description** | Folder containing one `.md` / `.mdx` file per dated update. |
+
+### `collections.<id>.routeBase`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | yes |
+| **Description** | Public list/post/tag route base for this collection. |
+
+### `collections.<id>.feedPath`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${routeBase}/rss.xml` |
+| **Description** | Public RSS feed path for this collection. |
+
+### `collections.<id>.label`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Description** | Display label such as `"Changelog"`. |
+
+### `collections.<id>.scope`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | collection id |
+| **Description** | Search scope used by posts in this collection. |
+
+**Changelog example**
+
+```typescript
+collections: {
+  changelog: {
+    dir: "content/changelog",
+    routeBase: "/changelog",
+    feedPath: "/changelog/rss.xml",
+    label: "Changelog",
+    scope: "changelog",
+  },
+},
+```
+
+---
+
+## `blog`
+
+The blog section controls the legacy blog route surface for dated Markdown posts. It remains supported for existing docs sites. For changelog, use `collections.changelog`.
+
+### `blog.routeBase`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${site.basePath}/blog` |
+| **Description** | Public list/post/tag route base for the dated post collection. |
+
+### `blog.feedPath`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${blog.routeBase}/rss.xml` |
+| **Description** | Public RSS feed path. |
+
+**Blog example**
+
+```typescript
+content: {
+  root: ".",
+  docsDir: "content/docs",
+  blogDir: "content/blog",
+},
+blog: {
+  routeBase: "/docs/blog",
+},
+```
+
+---
+
+## `search`
+
+### `search.enabled`
+
+| | |
+| --- | --- |
+| **Type** | `boolean` |
+| **Required** | yes (when `search` is set) |
+| **Default** | `true` (implicit default config) |
+| **Description** | Master switch for search index generation. |
+
+### `search.scopes`
+
+| | |
+| --- | --- |
+| **Type** | `("docs" \| "api" \| "blog")[]` |
+| **Required** | yes (when `search` is set) |
+| **Default** | `["docs"]` |
+| **Description** | Which collections appear in the search artifact. |
+
+### `search.bodyIndexing`
+
+| | |
+| --- | --- |
+| **Type** | `"full"` \| `"summary"` \| `"disabled"` |
+| **Required** | no |
+| **Default** | `"summary"` |
+| **Description** | Trade-off between artifact size and body depth in the index. |
+
+### `search.maxArtifactBytes`
+
+| | |
+| --- | --- |
+| **Type** | positive integer |
+| **Required** | no |
+| **Default** | internal default in `@docsfn/core` |
+| **Description** | Hard cap for serialized search JSON size. |
+
+### `search.routeScopeOverrides`
+
+| | |
+| --- | --- |
+| **Type** | `DocsSearchRouteScopeOverride[]` — each entry `{ pattern: string; scope: string }` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Override the search scope for routes matching a glob pattern. Useful when some pages belong to a different logical scope than their collection. For example, an API reference page under the `docs` collection can be forced into the `api` scope. Resolved by **`resolveSearchScopeForRoute`** at index-build time. |
+
+**Example**
+
+```typescript
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "changelog"],
+  routeScopeOverrides: [
+    { pattern: "/docs/api/**", scope: "api" },
+  ],
+},
+```
+
+---
+
+## `auth`
+
+### `auth.enabled` / `auth.mode`
+
+| | |
+| --- | --- |
+| **Type** | `enabled: boolean`, `mode: "public" \| "private" \| "mixed"` |
+| **Required** | yes (when `auth` is set) |
+| **Default** | `enabled: false`, `mode: "public"` |
+| **Description** | Route/content access mode for private docs setups. |
+
+---
+
+## `analytics`
+
+### `analytics.enabled` / `provider` / `respectDnt`
+
+| | |
+| --- | --- |
+| **Type** | `enabled: boolean`, `provider: "watchfn"`, `respectDnt: boolean` |
+| **Required** | yes (when `analytics` is set) |
+| **Default** | `enabled: false`, `provider: "watchfn"`, `respectDnt: true` |
+| **Description** | Pluggable analytics; `watchfn` is the supported provider id today. |
+
+---
+
+## Full example
+
+```typescript
+import type { DocsConfig } from "@docsfn/core";
+
+const config: DocsConfig = {
+  schemaVersion: 1,
+  site: {
+    title: "My product",
+    description: "Docs",
+    basePath: "/docs",
+    canonicalUrl: "https://example.com",
+    editLink: { pattern: "https://github.com/org/repo/edit/main/{path}" },
+  },
+  compat: { preset: "none" },
+  content: {
+    root: ".",
+    docsDir: "content/docs",
+    blogDir: "content/blog",
+    apiDir: "content/api",
+    pagesDir: "content/pages",
+    assetsDir: "static",
+    metaFileName: "meta.json",
+  },
+  navigation: {
+    topNav: [{ label: "Home", href: "/docs" }],
+    sidebars: {
+      docs: { title: "Docs", include: ["docs/**"] },
+    },
+  },
+  blog: {
+    routeBase: "/docs/blog",
+  },
+  collections: {
+    changelog: {
+      dir: "content/changelog",
+      routeBase: "/changelog",
+      label: "Changelog",
+      scope: "changelog",
+    },
+  },
+  search: {
+    enabled: true,
+    scopes: ["docs", "api", "blog", "changelog"],
+    bodyIndexing: "summary",
+  },
+  auth: { enabled: false, mode: "public" },
+  analytics: { enabled: false, provider: "watchfn", respectDnt: true },
+};
+
+export default config;
+```
+
+Run **`npx docsfn validate --root .`** after edits; fix **DOCS_CONFIG_INVALID** diagnostics before shipping.
+
+## Programmatic validation
+
+`validateDocsConfig(value, configPath?)` from `@docsfn/core` applies the same configuration validation used by file loading. It returns the validated config or throws `DOCS_CONFIG_INVALID` with field diagnostics. Admin-managed configurations are validated before saving and before building.
+
+---
+
+<!-- page:docs:core-concepts/content-format.md path:/docs/core-concepts/content-format -->
+# Content Format
+
+> Native Markdown, frontmatter, meta.json, URLs, and docsfn extensions.
+
+
+# Content Format
+
+docsfn uses **Markdown** (`.md` or `.mdx` where enabled) with **YAML frontmatter** plus per-directory **`meta.json`** files to control navigation. The **native** preset is `compat.preset: "none"` (no Fumadocs transform).
+
+## Standard Markdown
+
+### Headings
+
+Use `#` … `######` for hierarchy. Headings feed the in-page **table of contents** when exposed by your layout.
+
+### Paragraphs and emphasis
+
+Blank lines separate paragraphs. Use `**bold**`, `*italic*`, and `` `inline code` `` as usual.
+
+### Lists
+
+- **Unordered** — `-` or `*` items.
+- **Ordered** — `1.` numbered items.
+Indent nested lists with two spaces.
+
+### Code blocks
+
+Fenced blocks with an optional language tag:
+
+````markdown
+```typescript
+const x = 1;
+```
+````
+
+### Tables
+
+```markdown
+| Column A | Column B |
+| --- | --- |
+| foo | bar |
+```
+
+### Links and images
+
+```markdown
+[Label](/docs/path)
+![Alt text](/images/diagram.png)
+```
+
+Paths are usually absolute from the site origin or relative to your asset hosting rules.
+
+---
+
+## docsfn Markdown extensions
+
+### Callouts
+
+GitHub-style callouts in blockquotes:
+
+```markdown
+> [!NOTE]
+> Supplementary information.
+
+> [!TIP]
+> Helpful suggestion.
+
+> [!WARNING]
+> Caution.
+
+> [!INFO]
+> Neutral info.
+
+> [!CAUTION]
+> Risk or breaking behavior.
+```
+
+### Mermaid
+
+````markdown
+```mermaid
+graph LR
+  A --> B
+```
+````
+
+Rendering depends on your app (client-side Mermaid, build step, or server diagram service).
+
+### Tabs
+
+Fenced tab groups (values and panels are parsed by `@docsfn/core`):
+
+```markdown
+<DocsTabs>
+  <Tab value="npm">npm install @docsfn/core</Tab>
+  <Tab value="pnpm">pnpm add @docsfn/core</Tab>
+</DocsTabs>
+```
+
+(Component names may be `Tabs` / `Tab` in some configs; align with your `compileSvelteContent` / compat preset.)
+
+### Component blocks
+
+Custom `<ComponentName>...</ComponentName>` blocks are represented as **component** segments in the compiled artifact; your UI layer supplies renderers or falls back to placeholders.
+
+---
+
+## Frontmatter (YAML)
+
+Common fields on doc and blog pages:
+
+| Field | Role |
+| --- | --- |
+| `title` | **Required** for meaningful pages — page title and default nav label. |
+| `description` | SEO + search summary. |
+| `draft` | When true, exclude from production listings/search where implemented. |
+| `tags` | Array of strings (blog, some indexes). |
+| `date` | ISO date string for blog ordering. |
+| `author` | Display string. |
+| `version` | Optional version slug when using versioned docs. |
+
+Example:
+
+```yaml
+---
+title: Page title
+description: One line for SEO
+draft: false
+tags: [release, docsfn]
+date: 2026-03-22
+author: 21n
+---
+```
+
+Private or auth-gated content may use additional keys interpreted by `@docsfn/core` / your adapter.
+
+---
+
+## `meta.json` structure
+
+Each docs subdirectory may include a **`meta.json`** (name overridden by `content.metaFileName`).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Section title in the sidebar. |
+| `pages` | array | Ordered list of child pages. |
+| `root` | boolean | When true, flattens or promotes the section (see navigation builder behavior). |
+
+### `pages` entries
+
+- **String** — slug key matching a file stem, e.g. `"quick-start"` → `quick-start.md`.
+- **Object** — `{ "key": "subdir", "label": "Custom label", "icon": "optional", "hidden": true }`
+  - `hidden: true` removes the item from visible nav while keeping routes if files exist.
+  - `icon` is passed through to UI layers that support icons.
+
+Example:
+
+```json
+{
+  "title": "Getting Started",
+  "pages": [
+    "index",
+    "installation",
+    { "key": "advanced", "label": "Advanced" }
+  ]
+}
+```
+
+**Strictness:** every referenced key must correspond to real content; unknown keys produce **DOCS_META_INVALID** at build time.
+
+---
+
+## File naming
+
+- Use **`.md`** (or supported MDX where applicable).
+- Name section roots **`index.md`** so the directory maps to a single URL segment.
+- Prefer **kebab-case** filenames for slugs (`quick-start.md`).
+
+---
+
+## Directory → URL mapping (docs collection)
+
+1. `content.root` + `content.docsDir` defines the docs tree root on disk.
+2. Each file becomes a **slug** from its path relative to that root (without extension).
+3. URLs are prefixed with **`site.basePath`**.
+4. Example: `content/docs/guides/setup.md` → slug like `guides/setup` → URL `/docs/guides/setup` (exact rules follow manifest normalization in `@docsfn/core`).
+
+Blog and **api** collections use separate directories and routing conventions.
+
+---
+
+## Collection types
+
+| Collection | Typical directory | Contents |
+| --- | --- | --- |
+| **docs** | `content/docs` | Conceptual documentation Markdown. |
+| **pages** | `content/pages` (configurable) | Extra Markdown pages outside the main doc tree. |
+| **blog** | `content/blog` | Dated posts, RSS, listings. |
+| **api** | `content/api` | OpenAPI **JSON/YAML** only. |
+| **assets** | `static` / `public` | Binary/static files. |
+
+Hand-written API Markdown can still live under the **docs** collection (for example `content/docs/api/overview.md`). Those files keep normal docs semantics, but you can intentionally classify `/docs/api...` routes into the **api** sidebar and search scope with `navigation.sidebars.api.include` and `search.routeScopeOverrides`.
+
+For configuration details, see [Configuration](./configuration).
+
+---
+
+<!-- page:docs:core-concepts/content-providers.md path:/docs/core-concepts/content-providers -->
+# Content Providers
+
+> The DocsContentProvider interface, FsContentProvider, and how to implement custom sources.
+
+
+# Content providers
+
+All docsfn pipelines read content through a **`DocsContentProvider`**. The reference implementation is **`FsContentProvider`** in **`@docsfn/provider-fs`**.
+
+See also: [Content format](./content-format), [CLI](./cli).
+
+## `DocsContentProvider` interface
+
+```ts
+interface DocsContentProvider {
+  readonly providerId: string;
+  listEntries(input: DocsProviderListEntriesInput): Promise<DocsSourceEntry[]>;
+  loadEntry(input: DocsProviderLoadEntryInput): Promise<DocsSourceEntry>;
+  loadAsset?(input: {
+    config: DocsConfig;
+    relativePath: string;
+  }): Promise<DocsProviderLoadAssetResult>;
+  watch?(input: DocsProviderWatchInput): Promise<DocsProviderWatchSubscription>;
+  list(): Promise<RawContentEntry[]>;
+}
+```
+
+- **`listEntries`** — Primary API: returns normalized **`DocsSourceEntry`** rows for requested collections under the configured content root.
+- **`loadEntry`** — For filesystem provider, returns the same entry (CMS providers may fetch lazily here).
+- **`loadAsset`** — Optional binary/static asset loader (used for `assets` collection paths).
+- **`watch`** — Optional; FS provider returns metadata describing watched directories (CLI dev mode uses this when available).
+- **`list`** — Legacy compatibility helper that bulk-loads via `listEntries` and maps to **`RawContentEntry[]`**.
+
+Implementations must emit **stable, unique** `id` values per entry; core validates this in **`assertUniqueSourceEntryIds`**.
+
+## `FsContentProvider`
+
+### Constructor options
+
+```ts
+new FsContentProvider({
+  root: "/absolute/or/cwd/relative/site",
+  docsDir: "content/docs",      // optional overrides; else config + defaults
+  pagesDir: "content/pages",
+  blogDir: "content/blog",
+  apiDir: "content/api",
+  assetsDir: "static",
+});
+```
+
+CLI wiring passes explicit dirs from **`DocsConfig.content`** so the provider stays aligned with config.
+
+### Collection directory mapping
+
+Directories resolve relative to **`config.content.root`** (or `options.root`):
+
+| Collection | Config key | Default candidates (when unset) |
+| --- | --- | --- |
+| `docs` | `content.docsDir` | `content/docs`, then `docs` |
+| `pages` | `content.pagesDir` | `pages` |
+| `blog` | `content.blogDir` | `blog` |
+| `api` | `content.apiDir` | `api` |
+| `assets` | `content.assetsDir` | `public`, then `assets` |
+
+The first **existing** candidate wins for defaults. **`docs`** is **required** to exist when strict validation applies.
+
+### Supported file types
+
+- **Markdown:** `.md`, `.mdx` for `docs`, `pages`, and `blog`.
+- **API:** `.json`, `.yaml`, `.yml` under the `api` collection (OpenAPI, etc.).
+- **Control files:** `meta.json` (or `content.metaFileName`) parsed as navigation metadata.
+- **Assets:** opaque files under the assets directory with hashed metadata.
+
+### Discovery
+
+`fast-glob` walks **`**/*`** under each collection root (files only, sorted). Paths are normalized to stable POSIX-style strings for IDs and diagnostics.
+
+### Watch mode
+
+`watch()` builds metadata via **`buildFsWatchMetadata`** listing watched directories; the current FS subscription is a **noop** close, but CLI **`dev`** still uses metadata to choose chokidar roots.
+
+## Custom provider skeleton
+
+```ts
+import type {
+  DocsContentProvider,
+  DocsProviderListEntriesInput,
+  DocsProviderLoadEntryInput,
+  DocsSourceEntry,
+  RawContentEntry,
+} from "@docsfn/core";
+// import { loadDocsConfig, toLegacyRawEntries } from "@docsfn/core";
+
+export class CmsContentProvider implements DocsContentProvider {
+  readonly providerId = "cms";
+
+  async listEntries(input: DocsProviderListEntriesInput): Promise<DocsSourceEntry[]> {
+    // Fetch remote / DB records, map to DocsSourceEntry (id, collection, relativePath, body, frontmatter, …)
+    return [];
+  }
+
+  async loadEntry(input: DocsProviderLoadEntryInput): Promise<DocsSourceEntry> {
+    return input.entry;
+  }
+
+  async list(): Promise<RawContentEntry[]> {
+    // const config = await loadDocsConfig({ cwd: process.cwd() });
+    // const entries = await this.listEntries({
+    //   config,
+    //   collections: ["docs", "pages", "blog", "api", "assets"],
+    // });
+    // return toLegacyRawEntries(entries);
+    return [];
+  }
+}
+```
+
+Use **`normalizeProviderPath`** when building `relativePath` values, and throw **`createDocsError`** with **`DOCS_PROVIDER_ERROR`** diagnostics on contract violations.
+
+## When to use FS vs custom
+
+- **FsContentProvider** — Local git repos, static site generators, CI checkout paths.
+- **Custom** — Headless CMS, database-backed docs, generated content from another service, or multi-tenant sources.
+
+Pass your provider to **`buildManifest`** the same way the CLI does.
+
+---
+
+<!-- page:docs:core-concepts/diagnostics.md path:/docs/core-concepts/diagnostics -->
+# Diagnostics
+
+> docsfn diagnostic codes, severities, JSON output, and common fixes.
+
+
+# Diagnostics
+
+Every pipeline stage can emit **`DocsDiagnostic`** objects: structured messages with **`code`**, **`severity`**, **`message`**, optional **`location`**, **`details`**, and **`suggestion`**.
+
+See also: [CLI](./cli), [Security](./security).
+
+## Severity levels
+
+| Severity | Meaning |
+| --- | --- |
+| **`error`** | Fails the command / blocks artifacts (CLI sets exit code **1**). |
+| **`warning`** | Non-blocking; should be reviewed. |
+| **`info`** | Informational (compat hints, unsupported OpenAPI sections, etc.). |
+
+## `DocsDiagnostic` shape
+
+- **`code`** — `DocsErrorCode` (see below).
+- **`severity`** — `error` | `warning` | `info`.
+- **`message`** — Human-readable summary.
+- **`location`** — `sourceId`, `absolutePath`, optional `line` / `column`.
+- **`details`** — Machine-readable context (duplicate route ids, blocked HTML categories, etc.).
+- **`suggestion`** — Optional remediation text.
+
+## Error codes (19 codes)
+
+| Code | Typical cause |
+| --- | --- |
+| `DOCS_CONFIG_INVALID` | Schema validation failed on `docsfn.config`. |
+| `DOCS_CONFIG_UNSUPPORTED` | Valid JSON shape but feature not available. |
+| `DOCS_PROVIDER_ERROR` | Provider contract violation (duplicate ids, missing fields). |
+| `DOCS_ENTRY_INVALID` | A source entry cannot be normalized. |
+| `DOCS_META_INVALID` | `meta.json` parse or `pages` rule error. |
+| `DOCS_ROUTE_CONFLICT` | Two entries claim the same URL path. |
+| `DOCS_ROUTE_NOT_FOUND` | Sidebar/pagination/breadcrumb target missing from tree. |
+| `DOCS_VERSION_INVALID` | Version config or slug resolution failed. |
+| `DOCS_COMPAT_UNSUPPORTED` | Fumadocs compat preset hit unsupported syntax. |
+| `DOCS_COMPONENT_UNRESOLVED` | A PascalCase component used in Markdown has no mapping in the `components` prop. |
+| `DOCS_MDX_COMPILE_FAILED` | MDX/compile pipeline error. |
+| `DOCS_HTML_UNSAFE` | Blocked tag or pattern in Markdown (or unsafe HTML path). |
+| `DOCS_SEARCH_BUILD_FAILED` | Search artifact could not be built (size limit, internal error). |
+| `DOCS_SEARCH_SCOPE_INVALID` | A `routeScopeOverrides` pattern matched a route but the resolved scope is not in the configured `search.scopes`. |
+| `DOCS_OPENAPI_PARSE_FAILED` | OpenAPI file invalid or not OpenAPI 3.x. |
+| `DOCS_REMOTE_FETCH_FAILED` | Remote spec/content fetch error. |
+| `DOCS_AUTH_REQUIRED` | Route needs a session. |
+| `DOCS_AUTH_FORBIDDEN` | Session present but not authorized. |
+| `DOCS_ARTIFACT_INVALID` | Manifest/blog/search artifact consistency error. |
+
+## Reading `diagnostics.json`
+
+**`docsfn build`** and **`docsfn dev`** write **`.docsfn/diagnostics.json`** (or your `--out-dir`) as a JSON array of diagnostics. Use it in CI to fail on warnings by policy, or to aggregate issues across environments.
+
+## Common scenarios
+
+- **`DOCS_HTML_UNSAFE`** — Remove raw `script` / `iframe` / event handlers from Markdown, or use **`DOCSFN_HTML_UNSAFE_ALLOWLIST`** for vetted paths only.
+- **`DOCS_ROUTE_CONFLICT`** — Rename files or adjust `basePath` / version slugs so paths are unique.
+- **`DOCS_META_INVALID`** — Validate `meta.json` `pages` entries (each object needs a key id).
+- **`DOCS_OPENAPI_PARSE_FAILED`** — Confirm OpenAPI **3.x** and fix YAML/JSON syntax.
+- **`DOCS_SEARCH_BUILD_FAILED`** — Lower **`search.bodyIndexing`** resolution, shrink corpus, or raise **`maxArtifactBytes`**.
+
+---
+
+<!-- page:docs:core-concepts/index.md path:/docs/core-concepts -->
+# Core Concepts
+
+> Configuration, content format, navigation, search, and the rest of the docsfn mental model.
+
+
+# Core Concepts
+
+These pages explain how docsfn interprets your **config**, your **Markdown**, your **`meta.json`** trees, and how features like **search**, **blog**, **OpenAPI**, and **auth** connect end to end.
+
+## In this section
+
+### Foundations
+
+- **[Configuration](./configuration)** — Every `DocsConfig` field: types, defaults, and examples.
+- **[Content format](./content-format)** — Markdown, frontmatter, `meta.json`, URLs, and collections.
+- **[Sidebars](./sidebars)** — `meta.json` ordering, `navigation.sidebars`, multiple sidebars, groups, and resolution.
+- **[Navigation](./navigation)** — Top nav, breadcrumbs, pagination, frontmatter overrides, active states, keyboard shortcuts.
+- **[Search](./search)** — Scopes, body indexing, artifacts, `DocsSearch`, and scoring overview.
+- **[SEO](./seo)** — Site metadata, canonical URLs, `basePath`, and SvelteKit head tags.
+- **[Theming](./theming)** — `--docsfn-*` variables, `ThemeConfig`, Tailwind, dark mode.
+- **[CLI](./cli)** — `validate`, `build`, `dev`, artifacts, exit codes.
+- **[Content providers](./content-providers)** — `DocsContentProvider`, `FsContentProvider`, custom sources.
+
+### Features
+
+- **[Blog](./blog)** — Posts, drafts, tags, archives, `BlogManifestSurface`.
+- **[Versioning](./versioning)** — Modes, URLs, static params, `VersionSwitcher`.
+- **[OpenAPI](./openapi)** — Spec files, generated routes, `ApiReferenceRenderer`.
+- **[Security](./security)** — HTML rules, auth modes, private routes, redaction, allowlist env.
+- **[Analytics](./analytics)** — Canonical events, DNT, URL sanitization, `watchfn`.
+- **[RSS](./rss)** — RSS 2.0 channel, Atom self-link, serving feeds.
+- **[Markdown extensions](./markdown-extensions)** — Callouts, Mermaid, tabs, components.
+- **[Diagnostics](./diagnostics)** — Error codes, severities, `diagnostics.json`, troubleshooting.
+
+---
+
+<!-- page:docs:core-concepts/markdown-extensions.md path:/docs/core-concepts/markdown-extensions -->
+# Markdown extensions
+
+> Callouts, Mermaid, tabs, code fences, and custom components in docsfn Markdown.
+
+
+# Markdown extensions
+
+docsfn parses Markdown into a **`CompiledContentArtifact`**: a list of **`CompiledContentBlock`** values your Svelte/React layer renders.
+
+See also: [Content format](./content-format), [Diagnostics](./diagnostics) (`DOCS_HTML_UNSAFE`, `DOCS_COMPAT_UNSUPPORTED`).
+
+## Callouts
+
+GitHub-style alerts in blockquotes:
+
+```markdown
+> [!NOTE]
+> Supplementary detail.
+
+> [!TIP]
+> Helpful suggestion.
+
+> [!WARNING]
+> Risk or breaking behavior.
+
+> [!INFO]
+> Neutral context.
+
+> [!CAUTION]
+> Stronger warning than WARNING for safety or data loss.
+```
+
+Parser regex: line starts with `>`, optional space, `[!KIND]`, rest of line + following `>` continuation lines become **`type: "callout"`** with **`kind`** `note` | `tip` | `warning` | `info` | `caution`.
+
+## Mermaid
+
+Fenced code with language **`mermaid`** becomes **`type: "mermaid"`** with the raw diagram source:
+
+````markdown
+```mermaid
+graph TD
+  A[Start] --> B{Decision}
+  B -->|Yes| C[OK]
+  B -->|No| D[Stop]
+```
+````
+
+Rendering uses your app’s Mermaid integration on the client or SSR. Common diagram types (`graph`, `sequenceDiagram`, `classDiagram`, etc.) follow Mermaid’s own parser support.
+
+## Tabs
+
+Tabs blocks use **`DocsTabs`** / **`DocsTab`** (or **`Tabs`** / **`Tab`** with **`compat.preset: "fumadocs-v15"`**, which rewrites to DocsTabs during transform).
+
+Illustrative structure (place in Markdown as raw HTML-like tags—see compat note below):
+
+```text
+DocsTabs items="npm,pnpm,yarn"
+  DocsTab value="npm"
+  npm install @docsfn/core
+  /DocsTab
+  DocsTab value="pnpm"
+  pnpm add @docsfn/core
+  /DocsTab
+/DocsTabs
+```
+
+Replace `DocsTabs`/`DocsTab` with angle-bracket tags in real content; **`items`** can be parsed from attributes for default tab order.
+
+## Code blocks
+
+Standard fenced blocks become **`type: "code"`** with optional **`lang`** for syntax highlighting in your renderer. Any language string is accepted; highlighter support depends on the UI layer.
+
+## Custom components
+
+PascalCase tags parse as **`type: "component"`** with **`name`**, optional **`body`**, and **`selfClosing`**. Example pattern: `ComponentName prop="value"` … `ComponentName` with inner Markdown.
+
+Your site supplies renderers for known components or falls back to placeholders.
+
+## Compiled block types (summary)
+
+| `type` | Meaning |
+| --- | --- |
+| `heading` | TOC + anchors. |
+| `paragraph` | Plain text paragraph. |
+| `list` | Ordered or unordered list with item texts. |
+| `code` | Fenced code (non-mermaid). |
+| `mermaid` | Diagram source. |
+| `tabs` | Tab metadata + per-tab content strings. |
+| `callout` | Alert kind + text. |
+| `table` | HTML table from Markdown pipe-table syntax. |
+| `component` | Custom component segment. |
+
+## Fumadocs compatibility
+
+Preset **`fumadocs-v15`** maps `Tabs`→`DocsTabs` and tracks usage for compat diagnostics. Unsupported constructs raise **`DOCS_COMPAT_UNSUPPORTED`** where applicable.
+
+---
+
+<!-- page:docs:core-concepts/navigation.md path:/docs/core-concepts/navigation -->
+# Navigation
+
+> Top navigation, breadcrumbs, pagination, active states, and keyboard shortcuts in docsfn.
+
+
+# Navigation
+
+docsfn separates **global top navigation** (`navigation.topNav` in config) from **per-page surfaces** resolved in your framework adapter (breadcrumbs, pagination, sidebar id, canonical URL).
+
+See also: [Sidebars](./sidebars), [Configuration](./configuration), [SEO](./seo).
+
+## Top navigation (`topNav`)
+
+Configure an array of **`DocsTopNavItem`** entries:
+
+```ts
+navigation: {
+  topNav: [
+    { label: "Docs", href: "/docs" },
+    { label: "Blog", href: "/blog" },
+    {
+      label: "More",
+      href: "/docs",
+      children: [
+        { label: "Guides", href: "/docs/guides" },
+        { label: "GitHub", href: "https://github.com/...", external: true },
+      ],
+    },
+  ],
+},
+```
+
+- **`label` / `href`**: Required for each item.
+- **`external`**: Marks off-site links (e.g. for `rel` or styling in your layout).
+- **`children`**: Optional nested items for dropdown-style menus in UI components that support them.
+
+The manifest exposes `topNav` via **`getTopNavigation`**; SvelteKit’s **`resolveDocsPageSurface`** includes `topNav` on the surface for layouts.
+
+## Breadcrumbs
+
+Breadcrumbs are derived from the **active sidebar** and the **current route**:
+
+1. **`flattenSidebarLinks`** collects ordered links (depth-first through groups).
+2. A **root** crumb uses `homeLabel` / `homeHref` options (often the site title and `/docs`).
+3. **`resolveBreadcrumbsFromSidebar`** walks the sidebar tree to locate the trail to the active link.
+4. **Groups** on the trail add a crumb pointing at the **first link inside that group** (so group labels are navigable).
+
+In SvelteKit, call **`resolveDocsPageSurface`** with `homeHref` and `homeLabel` aligned to your app’s docs landing route. The returned **`breadcrumbs`** array is ready for a `Breadcrumbs` component.
+
+## Pagination (prev / next)
+
+Pagination links are the **previous and next sibling links** in the **flattened order** of the **active sidebar** (same order as breadcrumbs’ linear link list).
+
+- Implemented in core as **`resolvePaginationFromSidebar`**.
+- Titles are filled from manifest pages via **`getPaginationFromSidebarWithTitles`**.
+
+If the current route is **not** in that sidebar’s flattened list, pagination resolution throws `DOCS_ROUTE_NOT_FOUND`—keep routes and sidebar `include` patterns in sync.
+
+## Frontmatter overrides
+
+On a **`DocPage`**, frontmatter keys **`prev`** and **`next`** override sidebar-derived pagination when present.
+
+Supported shapes:
+
+- **String**: treated as the target path.
+
+```yaml
+---
+title: Custom flow
+prev: /docs/core-concepts/configuration
+next:
+  path: /docs/core-concepts/search
+  title: Search
+---
+```
+
+- **Object**: `path` or `href` (required), optional `title`.
+
+When either override is set, **both** prev and next come from frontmatter only (missing side means `undefined`).
+
+## Active page in the sidebar
+
+`DocsSidebar` accepts **`activePath`** (usually `surface.route`). **`SidebarGroup`** marks a link active when `item.link === activePath`, sets `aria-current="page"`, and applies an `active` class. Parent **groups** expand when **`hasActiveChild`** is true so nested pages stay visible.
+
+## Keyboard shortcuts: Alt + arrows
+
+The **`Pagination`** component from `@docsfn/svelte` registers a window **`keydown`** listener:
+
+- **Alt + ArrowLeft** → navigate to **previous** page (if present).
+- **Alt + ArrowRight** → navigate to **next** page (if present).
+
+This matches keyboard-centric docs browsing without focusing the pagination links first.
+
+## SvelteKit wiring
+
+Typical flow:
+
+1. **`resolveDocsRouteDataOrThrow`** — resolve slug to a manifest entry.
+2. **`resolveDocsPageSurface`** — breadcrumbs, pagination, `canonicalUrl`, `sidebarId`, etc.
+3. Pass **`surface`** to **`DocsSidebar`**, **`Breadcrumbs`**, and **`Pagination`**.
+
+See your app’s `+page.server.ts` for the exact options (`basePath`, `canonicalUrl`, `homeHref`).
+
+---
+
+<!-- page:docs:core-concepts/nested/index.md path:/docs/core-concepts/nested -->
+# Nested
+
+some markdown
+
+---
+
+<!-- page:docs:core-concepts/openapi.md path:/docs/core-concepts/openapi -->
+# OpenAPI
+
+> Adding OpenAPI 3.x specs to the api collection, generated routes, and rendering with ApiReferenceRenderer.
+
+
+# OpenAPI
+
+docsfn ingests **OpenAPI 3.x** specs from the **api** collection, builds a **`CanonicalOpenApiReference`**, registers **one route per surface** (overview, tag, operation, schema), and stores the canonical object on **`ApiReference.spec`** in the manifest.
+
+See also: [Content providers](./content-providers), [Diagnostics](./diagnostics).
+
+## Supported formats
+
+- **JSON** — `.json`
+- **YAML** — `.yaml`, `.yml`
+
+Unsupported major versions fail with **`DOCS_OPENAPI_PARSE_FAILED`**.
+
+## Where to put specs
+
+Add files under your configured **`content.apiDir`** (commonly `content/api`). Each file becomes an **`ApiReference`** with a slug derived from its path.
+
+Keep Markdown docs and OpenAPI specs as separate collections. If you want Markdown package docs under `/docs/api/...`, place those files under `content/docs/api` and classify their routes with `search.routeScopeOverrides`.
+
+## API root path
+
+**`buildApiRootPath(basePath, sourcePath)`** produces:
+
+- **`{basePath}/api`** when the spec lives at the collection root, or
+- **`{basePath}/api/{logicalPath}`** when nested (logical path from the file without extension).
+
+All generated routes hang under that **`apiRootPath`**.
+
+## Auto-generated routes
+
+For each spec:
+
+| Surface | Route pattern (under `apiRootPath`) |
+| --- | --- |
+| Overview | `{apiRootPath}` |
+| Tag group | `{apiRootPath}/tags/{tag-slug}` |
+| Operation | `{apiRootPath}/operations/{method}-{operation-slug}` |
+| Schema | `{apiRootPath}/schemas/{schema-slug}` |
+
+- **Operation slugs** use `operationId` when set (normalized); otherwise a slug from the path item.
+- **Tag slugs** normalize the OpenAPI tag name.
+- **Schema slugs** normalize component schema names.
+
+**`CanonicalOpenApiRoutes`** exposes `overview`, `tags`, `operations`, `schemas`, and **`all`** (sorted list). The manifest **`routes`** map includes every path → api id.
+
+## `CanonicalOpenApiReference`
+
+Key fields include `schemaVersion`, `sourceId`, `sourcePath`, `sourceFormat`, `openapiVersion`, `info`, `servers`, **`tags`** (tag groups + operation ids), **`operations`**, **`schemas`**, **`routes`**, and **`diagnostics`** (e.g. warnings for unsupported features like webhooks).
+
+## `ApiReferenceRenderer`
+
+From **`@docsfn/svelte`**, pass **`api: ApiReference`** (from **`resolveDocsRouteDataOrThrow`** / manifest). The renderer reads **`api.spec`** as the canonical reference and presents operations, parameters, and responses using shared UI primitives (tabs, scroll areas).
+
+Use your framework’s docs catch-all route to render **`ApiReferenceRenderer`** for `routeEntry.kind === "api"` (as in the docsfn docs site).
+
+---
+
+<!-- page:docs:core-concepts/rss.md path:/docs/core-concepts/rss -->
+# RSS
+
+> RSS 2.0 blog feeds from the manifest, channel fields, and serving in SvelteKit.
+
+
+# RSS
+
+docsfn generates **RSS 2.0** XML from **`DocsManifest`** blog data via **`generateRSSFeed`** in **`@docsfn/core`**.
+
+See also: [Blog](./blog).
+
+## Format
+
+Output is XML with:
+
+- **`rss` root** — `version="2.0"` and **`xmlns:atom`** for Atom links.
+- **`channel`** — `title`, `description`, `link`, `language` (default `en`), **`lastBuildDate`**, **`atom:link`** (self).
+- **`item`** per post — `title` (CDATA), `link`, `guid` (permaLink true), `pubDate` (RFC-822 via `Date#toUTCString`), optional `description` (CDATA from excerpt/summary), optional `author`, **`category`** per tag.
+
+## Data sources
+
+- Post order prefers **`manifest.blog.postOrder`**; otherwise posts are sorted by publish timestamp and slug.
+- **`lastBuildDate`** uses **`resolveBlogLastBuildDate`** over the ordered set.
+- Feed path for the self link defaults to **`manifest.blog.feedPath`** or **`/rss.xml`** relative to the blog link you pass in.
+
+## Atom self-link
+
+The channel includes:
+
+`atom:link` with `rel="self"`, `type="application/rss+xml"`, and `href` set to `{blogOrigin}{feedPath}`.
+
+## Serving in SvelteKit
+
+Call **`generateRSSFeed(manifest, { title, description, link })`** in a **`+server.ts`** and return **`application/rss+xml`**:
+
+- **`link`** — Public blog index URL (e.g. `url.origin + "/blog"`).
+- Title/description — Usually from `config.site` plus a “Blog” suffix.
+
+The docsfn docs site implements **`GET /blog/rss.xml`** this way.
+
+## Next.js
+
+Use a **Route Handler** or **`getServerSideProps`-less** static route with the same helper; set the `Content-Type` header to RSS XML.
+
+## Public feeds on authenticated sites
+
+Pass `auth: config.auth` to `generateRSSFeed` and
+`buildDatedCollectionJsonFeed` (also accepted by the Next/SvelteKit JSON response
+helpers). Pass the same `isRoutePrivate(route)` classifier used for search and LLM
+artifacts. Private mode excludes all posts; mixed mode excludes protected routes
+and private frontmatter, and excludes all posts when no classifier is supplied.
+Filtering occurs before JSON limits/latest selection and RSS metadata generation.
+Omitting `auth`, or disabling it, retains public-site behavior. The manifest alone
+does not carry the site's authentication policy.
+
+---
+
+<!-- page:docs:core-concepts/search.md path:/docs/core-concepts/search -->
+# Search
+
+> Configure docsfn search scopes, body indexing, artifacts, and the DocsSearch UI.
+
+
+# Search
+
+docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. Search is local/static by default: the browser loads that artifact (or fetches it lazily) and queries it in-process.
+
+The default engine is **searchfn**. Internally, docsfn now talks to search through a small adapter boundary, so searchfn remains the built-in starting point while other engines can be added later without rewriting the docs UI or manifest pipeline.
+
+See also: [Configuration](./configuration), [CLI](./cli), [Content providers](./content-providers).
+
+## Enabling search
+
+In **`docsfn.config.ts`**:
+
+```ts
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "blog", "changelog"],
+  bodyIndexing: "summary",
+  maxArtifactBytes: 1_500_000,
+},
+```
+
+- **`enabled`**: When `false`, the pipeline skips emitting `search.json` in CLI artifact writes (and you should avoid exposing an empty endpoint).
+
+## Scopes
+
+Each indexed document carries a **`scope`** (`DocsSearchScope`). The runtime can filter results:
+
+- **`docs`** — documentation pages.
+- **`api`** — API reference entries, including OpenAPI routes and any `/docs/api...` markdown routes that you classify with `search.routeScopeOverrides`.
+- **`blog`** — blog posts.
+- **custom scopes** — named dated collections can define scopes such as **`changelog`**.
+
+`DocsSearch` can filter by any scopes present in the artifact. Pass a narrower `scopes` prop if your UI should show only selected sections.
+
+### Route-based scope overrides
+
+Use `search.routeScopeOverrides` when a route should search like API content even though the source file lives in the docs collection:
+
+```ts
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "blog", "changelog"],
+  routeScopeOverrides: [
+    { pattern: "/docs/api", scope: "api" },
+    { pattern: "/docs/api/**", scope: "api" },
+  ],
+},
+```
+
+That is the supported way to make Markdown package docs under `content/docs/api` appear in the API scope. `content.apiDir` should still point at your OpenAPI spec directory such as `content/api`.
+
+## Body indexing modes
+
+`search.bodyIndexing` controls how much text is indexed per page/post:
+
+| Mode | Behavior |
+| --- | --- |
+| `"full"` | Indexes the **entire** Markdown body (largest artifacts, best recall on long pages). |
+| `"summary"` | Indexes a **short plain-text summary** (default helper uses roughly the first **220** characters of normalized body text when no description/excerpt exists). |
+| `"disabled"` | Title and metadata only; minimal artifact size. |
+
+### Trade-offs
+
+- **`full`** improves matching inside long prose but **increases JSON size** and parse/hydrate cost in the browser.
+- **`summary`** balances size and quality for typical docs sites.
+- **`disabled`** is ideal when you only need title/path search.
+
+## `maxArtifactBytes`
+
+If the serialized artifact size exceeds **`search.maxArtifactBytes`**, the build emits a warning diagnostic (`DOCS_ARTIFACT_INVALID`) and still succeeds. Treat warnings as failures in CI if you want this limit to be a hard guardrail when enabling `full` body indexing or very large corpora.
+
+## Serving the artifact in SvelteKit
+
+Expose a route that returns the JSON artifact with `createSearchArtifactResponse` from **`@docsfn/sveltekit`**:
+
+```ts
+// src/routes/search.json/+server.ts
+import { createSearchArtifactResponse } from "@docsfn/sveltekit";
+
+export const GET = async ({ locals }) => {
+  const source = await locals.getDocsSource(); // your app’s helper
+  return createSearchArtifactResponse({ artifact: source.searchArtifact });
+};
+```
+
+The helper sets JSON headers and serializes the artifact your layout/build already produced.
+
+## `DocsSearch` component
+
+From **`@docsfn/svelte`**:
+
+- Pass **`searchArtifact`** or **`loadSearchArtifact`** for lazy loading.
+- **`placeholder`**, **`initialScope`**, and **`scopes`** tune the dialog.
+- Optional **`analytics`** hooks into `maybeEmitAnalyticsEvent` from core.
+
+### Keyboard shortcut: Cmd / Ctrl + K
+
+`DocsSearch` registers **`Meta+K` / `Ctrl+K`** globally to open the dialog (see `onMount` in `DocsSearch.svelte`).
+
+### Scope filtering
+
+The dialog UI lets users restrict queries to **All**, **Docs**, **API**, **Blog**, or **Changelog**; the runtime passes the selected scope into **`createDocsSearchRuntime`’s `query()`**.
+
+## How scoring works (brief)
+
+The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` reads the artifact engine, resolves the matching docsfn search adapter, and returns results sorted by **score**, **title**, and **path** for stable ordering.
+
+You do not configure BM25 weights in `docsfn.config.ts`; tuning is achieved by **scope**, **body indexing mode**, and content structure.
+
+---
+
+<!-- page:docs:core-concepts/security.md path:/docs/core-concepts/security -->
+# Security
+
+> HTML sanitization, authentication modes, private routes, sensitive redaction, and allowlists.
+
+
+# Security
+
+docsfn blocks unsafe patterns in Markdown sources by default, gates routes when **auth** is enabled, and **redacts** sensitive strings in search text, analytics URLs, and structured payloads.
+
+See also: [Search](./search), [Analytics](./analytics), [Diagnostics](./diagnostics).
+
+## HTML sanitization
+
+**`findUnsafeHtml`** scans raw source for:
+
+### Blocked tags
+
+`script`, `iframe`, `object`, `embed`, `link`, `meta` (opening tag pattern, case-insensitive).
+
+### Blocked patterns
+
+- **Event handlers** — inline DOM handler attributes whose names match the pattern **on** + letters + **=** (blocked by regex).
+- **Script-in-URL schemes** — URIs using the legacy script-in-URL scheme (blocked by regex).
+
+Violations surface as **`DOCS_HTML_UNSAFE`** during compile/trust checks unless the source is allowlisted or raw HTML is explicitly allowed by policy.
+
+## Authentication modes
+
+When **`auth.enabled`** is false, **`resolveDocsAuthMode`** returns **`public`** (no auth layer in core).
+
+When enabled:
+
+| Mode | Behavior |
+| --- | --- |
+| **`public`** | No route requires a session (enabled + public is unusual; typically you leave auth disabled instead). |
+| **`private`** | **Every** checked route requires a session. |
+| **`mixed`** | **`isRoutePrivate(route)`** decides. If the classifier is **omitted**, mixed mode **fails closed** (all routes treated as private). |
+
+**`assertDocsRouteAccess`** throws:
+
+- **`DOCS_AUTH_REQUIRED`** — session missing on a protected route.
+- **`DOCS_AUTH_FORBIDDEN`** — `authorize` callback returned false.
+
+## Route-level privacy (mixed + search)
+
+For **search indexing**, a page is treated as protected in **mixed** mode when:
+
+- `frontmatter.private === true` or `frontmatter.auth === "private"`, or
+- the route path matches **`/private/`** (segment boundary, case-insensitive).
+
+Protected docs/api pages are **omitted** from the search artifact when auth is enabled.
+
+Implement **`isRoutePrivate`** in your app to mirror the same rules for HTTP access.
+
+## Sensitive data detection
+
+**`redactSensitivePayload`** / **`redactSensitiveText`** use patterns for:
+
+- **Keys** matching: `secret`, `token`, `cookie`, `authorization`, `password`, `api_key`-style names, `session`, etc.
+- **Values** matching: Bearer tokens, Slack-style `xox*`, GitHub `ghp_*` / `gho_*`, Stripe `sk_*`, `api_key` assignments, etc.
+
+Diagnostics and analytics pipelines run redaction helpers so accidental paste of secrets is less likely to leak in JSON logs.
+
+## `DOCSFN_HTML_UNSAFE_ALLOWLIST`
+
+Comma-separated globs (from **`process.env`** or API input) matched against entry **`id`**, **`relativePath`**, and **`absolutePath`**. Any match allows that Markdown entry through the unsafe-HTML gate when policy merges the allowlist.
+
+Use sparingly and only for trusted paths.
+
+Allowlist matching is case-sensitive and preserves whitespace in source identities.
+Backslashes normalize to `/`. `*` matches within one path segment, `**` crosses
+segments, and `**/` also matches zero directory prefixes. Other characters are
+literal. Wildcard matches exceeding one million pattern-length × candidate-length
+work units fail closed rather than running an unbounded regular expression.
+
+Compiled content without a source identity cannot gain trust from an allowlist,
+even `**`. The host must supply trustworthy source metadata; this check does not
+authenticate a caller-supplied identity. Explicit `allowUnsafeHtml: true` remains
+a global opt-in and should only be used for trusted content.
+
+---
+
+<!-- page:docs:core-concepts/seo.md path:/docs/core-concepts/seo -->
+# SEO
+
+> Site metadata, canonical URLs, base paths, and how to wire head tags in SvelteKit.
+
+
+# SEO
+
+docsfn keeps SEO-related data in **`DocsConfig.site`**, per-page **frontmatter**, and the **page surface** returned by framework helpers.
+
+See also: [Configuration](./configuration), [Navigation](./navigation).
+
+## `site.title` and `site.description`
+
+- **`site.title`**: Default site / brand string. The SvelteKit docs template uses it as a **fallback document title** when a page has no title.
+- **`site.description`**: Optional site-wide description; consumers can map it to a default meta description tag on non-doc routes.
+
+Per-page **`title`** and **`description`** come from Markdown frontmatter and override the defaults in your layout.
+
+## `site.canonicalUrl`
+
+When set (recommended in production), it should be the **origin** of the deployed site, e.g. `https://docs.example.com`. Trailing slashes are normalized away when joining paths.
+
+**`resolveDocsPageSurface`** (SvelteKit) computes:
+
+- **`canonicalPath`** — the app route for the page (e.g. `/docs/core-concepts/search`).
+- **`canonicalUrl`** — `canonicalUrl` origin + path via **`resolveCanonicalUrl`**.
+
+Use **`surface.canonicalUrl`** for the document’s canonical link element and Open Graph `og:url`.
+
+## `site.basePath`
+
+`basePath` is your application’s **URL prefix** (e.g. `/docs` when the app is mounted under a subpath). Pass the same value into **`resolveDocsRouteDataOrThrow`** and **`resolveDocsPageSurface`** so slugs, sidebars, and breadcrumbs align with how users reach the site.
+
+Canonical URLs use the **route path**; ensure your reverse proxy or host preserves the public origin in **`site.canonicalUrl`**.
+
+## Per-page title and description
+
+In Markdown:
+
+```yaml
+---
+title: Search
+description: Configure docsfn search scopes, body indexing, and artifacts.
+---
+```
+
+The compiled **`DocPage`** carries these fields; **`resolveDocsPageSurface`** exposes them as **`surface.title`** and **`surface.description`**.
+
+## Edit link pattern
+
+`site.editLink` may include a **`pattern`** string with **`{path}`** replaced by the source file path (framework-dependent). The surface exposes **`editLink`** when your loader passes options through—use it for “Edit this page” links in the layout.
+
+Example pattern:
+
+```txt
+https://github.com/org/repo/edit/main/docs/{path}
+```
+
+## Generating meta tags in SvelteKit
+
+After **`resolveDocsPageSurface`** in `+page.server.ts`, your `+page.svelte` can render:
+
+```text
+<!-- +page.svelte: use svelte:head with title, meta description, and link canonical
+     bound to data.surface.title, data.surface.description, data.surface.canonicalUrl -->
+```
+
+The official docsfn docs site currently sets **title** and **description**; you can extend the same pattern with **`canonicalUrl`** as above.
+
+## Open Graph and social sharing
+
+For richer previews, add tags derived from the same surface:
+
+- **`og:title`** — `surface.title` or site title.
+- **`og:description`** — `surface.description`.
+- **`og:url`** — `surface.canonicalUrl`.
+- **`twitter:card`** — typically `summary` or `summary_large_image`.
+
+Use absolute URLs for `og:image` if you add artwork. Consistency between **canonical** and **og:url** avoids duplicate-URL issues in crawlers.
+
+---
+
+<!-- page:docs:core-concepts/sidebars.md path:/docs/core-concepts/sidebars -->
+# Sidebars
+
+> How docsfn builds sidebars from meta.json, directory trees, and navigation.sidebars in your config.
+
+
+# Sidebars
+
+Sidebars are built from your **docs collection** (Markdown files under `content.docsDir`) plus optional **`meta.json`** files in each directory. You can define **multiple named sidebars** in `docsfn.config.ts` and docsfn picks the one that contains the current route.
+
+See also: [Configuration](./configuration), [Content format](./content-format), [Navigation](./navigation).
+
+## Auto-build from directories
+
+For each docs page, the filesystem path (relative to the docs directory) becomes part of the URL and the sidebar tree:
+
+- A folder with an `index.md` can act as a **section root** (see `root` in `meta.json` below).
+- Nested folders become **nested groups** in the sidebar unless `meta.json` changes ordering or visibility.
+
+The manifest stores sidebars as trees of items with `type: "link" | "group" | "separator"`.
+
+## Ordering with `meta.json`
+
+Each directory may contain a `meta.json` (or the name from `content.metaFileName`). It controls **section title**, **root** behavior, and the **`pages`** array that orders children.
+
+### `pages` array: string shorthand
+
+Use strings for file or folder keys (without `.md`):
+
+```json
+{
+  "title": "Core Concepts",
+  "pages": ["index", "configuration", "sidebars"]
+}
+```
+
+### Object rules: `key`, `label`, `icon`, `hidden`
+
+Objects support:
+
+| Field | Purpose |
+| --- | --- |
+| `key` / `id` / `page` / `name` | Which file or directory key to include (normalized slug). |
+| `label` or `title` | Override the visible label (default: derived from filename). |
+| `icon` | Optional string prefixed to the label (e.g. emoji) for display. |
+| `hidden` | When `true`, the page is omitted from the sidebar (the route may still exist). |
+
+Example:
+
+```json
+{
+  "title": "Guides",
+  "pages": [
+    "index",
+    { "key": "advanced", "label": "Advanced topics", "icon": "⚡" },
+    { "key": "draft-page", "hidden": true }
+  ]
+}
+```
+
+## Custom sidebars in config
+
+Under `navigation.sidebars`, each entry is a **`DocsSidebarDefinition`**:
+
+```ts
+navigation: {
+  sidebars: {
+    docs: {
+      title: "Documentation",
+      root: true,
+      include: ["docs/**"],
+    },
+    api: {
+      title: "API Reference",
+      root: true,
+      include: ["docs/api/**"],
+    },
+  },
+},
+```
+
+- **`include`**: glob patterns matched against `docs/<sourcePath>` for each docs page. Only matching pages appear in that sidebar.
+- **`title`**: Human-facing title for the sidebar (stored on the manifest surface for adapters).
+- **`root`**: Passed through meta handling so flattened groups behave consistently with auto-built trees.
+
+A **`default`** sidebar is always generated from all docs pages. Named sidebars **filter** that page set.
+
+## Multiple sidebars and route switching
+
+`resolveSidebarForRoute` walks **sorted sidebar ids** and picks the **first** sidebar whose flattened link list contains the current route. Alphabetical id order matters when two sidebars both contain the same path—e.g. `api` before `docs` means API wins for overlapping routes.
+
+Configure non-overlapping `include` patterns (as in the [Configuration](./configuration) examples) to avoid ambiguity.
+
+## Groups and nesting
+
+- Subdirectories become **`group`** items with nested **`link`** children.
+- If a child directory’s `meta.json` sets **`"root": true`**, its index and children are **promoted**: the section may render as a single top-level link plus flattened items instead of a deep exclusive group (see core `renderDirectory` / `root` handling).
+
+## Default open vs collapsed groups
+
+In `@docsfn/svelte`, `SidebarGroup` uses **collapsible** UI. A group is shown **open** when `expanded === true` on the item **or** when any descendant link matches the active route (`hasActiveChild`). To start specific groups open, set `expanded: true` on those `SidebarItem` groups in your sidebar model.
+
+## Hidden pages
+
+Set `"hidden": true` on a `meta.json` page rule. Those entries are **skipped** when building sidebar items; use this for WIP pages you still want routable or linked manually.
+
+## Item types: `link`, `group`, `separator`
+
+| Type | Meaning |
+| --- | --- |
+| `link` | Navigates to a docs route (`text` + `link`). |
+| `group` | Named section containing nested items. |
+| `separator` | Horizontal rule in the sidebar UI (`DocsSidebar` / `SidebarGroup`). |
+
+Filesystem-driven trees emit **links** and **groups**. **`separator`** items are part of the shared `SidebarItem` model for manual or generated manifests.
+
+## Resolution summary
+
+1. Build **all docs pages** and **meta** map.
+2. Build **`default`** sidebar from every docs page.
+3. For each `navigation.sidebars` entry, **filter** pages by `include` globs and build a sidebar with the same meta rules.
+4. At runtime, **`resolveSidebarForRoute`** selects the matching sidebar id for the active path.
+
+## Example: docs + API sidebars
+
+**Config** (abbreviated):
+
+```ts
+navigation: {
+  sidebars: {
+    docs: { title: "Documentation", root: true, include: ["docs/**"] },
+    api: { title: "API Reference", root: true, include: ["docs/api/**"] },
+  },
+},
+```
+
+**Resulting behavior** (conceptually):
+
+- Routes under `/docs/api/...` resolve to the **`api`** sidebar (first match with `api` before `docs` when both match).
+- Other docs routes use the **`docs`** sidebar.
+- [Navigation](./navigation) covers breadcrumbs and pagination for the active sidebar.
+
+---
+
+<!-- page:docs:core-concepts/theming.md path:/docs/core-concepts/theming -->
+# Theming
+
+> docsfn theme configuration, CSS custom properties, Tailwind, and dark mode.
+
+
+# Theming
+
+docsfn themes are plain **`ThemeConfig`** objects: colors, fonts, spacing, and a **`darkMode`** strategy. **`generateThemeCSS`** turns that config into **`:root`** declarations using the **`--docsfn-*`** custom property namespace.
+
+See also: [Configuration](./configuration).
+
+## CSS custom properties (`--docsfn-*`)
+
+`generateThemeCSS` emits variables **only for keys you set**. Supported outputs today (these match **`@docsfn/svelte/theme.css`** and **`@docsfn/react/theme.css`**):
+
+| Token | CSS variable |
+| --- | --- |
+| `colors.primary` | `--docsfn-color-primary` |
+| `colors.secondary` | `--docsfn-color-secondary` |
+| `colors.background` | `--docsfn-color-bg` |
+| `colors.foreground` | `--docsfn-color-fg` |
+| `colors.muted` | `--docsfn-color-muted` |
+| `colors.accent` | `--docsfn-color-accent-soft` |
+| `colors.border` | `--docsfn-color-border` |
+| `fonts.sans` | `--docsfn-font-sans` |
+| `fonts.mono` | `--docsfn-font-mono` |
+| `spacing.container` | `--docsfn-container` |
+| `spacing.section` | `--docsfn-section` |
+
+**Default theme CSS** also defines related tokens (override in your own CSS after importing the theme): `--docsfn-color-surface`, `--docsfn-color-surface-raised`, `--docsfn-color-primary-hover`, `--docsfn-color-primary-fg`, and code-block colors.
+
+**Note:** `ThemeConfig.colors.destructive` is a valid config field for your own UI, but **`generateThemeCSS` does not yet emit** a matching variable. Set it manually in CSS if needed.
+
+## `ThemeConfig` structure
+
+```ts
+type DarkModeStrategy = "class" | "media" | false;
+
+interface ThemeConfig {
+  colors?: {
+    primary?: string;
+    secondary?: string;
+    background?: string;
+    foreground?: string;
+    muted?: string;
+    accent?: string;
+    destructive?: string;
+    border?: string;
+  };
+  fonts?: {
+    sans?: string;
+    mono?: string;
+  };
+  spacing?: {
+    container?: string;
+    section?: string;
+  };
+  darkMode?: DarkModeStrategy;
+}
+```
+
+## Default presets
+
+Core exports:
+
+- **`defaultLightTheme`** — light surfaces, `darkMode: "class"`.
+- **`defaultDarkTheme`** — dark surfaces, `darkMode: "class"`.
+
+Use them as starting points and override individual keys.
+
+## Overriding in CSS
+
+Because tokens are ordinary custom properties, you can override them in global CSS:
+
+```css
+:root {
+  --docsfn-color-primary: hsl(220 90% 56%);
+  --docsfn-color-bg: hsl(0 0% 98%);
+  --docsfn-color-border: hsl(214 32% 91%);
+}
+```
+
+For dark mode, either repeat tokens inside `@media (prefers-color-scheme: dark) { :root { ... } }` (to override the default theme’s dark palette) or scope class-based themes under `.dark` / `html.dark` depending on your app.
+
+For dark mode with **`darkMode: "class"`**, scope overrides under `.dark` (or your root dark class) in your app.
+
+## Tailwind integration
+
+Map docsfn tokens in `tailwind.config` (v4 theme or `@theme`) so utilities align with components:
+
+```js
+// Example: tailwind v3-style extension (adapt for v4 @theme as needed)
+theme: {
+  extend: {
+    colors: {
+      primary: "var(--docsfn-color-primary)",
+      background: "var(--docsfn-color-bg)",
+    },
+    fontFamily: {
+      sans: ["var(--docsfn-font-sans)", "system-ui", "sans-serif"],
+      mono: ["var(--docsfn-font-mono)", "ui-monospace", "monospace"],
+    },
+    maxWidth: {
+      docs: "var(--docsfn-container)",
+    },
+  },
+},
+```
+
+## Dark mode strategies
+
+| `darkMode` | Behavior |
+| --- | --- |
+| `"class"` | You toggle a class on `<html>` or `<body>`; pair with CSS overrides for dark palettes. |
+| `"media"` | Rely on **`prefers-color-scheme`** in your own CSS (docsfn tokens are still single `:root` unless you branch). |
+| `false` | No built-in switching hook; supply static colors only. |
+
+`defaultLightTheme` / `defaultDarkTheme` both use **`"class"`** so adapters can swap themes predictably.
+
+---
+
+<!-- page:docs:core-concepts/versioning.md path:/docs/core-concepts/versioning -->
+# Versioning
+
+> docsfn version modes, URLs, frontmatter, static params, and the VersionSwitcher component.
+
+
+# Versioning
+
+Versioned docs shift URL segments based on **`versions.mode`** in `docsfn.config.ts`. Versions are declared in **`versions.versions`** with **`slug`**, **`label`**, and optional **`default`**.
+
+See also: [Configuration](./configuration), [Navigation](./navigation).
+
+## Modes
+
+| Mode | Behavior |
+| --- | --- |
+| **`none`** | Default. No version segment in paths. |
+| **`path-prefix`** | Version slug is the **first** segment after `basePath` (e.g. `/docs/v2/getting-started`). |
+| **`path-segment`** | Version slug is the **last** segment (e.g. `/docs/getting-started/v2`). |
+
+## Config example
+
+```ts
+versions: {
+  mode: "path-prefix",
+  versions: [
+    { slug: "v1", label: "1.x", default: true },
+    { slug: "v2", label: "2.x" },
+  ],
+},
+```
+
+In **`docsfn.config.ts`** each version entry uses optional **`default: true`** for the default slug; the built manifest maps that to **`Version.isDefault`** for UI helpers.
+
+## URL generation
+
+For **docs** pages, **`buildRoute`** resolves **`resolveVersionContext`** from logical path + frontmatter, then applies the version to the slug internally:
+
+- **path-prefix:** `[version, ...restOfSlug]`
+- **path-segment:** `[...restOfSlug, version]`
+
+**Pages** and **blog** collections do not apply the same version slug rules as docs in core routing today—versioning is focused on the **docs** tree.
+
+## Version detection
+
+- From **frontmatter** when a version field is present (see `resolveVersionContext` in core).
+- From **path segments** that match configured version slugs when inferring static params.
+
+## `VersionSwitcher` (`@docsfn/svelte`)
+
+Props:
+
+- **`surface`** — Optional; supplies `versions`, `currentVersion`, and **`versionLinks`** (per-slug hrefs from the adapter).
+- **`versions`** / **`currentVersion`** — Overrides when not using `surface`.
+- **`onVersionChange`** — Custom handler; if omitted, the component uses **`surface.versionLinks`** or rewrites the first path-prefix segment client-side.
+
+The switcher renders only when **more than one** version exists and a current slug is known. It uses a dropdown (uifn) to pick a version.
+
+## Static params
+
+**`buildDocsStaticParams`** maps manifest routes to params:
+
+- Under **path-prefix**, if the first segment is a version slug, it returns `{ version, slug: [...] }`.
+- Under **path-segment**, if the last segment is a version slug, it splits accordingly.
+- Otherwise `{ slug: [...] }` only.
+
+Use the same logic in SvelteKit **`entries`** or Next **`generateStaticParams`** as your kit package exports.
+
+---
+
+<!-- page:docs:getting-started/index.md path:/docs/getting-started -->
+# Getting Started
+
+> Install docsfn, create a minimal site, and understand how content maps to URLs.
+
+
+# Getting Started
+
+**docsfn** is a self-hosted documentation toolchain for the superfunctions ecosystem. You define a `docsfn.config.ts`, write Markdown under a content directory, and wire framework adapters (**SvelteKit** or **Next.js**) to serve pages, sidebars, search, and blog posts.
+
+In this section you will:
+
+1. [Install](./installation) the packages you need for your stack
+2. Follow a [Quick Start](./quick-start) with copy-paste examples for SvelteKit and Next.js
+3. Learn the recommended [Project Structure](./project-structure) and how files become URLs
+
+If you are new to docsfn, read [Quick Start](./quick-start) first, then skim [Project Structure](./project-structure) before diving into [Core Concepts: Configuration](../core-concepts/configuration).
+
+---
+
+<!-- page:docs:getting-started/installation.md path:/docs/getting-started/installation -->
+# Installation
+
+> Add docsfn packages with npm, pnpm, or yarn; peer dependencies for SvelteKit and Next.js.
+
+
+# Installation
+
+docsfn is published as scoped packages under `@docsfn/*`. Install only what your app needs.
+
+## Package overview
+
+| Package | Role |
+| --- | --- |
+| `@docsfn/core` | Config loading, manifest, search index, markdown compile, navigation helpers |
+| `@docsfn/provider-fs` | Filesystem content provider (Markdown, `meta.json`, assets) |
+| `@docsfn/cli` | `docsfn validate`, `build`, `dev` |
+| `@docsfn/svelte` | Svelte UI: layout, sidebar, TOC, breadcrumbs, search shell |
+| `@docsfn/sveltekit` | SvelteKit loaders, static params, search response helpers |
+| `@docsfn/next` | Next.js App Router helpers (static params, metadata, search) |
+| `@docsfn/react` | React UI counterparts to `@docsfn/svelte` |
+
+## npm / pnpm / yarn
+
+**SvelteKit site** (typical):
+
+```bash
+npm install @docsfn/core @docsfn/provider-fs @docsfn/svelte @docsfn/sveltekit
+npm install -D @docsfn/cli
+```
+
+**Next.js site**:
+
+```bash
+npm install @docsfn/core @docsfn/provider-fs @docsfn/react @docsfn/next
+npm install -D @docsfn/cli
+```
+
+Use the same dependency lines with `pnpm add` or `yarn add` as you prefer.
+
+## Peer dependencies
+
+- **SvelteKit**: `@sveltejs/kit` ^2, `svelte` ^4 or ^5 (match versions required by your Kit release).
+- **Next.js**: `next`, `react`, and `react-dom` versions supported by your `@docsfn/next` release.
+
+The CLI is usually a **devDependency**; runtime packages belong in `dependencies`.
+
+## Monorepo (npm workspaces / Turborepo)
+
+In a monorepo, point `package.json` workspace dependencies at local packages, for example:
+
+```json
+{
+  "dependencies": {
+    "@docsfn/core": "*",
+    "@docsfn/provider-fs": "*",
+    "@docsfn/svelte": "*",
+    "@docsfn/sveltekit": "*"
+  },
+  "devDependencies": {
+    "@docsfn/cli": "*"
+  }
+}
+```
+
+Use `*` or `workspace:*` per your package manager. The official docs site aliases `@docsfn/*` to source for fast local development; published consumers use registry versions instead.
+
+After installation, continue with [Quick Start](./quick-start).
+
+---
+
+<!-- page:docs:getting-started/project-structure.md path:/docs/getting-started/project-structure -->
+# Project Structure
+
+> Typical directories for a docsfn-powered app and how they map to URLs and collections.
+
+
+# Project Structure
+
+Below is a **typical** layout for a SvelteKit (or similar) app using native docsfn content. Names match common `docsfn.config.ts` defaults; yours may differ if you override `content.*` paths.
+
+## Annotated tree
+
+```text
+my-docs-site/
+├── docsfn.config.ts          # Main docsfn configuration (required)
+├── package.json
+├── content/
+│   ├── docs/                 # Docs collection → routes under site.basePath (e.g. /docs/...)
+│   │   ├── meta.json         # Order/labels for top-level sections
+│   │   ├── index.md          # URL: /docs (or /docs/ depending on slug rules)
+│   │   ├── getting-started/
+│   │   │   ├── meta.json
+│   │   │   ├── index.md
+│   │   │   └── ...
+│   │   └── core-concepts/
+│   │       └── ...
+│   ├── blog/                   # Blog posts → /blog/[slug] (framework-specific)
+│   ├── pages/                  # Optional “pages” collection (marketing, etc.)
+│   └── api/                    # OpenAPI JSON/YAML only (.md ignored here)
+├── static/                     # Static assets (maps to content.assetsDir)
+│   └── images/
+└── src/                        # Framework routes, layouts, adapters
+    └── routes/
+        ├── +layout.server.ts   # Load manifest + search artifact
+        ├── docs/[...slug]/...
+        └── search.json/...
+```
+
+## Directory roles
+
+| Path | Purpose |
+| --- | --- |
+| `docsfn.config.ts` | Single source of truth for site, content roots, navigation, search, auth, analytics. |
+| `content/docs/` | Primary documentation Markdown + per-folder `meta.json`. |
+| `content/blog/` | Blog Markdown; frontmatter drives listing and RSS. |
+| `content/pages/` | Extra Markdown “pages” collection if you enable it in the provider. |
+| `content/api/` | OpenAPI specs (`.json`, `.yaml`, `.yml`). Hand-written API **Markdown** usually lives under `content/docs/...` (see [Content format](../core-concepts/content-format)). |
+| `static/` (or `public/`) | Assets served as files; referenced from Markdown as needed. |
+| `src/routes/` (SvelteKit) | HTTP routes: doc catch-all, blog, search JSON, RSS, etc. |
+
+## How content maps to URLs
+
+- **`site.basePath`** (commonly `/docs`) is the prefix for **docs** pages.
+- A file `content/docs/guides/setup.md` becomes a doc whose path is derived from the **slug** built by the manifest (typically `/docs/guides/setup`).
+- `content/docs/guides/index.md` is usually the section root (e.g. `/docs/guides`).
+- **Blog** paths come from `content/blog/*.md` and your framework’s blog routes (`/blog`, `/blog/[slug]`).
+
+Exact slugs and collision rules are defined in `@docsfn/core` manifest generation; keep directory names URL-safe and use `meta.json` for labels and ordering.
+
+## Collections
+
+docsfn distinguishes **collections** (`docs`, `pages`, `blog`, `api`, `assets`). The filesystem provider reads directories configured in `content.docsDir`, `content.blogDir`, etc., relative to `content.root`.
+
+For a deeper reference, see [Content format](../core-concepts/content-format) and [Configuration](../core-concepts/configuration).
+
+---
+
+<!-- page:docs:getting-started/quick-start.md path:/docs/getting-started/quick-start -->
+# Quick Start
+
+> Minimal docsfn config, first Markdown page, meta.json, and dev workflow for SvelteKit and Next.js.
+
+
+# Quick Start
+
+This page walks through a **minimal** docs site: one config file, one doc page, one `meta.json`, and the CLI dev loop. Paths assume your app root is the same directory as `docsfn.config.ts`.
+
+## 1. Create `docsfn.config.ts`
+
+```typescript
+import type { DocsConfig } from "@docsfn/core";
+
+const config: DocsConfig = {
+  schemaVersion: 1,
+  site: {
+    title: "My Docs",
+    description: "Documentation powered by docsfn",
+    basePath: "/docs",
+  },
+  compat: { preset: "none" },
+  content: {
+    root: ".",
+    docsDir: "content/docs",
+    blogDir: "content/blog",
+    apiDir: "content/api",
+    pagesDir: "content/pages",
+    assetsDir: "static",
+    metaFileName: "meta.json",
+  },
+  navigation: {
+    topNav: [
+      { label: "Docs", href: "/docs" },
+      { label: "Blog", href: "/blog" },
+    ],
+    sidebars: {
+      docs: { title: "Documentation", root: true, include: ["docs/**"] },
+    },
+  },
+  search: {
+    enabled: true,
+    scopes: ["docs", "api", "blog"],
+    bodyIndexing: "summary",
+  },
+  auth: { enabled: false, mode: "public" },
+  analytics: { enabled: false, provider: "watchfn", respectDnt: true },
+};
+
+export default config;
+```
+
+`schemaVersion` must be `1`. Use `compat.preset: "none"` for native Markdown (no Fumadocs transform).
+
+## 2. Add your first page
+
+Create `content/docs/index.md`:
+
+```markdown
+---
+title: Welcome
+description: First page
+---
+
+# Welcome
+
+This is your first docsfn page.
+```
+
+Create `content/docs/meta.json`:
+
+```json
+{
+  "title": "Documentation",
+  "pages": ["index"]
+}
+```
+
+## 3. Validate and build artifacts
+
+From the project root:
+
+```bash
+npx docsfn validate --root .
+npx docsfn build --root . --out-dir .docsfn
+```
+
+Fix any reported diagnostics before continuing.
+
+## 4. SvelteKit wiring (summary)
+
+1. Add a root `+layout.server.ts` that calls `loadDocsConfig`, `FsContentProvider`, `buildManifest`, and `buildSearchIndex` (singleton cache pattern).
+2. Add `docs/[...slug]/+page.server.ts` (or universal load) using `resolveDocsRouteDataOrThrow` and `resolveDocsPageSurface` from `@docsfn/sveltekit`.
+3. Render with `@docsfn/svelte` components (`TopBar`, `DocsSidebar`, `DocsContent` or compiled HTML, `Breadcrumbs`, `Pagination`, `DocsToc`).
+4. Expose `GET /search.json` with `createSearchArtifactResponse`.
+
+See the **docsfn** monorepo `docsfn/docs` app for a full reference implementation.
+
+## 5. Next.js wiring (summary)
+
+1. Load config and build manifest/search on the server (e.g. in a shared module used by `generateStaticParams` / route handlers).
+2. Use `@docsfn/next` helpers for static params, page data, metadata, and search responses.
+3. Compose `@docsfn/react` components in your App Router layouts and pages.
+
+Exact imports evolve with releases; align with the version of `@docsfn/next` you install.
+
+## 6. Run the dev server
+
+- **CLI watch** (artifacts only): `npx docsfn dev --root .`
+- **Framework dev**: run `vite dev` / `next dev` as usual; reload when content or config changes.
+
+You now have a validated config, a routed doc page, and a repeatable build. Next, read [Project Structure](./project-structure) and [Configuration](../core-concepts/configuration).
+
+---
+
+<!-- page:docs:guides/customizing-components.md path:/docs/guides/customizing-components -->
+# Customizing Components
+
+> Override docsfn UI primitives in Svelte and React without forking the toolchain.
+
+
+# Customizing Components
+
+The `@docsfn/svelte` and `@docsfn/react` packages ship opinionated chrome (**TopBar**, **DocsSidebar**, **Breadcrumbs**, **Pagination**, **DocsContent**, …). You can extend them by passing **props**, **component maps**, **slots**, or by **wrapping** exported building blocks.
+
+See also: [SvelteKit integration](./sveltekit), [Next.js integration](./nextjs), [Markdown extensions](../core-concepts/markdown-extensions).
+
+---
+
+## `DocsContent` and custom Markdown components
+
+Compiled Markdown may emit **`component`** blocks (PascalCase tags). Both **`DocsContent`** implementations accept a **`components`** map from **tag name → component**.
+
+**Svelte (`@docsfn/svelte`)** — `components: Record<string, ComponentType | undefined>`:
+
+```svelte
+<s
+cript lang="ts">
+  import DocsContent from "@docsfn/svelte/DocsContent.svelte";
+  import MyCallout from "$lib/MyCallout.svelte";
+</script>
+
+<DocsContent
+  compiled={data.compiled}
+  components={{ MyCallout }}
+/>
+```
+
+(Join the split opening **scr**/**ipt** line when pasting.)
+
+**React (`@docsfn/react`)** — same idea with React components:
+
+```tsx
+<DocsContent
+  compiled={compiled}
+  components={{ MyCallout }}
+/>
+```
+
+Unknown component names render as a fallback **`data-docsfn-component`** container until you add a mapping.
+
+---
+
+## Sidebar: reuse or replace
+
+1. **Tweak `DocsSidebar`** — set **`expanded: true`** on specific `SidebarItem` groups in your sidebar model to control which groups start open.
+2. **Reuse `SidebarGroup`** — import **`SidebarGroup`** from **`@docsfn/svelte`** and walk your own `Sidebar` model if you need different HTML or icons per depth.
+3. **Fork layout** — copy the small loop from **`DocsSidebar.svelte`** into your project only when you need radically different markup; keep **`resolveDocsPageSurface`** so breadcrumbs and pagination stay aligned.
+
+---
+
+## Breadcrumb separator
+
+**`Breadcrumbs`** accepts **`separator`** (Svelte: component constructor; React: component type). Default is a chevron SVG. Provide a slash, text, or icon component:
+
+```svelte
+<s
+cript lang="ts">
+  import Breadcrumbs from "@docsfn/svelte/Breadcrumbs.svelte";
+  import SlashSeparator from "$lib/SlashSeparator.svelte";
+</script>
+
+<Breadcrumbs surface={data.surface} separator={SlashSeparator} />
+```
+
+React: pass `separator={SlashSeparator}` similarly.
+
+You can also bypass **`surface`** entirely and pass **`items`** as `{ label, href? }[]`.
+
+---
+
+## Pagination layout
+
+**`Pagination`** resolves **`prev` / `next`** from **`surface.pagination`** or from explicit props:
+
+- **`prevPage`** / **`nextPage`** — `{ title, path }` overrides.
+- **`sectionContext`** — optional label above the links.
+
+Wrap the component in your own grid or flex container; class names on the root **`docsfn-pagination`** node can be targeted from global CSS.
+
+---
+
+## TopBar composition
+
+**`TopBar`** props:
+
+- **`items`** — flat links or dropdown groups (see **`TopBarItem`** / **`TopBarDropdown`** types). If omitted, items are derived from **`surface.topNav`**.
+- **`logo`** — component rendered in the left slot.
+- **`searchTrigger`** — component rendered in the actions row (often **`DocsSearch`** or a thin wrapper).
+- **`versionSelector`** — optional component (e.g. **`VersionSwitcher`**).
+- **`mobileMenuTrigger`** — optional custom menu control.
+
+Pass **`surface`** when you want nav + version links to come from the manifest in one shot.
+
+---
+
+## Custom CSS
+
+Stable hooks include:
+
+- **`docsfn-topbar`**, **`docsfn-sidebar-*`**, **`docsfn-breadcrumbs-*`**, **`docsfn-pagination-*`**, **`docsfn-content`**, **`docsfn-search-*`**, **`data-docsfn-*`** attributes on callouts, tabs, and code blocks.
+
+Prefer overriding **CSS variables** (e.g. colors from [Theming](../core-concepts/theming)) before rewriting rules. Scope overrides under your root layout class to avoid leaking into non-docs routes.
+
+---
+
+## Wrapper components
+
+Common patterns:
+
+- **SearchWrapper** — renders **`DocsSearch`** with **`loadSearchArtifact`**, analytics callbacks, and narrowed **`scopes`**.
+- **BrandedTopBar** — wraps **`TopBar`** and injects **`logo`** + **`items`** from CMS data while still using manifest **`surface`** for version links.
+- **DocsPageShell** — wraps **`Breadcrumbs`**, **`DocsContent`**, **`Pagination`**, and **`DocsToc`** with your grid and sticky behavior.
+
+Keep **`resolveDocsPageSurface`** (SvelteKit / Next) as the single source of truth for **`route`**, **`breadcrumbs`**, and **`pagination`** so you do not drift from core routing.
+
+For React, keep component imports on the package root:
+
+```tsx
+import { DocsContent, TopBar } from "@docsfn/react";
+```
+
+---
+
+<!-- page:docs:guides/index.md path:/docs/guides -->
+# Guides
+
+> End-to-end integration and customization guides for docsfn.
+
+
+# Guides
+
+Step-by-step walkthroughs for shipping a docs site with docsfn on **SvelteKit** or **Next.js**, plus patterns for **customizing** the default UI kit.
+
+## Available guides
+
+- **[SvelteKit integration](./sveltekit)** — Install packages, wire layouts, docs and blog routes, search, and prerendering (matches how this site is built).
+- **[Next.js integration](./nextjs)** — App Router pages, static params, metadata, React components, and search.
+- **[Customizing components](./customizing-components)** — `DocsContent` component maps, sidebar and chrome overrides, TopBar composition, CSS hooks.
+
+If you are new to docsfn, start with **[Getting Started](../getting-started/)** and **[Configuration](../core-concepts/configuration)** before deep integration.
+
+---
+
+<!-- page:docs:guides/nextjs.md path:/docs/guides/nextjs -->
+# Next.js Integration
+
+> Build a docsfn documentation site on the Next.js App Router.
+
+
+# Next.js Integration
+
+Use **`@docsfn/next`** with **`@docsfn/core`**, **`@docsfn/react`**, and **`@docsfn/provider-fs`** to render docs from the same `docsfn.config.ts` as SvelteKit. The App Router loads the manifest at build time (or in a server module) and uses **`generateStaticParams`**, **`resolveDocsRouteData`**, **`resolveDocsPageSurface`**, and **`generatePageMetadata`**.
+
+## Prerequisites
+
+- **Next.js 15** (App Router)
+- **React 19** (or 18; see package peer ranges)
+- **Node.js 20–24**
+
+---
+
+## Step 1 — Create a Next.js project
+
+```bash
+npx create-next-app@latest my-docs --typescript --eslint --app --src-dir
+cd my-docs
+```
+
+---
+
+## Step 2 — Install packages
+
+```bash
+npm install @docsfn/core @docsfn/next @docsfn/react @docsfn/provider-fs
+npm install -D @docsfn/cli
+```
+
+---
+
+## Step 3 — `docsfn.config.ts`
+
+Reuse the same config shape as the SvelteKit guide (`schemaVersion`, `site`, `content`, `navigation`, `search`, `auth`, `analytics`). Place at the repo root and load with **`loadDocsConfig({ cwd: process.cwd() })`**.
+
+---
+
+## Step 4 — Shared server module for manifest + search
+
+Create **`src/server/docs-source.ts`** (name arbitrary) that builds once per process:
+
+```ts
+// src/server/docs-source.ts
+import path from "node:path";
+import { buildManifest, loadDocsConfig } from "@docsfn/core";
+import { FsContentProvider } from "@docsfn/provider-fs";
+
+const root = process.cwd();
+
+export async function getDocsConfig() {
+  return loadDocsConfig({ cwd: root });
+}
+
+export async function getManifest() {
+  const config = await getDocsConfig();
+  const provider = new FsContentProvider({
+    root,
+    docsDir: config.content.docsDir,
+    pagesDir: config.content.pagesDir,
+    blogDir: config.content.blogDir,
+    apiDir: config.content.apiDir,
+    assetsDir: config.content.assetsDir,
+  });
+  return buildManifest(provider, config);
+}
+```
+
+Call **`buildSearchIndex`** the same way as SvelteKit if you need search JSON on disk for **`createSearchArtifactResponse`**.
+
+---
+
+## Step 5 — Root layout
+
+```tsx
+// src/app/layout.tsx
+import type { ReactNode } from "react";
+import "./globals.css";
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+---
+
+## Step 6 — Docs page `app/docs/[[...slug]]/page.tsx`
+
+```tsx
+// src/app/docs/[[...slug]]/page.tsx
+import { notFound } from "next/navigation";
+import {
+  generateStaticParams as generateDocsStaticParams,
+  generatePageMetadata,
+  resolveDocsPageSurface,
+  resolveDocsRouteData,
+} from "@docsfn/next";
+import { getDocsConfig, getManifest } from "@/server/docs-source";
+import {
+  ApiReferenceRenderer,
+  Breadcrumbs,
+  DocsContent,
+  DocsSidebar,
+  Pagination,
+} from "@docsfn/react";
+import { compileReactContent, resolveMarkdownRelativeLinks } from "@docsfn/core";
+
+const manifestPromise = getManifest();
+const configPromise = getDocsConfig();
+
+export async function generateStaticParams() {
+  const [manifest, config] = await Promise.all([manifestPromise, configPromise]);
+  return generateDocsStaticParams(manifest, {
+    basePath: config.site.basePath ?? "/docs",
+    includeApiRoutes: true,
+  });
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug?: string[] }>;
+}) {
+  const { slug } = await params;
+  const [manifest, config] = await Promise.all([manifestPromise, configPromise]);
+  const routeEntry = resolveDocsRouteData(slug, manifest, {
+    basePath: config.site.basePath ?? "/docs",
+  });
+  if (!routeEntry || routeEntry.kind !== "page") {
+    return {};
+  }
+  const meta = generatePageMetadata(routeEntry.page, {
+    siteTitle: manifest.site.title,
+    canonicalUrl: config.site.canonicalUrl,
+  });
+  return {
+    title: meta.title,
+    description: meta.description,
+    alternates: meta.alternates,
+    openGraph: meta.openGraph,
+  };
+}
+
+export default async function DocsPage({
+  params,
+}: {
+  params: Promise<{ slug?: string[] }>;
+}) {
+  const { slug } = await params;
+  const [manifest, config] = await Promise.all([manifestPromise, configPromise]);
+  const basePath = config.site.basePath ?? "/docs";
+
+  const routeEntry = resolveDocsRouteData(slug, manifest, { basePath });
+  if (!routeEntry) {
+    notFound();
+  }
+
+  const surface = resolveDocsPageSurface({
+    manifest,
+    route: routeEntry.route,
+    page: routeEntry.kind === "page" ? routeEntry.page : undefined,
+    options: {
+      basePath,
+      homeHref: basePath,
+      canonicalUrl: config.site.canonicalUrl,
+    },
+  });
+
+  const sidebarId = surface.sidebarId ?? "default";
+  const sidebar = manifest.sidebars[sidebarId];
+
+  if (routeEntry.kind === "page") {
+    const compiled = resolveMarkdownRelativeLinks({
+      compiled: compileReactContent({ source: routeEntry.page.body, sourcePath: routeEntry.page.id.replace(/^[^:]+:/, ""), compatPreset: config.compat?.preset ?? "none" }),
+      route: routeEntry.route,
+      sourcePath: routeEntry.page.id.replace(/^[^:]+:/, ""),
+    });
+    return (
+      <div className="docs-layout">
+        {sidebar ? (
+          <DocsSidebar sidebar={sidebar} activePath={surface.route} />
+        ) : null}
+        <main>
+          <Breadcrumbs surface={surface} />
+          <DocsContent compiled={compiled} />
+          <Pagination surface={surface} />
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="docs-layout">
+      {sidebar ? <DocsSidebar sidebar={sidebar} activePath={surface.route} /> : null}
+      <main>
+        <Breadcrumbs surface={surface} />
+        <ApiReferenceRenderer api={routeEntry.api} />
+      </main>
+    </div>
+  );
+}
+```
+
+Use **`resolveDocsRouteDataOrThrow`** if you prefer exceptions over `notFound()` for missing slugs.
+
+---
+
+## Step 7 — Search route
+
+```ts
+// src/app/api/search/route.ts
+import { createSearchArtifactResponse } from "@docsfn/next";
+import { buildSearchIndex } from "@docsfn/core";
+import { getDocsConfig, getManifest } from "@/server/docs-source";
+
+export async function GET() {
+  const [manifest, config] = await Promise.all([getManifest(), getDocsConfig()]);
+  const artifact = await buildSearchIndex(manifest, {
+    search: config.search,
+    auth: config.auth,
+  });
+  return createSearchArtifactResponse({ artifact });
+}
+```
+
+Alternatively read **`search.json`** produced by **`docsfn build`** from **`.docsfn/`** with `loadArtifact` (see `@docsfn/next` README).
+
+Wire **`DocsSearch`** from **`@docsfn/react`** with **`loadSearchArtifact={() => fetch("/api/search").then((r) => r.json())}`** (adjust path to match your route).
+
+---
+
+## Step 8 — Blog routes
+
+Use **`generateBlogParams`**, **`getPostData`** / **`getPostDataOrThrow`** from **`@docsfn/next`**, and **`BlogList`** from **`@docsfn/react`**:
+
+- **`app/blog/page.tsx`** — list posts from `manifest.posts` (filter drafts).
+- **`app/blog/[slug]/page.tsx`** — resolve post by slug, **`compileReactContent`** on `post.body`, render **`DocsContent`**.
+
+Re-use the same **`getManifest()`** helper so content stays consistent.
+
+---
+
+## `@docsfn/next` helpers (quick reference)
+
+| Export | Role |
+| --- | --- |
+| **`generateStaticParams`** | Static paths for `[[...slug]]` (and versioned variants). |
+| **`resolveDocsRouteData`** / **`resolveDocsRouteDataOrThrow`** | Map param segments → page or API entry. |
+| **`resolveDocsPageSurface`** | Breadcrumbs, pagination, sidebar id, canonical URL, etc. |
+| **`generatePageMetadata`** | Title, description, Open Graph, canonical alternates. |
+| **`createSearchArtifactResponse`** | JSON **`Response`** for search artifact. |
+| **`generateBlogParams`** | Blog static params. |
+
+---
+
+## `@docsfn/react` components
+
+| Export | Role |
+| --- | --- |
+| **DocsContent** | Compiled Markdown blocks; `components` prop for custom tags. |
+| **DocsSidebar** | Navigation tree. |
+| **Breadcrumbs** | Trail + optional custom **separator** component. |
+| **Pagination** | Prev/next; override via props. |
+| **DocsToc** | On-page headings. |
+| **DocsSearch** | Search modal + keyboard shortcut. |
+| **TopBar** | Header; `items`, `logo`, `searchTrigger`. |
+| **ApiReferenceRenderer** | OpenAPI UI. |
+| **VersionSwitcher** | Version dropdown. |
+| **BlogList** | Opinionated list layout for posts. |
+| **EmbeddedPage** | Compact article for embeds. |
+| **ThemeProvider** | Optional theme context wiring. |
+| **DocsLayout** | Lower-level shell when you assemble your own frame. |
+
+---
+
+## Production build
+
+```bash
+npx docsfn validate --root .
+npm run build
+```
+
+Run **`docsfn build`** in CI if you commit `.docsfn` artifacts for faster search loading.
+
+---
+
+<!-- page:docs:guides/sveltekit.md path:/docs/guides/sveltekit -->
+# SvelteKit Integration
+
+> Build a docsfn documentation site on SvelteKit 2 with Svelte 5.
+
+
+# SvelteKit Integration
+
+This guide mirrors the layout used by the official docsfn docs app: a **singleton manifest + search artifact** loaded from the root layout, a **`docs/[...slug]`** catch-all for docs and API pages, **blog** routes, **`/search.json`**, and Vite aliases so the browser bundle never pulls Node-only code from `@docsfn/core`.
+
+## Prerequisites
+
+- **SvelteKit 2** and **Svelte 5**
+- **Node.js 20–24**
+- **TypeScript** enabled in the Kit project
+
+## Svelte `script` blocks in this guide
+
+docsfn scans Markdown for unsafe HTML. A normal Svelte opening **scr**/**ipt** tag is flagged, so examples below split it across two lines. When you copy a block, **join the first two lines into one valid opening tag**. Closing tags stay on a single line (they are safe).
+
+---
+
+## Step 1 — Create a SvelteKit project
+
+```bash
+npm create svelte@latest my-docs
+cd my-docs
+npm install
+```
+
+Enable TypeScript and choose Svelte 5 syntax in the wizard if prompted.
+
+---
+
+## Step 2 — Install packages
+
+```bash
+npm install @docsfn/core @docsfn/sveltekit @docsfn/svelte @docsfn/provider-fs
+npm install -D @docsfn/cli
+```
+
+Optional: add **`@tailwindcss/vite`** and Tailwind v4 if you want utility styling like the reference site.
+
+---
+
+## Step 3 — Configure `svelte.config.js` aliases
+
+Point Kit’s resolver at the published packages (or monorepo paths while developing):
+
+```js
+// svelte.config.js
+import path from "node:path";
+import adapter from "@sveltejs/adapter-auto";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+const dirname = path.dirname(new URL(import.meta.url).pathname);
+
+/** @type {import('@sveltejs/kit').Config} */
+export default {
+  preprocess: vitePreprocess(),
+  kit: {
+    adapter: adapter(),
+  },
+};
+```
+
+Installed apps should import the published package entry points directly. Reserve aliases for local monorepo development only.
+
+---
+
+## Step 4 — Public Svelte component imports
+
+Import shipped components from `@docsfn/svelte` public exports. Use either the package root or the documented `.svelte` subpaths, but never internal package source directories:
+
+```svelte
+<script lang="ts">
+  import TopBar from "@docsfn/svelte/TopBar.svelte";
+  import Breadcrumbs from "@docsfn/svelte/Breadcrumbs.svelte";
+  import Pagination from "@docsfn/svelte/Pagination.svelte";
+  import DocsSidebar from "@docsfn/svelte/DocsSidebar.svelte";
+  import DocsToc from "@docsfn/svelte/DocsToc.svelte";
+  import ApiReferenceRenderer from "@docsfn/svelte/ApiReferenceRenderer.svelte";
+  import DocsSearch from "@docsfn/svelte/DocsSearch.svelte";
+</script>
+```
+
+---
+
+## Step 5 — `docsfn.config.ts`
+
+Place at the project root (next to `package.json`). Minimal example:
+
+```ts
+// docsfn.config.ts
+import type { DocsConfig } from "@docsfn/core";
+
+const config: DocsConfig = {
+  schemaVersion: 1,
+  site: {
+    title: "My docs",
+    description: "Documentation",
+    basePath: "/docs",
+  },
+  compat: { preset: "none" },
+  content: {
+    root: ".",
+    docsDir: "content/docs",
+    blogDir: "content/blog",
+    apiDir: "content/api",
+    pagesDir: "content/pages",
+    assetsDir: "static",
+    metaFileName: "meta.json",
+  },
+  navigation: {
+    topNav: [
+      { label: "Docs", href: "/docs" },
+      { label: "Blog", href: "/blog" },
+    ],
+    sidebars: {
+      docs: { title: "Docs", root: true, include: ["docs/**"] },
+      api: { title: "API", root: true, include: ["docs/api/**"] },
+    },
+  },
+  search: { enabled: true, scopes: ["docs", "api", "blog"], bodyIndexing: "summary" },
+  auth: { enabled: false, mode: "public" },
+  analytics: { enabled: false, provider: "watchfn", respectDnt: true },
+};
+
+export default config;
+```
+
+Reserve the API collection for OpenAPI specs. If you also want hand-written package docs at `/docs/api/...`, keep those Markdown files under `content/docs/api` and classify them with:
+
+```ts
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "blog"],
+  bodyIndexing: "summary",
+  routeScopeOverrides: [
+    { pattern: "/docs/api", scope: "api" },
+    { pattern: "/docs/api/**", scope: "api" },
+  ],
+},
+navigation: {
+  sidebars: {
+    docs: { title: "Docs", root: true, include: ["docs/**"] },
+    api: { title: "API", root: true, include: ["docs/api/**"] },
+  },
+},
+```
+
+---
+
+## Step 6 — Server module: load manifest + search
+
+Create **`src/lib/server/docs-site-source.ts`** (same pattern as this repo’s docs app):
+
+```ts
+// src/lib/server/docs-site-source.ts
+import path from "node:path";
+import {
+  buildManifest,
+  buildSearchIndex,
+  loadDocsConfig,
+  type DocsCompatPreset,
+  type DocsConfig,
+  type DocsManifest,
+  type DocsSearchArtifact,
+} from "@docsfn/core";
+import { FsContentProvider } from "@docsfn/provider-fs";
+
+export interface DocsSiteSource {
+  siteRoot: string;
+  manifest: DocsManifest;
+  searchArtifact: DocsSearchArtifact;
+  siteTitle: string;
+  canonicalUrl?: string;
+  compatPreset: DocsCompatPreset;
+  config: DocsConfig;
+}
+
+let sourcePromise: Promise<DocsSiteSource> | null = null;
+
+export async function loadDocsSiteSource(): Promise<DocsSiteSource> {
+  if (!sourcePromise) {
+    sourcePromise = (async () => {
+      const siteRoot = path.resolve(process.cwd());
+      const config = await loadDocsConfig({ cwd: siteRoot });
+      const provider = new FsContentProvider({
+        root: siteRoot,
+        docsDir: config.content.docsDir,
+        pagesDir: config.content.pagesDir,
+        blogDir: config.content.blogDir,
+        apiDir: config.content.apiDir,
+        assetsDir: config.content.assetsDir,
+      });
+      const manifest = await buildManifest(provider, config);
+      const searchArtifact = await buildSearchIndex(manifest, {
+        search: config.search,
+        auth: config.auth,
+      });
+
+      return {
+        siteRoot,
+        manifest,
+        searchArtifact,
+        siteTitle: config.site.title,
+        canonicalUrl: config.site.canonicalUrl,
+        compatPreset: config.compat?.preset ?? "none",
+        config,
+      };
+    })();
+  }
+  return sourcePromise;
+}
+```
+
+---
+
+## Step 7 — Root `+layout.server.ts`
+
+```ts
+// src/routes/+layout.server.ts
+import { loadDocsSiteSource } from "$lib/server/docs-site-source";
+import type { LayoutServerLoad } from "./$types";
+
+export const load: LayoutServerLoad = async () => ({
+  source: await loadDocsSiteSource(),
+});
+```
+
+---
+
+## Step 8 — Root `+layout.svelte`
+
+Wire **TopBar** with nav from config and **`DocsSearch`** as the search trigger (search UI includes its own button and Cmd/Ctrl+K).
+
+```svelte
+<!-- src/routes/+layout.svelte — join the split opening tag when pasting -->
+<s
+cript lang="ts">
+  import "../app.css";
+  import TopBar from "@site/topbar";
+  import DocsSearch from "@site/docs-search";
+  import type { Snippet } from "svelte";
+  import type { LayoutData } from "./$types";
+
+  interface Props {
+    data: LayoutData;
+    children: Snippet;
+  }
+
+  let { data, children }: Props = $props();
+</script>
+
+<div class="docsfn-site-root">
+  <TopBar
+    items={data.source.config.navigation?.topNav}
+    searchTrigger={DocsSearch}
+  />
+  <main class="docsfn-site-main">
+    {@render children()}
+  </main>
+</div>
+```
+
+Pass **`loadSearchArtifact`** if you do not have the artifact in `data` (see Step 11). You can wrap `DocsSearch` in a tiny component that calls `fetch("/search.json")`.
+
+---
+
+## Step 9 — Docs route `+page.server.ts`
+
+```ts
+// src/routes/docs/[...slug]/+page.server.ts
+import { error } from "@sveltejs/kit";
+import { compileSvelteContent, resolveMarkdownRelativeLinks } from "@docsfn/core";
+import type { Sidebar } from "@docsfn/core";
+import { resolveDocsPageSurface, resolveDocsRouteDataOrThrow } from "@docsfn/sveltekit";
+import type { PageServerLoad } from "./$types";
+
+function isRouteNotFound(err: unknown): err is { code: string; message: string } {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    String((err as { code: unknown }).code) === "DOCS_ROUTE_NOT_FOUND"
+  );
+}
+
+export const load: PageServerLoad = async ({ params, parent }) => {
+  const { source } = await parent();
+  const basePath = "/docs";
+
+  let routeEntry;
+  try {
+    routeEntry = resolveDocsRouteDataOrThrow(params.slug, source.manifest, { basePath });
+  } catch (e) {
+    if (isRouteNotFound(e)) throw error(404, e.message);
+    throw e;
+  }
+
+  if (routeEntry.kind === "post") {
+    throw error(404, "use /blog for posts");
+  }
+
+  const surface = resolveDocsPageSurface({
+    manifest: source.manifest,
+    route: routeEntry.route,
+    page: routeEntry.kind === "page" ? routeEntry.page : undefined,
+    options: {
+      basePath,
+      homeHref: basePath,
+      canonicalUrl: source.canonicalUrl,
+      versionMode: "path-prefix",
+    },
+  });
+
+  const sidebarId = surface.sidebarId ?? "default";
+  const sidebar: Sidebar | undefined = source.manifest.sidebars[sidebarId];
+
+  const compiled =
+    routeEntry.kind === "page"
+      ? resolveMarkdownRelativeLinks({
+          compiled: compileSvelteContent({ source: routeEntry.page.body, sourcePath: routeEntry.page.id.replace(/^[^:]+:/, ""), compatPreset: source.compatPreset }),
+          route: routeEntry.route,
+          sourcePath: routeEntry.page.id.replace(/^[^:]+:/, ""),
+        })
+      : undefined;
+
+  return { routeEntry, surface, sidebar, compiled, siteTitle: source.siteTitle };
+};
+```
+
+---
+
+## Step 10 — Docs route `+page.svelte` (three-column layout)
+
+Use **`DocsContent`** for Markdown pages and **`ApiReferenceRenderer`** for OpenAPI entries. Import shipped UI directly from the `@docsfn/svelte/*.svelte` public subpaths.
+
+```svelte
+<!-- src/routes/docs/[...slug]/+page.svelte -->
+<s
+cript lang="ts">
+  import DocsContent from "@docsfn/svelte/DocsContent.svelte";
+  import ApiReferenceRenderer from "@docsfn/svelte/ApiReferenceRenderer.svelte";
+  import Breadcrumbs from "@docsfn/svelte/Breadcrumbs.svelte";
+  import DocsSidebar from "@docsfn/svelte/DocsSidebar.svelte";
+  import DocsToc from "@docsfn/svelte/DocsToc.svelte";
+  import Pagination from "@docsfn/svelte/Pagination.svelte";
+  import type { PageData } from "./$types";
+
+  interface Props {
+    data: PageData;
+  }
+
+  let { data }: Props = $props();
+</script>
+
+<svelte:head>
+  <title>{data.surface.title ?? data.siteTitle}</title>
+</svelte:head>
+
+<div class="docs-page-grid">
+  {#if data.sidebar}
+    <aside class="docs-sidebar">
+      <DocsSidebar sidebar={data.sidebar} activePath={data.surface.route} />
+    </aside>
+  {/if}
+
+  <section class="docs-main">
+    <Breadcrumbs surface={data.surface} />
+    {#if data.routeEntry.kind === "page" && data.compiled}
+      <article>
+        <DocsContent compiled={data.compiled} />
+      </article>
+    {:else}
+      <ApiReferenceRenderer api={data.routeEntry.api} />
+    {/if}
+    <Pagination surface={data.surface} />
+  </section>
+
+  {#if (data.surface.headings ?? []).length > 0}
+    <aside class="docs-toc">
+      <DocsToc surface={data.surface} headings={data.surface.headings} />
+    </aside>
+  {/if}
+</div>
+```
+
+Add responsive CSS as needed.
+
+---
+
+## Step 11 — Search endpoint
+
+```ts
+// src/routes/search.json/+server.ts
+import { createSearchArtifactResponse } from "@docsfn/sveltekit";
+import { loadDocsSiteSource } from "$lib/server/docs-site-source";
+import type { RequestHandler } from "./$types";
+
+export const GET: RequestHandler = async () => {
+  const source = await loadDocsSiteSource();
+  return createSearchArtifactResponse({ artifact: source.searchArtifact });
+};
+```
+
+If `DocsSearch` is not passed `searchArtifact` from the server, set:
+
+```ts
+loadSearchArtifact={() => fetch("/search.json").then((r) => r.json())}
+```
+
+on a thin wrapper component used as `searchTrigger`.
+
+---
+
+## Step 12 — Blog routes
+
+**`src/routes/blog/+page.ts`** (client load is fine for listing):
+
+```ts
+import type { PageLoad } from "./$types";
+
+export const load: PageLoad = async ({ parent }) => {
+  const { source } = await parent();
+  const posts = Object.values(source.manifest.posts)
+    .filter((p) => !p.draft)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  return { posts };
+};
+```
+
+**`src/routes/blog/[...slug]/+page.server.ts`**:
+
+```ts
+import { error } from "@sveltejs/kit";
+import { compileSvelteContent, resolveMarkdownRelativeLinks } from "@docsfn/core";
+import { getPostData } from "@docsfn/sveltekit";
+import type { PageServerLoad } from "./$types";
+
+export const load: PageServerLoad = async ({ params, parent }) => {
+  const { source } = await parent();
+  const post = getPostData(params.slug, source.manifest);
+  if (!post || post.draft) throw error(404, "Not found");
+  const compiled = resolveMarkdownRelativeLinks({
+    compiled: compileSvelteContent({ source: post.body, compatPreset: source.compatPreset }),
+    route: post.path, sourcePath: post.id.replace(/^[^:]+:/, ""),
+  });
+  return { post, compiled, siteTitle: source.siteTitle };
+};
+```
+
+Render with **`DocsContent`** and link the list to `/blog/[...slug]`.
+
+**RSS** — optional `src/routes/blog/rss.xml/+server.ts` using **`generateRSSFeed`** from `@docsfn/core` (see [RSS](../core-concepts/rss)).
+
+---
+
+## Step 13 — Prerendering / static generation
+
+1. **`adapter-static`** — install `@sveltejs/adapter-static`, set `fallback` if needed, run `vite build`.
+2. **Route entries** — for `[...slug]`, export **`entries`** from `+page.ts` / `+page.server.ts` using **`generateStaticParams`** from `@docsfn/sveltekit`:
+
+```ts
+import { generateStaticParams } from "@docsfn/sveltekit";
+import { loadDocsSiteSource } from "$lib/server/docs-site-source";
+
+export const entries = async () => {
+  const source = await loadDocsSiteSource();
+  return generateStaticParams(source.manifest, {
+    basePath: source.config.site.basePath ?? "/docs",
+    includeApiRoutes: true,
+  });
+};
+
+export const prerender = true;
+```
+
+Versioned docs use **`generateVersionedStaticParams`** when `versions.mode` is not `none`.
+
+---
+
+## Embedded routes (optional)
+
+`DocsManifest.embedded` lists **iframe-friendly** page and surface URLs for each docs page. Use **`EmbeddedPage`** from `@docsfn/svelte` when you host those routes and want a minimal article chrome without the full site layout. Typical pattern: dedicated routes under `embedded/page/...` that load the same manifest and render `EmbeddedPage` with `compiled` + headings.
+
+---
+
+## `@docsfn/svelte` component checklist
+
+| Component | Role |
+| --- | --- |
+| **TopBar** | Header nav; props: `items`, `logo`, `searchTrigger`, `versionSelector`, `surface`. |
+| **DocsSidebar** | Tree nav; `surface`, `sidebar`, `activePath`. Groups expand when `item.expanded === true` or a descendant matches active route. |
+| **SidebarGroup** | Recursive group renderer (use when building a custom sidebar). |
+| **Breadcrumbs** | `surface` or `items`; `separator` slot component. |
+| **Pagination** | `surface` or explicit `prevPage` / `nextPage`. |
+| **DocsToc** | Heading list for current page. |
+| **DocsContent** | Renders compiled Markdown blocks; `components` map for custom MDX-style tags. |
+| **DocsSearch** | Modal search + Cmd/Ctrl+K. |
+| **ApiReferenceRenderer** | OpenAPI reference UI. |
+| **VersionSwitcher** | Version dropdown from `surface.versions`. |
+| **DocsLayout** | Lower-level layout shell if you assemble your own page frame. |
+| **EmbeddedPage** | Compact article + optional TOC for embeds. |
+
+---
+
+## CLI workflow
+
+```bash
+npx docsfn validate --root .
+npx docsfn build --root .
+npx docsfn dev --root .
+```
+
+Use **`dev`** while authoring so `.docsfn/search.json` stays warm if you load the artifact from disk instead of the Kit route.
+
+---
+
+<!-- page:docs:index.md path:/docs -->
+# docsfn Documentation
+
+> Overview of the docsfn documentation toolchain and how to use this site.
+
+
+# docsfn Documentation
+
+**docsfn** is the documentation framework used across superfunctions: filesystem-backed Markdown, a typed config file, manifest + search artifacts, and first-class adapters for **SvelteKit** and **Next.js**.
+
+## Where to go next
+
+- **[Getting Started](./getting-started/)** — Install packages, minimal config, quick start, project layout.
+- **[Core Concepts](./core-concepts/)** — Configuration reference and content format.
+- **[API Reference](./api/)** — Package-level reference (expanded in later phases).
+- **[Guides](./guides/)** — Framework walkthroughs and customization (filled in over time).
+
+Use the left sidebar to browse; every page includes breadcrumbs and prev/next where the manifest provides an ordering.
+
+---
+
+# Blog
+
+<!-- post:blog:introducing-docsfn.md path:/blog/introducing-docsfn date:2026-03-22 -->
+# Introducing docsfn
+
+
+docsfn is a **self-hosted documentation toolchain** for the superfunctions ecosystem and any project that wants the same building blocks: a single content tree, a typed manifest, full-text search, optional blog and OpenAPI-backed API reference pages, and first-class adapters for **SvelteKit** and **Next.js**.
+
+We built it because we wanted one pipeline that stays honest about where content lives, how routes are generated, and how search and RSS stay in sync with the manifest—without locking you into a single framework or a hosted SaaS.
+
+## What you get
+
+- **Multi-framework routing** — Wire **SvelteKit** or **Next.js** to the same `DocsManifest`: catch-all doc routes, blog listing and posts, search JSON, and RSS where you enable them.
+- **Native Markdown (and MDX where configured)** — Write docs and posts as files under configurable directories; frontmatter and `meta.json` trees drive navigation and sidebars.
+- **Full-text search** — Build a search artifact from your content; the runtime scopes queries across docs, API reference, and blog when you opt in.
+- **Blog** — Dated posts, listings, tags, and **RSS 2.0** via `generateRSSFeed` from `@docsfn/core`.
+- **OpenAPI** — Promote OpenAPI specs into browsable API reference pages that participate in search and routing like the rest of the site.
+- **CLI** — `docsfn validate` and `docsfn build` for manifests, diagnostics, and artifacts you can check in CI.
+
+## How this differs
+
+Many doc products optimize for a single meta-framework or a hosted editor. docsfn optimizes for **repos you own**: plain files, explicit config (`docsfn.config.ts`), and adapters that only bridge manifests to your framework’s loaders and server routes. You keep deployment, auth, and caching choices on your side.
+
+## Getting started
+
+Create a `docsfn.config.ts`, point `content.docsDir` and `content.blogDir` at your trees, run **`docsfn validate`** and **`docsfn build`**, then follow the [SvelteKit integration guide](/docs/guides/sveltekit) or [Next.js guide](/docs/guides/nextjs) to mount routes. The [quick start](/docs/getting-started/quick-start) page walks through the minimal file layout.
+
+## What’s next
+
+We will keep tightening diagnostics, expanding guides, and aligning adapters as superfunctions packages evolve. If you adopt docsfn in your own repo, issues and feedback help set the roadmap.
+
+Thanks for reading—welcome to docsfn.
+
+---
+
+<!-- post:collection:changelog:docsfn-v0-1-0.md path:/changelog/docsfn-v0-1-0 date:2026-07-10 -->
+# Docsfn v0.1.0 Changelog Foundation
+
+
+# Docsfn v0.1.0 Changelog Foundation
+
+This update adds the first production-grade foundation for changelog content in docsfn.
+
+- Changelog entries can live in `content/changelog`.
+- Public routes can be served from `/changelog`.
+- Search can index changelog entries under the `changelog` scope.
+- RSS can be generated for changelog separately from blog posts.
+
+The underlying dated-content engine is reused, but the public model is now a named collection instead of a fake blog configuration.
+
+---
+
+# API Reference
+
+<!-- api:api:search-qa-stub.openapi.yaml path:/docs/api/search-qa-stub.openapi -->
+## Svelte components (search QA)
+
+- GET /health — Health check
