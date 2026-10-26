@@ -1,0 +1,9 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-27T02:48:03Z,unknown,Codex Desktop,spec,spec,,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec
+2026-03-27T03:20:27Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_00,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_00-2026-03-27-v2s8n4xq-report.md
+2026-03-27T03:43:40Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_01,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_01-2026-03-27-k9m4t2p-report.md
+2026-03-27T04:10:45Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_02,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_02-2026-03-27-m8r3q2t9-report.md
+2026-03-27T04:32:42Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_03,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_03-2026-03-27-h4n2p7qx-report.md
+2026-03-27T05:04:45Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_04,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_04-2026-03-27-r7m3c6kp-report.md
+2026-03-27T05:12:56Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_05,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_05-2026-03-27-q5v2n8lm-report.md
+2026-03-27T05:33:43Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_06,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/phase-reports/PHASE_06-2026-03-27-z8k4p1qm-report.md
