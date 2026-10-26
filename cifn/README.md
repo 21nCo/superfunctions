@@ -484,7 +484,7 @@ The local `Runner` executes `hostfn/deploy` with supervised argument-vector exec
 
 The exported `executeHostFnDeployAsync` uses the same supervisor. Its `baseEnv`, `executable`, and redaction policy are trusted host settings. Without an explicit redaction policy, nonempty supplied environment values are redacted. A throwing output callback aborts execution and cannot produce success. Unproven group termination propagates `ProcessGroupUncertainError`; the Runner retains its workspace. Cancellation prevents subsequent steps, including `always()` steps.
 
-The existing synchronous `executeHostFnDeploy` keeps literal argv and its optional `ci` flag. It inherits the host environment for compatibility and provides no asynchronous process-group cleanup guarantee. Timeout, capture overflow, or signal termination throws `ProcessGroupUncertainError`; the managed Runner does not use this path. The remote durable executor still rejects HostFn steps: remote integration, deployment receipts, and live provider acceptance remain open.
+The existing synchronous `executeHostFnDeploy` keeps literal argv and its optional `ci` flag. It inherits the host environment for compatibility and provides no asynchronous process-group cleanup guarantee. Timeout, capture overflow, or signal termination throws `ProcessGroupUncertainError`; the managed Runner does not use this path. Remote HostFn is separately enabled through the trusted policy described below; independent deployment receipts and live provider acceptance remain open.
 
 ### Scheduled pipelines
 
@@ -497,3 +497,17 @@ The built control-plane server accepts trusted host configuration in `CIFN_CRON_
 `CronScheduler.start()` returns a promise and repeated starts share the same owner. Register before starting; stop before modifying registrations. `await scheduler.stop()` prevents new scheduled admission and drains active work before closing its Flow scheduler. A shutdown timeout retains the stop fence and reports uncertain ownership. The server waits for that drain before closing storage. The legacy `start(intervalMs)` argument is accepted for source compatibility but cannot override the expression.
 
 This integration has one scheduler owner per process. Restart schedules strictly future occurrences; missed occurrences are not backfilled. Concurrent control-plane processes must not register the same schedules: durable occurrence deduplication, distributed schedule ownership and crash reconciliation of ambiguous admission are not implemented here. Failed admission is recorded as a sanitized scheduler error and the next occurrence remains eligible; the failed occurrence is not blindly replayed. Committed run/job dispatch still uses the existing durable store and publisher. This does not claim the entire original FlowFn integration is complete.
+
+### Opt-in remote HostFn execution
+
+Remote runners default to denying provider steps. A trusted host may enable only `hostfn/deploy` with `RemoteRunnerOptions.hostFn`, or set `CIFN_HOSTFN_POLICY` on the built runner:
+
+```json
+{"executable":"/absolute/path/to/hostfn","timeoutMs":600000,"labels":["hostfn-runner"],"local":true}
+```
+
+The executable, deadline, allowed labels and local mode are host configuration, never pipeline configuration. A job's single `runs-on` label must exactly match one listed label; empty lists, wildcards and duplicate labels are rejected. The normal authenticated control-plane assignment must also match the runner's registered labels. `local` defaults to false and overrides `with.local`; `--ci` is always supplied. Environment names remain literal argv. Any job combining an image requirement with a HostFn step is rejected before any step, even when Docker is configured, so deployment cannot silently escape container selection.
+
+Remote deployment uses the prepared secret snapshot, streamed redacted log spool, awaited step journal, durable claim and existing cancellation monitor. A lost completion acknowledgement replays the saved result, not the deployment command. A killed runner or unproven process-group shutdown retains uncertain execution and requires explicit reconciliation; it never retries deployment automatically. Cancellation proves only closure of the owned local process, not rollback or cancellation of a provider operation that the CLI already submitted.
+
+The provided acceptance fixture uses a private fake executable with real HTTP/SQLite claims, the built runner entrypoint, cancellation, lost acknowledgements and restart. No live HostFn deployment or external provider was exercised. Remote FileFn/artifact/cache/TestFn integration remains open, and this process boundary is not an untrusted-job sandbox.

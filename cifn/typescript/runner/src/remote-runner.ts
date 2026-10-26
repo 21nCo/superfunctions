@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { OwnedDockerExecutor } from './owned-docker-executor.js';
 import { StepJournal, replayStepSnapshot, StepStatusReportingError } from './step-journal.js';
 import { LogSpool, replayStartedLogSnapshot } from "./log-spool.js";
@@ -9,13 +10,21 @@ import { Runner } from './runner.js';
 import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { ClaimJournal, type ClaimJournalEntry } from './claim-journal.js';
 
-export interface RemoteRunnerOptions { ownedDockerExecutor?: OwnedDockerExecutor; allowLocalRepositories?: boolean; baseUrl: string; runnerId: string; runnerSecret: string; stateDirectory: string; logRetentionMs?: number; fetch?: typeof fetch }
+export interface RemoteHostFnPolicy { executable: string; timeoutMs: number; labels: string[]; local?: boolean }
+function snapshotHostFnPolicy(value: RemoteHostFnPolicy | undefined): RemoteHostFnPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value.executable !== 'string' || !isAbsolute(value.executable) || value.executable.includes('\0') || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs < 1 || value.timeoutMs > 3600000 || !Array.isArray(value.labels) || !value.labels.length || value.labels.length > 32 || value.labels.some(label => typeof label !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(label)) || new Set(value.labels).size !== value.labels.length || (value.local !== undefined && typeof value.local !== 'boolean')) throw new Error('Invalid trusted HostFn policy');
+  return Object.freeze({...value, labels:Object.freeze([...value.labels]) as unknown as string[],local:value.local??false});
+}
+export interface RemoteRunnerOptions { hostFn?: RemoteHostFnPolicy; ownedDockerExecutor?: OwnedDockerExecutor; allowLocalRepositories?: boolean; baseUrl: string; runnerId: string; runnerSecret: string; stateDirectory: string; logRetentionMs?: number; fetch?: typeof fetch }
 interface ResumableClaim { payload?: JobPayload; runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean }
 
 /** Reuses the real shell executor. The memory projection is scratch state only. */
-export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void, onLogFailure?: () => void, onStepStatus?: import('./runner.js').RunnerOptions['onStepStatus'], checkoutPolicy: { allowLocalRepositories?: boolean; ownedDockerExecutor?: OwnedDockerExecutor; executionOwner?: string } = {}): Promise<JobCompletion> {
+export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal, logClient: LogFnClient = new MemoryLogFnClient(), onTruncated?: () => void, onLogFailure?: () => void, onStepStatus?: import('./runner.js').RunnerOptions['onStepStatus'], checkoutPolicy: { hostFn?: RemoteHostFnPolicy; allowLocalRepositories?: boolean; ownedDockerExecutor?: OwnedDockerExecutor; executionOwner?: string } = {}): Promise<JobCompletion> {
   const failed = (): JobCompletion => ({ status: 'failure', steps: payload.jobSpec.steps.map((_, index) => ({ stepKey: `step-${index}`, status: index === 0 ? 'failure' : 'skipped' })) });
-  if ((payload.jobSpec.image !== undefined && !checkoutPolicy.ownedDockerExecutor) || payload.jobSpec.steps.some(step => !('run' in step) && step.uses !== 'checkout')) {
+  const hostFn = snapshotHostFnPolicy(checkoutPolicy.hostFn);
+  const deployment = payload.jobSpec.steps.some(step => 'uses' in step && step.uses === 'hostfn/deploy');
+  if ((deployment && (!hostFn || !hostFn.labels.includes(payload.jobSpec['runs-on']) || payload.jobSpec.image !== undefined)) || (payload.jobSpec.image !== undefined && !checkoutPolicy.ownedDockerExecutor) || payload.jobSpec.steps.some(step => !('run' in step) && step.uses !== 'checkout' && step.uses !== 'hostfn/deploy')) {
     console.error('Remote job requires an unsupported executor/provider'); return failed();
   }
   const store = new MemoryStore(); const queue = new MemoryQueueClient();
@@ -25,7 +34,7 @@ export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortS
   const run = store.createRun({ pipelineSpec: spec, pipelineRef: payload.pipelineRef, trigger: { type: (payload.trigger?.type ?? 'workflow_dispatch') as 'workflow_dispatch', payload: payload.trigger?.payload } });
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
   const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
-  const runner = new Runner({ onOutputTruncated: onTruncated, ownedDockerExecutor: checkoutPolicy.ownedDockerExecutor, executionOwner: checkoutPolicy.executionOwner, allowLocalRepositories: checkoutPolicy.allowLocalRepositories, onStepStatus, executionSignal: signal, runCommand: async (command, workspace, env, onLines) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal, lines => { try { onLines?.(lines); } catch { onLogFailure?.(); } }); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
+  const runner = new Runner({ hostFnExecutable:hostFn?.executable,hostFnTimeoutMs:hostFn?.timeoutMs,hostFnLocal:hostFn?.local,onOutputTruncated: onTruncated, ownedDockerExecutor: checkoutPolicy.ownedDockerExecutor, executionOwner: checkoutPolicy.executionOwner, allowLocalRepositories: checkoutPolicy.allowLocalRepositories, onStepStatus, executionSignal: signal, runCommand: async (command, workspace, env, onLines) => { const result = await executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal, lines => { try { onLines?.(lines); } catch { onLogFailure?.(); } }); return result; }, executionEnv: baseEnv, store, queue, logClient, labels: [jobSpec['runs-on']],
     getSecret: async (_runId, name) => {
       if (!payload.secretSnapshot || !Object.prototype.hasOwnProperty.call(payload.secretSnapshot, name)) throw new Error('Required prepared secret is unavailable');
       return payload.secretSnapshot[name];
@@ -46,6 +55,7 @@ export class RemoteRunner {
   private fetcher: typeof fetch;
   private reportedUncertain = new Set<string>();
   constructor(private options: RemoteRunnerOptions) {
+    this.options = {...options,hostFn:snapshotHostFnPolicy(options.hostFn)};
     if (options.logRetentionMs !== undefined && (!Number.isSafeInteger(options.logRetentionMs) || options.logRetentionMs < 1 || options.logRetentionMs > 30 * 86400000)) throw new Error('Invalid log retention');
     this.journal = new ClaimJournal(options.stateDirectory); this.fetcher = options.fetch ?? fetch;
   }
@@ -153,7 +163,7 @@ export class RemoteRunner {
               if (error instanceof StepStatusReportingError || (error instanceof RunnerProtocolError && error.status >= 400 && error.status < 500 && !cancellation.signal.aborted)) throw new StepStatusReportingError();
               console.error('CiFn step status delivery pending; durable events retained');
             }
-          }, { allowLocalRepositories: this.options.allowLocalRepositories, ownedDockerExecutor: this.options.ownedDockerExecutor, executionOwner: JSON.stringify({runId:entry.runId,dispatchId:entry.dispatchId,executionId:entry.executionId,runnerId:this.options.runnerId}) });
+          }, { hostFn:this.options.hostFn,allowLocalRepositories: this.options.allowLocalRepositories, ownedDockerExecutor: this.options.ownedDockerExecutor, executionOwner: JSON.stringify({runId:entry.runId,dispatchId:entry.dispatchId,executionId:entry.executionId,runnerId:this.options.runnerId}) });
         } finally {
           clearInterval(logTimer);
           await sending;

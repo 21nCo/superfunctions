@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2020", "DOM", "DOM.Iterable"], "skipLibCheck": false, "noEmit": true },
-  "include": ["src/remote-runner.ts", "src/claim-journal.ts", "src/remote-runner.test.ts", "src/remote-checkout.test.ts", "src/container-admission.test.ts", "src/owned-docker-executor.test.ts", "src/owned-docker-job.test.ts", "src/docker-engine.test.ts", "src/docker-receipts.test.ts", "src/archive-confinement.test.ts", "src/artifacts-cache.test.ts", "src/hostfn-integration.test.ts", "src/step-journal.test.ts", "src/server.ts"],
+  "include": ["src/remote-runner.ts", "src/claim-journal.ts", "src/remote-runner.test.ts", "src/remote-checkout.test.ts", "src/container-admission.test.ts", "src/owned-docker-executor.test.ts", "src/owned-docker-job.test.ts", "src/docker-engine.test.ts", "src/docker-receipts.test.ts", "src/archive-confinement.test.ts", "src/artifacts-cache.test.ts", "src/hostfn-integration.test.ts", "src/remote-hostfn.test.ts", "src/step-journal.test.ts", "src/server.ts"],
   "exclude": ["node_modules", "dist"]
 }

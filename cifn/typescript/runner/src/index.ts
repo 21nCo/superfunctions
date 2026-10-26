@@ -22,7 +22,7 @@ export type { HostFnDeployOptions, HostFnDeployAsyncOptions, HostFnDeployResult 
 export { DockerExecutor } from './docker-executor.js';
 export type { DockerExecutorOptions, DockerCommandRunner } from './docker-executor.js';
 export { RemoteRunner, executeRemoteShellJob } from './remote-runner.js';
-export type { RemoteRunnerOptions } from './remote-runner.js';
+export type { RemoteRunnerOptions, RemoteHostFnPolicy } from './remote-runner.js';
 
 export { OwnedDockerExecutor } from './owned-docker-executor.js';
 export type { OwnedDockerOptions, OwnedDockerStep } from './owned-docker-executor.js';

@@ -47,6 +47,8 @@ export interface RunnerOptions {
   /** Trusted host executable for deployment; never supplied by a step. */
   hostFnExecutable?: string;
   hostFnTimeoutMs?: number;
+  /** Trusted fixed local mode, overriding pipeline options when provided. */
+  hostFnLocal?: boolean;
   archiveLimits?: ArchiveLimits;
   fileFnClient?: {
     upload(namespace: string, key: string, data: Buffer): Promise<string>;
@@ -83,6 +85,7 @@ export class Runner {
   private cleanWorkspace: boolean;
   private hostFnExecutable?: string;
   private hostFnTimeoutMs?: number;
+  private hostFnLocal?: boolean;
   private archiveLimits?: ArchiveLimits;
   private fileFnClient?: RunnerOptions['fileFnClient'];
   private artifactStore?: RunnerOptions['artifactStore'];
@@ -114,6 +117,7 @@ export class Runner {
     this.archiveLimits = options.archiveLimits;
     this.hostFnExecutable = options.hostFnExecutable;
     this.hostFnTimeoutMs = options.hostFnTimeoutMs;
+    this.hostFnLocal = options.hostFnLocal;
     this.artifactStore = options.artifactStore;
     this.secretValues = options.secretValues ?? new Map();
     this.getSecret = options.getSecret;
@@ -543,9 +547,9 @@ export class Runner {
             step.startedAt = new Date().toISOString();
             const environment = (stepSpec.with?.environment as string) ?? '';
             const ci = true; // Runner deployments are always noninteractive.
-            const local = typeof stepSpec.with?.local === 'boolean'
+            const local = this.hostFnLocal ?? (typeof stepSpec.with?.local === 'boolean'
               ? (stepSpec.with.local as boolean)
-              : jobSpec['runs-on'] === 'hostfn-runner';
+              : jobSpec['runs-on'] === 'hostfn-runner');
             logLines(step.stepKey, [
               `Step "${step.stepKey}" started: hostfn/deploy ${environment}`,
             ]);
