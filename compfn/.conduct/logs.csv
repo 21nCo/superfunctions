@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-05T12:00:00Z,unknown,Cursor,spec,unknown-agent,,compfn/.conduct/specs/2026-02-05-new-cp2m5k9x-spec
+2026-02-10T06:30:00Z,claude-4.5-sonnet-thinking,Warp,execute,warp-agent,PHASE_12,.conduct/specs/2026-02-05-new-cp2m5k9x-spec/phase-reports/PHASE_12-2026-02-10-p12prov9x-report.md
+2026-02-11T12:00:00Z,claude-4.6-opus-high-thinking,Cursor,audit,unknown-agent,,.conduct/audits/2026-02-11-x9k4m7pq-full-audit.md
