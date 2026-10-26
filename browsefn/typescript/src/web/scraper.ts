@@ -28,7 +28,7 @@ interface ServiceHooks {
   onProviderFallback?: (input: { from: string; to: string; error: Error }) => void;
 }
 
-const DEFAULT_METADATA_BATCH_LIMIT = 50;
+const DEFAULT_METADATA_BATCH_LIMIT = 100;
 
 export class WebScraper {
   private userAgentIndex = 0;
@@ -95,7 +95,17 @@ export class WebScraper {
     urls: string[],
     options: MetadataOptions = {}
   ): Promise<MetadataResult[]> {
-    options = { ...options, security: mergeSecurity(this.security, options.security) };
+    if (!Array.isArray(urls) || [...urls].some(url => typeof url !== 'string')) {
+      throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Metadata URLs must be an array of strings.' });
+    }
+    urls = [...urls];
+    for (const name of ['maxBatchOverride', 'concurrency'] as const) {
+      const value = options[name];
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > DEFAULT_METADATA_BATCH_LIMIT)) {
+        throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: `${name} must be an integer between 1 and 100.` });
+      }
+    }
+    options = { ...options, fields: options.fields ? [...options.fields] : undefined, security: mergeSecurity(this.security, options.security) };
     const maxBatchSize = options.maxBatchOverride ?? DEFAULT_METADATA_BATCH_LIMIT;
     if (urls.length > maxBatchSize) {
       throw new BrowseFnError({

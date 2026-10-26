@@ -32,7 +32,7 @@ from browsefn.utils.validation import validate_page_options, validate_url
 class WebScraper:
     """Web scraping service with fallback and batch metadata support."""
 
-    MAX_METADATA_BATCH = 50
+    MAX_METADATA_BATCH = 100
 
     def __init__(self, config: Optional[WebConfig] = None, security: Optional[DestinationSecurity] = None):
         self.security = normalize_security(security)
@@ -128,9 +128,16 @@ class WebScraper:
         urls: List[str],
         options: Optional[MetadataOptions] = None,
     ) -> List[MetadataResult]:
+        if not isinstance(urls, list) or any(not isinstance(url, str) for url in urls):
+            raise BrowseFnError("INVALID_ARGUMENT", "Metadata URLs must be an array of strings.")
+        urls = list(urls)
         options = options or MetadataOptions()
-        options = options.model_copy(update={"security": merge_security(self.security, options.security)})
-        max_batch = options.max_batch_override or self.MAX_METADATA_BATCH
+        for name in ("max_batch_override", "concurrency"):
+            value = getattr(options, name)
+            if value is not None and (type(value) is not int or not 1 <= value <= self.MAX_METADATA_BATCH):
+                raise BrowseFnError("INVALID_ARGUMENT", "Metadata bounds must be integers between 1 and 100.")
+        options = options.model_copy(update={"fields": list(options.fields) if options.fields is not None else None, "security": merge_security(self.security, options.security)})
+        max_batch = options.max_batch_override if options.max_batch_override is not None else self.MAX_METADATA_BATCH
         if len(urls) > max_batch:
             raise BrowseFnError(
                 "INVALID_ARGUMENT",

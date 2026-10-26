@@ -42,6 +42,30 @@ describe('ImageBrowser', () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
   const options = { allowPrivateHosts: true };
+  it('bounds image batches at 50 and snapshots URLs and options during delivery', async () => {
+    const browser = new ImageBrowser();
+    const input = Array.from({length:50}, (_,i) => `${base}/batch-${i}.jpg`);
+    const progress: number[][] = [];
+    const batchOptions = { ...options, destination: tempRoot, concurrency:1, onProgress:(done:number,total:number) => {
+      progress.push([done,total]);
+      if(done===1) { input.push(`${base}/late.jpg`); batchOptions.destination = '/must-not-write'; }
+    }};
+    const results = await browser.downloadBatch(input, batchOptions);
+    expect(results).toHaveLength(50); expect(results.every(result => result.success)).toBe(true);
+    expect(hits).toBe(50); expect(progress.at(-1)).toEqual([50,50]);
+    expect(await readdir(tempRoot)).toHaveLength(50);
+    await expect(browser.downloadBatch(input, {...options,destination:tempRoot})).rejects.toMatchObject({code:'INVALID_ARGUMENT'});
+    expect(hits).toBe(50);
+    for(const value of [0,-1,1.5,NaN,Infinity,51]) await expect(browser.downloadBatch([`${base}/invalid.jpg`], {...options, concurrency:value})).rejects.toMatchObject({code:'INVALID_ARGUMENT'});
+    expect(hits).toBe(50);
+  });
+  it('preserves private opt-in under a global image ceiling in batches', async () => {
+    const browser = new ImageBrowser(undefined, undefined, undefined, undefined, undefined, {maxDownloadBytes:JPEG_BYTES.length});
+    expect((await browser.downloadBatch([`${base}/bounded.jpg`], {...options,destination:tempRoot}))[0].success).toBe(true);
+    const tight = new ImageBrowser(undefined, undefined, undefined, undefined, undefined, {maxDownloadBytes:1});
+    const result = await tight.downloadBatch([`${base}/too-large.jpg`], {...options,destination:tempRoot});
+    expect(result[0].success).toBe(false); expect(await readdir(tempRoot)).toEqual(['bounded.jpg']);
+  });
   it('writes actual HTTP bytes with normalized metadata', async () => {
     const result = await new ImageBrowser().download(`${base}/a.jpg`, { ...options, destination: tempRoot, metadata: true });
     expect(result.metadata).toMatchObject({ width: 3, height: 2, size: JPEG_BYTES.length });

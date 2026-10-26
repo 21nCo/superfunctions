@@ -95,7 +95,12 @@ class ImageBrowser:
         urls: List[str],
         options: Optional[ImageDownloadOptions] = None,
     ) -> List[DownloadResult]:
-        options = options or ImageDownloadOptions()
+        if not isinstance(urls, list) or len(urls) > 50 or any(not isinstance(url, str) for url in urls):
+            raise BrowseFnError("INVALID_ARGUMENT", "Image batches require at most 50 URL strings.")
+        urls = list(urls)
+        options = (options or ImageDownloadOptions()).model_copy(deep=True)
+        if options.concurrency is not None and (type(options.concurrency) is not int or not 1 <= options.concurrency <= 50):
+            raise BrowseFnError("INVALID_ARGUMENT", "concurrency must be an integer between 1 and 50.")
         override = options.security if options.security is not None else (DestinationSecurity(allowPrivateHosts=options.allow_private_hosts) if "allow_private_hosts" in options.model_fields_set else None)
         options = options.model_copy(update={"security": merge_security(self.security, override)})
         options = resolve_download_options(options)

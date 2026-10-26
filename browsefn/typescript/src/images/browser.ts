@@ -142,7 +142,17 @@ export class ImageBrowser {
       onError?: (url: string, error: Error) => void;
     } = {}
   ): Promise<DownloadResult[]> {
-    const concurrency = Math.max(1, options.concurrency || 3);
+    if (!Array.isArray(urls) || urls.length > 50 || [...urls].some(url => typeof url !== 'string')) {
+      throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Image batches require at most 50 URL strings.' });
+    }
+    if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 50)) {
+      throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'concurrency must be an integer between 1 and 50.' });
+    }
+    urls = [...urls];
+    options = { ...options, crop: options.crop ? { ...options.crop } : undefined,
+      watermark: options.watermark ? { ...options.watermark } : undefined,
+      security: mergeSecurity(this.security, options.security ?? (options.allowPrivateHosts === undefined ? undefined : { allowPrivateHosts: options.allowPrivateHosts })) };
+    const concurrency = options.concurrency ?? 3;
     const results = new Array<DownloadResult>(urls.length);
     let nextIndex = 0;
     let completed = 0;

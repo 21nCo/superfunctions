@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from pydantic import ValidationError
 
 from superfunctions.http import HttpMethod, Request, Response, Route, RouteContext
 
@@ -83,6 +84,8 @@ def _float_query(context: RouteContext, key: str, *, message: str) -> Optional[f
 
 
 def _response_from_error(error: Exception, request_id: str) -> Response:
+    if isinstance(error, ValidationError):
+        error = BrowseFnError("INVALID_ARGUMENT", "Invalid request options.")
     browse_error = error if isinstance(error, BrowseFnError) else BrowseFnError("INTERNAL_ERROR", str(error))
     return Response(status=_error_status(browse_error), body=create_error_envelope(browse_error, request_id))
 

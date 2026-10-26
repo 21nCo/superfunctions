@@ -248,9 +248,9 @@ class MetadataOptions(BaseModel):
     security: Optional[DestinationSecurity] = None
     fields: Optional[List[Literal['title', 'description', 'image', 'author', 'published', 'keywords', 'favicon']]] = None
     timeout: Optional[int] = None
-    concurrency: Optional[int] = None
+    concurrency: Optional[int] = Field(None, strict=True, ge=1, le=100)
     cache: Optional[bool] = None
-    max_batch_override: Optional[int] = Field(None, alias="maxBatchOverride")
+    max_batch_override: Optional[int] = Field(None, alias="maxBatchOverride", strict=True, ge=1, le=100)
     on_progress: Optional[Any] = Field(None, alias="onProgress", exclude=True)
 
 class MetadataResult(BaseModel):
@@ -372,7 +372,7 @@ class ImageDownloadOptions(BaseModel):
     watermark: Optional[Watermark] = None
     metadata: Optional[bool] = None
     overwrite: Optional[bool] = None
-    concurrency: Optional[int] = None
+    concurrency: Optional[int] = Field(None, strict=True, ge=1, le=50)
     on_progress: Optional[Any] = Field(None, alias="onProgress", exclude=True)
 
 class ImageMetadata(BaseModel):

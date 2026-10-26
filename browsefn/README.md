@@ -572,3 +572,7 @@ node browsefn/scripts/packed-runtime-acceptance.mjs
 This creates separate temporary production-only consumers for BrowseFn core and BrowseFn admin, installs local tarballs rather than workspace aliases, audits each graph, checks ESM/CommonJS routers and real localhost scraping on exact Node 20.19.0, and checks NodeNext declarations. The admin consumer additionally checks provider listing and rejects a mismatched tenant scope. It removes temporary consumers afterward. Set `BROWSEFN_NODE` to an explicit Node binary to exercise another runtime; the default downloads/uses Node 20.19.0 through npm exec.
 
 Core requires the additive `@superfunctions/http@0.3.1` router export. The optional admin graph requires `@superfunctions/admin@0.1.5` and `@mcpfn/core@0.0.6`. Local tarball success does not imply those versions are already published. Publish prerequisites before dependent packages; deployments must configure router authorization and secret storage separately.
+
+### Batch admission
+
+Metadata batches accept at most100 URL strings; `maxBatchOverride` may tighten this limit to an integer1–100. Image download batches accept at most50 URL strings. Concurrency must be an integer1–100 for metadata or1–50 for images. Invalid collection/bound options reject before provider work. Admitted URL lists and option snapshots remain stable if callers or progress callbacks mutate their originals; result order and progress totals refer to the original batch. Per-item upstream errors still occupy their original result positions.
