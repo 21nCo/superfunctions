@@ -21,7 +21,7 @@ def run(args: list[str], cwd: Path, env: dict[str, str]) -> None:
 
 
 def main() -> None:
-    for executable in ('node', 'redis-server'):
+    for executable in ('node', 'redis-server', 'initdb', 'pg_ctl'):
         if shutil.which(executable) is None:
             raise RuntimeError(executable + ' is required for native acceptance')
     env = dict(os.environ)
@@ -45,7 +45,7 @@ def main() -> None:
         run([sys.executable, '-m', 'build', '--wheel', '--outdir', str(wheels), str(source)], base, env)
         wheel = next(wheels.glob('flowfn-*.whl'))
         with ZipFile(wheel) as archive:
-            for name in ('redis_partitions.py', 'redis_partition_scripts.py', 'redis_partition_subscription.py'):
+            for name in ('redis_partitions.py', 'redis_partition_scripts.py', 'redis_partition_subscription.py', 'postgres_partitions.py', 'postgres_partition_subscription.py'):
                 assert 'flowfn/adapters/' + name in archive.namelist()
         for version in ('3.9', '3.11'):
             consumer = base / version
@@ -54,7 +54,7 @@ def main() -> None:
             run([UV, 'venv', '--python', version, str(venv)], consumer, env)
             python = venv / 'bin/python'
             run([UV, 'pip', 'install', '--python', str(python), f'{wheel}[dev]'], consumer, env)
-            tests = [consumer / name for name in ('test_redis_partitions.py', 'test_owned_wait.py')]
+            tests = [consumer / name for name in ('test_redis_partitions.py', 'test_owned_wait.py', 'test_postgres_partitions.py')]
             for test in tests:
                 shutil.copyfile(ROOT / 'flowfn/python/tests' / test.name, test)
             run([str(python), '-c', 'import flowfn,sys; from pathlib import Path; assert Path(flowfn.__file__).is_relative_to(Path(sys.prefix)); print(flowfn.__file__)'], consumer, env)

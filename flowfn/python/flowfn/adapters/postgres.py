@@ -1,4 +1,5 @@
 """PostgreSQL persistence with transactional queue state and leased stream groups."""
+
 import asyncio
 import json
 import time
@@ -10,6 +11,7 @@ from typing import Any, Optional
 import asyncpg  # type: ignore[import-untyped]
 
 from flowfn.adapters.durable_queues import DurableQueues
+from flowfn.adapters.postgres_partitions import SCHEMA_V2, PostgresPartitions
 from flowfn.queue.dlq import DLQJob
 from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
@@ -38,30 +40,70 @@ class PostgresAdapter(DurableQueues):
         self._pool: Any = None
         self._initialize = asyncio.Lock()
         self._subscriptions: set[PostgresSubscription] = set()
+        self._partitions = PostgresPartitions(self)
+        self._draining = False
+        self._cleanup_task: Optional[asyncio.Task[None]] = None
 
-    async def _database(self) -> Any:
-        if self._closed:
+    async def _database(self, *, allow_draining: bool = False) -> Any:
+        if self._closed or (self._draining and not allow_draining):
             raise RuntimeError('PostgreSQL adapter is closed')
         async with self._initialize:
+            if self._closed or (self._draining and not allow_draining):
+                raise RuntimeError('PostgreSQL adapter is closed')
+            if self._draining and self._pool is None:
+                raise RuntimeError('No owned PostgreSQL pool during shutdown')
             if self._pool is None:
                 pool = await asyncpg.create_pool(self.url, min_size=1, max_size=10)
                 try:
                     async with pool.acquire() as connection:
                         installed = await connection.fetchval("SELECT to_regclass('flowfn_py_meta')")
                         version = await connection.fetchval('SELECT max(version) FROM flowfn_py_meta') if installed else None
-                        if version not in (None,1):
+                        if version == 1:
+                            raise RuntimeError("FlowFn PostgreSQL stream schema v1 requires explicit migrate_stream_schema with stopped writers")
+                        if version not in (None,2):
                             raise RuntimeError("Unsupported FlowFn PostgreSQL schema version")
                         if version is None:
                             async with connection.transaction():
                                 # Only first installation takes schema locks; opening
                                 # a new worker must not run DDL against live workers.
                                 await connection.execute("SELECT pg_advisory_xact_lock(490182735)")
-                                await connection.execute(_SCHEMA)
+                                # Recheck under the installation lock after another opener.
+                                installed = await connection.fetchval("SELECT to_regclass('flowfn_py_meta')")
+                                version = await connection.fetchval("SELECT max(version) FROM flowfn_py_meta") if installed else None
+                                if version is None:
+                                    await connection.execute(_SCHEMA)
+                                    await connection.execute(SCHEMA_V2)
+                                elif version != 2:
+                                    raise RuntimeError("Explicit stream schema migration required")
                     self._pool = pool
                 except BaseException:
                     await pool.close()
                     raise
         return self._pool
+
+    async def migrate_stream_schema(self) -> None:
+        """Upgrade v1 atomically with every old writer stopped; never repartition history."""
+        if self._closed or self._draining or self._pool is not None:
+            raise RuntimeError('Migration requires a fresh open adapter and stopped writers')
+        async with self._initialize:
+            if self._closed or self._draining or self._pool is not None:
+                raise RuntimeError('Migration requires a fresh open adapter and stopped writers')
+            pool = await asyncpg.create_pool(self.url, min_size=1, max_size=1)
+            try:
+                async with pool.acquire() as connection, connection.transaction():
+                    await connection.execute('SELECT pg_advisory_xact_lock(490182735)')
+                    exists = await connection.fetchval("SELECT to_regclass('flowfn_py_meta')")
+                    version = await connection.fetchval('SELECT max(version) FROM flowfn_py_meta') if exists else None
+                    if version == 2:
+                        return
+                    if version != 1:
+                        raise RuntimeError('Expected FlowFn PostgreSQL schema v1 for migration')
+                    await connection.execute(SCHEMA_V2)
+            finally:
+                await pool.close()
+
+    async def configure_stream(self, stream: str, partitions: Optional[int] = None) -> Optional[int]:
+        return await self._partitions.configure(stream, partitions)
 
     async def migrate_legacy_queues(self) -> None:
         """Migrate atomically after all old-layout workers have been stopped."""
@@ -123,11 +165,7 @@ class PostgresAdapter(DurableQueues):
         await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", json.dumps([self.namespace,stream]))
 
     async def publish(self, stream: str, message: Message) -> str:
-        pool = await self._database()
-        async with pool.acquire() as connection, connection.transaction():
-            await self._lock_stream(connection, stream)
-            await connection.execute('INSERT INTO flowfn_py_events(namespace,stream,payload) VALUES($1,$2,$3)', self.namespace, stream, message.model_dump_json())
-        return message.id
+        return await self._partitions.publish(stream, message)
 
     async def get_stream_messages(self, stream: str) -> list[Message]:
         pool = await self._database()
@@ -136,19 +174,22 @@ class PostgresAdapter(DurableQueues):
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
         pool = await self._database()
-        row = await pool.fetchrow('''SELECT
+        count = await self._partitions.policy(pool, stream)
+        row = await pool.fetchrow("""SELECT
             (SELECT count(*) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) AS length,
             (SELECT count(*) FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2) AS groups,
-            (SELECT COALESCE(sum((SELECT count(*) FROM flowfn_py_events e WHERE e.namespace=g.namespace AND e.stream=g.stream AND e.id>g.cursor)
-                +(SELECT count(*) FROM flowfn_py_pending p WHERE p.namespace=g.namespace AND p.stream=g.stream AND p.group_name=g.name)),0)
-                FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2) AS lag''',self.namespace,stream)
-        return StreamInfo(name=stream,length=row['length'],groups=row['groups'],lag=int(row['lag']))
+            (SELECT COALESCE(sum((SELECT count(*) FROM flowfn_py_events e
+                LEFT JOIN flowfn_py_partition_progress p ON p.namespace=e.namespace AND p.stream=e.stream AND p.group_name=g.name AND p.partition=CASE WHEN $3::integer IS NOT NULL THEN (e.payload->>'partition')::integer END
+                WHERE e.namespace=g.namespace AND e.stream=g.stream AND e.id>COALESCE(p.cursor,g.cursor))
+                +(SELECT count(*) FROM flowfn_py_pending pending WHERE pending.namespace=g.namespace AND pending.stream=g.stream AND pending.group_name=g.name)),0)
+                FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2) AS lag""", self.namespace, stream, count)
+        return StreamInfo(name=stream,length=row['length'],groups=row['groups'],lag=int(row['lag']),partitions=count)
 
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
         pool = await self._database()
         async with pool.acquire() as connection, connection.transaction():
             await self._lock_stream(connection, stream)
-            # Group cursors and pending claims must remain stable while trimming.
+            # Serialize payload removal with claims; FK-free partition barriers survive.
             await connection.fetch('SELECT name FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 FOR UPDATE', self.namespace, stream)
             result = await connection.fetch('''
                 WITH ranked AS (
@@ -157,8 +198,6 @@ class PostgresAdapter(DurableQueues):
                 ) DELETE FROM flowfn_py_events e USING ranked r
                 WHERE e.id=r.id AND (($3::bigint IS NOT NULL AND r.position>$3)
                     OR ($4::double precision IS NOT NULL AND r.created_at<clock_timestamp()-$4*interval '1 second'))
-                AND NOT EXISTS(SELECT 1 FROM flowfn_py_pending p WHERE p.event_id=e.id)
-                AND NOT EXISTS(SELECT 1 FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2 AND g.cursor<e.id)
                 RETURNING e.id
             ''', self.namespace, stream, strategy.max_length, strategy.max_age_seconds)
             return len(result)
@@ -166,6 +205,8 @@ class PostgresAdapter(DurableQueues):
     async def subscribe(self, stream: str, handler: Any) -> 'PostgresSubscription':
         pool = await self._database()
         cursor = await pool.fetchval('SELECT COALESCE(max(id),0) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2', self.namespace, stream)
+        if self._draining:
+            raise RuntimeError('PostgreSQL adapter is closed')
         subscription = PostgresSubscription(self, stream, handler, cursor=cursor)
         self._subscriptions.add(subscription)
         subscription.start()
@@ -177,10 +218,20 @@ class PostgresAdapter(DurableQueues):
         pool = await self._database()
         async with pool.acquire() as connection, connection.transaction():
             await self._lock_stream(connection, stream)
+            await self._partitions.mark_legacy(connection, stream)
+            count = await self._partitions.policy(connection, stream)
             await connection.execute('''INSERT INTO flowfn_py_groups VALUES($1,$2,$3,
                 CASE WHEN $4 THEN 0 ELSE (SELECT COALESCE(max(id),0) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) END)
                 ON CONFLICT DO NOTHING''', self.namespace, stream, group, options.from_beginning)
-        subscription = PostgresSubscription(self,stream,handler,group=group,consumer=consumer,options=options)
+        if self._draining:
+            raise RuntimeError('PostgreSQL adapter is closed')
+        if count is not None:
+            from flowfn.adapters.postgres_partition_subscription import (
+                PostgresPartitionSubscription,
+            )
+            subscription: PostgresSubscription = PostgresPartitionSubscription(self,stream,handler,group=group,consumer=consumer,options=options)
+        else:
+            subscription = PostgresSubscription(self,stream,handler,group=group,consumer=consumer,options=options)
         self._subscriptions.add(subscription)
         subscription.start()
         return subscription
@@ -191,11 +242,32 @@ class PostgresAdapter(DurableQueues):
         return {"type": "postgres", "connected": True, "server_time": int(now)}
 
     async def cleanup(self) -> None:
+        if self._cleanup_task is None:
+            self._draining = True
+            self._cleanup_task = asyncio.create_task(self._finish_cleanup())
+        try:
+            await asyncio.shield(self._cleanup_task)
+        except asyncio.CancelledError as cancelled:
+            while not self._cleanup_task.done():
+                try:
+                    await asyncio.shield(self._cleanup_task)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            if not self._cleanup_task.cancelled():
+                failure = self._cleanup_task.exception()
+                if failure is not None:
+                    raise cancelled from failure
+            raise
+
+    async def _finish_cleanup(self) -> None:
         await asyncio.gather(*(sub.unsubscribe() for sub in list(self._subscriptions)))
         await self._close_queues()
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        async with self._initialize:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
 
 
 class PostgresSubscription:

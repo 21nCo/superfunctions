@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--source-root', type=Path, default=ROOT / 'flowfn/python')
 parser.add_argument('--tests', nargs='+')
+parser.add_argument('--postgres-url')
 args = parser.parse_args()
 redis = shutil.which('redis-server')
 if redis is None:
@@ -39,6 +40,8 @@ with tempfile.TemporaryDirectory(prefix='flow-redis-ci-') as temporary:
                 raise RuntimeError('Owned Redis startup timed out')
             env = dict(os.environ, FLOWFN_REDIS_URL=f'redis://127.0.0.1:{port}')
             env.pop('FLOWFN_POSTGRES_URL', None)
+            if args.postgres_url:
+                env['FLOWFN_POSTGRES_URL'] = args.postgres_url
             command = ([sys.executable, '-m', 'pytest', *args.tests, '--no-cov', '-q'] if args.tests
                        else ['node', 'scripts/ci-run-python-package.mjs', 'flowfn/python'])
             subprocess.run(command, cwd=args.source_root if args.tests else ROOT,

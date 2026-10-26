@@ -72,49 +72,6 @@ async def test_memory_stream_age_policy() -> None:
         await adapter.cleanup()
 
 
-async def assert_pending_retention(adapter: FlowAdapter, *, rejects_stale_ack: bool=False) -> None:
-    stream=Stream('protected',adapter,{'max_length':0,'retention':0})
-    delivered=[]
-    received=asyncio.Event()
-    async def receive(message: Message) -> None:
-        delivered.append(message)
-        received.set()
-    old=stream.create_consumer('old',ConsumerOptions(group_id='group',max_in_flight=1))
-    await old.subscribe(receive)
-    await stream.publish('pending')
-    await stream.publish('unread')
-    await asyncio.wait_for(received.wait(),5)
-    assert (require_value(await stream.get_info())).length==2
-    await old.close()
-    # Durable delivery attempts explicitly reject stale ownership. In-memory
-    # subscriptions retain their no-op behavior. Neither may release retention.
-    if rejects_stale_ack:
-        with pytest.raises(RuntimeError, match='ownership changed'):
-            await delivered[0].ack()
-    else:
-        await delivered[0].ack()
-    assert (require_value(await stream.get_info())).length==2
-    received.clear()
-    resumed=[]
-    async def finish(message: Message) -> None:
-        resumed.append(message.data)
-        await message.ack()
-        if set(resumed)=={'pending','unread'}:
-            received.set()
-    new=stream.create_consumer('new',ConsumerOptions(group_id='group',max_in_flight=1))
-    await new.subscribe(finish)
-    await asyncio.wait_for(received.wait(),5)
-    assert set(resumed)=={'pending','unread'}
-    assert (require_value(await stream.get_info())).length==0
-    await stream.close()
-
-
-async def test_postgres_retention_preserves_unread_and_pending(adapters: NativeAdapters) -> None:
-    if isinstance(adapters[0], RedisAdapter):
-        pytest.skip('PostgreSQL-only protected retention; Redis bounded retention is covered natively')
-    await assert_pending_retention(adapters[0], rejects_stale_ack=True)
-
-
 async def test_memory_retention_removes_unread_and_pending_payloads() -> None:
     adapter = MemoryAdapter()
     stream = Stream('bounded', adapter)

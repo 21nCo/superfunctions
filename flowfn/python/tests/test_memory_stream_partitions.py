@@ -153,33 +153,6 @@ async def test_unsubscribe_releases_owned_receipt_before_timeout() -> None:
         await flow.close()
 
 
-async def test_unsupported_postgres_rejects_before_io(monkeypatch: pytest.MonkeyPatch) -> None:
-    from typing import Any
-
-    from flowfn.adapters.postgres import PostgresAdapter
-    adapter = PostgresAdapter('postgresql://127.0.0.1:1/absent')
-    calls: list[str] = []
-    async def forbidden(*args: Any, **kwargs: Any) -> Any:
-        calls.append('io')
-        raise AssertionError('Unsupported partition request reached storage')
-    monkeypatch.setattr(adapter, 'publish', forbidden)
-    monkeypatch.setattr(adapter, 'consume', forbidden)
-    monkeypatch.setattr(adapter, 'trim_stream', forbidden)
-    stream = Stream('unsupported', adapter, {'partitions': 2})
-    async def handler(message: Message) -> None:
-        raise AssertionError('No delivery expected')
-    try:
-        with pytest.raises(RuntimeError, match='does not support'):
-            await stream.publish(1)
-        consumer = stream.create_consumer('one', ConsumerOptions(group_id='g'))
-        with pytest.raises(RuntimeError, match='does not support'):
-            await consumer.subscribe(handler)
-        assert calls == []
-    finally:
-        await stream.close()
-        await adapter.cleanup()
-
-
 async def test_legacy_policy_cannot_change_after_trim_or_group_creation() -> None:
     from flowfn.stream.types import TrimStrategy
     adapter = MemoryAdapter()

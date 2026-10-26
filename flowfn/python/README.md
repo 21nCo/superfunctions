@@ -135,13 +135,33 @@ consumer = stream.create_consumer('worker', ConsumerOptions(
 await consumer.subscribe(handle_order)  # handler explicitly awaits message.ack()
 ```
 
-Python Memory and Redis support immutable counts from 1 through 2,147,483,647. Keys use exact UTF-8 SHA-256, first four bytes interpreted as unsigned big-endian, modulo count (`sha256-utf8-u32be-v1`), matching TypeScript. Omitted keys route by the stable message ID; explicit partition indices must be within the configured range. Sparse progress uses only encountered partitions. Global message IDs, retained history, range reads, and replay remain available across partitions.
+Python Memory, Redis and PostgreSQL support immutable counts from 1 through 2,147,483,647. Keys use exact UTF-8 SHA-256, first four bytes interpreted as unsigned big-endian, modulo count (`sha256-utf8-u32be-v1`), matching TypeScript. Omitted keys route by the stable message ID; explicit partition indices must be within the configured range. Sparse progress uses only encountered partitions. Global message IDs, retained history, range reads, and replay remain available across partitions.
 
 Configured groups have one current receipt per partition; different groups and partitions progress independently. Unconfigured groups use one receipt per message and preserve concurrency across different messages. Both modes share the same lifecycle. An active callback renews its receipt. After a manual callback returns, renewal stops and the last confirmed `visibility_timeout` (milliseconds) bounds its remaining ownership. Expiry permits redelivery of retained messages; stale ACK/NACK closures cannot settle a replacement receipt. Trimming removes payloads without releasing a live partition barrier. Trimmed deliveries cannot renew, and their callbacks are cancelled when renewal fails; their barriers remain until authorized settlement or the original deadline. Unsubscribe cancels and awaits owned callbacks before releasing their receipts. A callback that suppresses cancellation can delay shutdown; fencing cannot undo its external side effects.
 
 The count persists only in the same Memory adapter instance. Reopening an unconfigured stream handle adopts it; changing it or converting a previously used legacy stream fails. Changing a cached handle's requested count also fails; use a new Flow instance with the same adapter to adopt an existing policy. Process termination loses Memory state.
 
-Python PostgreSQL partition support remains pending; explicit `partitions` requests fail before publication, retention, or consumer-group mutation on that adapter. Redis configured streams persist their policy, sparse cursors, and receipt barriers in Redis. Existing unconfigured Redis behavior remains available, with payload retention independent of pending/unread group progress. No Python performance targets are established by correctness tests.
+Redis and PostgreSQL configured streams persist their policy, sparse cursors and receipt barriers. Both providers remove payloads according to retention independently of pending/unread group progress. No Python performance targets are established by correctness tests.
+
+#### PostgreSQL partition storage and upgrades
+
+Fresh databases install Python stream schema version 2. Existing version 1 databases fail closed on normal connection until explicitly upgraded with all old writers stopped:
+
+```python
+from flowfn.adapters.postgres import PostgresAdapter
+
+adapter = PostgresAdapter(database_url, namespace='orders')
+await adapter.migrate_stream_schema()
+await adapter.cleanup()
+```
+
+The migration is transactional and idempotent, preserves existing message IDs and group cursors, and marks existing histories/groups as legacy streams. A failed migration rolls back the schema/version together. Use a fresh stream name for configured partitioning; historical partition assignments are not invented. All application versions sharing these tables must be upgraded together. The advisory migration lock coordinates cooperating new adapters; it cannot fence old deployed code that does not read the new policy. Do not run old writers after upgrading.
+
+PostgreSQL uses its storage clock for receipt expiry and `created_at` retention age, including fractional millisecond limits. Exact capacity retention may remove unread or pending payloads. Pending rows cascade with payload removal, while live partition barriers remain independently stored until their authorized owner settles or the lease expires. No deleted payload is retained as a hidden retry copy. Progress advances only when claiming a previously unseen message; NACK and expired-owner recovery retry the retained predecessor before its partition successor. Independent groups and partitions remain available.
+
+Cleanup immediately rejects new public admissions, joins owned subscriptions and migration work, and then closes its pool. Concurrent cleanup calls share the same operation. A cancelled cleanup caller still joins that operation before propagating cancellation, including repeated cancellation; a callback that suppresses cancellation can therefore delay shutdown. Internal receipt release remains available while draining. Reopen with a new adapter instance.
+
+These semantics match the partition ownership contract of the TypeScript adapter, but the Python `flowfn_py_*` tables, stored message IDs and JSON schema remain distinct. Python and TypeScript PostgreSQL adapters do **not** share a physical storage layout. Deployment, PostgreSQL-server crash recovery and performance targets require separate acceptance.
 
 #### Redis partition storage and upgrades
 

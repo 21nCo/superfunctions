@@ -99,10 +99,9 @@ async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters: Nativ
     await b.consume('events','g','second',accept,options)
     await asyncio.sleep(2.5)
     assert deliveries == ['message']  # heartbeat protects slow live worker
-    # Preserve one payload for this recovery test; Redis enforces zero caps
+    # Preserve one payload for this recovery test; both providers enforce zero caps
     # independently of active ownership (covered by native retention cases).
-    keep = 1 if isinstance(b, RedisFixtureAdapter) else 0
-    assert await b.trim_stream('events',TrimStrategy(max_length=keep)) == 0
+    assert await b.trim_stream('events',TrimStrategy(max_length=1)) == 0
     await sub.unsubscribe()
     await asyncio.wait_for(received.wait(),4)
     await asyncio.sleep(.05)
