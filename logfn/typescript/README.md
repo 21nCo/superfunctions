@@ -78,22 +78,35 @@ every other event field, object keys and top-level field names included:
   `token`, `jwt` or `signature`, and a few exact names such as `auth`, `sid`).
   Keys are compared lowercased with punctuation removed; `maxTokens` and
   `tokenCount` are kept.
-- URL credentials (`scheme://user:pass@host`), credential query and fragment
+- URL credentials (`scheme://user:pass@host`, up to the last `@` of the
+  authority as URL parsers read it), credential query and fragment
   values (names are percent-decoded; the value runs to the next `&`, `#`,
   whitespace or quote; parameters inside a percent-encoded URL such as a
   redirect target are found too), `name=value` or `Name: value` pairs inside
-  strings (quoted names may contain spaces; quoted values are consumed whole,
-  escaped quotes and once-escaped JSON included; an object or array value is
-  consumed to its balanced closing bracket, across lines, or to the end of the
-  text when unbalanced), and bearer tokens. A value that already starts with
+  strings (any JSON whitespace, newlines and CRLF included, may surround the
+  separator, and escaped `\n`/`\r`/`\t` may follow it in once-escaped JSON;
+  quoted names may contain spaces; quoted values are consumed whole, escaped
+  quotes and once-escaped JSON included, with any text glued to the closing
+  quote; an object or array value is consumed to its balanced closing
+  bracket, across lines, or to the end of the text when unbalanced), and
+  bearer tokens. A value that already starts with
   the replacement is left alone only when the replacement is all of it.
 - Email addresses, by default. `patterns` replaces this default extra list but
   never disables the credential rules.
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`), `patterns`, `replacement`
-(default `"[redacted]"`; it must not be empty, which throws). Cycles become `"[circular]"` and nesting beyond 32
-levels becomes `"[max-depth]"`.
+(default `"[redacted]"`; it must not be empty, which throws; it is inserted
+literally, `$&` or `$1` are not expanded). Cycles become `"[circular]"` and
+nesting beyond 32 levels becomes `"[max-depth]"`.
+
+Text rules are heuristics with known limits (the same in both runtimes):
+unquoted names with spaces (`pass word=x`), escaped whitespace before the
+separator (`\"token\"\n:` in serialized JSON), text after a closing bracket
+that ends an unquoted value (`password=abc}TAIL`), a quoted value right after
+an unquoted marker (`password=[redacted]"X"`) and query strings encoded twice
+(`%253Ftoken%253D`) are not redacted. Log credentials as structured context
+under a credential key rather than inside free text.
 
 The rules are shared with the Python package through
 `conformance/redaction-vectors.json`; both test suites run every vector.

@@ -138,6 +138,29 @@ describe("sinkHttp", () => {
       expect(sink.stats()).toMatchObject({ queued: 0, sent: 3, dropped: 2 });
     });
 
+    it("prepares only the newest maxQueue events of an oversized batch", async () => {
+      const { fetch, sentMessages } = scriptedFetch(ok);
+      const onDrop = vi.fn();
+      const sink = sinkHttp({ url: URL, fetch, batch: 100, maxQueue: 3, onDrop });
+      let prepared = 0;
+      const batch = ["1", "2", "3", "4", "5"].map((msg) =>
+        event(msg, {
+          ctx: {
+            get counted() {
+              prepared += 1;
+              return msg;
+            },
+          },
+        })
+      );
+      sink(batch);
+      expect(prepared).toBe(3);
+      expect(onDrop.mock.calls).toEqual([[2, "queue_full"]]);
+      await sink.flush();
+      expect(sentMessages()).toEqual([["3", "4", "5"]]);
+      expect(sink.stats()).toMatchObject({ queued: 0, sent: 3, dropped: 2 });
+    });
+
     it("stays bounded while the collector is down", async () => {
       const { fetch } = scriptedFetch(new Error("ECONNREFUSED"));
       const onError = vi.fn();
@@ -355,6 +378,27 @@ describe("sinkHttp", () => {
       await sink.flush();
       expect(sentMessages()).toEqual([["before"]]);
       expect(onDrop).toHaveBeenCalledWith(1, "closed");
+    });
+
+    it("drops events of a batch whose preparation closed the sink", async () => {
+      // Enqueueing is synchronous, so caller code run during preparation (a
+      // getter) is the only way close() can start mid-batch.
+      const { fetch } = scriptedFetch(ok);
+      const onDrop = vi.fn();
+      const sink = sinkHttp({ url: URL, fetch, onDrop, batch: 1 });
+      let closing: Promise<void> | undefined;
+      const ctx = {
+        get trigger() {
+          closing = sink.close();
+          return 1;
+        },
+      };
+      sink([event("closing", { ctx }), event("after")]);
+      await closing;
+      await sink.flush();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(onDrop.mock.calls).toEqual([[1, "closed"], [1, "closed"]]);
+      expect(sink.stats()).toMatchObject({ queued: 0, sent: 0, dropped: 2 });
     });
   });
 

@@ -45,7 +45,9 @@ _SENSITIVE_SUFFIXES = ("token", "jwt", "signature")
 _HEADER_LINE_KEYS = frozenset({"authorization", "proxyauthorization", "cookie", "setcookie"})
 
 # ASCII flag keeps character classes and case folding identical to JavaScript.
-_URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+.\-]*://)[^ \t\n\r\f\v/?#@]+@", re.ASCII)
+# Userinfo runs to the last ``@`` of the authority, as URL parsers read it, so
+# an unencoded ``@`` in a password (``postgres://u:p@ss@db``) is redacted too.
+_URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+.\-]*://)[^ \t\n\r\f\v/?#]+@", re.ASCII)
 # A query or fragment parameter: ``?name=``, ``&name=`` or ``#name=``.
 _QUERY_PARAM = re.compile(r"""[?&#]([^=&#? \t\n\r\f\v"'<>]+)=""", re.ASCII)
 # The same parameter inside a percent-encoded URL (a redirect target):
@@ -62,14 +64,30 @@ _ENCODED_QUERY_VALUE = re.compile(
     r"""(?:[^&#% \t\n\r\f\v"<>\\]|%(?!2[36])|\\+(?![\\"']))*""", re.ASCII | re.IGNORECASE
 )
 # The name may be quoted, also with escaped quotes (``\"name\":`` in JSON that
-# was itself serialized into a string), and may be percent-encoded. At most
+# was itself serialized into a string), and may be percent-encoded. Any
+# whitespace JSON allows may surround the separator; after it, also escaped
+# whitespace (``\n``, ``\r\n``, ``\t`` in serialized pretty-printed JSON).
+# Escapes are not accepted before the separator: in ``x\n\n\n...`` every
+# ``n`` would start a name and rescan the run, which is quadratic. At most
 # seven backslashes (three levels of escaping) keep matching linear.
+_SPACE_BEFORE_SEPARATOR = r"[ \t\r\n]*"
+_SPACE_AFTER_SEPARATOR = r"(?:[ \t\r\n]|\\{1,7}[nrt])*"
 _KEY_SEPARATOR = re.compile(
-    r"""(\\{0,7}["']?)(?<![A-Za-z0-9_.%\-])([A-Za-z0-9_.%\-]+)\1([ \t]*[:=][ \t]*)""", re.ASCII
+    r"""(\\{0,7}["']?)(?<![A-Za-z0-9_.%\-])([A-Za-z0-9_.%\-]+)\1("""
+    + _SPACE_BEFORE_SEPARATOR
+    + "[:=]"
+    + _SPACE_AFTER_SEPARATOR
+    + ")",
+    re.ASCII,
 )
 # A quoted name made of several words, such as ``"api key":``.
 _SPACED_KEY_SEPARATOR = re.compile(
-    r"""(\\{0,7}["'])([A-Za-z0-9_.%\-]+(?: [A-Za-z0-9_.%\-]+)+)\1([ \t]*:[ \t]*)""", re.ASCII
+    r"""(\\{0,7}["'])([A-Za-z0-9_.%\-]+(?: [A-Za-z0-9_.%\-]+)+)\1("""
+    + _SPACE_BEFORE_SEPARATOR
+    + ":"
+    + _SPACE_AFTER_SEPARATOR
+    + ")",
+    re.ASCII,
 )
 _AUTH_SCHEME = re.compile(r"(?:bearer|basic|digest|negotiate)[ \t]+", re.ASCII | re.IGNORECASE)
 # Characters that end an unquoted value
@@ -178,6 +196,20 @@ def _quoted_value_end(text: str, start: int, slashes: int, quote: str) -> int:
     return index
 
 
+def _glued_end(text: str, start: int) -> int:
+    # End of text glued to the end of a quoted or bracketed value, as in
+    # ``"x"TAIL`` or ``[x]TAIL``. A backslash also ends it, so the escaped
+    # whitespace after a value in serialized JSON (``\"x\"\n``) is kept.
+    index = start
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "\\" or char in _UNQUOTED_STOP or char in "}]":
+            break
+        index += 1
+    return index
+
+
 def _unquoted_value_end(text: str, start: int) -> int:
     # End of an unquoted value: whitespace, a separator, a quote or a closing
     # bracket it did not open (``{token=x}``) ends it. Brackets opened inside
@@ -242,7 +274,7 @@ def _scan_value(text: str, start: int, replacement: str) -> tuple[int, str] | No
         return (end, "") if end > start + len(replacement) else None
     if text[start : start + 1] in ("{", "["):
         # Text glued to the closing bracket, as in ``[x]TAIL``, is part of the value.
-        return _unquoted_value_end(text, _bracketed_value_end(text, start)), ""
+        return _glued_end(text, _bracketed_value_end(text, start)), ""
     scheme = _AUTH_SCHEME.match(text, start)
     position = scheme.end() if scheme else start
     slashes = 0
@@ -250,7 +282,8 @@ def _scan_value(text: str, start: int, replacement: str) -> tuple[int, str] | No
         slashes += 1
     quote = text[position + slashes : position + slashes + 1]
     if quote in ('"', "'"):
-        end = _quoted_value_end(text, position + slashes + 1, slashes, quote)
+        # Text glued to the closing quote, as in ``"x"TAIL``, is part of the value.
+        end = _glued_end(text, _quoted_value_end(text, position + slashes + 1, slashes, quote))
         return end, text[position : position + slashes + 1]
     for origin in (start,) if position == start else (position, start):
         end = _unquoted_value_end(text, origin)
@@ -336,7 +369,8 @@ def _redact_text(value: str, redactor: _Redactor) -> str:
     result = _redact_assignments(result, redactor, _SPACED_KEY_SEPARATOR)
     result = _BEARER_TOKEN.sub(lambda m: f"{m.group(1)} {replacement}", result)
     for pattern in redactor.patterns:
-        result = pattern.sub(replacement, result)
+        # A function keeps the marker literal: ``\g<0>`` or ``\1`` are not expanded.
+        result = pattern.sub(lambda _match: replacement, result)
     return result
 
 

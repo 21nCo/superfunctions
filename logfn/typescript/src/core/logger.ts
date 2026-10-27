@@ -129,8 +129,10 @@ export class Logger {
       event.ctx = { ...this.options.baseContext, ...callContext };
     }
 
-    if (this.options.baseTags || tags) {
-      event.tags = [...(this.options.baseTags ?? []), ...(Array.isArray(tags) ? tags : [])];
+    // Like the Python logger, an event without tags has no tags field.
+    const mergedTags = [...(this.options.baseTags ?? []), ...(Array.isArray(tags) ? tags : [])];
+    if (mergedTags.length > 0) {
+      event.tags = mergedTags;
     }
 
     // Apply pipeline stages. A failing stage drops the event: a broken

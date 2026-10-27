@@ -85,7 +85,9 @@ const HEADER_LINE_KEYS = new Set([
 ]);
 
 // Whitespace is spelled out as ASCII so both runtimes agree on Unicode spaces.
-const URL_USERINFO = /(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^ \t\n\r\f\v/?#@]+@/g;
+// Userinfo runs to the last `@` of the authority, as URL parsers read it, so
+// an unencoded `@` in a password (`postgres://u:p@ss@db`) is redacted too.
+const URL_USERINFO = /(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^ \t\n\r\f\v/?#]+@/g;
 // A query or fragment parameter: `?name=`, `&name=` or `#name=`.
 const QUERY_PARAM = /[?&#]([^=&#? \t\n\r\f\v"'<>]+)=/g;
 // The same parameter inside a percent-encoded URL (a redirect target):
@@ -98,11 +100,23 @@ const QUERY_VALUE = /(?:[^&# \t\n\r\f\v"<>\\]|\\+(?![\\"']))*/y;
 // An encoded value also ends at an encoded `&` or `#`.
 const ENCODED_QUERY_VALUE = /(?:[^&#% \t\n\r\f\v"<>\\]|%(?!2[36])|\\+(?![\\"']))*/iy;
 // The name may be quoted, also with escaped quotes (`\"name\":` in JSON
-// that was itself serialized into a string), and may be percent-encoded. At
-// most seven backslashes (three levels of escaping) keep matching linear.
-const KEY_SEPARATOR = /(\\{0,7}["']?)(?<![A-Za-z0-9_.%-])([A-Za-z0-9_.%-]+)\1([ \t]*[:=][ \t]*)/g;
+// that was itself serialized into a string), and may be percent-encoded. Any
+// whitespace JSON allows may surround the separator; after it, also escaped
+// whitespace (`\n`, `\r\n`, `\t` in serialized pretty-printed JSON). Escapes
+// are not accepted before the separator: in `x\n\n\n...` every `n` would
+// start a name and rescan the run, which is quadratic. At most seven
+// backslashes (three levels of escaping) keep matching linear.
+const SPACE_BEFORE_SEPARATOR = String.raw`[ \t\r\n]*`;
+const SPACE_AFTER_SEPARATOR = String.raw`(?:[ \t\r\n]|\\{1,7}[nrt])*`;
+const KEY_SEPARATOR = new RegExp(
+  String.raw`(\\{0,7}["']?)(?<![A-Za-z0-9_.%-])([A-Za-z0-9_.%-]+)\1(${SPACE_BEFORE_SEPARATOR}[:=]${SPACE_AFTER_SEPARATOR})`,
+  "g"
+);
 // A quoted name made of several words, such as `"api key":`.
-const SPACED_KEY_SEPARATOR = /(\\{0,7}["'])([A-Za-z0-9_.%-]+(?: [A-Za-z0-9_.%-]+)+)\1([ \t]*:[ \t]*)/g;
+const SPACED_KEY_SEPARATOR = new RegExp(
+  String.raw`(\\{0,7}["'])([A-Za-z0-9_.%-]+(?: [A-Za-z0-9_.%-]+)+)\1(${SPACE_BEFORE_SEPARATOR}:${SPACE_AFTER_SEPARATOR})`,
+  "g"
+);
 const AUTH_SCHEME = /(?:bearer|basic|digest|negotiate)[ \t]+/iy;
 // Characters that end an unquoted value
 const UNQUOTED_STOP = new Set([" ", "\t", "\n", "\r", "\f", "\v", "&", ";", ",", "#", '"', "'"]);
@@ -192,6 +206,19 @@ function quotedValueEnd(input: string, from: number, slashes: number, quote: str
   return index;
 }
 
+// End of text glued to the end of a quoted or bracketed value, as in
+// `"x"TAIL` or `[x]TAIL`. A backslash also ends it, so the escaped
+// whitespace after a value in serialized JSON (`\"x\"\n`) is kept.
+function gluedEnd(input: string, from: number): number {
+  let index = from;
+  while (index < input.length && input[index] !== "\\" && !UNQUOTED_STOP.has(input[index])) {
+    const char = input[index];
+    if (char === "}" || char === "]") break;
+    index++;
+  }
+  return index;
+}
+
 // End of an unquoted value: whitespace, a separator, a quote or a closing
 // bracket it did not open (`{token=x}`) ends it. Brackets opened inside it
 // are part of it, so `abc[1]TAIL` is one value.
@@ -259,7 +286,7 @@ function scanValue(input: string, start: number, replacement: string): ScannedVa
   }
   if (input[start] === "{" || input[start] === "[") {
     // Text glued to the closing bracket, as in `[x]TAIL`, is part of the value.
-    return { end: unquotedValueEnd(input, bracketedValueEnd(input, start)), quote: "" };
+    return { end: gluedEnd(input, bracketedValueEnd(input, start)), quote: "" };
   }
   AUTH_SCHEME.lastIndex = start;
   const position = AUTH_SCHEME.exec(input) ? AUTH_SCHEME.lastIndex : start;
@@ -267,8 +294,9 @@ function scanValue(input: string, start: number, replacement: string): ScannedVa
   while (input[position + slashes] === "\\") slashes++;
   const quote = input[position + slashes];
   if (quote === '"' || quote === "'") {
+    // Text glued to the closing quote, as in `"x"TAIL`, is part of the value.
     return {
-      end: quotedValueEnd(input, position + slashes + 1, slashes, quote),
+      end: gluedEnd(input, quotedValueEnd(input, position + slashes + 1, slashes, quote)),
       quote: input.slice(position, position + slashes + 1),
     };
   }
@@ -352,7 +380,8 @@ function redactText(value: string, redactor: CompiledRedactor): string {
   result = result.replace(BEARER_TOKEN, (_match, scheme: string) => `${scheme} ${replacement}`);
   for (const pattern of redactor.patterns) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, replacement);
+    // A function keeps the marker literal: `$&` or `$1` are not expanded.
+    result = result.replace(pattern, () => replacement);
   }
   return result;
 }

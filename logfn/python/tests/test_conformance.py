@@ -1,5 +1,7 @@
 import asyncio
 import json
+import re
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -40,6 +42,55 @@ def test_sink_redacts_context_added_after_the_redaction_stage() -> None:
     asyncio.run(sink.flush())
     assert b"late-key" not in bodies[0] and b"late-pw" not in bodies[0]
     assert json.loads(bodies[0])["events"][0]["ctx"] == {"apiKey": "[redacted]", "dsn": "https://[redacted]@db.test"}
+
+
+def test_no_credential_in_json_text_reaches_the_sink_body_whatever_its_formatting() -> None:
+    # Credential keys at several depths, holding strings, numbers and objects.
+    def document(n: int) -> dict[str, Any]:
+        return {
+            "token": f"S{n}_TOP",
+            "service": {
+                "name": "billing",
+                "auth": {"user": "svc", "password": f"S{n}_NESTED"},
+                "hosts": [{"host": "a", "apiKey": f"S{n}_ARRAY"}],
+                "retries": {"client_secret": f"S{n}_DEEP", "max": 3},
+            },
+            "credentials": {"id": f"S{n}_OBJECT"},
+        }
+
+    def crlf(text: str) -> str:
+        return text.replace("\n", "\r\n")
+
+    def newline_before_value(text: str) -> str:
+        return text.replace('": ', '":\n    ')
+
+    formats: list[Callable[[Any], str]] = [
+        lambda value: json.dumps(value, separators=(",", ":")),
+        lambda value: json.dumps(value),
+        lambda value: json.dumps(value, indent=2),
+        lambda value: json.dumps(value, indent=4),
+        lambda value: json.dumps(value, indent="\t"),
+        lambda value: newline_before_value(json.dumps(value, indent=2)),
+        lambda value: crlf(json.dumps(value, indent=2)),
+        lambda value: crlf(newline_before_value(json.dumps(value, indent=2))),
+    ]
+    escaped = [lambda value, format=format: json.dumps(format(value)) for format in formats]
+    bodies: list[bytes] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return 200
+
+    sink = logfn.SinkHttp("https://collector.test/ingest", transport=transport, max_queue=1000, batch_size=1000)
+    base = {"ts": "2026-01-14T12:00:00.000Z", "level": "info", "name": "t", "version": "0"}
+    for n, format in enumerate(formats + escaped):
+        sink([{**base, "msg": format(document(n))}])  # type: ignore[list-item]
+        sink([{**base, "msg": "m", "ctx": {"text": format(document(n + 100))}}])  # type: ignore[list-item]
+    asyncio.run(sink.flush())
+    body = b"\n".join(bodies).decode()
+    assert sum(len(json.loads(b)["events"]) for b in bodies) == 2 * len(formats + escaped)
+    assert re.findall(r"S\d+_[A-Z]+", body) == []
+    assert "billing" in body
 
 
 def test_server_logger_with_url_redacts_before_http(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

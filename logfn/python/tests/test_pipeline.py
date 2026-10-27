@@ -111,6 +111,12 @@ def test_linear_time_on_adversarial_input() -> None:
         '"a ' * 60_000,
         '"' + "a " * 100_000,
         "\\" * 100_000 + '"a b',
+        "x" + "\\n" * 100_000,
+        "a" + " \n" * 100_000,
+        "n:" + "\\n" * 100_000,
+        "https://" + "a@" * 100_000,
+        ("a://" + "b:" * 10 + " ") * 10_000,
+        'password="x"' + "a" * 200_000,
     ]
     started = time.monotonic()
     for msg in inputs:

@@ -47,6 +47,15 @@ def test_context_kwargs_child_and_tags() -> None:
     assert event["tags"] == ["base", "child", "call"]
 
 
+def test_no_tags_field_without_tags_also_for_child_loggers() -> None:
+    sink = MockSink()
+    logger = create_logger("svc", sinks=[sink])
+    logger.info("root", None, [])
+    logger.child(ctx={"module": "auth"}).info("child")
+    assert len(sink.events) == 2
+    assert all("tags" not in event for event in sink.events)
+
+
 def test_exception_or_scalar_context_is_kept() -> None:
     sink = MockSink()
     logger = create_logger("svc", sinks=[sink])

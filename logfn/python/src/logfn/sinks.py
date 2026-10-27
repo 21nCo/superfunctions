@@ -229,6 +229,12 @@ class SinkHttp:
             if self._closed:
                 self._drop(len(batch), "closed")
                 return
+            # Only the newest max_queue events of a batch could stay queued, so
+            # the older ones are dropped without being prepared (copied).
+            excess = len(batch) - self.max_queue
+            if excess > 0:
+                self._drop(excess, "queue_full")
+                batch = batch[excess:]
             redacted: list[LogEvent] = []
             for event in batch:
                 try:
@@ -237,13 +243,21 @@ class SinkHttp:
                     self._drop(1, "redaction_failed")
                     self._report(error)
             with self._lock:
-                self._queue.extend(redacted)
-                self._accepted += len(redacted)
+                # Checked again under the lock close() sets it with: a batch
+                # still being prepared when close() started is dropped here,
+                # never queued behind close()'s final flush.
+                late = self._closed
+                if not late:
+                    self._queue.extend(redacted)
+                    self._accepted += len(redacted)
                 overflow = max(0, len(self._queue) - self.max_queue)
                 for _ in range(overflow):
                     self._queue.popleft()
                 self._removed += overflow
                 queued = len(self._queue)
+            if late:
+                self._drop(len(redacted), "closed")
+                return
             self._drop(overflow, "queue_full")
             if queued >= self.batch_size:
                 self._start_drain()
@@ -411,7 +425,8 @@ class SinkHttp:
     async def close(self) -> None:
         """Stop accepting events, then deliver or drop everything accepted.
         Never raises; events that cannot be sent are dropped as "closed"."""
-        self._closed = True
+        with self._lock:
+            self._closed = True
         await self.flush()
         with self._lock:
             left = len(self._queue)

@@ -404,7 +404,11 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
         drop(batch.length, "closed");
         return;
       }
-      for (const event of batch) {
+      // Only the newest maxQueue events of a batch could stay queued, so the
+      // older ones are dropped without being prepared (copied).
+      const excess = batch.length - maxQueue;
+      if (excess > 0) drop(excess, "queue_full");
+      for (const event of excess > 0 ? batch.slice(excess) : batch) {
         let redacted: LogEvent | null;
         try {
           redacted = prepare(event);
@@ -413,7 +417,13 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           safely(() => onError(toError(error)));
           continue;
         }
-        if (redacted) {
+        // Preparation runs caller code (toJSON) that could close the sink.
+        // Enqueueing is synchronous on one thread, so this is the only way
+        // an event can arrive after close() started; it is dropped, never
+        // queued behind close()'s flush (the Python sink checks under a lock).
+        if (closed) {
+          drop(1, "closed");
+        } else if (redacted) {
           queue.push(redacted);
           accepted += 1;
         }

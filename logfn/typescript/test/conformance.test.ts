@@ -126,6 +126,44 @@ describe("shared redaction vectors", () => {
     expect(spy.events()[0].ctx).toEqual({ apiKey: REDACTED, dsn: `https://${REDACTED}@db.test` });
   });
 
+  it("no credential in JSON text reaches the sink body, whatever its formatting", async () => {
+    // Credential keys at several depths, holding strings, numbers and objects.
+    const document = (n: number) => ({
+      token: `S${n}_TOP`,
+      service: {
+        name: "billing",
+        auth: { user: "svc", password: `S${n}_NESTED` },
+        hosts: [{ host: "a", apiKey: `S${n}_ARRAY` }],
+        retries: { client_secret: `S${n}_DEEP`, max: 3 },
+      },
+      credentials: { id: `S${n}_OBJECT` },
+    });
+    const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+    const newlineBeforeValue = (text: string) => text.replace(/": /g, '":\n    ');
+    const formats: Array<(value: unknown) => string> = [
+      (value) => JSON.stringify(value),
+      (value) => JSON.stringify(value, null, 2),
+      (value) => JSON.stringify(value, null, 4),
+      (value) => JSON.stringify(value, null, "\t"),
+      (value) => newlineBeforeValue(JSON.stringify(value, null, 2)),
+      (value) => crlf(JSON.stringify(value, null, 2)),
+      (value) => crlf(newlineBeforeValue(JSON.stringify(value, null, 2))),
+    ];
+    const escaped = formats.map((format) => (value: unknown) => JSON.stringify(format(value)));
+    const all = [...formats, ...escaped];
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch, maxQueue: 1000, batch: 1000 });
+    all.forEach((format, n) => {
+      sink([{ ts: "2026-01-14T12:00:00.000Z", level: "info", msg: format(document(n)), name: "t", version: "0" }]);
+      sink([{ ts: "2026-01-14T12:00:00.000Z", level: "info", msg: "m", name: "t", version: "0", ctx: { text: format(document(n + 100)) } }]);
+    });
+    await sink.flush();
+    expect(spy.events()).toHaveLength(all.length * 2);
+    const body = spy.requests.map((request) => request.body).join("\n");
+    expect(body.match(/S\d+_[A-Z]+/g)).toBeNull();
+    expect(body).toContain("billing");
+  });
+
   it("serverLogger with a url redacts before its HTTP sink", async () => {
     const spy = fetchSpy();
     vi.stubGlobal("fetch", spy.fetch);

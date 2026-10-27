@@ -102,6 +102,12 @@ describe("redaction", () => {
       '"a '.repeat(60_000),
       '"' + "a ".repeat(100_000),
       "\\".repeat(100_000) + '"a b',
+      "x" + "\\n".repeat(100_000),
+      "a" + " \n".repeat(100_000),
+      "n:" + "\\n".repeat(100_000),
+      "https://" + "a@".repeat(100_000),
+      ("a://" + "b:".repeat(10) + " ").repeat(10_000),
+      'password="x"' + "a".repeat(200_000),
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));

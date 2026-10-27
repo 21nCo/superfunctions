@@ -679,6 +679,119 @@
         "DSN_PW",
         "[redacted]"
       ]
+    },
+    {
+      "id": "json-whitespace-separators",
+      "description": "Any whitespace JSON allows around the separator (newlines, CRLF, tabs, indentation) is accepted, and escaped whitespace after it in once-escaped JSON, so pretty-printed and hand-written JSON keep no credential.",
+      "input": {
+        "msg": "{\"token\":\n\"LINE_SECRET\"} {\"apiKey\":\r\n  \"CRLF_SECRET\"} {\"password\"\n: \"BEFORE_SEP\"}",
+        "ctx": {
+          "pretty": "{\n  \"password\":\n    \"PRETTY_SECRET\"\n}",
+          "indented": "{\n  \"service\": {\n    \"auth\": {\n      \"token\": \"PRETTY_TOKEN\"\n    },\n    \"region\": \"eu\"\n  }\n}",
+          "tabbed": "{\n\t\"db\": {\n\t\t\"client_secret\": \"TAB_SECRET\",\n\t\t\"port\": 5432\n\t}\n}",
+          "escaped": "\"{\\n  \\\"a\\\": {\\n    \\\"token\\\": \\\"ESC_INDENT\\\"\\n  }\\n}\"",
+          "escapedCrlf": "\"{\\\"apiKey\\\":\\r\\n  \\\"ESC_CRLF\\\"}\""
+        }
+      },
+      "expected": {
+        "msg": "{\"token\":\n\"[redacted]\"} {\"apiKey\":\r\n  \"[redacted]\"} {\"password\"\n: \"[redacted]\"}",
+        "ctx": {
+          "pretty": "{\n  \"password\":\n    \"[redacted]\"\n}",
+          "indented": "{\n  \"service\": {\n    \"auth\": [redacted],\n    \"region\": \"eu\"\n  }\n}",
+          "tabbed": "{\n\t\"db\": {\n\t\t\"client_secret\": \"[redacted]\",\n\t\t\"port\": 5432\n\t}\n}",
+          "escaped": "\"{\\n  \\\"a\\\": {\\n    \\\"token\\\": \\\"[redacted]\\\"\\n  }\\n}\"",
+          "escapedCrlf": "\"{\\\"apiKey\\\":\\r\\n  \\\"[redacted]\\\"}\""
+        }
+      },
+      "absent": [
+        "LINE_SECRET",
+        "CRLF_SECRET",
+        "BEFORE_SEP",
+        "PRETTY_SECRET",
+        "PRETTY_TOKEN",
+        "TAB_SECRET",
+        "ESC_INDENT",
+        "ESC_CRLF"
+      ]
+    },
+    {
+      "id": "url-userinfo-last-at",
+      "description": "URL userinfo runs to the last @ of the authority, as URL parsers read it, so an unencoded @ in a password is redacted too.",
+      "input": {
+        "msg": "fetch https://user:prefix@TAIL_SECRET@localhost/path failed",
+        "ctx": {
+          "dsn": "postgres://u:p@ss@DBTAIL@db:5432/app",
+          "plain": "https://h.test/a@b",
+          "query": "https://u:p@w@h.test?x=a@b.c"
+        }
+      },
+      "expected": {
+        "msg": "fetch https://[redacted]@localhost/path failed",
+        "ctx": {
+          "dsn": "postgres://[redacted]@db:5432/app",
+          "plain": "https://h.test/a@b",
+          "query": "https://[redacted]@h.test?x=a@b.c"
+        }
+      },
+      "absent": [
+        "TAIL_SECRET",
+        "DBTAIL",
+        "u:p",
+        "ss@",
+        "p@w"
+      ]
+    },
+    {
+      "id": "literal-replacement",
+      "description": "A custom marker is inserted literally by every rule: substitution syntax such as $&, $`, \\g<0> or \\1 is never expanded.",
+      "options": {
+        "replacement": "<$&$`$1\\g<0>\\1>"
+      },
+      "input": {
+        "msg": "ada@example.com password=hunter2 https://u:URLPW@h.test Bearer BEARER_TOK",
+        "ctx": {
+          "apiKey": "k-1",
+          "note": "token=\"QUOTED\" mail bob@example.org"
+        }
+      },
+      "expected": {
+        "msg": "<$&$`$1\\g<0>\\1> password=<$&$`$1\\g<0>\\1> https://<$&$`$1\\g<0>\\1>@h.test Bearer <$&$`$1\\g<0>\\1>",
+        "ctx": {
+          "apiKey": "<$&$`$1\\g<0>\\1>",
+          "note": "token=\"<$&$`$1\\g<0>\\1>\" mail <$&$`$1\\g<0>\\1>"
+        }
+      },
+      "absent": [
+        "ada@example.com",
+        "hunter2",
+        "URLPW",
+        "BEARER_TOK",
+        "k-1",
+        "QUOTED",
+        "bob@example.org",
+        "[redacted]"
+      ]
+    },
+    {
+      "id": "glued-quoted-values",
+      "description": "Text glued to the closing quote of a credential value is part of the value; JSON structure and escaped whitespace after it are kept.",
+      "input": {
+        "msg": "password=\"x\"GLUE_ONE token='y'GLUE_TWO {\"secret\":\"z\"}, ok",
+        "ctx": {
+          "escaped": "\"{\\n  \\\"secret\\\": \\\"ESC_GLUE\\\",\\n  \\\"n\\\": 1\\n}\""
+        }
+      },
+      "expected": {
+        "msg": "password=\"[redacted]\" token='[redacted]' {\"secret\":\"[redacted]\"}, ok",
+        "ctx": {
+          "escaped": "\"{\\n  \\\"secret\\\": \\\"[redacted]\\\",\\n  \\\"n\\\": 1\\n}\""
+        }
+      },
+      "absent": [
+        "GLUE_ONE",
+        "GLUE_TWO",
+        "ESC_GLUE"
+      ]
     }
   ]
 }

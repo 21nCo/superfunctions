@@ -48,6 +48,15 @@ describe("Logger", () => {
     });
   });
 
+  it("omits the tags field when there are no tags, also for child loggers", () => {
+    const { events, sink } = capture();
+    const logger = createLogger({ name: "svc", sinks: [sink] });
+    logger.info("root", undefined, []);
+    logger.child({ ctx: { module: "auth" } }).info("child");
+    expect(events).toHaveLength(2);
+    for (const logged of events) expect(logged).not.toHaveProperty("tags");
+  });
+
   it("keeps an Error or a non-object passed as ctx", () => {
     const { events, sink } = capture();
     const logger = createLogger({ name: "svc", sinks: [sink] });

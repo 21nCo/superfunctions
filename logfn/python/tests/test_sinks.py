@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import threading
 from collections.abc import Iterator
@@ -7,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import logfn.sinks
 from logfn import MAX_EVENT_SIZE, SinkConsole, SinkHttp, create_logger
 from logfn.types import LogEvent
 
@@ -127,6 +129,26 @@ def test_queue_cap_drops_oldest() -> None:
     assert drops == [(1, "queue_full"), (1, "queue_full")]
     asyncio.run(sink.flush())
     assert transport.batches == [["3", "4", "5"]]
+
+
+def test_oversized_batch_prepares_only_the_newest_max_queue_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    prepared: list[str] = []
+    original = logfn.sinks.sanitize_event
+
+    def counting(value: LogEvent) -> LogEvent:
+        prepared.append(value["msg"])
+        return original(value)
+
+    monkeypatch.setattr(logfn.sinks, "sanitize_event", counting)
+    transport = Scripted()
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(URL, transport=transport, batch_size=100, max_queue=3, on_drop=lambda n, r: drops.append((n, r)))
+    sink([event(msg) for msg in "12345"])
+    assert prepared == ["3", "4", "5"]
+    assert drops == [(2, "queue_full")]
+    asyncio.run(sink.flush())
+    assert transport.batches == [["3", "4", "5"]]
+    assert sink.stats()["dropped"] == 2
 
 
 def test_bounded_while_collector_is_down() -> None:
@@ -310,6 +332,31 @@ def test_close_flushes_then_drops() -> None:
     asyncio.run(sink.flush())
     assert transport.batches == [["before"]]
     assert drops == [(1, "closed")]
+
+
+def test_batch_prepared_while_close_runs_is_dropped_not_queued() -> None:
+    # A thread paused inside event preparation (after the entry check) while
+    # close() completes must not queue the event behind the final flush.
+    preparing, resume = threading.Event(), threading.Event()
+
+    class SlowDate(datetime.date):
+        def isoformat(self) -> str:
+            preparing.set()
+            resume.wait(5)
+            return super().isoformat()
+
+    transport = Scripted(204)
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(URL, batch_size=1, transport=transport, on_drop=lambda n, r: drops.append((n, r)))
+    late = threading.Thread(target=lambda: sink([event("late", ctx={"day": SlowDate(2020, 1, 1)})]))
+    late.start()
+    assert preparing.wait(5)
+    asyncio.run(sink.close())
+    resume.set()
+    late.join(5)
+    assert transport.batches == []
+    assert drops == [(1, "closed")]
+    assert sink.stats()["queued"] == 0
 
 
 def test_queues_redacted_copies() -> None:

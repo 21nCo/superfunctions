@@ -65,16 +65,30 @@ adds an HTTP sink only when `url` is given.
 `redact(patterns=None, replacement="[redacted]", keys=None, allowlist=None)`
 and `redact_event(event, ...)` apply the same rules as `@logfn/core` to every
 event field, object keys and top-level field names included: values under
-credential-named keys at any depth, URL credentials, credential query and
+credential-named keys at any depth, URL credentials (up to the last `@` of
+the authority), credential query and
 fragment values (percent-decoded names; the value runs to the next `&`, `#`,
 whitespace or quote; also inside a percent-encoded URL), `name=value` /
-`Name: value` pairs inside strings (quoted names may contain spaces; quoted
-values consumed whole, escaped quotes included; object and array values to
-their balanced closing bracket), bearer tokens, and email addresses by
-default. A value is left alone only when the replacement is all of it, and
-`replacement` must not be empty (`ValueError`). `patterns` replaces the default extra list
-(emails) but never disables the credential rules; `keys` adds sensitive key
-names; `allowlist` exempts exact paths such as `user.email` or `userId`.
+`Name: value` pairs inside strings (any JSON whitespace around the
+separator, escaped `\n`/`\r`/`\t` after it in once-escaped JSON; quoted names
+may contain spaces; quoted values consumed whole, escaped quotes and glued
+text included; object and array values to their balanced closing bracket),
+bearer tokens, and email addresses by default. A value is left alone only
+when the replacement is all of it, and `replacement` must not be empty
+(`ValueError`); it is inserted literally (`\g<0>` or `\1` are not expanded).
+`patterns` replaces the default extra list (emails) but never disables the
+credential rules; `keys` adds sensitive key names; `allowlist` exempts exact
+paths such as `user.email` or `userId`.
+
+The text rules have the same known limits as `@logfn/core` (see its README):
+unquoted names with spaces, escaped whitespace before the separator,
+`password=abc}TAIL`, `password=[redacted]"X"` and twice-encoded query
+strings are not redacted. Log credentials as structured context instead.
+
+Runtime differences kept from the ported packages: `create_logger(sinks=[])`
+warns where `createLogger({ sinks: [] })` throws, and `with_request_ids()`
+fills each missing id where `withRequestIds()` leaves an event that already
+has any id unchanged.
 
 ## Sinks
 
