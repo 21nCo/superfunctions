@@ -226,6 +226,11 @@ def test_validate_and_serialize_keeps_message_and_small_metadata() -> None:
     assert capped["msg"] == "keep"
 
 
+def test_sanitize_value_keeps_keys_that_become_the_same_text() -> None:
+    assert sanitize_value({1: "numeric", "1": "text", "1#2": "taken"}) == {"1": "numeric", "1#2": "text", "1#2#2": "taken"}
+    assert sanitize_value({"1#2": "taken", 1: "numeric", "1": "text"}) == {"1#2": "taken", "1": "numeric", "1#3": "text"}
+
+
 def test_sanitize_event_makes_every_field_json_safe() -> None:
     class Leaky:
         def __str__(self) -> str:

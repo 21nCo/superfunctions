@@ -8,7 +8,7 @@ import contextvars
 import inspect
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
 from typing import Any
 
@@ -192,10 +192,12 @@ class Logger:
 
         # The task copies the current context, so a failure of a call made
         # while on_error runs is not reported back into that on_error.
+        async def call() -> None:
+            await awaitable
+
         async def run() -> None:
-            try:
-                await awaitable
-            except Exception as error:
+            error = await _isolated(call)
+            if error is not None:
                 self._report(error, {"sink": _callable_name(sink)})
 
         task = loop.create_task(run())
@@ -296,8 +298,8 @@ class Logger:
             self._report(error, {})
 
         async def flush_one(sink: Sink) -> None:
-            try:
-                # Looked up inside the try: a raising flush property is this
+            async def call() -> None:
+                # Looked up inside the call: a raising flush property is this
                 # sink's failure, reported like any other; siblings still flush.
                 flush = getattr(sink, "flush", None)
                 if not callable(flush):
@@ -305,10 +307,34 @@ class Logger:
                 result = flush()
                 if inspect.isawaitable(result):
                     await result
-            except Exception as error:
+
+            error = await _isolated(call)
+            if error is not None:
                 self._report(error, {"sink": _callable_name(sink)})
 
         await asyncio.gather(*(flush_one(sink) for sink in self.sinks))
+
+
+async def _isolated(call: Callable[[], Coroutine[Any, Any, None]]) -> BaseException | None:
+    """Runs a sink call as its own task and returns its failure, if any.
+
+    A CancelledError the sink raises itself (it awaited a cancelled future)
+    ends only that task, so it is the sink's failure like any other, and
+    sibling sinks are unaffected. Cancelling the caller (flush() itself, or
+    the loop shutting down) still cancels the call and propagates. Task
+    .cancelling() would tell the two apart, but Python 3.10 lacks it."""
+    task = asyncio.get_running_loop().create_task(call())
+    try:
+        await asyncio.wait([task])
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    if task.cancelled():
+        try:
+            task.result()
+        except asyncio.CancelledError as error:
+            return error
+    return task.exception()
 
 
 def _wake_threadsafe(loop: asyncio.AbstractEventLoop, future: asyncio.Future[None]) -> None:

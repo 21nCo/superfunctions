@@ -547,6 +547,19 @@ def test_direct_call_sends_only_redacted_json_safe_fields() -> None:
     assert sent["userId"] == {"password": "[redacted]"} and sent["extra"] == {"password": "[redacted]"}
 
 
+def test_direct_call_keeps_keys_that_sanitize_to_the_same_text() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(json.loads(body))
+        return 204
+
+    sink = SinkHttp(URL, transport=transport)
+    sink([event("ids", ctx={"by_id": {1: "numeric", "1": "text"}})])
+    asyncio.run(sink.close())
+    assert bodies[0]["events"][0]["ctx"] == {"by_id": {"1": "numeric", "1#2": "text"}}
+
+
 def test_direct_call_bounds_each_event() -> None:
     bodies: list[bytes] = []
 
@@ -682,6 +695,61 @@ def test_flush_and_close_wait_for_a_batch_another_loop_is_sending(method: str) -
     assert gate.posted == [["held"]]
     assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}
     worker.join(5)
+
+
+class _ReleaseHook:
+    """A lock that runs a hook on the given thread after its nth release."""
+
+    def __init__(self, lock: Any, thread: int, nth: int, hook: Any) -> None:
+        self._lock, self._thread, self._left, self._hook = lock, thread, nth, hook
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lock.release()
+        if threading.get_ident() == self._thread:
+            self._left -= 1
+            if self._left == 0:
+                self._hook()
+
+
+def test_flush_waits_for_a_batch_another_loop_puts_back_while_it_checks() -> None:
+    # Another loop is sending the only event when flush() starts. Right after
+    # flush() has found the queue empty, that loop's drain is cancelled and
+    # puts the batch back. flush() must still see the event (now queued) and
+    # send it, not find it neither queued nor in flight and return.
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        if threading.current_thread() is other:
+            await asyncio.sleep(3600)
+        return 204
+
+    sink = SinkHttp(URL, transport=transport, batch_size=1, timeout=30)
+    other_loop = asyncio.new_event_loop()
+    other = threading.Thread(target=other_loop.run_forever, daemon=True)
+    other.start()
+    try:
+        other_loop.call_soon_threadsafe(sink, [event("moved")])
+        deadline = time.monotonic() + 5
+        while sink.stats()["in_flight"] != 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+
+        def put_back() -> None:
+            drain = sink._drains[other_loop]
+            other_loop.call_soon_threadsafe(drain.cancel)
+            while sink.stats()["queued"] != 1:
+                assert time.monotonic() < deadline + 5
+                time.sleep(0.005)
+
+        # Releases in flush(): the target read, then the queue check.
+        sink._lock = _ReleaseHook(sink._lock, threading.get_ident(), 2, put_back)  # type: ignore[assignment]
+        asyncio.run(sink.flush())
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}
+    finally:
+        other_loop.call_soon_threadsafe(other_loop.stop)
+        other.join(5)
+        other_loop.close()
 
 
 def test_concurrent_drains_on_two_loops_account_for_every_batch() -> None:
@@ -1056,7 +1124,10 @@ def test_a_stalled_resolver_holds_no_sockets_and_a_bounded_number_of_threads(
 
     def held(host: Any, *args: Any, **kwargs: Any) -> Any:
         if host == "stalled.test":
+            # Released lookups fail without asking the real resolver, so
+            # teardown does not depend on live DNS.
             gate.wait(10)
+            raise socket.gaierror(socket.EAI_NONAME, "stalled.test")
         return real_getaddrinfo(host, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", held)
@@ -1110,7 +1181,10 @@ def test_a_host_whose_lookups_stall_does_not_hold_up_sinks_for_other_hosts(
 
     def held(host: Any, *args: Any, **kwargs: Any) -> Any:
         if host == "stalled.test":
+            # Released lookups fail without asking the real resolver, so
+            # teardown does not depend on live DNS.
             gate.wait(10)
+            raise socket.gaierror(socket.EAI_NONAME, "stalled.test")
         return real_getaddrinfo(host, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", held)

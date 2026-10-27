@@ -393,9 +393,9 @@ def exception_message(error: BaseException) -> str:
         return repr(error)
 
 
-def _unique_key(target: dict[str, Any], key: str, used: dict[str, int]) -> str:
-    # Distinct keys can redact to the same text (two email keys both become
-    # the marker; 1 and "1"). Each later one is kept under the first free
+def unique_key(target: dict[str, Any], key: str, used: dict[str, int]) -> str:
+    # Distinct keys can become the same text: 1 and "1" when sanitized, two
+    # email keys both redacted to the marker. Each later one is kept under the first free
     # "<key>#<n>" (n from 2) instead of overwriting the earlier value. ``used``
     # holds the next n per key.
     if key not in target:
@@ -451,7 +451,7 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
                 item_path = _child_path(path, key)
                 allowed = item_path in redactor.allowlist
                 # Keys are text too: a map keyed by URL or email must not leak them.
-                output_key = _unique_key(result, key if allowed else _redact_text(key, redactor), used)
+                output_key = unique_key(result, key if allowed else _redact_text(key, redactor), used)
                 if redactor.is_sensitive(key) and not allowed:
                     result[output_key] = redactor.replacement
                 else:
@@ -482,7 +482,7 @@ def _redact_with(event: LogEvent, redactor: _Redactor) -> LogEvent:
             redacted[key] = _redact_node(value, redactor, key, set(), 0)
         else:
             # Field names are text too, exactly like nested keys.
-            redacted[_unique_key(redacted, _redact_text(key, redactor), used)] = (
+            redacted[unique_key(redacted, _redact_text(key, redactor), used)] = (
                 redactor.replacement
                 if redactor.is_sensitive(key)
                 else _redact_node(value, redactor, key, set(), 0)

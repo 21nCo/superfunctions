@@ -52,7 +52,11 @@ adds an HTTP sink only when `url` is given.
   then flushes every sink. A call whose loop has stopped or closed is not
   waited for, since nothing would run it. Looking up a sink's `flush` or a
   sink's or stage's `__name__` is inside the same isolation: a raising
-  property is reported, and sibling sinks still flush. An `on_error` that
+  property is reported, and sibling sinks still flush. So is a
+  `CancelledError` a sink raises itself (its call or flush awaited a
+  cancelled future): it is that sink's failure, reported once, and
+  `flush()` still waits for the siblings. Cancelling `flush()` itself, or
+  the loop shutting down, still cancels the sink calls and propagates. An `on_error` that
   logs through a failing sink, or schedules `flush()` while a sink's flush
   fails, is never called for the failure it caused, whether the sink raises
   at once or its awaitable fails later in a task (also through child loggers
@@ -94,9 +98,10 @@ when the replacement is all of it, and `replacement` must not be empty
 (`ValueError`); it is inserted literally (`\g<0>` or `\1` are not expanded).
 `patterns` replaces the default extra list (emails) but never disables the
 credential rules; `keys` adds sensitive key names; `allowlist` exempts exact
-paths such as `user.email` or `userId`. Distinct keys that redact to the
-same text (two email keys; `1` and `"1"`) keep every value: later ones are
-stored under `"<key>#2"`, `"#3"` and so on, in key order.
+paths such as `user.email` or `userId`. Distinct keys that become the
+same text (two email keys once redacted; `1` and `"1"` once made JSON-safe,
+on every path: the logger, `SinkHttp`, `sanitize_value`) keep every value:
+later ones are stored under `"<key>#2"`, `"#3"` and so on, in key order.
 
 The text rules have the same known limits as `@logfn/core` (see its README):
 unquoted names with spaces, escaped whitespace before the separator,

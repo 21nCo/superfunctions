@@ -786,15 +786,20 @@ class SinkHttp:
                     # wait below is bounded by that batch's deadline too.
                     await asyncio.sleep(0)
                 waiter: asyncio.Future[None] | None = None
+                # Queue and batches are read in one snapshot: another loop
+                # puts an interrupted batch back under the same lock, so the
+                # events in question are seen in one place or the other,
+                # never in neither.
                 with self._lock:
+                    queued = bool(self._queue) and self._queue[0][0] < target
                     pending = [batch for batch in self._batches if batch.items[0][0] < target]
                     if pending:
                         waiter = loop.create_future()
                         self._waiters.append((loop, waiter))
                 if waiter is None:
-                    if drain is None:
+                    if not queued:
                         return
-                    continue  # The drain is between batches or done.
+                    continue  # A drain is between batches, or a batch was put back.
                 # Woken by any settlement or the end of this loop's drain, and
                 # never later than the earliest deadline of a pending batch,
                 # however the transport behaves.

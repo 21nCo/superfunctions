@@ -220,6 +220,71 @@ def test_a_raising_flush_property_is_reported_and_siblings_still_flush() -> None
     assert flushed == ["good"]
 
 
+async def _cancelled_by_the_sink() -> None:
+    # The sink awaits a future that was cancelled; nobody cancelled the caller.
+    future = asyncio.get_running_loop().create_future()
+    future.cancel()
+    await future
+
+
+@pytest.mark.parametrize("where", ["call", "flush"])
+def test_a_cancelled_error_raised_by_a_sink_is_that_sinks_failure(where: str) -> None:
+    errors: list[tuple[str, dict[str, str]]] = []
+    done: list[str] = []
+
+    class Cancelling(MockSink):
+        def __call__(self, batch: list[LogEvent]) -> Any:
+            return _cancelled_by_the_sink() if where == "call" else None
+
+        async def flush(self) -> None:
+            if where == "flush":
+                await _cancelled_by_the_sink()
+
+    class Slow(MockSink):
+        async def flush(self) -> None:
+            await asyncio.sleep(0.05)
+            done.append("slow")
+
+    logger = create_logger(
+        "svc", sinks=[Cancelling(), Slow()], on_error=lambda e, c: errors.append((type(e).__name__, c))
+    )
+
+    async def main() -> None:
+        logger.info("m")
+        await logger.flush()  # Resolves: the sink's cancellation is not the caller's.
+
+    asyncio.run(main())
+    assert errors == [("CancelledError", {"sink": "Cancelling"})]
+    assert done == ["slow"]
+
+
+def test_cancelling_flush_itself_still_propagates() -> None:
+    started = asyncio.Event()
+    cancelled: list[str] = []
+
+    class Hanging(MockSink):
+        async def flush(self) -> None:
+            started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.append("hanging")
+                raise
+
+    errors: list[BaseException] = []
+    logger = create_logger("svc", sinks=[Hanging()], on_error=lambda e, c: errors.append(e))
+
+    async def main() -> None:
+        flushing = asyncio.get_running_loop().create_task(logger.flush())
+        await started.wait()
+        flushing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await flushing
+
+    asyncio.run(main())
+    assert cancelled == ["hanging"] and errors == []
+
+
 def test_default_sink_is_local_console(capsys: pytest.CaptureFixture[str]) -> None:
     logger = Logger("svc", level="info")
     logger.info("hello")
@@ -235,6 +300,12 @@ def test_circular_context_is_sanitized() -> None:
     # The logger merges ctx into a new top-level dict, so the caller's dict
     # appears once more before its back-reference is cut.
     assert sink.events[0]["ctx"] == {"id": 1, "self": {"id": 1, "self": "[circular]"}}
+
+
+def test_keys_that_sanitize_to_the_same_text_keep_every_value() -> None:
+    sink = MockSink()
+    create_logger("svc", sinks=[sink]).info("ids", by_id={1: "numeric", "1": "text"})
+    assert sink.events[0]["ctx"] == {"by_id": {"1": "numeric", "1#2": "text"}}
 
 
 def test_any_context_keyword_is_accepted() -> None:

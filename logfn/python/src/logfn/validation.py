@@ -14,6 +14,7 @@ from .redact import (
     UNSERIALIZABLE,
     exception_message,
     format_exception_stack,
+    unique_key,
 )
 from .types import MAX_EVENT_SIZE, MAX_TAGS, LogEvent
 
@@ -51,7 +52,12 @@ def _sanitize(value: Any, ancestors: set[int], depth: int) -> Any:
                 error["cause"] = _sanitize(value.__cause__, ancestors, depth + 1)
             return error
         if isinstance(value, dict):
-            return {str(key): _sanitize(item, ancestors, depth + 1) for key, item in value.items()}
+            result: dict[str, Any] = {}
+            used: dict[str, int] = {}
+            for key, item in value.items():
+                # 1 and "1" are both "1" in JSON: the later one is kept as "1#2".
+                result[unique_key(result, str(key), used)] = _sanitize(item, ancestors, depth + 1)
+            return result
         return [_sanitize(item, ancestors, depth + 1) for item in value]
     finally:
         ancestors.discard(identity)
@@ -98,10 +104,11 @@ def sanitize_event(event: LogEvent) -> LogEvent:
     string, tags (at most MAX_TAGS) strings, and every other field is
     sanitized like ctx. None fields are removed."""
     sanitized: dict[str, Any] = {}
+    used: dict[str, int] = {}
     for raw_key, value in event.items():
         if value is None:
             continue
-        key = str(raw_key)
+        key = unique_key(sanitized, str(raw_key), used)
         if key == "msg":
             sanitized[key] = str(value)
         elif key == "tags" and isinstance(value, (list, tuple)):
