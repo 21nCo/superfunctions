@@ -4,6 +4,7 @@ import { containsCredentialValue, PACKAGE_NAME_PATTERN, type OperationCatalog } 
 import type { SdkDiagnostic } from "../../types.js";
 import { PY_MODULE_NAME, PY_TYPE_NAME, pyPascalCase, PYTHON_KEYWORDS } from "./naming.js";
 import { RUNTIME_DEPENDENCY_MODULES, STDLIB_MODULES } from "./reserved-modules.js";
+import { canonicalLicenseExpression } from "./spdx.js";
 
 export interface PythonOptions {
   /** Distribution name (normalized PEP 503 form) and normalized PEP 440 version, so installed metadata equals the manifest. */
@@ -34,8 +35,6 @@ const MAX_TIMER_MS = 2_147_483_647;
 const DISTRIBUTION_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** A normalized PEP 440 public version: release, optional pre-release, post-release and development release. */
 const PEP440_VERSION = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*(?:(?:a|b|rc)(?:0|[1-9]\d*))?(?:\.post(?:0|[1-9]\d*))?(?:\.dev(?:0|[1-9]\d*))?$/;
-/** An SPDX license expression as PEP 639 writes it: identifiers joined by AND, OR and WITH, with parentheses. */
-const SPDX_EXPRESSION = /^[A-Za-z0-9.+\-() ]+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -82,7 +81,13 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
     fail("/package/version", "Expected a normalized PEP 440 version such as 1.0.0, 1.0.0rc1 or 1.0.0.post1.");
   }
   const license = text(pkg.license, "/package/license");
-  if (license !== null && !SPDX_EXPRESSION.test(license)) fail("/package/license", "Expected an SPDX license expression such as MIT or Apache-2.0 OR MIT.");
+  if (license !== null) {
+    // In normalized form, which the build backend writes unchanged, so the installed License-Expression equals the option.
+    const canonical = canonicalLicenseExpression(license);
+    if (canonical !== license) {
+      fail("/package/license", canonical === null ? "Expected an SPDX license expression such as MIT or Apache-2.0 OR MIT, of SPDX license and exception identifiers or LicenseRef- names." : `Expected the normalized SPDX license expression "${canonical}".`);
+    }
+  }
 
   const module = root.module ?? (nameValid ? (name as string).replace(/-/g, "_") : "");
   if (typeof module !== "string" || module.length > 100 || !PY_MODULE_NAME.test(module) || PYTHON_KEYWORDS.has(module)) {

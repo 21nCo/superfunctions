@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { validateClientFailureEvent } from "@apifn/contracts/failure-event";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeSdk, type SdkArtifactManifest } from "../src/index.js";
+import { canonicalLicenseExpression } from "../src/targets/python/spdx.js";
 import { buildFixtureSdk, cleanupTemp, clone, FIXTURES, fixtureCatalog, fixtureConfig, FixtureServer, generate, methodFor, okResponse, PACKAGE_DIR, paramsFor, readJson, tempDir } from "./helpers.js";
 import { createVenv, findPython, PythonLog, REQUIREMENTS, venvPython } from "./python.js";
 
@@ -18,6 +19,8 @@ const SETUP_MS = 15 * 60_000;
 
 let work: string;
 let log: PythonLog;
+/** Interpreter of the environment with the build tools, and with them packaging. */
+let tools: string;
 let manifest: SdkArtifactManifest;
 let sdk: string;
 let wheel: string;
@@ -32,7 +35,7 @@ beforeAll(async () => {
   work = tempDir("apifn-sdk-python-");
   log = new PythonLog(path.join(work, "python-sdk.log"));
   const python = findPython(log, work);
-  const tools = createVenv(log, python, path.join(work, "tools"), ["-r", REQUIREMENTS], work);
+  tools = createVenv(log, python, path.join(work, "tools"), ["-r", REQUIREMENTS], work);
 
   // Generate, add custom code, and regenerate: the custom module must survive into the installed package.
   sdk = path.join(work, "example-tasks-sdk");
@@ -149,6 +152,10 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       Tree: { type: "object", properties: { children: { type: "array", items: { $ref: "#/components/schemas/Tree" } }, parent: { $ref: "#/components/schemas/Tree" } } },
       // One part declares x, another only requires it.
       RequiredSplit: { allOf: [{ type: "object", properties: { x: { type: "string" } } }, { type: "object", required: ["x"] }] },
+      // A reference, alone or as the one allOf member, with a required name its referent leaves optional.
+      Optional: { type: "object", properties: { x: { type: "string" }, w: { type: "string" } } },
+      OneRefReq: { allOf: [{ $ref: "#/components/schemas/Optional" }], required: ["x"] },
+      RefSiblingReq: { $ref: "#/components/schemas/Optional", required: ["x"] },
     });
     // Parameters whose schemas also admit values the client cannot serialize are narrowed to ParamValue and DeepObjectValue.
     const lookup = catalog.operations.find((operation: any) => operation.id === "tasks.lookup");
@@ -166,19 +173,44 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       expect(written.ok).toBe(true);
       expect(readFileSync(path.join(dir, "src/awkward_sdk/client.py"), "utf8")).toMatch(/extra: _ParamValue \| None = None,\n[\s\S]*where: _DeepObjectValue \| None = None,/);
       // The misuse module passes only while mypy reports the missing required key its ignore comment names.
-      writeFileSync(path.join(dir, "src/required_misuse.py"), 'from awkward_sdk import RequiredSplit\n\nok: RequiredSplit = {"x": "a"}\nmissing: RequiredSplit = {}  # type: ignore[typeddict-item]\n');
+      const misuse = ["RequiredSplit", "OneRefReq", "RefSiblingReq"].map((name) => `ok_${name}: ${name} = {"x": "a"}\nmissing_${name}: ${name} = {}  # type: ignore[typeddict-item]\n`);
+      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import OneRefReq, Optional, RefSiblingReq, RequiredSplit\n\noptional: Optional = {}\n${misuse.join("")}`);
       log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "awkward_sdk", "required_misuse.py"], { cwd: path.join(dir, "src") });
       // And it imports: every quoted type and inline TypedDict is valid at runtime too.
       const keys = log.run(wheelPython, ["-c", "import json, awkward_sdk, typing; typing.get_type_hints(awkward_sdk.Keywords); print(json.dumps(sorted(awkward_sdk.Keywords.__required_keys__)))"], { cwd: path.join(dir, "src") });
       expect(JSON.parse(keys)).toEqual(["class"]);
-      const split = log.run(wheelPython, ["-c", "import json, awkward_sdk; print(json.dumps(sorted(awkward_sdk.RequiredSplit.__required_keys__)))"], { cwd: path.join(dir, "src") });
-      expect(JSON.parse(split)).toEqual(["x"]);
+      const required = log.run(wheelPython, ["-c", "import json, awkward_sdk as m; print(json.dumps([sorted(t.__required_keys__) for t in (m.RequiredSplit, m.OneRefReq, m.RefSiblingReq, m.Optional)]))"], { cwd: path.join(dir, "src") });
+      expect(JSON.parse(required)).toEqual([["x"], ["x"], ["x"], []]);
     });
   });
 });
 
 /** The keys a request is compared on: what the operation, credentials and body decide, not the transport. */
 const TRANSPORT_HEADERS = new Set(["host", "connection", "user-agent", "accept-encoding", "accept-language", "sec-fetch-mode", "content-length", "transfer-encoding"]);
+
+describe("license expressions", () => {
+  it("are accepted, and normalized, as packaging (which hatchling validates them with) accepts and normalizes them", () => {
+    const expressions = [
+      "MIT", "Apache-2.0 OR MIT", "(MIT AND BSD-3-Clause)", "GPL-2.0-only WITH Classpath-exception-2.0", "LicenseRef-Custom", "GPL-2.0+", "GPL-2.0",
+      "mit or apache-2.0 with llvm-exception", "licenseref-a.B-2 AND LicenseRef-A.b-2", "  MIT\u00a0OR  (Apache-2.0)", "((MIT))", "MIT AND (Apache-2.0 OR 0BSD)",
+      "MIT AND", "see LICENSE", "(", ")", "( )", "", "Foo-Bar", "Classpath-exception-2.0", "MIT WITH Apache-2.0", "MIT WITH", "WITH Classpath-exception-2.0",
+      "MIT WITH Classpath-exception-2.0 WITH LLVM-exception", "(MIT) WITH LLVM-exception", "MIT (Apache-2.0)", "MIT OR OR Apache-2.0", "LicenseRef-", "LicenseRef-a_b",
+      "LicenseRef-A+", "MIT+ WITH LLVM-exception", "Apache-2.0 WITH LicenseRef-X",
+    ];
+    const script = [
+      "import json, sys",
+      "from packaging.licenses import InvalidLicenseExpression, canonicalize_license_expression",
+      "def canonical(expression):",
+      "    try:",
+      "        return canonicalize_license_expression(expression)",
+      "    except InvalidLicenseExpression:",
+      "        return None",
+      "print(json.dumps([canonical(expression) for expression in json.load(sys.stdin)]))",
+    ].join("\n");
+    const expected = JSON.parse(log.run(tools, ["-I", "-c", script], { cwd: work, input: JSON.stringify(expressions) }));
+    expect(expressions.map(canonicalLicenseExpression)).toEqual(expected);
+  });
+});
 
 describe("cross-language vectors", () => {
   const server = new FixtureServer();

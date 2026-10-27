@@ -211,6 +211,14 @@ describe("python target: options", () => {
     ["a distribution name whose derived module shadows typing_extensions", option((options) => (options.package.name = "typing-extensions")), "/options/package/name"],
     ["a distribution name whose derived module shadows the standard library", option((options) => (options.package.name = "asyncio")), "/options/package/name"],
     ["a license that is not an SPDX expression", option((options) => (options.package.license = "see LICENSE, 2026")), "/options/package/license"],
+    // Each of these passed a character check, then failed the build backend's license validation.
+    ["a license expression missing an operand", option((options) => (options.package.license = "MIT AND")), "/options/package/license"],
+    ["a license of words", option((options) => (options.package.license = "see LICENSE")), "/options/package/license"],
+    ["a license with an unbalanced parenthesis", option((options) => (options.package.license = "(")), "/options/package/license"],
+    ["a license that is not an SPDX identifier", option((options) => (options.package.license = "Foo-Bar")), "/options/package/license"],
+    ["a license exception used as a license", option((options) => (options.package.license = "Classpath-exception-2.0")), "/options/package/license"],
+    ["a license used as an exception", option((options) => (options.package.license = "MIT WITH Apache-2.0")), "/options/package/license"],
+    ["a license expression that is not normalized", option((options) => (options.package.license = "mit or apache-2.0")), "/options/package/license"],
     ["a description with a line break", option((options) => (options.package.description = "two\nlines")), "/options/package/description"],
     ["a base URL with a dot segment", option((options) => (options.baseUrl = "https://api.example.test/a/../v1")), "/options/baseUrl"],
     ["a base URL with user info", option((options) => (options.baseUrl = "https://user:pw@api.example.test")), "/options/baseUrl"],
@@ -238,6 +246,16 @@ describe("python target: options", () => {
     const renamed = generatePython(fixtureCatalog(), option((options) => (options.module = "tasks")));
     expect(renamed.manifest!.customCode.root).toBe("src/tasks/custom/");
     expect(fileOf(renamed, "pyproject.toml")).toContain('packages = ["src/tasks"]');
+  });
+
+  it("accepts normalized SPDX license expressions, and names the normalized form of one that is not", () => {
+    for (const license of ["MIT", "Apache-2.0 OR MIT", "(MIT AND BSD-3-Clause)", "GPL-2.0-only WITH Classpath-exception-2.0", "LicenseRef-Custom", "GPL-2.0+ OR (MIT AND LicenseRef-a.b-2)"]) {
+      const result = generatePython(fixtureCatalog(), option((options) => (options.package.license = license)));
+      expect(result.ok, `${license}: ${JSON.stringify(result.diagnostics)}`).toBe(true);
+      expect(fileOf(result, "pyproject.toml")).toContain(`license = ${JSON.stringify(license)}`);
+    }
+    const lowercase = generatePython(fixtureCatalog(), option((options) => (options.package.license = "mit or apache-2.0 with llvm-exception")));
+    expect(lowercase.diagnostics.find((diagnostic) => diagnostic.pointer === "/options/package/license")?.message).toContain('"MIT OR Apache-2.0 WITH LLVM-exception"');
   });
 
   it("escapes package metadata as TOML and keeps the generated files ASCII", () => {
@@ -337,6 +355,31 @@ describe("python target: schema types", () => {
     const models = fileOf(result, "src/example_tasks_sdk/models.py");
     expect(models).toContain('RequiredSplit = _te.TypedDict(\n    "RequiredSplit",\n    {\n        "x": "str",\n    },\n)');
     expect(models).toContain('Enclosing = _te.TypedDict(\n    "Enclosing",\n    {\n        "x": "str",\n        "y": "int",\n        "z": _te.NotRequired["bool"],\n    },\n)');
+  });
+
+  it("requires a property that a reference or single allOf wrapper requires, and still aliases one that adds no requirement", () => {
+    const catalog = fixtureCatalog();
+    const base = { $ref: "#/components/schemas/Base" };
+    catalog.schemas.Base = { type: "object", required: ["v"], properties: { v: { type: "string" }, w: { type: "string" }, x: { type: "string" } } };
+    catalog.schemas.OneRefReq = { allOf: [base], required: ["x"] };
+    catalog.schemas.RefSiblingReq = { $ref: "#/components/schemas/Base", required: ["x"] };
+    catalog.schemas.InlineReq = { type: "object", properties: { inner: { allOf: [base], required: ["x"] } } };
+    catalog.schemas.PlainAllOf = { allOf: [base] };
+    // Requiring what the referent already requires, or what no part declares, adds nothing to the type.
+    catalog.schemas.RequiresRequired = { $ref: "#/components/schemas/Base", required: ["v", "undeclared"] };
+    catalog.schemas.OfWrapper = { $ref: "#/components/schemas/OneRefReq" };
+    const result = generatePython(catalog);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    const fields = '    {\n        "v": "str",\n        "w": _te.NotRequired["str"],\n        "x": "str",\n    },\n)';
+    expect(models).toContain(`Base = _te.TypedDict(\n    "Base",\n    {\n        "v": "str",\n        "w": _te.NotRequired["str"],\n        "x": _te.NotRequired["str"],\n    },\n)`);
+    expect(models).toContain(`OneRefReq = _te.TypedDict(\n    "OneRefReq",\n${fields}`);
+    expect(models).toContain(`RefSiblingReq = _te.TypedDict(\n    "RefSiblingReq",\n${fields}`);
+    expect(models).toContain('"inner": _te.NotRequired["_InlineReq_1"]');
+    expect(models).toContain(`_InlineReq_1 = _te.TypedDict(\n    "_InlineReq_1",\n${fields}`);
+    expect(models).toContain('PlainAllOf: _te.TypeAlias = "Base"\n');
+    expect(models).toContain('RequiresRequired: _te.TypeAlias = "Base"\n');
+    expect(models).toContain('OfWrapper: _te.TypeAlias = "OneRefReq"\n');
   });
 
   it("merges each shared allOf reference once, so a doubling chain generates in linear time", () => {

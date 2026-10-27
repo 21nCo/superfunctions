@@ -147,17 +147,32 @@ export class PythonTypes {
 
   /**
    * The TypedDict fields of a schema that declares properties itself or merges several object parts (see
-   * `#objectParts`), or null. A bare reference, or `allOf` with one member, is typed as what it refers to.
-   * A field two parts declare with different types is Any; a field any part requires is required;
-   * `required` naming no declared property only constrains, as in the TypeScript target.
+   * `#objectParts`), or null. A reference, or `allOf` with one member, is typed as what it refers to unless the
+   * schema requires a property that the referent declares but leaves optional. A field two parts declare with
+   * different types is Any; a field any part requires is required; `required` naming no declared property only
+   * constrains, as in the TypeScript target.
    */
   objectFields(schema: unknown, owner: string, cut: ReadonlySet<string> = NO_CUTS, depth = 0): PyField[] | null {
     if (!isRecord(schema)) return null;
     const own = isRecord(schema.properties) && Object.keys(schema.properties).length > 0 ? 1 : 0;
     const references = ("$ref" in schema ? 1 : 0) + (Array.isArray(schema.allOf) ? schema.allOf.length : 0);
-    if (own === 0 && references < 2) return null;
+    if (own === 0 && references === 0) return null;
     const parts = this.#objectParts(schema, cut, depth);
     if (parts === null) return null;
+    const declared = new Set(parts.flatMap((part) => (isRecord(part.properties) ? Object.keys(part.properties) : [])));
+    if (declared.size === 0) return null;
+    // Any part may require a property any part declares, including a part that declares none itself.
+    const required = new Set<string>();
+    let added = false;
+    for (const [index, part] of parts.entries()) {
+      for (const name of Array.isArray(part.required) ? part.required : []) {
+        if (typeof name !== "string" || !declared.has(name) || required.has(name)) continue;
+        required.add(name);
+        // With one referent, the schema itself is the last part and every other part is the referent's.
+        added ||= index === parts.length - 1;
+      }
+    }
+    if (own === 0 && references === 1 && !added) return null;
     const merged = new Map<string, PyField>();
     for (const part of parts) {
       if (!isRecord(part.properties)) continue;
@@ -167,20 +182,12 @@ export class PythonTypes {
         const field: PyField = {
           key,
           type: this.type(property, owner, depth + 1),
-          required: false,
+          required: required.has(key),
           description: isRecord(property) && typeof property.description === "string" ? property.description : null,
           deprecated: isRecord(property) && property.deprecated === true,
         };
         const previous = merged.get(key);
         merged.set(key, previous ? { ...previous, type: previous.type === field.type ? field.type : ANY } : field);
-      }
-    }
-    if (merged.size === 0) return null;
-    // Any part may require a property any part declares, including a part that declares none itself.
-    for (const part of parts) {
-      for (const name of Array.isArray(part.required) ? part.required : []) {
-        const field = typeof name === "string" ? merged.get(name) : undefined;
-        if (field) field.required = true;
       }
     }
     return [...merged.values()];
