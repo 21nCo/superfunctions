@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidLogEvent,
   MAX_EVENT_SIZE,
+  MAX_METADATA_CHARS,
   MAX_TAGS,
   sanitizeValue,
   validateAndSerialize,
@@ -72,6 +73,45 @@ describe("validateAndSerialize", () => {
     expect(huge.truncated).toBe(true);
     expect(huge.event.msg.endsWith("...[truncated]")).toBe(true);
     expect(bytes(huge.event)).toBeLessThanOrEqual(MAX_EVENT_SIZE);
+  });
+
+  it.each([
+    ["name", { name: "x".repeat(70_000) }],
+    ["requestId", { requestId: "€".repeat(30_000) }],
+    ["a field outside the schema", { extra: "x".repeat(70_000) } as Partial<LogEvent>],
+    ["tags", { tags: Array.from({ length: MAX_TAGS }, () => "t".repeat(4_000)) }],
+    ["control characters", { name: "\u0001".repeat(20_000), msg: "\u0002".repeat(20_000) }],
+  ])("bounds an event whose %s alone is over the limit", (_field, overrides) => {
+    const { event: out, truncated } = validateAndSerialize(event({ msg: "keep this message", ...overrides }));
+    expect(truncated).toBe(true);
+    expect(bytes(out)).toBeLessThanOrEqual(MAX_EVENT_SIZE);
+    expect(out.ts).toBe("2026-01-14T12:00:00.000Z");
+    expect(out.level).toBe("info");
+  });
+
+  it("keeps the message and small metadata when only the context is large", () => {
+    const { event: out } = validateAndSerialize(
+      event({ msg: "keep", requestId: "req-1", tags: ["a"], ctx: { blob: "x".repeat(MAX_EVENT_SIZE) } })
+    );
+    expect(out).toMatchObject({ msg: "keep", requestId: "req-1", tags: ["a"] });
+  });
+
+  it("caps metadata at MAX_METADATA_CHARS when it does not fit", () => {
+    const { event: out } = validateAndSerialize(event({ name: "x".repeat(70_000), msg: "keep" }));
+    expect(out.name).toHaveLength(MAX_METADATA_CHARS);
+    expect(out.name.endsWith("...[truncated]")).toBe(true);
+    expect(out.msg).toBe("keep");
+  });
+
+  it("makes every field JSON-safe", () => {
+    const { event: out } = validateAndSerialize({
+      ...event(),
+      tags: [1, { a: 1 }] as unknown as string[],
+      userId: 10n as unknown as string,
+    });
+    expect(out.tags).toEqual(["1", '{"a":1}']);
+    expect(out.userId).toBe("[unserializable]");
+    expect(() => JSON.stringify(out)).not.toThrow();
   });
 });
 

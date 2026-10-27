@@ -27,6 +27,7 @@ export interface RedactionVector {
     tags?: string[];
     userId?: string;
     tenantId?: string;
+    fields?: Record<string, Json>;
   };
   expected: Record<string, Json>;
 }
@@ -110,7 +111,7 @@ export function vectorEvent(vector: RedactionVector): LogEvent {
   if (vector.input.tags) event.tags = [...vector.input.tags];
   if (vector.input.userId !== undefined) event.userId = vector.input.userId;
   if (vector.input.tenantId !== undefined) event.tenantId = vector.input.tenantId;
-  return event;
+  return { ...event, ...structuredClone(vector.input.fields) };
 }
 
 function matchValue(actual: unknown, expected: Json, where: string): void {
@@ -138,7 +139,7 @@ function matchValue(actual: unknown, expected: Json, where: string): void {
   expect(actual, where).toEqual(expected);
 }
 
-/** Compares the fields present in `expected` (msg, ctx, tags, userId, tenantId). */
+/** Compares the fields present in `expected` (msg, ctx, tags, userId, tenantId, fields). */
 export function expectVector(actual: LogEvent, vector: RedactionVector, mode: string): void {
   for (const [field, expected] of Object.entries(vector.expected)) {
     matchValue((actual as unknown as Record<string, unknown>)[field], expected, `${vector.id} (${mode}) ${field}`);

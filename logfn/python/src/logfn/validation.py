@@ -58,33 +58,90 @@ def sanitize_value(value: Any) -> Any:
     return _sanitize(value, set(), 0)
 
 
-def _byte_length(event: LogEvent) -> int:
+# Longest kept string for a metadata field once an event is over the size limit
+MAX_METADATA_CHARS = 256
+
+_METADATA_FIELDS = ("ts", "level", "name", "version", "traceId", "spanId", "requestId", "userId", "tenantId")
+
+
+def _byte_length(event: Any) -> int:
     return len(json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "replace"))
 
 
-def validate_and_serialize(event: LogEvent) -> tuple[LogEvent, bool]:
-    """Sanitize an event and bound its UTF-8 size. Returns (event, truncated).
-    An event over MAX_EVENT_SIZE loses its ctx and, if still too large, has
-    its message shortened (then its tags removed)."""
-    cleaned = cast(LogEvent, {key: value for key, value in event.items() if value is not None})
-    cleaned["msg"] = str(event["msg"])
-    if "ctx" in cleaned:
-        cleaned["ctx"] = sanitize_value(cleaned["ctx"])
-    if "tags" in cleaned:
-        cleaned["tags"] = [str(tag) for tag in list(cleaned["tags"])[:MAX_TAGS]]
+def _tag_text(tag: Any) -> str:
+    if isinstance(tag, str):
+        return tag
+    return json.dumps(sanitize_value(tag), ensure_ascii=False, separators=(",", ":"))
 
+
+def sanitize_event(event: LogEvent) -> LogEvent:
+    """Return a JSON-safe copy of every field of an event: msg becomes a
+    string, tags (at most MAX_TAGS) strings, and every other field is
+    sanitized like ctx. None fields are removed."""
+    sanitized: dict[str, Any] = {}
+    for raw_key, value in event.items():
+        if value is None:
+            continue
+        key = str(raw_key)
+        if key == "msg":
+            sanitized[key] = str(value)
+        elif key == "tags" and isinstance(value, (list, tuple)):
+            sanitized[key] = [_tag_text(tag) for tag in list(value)[:MAX_TAGS]]
+        else:
+            sanitized[key] = sanitize_value(value)
+    sanitized.setdefault("msg", "")
+    return cast(LogEvent, sanitized)
+
+
+def _truncate(text: str, keep: int) -> str:
+    return text[: max(0, keep)] + TRUNCATED_SUFFIX
+
+
+def _bound_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    # Schema metadata only, as strings of at most MAX_METADATA_CHARS; fields
+    # outside the schema and non-string metadata are removed.
+    bounded: dict[str, Any] = {"msg": event["msg"], "ctx": event["ctx"]}
+    if "tags" in event:
+        bounded["tags"] = event["tags"]
+    for field in _METADATA_FIELDS:
+        value = event.get(field)
+        if not isinstance(value, str):
+            continue
+        if len(value) > MAX_METADATA_CHARS:
+            value = _truncate(value, MAX_METADATA_CHARS - len(TRUNCATED_SUFFIX))
+        bounded[field] = value
+    return bounded
+
+
+def validate_and_serialize(event: LogEvent) -> tuple[LogEvent, bool]:
+    """Sanitize an event and bound its size. Returns (event, truncated).
+
+    The result is always at most MAX_EVENT_SIZE bytes of UTF-8 JSON. An event
+    over the limit loses its ctx (replaced by a truncation marker). If the
+    fields other than msg still take more than half the limit, metadata is
+    cut to the schema fields of at most MAX_METADATA_CHARS characters each,
+    then the tags are removed. Finally the message is shortened to fit."""
+    cleaned: dict[str, Any] = dict(sanitize_event(event))
     original_size = _byte_length(cleaned)
     if original_size <= MAX_EVENT_SIZE:
-        return cleaned, False
+        return cast(LogEvent, cleaned), False
 
     cleaned["ctx"] = {"_truncated": True, "_reason": "size_limit", "_originalSize": original_size}
+
+    def without_message() -> int:
+        return _byte_length({**cleaned, "msg": ""})
+
+    if without_message() > MAX_EVENT_SIZE // 2:
+        cleaned = _bound_metadata(cleaned)
+        if without_message() > MAX_EVENT_SIZE // 2:
+            cleaned.pop("tags", None)
     overflow = _byte_length(cleaned) - MAX_EVENT_SIZE
     if overflow > 0:
-        keep = max(0, len(cleaned["msg"]) - overflow - len(TRUNCATED_SUFFIX))
-        cleaned["msg"] = cleaned["msg"][:keep] + TRUNCATED_SUFFIX
-        if _byte_length(cleaned) > MAX_EVENT_SIZE:
-            cleaned.pop("tags", None)
-    return cleaned, True
+        # Every removed character frees at least one byte, and the other
+        # fields take at most half the limit, so this fits.
+        message = cleaned["msg"]
+        cleaned["msg"] = _truncate(message, len(message) - overflow - len(TRUNCATED_SUFFIX))
+    return cast(LogEvent, cleaned), True
 
 
 def is_valid_log_event(event: Any) -> bool:

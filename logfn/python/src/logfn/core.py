@@ -98,22 +98,13 @@ class Logger:
     def should_log(self, level: LogLevel) -> bool:
         return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[self.level]
 
-    def _log(
-        self,
-        level: LogLevel,
-        msg: str,
-        ctx: Any = None,
-        tags: list[str] | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def _log(self, level: LogLevel, msg: Any, ctx: Any, tags: Any, kwargs: dict[str, Any]) -> None:
         try:
             self._emit(level, msg, ctx, tags, kwargs)
         except Exception as error:
             self._report(error, {})
 
-    def _emit(
-        self, level: LogLevel, msg: str, ctx: Any, tags: list[str] | None, kwargs: dict[str, Any]
-    ) -> None:
+    def _emit(self, level: LogLevel, msg: Any, ctx: Any, tags: Any, kwargs: dict[str, Any]) -> None:
         if not self.should_log(level):
             return
 
@@ -131,7 +122,7 @@ class Logger:
         }
         if self.base_context or call_context:
             event["ctx"] = {**self.base_context, **(call_context or {})}
-        merged_tags = [*self.base_tags, *(tags or [])]
+        merged_tags = [*self.base_tags, *(tags if isinstance(tags, (list, tuple)) else [])]
         if merged_tags:
             event["tags"] = merged_tags
 
@@ -180,25 +171,29 @@ class Logger:
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 
-    def trace(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
-        self._log("trace", msg, ctx, tags, **kwargs)
+    # msg is positional-only, so every other keyword, including ``level``,
+    # ``msg`` and ``name``, is context: logger.info("login", level="admin").
+    # ``ctx`` and ``tags`` are the parameters of those names.
 
-    def debug(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
-        self._log("debug", msg, ctx, tags, **kwargs)
+    def trace(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+        self._log("trace", msg, ctx, tags, kwargs)
 
-    def info(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
-        self._log("info", msg, ctx, tags, **kwargs)
+    def debug(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+        self._log("debug", msg, ctx, tags, kwargs)
 
-    def warn(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
-        self._log("warn", msg, ctx, tags, **kwargs)
+    def info(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+        self._log("info", msg, ctx, tags, kwargs)
 
-    def error(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+    def warn(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+        self._log("warn", msg, ctx, tags, kwargs)
+
+    def error(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
         """Log at error level. An exception may be passed as ctx; it is logged as ctx["error"]."""
-        self._log("error", msg, ctx, tags, **kwargs)
+        self._log("error", msg, ctx, tags, kwargs)
 
-    def fatal(self, msg: str, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
+    def fatal(self, msg: Any, /, ctx: Any = None, tags: list[str] | None = None, **kwargs: Any) -> None:
         """Log at fatal level. An exception may be passed as ctx; it is logged as ctx["error"]."""
-        self._log("fatal", msg, ctx, tags, **kwargs)
+        self._log("fatal", msg, ctx, tags, kwargs)
 
     def child(
         self,
@@ -207,7 +202,7 @@ class Logger:
         ctx: dict[str, Any] | None = None,
         tags: list[str] | None = None,
     ) -> Logger:
-        return Logger(
+        child = Logger(
             name=name or self.name,
             sinks=self.sinks,
             level=level or self.level,
@@ -217,6 +212,9 @@ class Logger:
             base_tags=[*self.base_tags, *(tags or [])],
             on_error=self.on_error,
         )
+        # Shared so flush() on either waits for calls made through the shared sinks.
+        child._pending = self._pending
+        return child
 
     async def flush(self) -> None:
         """Wait for scheduled async sink calls, then flush every sink. Sink

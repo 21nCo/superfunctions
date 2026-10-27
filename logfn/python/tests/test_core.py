@@ -150,3 +150,42 @@ def test_circular_context_is_sanitized() -> None:
     # The logger merges ctx into a new top-level dict, so the caller's dict
     # appears once more before its back-reference is cut.
     assert sink.events[0]["ctx"] == {"id": 1, "self": {"id": 1, "self": "[circular]"}}
+
+
+def test_any_context_keyword_is_accepted() -> None:
+    sink = MockSink()
+    errors: list[BaseException] = []
+    logger = create_logger("svc", sinks=[sink], on_error=lambda error, context: errors.append(error))
+    logger.info("login", level="admin", msg="shadow", name="ada", kwargs=1)
+    logger.warn("keywords", ctx={"a": 1}, tags=["t"], user_id="1")
+    logger.error("odd tags", tags=5)  # type: ignore[arg-type]
+    assert errors == []
+    assert sink.events[0]["msg"] == "login" and sink.events[0]["level"] == "info"
+    assert sink.events[0]["ctx"] == {"level": "admin", "msg": "shadow", "name": "ada", "kwargs": 1}
+    assert sink.events[1]["ctx"] == {"a": 1, "user_id": "1"} and sink.events[1]["tags"] == ["t"]
+    assert "tags" not in sink.events[2]
+
+
+def test_flush_waits_for_async_sink_calls_made_through_a_child() -> None:
+    delivered: list[str] = []
+
+    async def scenario() -> None:
+        gate = asyncio.Event()
+
+        async def slow(batch: list[LogEvent]) -> None:
+            if batch[0]["name"] == "child":
+                await gate.wait()
+            delivered.extend(event["msg"] for event in batch)
+
+        logger = create_logger("svc", sinks=[slow])
+        logger.child(name="child").info("child")
+        logger.info("root")
+        flushing = asyncio.ensure_future(logger.flush())
+        await asyncio.sleep(0.01)
+        assert not flushing.done()
+        gate.set()
+        await flushing
+
+    asyncio.run(scenario())
+    assert delivered == ["root", "child"]
+

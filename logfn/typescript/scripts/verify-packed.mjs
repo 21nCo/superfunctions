@@ -2,7 +2,8 @@
 // Packs @logfn/core, installs the tarball offline into a clean consumer
 // outside the repository and runs ESM, CommonJS and typed consumers against
 // it: enrichment, sampling, bounded delivery to a local collector, redaction
-// before the HTTP sink and failure isolation. Run after `npm run build`.
+// before the HTTP sink, failure isolation and a short-lived process whose
+// awaited flush outlives the retry backoff. Run after `npm run build`.
 // `--keep` keeps the temp directory.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -20,9 +21,22 @@ function run(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 }
 
+// Runs alone in its own process, so nothing but the sink keeps it alive while
+// flush() waits out the retry backoff after a 503.
+const flushChild = `
+import { createLogger, sinkHttp } from "@logfn/core";
+const errors = [];
+const sink = sinkHttp({ url: process.argv[2], batch: 10, retry: { attempts: 3, backoffMs: 300 }, onError: (error) => errors.push(error.message) });
+createLogger({ name: "child", sinks: [sink] }).error("flushed before exit");
+await sink.flush();
+console.log(JSON.stringify({ stats: sink.stats(), errors }));
+`;
+
 const esmConsumer = `
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import { promisify } from "node:util";
 import { createLogger, enrichContext, sample, sinkHttp, REDACTED } from "@logfn/core";
 
 const received = [];
@@ -96,6 +110,13 @@ await fragile.flush();
 assert.deepEqual(errors.sort(), ["async", "sync"]);
 assert.equal(unreachable.stats().dropped, 1);
 
+// An awaited flush keeps a short-lived process alive through the backoff.
+received.length = 0;
+failNext = 1;
+const child = await promisify(execFile)(process.execPath, ["flush-child.mjs", url]);
+assert.deepEqual(JSON.parse(child.stdout), { stats: { queued: 0, inFlight: 0, sent: 1, dropped: 0, failedBatches: 0 }, errors: [] });
+assert.deepEqual(received.map((event) => event.msg), ["flushed before exit"]);
+
 server.close();
 console.log(JSON.stringify({ consumer: "esm", ok: true }));
 `;
@@ -162,6 +183,7 @@ try {
   }
 
   writeFileSync(path.join(consumer, "main.mjs"), esmConsumer);
+  writeFileSync(path.join(consumer, "flush-child.mjs"), flushChild);
   writeFileSync(path.join(consumer, "main.cjs"), cjsConsumer);
   console.log(run("node", ["main.mjs"], consumer).trim());
   console.log(run("node", ["main.cjs"], consumer).trim());

@@ -29,8 +29,10 @@ export {
 export {
   isSerializable,
   sanitizeValue,
+  sanitizeEvent,
   validateAndSerialize,
   isValidLogEvent,
+  MAX_METADATA_CHARS,
 } from "./validation.js";
 
 // Pipeline stages

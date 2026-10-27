@@ -55,27 +55,34 @@ when `url` is given.
 - `child({ name, level, ctx, tags })` inherits sinks, pipeline and context.
 - An `Error` passed as the context argument is logged as `ctx.error`.
 - Logging calls and `flush()` never throw. Pipeline and sink failures go to
-  `onError` (default `console.error`).
+  `onError` (default `console.error`). `flush()` first waits for pending
+  async sink calls (also those made through child loggers), then flushes
+  every sink.
 - A pipeline stage that throws drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
   stack, cause }`, cycles become `"[circular]"`, unserializable values become
-  `"[unserializable]"`, and events over 64 KB (UTF-8) lose their context and
-  then have their message shortened.
+  `"[unserializable]"`, and an event never exceeds 64 KB of UTF-8 JSON: an
+  oversized event loses its context; if its other fields are still large,
+  metadata is cut to the schema fields of at most 256 characters and tags are
+  removed; then the message is shortened.
 
 ## Redaction
 
 `redactSecFn(options)` (stage) and `redactEvent(event, options)` redact the
-message, context (recursively, including error message, stack and cause),
-tags, `userId` and `tenantId`:
+message, context (recursively, including error message, stack and cause) and
+every other event field, object keys included:
 
 - Values under credential-named keys at any depth, of any type (`password`,
   `secret`, `apiKey`, `authorization`, `cookie`, `credentials`, keys ending in
   `token`, `jwt` or `signature`, and a few exact names such as `auth`, `sid`).
   Keys are compared lowercased with punctuation removed; `maxTokens` and
   `tokenCount` are kept.
-- URL credentials (`scheme://user:pass@host`), credential query values and
-  `name=value` or `Name: value` pairs inside strings, and bearer tokens.
+- URL credentials (`scheme://user:pass@host`), credential query and fragment
+  values (names are percent-decoded; the value runs to the next `&`, `#`,
+  whitespace or quote), `name=value` or `Name: value` pairs inside strings
+  (quoted values are consumed whole, escaped quotes and once-escaped JSON
+  included), and bearer tokens.
 - Email addresses, by default. `patterns` replaces this default extra list but
   never disables the credential rules.
 
@@ -100,21 +107,28 @@ Posts `{"events": [...]}` to `url` in batches.
 
 - Constructing the sink performs no I/O; the url must be absolute http(s)
   and must not embed credentials.
-- Every event is redacted before it is queued (`redact` adds options; it
-  cannot be turned off).
+- Every event is made JSON-safe, redacted (every field, keys included) and
+  size-bounded before it is queued, so the request body is exactly what was
+  redacted (`redact` adds options; it cannot be turned off).
 - The queue holds at most `maxQueue` events (default 5000); the oldest are
   dropped beyond that. A full `batch` (default 50) is sent at once, a partial
   one after `flushIntervalMs` (default 1000).
 - Each attempt times out after `timeoutMs` (default 3000). Network errors,
   timeouts, 408, 429 and 5xx are retried up to `retry.attempts` (default 5)
   with exponential backoff from `retry.backoffMs` (default 200). Other
-  responses, and exhausted retries, drop the batch.
+  responses, and exhausted retries, drop the batch. Redirects are never
+  followed (`redirect: "manual"`): a 3xx drops the batch without a retry, so
+  the body and credentials cannot reach another origin.
 - Calling the sink never throws or waits. `flush()` sends what is queued and
-  never rejects; `close()` flushes and drops later events. `stats()` returns
+  never rejects; events logged while it waits keep their interval timer.
+  `close()` flushes and drops later events. `stats()` returns
   `{ queued, inFlight, sent, dropped, failedBatches }`; `onDrop(count, reason)`
   and `onError(error)` report losses.
-- Timers are unref'd so they do not keep a Node process alive. In browsers the
-  request uses `keepalive` when the body is under 60 KB.
+- Background timers are unref'd so they do not keep a Node process alive;
+  while a caller awaits `flush()` or `close()` the retry backoff and request
+  timeout do, so the awaited batch is sent or dropped before exit. In
+  browsers the request uses `keepalive` when the body is at most 60,000 bytes
+  of UTF-8.
 - `fetch` can be supplied; by default `globalThis.fetch` is used per request.
 
 ## Other stages

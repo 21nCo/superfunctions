@@ -91,37 +91,84 @@ export function sanitizeValue(value: unknown): unknown {
   return sanitizeNode(value, new Set(), 0);
 }
 
+/** Longest kept string for a metadata field once an event is over the size limit */
+export const MAX_METADATA_CHARS = 256;
+
+const METADATA_FIELDS = [
+  "ts",
+  "level",
+  "name",
+  "version",
+  "traceId",
+  "spanId",
+  "requestId",
+  "userId",
+  "tenantId",
+] as const;
+
 function byteLength(event: LogEvent): number {
   return encoder.encode(JSON.stringify(event)).length;
 }
 
-/**
- * Validates and serializes a log event, enforcing size limits. An event over
- * MAX_EVENT_SIZE bytes loses its ctx (replaced by a truncation marker) and,
- * if still too large, has its message shortened.
- */
-export function validateAndSerialize(event: LogEvent): SerializationResult {
-  const sanitized: LogEvent = {
-    ...event,
-    msg: String(event.msg),
-    ctx:
-      event.ctx !== undefined
-        ? (sanitizeValue(event.ctx) as Record<string, unknown>)
-        : undefined,
-    tags: Array.isArray(event.tags)
-      ? event.tags.slice(0, MAX_TAGS).map((tag) => String(tag))
-      : undefined,
-  };
+function tagText(tag: unknown): string {
+  return typeof tag === "string" ? tag : JSON.stringify(sanitizeValue(tag) ?? null);
+}
 
-  // Remove undefined fields
-  const cleaned: Partial<LogEvent> = {};
-  for (const [key, value] of Object.entries(sanitized)) {
-    if (value !== undefined) {
-      cleaned[key as keyof LogEvent] = value as never;
+/**
+ * Returns a JSON-safe copy of every field of an event: msg becomes a string,
+ * tags (at most MAX_TAGS) strings, and every other field is sanitized like
+ * ctx. Undefined fields are removed.
+ */
+export function sanitizeEvent(event: LogEvent): LogEvent {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) {
+    if (value === undefined) continue;
+    if (key === "msg") {
+      sanitized.msg = String(value);
+    } else if (key === "tags" && Array.isArray(value)) {
+      sanitized.tags = value.slice(0, MAX_TAGS).map(tagText);
+    } else {
+      sanitized[key] = sanitizeValue(value);
     }
   }
+  if (sanitized.msg === undefined) sanitized.msg = "";
+  return sanitized as unknown as LogEvent;
+}
 
-  let finalEvent = cleaned as LogEvent;
+function truncate(text: string, keep: number): string {
+  let end = Math.max(0, keep);
+  // Never split a surrogate pair: a lone surrogate serializes as six bytes.
+  const last = text.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return text.slice(0, end) + TRUNCATED_SUFFIX;
+}
+
+// Schema metadata only, as strings of at most MAX_METADATA_CHARS; fields
+// outside the schema and non-string metadata are removed.
+function boundMetadata(event: LogEvent): LogEvent {
+  const bounded: Record<string, unknown> = { msg: event.msg, ctx: event.ctx };
+  if (event.tags !== undefined) bounded.tags = event.tags;
+  for (const field of METADATA_FIELDS) {
+    const value: unknown = event[field];
+    if (typeof value !== "string") continue;
+    bounded[field] =
+      value.length > MAX_METADATA_CHARS
+        ? truncate(value, MAX_METADATA_CHARS - TRUNCATED_SUFFIX.length)
+        : value;
+  }
+  return bounded as unknown as LogEvent;
+}
+
+/**
+ * Validates and serializes a log event, enforcing size limits: the result is
+ * always at most MAX_EVENT_SIZE bytes of UTF-8 JSON. An event over the limit
+ * loses its ctx (replaced by a truncation marker). If the fields other than
+ * msg still take more than half the limit, metadata is cut to the schema
+ * fields of at most MAX_METADATA_CHARS characters each, then the tags are
+ * removed. Finally the message is shortened to fit.
+ */
+export function validateAndSerialize(event: LogEvent): SerializationResult {
+  let finalEvent = sanitizeEvent(event);
   const originalSize = byteLength(finalEvent);
   if (originalSize <= MAX_EVENT_SIZE) {
     return { event: finalEvent, truncated: false };
@@ -131,15 +178,19 @@ export function validateAndSerialize(event: LogEvent): SerializationResult {
     ...finalEvent,
     ctx: { _truncated: true, _reason: "size_limit", _originalSize: originalSize },
   };
+  const withoutMessage = () => byteLength({ ...finalEvent, msg: "" });
+  if (withoutMessage() > MAX_EVENT_SIZE / 2) {
+    finalEvent = boundMetadata(finalEvent);
+    if (withoutMessage() > MAX_EVENT_SIZE / 2) delete finalEvent.tags;
+  }
   const overflow = byteLength(finalEvent) - MAX_EVENT_SIZE;
   if (overflow > 0) {
-    // Every removed character frees at least one byte, so this fits unless
-    // the remaining fields alone are too large; then the tags go as well.
-    const keep = Math.max(0, finalEvent.msg.length - overflow - TRUNCATED_SUFFIX.length);
-    finalEvent = { ...finalEvent, msg: finalEvent.msg.slice(0, keep) + TRUNCATED_SUFFIX };
-    if (byteLength(finalEvent) > MAX_EVENT_SIZE) {
-      delete finalEvent.tags;
-    }
+    // Every removed character frees at least one byte, and the other fields
+    // take at most half the limit, so this fits.
+    finalEvent = {
+      ...finalEvent,
+      msg: truncate(finalEvent.msg, finalEvent.msg.length - overflow - TRUNCATED_SUFFIX.length),
+    };
   }
 
   return { event: finalEvent, truncated: true };

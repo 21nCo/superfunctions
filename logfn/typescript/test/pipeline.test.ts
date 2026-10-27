@@ -80,6 +80,12 @@ describe("redaction", () => {
       "https://".repeat(25_000),
       "x@".repeat(100_000),
       "bearer ".repeat(30_000),
+      "\\".repeat(200_000),
+      "\\".repeat(200_000) + '"',
+      'password="' + '\\"'.repeat(100_000),
+      "?token=" + "\\".repeat(200_000) + "'",
+      "&token=".repeat(30_000),
+      '\\"token\\":'.repeat(20_000),
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));
@@ -137,5 +143,8 @@ describe("request ids", () => {
     expect(parseW3CTraceContext("00-00000000000000000000000000000000-b7ad6b7169203331-01")).toBeNull();
     expect(parseW3CTraceContext("00-0AF7651916CD43DD8448EB211C80319Z-b7ad6b7169203331-01")).toBeNull();
     expect(parseW3CTraceContext("01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")).toBeNull();
+    for (const flags of ["", "1", "001", "zz", "0A"]) {
+      expect(parseW3CTraceContext(`00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-${flags}`)).toBeNull();
+    }
   });
 });

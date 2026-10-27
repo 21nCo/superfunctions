@@ -28,7 +28,7 @@ function parseTraceParent(
     return null;
   }
 
-  const [version, traceId, spanId] = parts;
+  const [version, traceId, spanId, flags] = parts;
 
   // Version must be 00 for now
   if (version !== "00") {
@@ -36,7 +36,11 @@ function parseTraceParent(
   }
 
   // Validate format: lowercase hex, not all zeros
-  if (!/^[0-9a-f]{32}$/.test(traceId) || !/^[0-9a-f]{16}$/.test(spanId)) {
+  if (
+    !/^[0-9a-f]{32}$/.test(traceId) ||
+    !/^[0-9a-f]{16}$/.test(spanId) ||
+    !/^[0-9a-f]{2}$/.test(flags)
+  ) {
     return null;
   }
   if (/^0+$/.test(traceId) || /^0+$/.test(spanId)) {

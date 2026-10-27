@@ -138,6 +138,25 @@ describe("Logger", () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "flush failed" }), expect.any(Object));
   });
 
+  it("flush waits for pending async sink calls, also those made through a child", async () => {
+    const delivered: string[] = [];
+    const releases: Array<() => void> = [];
+    const slow: Sink = async (batch) => {
+      await new Promise<void>((resolve) => releases.push(resolve));
+      delivered.push(...batch.map((event) => event.msg));
+    };
+    const logger = createLogger({ name: "svc", sinks: [slow] });
+    logger.info("root");
+    logger.child({ name: "child" }).info("child");
+    let settled = false;
+    const flushed = logger.flush().then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    releases.forEach((release) => release());
+    await flushed;
+    expect(delivered).toEqual(["root", "child"]);
+  });
+
   it("defaults to a local console sink", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const logger = new Logger({ name: "svc", level: "info" });

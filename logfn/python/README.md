@@ -40,27 +40,36 @@ adds an HTTP sink only when `url` is given.
 - Levels: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. The default is
   `info` when `ENV` (or `NODE_ENV`) is `production`, otherwise `debug`.
 - Keyword arguments are merged into the context:
-  `logger.info("login", user_id="1")`. An exception passed as the context is
-  logged as `ctx["error"]`.
+  `logger.info("login", user_id="1")`. `msg` is positional-only, so any other
+  keyword (`level`, `msg`, `name`) is context too; `ctx` and `tags` are the
+  parameters of those names. An exception passed as the context is logged as
+  `ctx["error"]`.
 - `child(name=, level=, ctx=, tags=)` inherits sinks, pipeline and context.
 - Logging calls and `await logger.flush()` never raise. Pipeline and sink
-  failures go to `on_error(error, context)` (default: stderr).
+  failures go to `on_error(error, context)` (default: stderr). `flush()`
+  first waits for pending async sink calls (also those made through child
+  loggers), then flushes every sink.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
   stack, cause}` (`stack` is the formatted traceback, `cause` is
   `__cause__`), cycles become `"[circular]"`, unknown objects become
-  `"[unserializable]"`, and events over 64 KB (UTF-8) lose their context and
-  then have their message shortened.
+  `"[unserializable]"`, and an event never exceeds 64 KB of UTF-8 JSON: an
+  oversized event loses its context; if its other fields are still large,
+  metadata is cut to the schema fields of at most 256 characters and tags are
+  removed; then the message is shortened.
 - Timestamps are RFC3339 UTC with milliseconds (`2026-01-14T12:00:00.000Z`).
 
 ## Redaction
 
 `redact(patterns=None, replacement="[redacted]", keys=None, allowlist=None)`
-and `redact_event(event, ...)` apply the same rules as `@logfn/core`: values
-under credential-named keys at any depth, URL credentials, credential query
-values and `name=value` / `Name: value` pairs inside strings, bearer tokens,
-and email addresses by default. `patterns` replaces the default extra list
+and `redact_event(event, ...)` apply the same rules as `@logfn/core` to every
+event field, object keys included: values under credential-named keys at any
+depth, URL credentials, credential query and fragment values (percent-decoded
+names; the value runs to the next `&`, `#`, whitespace or quote),
+`name=value` / `Name: value` pairs inside strings (quoted values consumed
+whole, escaped quotes included), bearer tokens, and email addresses by
+default. `patterns` replaces the default extra list
 (emails) but never disables the credential rules; `keys` adds sensitive key
 names; `allowlist` exempts exact paths such as `user.email` or `userId`.
 
@@ -73,14 +82,19 @@ names; `allowlist` exempts exact paths such as `user.email` or `userId`.
   redact_allowlist=None, transport=None, on_error=None, on_drop=None)`:
   - Constructing it performs no I/O; the url must be absolute http(s) without
     embedded credentials.
-  - Every event is redacted before it is queued. The queue holds at most
-    `max_queue` events and drops the oldest beyond that.
+  - Every event is made JSON-safe, redacted (every field, keys included) and
+    size-bounded before it is queued, so the request body is exactly what was
+    redacted. The queue holds at most `max_queue` events and drops the oldest
+    beyond that, also when an interrupted batch is put back.
   - Calling the sink never raises or blocks. On a running event loop a full
     batch is sent at once and a partial one after `flush_interval_ms`;
     without a running loop events wait for `await sink.flush()`.
   - Network errors, timeouts, 408, 429 and 5xx are retried with exponential
-    backoff; other responses and exhausted retries drop the batch.
-  - `flush()` and `close()` never raise; `stats()` returns `queued`,
+    backoff; other responses and exhausted retries drop the batch. Redirects
+    are never followed: a 3xx drops the batch without a retry, so the body
+    and credentials cannot reach another origin.
+  - `flush()` and `close()` never raise; events logged while `flush()` waits
+    keep their interval timer. `stats()` returns `queued`,
     `in_flight`, `sent`, `dropped` and `failed_batches`.
   - The default transport is the standard library (`urllib`) in a worker
     thread; pass `transport=async (url, body, headers, timeout) -> status` to

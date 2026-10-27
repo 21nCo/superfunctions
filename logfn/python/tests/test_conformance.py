@@ -12,7 +12,7 @@ VECTORS = load_vectors()
 
 def test_vectors_match_the_typescript_copy_and_marker() -> None:
     assert VECTORS["marker"] == logfn.REDACTED
-    assert len(VECTORS["vectors"]) >= 9
+    assert len(VECTORS["vectors"]) >= 12
     if not TYPESCRIPT_VECTORS_PATH.exists():
         pytest.skip("TypeScript package is not next to this checkout")
     assert VECTORS_PATH.read_bytes() == TYPESCRIPT_VECTORS_PATH.read_bytes()
@@ -20,7 +20,7 @@ def test_vectors_match_the_typescript_copy_and_marker() -> None:
 
 @pytest.mark.parametrize("vector", VECTORS["vectors"], ids=lambda vector: vector["id"])
 def test_vector(vector: dict[str, Any]) -> None:
-    assert run_vector(logfn, vector) == ["stage", "logger", "SinkHttp"]
+    assert run_vector(logfn, vector) == ["stage", "logger", "SinkHttp", "SinkHttp direct"]
 
 
 def test_sink_redacts_context_added_after_the_redaction_stage() -> None:

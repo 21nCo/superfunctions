@@ -41,6 +41,7 @@ function identityStage(vector: RedactionVector): PipelineStage {
     ...event,
     ...(vector.input.userId !== undefined ? { userId: vector.input.userId } : {}),
     ...(vector.input.tenantId !== undefined ? { tenantId: vector.input.tenantId } : {}),
+    ...structuredClone(vector.input.fields),
   });
 }
 
@@ -65,7 +66,7 @@ describe("shared redaction vectors", () => {
 
   it("use the same marker as the runtime and match the Python copy byte for byte", () => {
     expect(marker).toBe(REDACTED);
-    expect(vectors.length).toBeGreaterThanOrEqual(9);
+    expect(vectors.length).toBeGreaterThanOrEqual(12);
     expect(readFileSync(PYTHON_VECTORS_PATH, "utf8")).toBe(readFileSync(VECTORS_PATH, "utf8"));
   });
 
@@ -97,6 +98,15 @@ describe("shared redaction vectors", () => {
       expect(spy.fetch).toHaveBeenCalledTimes(1);
       expect(spy.events()).toHaveLength(1);
       expectVector(spy.events()[0], vector, "sinkHttp");
+    });
+
+    it("sinkHttp called directly with the raw event sends the expected event", async () => {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch, redact: vector.options });
+      sink([vectorEvent(vector)]);
+      await sink.flush();
+      expect(spy.events()).toHaveLength(1);
+      expectVector(spy.events()[0], vector, "sinkHttp direct");
     });
   });
 

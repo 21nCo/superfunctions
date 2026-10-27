@@ -46,12 +46,21 @@ _HEADER_LINE_KEYS = frozenset({"authorization", "proxyauthorization", "cookie", 
 
 # ASCII flag keeps character classes and case folding identical to JavaScript.
 _URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+.\-]*://)[^ \t\n\r\f\v/?#@]+@", re.ASCII)
-_KEY_SEPARATOR = re.compile(r"""(["']?)(?<![A-Za-z0-9_.\-])([A-Za-z0-9_.\-]+)\1([ \t]*[:=][ \t]*)""", re.ASCII)
-_ASSIGNED_VALUE = re.compile(
-    r"""(?:(?:bearer|basic|digest|negotiate)[ \t]+)?(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^ \t\n\r\f\v&;,#"'}\]]+)""",
-    re.ASCII | re.IGNORECASE,
+# A query or fragment parameter: ``?name=``, ``&name=`` or ``#name=``.
+_QUERY_PARAM = re.compile(r"""[?&#]([^=&#? \t\n\r\f\v"'<>]+)=""", re.ASCII)
+# A query value ends at the next parameter, whitespace, a double quote or an
+# escaped quote (a URL inside escaped JSON); commas and semicolons are kept.
+# A backslash run is consumed whole, so matching stays linear.
+_QUERY_VALUE = re.compile(r"""(?:[^&# \t\n\r\f\v"<>\\]|\\+(?![\\"']))*""", re.ASCII)
+# The name may be quoted, also with escaped quotes (``\"name\":`` in JSON that
+# was itself serialized into a string), and may be percent-encoded. At most
+# seven backslashes (three levels of escaping) keep matching linear.
+_KEY_SEPARATOR = re.compile(
+    r"""(\\{0,7}["']?)(?<![A-Za-z0-9_.%\-])([A-Za-z0-9_.%\-]+)\1([ \t]*[:=][ \t]*)""", re.ASCII
 )
-_LINE_VALUE = re.compile(r"[^\r\n]+", re.ASCII)
+_AUTH_SCHEME = re.compile(r"(?:bearer|basic|digest|negotiate)[ \t]+", re.ASCII | re.IGNORECASE)
+_UNQUOTED_VALUE = re.compile(r"""[^ \t\n\r\f\v&;,#"'}\]]+""", re.ASCII)
+_LINE_REST = re.compile(r"[^\r\n]*", re.ASCII)
 _BEARER_TOKEN = re.compile(r"(?<![A-Za-z0-9])(bearer)[ \t]+[A-Za-z0-9\-._~+/]+=*", re.ASCII | re.IGNORECASE)
 EMAIL_PATTERN = re.compile(
     r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}(?![A-Za-z0-9])", re.ASCII
@@ -61,13 +70,21 @@ EMAIL_PATTERN = re.compile(
 DEFAULT_PATTERNS: tuple[Pattern[str], ...] = (EMAIL_PATTERN,)
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]", re.ASCII)
+_PERCENT_ESCAPE = re.compile(r"%([0-9A-Fa-f]{2})", re.ASCII)
+
+
+def _decode_ascii_escape(match: re.Match[str]) -> str:
+    code = int(match.group(1), 16)
+    return chr(code) if code < 0x80 else ""
 
 
 # Keys repeat heavily (the same names in every event, every query string), so
-# the per-key work is cached.
+# the per-key work is cached. Percent-escapes are decoded first, so
+# ``api%5Fkey`` is ``api_key``; only ASCII escapes matter, everything else is
+# removed by the normalization anyway.
 @lru_cache(maxsize=4096)
 def _normalize_key(key: str) -> str:
-    return _NON_ALNUM.sub("", key.lower())
+    return _NON_ALNUM.sub("", _PERCENT_ESCAPE.sub(_decode_ascii_escape, key).lower())
 
 
 @lru_cache(maxsize=4096)
@@ -117,6 +134,81 @@ def _compile(
     return _Redactor(replacement, compiled, frozenset(allowlist or ()), extra)
 
 
+def _quoted_value_end(text: str, start: int, slashes: int, quote: str) -> int:
+    # End of a quoted value whose opening quote is preceded by ``slashes``
+    # backslashes; ``start`` is just after the opening quote. Each level of
+    # string escaping doubles the backslashes, so a quote closes the value
+    # when the backslash run before it is congruent to ``slashes`` modulo
+    # 2 * (slashes + 1). An unterminated value runs to the end of the line.
+    index = start
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in "\r\n":
+            return index
+        if char == "\\" or char == quote:
+            run = 0
+            while index + run < length and text[index + run] == "\\":
+                run += 1
+            if index + run < length and text[index + run] == quote:
+                if run % (2 * (slashes + 1)) == slashes:
+                    return index + run + 1
+                index += run + 1
+            else:
+                index += run
+            continue
+        index += 1
+    return index
+
+
+def _scan_value(text: str, start: int) -> tuple[int, str] | None:
+    # The credential value at ``start``: an optional auth scheme, then a
+    # complete quoted string (escaped quotes included) or an unquoted token.
+    # Returns its end and the quote, with its escaping backslashes, written
+    # around the replacement.
+    scheme = _AUTH_SCHEME.match(text, start)
+    position = scheme.end() if scheme else start
+    slashes = 0
+    while position + slashes < len(text) and text[position + slashes] == "\\":
+        slashes += 1
+    quote = text[position + slashes : position + slashes + 1]
+    if quote in ('"', "'"):
+        end = _quoted_value_end(text, position + slashes + 1, slashes, quote)
+        return end, text[position : position + slashes + 1]
+    for origin in (start,) if position == start else (position, start):
+        unquoted = _UNQUOTED_VALUE.match(text, origin)
+        if unquoted:
+            return unquoted.end(), ""
+    return None
+
+
+def _redact_query_params(text: str, redactor: _Redactor) -> str:
+    # Redacts sensitive query and fragment parameter values up to the next
+    # parameter, so ``?password=one,two`` loses all of ``one,two``.
+    replacement = redactor.replacement
+    parts: list[str] = []
+    copied = 0
+    position = 0
+    while True:
+        match = _QUERY_PARAM.search(text, position)
+        if match is None:
+            break
+        value_start = match.end()
+        position = value_start
+        if not redactor.is_sensitive(match.group(1)) or text.startswith(replacement, value_start):
+            continue
+        value_end = cast(re.Match[str], _QUERY_VALUE.match(text, value_start)).end()
+        if value_end == value_start:
+            continue
+        parts.append(text[copied:value_start] + replacement)
+        copied = value_end
+        position = value_end
+    if copied == 0:
+        return text
+    parts.append(text[copied:])
+    return "".join(parts)
+
+
 def _redact_assignments(text: str, redactor: _Redactor) -> str:
     # A non-sensitive pair consumes only its name and separator so a
     # credential inside the value (for example a query after ``https:``) is
@@ -133,19 +225,22 @@ def _redact_assignments(text: str, redactor: _Redactor) -> str:
         position = value_start
         if not redactor.is_sensitive(match.group(2)) or text.startswith(replacement, value_start):
             continue
-        following = text[value_start : value_start + 1]
-        to_line_end = (
-            ":" in match.group(3)
+        value = _scan_value(text, value_start)
+        # An unquoted ``Authorization:`` or ``Cookie:`` header value is the whole line.
+        header_line = (
+            (value is None or value[1] == "")
+            and ":" in match.group(3)
             and _normalize_key(match.group(2)) in _HEADER_LINE_KEYS
-            and following not in ('"', "'")
         )
-        value = (_LINE_VALUE if to_line_end else _ASSIGNED_VALUE).match(text, value_start)
-        if value is None:
+        if header_line:
+            value_end = cast(re.Match[str], _LINE_REST.match(text, value_start)).end()
+        else:
+            value_end = value[0] if value else value_start
+        if value_end == value_start:
             continue
-        raw = value.group(0)
-        quote = raw[0] if raw[0] in ('"', "'") else ""
+        quote = "" if header_line or value is None else value[1]
         parts.append(text[copied:value_start] + quote + replacement + quote)
-        copied = value.end()
+        copied = value_end
         position = copied
     if copied == 0:
         return text
@@ -156,6 +251,7 @@ def _redact_assignments(text: str, redactor: _Redactor) -> str:
 def _redact_text(value: str, redactor: _Redactor) -> str:
     replacement = redactor.replacement
     result = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{replacement}@", value)
+    result = _redact_query_params(result, redactor)
     result = _redact_assignments(result, redactor)
     result = _BEARER_TOKEN.sub(lambda m: f"{m.group(1)} {replacement}", result)
     for pattern in redactor.patterns:
@@ -215,10 +311,13 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
             for raw_key, item in value.items():
                 key = str(raw_key)
                 item_path = _child_path(path, key)
-                if redactor.is_sensitive(key) and item_path not in redactor.allowlist:
-                    result[key] = redactor.replacement
+                allowed = item_path in redactor.allowlist
+                # Keys are text too: a map keyed by URL or email must not leak them.
+                output_key = key if allowed else _redact_text(key, redactor)
+                if redactor.is_sensitive(key) and not allowed:
+                    result[output_key] = redactor.replacement
                 else:
-                    result[key] = _redact_node(item, redactor, item_path, ancestors, depth + 1)
+                    result[output_key] = _redact_node(item, redactor, item_path, ancestors, depth + 1)
             return result
         return [
             _redact_node(item, redactor, f"{path}[{index}]", ancestors, depth + 1)
@@ -229,19 +328,22 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
 
 
 def _redact_with(event: LogEvent, redactor: _Redactor) -> LogEvent:
-    redacted = cast(LogEvent, dict(event))
-    redacted["msg"] = _redact_text(str(event["msg"]), redactor)
-    if "ctx" in event:
-        redacted["ctx"] = _redact_node(event["ctx"], redactor, "", set(), 0)
-    if isinstance(event.get("tags"), list):
-        redacted["tags"] = [
-            _redact_text(tag, redactor) if isinstance(tag, str) else tag for tag in event["tags"]
-        ]
-    for field in ("userId", "tenantId"):
-        value = event.get(field)
-        if isinstance(value, str) and field not in redactor.allowlist:
-            redacted[field] = _redact_text(value, redactor)
-    return redacted
+    # Every top-level field is redacted, including fields outside the LogEvent
+    # schema that a caller-added stage may have set. Paths for fields other
+    # than ctx are their names (``userId``, ``tags[0]``); ctx paths start at
+    # the ctx root.
+    redacted: dict[str, Any] = {}
+    for raw_key, value in event.items():
+        key = str(raw_key)
+        if key == "msg":
+            redacted[key] = _redact_text(str(value), redactor)
+        elif key == "ctx":
+            redacted[key] = _redact_node(value, redactor, "", set(), 0)
+        elif redactor.is_sensitive(key) and key not in redactor.allowlist:
+            redacted[key] = redactor.replacement
+        else:
+            redacted[key] = _redact_node(value, redactor, key, set(), 0)
+    return cast(LogEvent, redacted)
 
 
 def redact_event(
@@ -252,8 +354,8 @@ def redact_event(
     allowlist: Iterable[str] | None = None,
 ) -> LogEvent:
     """Redact one event: message, ctx (recursively, including exceptions and
-    cycles), tags, userId and tenantId. Returns a new event; the input is not
-    modified."""
+    cycles) and every other field, keys included. Returns a new event; the
+    input is not modified."""
     return _redact_with(event, _compile(patterns, replacement, keys, allowlist))
 
 

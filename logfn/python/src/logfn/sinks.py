@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from .redact import REDACTED, make_redactor
 from .types import LogEvent
+from .validation import UNSERIALIZABLE, sanitize_event, validate_and_serialize
 
 _COLORS = {
     "trace": "\033[90m",  # Gray
@@ -63,15 +64,27 @@ Transport = Callable[[str, bytes, dict[str, str], float], Awaitable[int]]
 DropReason = Literal["queue_full", "delivery_failed", "closed", "redaction_failed"]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # Following a redirect could send the credentials to another origin and
+    # turns the POST into a GET without the events; report the 3xx instead.
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 async def urllib_transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
-    """Default transport: a standard-library POST run in a worker thread."""
+    """Default transport: a standard-library POST run in a worker thread.
+    Redirects are not followed; their status is returned."""
 
     def send() -> int:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - http(s) only
+            with _OPENER.open(request, timeout=timeout) as response:
                 return int(response.status)
         except urllib.error.HTTPError as error:
+            error.close()
             return int(error.code)
 
     return await asyncio.to_thread(send)
@@ -81,7 +94,8 @@ class DeliveryError(Exception):
     """A batch was rejected by the collector."""
 
     def __init__(self, status: int):
-        super().__init__(f"HTTP {status}")
+        detail = ": redirects are not followed" if 300 <= status < 400 else ""
+        super().__init__(f"HTTP {status}{detail}")
         self.status = status
 
 
@@ -109,11 +123,18 @@ def _retryable(status: int) -> bool:
     return status in (408, 429) or status >= 500
 
 
+def _unserializable(_value: object) -> str:
+    return UNSERIALIZABLE
+
+
 class SinkHttp:
     """Bounded, batched HTTP delivery of ``{"events": [...]}``.
 
-    Constructing the sink performs no I/O. Each event is redacted before it is
-    queued; the queue keeps at most ``max_queue`` events and drops the oldest.
+    Constructing the sink performs no I/O. Each event is made JSON-safe,
+    redacted (every field, keys included) and size-bounded before it is
+    queued, so what is sent is exactly what was redacted; this cannot be
+    disabled. The queue keeps at most ``max_queue`` events and drops the
+    oldest. Redirects are not followed: a 3xx fails the batch without retry.
     Calling the sink never raises and never waits for the network: a full
     batch is sent on the running event loop, a partial one after
     ``flush_interval_ms``. Without a running loop events wait for ``flush()``.
@@ -192,6 +213,12 @@ class SinkHttp:
 
     # -- enqueue ---------------------------------------------------------
 
+    def _prepare(self, event: LogEvent) -> LogEvent:
+        # JSON-safe values first, so serialization cannot add text (__str__,
+        # bytes), then redaction, then the size bound.
+        final, _truncated = validate_and_serialize(self._redact(sanitize_event(event)))
+        return final
+
     def __call__(self, batch: list[LogEvent]) -> None:
         try:
             if not isinstance(batch, list) or not batch:
@@ -202,7 +229,7 @@ class SinkHttp:
             redacted: list[LogEvent] = []
             for event in batch:
                 try:
-                    redacted.append(self._redact(event))
+                    redacted.append(self._prepare(event))
                 except Exception as error:
                     self._drop(1, "redaction_failed")
                     self._report(error)
@@ -296,9 +323,14 @@ class SinkHttp:
                 await self._deliver(events)
                 self._sent += len(events)
             except asyncio.CancelledError:
-                # The loop is shutting down: keep the batch for a later flush.
+                # The loop is shutting down: keep the batch for a later flush,
+                # within max_queue. It is the oldest, so it is dropped first.
                 with self._lock:
                     self._queue.extendleft(reversed(events))
+                    overflow = max(0, len(self._queue) - self.max_queue)
+                    for _ in range(overflow):
+                        self._queue.popleft()
+                self._drop(overflow, "queue_full")
                 raise
             except Exception as error:
                 self._failed_batches += 1
@@ -308,7 +340,9 @@ class SinkHttp:
                 self._in_flight = 0
 
     async def _deliver(self, events: list[LogEvent]) -> None:
-        body = json.dumps({"events": events}, separators=(",", ":"), default=str).encode("utf-8", "replace")
+        body = json.dumps({"events": events}, separators=(",", ":"), default=_unserializable).encode(
+            "utf-8", "replace"
+        )
         last_error: BaseException = RuntimeError("not sent")
         for attempt in range(self.retry_attempts):
             if attempt > 0:
@@ -334,7 +368,8 @@ class SinkHttp:
     # -- public ----------------------------------------------------------
 
     async def flush(self) -> None:
-        """Send everything queued so far. Never raises."""
+        """Send everything queued so far. Never raises. Events logged while
+        this waits are not part of it; they keep their interval timer."""
         try:
             self._cancel_timer()
             loop = asyncio.get_running_loop()
@@ -345,7 +380,6 @@ class SinkHttp:
                 task = self._start_drain()
                 if task is not None:
                     await asyncio.wait([task])
-            self._cancel_timer()
         except Exception as error:
             self._report(error)
 

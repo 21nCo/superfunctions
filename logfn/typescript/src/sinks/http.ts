@@ -4,6 +4,7 @@
 
 import type { LogEvent, PipelineStage, Sink } from "../types.js";
 import { redactSecFn, type RedactionOptions } from "../pipeline/redact.js";
+import { sanitizeEvent, validateAndSerialize } from "../validation.js";
 
 /** Request passed to the fetch implementation */
 export interface HttpSinkRequest {
@@ -12,13 +13,15 @@ export interface HttpSinkRequest {
   body: string;
   signal?: AbortSignal;
   keepalive?: boolean;
+  /** Always "manual": a redirect is a failed delivery, never followed */
+  redirect: "manual";
 }
 
 /** Minimal fetch contract used by the sink */
 export type HttpSinkFetch = (
   url: string,
   init: HttpSinkRequest
-) => Promise<{ ok: boolean; status: number; statusText?: string }>;
+) => Promise<{ ok: boolean; status: number; statusText?: string; type?: string }>;
 
 /** Why events were dropped instead of delivered */
 export type HttpSinkDropReason =
@@ -55,7 +58,10 @@ export interface HttpSinkOptions {
     secretHeader?: string;
   };
 
-  /** Retry configuration for network errors, timeouts, 408, 429 and 5xx */
+  /**
+   * Retry configuration for network errors, timeouts, 408, 429 and 5xx.
+   * Redirects are not followed and fail the batch without a retry.
+   */
   retry?: {
     /** Total attempts per batch (default: 5) */
     attempts?: number;
@@ -70,8 +76,9 @@ export interface HttpSinkOptions {
   maxQueue?: number;
 
   /**
-   * Extra redaction options. Every event is redacted before it is queued;
-   * this cannot be disabled.
+   * Extra redaction options. Every event is made JSON-safe, redacted (every
+   * field, keys included) and size-bounded before it is queued; this cannot
+   * be disabled.
    */
   redact?: RedactionOptions;
 
@@ -142,14 +149,20 @@ function validateUrl(url: string): void {
   }
 }
 
-// Timers must not keep a Node process alive just to deliver logs.
-function unref(timer: ReturnType<typeof setTimeout>): void {
+type Timer = ReturnType<typeof setTimeout>;
+
+function unref(timer: Timer): void {
   (timer as { unref?: () => void }).unref?.();
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => unref(setTimeout(resolve, ms)));
+function ref(timer: Timer): void {
+  (timer as { ref?: () => void }).ref?.();
 }
+
+const encoder = new TextEncoder();
+
+// Browsers reject keepalive requests whose body is over 64 KiB.
+const KEEPALIVE_MAX_BYTES = 60_000;
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -157,6 +170,10 @@ function toError(error: unknown): Error {
 
 function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function isRedirect(response: { status: number; type?: string }): boolean {
+  return response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400);
 }
 
 /**
@@ -174,6 +191,12 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const flushIntervalMs = nonNegative(options.flushIntervalMs, 1000, "flushIntervalMs");
   const timeoutMs = nonNegative(options.timeoutMs, 3000, "timeoutMs");
   const redact: PipelineStage = redactSecFn(options.redact);
+  // What is sent is exactly what was redacted: JSON-safe values first, so
+  // serialization cannot add text (toJSON, bigint), then size-bounded.
+  const prepare = (event: LogEvent): LogEvent | null => {
+    const redacted = redact(sanitizeEvent(event));
+    return redacted ? validateAndSerialize(redacted).event : null;
+  };
   const onError =
     options.onError ??
     ((error: Error) => {
@@ -194,8 +217,44 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const counters = { sent: 0, dropped: 0, failedBatches: 0 };
   let inFlight = 0;
   let closed = false;
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let flushTimer: Timer | null = null;
   let draining: Promise<void> | null = null;
+  // Background timers never keep a Node process alive, but while a caller
+  // awaits flush() or close() the retry backoff and request timeout must.
+  const deliveryTimers = new Set<Timer>();
+  let holders = 0;
+
+  function startTimer(callback: () => void, ms: number): Timer {
+    const timer = setTimeout(() => {
+      deliveryTimers.delete(timer);
+      callback();
+    }, ms);
+    deliveryTimers.add(timer);
+    if (holders === 0) unref(timer);
+    return timer;
+  }
+
+  function stopTimer(timer: Timer | undefined): void {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    deliveryTimers.delete(timer);
+  }
+
+  function hold(): () => void {
+    holders += 1;
+    if (holders === 1) deliveryTimers.forEach(ref);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      holders -= 1;
+      if (holders === 0) deliveryTimers.forEach(unref);
+    };
+  }
+
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => startTimer(resolve, ms));
+  }
 
   function safely(callback: () => void): void {
     try {
@@ -220,15 +279,17 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     }
 
     const controller = typeof AbortController === "function" ? new AbortController() : undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: Timer | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
+      timer = startTimer(() => {
         controller?.abort();
         reject(new Error(`timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      unref(timer);
     });
-    const keepalive = typeof window !== "undefined" && body.length <= 60_000;
+    // Checked in UTF-8 bytes: a body of multibyte text is longer than its
+    // string length, and an oversized keepalive request always fails.
+    const keepalive =
+      typeof window !== "undefined" && encoder.encode(body).length <= KEEPALIVE_MAX_BYTES;
 
     try {
       const response = await Promise.race([
@@ -237,10 +298,18 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           headers: requestHeaders,
           body,
           signal: controller?.signal,
+          redirect: "manual",
           ...(keepalive ? { keepalive } : {}),
         }),
         timeout,
       ]);
+      if (isRedirect(response)) {
+        // Following could send the body and credentials to another origin.
+        return {
+          kind: "fail",
+          error: new Error(`HTTP ${response.status}: redirects are not followed`),
+        };
+      }
       if (response.ok) return { kind: "sent" };
       const error = new Error(
         `HTTP ${response.status}${response.statusText ? `: ${response.statusText}` : ""}`
@@ -249,7 +318,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     } catch (error) {
       return { kind: "retry", error: toError(error) };
     } finally {
-      clearTimeout(timer);
+      stopTimer(timer);
     }
   }
 
@@ -330,7 +399,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       for (const event of batch) {
         let redacted: LogEvent | null;
         try {
-          redacted = redact(event);
+          redacted = prepare(event);
         } catch (error) {
           drop(1, "redaction_failed");
           safely(() => onError(toError(error)));
@@ -351,11 +420,17 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     }
   } as HttpSink;
 
+  // Events logged while this waits are not part of it; drain() leaves them
+  // with an interval timer (or a new drain for a full batch).
   sink.flush = async (): Promise<void> => {
-    clearFlushTimer();
-    if (draining) await draining;
-    if (queue.length > 0) await drain();
-    clearFlushTimer();
+    const release = hold();
+    try {
+      clearFlushTimer();
+      if (draining) await draining;
+      if (queue.length > 0) await drain();
+    } finally {
+      release();
+    }
   };
 
   sink.close = async (): Promise<void> => {

@@ -24,6 +24,7 @@ DEFAULT_SAMPLING_RATES: dict[LogLevel, float] = {
 
 _TRACE_ID = re.compile(r"[0-9a-f]{32}", re.ASCII)
 _SPAN_ID = re.compile(r"[0-9a-f]{16}", re.ASCII)
+_FLAGS = re.compile(r"[0-9a-f]{2}", re.ASCII)
 
 
 def redact(
@@ -96,8 +97,8 @@ def parse_w3c_trace_context(traceparent: str) -> dict[str, str] | None:
     parts = traceparent.split("-")
     if len(parts) != 4 or parts[0] != "00":
         return None
-    trace_id, span_id = parts[1], parts[2]
-    if not _TRACE_ID.fullmatch(trace_id) or not _SPAN_ID.fullmatch(span_id):
+    trace_id, span_id, flags = parts[1], parts[2], parts[3]
+    if not _TRACE_ID.fullmatch(trace_id) or not _SPAN_ID.fullmatch(span_id) or not _FLAGS.fullmatch(flags):
         return None
     if set(trace_id) == {"0"} or set(span_id) == {"0"}:
         return None

@@ -7,7 +7,8 @@
     "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
     "options": "Optional redaction options: keys (extra sensitive key names) and allowlist (exempt paths: ctx paths like a.b or a[0], or userId, tenantId).",
     "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
-    "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId) are compared, by deep equality."
+    "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId or a fields key) are compared, by deep equality.",
+    "input.fields": "Optional extra top-level event fields (request ids, fields outside the LogEvent schema) set by a caller-added stage."
   },
   "vectors": [
     {
@@ -450,6 +451,108 @@
           "other": "[redacted]"
         },
         "userId": "ada@example.com"
+      }
+    },
+    {
+      "id": "escaped-quoted-values",
+      "description": "A quoted credential value is consumed whole: escaped quotes inside it, a trailing escaped backslash, single quotes and JSON that was serialized into a string again.",
+      "input": {
+        "msg": "rejected {\"apiKey\":\"k\\\"MSG_TAIL\"}",
+        "ctx": {
+          "json": "{\"password\":\"prefix\\\"TAIL_SECRET\",\"ok\":true}",
+          "backslashEnd": "{\"secret\":\"ends\\\\\",\"ok\":1}",
+          "single": "password='it\\'s SINGLE_TAIL' user=ada",
+          "escapedJson": "\"{\\\"token\\\":\\\"abc\\\\\\\"ESCAPED_TAIL\\\",\\\"ok\\\":true}\""
+        }
+      },
+      "expected": {
+        "msg": "rejected {\"apiKey\":\"[redacted]\"}",
+        "ctx": {
+          "json": "{\"password\":\"[redacted]\",\"ok\":true}",
+          "backslashEnd": "{\"secret\":\"[redacted]\",\"ok\":1}",
+          "single": "password='[redacted]' user=ada",
+          "escapedJson": "\"{\\\"token\\\":\\\"[redacted]\\\",\\\"ok\\\":true}\""
+        }
+      }
+    },
+    {
+      "id": "query-parameter-values",
+      "description": "A sensitive query or fragment parameter loses its whole value up to the next parameter, commas and semicolons included; names are percent-decoded and may be bracketed.",
+      "input": {
+        "msg": "GET /cb?password=one,TWO_SECRET&page=2",
+        "ctx": {
+          "encoded": "https://x.test/v1?api%5Fkey=WHOLE_SECRET&q=1",
+          "bracket": "/search?filter[api_key]=BRACKET_SECRET&page=1",
+          "fragment": "https://app.test/cb#access_token=FRAG,SECRET&state=s",
+          "form": "grant_type=client&client%5Fsecret=FORM;SECRET",
+          "inJson": "{\"url\":\"https://x.test/?token=JSON_Q_SECRET\",\"ok\":1}",
+          "safe": "/search?q=a,b;c&page=2"
+        }
+      },
+      "expected": {
+        "msg": "GET /cb?password=[redacted]&page=2",
+        "ctx": {
+          "encoded": "https://x.test/v1?api%5Fkey=[redacted]&q=1",
+          "bracket": "/search?filter[api_key]=[redacted]&page=1",
+          "fragment": "https://app.test/cb#access_token=[redacted]&state=s",
+          "form": "grant_type=client&client%5Fsecret=[redacted]",
+          "inJson": "{\"url\":\"https://x.test/?token=[redacted]\",\"ok\":1}",
+          "safe": "/search?q=a,b;c&page=2"
+        }
+      }
+    },
+    {
+      "id": "all-fields-and-keys",
+      "description": "Every top-level field is redacted, including request ids and fields outside the schema that a stage added, and credential text in object keys is redacted.",
+      "input": {
+        "msg": "sync finished",
+        "ctx": {
+          "byUrl": {
+            "https://svc:KEY_PW@db.test/app": "primary",
+            "https://db.test/replica": "replica"
+          },
+          "byEmail": {
+            "ada@example.com": {
+              "role": "admin"
+            }
+          }
+        },
+        "fields": {
+          "requestId": "req-1 access_token=REQ_SECRET",
+          "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+          "request": {
+            "headers": {
+              "Authorization": "Bearer STAGE_SECRET",
+              "Accept": "*/*"
+            },
+            "url": "/cb?code=1&state=s&id_token=ID_SECRET"
+          },
+          "password": "TOP_LEVEL_SECRET"
+        }
+      },
+      "expected": {
+        "msg": "sync finished",
+        "ctx": {
+          "byUrl": {
+            "https://[redacted]@db.test/app": "primary",
+            "https://db.test/replica": "replica"
+          },
+          "byEmail": {
+            "[redacted]": {
+              "role": "admin"
+            }
+          }
+        },
+        "requestId": "req-1 access_token=[redacted]",
+        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "request": {
+          "headers": {
+            "Authorization": "[redacted]",
+            "Accept": "*/*"
+          },
+          "url": "/cb?code=1&state=s&id_token=[redacted]"
+        },
+        "password": "[redacted]"
       }
     }
   ]

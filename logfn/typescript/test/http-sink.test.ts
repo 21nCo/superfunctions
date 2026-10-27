@@ -1,5 +1,13 @@
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sinkHttp, type HttpSinkFetch, type HttpSinkRequest, type LogEvent } from "../src/index.js";
+import {
+  MAX_EVENT_SIZE,
+  sinkHttp,
+  type HttpSinkFetch,
+  type HttpSinkRequest,
+  type LogEvent,
+} from "../src/index.js";
 
 const URL = "https://logs.example.com/ingest";
 
@@ -251,6 +259,27 @@ describe("sinkHttp", () => {
       expect(sink.stats()).toMatchObject({ queued: 0, inFlight: 0, sent: 2 });
     });
 
+    it("an event logged while flush awaits an in-flight batch is sent after the interval", async () => {
+      let release!: () => void;
+      const requests: string[][] = [];
+      const fetch = vi.fn<HttpSinkFetch>((_url, init) => {
+        requests.push((JSON.parse(init.body) as { events: LogEvent[] }).events.map((e) => e.msg));
+        if (requests.length === 1) return new Promise((resolve) => (release = () => resolve(ok)));
+        return Promise.resolve(ok);
+      });
+      const sink = sinkHttp({ url: URL, fetch, batch: 10, flushIntervalMs: 1000, timeoutMs: 60_000 });
+      sink([event("first")]);
+      const flushed = sink.flush();
+      await vi.advanceTimersByTimeAsync(0);
+      sink([event("during flush")]);
+      release();
+      await flushed;
+      expect(requests).toEqual([["first"]]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(requests).toEqual([["first"], ["during flush"]]);
+      expect(sink.stats()).toMatchObject({ queued: 0, sent: 2 });
+    });
+
     it("close flushes and then drops later events", async () => {
       const { fetch, sentMessages } = scriptedFetch(ok);
       const onDrop = vi.fn();
@@ -264,6 +293,63 @@ describe("sinkHttp", () => {
     });
   });
 
+  describe("browser keepalive", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("is used only when the UTF-8 body is at most 60,000 bytes", async () => {
+      vi.stubGlobal("window", {});
+      const { fetch, requests } = scriptedFetch(ok);
+      const sink = sinkHttp({ url: URL, fetch, batch: 2, flushIntervalMs: 60_000 });
+      sink([event("small")]);
+      await sink.flush();
+      // 24,000 characters but 72,000 bytes: two events of 12,000 euro signs.
+      sink([event("€".repeat(12_000)), event("€".repeat(12_000))]);
+      await sink.flush();
+      expect(requests.map((request) => request.keepalive)).toEqual([true, undefined]);
+      expect(requests[1].body.length).toBeLessThan(60_000);
+      expect(new TextEncoder().encode(requests[1].body).length).toBeGreaterThan(60_000);
+    });
+  });
+
+  describe("what is sent is what was redacted", () => {
+    it("redacts every field of a direct call, non-string values and keys included", async () => {
+      const { fetch, requests } = scriptedFetch(ok);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1 });
+      const leaky = { toJSON: () => "password=TOJSON_SECRET" };
+      sink([
+        {
+          ...event("m"),
+          tags: [{ token: "TAG_SECRET" }] as unknown as string[],
+          userId: { password: "USER_SECRET" } as unknown as string,
+          requestId: "access_token=REQ_SECRET",
+          ctx: { leaky, count: 10n, ["https://u:KEY_PW@h.test"]: 1 },
+          extra: { password: "EXTRA_SECRET" },
+        } as LogEvent,
+      ]);
+      await sink.flush();
+      expect(requests).toHaveLength(1);
+      const body = requests[0].body;
+      for (const secret of ["TOJSON_SECRET", "TAG_SECRET", "USER_SECRET", "REQ_SECRET", "KEY_PW", "EXTRA_SECRET"]) {
+        expect(body).not.toContain(secret);
+      }
+      const [sent] = (JSON.parse(body) as { events: Array<Record<string, unknown>> }).events;
+      expect(sent.ctx).toEqual({ leaky: { toJSON: "[unserializable]" }, count: "[unserializable]", "https://[redacted]@h.test": 1 });
+      expect(sent.userId).toEqual({ password: "[redacted]" });
+      expect(sent.extra).toEqual({ password: "[redacted]" });
+    });
+
+    it("bounds the size of each queued event", async () => {
+      const { fetch, requests } = scriptedFetch(ok);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1 });
+      sink([event("m", { name: "n".repeat(70_000), requestId: "r".repeat(70_000) })]);
+      await sink.flush();
+      const [sent] = (JSON.parse(requests[0].body) as { events: LogEvent[] }).events;
+      expect(new TextEncoder().encode(JSON.stringify(sent)).length).toBeLessThanOrEqual(MAX_EVENT_SIZE);
+    });
+  });
+
   it("queues redacted copies and leaves the caller's event untouched", async () => {
     const { fetch, requests } = scriptedFetch(ok);
     const sink = sinkHttp({ url: URL, fetch, batch: 1 });
@@ -273,5 +359,54 @@ describe("sinkHttp", () => {
     expect(original).toEqual(event("token=abc", { ctx: { password: "pw" } }));
     expect(requests[0].body).not.toContain("abc");
     expect(requests[0].body).not.toContain('"pw"');
+  });
+});
+
+describe("sinkHttp against a real collector", () => {
+  const servers: Server[] = [];
+
+  async function listen(handler: (request: IncomingMessage, body: string) => [number, Record<string, string>?]) {
+    const received: Array<{ method?: string; headers: IncomingMessage["headers"]; body: string }> = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => (body += chunk));
+      request.on("end", () => {
+        received.push({ method: request.method, headers: request.headers, body });
+        const [status, headers] = handler(request, body);
+        response.writeHead(status, headers).end();
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest`, received };
+  }
+
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+  });
+
+  it.each([301, 302, 303, 307, 308])("does not follow a %i redirect to another origin", async (status) => {
+    const other = await listen(() => [204]);
+    const collector = await listen(() => [status, { Location: other.url }]);
+    const onError = vi.fn();
+    const onDrop = vi.fn();
+    const sink = sinkHttp({
+      url: collector.url,
+      batch: 1,
+      auth: { token: "COLLECTOR_TOKEN", secretHeader: "X-Api-Key" },
+      retry: { attempts: 3, backoffMs: 1 },
+      onError,
+      onDrop,
+    });
+    sink([event("redirected")]);
+    await sink.flush();
+    expect(collector.received).toHaveLength(1);
+    expect(collector.received[0].headers["x-api-key"]).toBe("COLLECTOR_TOKEN");
+    expect(other.received).toEqual([]);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: `HTTP ${status}: redirects are not followed` })
+    );
+    expect(onDrop).toHaveBeenCalledWith(1, "delivery_failed");
+    expect(sink.stats()).toMatchObject({ sent: 0, dropped: 1, failedBatches: 1 });
   });
 });

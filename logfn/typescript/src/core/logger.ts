@@ -49,6 +49,9 @@ interface ResolvedOptions {
  */
 export class Logger {
   private readonly options: ResolvedOptions;
+  // Unsettled async sink calls, shared with child loggers so flush() on any
+  // of them waits for every call made through the shared sinks.
+  private pending = new Set<Promise<void>>();
 
   constructor(options: LoggerOptions) {
     if (options.level !== undefined && !(options.level in LOG_LEVEL_VALUES)) {
@@ -155,10 +158,15 @@ export class Logger {
       try {
         const result = sink([finalEvent]);
         if (result && typeof (result as Promise<void>).then === "function") {
-          // Don't await - fire and forget
-          (result as Promise<void>).then(undefined, (error: unknown) => {
-            this.report(error, { sink: sink.name || "unknown" });
-          });
+          // Not awaited here; flush() waits for it.
+          const settled = Promise.resolve(result).then(
+            () => undefined,
+            (error: unknown) => {
+              this.report(error, { sink: sink.name || "unknown" });
+            }
+          );
+          this.pending.add(settled);
+          void settled.finally(() => this.pending.delete(settled));
         }
       } catch (error) {
         this.report(error, { sink: sink.name || "unknown" });
@@ -212,7 +220,7 @@ export class Logger {
    * Create a child logger with merged configuration
    */
   child(overrides: ChildLoggerOptions): Logger {
-    return new Logger({
+    const child = new Logger({
       name: overrides.name ?? this.options.name,
       level: overrides.level ?? this.options.level,
       pipeline: this.options.pipeline,
@@ -225,13 +233,17 @@ export class Logger {
       baseTags: [...(this.options.baseTags ?? []), ...(overrides.tags ?? [])],
       onError: this.options.onError,
     });
+    child.pending = this.pending;
+    return child;
   }
 
   /**
-   * Flush all sinks. Resolves once every sink has settled; sink failures are
-   * reported to onError rather than rejected.
+   * Wait for pending async sink calls, then flush all sinks. Resolves once
+   * every sink has settled; sink failures are reported to onError rather
+   * than rejected.
    */
   async flush(): Promise<void> {
+    await Promise.all([...this.pending]);
     const pending = this.options.sinks.map(async (sink) => {
       if (typeof sink.flush !== "function") return;
       try {

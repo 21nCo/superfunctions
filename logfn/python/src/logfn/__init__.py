@@ -28,7 +28,13 @@ from .types import (
     PipelineStage,
     Sink,
 )
-from .validation import is_valid_log_event, sanitize_value, validate_and_serialize
+from .validation import (
+    MAX_METADATA_CHARS,
+    is_valid_log_event,
+    sanitize_event,
+    sanitize_value,
+    validate_and_serialize,
+)
 
 
 def dev_logger(name: str = "app") -> Logger:
@@ -72,6 +78,7 @@ __all__ = [
     "Logger",
     "MAX_DEPTH",
     "MAX_EVENT_SIZE",
+    "MAX_METADATA_CHARS",
     "MAX_REDACTION_DEPTH",
     "MAX_TAGS",
     "PipelineStage",
@@ -89,6 +96,7 @@ __all__ = [
     "redact",
     "redact_event",
     "sample",
+    "sanitize_event",
     "sanitize_value",
     "server_logger",
     "urllib_transport",

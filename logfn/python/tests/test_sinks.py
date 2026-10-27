@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from logfn import SinkConsole, SinkHttp, create_logger
+from logfn import MAX_EVENT_SIZE, SinkConsole, SinkHttp, create_logger
 from logfn.types import LogEvent
 
 URL = "https://logs.example.com/ingest"
@@ -320,3 +320,151 @@ def test_cancelled_drain_keeps_its_batch() -> None:
     assert sink.stats()["queued"] == 1 and sink.stats()["dropped"] == 0
     asyncio.run(sink.flush())
     assert transport.batches == [["kept"], ["kept"]] and sink.stats()["sent"] == 1
+
+
+def test_event_logged_while_flush_awaits_in_flight_is_sent_after_the_interval() -> None:
+    batches: list[list[str]] = []
+
+    async def scenario() -> SinkHttp:
+        gate = asyncio.Event()
+
+        async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+            batches.append([e["msg"] for e in json.loads(body)["events"]])
+            if len(batches) == 1:
+                await gate.wait()
+            return 200
+
+        sink = SinkHttp(URL, transport=transport, batch_size=10, flush_interval_ms=50, timeout=60)
+        sink([event("first")])
+        flushing = asyncio.ensure_future(sink.flush())
+        await eventually(lambda: sink.stats()["in_flight"] == 1)
+        sink([event("during flush")])
+        gate.set()
+        await flushing
+        assert batches == [["first"]]
+        await eventually(lambda: sink.stats()["sent"] == 2)
+        return sink
+
+    sink = asyncio.run(scenario())
+    assert batches == [["first"], ["during flush"]] and sink.stats()["queued"] == 0
+
+
+def test_cancelled_drain_requeues_within_max_queue() -> None:
+    transport = Scripted("hang", 200)
+    drops: list[tuple[int, str]] = []
+
+    async def cancelled() -> None:
+        sink([event("a"), event("b")])
+        await eventually(lambda: sink.stats()["in_flight"] == 2)
+        sink([event("c"), event("d")])
+        assert sink.stats()["queued"] == 2
+
+    sink = SinkHttp(URL, transport=transport, batch_size=2, max_queue=2, timeout=60, on_drop=lambda n, r: drops.append((n, r)))
+    asyncio.run(cancelled())  # asyncio.run cancels the hanging drain on exit
+    assert sink.stats()["queued"] == 2 and sink.stats()["dropped"] == 2
+    assert drops == [(2, "queue_full")]
+    asyncio.run(sink.flush())
+    assert transport.batches[-1] == ["c", "d"]
+
+
+def test_direct_call_sends_only_redacted_json_safe_fields() -> None:
+    class Leaky:
+        def __str__(self) -> str:
+            return "access_token=STR_SECRET Bearer BEARER_SECRET"
+
+    transport = Scripted()
+    bodies: list[bytes] = []
+
+    async def capture(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return await transport(url, body, headers, timeout)
+
+    sink = SinkHttp(URL, transport=capture, batch_size=1)
+    sink(
+        [
+            event(
+                "m",
+                ctx={"response": Leaky(), "raw": b"password=BYTES_SECRET", "https://u:KEYPW@h.test": 1},
+                tags=[{"token": "TAG_SECRET"}],
+                userId={"password": "USER_SECRET"},
+                requestId="access_token=REQ_SECRET",
+                extra={"password": "EXTRA_SECRET"},
+            )
+        ]
+    )
+    asyncio.run(sink.flush())
+    assert len(bodies) == 1
+    for secret in (b"STR_SECRET", b"BEARER_SECRET", b"BYTES_SECRET", b"KEYPW", b"TAG_SECRET", b"USER_SECRET", b"REQ_SECRET", b"EXTRA_SECRET"):
+        assert secret not in bodies[0]
+    sent = json.loads(bodies[0])["events"][0]
+    assert sent["ctx"] == {"response": "[unserializable]", "raw": "[unserializable]", "https://[redacted]@h.test": 1}
+    assert sent["userId"] == {"password": "[redacted]"} and sent["extra"] == {"password": "[redacted]"}
+
+
+def test_direct_call_bounds_each_event() -> None:
+    bodies: list[bytes] = []
+
+    async def capture(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return 200
+
+    sink = SinkHttp(URL, transport=capture, batch_size=1)
+    sink([event("m", name="n" * 70_000, requestId="r" * 70_000)])
+    asyncio.run(sink.flush())
+    sent = json.loads(bodies[0])["events"][0]
+    assert len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode()) <= MAX_EVENT_SIZE
+
+
+def _server(status: int, location: str | None, received: list[dict[str, Any]]) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            length = int(self.headers.get("Content-Length") or 0)
+            received.append({"method": self.command, "headers": dict(self.headers), "body": self.rfile.read(length)})
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = _handle
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+@pytest.mark.parametrize("secret_header", [None, "X-Api-Key"])
+def test_default_transport_does_not_follow_redirects(status: int, secret_header: str | None) -> None:
+    elsewhere: list[dict[str, Any]] = []
+    first: list[dict[str, Any]] = []
+    other = _server(204, None, elsewhere)
+    collector = _server(status, f"http://127.0.0.1:{other.server_address[1]}/steal", first)
+    errors: list[BaseException] = []
+    drops: list[tuple[int, str]] = []
+    try:
+        sink = SinkHttp(
+            f"http://127.0.0.1:{collector.server_address[1]}/ingest",
+            auth_token="COLLECTOR_TOKEN",
+            secret_header=secret_header,
+            batch_size=1,
+            retry_attempts=3,
+            backoff_ms=1,
+            on_error=errors.append,
+            on_drop=lambda n, r: drops.append((n, r)),
+        )
+        sink([event("redirected")])
+        asyncio.run(sink.flush())
+    finally:
+        for server in (collector, other):
+            server.shutdown()
+            server.server_close()
+    assert len(first) == 1 and first[0]["method"] == "POST"
+    assert elsewhere == []
+    assert [str(error) for error in errors] == [f"HTTP {status}: redirects are not followed"]
+    assert drops == [(1, "delivery_failed")]
+    assert sink.stats()["sent"] == 0 and sink.stats()["failed_batches"] == 1
+

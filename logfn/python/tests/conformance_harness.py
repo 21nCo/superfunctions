@@ -7,6 +7,7 @@ scripts/clean_consumer.py, so it imports nothing from the repository.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from pathlib import Path
 from types import ModuleType
@@ -85,6 +86,7 @@ def vector_event(vector: dict[str, Any], with_layers: bool = True) -> dict[str, 
         if field in vector["input"]:
             value = vector["input"][field]
             event[field] = list(value) if isinstance(value, list) else value
+    event.update(copy.deepcopy(vector["input"].get("fields", {})))
     return event
 
 
@@ -122,7 +124,8 @@ def _log_vector(logfn: ModuleType, vector: dict[str, Any], pipeline: list[Any], 
 
     def identity_stage(event: dict[str, Any]) -> dict[str, Any]:
         # Sets fields the Logger API has no argument for, as a caller-added stage would.
-        return {**event, **{field: data[field] for field in ("userId", "tenantId") if field in data}}
+        identity = {field: data[field] for field in ("userId", "tenantId") if field in data}
+        return {**event, **identity, **copy.deepcopy(data.get("fields", {}))}
 
     stages: list[Any] = [identity_stage]
     if "enrich" in layers:
@@ -139,7 +142,8 @@ def _log_vector(logfn: ModuleType, vector: dict[str, Any], pipeline: list[Any], 
 
 
 def run_vector(logfn: ModuleType, vector: dict[str, Any]) -> list[str]:
-    """Checks one vector through the stage, the logger and the HTTP sink; returns the modes run."""
+    """Checks one vector through the stage, the logger and the HTTP sink (fed by
+    the logger and called directly); returns the modes run."""
     options = vector.get("options") or {}
 
     stage = logfn.redact(**options)
@@ -159,16 +163,23 @@ def run_vector(logfn: ModuleType, vector: dict[str, Any]) -> list[str]:
         bodies.append(body)
         return 200
 
-    sink = logfn.SinkHttp(
-        "https://collector.test/ingest",
-        transport=transport,
-        redact_keys=options.get("keys"),
-        redact_allowlist=options.get("allowlist"),
-    )
+    def http_sink() -> Any:
+        return logfn.SinkHttp(
+            "https://collector.test/ingest",
+            transport=transport,
+            redact_keys=options.get("keys"),
+            redact_allowlist=options.get("allowlist"),
+        )
+
+    sink = http_sink()
     _log_vector(logfn, vector, [], sink)
     asyncio.run(sink.flush())
-    assert len(bodies) == 1, f"{vector['id']} (SinkHttp): {len(bodies)} requests"
-    events = json.loads(bodies[0])["events"]
-    assert len(events) == 1
-    expect_vector(events[0], vector, "SinkHttp")
-    return ["stage", "logger", "SinkHttp"]
+    direct = http_sink()
+    direct([vector_event(vector)])
+    asyncio.run(direct.flush())
+    assert len(bodies) == 2, f"{vector['id']} (SinkHttp): {len(bodies)} requests"
+    for body, mode in zip(bodies, ("SinkHttp", "SinkHttp direct"), strict=True):
+        events = json.loads(body)["events"]
+        assert len(events) == 1
+        expect_vector(events[0], vector, mode)
+    return ["stage", "logger", "SinkHttp", "SinkHttp direct"]
