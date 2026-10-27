@@ -53,10 +53,11 @@ adds an HTTP sink only when `url` is given.
   waited for, since nothing would run it. Looking up a sink's `flush` or a
   sink's or stage's `__name__` is inside the same isolation: a raising
   property is reported, and sibling sinks still flush. An `on_error` that
-  logs through a failing sink is never called for the failure it caused,
-  whether the sink raises at once or its awaitable fails later in a task
-  (also through child loggers or another logger's `on_error`); that failure
-  goes to stderr instead, so one error cannot start a loop.
+  logs through a failing sink, or schedules `flush()` while a sink's flush
+  fails, is never called for the failure it caused, whether the sink raises
+  at once or its awaitable fails later in a task (also through child loggers
+  or another logger's `on_error`); that failure goes to stderr instead, so
+  one error cannot start a loop.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
@@ -93,7 +94,9 @@ when the replacement is all of it, and `replacement` must not be empty
 (`ValueError`); it is inserted literally (`\g<0>` or `\1` are not expanded).
 `patterns` replaces the default extra list (emails) but never disables the
 credential rules; `keys` adds sensitive key names; `allowlist` exempts exact
-paths such as `user.email` or `userId`.
+paths such as `user.email` or `userId`. Distinct keys that redact to the
+same text (two email keys; `1` and `"1"`) keep every value: later ones are
+stored under `"<key>#2"`, `"#3"` and so on, in key order.
 
 The text rules have the same known limits as `@logfn/core` (see its README):
 unquoted names with spaces, escaped whitespace before the separator,
@@ -137,10 +140,21 @@ has any id unchanged.
     `failed_batches`. A drop or error caused while `on_drop` or `on_error`
     runs (for example by logging to a closed or full sink) is counted in
     `stats()` but not reported to that callback again on that thread, so a
-    callback is never re-entered.
+    callback is never re-entered. Events that `on_drop` or `on_error` logs to
+    the same sink on its own thread while it runs (directly or through a
+    logger) are its diagnostics: when a batch made only of them later fails
+    or is dropped, it is counted, its error goes to stderr, and neither
+    callback is called, so a collector that always fails cannot turn one
+    event into an endless chain of requests. A batch that also holds an
+    independent event is reported as usual. Events a callback hands to
+    another thread or task are not recognized as its diagnostics.
   - A `CancelledError` raised by a custom transport (its own request was
     cancelled) is a failed attempt within the retry budget. Only cancelling
-    the delivering loop's work (loop shutdown) puts a batch back.
+    the delivering loop's work (loop shutdown) puts a batch back. A call that
+    times out is cancelled and given 0.1 s to stop; one that ignores the
+    cancellation is abandoned, its late result discarded, so an attempt
+    never outlasts `timeout` + 0.1 s. `flush()`/`close()` wait for a batch,
+    also one their own drain is sending, no longer than its retry budget.
   - `timeout` (seconds) must be above 0; `timeout`, `backoff_ms` and
     `flush_interval_ms` must be finite, so every batch has a bounded retry
     budget.
@@ -148,7 +162,7 @@ has any id unchanged.
     on any event loop: they also wait for batches that another loop is
     sending. A batch whose loop stopped without finishing it is dropped by the
     waiting `flush()`/`close()` once its retry budget
-    (`retry_attempts × timeout` plus backoff, plus 1 s) has passed; its
+    (`retry_attempts × (timeout + 0.1 s)` plus backoff, plus 1 s) has passed; its
     current attempt is cancelled when that loop runs again and no further
     attempt is made, so each event has exactly one outcome.
   - The default transport, `stdlib_transport`, posts with `http.client` on a

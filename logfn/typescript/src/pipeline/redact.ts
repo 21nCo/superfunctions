@@ -405,6 +405,18 @@ function childPath(path: string, key: string): string {
   return path ? `${path}.${key}` : key;
 }
 
+// Distinct keys can redact to the same text (two email keys both become the
+// marker). Each later one is kept under the first free "<key>#<n>" (n from 2)
+// instead of overwriting the earlier value. `used` holds the next n per key.
+function uniqueKey(target: Record<string, unknown>, key: string, used: Map<string, number>): string {
+  const has = (candidate: string) => Object.prototype.hasOwnProperty.call(target, candidate);
+  if (!has(key)) return key;
+  let index = used.get(key) ?? 2;
+  while (has(`${key}#${index}`)) index += 1;
+  used.set(key, index + 1);
+  return `${key}#${index}`;
+}
+
 function redactNode(
   value: unknown,
   redactor: CompiledRedactor,
@@ -453,11 +465,12 @@ function redactNode(
     }
 
     const result: Record<string, unknown> = {};
+    const used = new Map<string, number>();
     for (const [key, item] of Object.entries(value)) {
       const itemPath = childPath(path, key);
       const allowed = redactor.allowlist.has(itemPath);
       // Keys are text too: a map keyed by URL or email must not leak them.
-      const outputKey = allowed ? key : redactText(key, redactor);
+      const outputKey = uniqueKey(result, allowed ? key : redactText(key, redactor), used);
       result[outputKey] =
         redactor.isSensitive(key) && !allowed
           ? redactor.replacement
@@ -474,6 +487,7 @@ function redactNode(
 // ctx are their names (`userId`, `tags[0]`); ctx paths start at the ctx root.
 function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
   const redacted: Record<string, unknown> = {};
+  const used = new Map<string, number>();
   for (const [key, value] of Object.entries(event)) {
     if (key === "msg") {
       redacted.msg = redactText(String(value), redactor);
@@ -483,7 +497,7 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
       redacted[key] = redactNode(value, redactor, key, new Set(), 0);
     } else {
       // Field names are text too, exactly like nested keys.
-      redacted[redactText(key, redactor)] = redactor.isSensitive(key)
+      redacted[uniqueKey(redacted, redactText(key, redactor), used)] = redactor.isSensitive(key)
         ? redactor.replacement
         : redactNode(value, redactor, key, new Set(), 0);
     }

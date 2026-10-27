@@ -60,10 +60,11 @@ when `url` is given.
   every sink.
   Reading a sink's `flush` or a sink's or stage's `name` is inside the same
   isolation: a throwing getter is reported, and sibling sinks still flush.
-  An `onError` that logs through a failing sink is never called for the
-  failure it caused, whether the sink throws at once or its promise rejects
-  later (also through child loggers or another logger's `onError`); that
-  failure goes to `console.error` instead, so one error cannot start a loop.
+  An `onError` that logs through a failing sink, or calls `flush()` while a
+  sink's flush fails, is never called for the failure it caused, whether the
+  sink throws at once or its promise rejects later (also through child
+  loggers or another logger's `onError`); that failure goes to
+  `console.error` instead, so one error cannot start a loop.
 - `registerProcessHandlers(logger)` (server entry): on SIGTERM or SIGINT it
   logs the signal, flushes once, logs nothing after that flush and exits
   with 143 or 130 (128 + the signal number). A second signal while that
@@ -116,7 +117,9 @@ Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`), `patterns`, `replacement`
 (default `"[redacted]"`; it must not be empty, which throws; it is inserted
 literally, `$&` or `$1` are not expanded). Cycles become `"[circular]"` and
-nesting beyond 32 levels becomes `"[max-depth]"`.
+nesting beyond 32 levels becomes `"[max-depth]"`. Distinct keys that redact
+to the same text (two email keys) keep every value: later ones are stored
+under `"<key>#2"`, `"#3"` and so on, in key order.
 
 Text rules are heuristics with known limits (the same in both runtimes):
 unquoted names with spaces (`pass word=x`), escaped whitespace before the
@@ -176,7 +179,15 @@ Posts `{"events": [...]}` to `url` in batches.
   responding waits on itself, so that attempt ends only at `timeoutMs`.
   A drop or error caused while `onDrop` or `onError` runs (for example by
   logging to a closed or full sink) is counted in `stats()` but not reported
-  to that callback again, so a callback is never re-entered.
+  to that callback again, so a callback is never re-entered. Events that
+  `onDrop` or `onError` logs to the same sink synchronously (directly or
+  through a logger) are their diagnostics: when a batch made only of them
+  later fails or is dropped, it is counted, its error goes to
+  `console.error`, and neither callback is called, so a collector that
+  always fails cannot turn one event into an endless chain of requests. A
+  batch that also holds an independent event is reported as usual. Events a
+  callback logs later (after an `await` or a timer) are not recognized as
+  its diagnostics.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.

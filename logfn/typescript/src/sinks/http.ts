@@ -303,8 +303,22 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   // re-entered and one event cannot start a recursion.
   let reportingError = false;
   let reportingDrop = false;
+  // Events accepted while onError or onDrop ran (the callback's own
+  // diagnostics). A batch made only of them that fails or is dropped later
+  // is counted, and its error goes to console.error, but neither callback is
+  // called for it: otherwise a collector that always fails would turn one
+  // event into an endless chain of requests and callbacks.
+  const feedback = new WeakSet<LogEvent>();
 
-  function report(error: unknown): void {
+  function onlyFeedback(events: LogEvent[]): boolean {
+    return events.length > 0 && events.every((event) => feedback.has(event));
+  }
+
+  function report(error: unknown, fromFeedback = false): void {
+    if (fromFeedback) {
+      safely(() => console.error("[logfn http-sink error]", toError(error)));
+      return;
+    }
     if (reportingError) return;
     reportingError = true;
     try {
@@ -314,10 +328,10 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     }
   }
 
-  function drop(count: number, reason: HttpSinkDropReason): void {
+  function drop(count: number, reason: HttpSinkDropReason, fromFeedback = false): void {
     if (count <= 0) return;
     counters.dropped += count;
-    if (!options.onDrop || reportingDrop) return;
+    if (!options.onDrop || reportingDrop || fromFeedback) return;
     reportingDrop = true;
     try {
       safely(() => options.onDrop?.(count, reason));
@@ -445,9 +459,10 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
             await deliver(events);
             counters.sent += events.length;
           } catch (error) {
+            const fromFeedback = onlyFeedback(events);
             counters.failedBatches += 1;
-            drop(events.length, "delivery_failed");
-            report(error);
+            drop(events.length, "delivery_failed", fromFeedback);
+            report(error, fromFeedback);
           } finally {
             inFlight.delete(batch);
           }
@@ -492,14 +507,15 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
         if (closed) {
           drop(1, "closed");
         } else if (redacted) {
+          if (reportingError || reportingDrop) feedback.add(redacted);
           queue.push(redacted);
           accepted += 1;
         }
       }
       if (queue.length > maxQueue) {
-        const overflow = queue.splice(0, queue.length - maxQueue).length;
-        removed += overflow;
-        drop(overflow, "queue_full");
+        const overflow = queue.splice(0, queue.length - maxQueue);
+        removed += overflow.length;
+        drop(overflow.length, "queue_full", onlyFeedback(overflow));
       }
       if (queue.length >= batchSize) {
         void drain();

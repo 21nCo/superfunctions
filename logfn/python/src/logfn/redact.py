@@ -393,6 +393,20 @@ def exception_message(error: BaseException) -> str:
         return repr(error)
 
 
+def _unique_key(target: dict[str, Any], key: str, used: dict[str, int]) -> str:
+    # Distinct keys can redact to the same text (two email keys both become
+    # the marker; 1 and "1"). Each later one is kept under the first free
+    # "<key>#<n>" (n from 2) instead of overwriting the earlier value. ``used``
+    # holds the next n per key.
+    if key not in target:
+        return key
+    index = used.get(key, 2)
+    while f"{key}#{index}" in target:
+        index += 1
+    used[key] = index + 1
+    return f"{key}#{index}"
+
+
 def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int], depth: int) -> Any:
     if isinstance(value, str):
         return value if path in redactor.allowlist else _redact_text(value, redactor)
@@ -431,12 +445,13 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
             return error
         if isinstance(value, dict):
             result: dict[str, Any] = {}
+            used: dict[str, int] = {}
             for raw_key, item in value.items():
                 key = str(raw_key)
                 item_path = _child_path(path, key)
                 allowed = item_path in redactor.allowlist
                 # Keys are text too: a map keyed by URL or email must not leak them.
-                output_key = key if allowed else _redact_text(key, redactor)
+                output_key = _unique_key(result, key if allowed else _redact_text(key, redactor), used)
                 if redactor.is_sensitive(key) and not allowed:
                     result[output_key] = redactor.replacement
                 else:
@@ -456,6 +471,7 @@ def _redact_with(event: LogEvent, redactor: _Redactor) -> LogEvent:
     # than ctx are their names (``userId``, ``tags[0]``); ctx paths start at
     # the ctx root.
     redacted: dict[str, Any] = {}
+    used: dict[str, int] = {}
     for raw_key, value in event.items():
         key = str(raw_key)
         if key == "msg":
@@ -466,7 +482,7 @@ def _redact_with(event: LogEvent, redactor: _Redactor) -> LogEvent:
             redacted[key] = _redact_node(value, redactor, key, set(), 0)
         else:
             # Field names are text too, exactly like nested keys.
-            redacted[_redact_text(key, redactor)] = (
+            redacted[_unique_key(redacted, _redact_text(key, redactor), used)] = (
                 redactor.replacement
                 if redactor.is_sensitive(key)
                 else _redact_node(value, redactor, key, set(), 0)

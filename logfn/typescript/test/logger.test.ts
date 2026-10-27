@@ -414,6 +414,44 @@ describe("Logger", () => {
     }
   );
 
+  it.each(["logger", "child"] as const)(
+    "does not re-enter onError for a sink.flush failure of a flush it started (via %s)",
+    async (via) => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const flush = vi.fn(async () => {
+        throw new Error("flush down");
+      });
+      const sink = Object.assign((() => {}) as Sink, { flush });
+      const calls: string[] = [];
+      const root = createLogger({
+        name: "svc",
+        sinks: [sink],
+        onError: (error) => {
+          calls.push(error.message);
+          if (calls.length > 10) return; // Keeps a regression finite.
+          void target.flush();
+        },
+      });
+      const target = via === "child" ? root.child({ name: "child" }) : root;
+      const started = Date.now();
+      const timer = new Promise<number>((resolve) => {
+        setTimeout(() => resolve(Date.now() - started), 10);
+      });
+      await target.flush();
+      expect(await timer).toBeLessThan(50);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls).toEqual(["flush down"]);
+      expect(flush).toHaveBeenCalledTimes(2);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+
+      // A later independent flush failure is still reported to onError.
+      await target.flush();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls).toEqual(["flush down", "flush down"]);
+      expect(flush).toHaveBeenCalledTimes(4);
+    }
+  );
+
   it("stops a reporting cycle between two loggers whose handlers log through each other", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     let sinkCalls = 0;

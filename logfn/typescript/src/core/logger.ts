@@ -285,6 +285,10 @@ export class Logger {
    * than rejected.
    */
   async flush(): Promise<void> {
+    // Taken before the first await, while a calling onError is still on the
+    // stack: a flush that onError started reports its failures to the
+    // default reporter, not back into that handler.
+    const provenance = activeHandlers;
     await Promise.all([...this.pending]);
     const pending = this.options.sinks.map(async (sink) => {
       try {
@@ -294,7 +298,7 @@ export class Logger {
         if (typeof flush !== "function") return;
         await (flush as () => unknown).call(sink);
       } catch (error) {
-        this.report(error, { sink: callableName(sink) });
+        this.report(error, { sink: callableName(sink) }, provenance);
       }
     });
     await Promise.all(pending);

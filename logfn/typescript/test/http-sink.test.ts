@@ -792,3 +792,91 @@ describe("sinkHttp drop reporting", () => {
     expect(drops).toEqual(["closed", "closed"]);
   });
 });
+
+describe("sinkHttp callback diagnostics", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const cases = (["onError", "onDrop"] as const).flatMap((callback) =>
+    (["direct", "logger"] as const).flatMap((path) => [400, 500].map((status) => [callback, path, status] as const))
+  );
+
+  // A callback that logs a diagnostic through its own sink must not be called
+  // for that diagnostic's failure or drop: with a collector that fails at
+  // once, each report would log another event without end.
+  it.each(cases)(
+    "%s that logs through the sink (%s) is not called back for its own diagnostic after HTTP %i",
+    async (callback, path, status) => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { fetch } = scriptedFetch({ ok: false, status });
+      const errors: string[] = [];
+      let callbackCalls = 0;
+      const diagnose = () => {
+        callbackCalls++;
+        if (callbackCalls > 10) return; // Keeps a regression finite.
+        if (path === "direct") sink([event("diagnostic")]);
+        else logger.warn("diagnostic");
+      };
+      const sink = sinkHttp({
+        url: URL,
+        fetch,
+        batch: 1,
+        retry: { attempts: 1, backoffMs: 0 },
+        onError: callback === "onError" ? diagnose : (error) => errors.push(error.message),
+        onDrop: callback === "onDrop" ? diagnose : undefined,
+      });
+      const logger = createLogger({ name: "svc", sinks: [sink] });
+      const started = Date.now();
+      const timer = new Promise<number>((resolve) => {
+        setTimeout(() => resolve(Date.now() - started), 10);
+      });
+
+      if (path === "direct") sink([event("one")]);
+      else logger.info("one");
+      await sink.flush();
+      await sleep(200);
+      expect(await timer).toBeLessThan(50);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(callbackCalls).toBe(1);
+      expect(sink.stats()).toMatchObject({ queued: 0, inFlight: 0, sent: 0, dropped: 2, failedBatches: 2 });
+      // The diagnostic's own failure goes to the console once.
+      expect(consoleError).toHaveBeenCalledTimes(1);
+
+      // A later independent event's failure is reported again.
+      if (path === "direct") sink([event("two")]);
+      else logger.info("two");
+      await sink.flush();
+      await sleep(200);
+      expect(fetch).toHaveBeenCalledTimes(4);
+      expect(callbackCalls).toBe(2);
+      expect(consoleError).toHaveBeenCalledTimes(2);
+      if (callback === "onDrop") expect(errors).toHaveLength(2);
+    }
+  );
+
+  it("reports a batch that mixes a diagnostic with an independent event", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fetch } = scriptedFetch({ ok: false, status: 400 });
+    let calls = 0;
+    const sink = sinkHttp({
+      url: URL,
+      fetch,
+      batch: 2,
+      flushIntervalMs: 60_000,
+      retry: { attempts: 1 },
+      onError: () => {
+        calls++;
+        if (calls === 1) sink([event("diagnostic")]);
+      },
+    });
+    sink([event("one")]);
+    await sink.flush();
+    expect(calls).toBe(1);
+    sink([event("two")]); // Joins the queued diagnostic in one batch.
+    await sink.flush();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(calls).toBe(2);
+  });
+});

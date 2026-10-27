@@ -1228,3 +1228,157 @@ def test_on_drop_still_reports_drops_from_other_threads_while_it_runs() -> None:
     release.set()
     first.join(5)
     assert drops == ["first", "second"]
+
+
+@pytest.mark.parametrize("status", [400, 500])
+@pytest.mark.parametrize("path", ["direct", "logger"])
+@pytest.mark.parametrize("callback", ["on_error", "on_drop"])
+def test_a_callback_is_not_called_back_for_its_own_diagnostic(
+    callback: str, path: str, status: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A callback that logs a diagnostic through its own sink must not be
+    # called for that diagnostic's failure or drop: with a collector that
+    # fails at once, each report would log another event without end.
+    transport = Scripted(status)
+    errors: list[BaseException] = []
+    callback_calls = 0
+
+    def diagnose(*_: Any) -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+        if callback_calls > 10:
+            return  # Keeps a regression finite.
+        if path == "direct":
+            sink([event("diagnostic")])
+        else:
+            logger.warn("diagnostic")
+
+    sink = SinkHttp(
+        URL,
+        transport=transport,
+        batch_size=1,
+        retry_attempts=1,
+        backoff_ms=0,
+        on_error=diagnose if callback == "on_error" else errors.append,
+        on_drop=diagnose if callback == "on_drop" else None,
+    )
+    logger = create_logger("svc", sinks=[sink])
+
+    def log(msg: str) -> None:
+        if path == "direct":
+            sink([event(msg)])
+        else:
+            logger.info(msg)
+
+    async def main() -> None:
+        log("one")
+        await sink.flush()
+        await asyncio.sleep(0.2)
+        assert len(transport.calls) == 2
+        assert callback_calls == 1
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 2, "failed_batches": 2}
+        # The diagnostic's own failure goes to stderr once.
+        assert capsys.readouterr().err.count("[logfn http-sink error]") == 1
+
+        # A later independent event's failure is reported again.
+        log("two")
+        await sink.flush()
+        await asyncio.sleep(0.2)
+        assert len(transport.calls) == 4
+        assert callback_calls == 2
+        assert capsys.readouterr().err.count("[logfn http-sink error]") == 1
+
+    asyncio.run(main())
+    if callback == "on_drop":
+        assert len(errors) == 2
+
+
+def test_a_batch_mixing_a_diagnostic_with_an_independent_event_is_reported() -> None:
+    transport = Scripted(400)
+    calls = 0
+
+    def on_error(error: BaseException) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            sink([event("diagnostic")])
+
+    sink = SinkHttp(URL, transport=transport, batch_size=2, flush_interval_ms=60_000, retry_attempts=1, on_error=on_error)
+
+    async def main() -> None:
+        sink([event("one")])
+        await sink.flush()
+        assert calls == 1
+        sink([event("two")])  # Joins the queued diagnostic in one batch.
+        await sink.flush()
+
+    asyncio.run(main())
+    assert transport.batches == [["one"], ["diagnostic", "two"]]
+    assert calls == 2
+
+
+@pytest.mark.parametrize("op", ["flush", "close"])
+def test_a_transport_that_ignores_cancellation_is_abandoned_within_the_budget(op: str) -> None:
+    # A timed-out call is cancelled; one whose cleanup never finishes must
+    # not hold the batch, flush() or close() past the batch's budget, and its
+    # late result must not change the outcome.
+    gate = threading.Event()
+    calls = 0
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        nonlocal calls
+        calls += 1
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            # Cleanup that ignores the cancellation (for at most 2s, so a
+            # regression fails instead of hanging the test run).
+            stop = time.monotonic() + 2
+            while not gate.is_set() and time.monotonic() < stop:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.sleep(0.01)
+        return 204
+
+    errors: list[BaseException] = []
+    sink = SinkHttp(URL, transport=transport, timeout=0.01, retry_attempts=1, backoff_ms=0, on_error=errors.append)
+
+    async def main() -> float:
+        sink([event("m")])
+        started = time.monotonic()
+        await asyncio.wait_for(getattr(sink, op)(), 3)
+        elapsed = time.monotonic() - started
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 1}
+        gate.set()
+        await asyncio.sleep(0.05)  # The abandoned call now returns 204.
+        return elapsed
+
+    assert asyncio.run(main()) < sink._batch_budget + 0.2
+    assert calls == 1
+    assert sink.stats()["sent"] == 0
+    assert [type(error) for error in errors] == [TimeoutError]
+
+
+@pytest.mark.parametrize("op", ["flush", "close"])
+def test_flush_waits_for_a_drain_it_started_no_longer_than_the_batch_deadline(op: str) -> None:
+    # The drain flush() starts is bounded by the deadline of the batch it
+    # sends, like a batch another loop is sending.
+    errors: list[BaseException] = []
+    sink = SinkHttp(URL, transport=Scripted("hang"), timeout=5, retry_attempts=1, on_error=errors.append)
+    sink._batch_budget = 0.2  # Shorter than one attempt: only the deadline can end the wait.
+
+    async def main() -> float:
+        sink([event("m")])
+        started = time.monotonic()
+        await asyncio.wait_for(getattr(sink, op)(), 3)
+        return time.monotonic() - started
+
+    assert asyncio.run(main()) < 1
+    reason = "closed" if op == "close" else "delivery_failed"
+    assert sink.stats() == {
+        "queued": 0,
+        "in_flight": 0,
+        "sent": 0,
+        "dropped": 1,
+        "failed_batches": 1 if reason == "delivery_failed" else 0,
+    }
+    assert [type(error) for error in errors] == [TimeoutError]

@@ -419,8 +419,9 @@ class SinkHttp:
                 self._headers["Authorization"] = f"Bearer {auth_token}"
 
         # Queued events carry their position in the stream of accepted events,
-        # in ascending order, so flush() can tell which were accepted before it.
-        self._queue: deque[tuple[int, LogEvent]] = deque()
+        # in ascending order, so flush() can tell which were accepted before
+        # it, and whether a reporting callback logged them (see _report).
+        self._queue: deque[_Item] = deque()
         self._lock = threading.Lock()
         self._accepted = 0
         self._sent = 0
@@ -431,9 +432,10 @@ class SinkHttp:
         self._batches: list[_Batch] = []
         # Loops waiting in flush() for a settlement; woken on every one.
         self._waiters: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
-        # Longest a batch can take: every attempt and backoff, plus slack.
+        # Longest a batch can take: every attempt (with its cancel grace) and
+        # backoff, plus slack.
         self._batch_budget = (
-            self.retry_attempts * self.timeout
+            self.retry_attempts * (self.timeout + _CANCEL_GRACE)
             + sum(self.backoff_ms * 2 ** (attempt - 1) + 100 for attempt in range(1, self.retry_attempts)) / 1000
             + 1.0
         )
@@ -450,8 +452,21 @@ class SinkHttp:
     # (a closed sink, a full queue). Such a nested error or drop is counted
     # but not reported to the callback that is running on this thread, so a
     # callback is never re-entered and one event cannot start a recursion.
+    #
+    # Events accepted while either callback runs on the calling thread are
+    # its own diagnostics. A batch made only of them that later fails or is
+    # dropped is counted, and its error goes to stderr, but neither callback
+    # is called for it: otherwise a collector that always fails would turn
+    # one event into an endless chain of requests and callbacks.
 
-    def _report(self, error: BaseException) -> None:
+    def _in_callback(self) -> bool:
+        return bool(getattr(self._reporting, "error", False) or getattr(self._reporting, "drop", False))
+
+    def _report(self, error: BaseException, from_feedback: bool = False) -> None:
+        if from_feedback:
+            with contextlib.suppress(Exception):
+                print(f"[logfn http-sink error] {error!r}", file=sys.stderr)
+            return
         if getattr(self._reporting, "error", False):
             return
         self._reporting.error = True
@@ -465,8 +480,8 @@ class SinkHttp:
         finally:
             self._reporting.error = False
 
-    def _notify_drop(self, count: int, reason: DropReason) -> None:
-        if count <= 0 or self._on_drop is None or getattr(self._reporting, "drop", False):
+    def _notify_drop(self, count: int, reason: DropReason, from_feedback: bool = False) -> None:
+        if count <= 0 or from_feedback or self._on_drop is None or getattr(self._reporting, "drop", False):
             return
         self._reporting.drop = True
         try:
@@ -504,6 +519,7 @@ class SinkHttp:
             if excess > 0:
                 self._drop(excess, "queue_full")
                 batch = batch[excess:]
+            from_feedback = self._in_callback()
             redacted: list[LogEvent] = []
             for event in batch:
                 try:
@@ -518,14 +534,14 @@ class SinkHttp:
                 late = self._closed
                 if not late:
                     for event in redacted:
-                        self._queue.append((self._accepted, event))
+                        self._queue.append((self._accepted, event, from_feedback))
                         self._accepted += 1
-                overflow = self._trim()
+                overflow, overflow_feedback = self._trim()
                 queued = len(self._queue)
             if late:
                 self._drop(len(redacted), "closed")
                 return
-            self._notify_drop(overflow, "queue_full")
+            self._notify_drop(overflow, "queue_full", overflow_feedback)
             if queued >= self.batch_size:
                 self._start_drain()
             elif queued > 0:
@@ -533,14 +549,14 @@ class SinkHttp:
         except Exception as error:
             self._report(error)
 
-    def _trim(self) -> int:
+    def _trim(self) -> tuple[int, bool]:
         # Under the lock: drops the oldest events beyond max_queue and counts
-        # them; the caller reports them once the lock is released.
+        # them; the caller reports them once the lock is released. Also
+        # returns whether all of them were callback diagnostics.
         overflow = max(0, len(self._queue) - self.max_queue)
-        for _ in range(overflow):
-            self._queue.popleft()
+        trimmed = [self._queue.popleft() for _ in range(overflow)]
         self._dropped += overflow
-        return overflow
+        return overflow, _only_feedback(trimmed)
 
     # -- scheduling ------------------------------------------------------
 
@@ -613,6 +629,7 @@ class SinkHttp:
         wakes every flush() waiting on any loop. Returns whether it settled."""
         dropped = 0
         reason: DropReason = "queue_full"
+        from_feedback = _only_feedback(batch.items)
         with self._lock:
             if batch not in self._batches:
                 return False
@@ -622,14 +639,14 @@ class SinkHttp:
             elif outcome == "requeue":
                 # Put back in position order; the oldest are trimmed first.
                 self._queue = deque(merge(batch.items, self._queue, key=lambda item: item[0]))
-                dropped = self._trim()
+                dropped, from_feedback = self._trim()
             else:
                 if outcome == "delivery_failed":
                     self._failed_batches += 1
                 dropped, reason = len(batch.items), outcome
                 self._dropped += dropped
             waiters, self._waiters = self._waiters, []
-        self._notify_drop(dropped, reason)
+        self._notify_drop(dropped, reason, from_feedback)
         for loop, waiter in waiters:
             with contextlib.suppress(RuntimeError):  # That loop is closed.
                 loop.call_soon_threadsafe(_wake, waiter)
@@ -682,14 +699,14 @@ class SinkHttp:
         if error is None:
             self._settle(batch, "sent")
         elif self._settle(batch, "delivery_failed"):
-            self._report(error)
+            self._report(error, _only_feedback(batch.items))
 
     def _registered(self, batch: _Batch) -> bool:
         with self._lock:
             return batch in self._batches
 
     async def _deliver(self, batch: _Batch) -> None:
-        body = json_bytes({"events": [event for _, event in batch.items]})
+        body = json_bytes({"events": [event for _, event, _ in batch.items]})
         last_error: BaseException = RuntimeError("not sent")
         for attempt in range(self.retry_attempts):
             if attempt > 0:
@@ -725,20 +742,23 @@ class SinkHttp:
         cancelled) is a failed attempt, not a cancellation of the delivery:
         only the sink or the loop cancels a delivery, which puts its batch
         back. Treating it as one would put the batch back with a fresh budget
-        and retry it at once, without end."""
+        and retry it at once, without end. A call that times out is cancelled
+        and given _CANCEL_GRACE to stop; one that ignores the cancellation is
+        abandoned (its late result is discarded), so the attempt still ends."""
         call = asyncio.get_running_loop().create_task(self._call(body))
         try:
             done, _ = await asyncio.wait([call], timeout=self.timeout)
             if not done:
                 call.cancel()
-                await asyncio.wait([call])  # Let it stop, as wait_for does.
+                await asyncio.wait([call], timeout=_CANCEL_GRACE)
         except asyncio.CancelledError:
             call.cancel()
             call.add_done_callback(_retrieve)
             raise
+        if not done:
+            call.add_done_callback(_retrieve)
+            raise asyncio.TimeoutError
         if call.cancelled():
-            if not done:
-                raise asyncio.TimeoutError
             raise ConnectionAbortedError("the transport was cancelled")
         return call.result()
 
@@ -748,8 +768,9 @@ class SinkHttp:
         """Wait until every event accepted before the call is sent or dropped,
         across as many drains as that takes, including batches that another
         event loop or thread is delivering. Never raises. A batch that is not
-        settled within its retry budget (its loop stopped) is dropped as
-        "delivery_failed", or "closed" once closed. Events logged while this
+        settled within its retry budget (its loop stopped), also one this
+        call's own drain is sending, is dropped as "delivery_failed", or
+        "closed" once closed. Events logged while this
         waits are not part of it; they keep their interval timer."""
         try:
             loop = asyncio.get_running_loop()
@@ -757,22 +778,32 @@ class SinkHttp:
             with self._lock:
                 target = self._accepted
             while True:
-                waiter: asyncio.Future[None] | None = None
                 with self._lock:
                     queued = bool(self._queue) and self._queue[0][0] < target
+                drain = self._start_drain() if queued else None
+                if drain is not None:
+                    # One step lets a new drain take its first batch, so the
+                    # wait below is bounded by that batch's deadline too.
+                    await asyncio.sleep(0)
+                waiter: asyncio.Future[None] | None = None
+                with self._lock:
                     pending = [batch for batch in self._batches if batch.items[0][0] < target]
-                    if not queued and pending:
+                    if pending:
                         waiter = loop.create_future()
                         self._waiters.append((loop, waiter))
-                if queued:
-                    task = self._start_drain()
-                    if task is not None:
-                        await asyncio.wait([task])
-                    continue
                 if waiter is None:
-                    return
+                    if drain is None:
+                        return
+                    continue  # The drain is between batches or done.
+                # Woken by any settlement or the end of this loop's drain, and
+                # never later than the earliest deadline of a pending batch,
+                # however the transport behaves.
                 try:
-                    await asyncio.wait([waiter], timeout=max(0.0, min(b.deadline for b in pending) - time.monotonic()))
+                    await asyncio.wait(
+                        [waiter] if drain is None else [waiter, drain],
+                        timeout=max(0.0, min(b.deadline for b in pending) - time.monotonic()),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
                 finally:
                     with self._lock:
                         if (loop, waiter) in self._waiters:
@@ -781,7 +812,10 @@ class SinkHttp:
                 for batch in pending:
                     if batch.deadline <= now and self._settle(batch, "closed" if self._closed else "delivery_failed"):
                         batch.cancel()
-                        self._report(TimeoutError(f"batch not settled within {self._batch_budget:.1f}s"))
+                        self._report(
+                            TimeoutError(f"batch not settled within {self._batch_budget:.1f}s"),
+                            _only_feedback(batch.items),
+                        )
         except Exception as error:
             self._report(error)
 
@@ -795,9 +829,10 @@ class SinkHttp:
             await self.flush()
         finally:
             with self._lock:
-                left = len(self._queue)
+                left = list(self._queue)
                 self._queue.clear()
-            self._drop(left, "closed")
+                self._dropped += len(left)
+            self._notify_drop(len(left), "closed", _only_feedback(left))
 
     def stats(self) -> dict[str, int]:
         """Delivery counters: queued, in_flight, sent, dropped, failed_batches."""
@@ -811,6 +846,25 @@ class SinkHttp:
             }
 
 
+# A queued event: its position in the stream of accepted events, the event,
+# and whether it was accepted while on_error or on_drop ran.
+_Item = tuple[int, LogEvent, bool]
+
+
+def _only_feedback(items: Iterable[_Item]) -> bool:
+    found = False
+    for _, _, from_feedback in items:
+        if not from_feedback:
+            return False
+        found = True
+    return found
+
+
+# How long a timed-out transport call may take to stop once cancelled before
+# the attempt abandons it.
+_CANCEL_GRACE = 0.1
+
+
 class _Abandoned(Exception):
     """The batch was settled elsewhere; its delivery stops without an outcome."""
 
@@ -818,7 +872,7 @@ class _Abandoned(Exception):
 class _Batch:
     __slots__ = ("abort", "deadline", "items")
 
-    def __init__(self, items: list[tuple[int, LogEvent]], deadline: float):
+    def __init__(self, items: list[_Item], deadline: float):
         self.items = items
         self.deadline = deadline
         # Cancels the delivery on its own loop; set once delivery starts.

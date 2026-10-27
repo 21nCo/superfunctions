@@ -916,6 +916,47 @@
         "VIEW_SECRET",
         "VIEW_TOKEN"
       ]
+    },
+    {
+      "id": "redacted-key-collisions",
+      "description": "Distinct keys that redact to the same text keep every value: the first under the redacted key, later ones under \"<key>#2\", \"#3\" in input order, never overwriting each other.",
+      "input": {
+        "msg": "role map",
+        "ctx": {
+          "byEmail": {
+            "ada@example.com": {
+              "role": "admin"
+            },
+            "bob@example.com": {
+              "role": "viewer"
+            },
+            "cy@example.com": {
+              "role": "owner"
+            }
+          }
+        }
+      },
+      "expected": {
+        "msg": "role map",
+        "ctx": {
+          "byEmail": {
+            "[redacted]": {
+              "role": "admin"
+            },
+            "[redacted]#2": {
+              "role": "viewer"
+            },
+            "[redacted]#3": {
+              "role": "owner"
+            }
+          }
+        }
+      },
+      "absent": [
+        "ada@example.com",
+        "bob@example.com",
+        "cy@example.com"
+      ]
     }
   ]
 }

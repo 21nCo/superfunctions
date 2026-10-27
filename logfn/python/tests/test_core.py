@@ -400,6 +400,46 @@ def test_on_error_is_not_reentered_by_an_async_sink_failure_it_causes(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("via", ["logger", "child"])
+def test_on_error_is_not_reentered_by_a_flush_failure_of_a_flush_it_started(
+    via: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    flushes = 0
+
+    class Failing:
+        def __call__(self, batch: list[LogEvent]) -> None:
+            pass
+
+        async def flush(self) -> None:
+            nonlocal flushes
+            flushes += 1
+            raise RuntimeError("flush down")
+
+    def on_error(error: BaseException, context: dict[str, str]) -> None:
+        calls.append(str(error))
+        if len(calls) <= 10:  # Keeps a regression finite.
+            asyncio.get_running_loop().create_task(target.flush())
+
+    root = create_logger("svc", sinks=[Failing()], on_error=on_error)
+    target = root.child(name="child") if via == "child" else root
+
+    async def scenario() -> None:
+        await target.flush()
+        await asyncio.sleep(0.05)
+        assert calls == ["flush down"]
+        assert flushes == 2
+        assert capsys.readouterr().err.count("[logfn internal error]") == 1
+
+        # A later independent flush failure is still reported to on_error.
+        await target.flush()
+        await asyncio.sleep(0.05)
+        assert calls == ["flush down", "flush down"]
+        assert flushes == 4
+
+    asyncio.run(scenario())
+
+
 def test_a_reporting_cycle_between_two_loggers_stops() -> None:
     # Handlers that log through each other's failing async sinks: the
     # provenance is carried through both tasks, so the cycle ends.
