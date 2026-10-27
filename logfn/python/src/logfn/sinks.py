@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
+import http.client
 import random
+import socket
 import sys
 import threading
-import urllib.error
-import urllib.request
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
+from heapq import merge
 from re import Pattern
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from .redact import REDACTED, make_redactor
@@ -42,7 +43,8 @@ class SinkConsole:
             # Loggers pass events that are not size-bounded; bound them here.
             event, _truncated = validate_and_serialize(raw)
             if self.json:
-                print(json.dumps(event, default=str))
+                # The encoding the size bound measured: non-ASCII unescaped.
+                print(json_bytes(event).decode("utf-8"))
             else:
                 self._print_pretty(event)
 
@@ -66,30 +68,95 @@ Transport = Callable[[str, bytes, dict[str, str], float], Awaitable[int]]
 DropReason = Literal["queue_full", "delivery_failed", "closed", "redaction_failed"]
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    # Following a redirect could send the credentials to another origin and
-    # turns the POST into a GET without the events; report the 3xx instead.
-    def redirect_request(self, *args: object, **kwargs: object) -> None:
-        return None
+class _Attempt:
+    """The socket of one request, which abort() shuts down from any thread."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sock: socket.socket | None = None
+        self._aborted = False
+
+    def attach(self, sock: socket.socket) -> None:
+        with self._lock:
+            if self._aborted:
+                raise ConnectionAbortedError("request aborted")
+            # A duplicate keeps the connection reachable until release(), so a
+            # late abort can never hit a reused descriptor.
+            self._sock = sock.dup()
+
+    def abort(self) -> None:
+        with self._lock:
+            self._aborted = True
+            if self._sock is not None:
+                with contextlib.suppress(OSError):
+                    self._sock.shutdown(socket.SHUT_RDWR)
+
+    def release(self) -> None:
+        with self._lock:
+            if self._sock is not None:
+                self._sock.close()
+                self._sock = None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+def _post(url: str, body: bytes, headers: dict[str, str], timeout: float, attempt: _Attempt) -> int:
+    parts = urlsplit(url)
+    https = parts.scheme == "https"
+    connection_class = http.client.HTTPSConnection if https else http.client.HTTPConnection
+    connection = connection_class(parts.hostname or "", parts.port or (443 if https else 80), timeout=timeout)
 
-
-async def urllib_transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
-    """Default transport: a standard-library POST run in a worker thread.
-    Redirects are not followed; their status is returned."""
-
-    def send() -> int:
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    def create_connection(address: tuple[str, int], *args: Any, **kwargs: Any) -> socket.socket:
+        sock = socket.create_connection(address, *args, **kwargs)
         try:
-            with _OPENER.open(request, timeout=timeout) as response:
-                return int(response.status)
-        except urllib.error.HTTPError as error:
-            error.close()
-            return int(error.code)
+            attempt.attach(sock)
+        except BaseException:
+            sock.close()
+            raise
+        return sock
 
-    return await asyncio.to_thread(send)
+    connection._create_connection = create_connection  # type: ignore[attr-defined]
+    target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    try:
+        connection.request("POST", target, body=body, headers=headers)
+        # Only the status is used; the body is never read.
+        return int(connection.getresponse().status)
+    finally:
+        connection.close()
+        attempt.release()
+
+
+async def stdlib_transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+    """Default transport: a standard-library (http.client) POST on its own
+    connection in a daemon thread. Redirects are not followed; their status is
+    returned. The whole request is bounded by ``timeout``: on timeout or
+    cancellation the socket is shut down, so no connection outlives the
+    attempt and interpreter or loop shutdown never waits for the collector.
+    Only name resolution cannot be interrupted; it ends in its own thread.
+    Proxy environment variables are not used."""
+    loop = asyncio.get_running_loop()
+    result: asyncio.Future[int] = loop.create_future()
+    attempt = _Attempt()
+
+    def settle(status: int | None, error: BaseException | None) -> None:
+        if result.done():
+            return
+        if error is not None:
+            result.set_exception(error)
+        else:
+            result.set_result(status or 0)
+
+    def run() -> None:
+        try:
+            status, error = _post(url, body, headers, timeout, attempt), None
+        except Exception as caught:
+            status, error = None, caught
+        with contextlib.suppress(RuntimeError):  # The loop is already closed.
+            loop.call_soon_threadsafe(settle, status, error)
+
+    threading.Thread(target=run, name="logfn-http", daemon=True).start()
+    try:
+        return await asyncio.wait_for(result, timeout)
+    finally:
+        attempt.abort()  # A no-op once the request has finished.
 
 
 class DeliveryError(Exception):
@@ -142,6 +209,8 @@ class SinkHttp:
     Calling the sink never raises and never waits for the network: a full
     batch is sent on the running event loop, a partial one after
     ``flush_interval_ms``. Without a running loop events wait for ``flush()``.
+    The sink may be called from any thread and flushed or closed on any loop;
+    ``flush()`` and ``close()`` also wait for batches other loops are sending.
     """
 
     def __init__(
@@ -174,7 +243,7 @@ class SinkHttp:
         self.flush_interval_ms = _non_negative(flush_interval_ms, "flush_interval_ms")
         # A zero timeout would fail every attempt and drop every batch.
         self.timeout = _positive(timeout, "timeout")
-        self._transport: Transport = transport or urllib_transport
+        self._transport: Transport = transport or stdlib_transport
         self._on_error = on_error
         self._on_drop = on_drop
         self._redact = make_redactor(redact_patterns, redact_replacement, redact_keys, redact_allowlist)
@@ -186,21 +255,27 @@ class SinkHttp:
             else:
                 self._headers["Authorization"] = f"Bearer {auth_token}"
 
-        self._queue: deque[LogEvent] = deque()
+        # Queued events carry their position in the stream of accepted events,
+        # in ascending order, so flush() can tell which were accepted before it.
+        self._queue: deque[tuple[int, LogEvent]] = deque()
         self._lock = threading.Lock()
+        self._accepted = 0
         self._sent = 0
         self._dropped = 0
         self._failed_batches = 0
-        self._in_flight = 0
-        # Positions in the stream of accepted events: ``_accepted`` events were
-        # queued so far, ``_removed`` left the front of the queue (sent, in
-        # flight or dropped), and the batch in flight starts at
-        # ``_in_flight_start``.
-        self._accepted = 0
-        self._removed = 0
-        self._in_flight_start = 0
+        # Every batch being delivered, on any event loop. A batch is settled
+        # (sent, dropped or put back) exactly once, by whoever comes first.
+        self._batches: list[_Batch] = []
+        # Loops waiting in flush() for a settlement; woken on every one.
+        self._waiters: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
+        # Longest a batch can take: every attempt and backoff, plus slack.
+        self._batch_budget = (
+            self.retry_attempts * self.timeout
+            + sum(self.backoff_ms * 2 ** (attempt - 1) + 100 for attempt in range(1, self.retry_attempts)) / 1000
+            + 1.0
+        )
         self._closed = False
-        self._drain_task: asyncio.Task[None] | None = None
+        self._drains: dict[asyncio.AbstractEventLoop, asyncio.Task[None]] = {}
         self._timer: asyncio.TimerHandle | None = None
         self._timer_loop: asyncio.AbstractEventLoop | None = None
 
@@ -215,13 +290,17 @@ class SinkHttp:
         except Exception:
             pass  # A failing handler must not break delivery.
 
+    def _notify_drop(self, count: int, reason: DropReason) -> None:
+        if count > 0 and self._on_drop is not None:
+            with contextlib.suppress(Exception):
+                self._on_drop(count, reason)
+
     def _drop(self, count: int, reason: DropReason) -> None:
         if count <= 0:
             return
-        self._dropped += count
-        if self._on_drop is not None:
-            with contextlib.suppress(Exception):
-                self._on_drop(count, reason)
+        with self._lock:
+            self._dropped += count
+        self._notify_drop(count, reason)
 
     # -- enqueue ---------------------------------------------------------
 
@@ -257,23 +336,30 @@ class SinkHttp:
                 # never queued behind close()'s final flush.
                 late = self._closed
                 if not late:
-                    self._queue.extend(redacted)
-                    self._accepted += len(redacted)
-                overflow = max(0, len(self._queue) - self.max_queue)
-                for _ in range(overflow):
-                    self._queue.popleft()
-                self._removed += overflow
+                    for event in redacted:
+                        self._queue.append((self._accepted, event))
+                        self._accepted += 1
+                overflow = self._trim()
                 queued = len(self._queue)
             if late:
                 self._drop(len(redacted), "closed")
                 return
-            self._drop(overflow, "queue_full")
+            self._notify_drop(overflow, "queue_full")
             if queued >= self.batch_size:
                 self._start_drain()
             elif queued > 0:
                 self._schedule_timer()
         except Exception as error:
             self._report(error)
+
+    def _trim(self) -> int:
+        # Under the lock: drops the oldest events beyond max_queue and counts
+        # them; the caller reports them once the lock is released.
+        overflow = max(0, len(self._queue) - self.max_queue)
+        for _ in range(overflow):
+            self._queue.popleft()
+        self._dropped += overflow
+        return overflow
 
     # -- scheduling ------------------------------------------------------
 
@@ -285,13 +371,13 @@ class SinkHttp:
             return None
 
     def _active_drain(self, loop: asyncio.AbstractEventLoop) -> asyncio.Task[None] | None:
-        task = self._drain_task
-        if task is None or task.done() or task.get_loop() is not loop:
-            return None
-        return task
+        task = self._drains.get(loop)
+        return task if task is not None and not task.done() else None
 
-    def _cancel_timer(self) -> None:
-        if self._timer is not None:
+    def _cancel_timer(self, loop: asyncio.AbstractEventLoop) -> None:
+        # Timer handles belong to their loop; another loop's timer is left to
+        # fire, which at worst starts a drain with nothing to send.
+        if self._timer is not None and self._timer_loop is loop:
             self._timer.cancel()
             self._timer = None
 
@@ -299,7 +385,7 @@ class SinkHttp:
         loop = self._running_loop()
         if loop is None or self._active_drain(loop) is not None:
             return
-        # A handle left by an earlier, finished loop never fires; replace it.
+        # A handle left by another or finished loop may never fire; replace it.
         if self._timer is not None and not self._timer.cancelled() and self._timer_loop is loop:
             return
         self._timer = loop.call_later(self.flush_interval_ms / 1000, self._on_timer)
@@ -316,15 +402,17 @@ class SinkHttp:
         active = self._active_drain(loop)
         if active is not None:
             return active
-        self._cancel_timer()
+        self._cancel_timer(loop)
         task = loop.create_task(self._drain())
         task.add_done_callback(self._after_drain)
-        self._drain_task = task
+        # Only this loop's thread reads or writes its own entry.
+        self._drains[loop] = task
         return task
 
     def _after_drain(self, task: asyncio.Task[None]) -> None:
-        if self._drain_task is task:
-            self._drain_task = None
+        loop = task.get_loop()
+        if self._drains.get(loop) is task:
+            del self._drains[loop]
         if task.cancelled():
             return  # The loop is going away; the next flush picks the queue up.
         queued = len(self._queue)
@@ -335,6 +423,33 @@ class SinkHttp:
 
     # -- delivery --------------------------------------------------------
 
+    def _settle(self, batch: _Batch, outcome: Literal["sent", "requeue"] | DropReason) -> bool:
+        """Records the batch's outcome unless another path already did, then
+        wakes every flush() waiting on any loop. Returns whether it settled."""
+        dropped = 0
+        reason: DropReason = "queue_full"
+        with self._lock:
+            if batch not in self._batches:
+                return False
+            self._batches.remove(batch)
+            if outcome == "sent":
+                self._sent += len(batch.items)
+            elif outcome == "requeue":
+                # Put back in position order; the oldest are trimmed first.
+                self._queue = deque(merge(batch.items, self._queue, key=lambda item: item[0]))
+                dropped = self._trim()
+            else:
+                if outcome == "delivery_failed":
+                    self._failed_batches += 1
+                dropped, reason = len(batch.items), outcome
+                self._dropped += dropped
+            waiters, self._waiters = self._waiters, []
+        self._notify_drop(dropped, reason)
+        for loop, waiter in waiters:
+            with contextlib.suppress(RuntimeError):  # That loop is closed.
+                loop.call_soon_threadsafe(_wake, waiter)
+        return True
+
     async def _drain(self) -> None:
         # Sends the events queued when it starts; later events go to the next
         # drain so a flush cannot be held open by a steady stream of events.
@@ -342,45 +457,23 @@ class SinkHttp:
         while budget > 0:
             with self._lock:
                 count = min(self.batch_size, budget, len(self._queue))
-                events = [self._queue.popleft() for _ in range(count)]
-                self._in_flight_start = self._removed
-                self._removed += count
-            if not events:
-                break
-            budget -= len(events)
-            self._in_flight = len(events)
+                if count == 0:
+                    break
+                batch = _Batch([self._queue.popleft() for _ in range(count)], time.monotonic() + self._batch_budget)
+                self._batches.append(batch)
+            budget -= count
             try:
-                await self._deliver(events)
-                self._sent += len(events)
+                await self._deliver([event for _, event in batch.items])
             except asyncio.CancelledError:
-                reason: DropReason
-                with self._lock:
-                    if self._closed:
-                        # Nothing will drain a closed sink again: drop the batch
-                        # and whatever is still queued.
-                        left = len(self._queue)
-                        self._queue.clear()
-                        self._removed += left
-                        dropped, reason = len(events) + left, "closed"
-                    else:
-                        # The loop is shutting down: keep the batch for a later
-                        # flush, within max_queue. It is the oldest, so it is
-                        # dropped first.
-                        self._queue.extendleft(reversed(events))
-                        self._removed -= len(events)
-                        overflow = max(0, len(self._queue) - self.max_queue)
-                        for _ in range(overflow):
-                            self._queue.popleft()
-                        self._removed += overflow
-                        dropped, reason = overflow, "queue_full"
-                self._drop(dropped, reason)
+                # The loop is shutting down: keep the batch for a later flush,
+                # unless the sink is closed and nothing will send it again.
+                self._settle(batch, "closed" if self._closed else "requeue")
                 raise
             except Exception as error:
-                self._failed_batches += 1
-                self._drop(len(events), "delivery_failed")
-                self._report(error)
-            finally:
-                self._in_flight = 0
+                if self._settle(batch, "delivery_failed"):
+                    self._report(error)
+            else:
+                self._settle(batch, "sent")
 
     async def _deliver(self, events: list[LogEvent]) -> None:
         body = json_bytes({"events": events})
@@ -408,47 +501,80 @@ class SinkHttp:
 
     # -- public ----------------------------------------------------------
 
-    def _unsettled(self, target: int, loop: asyncio.AbstractEventLoop) -> bool:
-        # Whether an event accepted before position ``target`` is still queued,
-        # or in flight in a drain that this loop can wait for.
-        if self._removed < target:
-            return True
-        return self._in_flight > 0 and self._in_flight_start < target and self._active_drain(loop) is not None
-
     async def flush(self) -> None:
         """Wait until every event accepted before the call is sent or dropped,
-        across as many drains as that takes. Never raises. Events logged
-        while this waits are not part of it; they keep their interval timer."""
+        across as many drains as that takes, including batches that another
+        event loop or thread is delivering. Never raises. A batch that is not
+        settled within its retry budget (its loop stopped) is dropped as
+        "delivery_failed", or "closed" once closed. Events logged while this
+        waits are not part of it; they keep their interval timer."""
         try:
-            self._cancel_timer()
             loop = asyncio.get_running_loop()
-            target = self._accepted
-            while self._unsettled(target, loop):
-                task = self._start_drain()
-                if task is None:
-                    break
-                await asyncio.wait([task])
+            self._cancel_timer(loop)
+            with self._lock:
+                target = self._accepted
+            while True:
+                waiter: asyncio.Future[None] | None = None
+                with self._lock:
+                    queued = bool(self._queue) and self._queue[0][0] < target
+                    pending = [batch for batch in self._batches if batch.items[0][0] < target]
+                    if not queued and pending:
+                        waiter = loop.create_future()
+                        self._waiters.append((loop, waiter))
+                if queued:
+                    task = self._start_drain()
+                    if task is not None:
+                        await asyncio.wait([task])
+                    continue
+                if waiter is None:
+                    return
+                try:
+                    await asyncio.wait([waiter], timeout=max(0.0, min(b.deadline for b in pending) - time.monotonic()))
+                finally:
+                    with self._lock:
+                        if (loop, waiter) in self._waiters:
+                            self._waiters.remove((loop, waiter))
+                now = time.monotonic()
+                for batch in pending:
+                    if batch.deadline <= now and self._settle(batch, "closed" if self._closed else "delivery_failed"):
+                        self._report(TimeoutError(f"batch not settled within {self._batch_budget:.1f}s"))
         except Exception as error:
             self._report(error)
 
     async def close(self) -> None:
-        """Stop accepting events, then deliver or drop everything accepted.
-        Never raises; events that cannot be sent are dropped as "closed"."""
+        """Stop accepting events, then deliver or drop everything accepted,
+        also batches in flight on other loops. Never raises; events that
+        cannot be sent are dropped as "closed", also when this is cancelled."""
         with self._lock:
             self._closed = True
-        await self.flush()
-        with self._lock:
-            left = len(self._queue)
-            self._queue.clear()
-            self._removed += left
-        self._drop(left, "closed")
+        try:
+            await self.flush()
+        finally:
+            with self._lock:
+                left = len(self._queue)
+                self._queue.clear()
+            self._drop(left, "closed")
 
     def stats(self) -> dict[str, int]:
         """Delivery counters: queued, in_flight, sent, dropped, failed_batches."""
-        return {
-            "queued": len(self._queue),
-            "in_flight": self._in_flight,
-            "sent": self._sent,
-            "dropped": self._dropped,
-            "failed_batches": self._failed_batches,
-        }
+        with self._lock:
+            return {
+                "queued": len(self._queue),
+                "in_flight": sum(len(batch.items) for batch in self._batches),
+                "sent": self._sent,
+                "dropped": self._dropped,
+                "failed_batches": self._failed_batches,
+            }
+
+
+class _Batch:
+    __slots__ = ("deadline", "items")
+
+    def __init__(self, items: list[tuple[int, LogEvent]], deadline: float):
+        self.items = items
+        self.deadline = deadline
+
+
+def _wake(waiter: asyncio.Future[None]) -> None:
+    if not waiter.done():
+        waiter.set_result(None)

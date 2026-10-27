@@ -144,7 +144,7 @@ def test_server_logger_with_url_redacts_before_http(monkeypatch: pytest.MonkeyPa
         bodies.append(body)
         return 200
 
-    monkeypatch.setattr(logfn.sinks, "urllib_transport", transport)
+    monkeypatch.setattr(logfn.sinks, "stdlib_transport", transport)
     logger = logfn.server_logger("server", url="https://collector.test/ingest")
     logger.error("db down postgres://svc:pw-123@db/app", password="hunter2", token="t-1")
     asyncio.run(logger.flush())

@@ -1,4 +1,5 @@
 import asyncio
+import http.client
 import socket
 import urllib.request
 from typing import Any
@@ -23,6 +24,7 @@ def test_default_configurations_perform_no_network_io(monkeypatch: pytest.Monkey
     monkeypatch.setattr(socket, "create_connection", forbid("socket.create_connection"))
     monkeypatch.setattr(socket, "getaddrinfo", forbid("socket.getaddrinfo"))
     monkeypatch.setattr(urllib.request, "urlopen", forbid("urllib.request.urlopen"))
+    monkeypatch.setattr(http.client.HTTPConnection, "request", forbid("http.client.HTTPConnection.request"))
 
     loggers = [
         logfn.create_logger("default"),

@@ -96,7 +96,8 @@ has any id unchanged.
 
 ## Sinks
 
-- `SinkConsole(json=False, color=True)` prints to stdout.
+- `SinkConsole(json=False, color=True)` prints to stdout; each event is
+  size-bounded, and JSON lines use the same UTF-8 encoding the bound measures.
 - `SinkHttp(url, auth_token=None, batch_size=10, flush_interval_ms=1000,
   timeout=5.0, *, headers=None, secret_header=None, max_queue=5000,
   retry_attempts=5, backoff_ms=200, redact_patterns=None, redact_keys=None,
@@ -123,9 +124,22 @@ has any id unchanged.
     `stats()` returns `queued`, `in_flight`, `sent`, `dropped` and
     `failed_batches`.
   - `timeout` (seconds) must be above 0.
-  - The default transport is the standard library (`urllib`) in a worker
-    thread; pass `transport=async (url, body, headers, timeout) -> status` to
-    use another client.
+  - The sink may be called from any thread, and `flush()`/`close()` awaited
+    on any event loop: they also wait for batches that another loop is
+    sending. A batch whose loop stopped without finishing it is dropped by the
+    waiting `flush()`/`close()` once its retry budget
+    (`retry_attempts × timeout` plus backoff, plus 1 s) has passed.
+  - The default transport, `stdlib_transport`, posts with `http.client` on a
+    new connection in a daemon thread. Each attempt is bounded by `timeout` as
+    a whole; on timeout or cancellation its socket is shut down, so a slow
+    collector cannot hold a connection, and `asyncio.run()` or interpreter
+    exit never waits for it. Only DNS resolution is not interruptible (it
+    finishes in its daemon thread). Proxy environment variables are not used.
+    Pass `transport=async (url, body, headers, timeout) -> status` to use
+    another client; it should release its resources when cancelled.
+  - Redaction runs on the caller's thread over the whole, untruncated event
+    (linear in its size; about 1.5-2.5 s for a 10 MiB message), so keep
+    very large payloads out of log calls.
 
 ## Differences from the `next` package
 

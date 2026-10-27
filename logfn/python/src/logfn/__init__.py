@@ -16,7 +16,7 @@ from .redact import (
     is_sensitive_key,
     redact_event,
 )
-from .sinks import DeliveryError, SinkConsole, SinkHttp, Transport, urllib_transport
+from .sinks import DeliveryError, SinkConsole, SinkHttp, Transport, stdlib_transport
 from .types import (
     DEFAULT_VERSION,
     LOG_LEVEL_VALUES,
@@ -99,7 +99,7 @@ __all__ = [
     "sanitize_event",
     "sanitize_value",
     "server_logger",
-    "urllib_transport",
+    "stdlib_transport",
     "validate_and_serialize",
     "with_request_ids",
 ]

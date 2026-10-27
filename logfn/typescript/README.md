@@ -156,6 +156,9 @@ Posts `{"events": [...]}` to `url` in batches.
   browsers the request uses `keepalive` when the body is at most 60,000 bytes
   of UTF-8.
 - `fetch` can be supplied; by default `globalThis.fetch` is used per request.
+- Redaction runs synchronously in the logging call over the whole,
+  untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
+  message), so keep very large payloads out of log calls.
 
 ## Other stages
 

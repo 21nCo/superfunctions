@@ -1,7 +1,10 @@
 import asyncio
+import contextlib
 import datetime
 import json
+import socket
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -320,7 +323,7 @@ def test_closed_sink_drops_what_a_cancelled_drain_held_or_left_queued() -> None:
 
     asyncio.run(scenario())  # asyncio.run cancels the hanging drain and close on exit
     assert sink.stats()["queued"] == 0 and sink.stats()["dropped"] == 3
-    assert drops == [(3, "closed")]
+    assert sorted(drops) == [(1, "closed"), (2, "closed")]
 
 
 def test_close_flushes_then_drops() -> None:
@@ -622,3 +625,157 @@ def test_default_transport_does_not_follow_redirects(status: int, secret_header:
     assert drops == [(1, "delivery_failed")]
     assert sink.stats()["sent"] == 0 and sink.stats()["failed_batches"] == 1
 
+
+
+def test_console_json_line_is_encoded_as_measured_by_the_size_limit(capsys: pytest.CaptureFixture[str]) -> None:
+    SinkConsole(json=True)([event("€" * 15_000)])
+    line = capsys.readouterr().out.rstrip("\n")
+    assert len(line.encode()) <= MAX_EVENT_SIZE
+    assert json.loads(line)["msg"] == "€" * 15_000
+
+
+class ThreadGate:
+    """A transport whose requests wait for a threading.Event, on any loop."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.waiting = threading.Semaphore(0)
+        self.posted: list[list[str]] = []
+
+    async def __call__(self, url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        self.waiting.release()
+        while not self.release.is_set():
+            await asyncio.sleep(0.005)
+        self.posted.append([e["msg"] for e in json.loads(body)["events"]])
+        return 204
+
+    def wait_for_requests(self, count: int) -> None:
+        for _ in range(count):
+            assert self.waiting.acquire(timeout=5), "request not started"
+
+
+def _in_thread(target: Any) -> threading.Thread:
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    return thread
+
+
+@pytest.mark.parametrize("method", ["flush", "close"])
+def test_flush_and_close_wait_for_a_batch_another_loop_is_sending(method: str) -> None:
+    gate = ThreadGate()
+    sink = SinkHttp(URL, transport=gate, timeout=30)
+    sink([event("held")])
+    worker = _in_thread(lambda: asyncio.run(sink.flush()))
+    gate.wait_for_requests(1)
+    assert sink.stats()["in_flight"] == 1
+
+    threading.Timer(0.2, gate.release.set).start()
+    asyncio.run(getattr(sink, method)())
+    # Returned only after the other loop's batch was sent, not before.
+    assert gate.posted == [["held"]]
+    assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}
+    worker.join(5)
+
+
+def test_concurrent_drains_on_two_loops_account_for_every_batch() -> None:
+    gate = ThreadGate()
+    sink = SinkHttp(URL, transport=gate, batch_size=2, timeout=30)
+
+    async def send_and_flush(*messages: str) -> None:
+        sink([event(message) for message in messages])
+        await sink.flush()
+
+    workers = [_in_thread(lambda: asyncio.run(send_and_flush("a", "b"))), _in_thread(lambda: asyncio.run(send_and_flush("c", "d")))]
+    gate.wait_for_requests(2)
+    assert sink.stats()["in_flight"] == 4 and sink.stats()["queued"] == 0
+    gate.release.set()
+    for worker in workers:
+        worker.join(5)
+    assert sorted(gate.posted) == [["a", "b"], ["c", "d"]]
+    assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 4, "dropped": 0, "failed_batches": 0}
+
+
+def test_close_drops_a_batch_whose_loop_stopped_after_its_retry_budget() -> None:
+    gate = ThreadGate()
+    drops: list[tuple[int, str]] = []
+    errors: list[BaseException] = []
+    sink = SinkHttp(
+        URL, transport=gate, batch_size=1, timeout=0.05, retry_attempts=1, on_drop=lambda n, r: drops.append((n, r)), on_error=errors.append
+    )
+    stopped = asyncio.new_event_loop()
+
+    async def start_sending() -> None:
+        sink([event("stranded")])
+        await eventually(lambda: sink.stats()["in_flight"] == 1)
+
+    try:
+        # The drain is left pending on a loop that no longer runs.
+        stopped.run_until_complete(start_sending())
+        started = time.monotonic()
+        asyncio.run(sink.close())
+        elapsed = time.monotonic() - started
+        assert 0.5 < elapsed < 5
+        assert drops == [(1, "closed")] and len(errors) == 1
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 0}
+        # The owner resuming later does not count the batch a second time.
+        gate.release.set()
+        stopped.run_until_complete(asyncio.sleep(0.1))
+        assert sink.stats()["dropped"] == 1 and sink.stats()["sent"] == 0
+    finally:
+        for task in asyncio.all_tasks(stopped):
+            task.cancel()
+        stopped.run_until_complete(asyncio.sleep(0))
+        stopped.close()
+
+
+def _dripping_collector(closed: threading.Event) -> tuple[socket.socket, int]:
+    # Sends a status line, then one header line every 50 ms for 10 s; records
+    # when the client closes the connection.
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+
+    def handle(conn: socket.socket) -> None:
+        with conn:
+            conn.settimeout(1)
+            with contextlib.suppress(OSError):
+                conn.recv(65536)
+            try:
+                conn.sendall(b"HTTP/1.1 204 No Content\r\n")
+                end = time.monotonic() + 10
+                while time.monotonic() < end:
+                    conn.sendall(b"X-Drip: 1\r\n")
+                    time.sleep(0.05)
+            except OSError:
+                closed.set()
+
+    def serve() -> None:
+        with contextlib.suppress(OSError):
+            while True:
+                conn, _ = server.accept()
+                _in_thread(lambda conn=conn: handle(conn))
+
+    _in_thread(serve)
+    return server, server.getsockname()[1]
+
+
+def test_default_transport_releases_the_connection_when_an_attempt_times_out() -> None:
+    closed = threading.Event()
+    server, port = _dripping_collector(closed)
+    drops: list[tuple[int, str]] = []
+    try:
+        sink = SinkHttp(f"http://127.0.0.1:{port}/ingest", timeout=0.3, retry_attempts=1, on_error=lambda e: None, on_drop=lambda n, r: drops.append((n, r)))
+        logger = create_logger("drip", sinks=[sink])
+        started = time.monotonic()
+
+        async def main() -> None:
+            logger.info("hello")
+            await logger.flush()
+
+        # asyncio.run also waits for executor threads; nothing may outlive the attempt.
+        asyncio.run(main())
+        assert time.monotonic() - started < 2
+        assert drops == [(1, "delivery_failed")]
+        assert closed.wait(3), "the collector still holds the connection"
+    finally:
+        server.close()
