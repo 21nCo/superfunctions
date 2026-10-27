@@ -89,7 +89,13 @@ async function getServer(env: Env) {
   await adapter.initialize({
     resources: [{ name: "articles", searchFields: ["title", "body"] }],
   });
-  sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+  sf = await createSearchFnServer({
+    adapter,
+    basePath: "/searchfn",
+    // Without authorize, anyone can call /searchfn/index, /remove and /clear.
+    // This Worker serves reads only; index from your own authenticated code with adapter.index().
+    authorize: (_ctx, action) => action === "status" || action === "search" || action === "searchAll",
+  });
   return sf;
 }
 

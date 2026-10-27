@@ -136,9 +136,6 @@ export class SqliteAdapter implements SearchAdapter {
   }
 
   async initialize({ resources }: InitializeParams): Promise<void> {
-    if (this.disposed) {
-      this.disposed = false;
-    }
     const declared = resources.map(({ name, searchFields }) => ({
       name: requireResourceName(name),
       fields: normalizeSearchFields(name, searchFields),
@@ -148,7 +145,9 @@ export class SqliteAdapter implements SearchAdapter {
     for (const { name, fields } of declared) {
       await this.applyFields(name, fields, false);
     }
+    // Publish lifecycle state only on success: a failed call leaves a disposed adapter disposed.
     this.declared = new Set(declared.map(({ name }) => name));
+    this.disposed = false;
   }
 
   async index({ resource, documents, signal }: IndexParams): Promise<void> {
@@ -657,6 +656,7 @@ function normalizeDocuments(documents: SearchDocument[]): NormalizedDocument[] {
     }
     const json = JSON.stringify({
       i: key,
+      k: sortKey(key),
       t: typeof document.id === "number" ? "n" : "s",
       n: metadataValue(document.metadata?.__ns),
       r: metadataValue(document.metadata?.__region),
@@ -722,19 +722,27 @@ function fieldWeight(boosts: Record<string, number> | undefined, field: string):
 }
 
 /**
- * Code point order, independent of the host locale. It equals SQLite's BINARY collation on
- * UTF-8 text, so ties merged here rank the same as ties truncated by `ORDER BY ... LIMIT`.
- * UTF-16 code-unit order (`<`) would put U+10000 before U+E000.
+ * JavaScript string order (UTF-16 code units), independent of the host locale. The searchfn
+ * client and @datafn/server re-sort results with `<`, so ties must use the same order here.
  */
 function compareText(left: string, right: string): number {
-  if (left === right) return 0;
-  const length = Math.min(left.length, right.length);
-  for (let index = 0; index < length; index++) {
-    if (left.charCodeAt(index) !== right.charCodeAt(index)) {
-      return (left.codePointAt(index) ?? 0) < (right.codePointAt(index) ?? 0) ? -1 : 1;
-    }
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
+}
+
+/**
+ * Key whose SQLite BINARY order (code point order of UTF-8 text) equals the `<` order of
+ * `id`, so `ORDER BY sort_key` truncates ties like compareText. Code point order puts
+ * U+E000..U+FFFF before U+10000 and UTF-16 puts them after it, so each code unit maps to a
+ * scalar value: below U+D800 unchanged, otherwise shifted by 0x800 past the surrogate range.
+ */
+function sortKey(id: string): string {
+  let key = "";
+  for (let index = 0; index < id.length; index++) {
+    const unit = id.charCodeAt(index);
+    key += String.fromCodePoint(unit < 0xd800 ? unit : unit + 0x800);
   }
-  return left.length < right.length ? -1 : 1;
+  return key;
 }
 
 function compareResults(left: SearchAllResult, right: SearchAllResult): number {

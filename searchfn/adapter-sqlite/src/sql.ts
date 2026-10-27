@@ -3,7 +3,7 @@
  *
  * Layout per table prefix (default "searchfn"):
  *   <prefix>_resources            one row per resource: id, name, field list, FTS generation
- *   <prefix>_r<id>_docs           source of truth: doc id, id type, namespace, region, fields JSON
+ *   <prefix>_r<id>_docs           source of truth: doc id, id sort key, id type, namespace, region, fields JSON
  *   <prefix>_r<id>_fts_<gen>      FTS5 index, one column (c0..cN) per declared search field
  *
  * Table names come from the integer resource id, and FTS columns are positional, so no
@@ -139,7 +139,7 @@ export class SqliteSchema {
     return [
       this.guardGeneration(state, PENDING_GENERATION),
       {
-        sql: `CREATE TABLE IF NOT EXISTS ${this.docsTable(state)} (seq INTEGER PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, id_type TEXT NOT NULL, ns TEXT, region TEXT, fields TEXT NOT NULL)`,
+        sql: `CREATE TABLE IF NOT EXISTS ${this.docsTable(state)} (seq INTEGER PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, sort_key TEXT NOT NULL, id_type TEXT NOT NULL, ns TEXT, region TEXT, fields TEXT NOT NULL)`,
       },
       { sql: this.createFtsTable(state, 0, state.fields.length, true) },
       {
@@ -205,7 +205,7 @@ export class SqliteSchema {
    * Write statements (upsert, remove, clear) start with a generation guard, so an instance
    * whose cached generation was retired never writes into a lingering old table.
    *
-   * Upsert a JSON array of `{ i, t, n, r, f }` documents: drop their old FTS rows, upsert
+   * Upsert a JSON array of `{ i, k, t, n, r, f }` documents: drop their old FTS rows, upsert
    * the docs rows (seq is stable across updates), then index the new values.
    */
   upsert(state: ResourceState, documentsJson: string): SqliteStatement[] {
@@ -219,7 +219,7 @@ export class SqliteSchema {
         params: [documentsJson],
       },
       {
-        sql: `INSERT INTO ${docs} (doc_id, id_type, ns, region, fields) SELECT json_extract(value, '$.i'), json_extract(value, '$.t'), json_extract(value, '$.n'), json_extract(value, '$.r'), json_extract(value, '$.f') FROM json_each(?) WHERE true ON CONFLICT(doc_id) DO UPDATE SET id_type = excluded.id_type, ns = excluded.ns, region = excluded.region, fields = excluded.fields`,
+        sql: `INSERT INTO ${docs} (doc_id, sort_key, id_type, ns, region, fields) SELECT json_extract(value, '$.i'), json_extract(value, '$.k'), json_extract(value, '$.t'), json_extract(value, '$.n'), json_extract(value, '$.r'), json_extract(value, '$.f') FROM json_each(?) WHERE true ON CONFLICT(doc_id) DO UPDATE SET id_type = excluded.id_type, ns = excluded.ns, region = excluded.region, fields = excluded.fields`,
         params: [documentsJson],
       },
       {
@@ -254,7 +254,8 @@ export class SqliteSchema {
   /**
    * Ranked matches, each row carrying the published generation. When nothing matches, one
    * row with null doc_id still reports it, so the caller can tell an empty result from a
-   * read of a retired generation.
+   * read of a retired generation. Score ties are ordered by sort_key, which gives the same
+   * order as comparing the ids with JavaScript `<`.
    */
   search(
     state: ResourceState,
@@ -280,9 +281,9 @@ export class SqliteSchema {
     params.push(options.limit);
     // bm25() is lower-is-better; negate it so callers see higher-is-better scores.
     const weights = options.weights.map((weight) => String(weight)).join(", ");
-    const matches = `SELECT d.doc_id AS doc_id, d.id_type AS id_type, -bm25(${fts}, ${weights}) AS score FROM ${fts} JOIN ${this.docsTable(state)} d ON d.seq = ${fts}.rowid WHERE ${fts} MATCH ?${filters} ORDER BY score DESC, d.doc_id ASC LIMIT ?`;
+    const matches = `SELECT d.doc_id AS doc_id, d.sort_key AS sort_key, d.id_type AS id_type, -bm25(${fts}, ${weights}) AS score FROM ${fts} JOIN ${this.docsTable(state)} d ON d.seq = ${fts}.rowid WHERE ${fts} MATCH ?${filters} ORDER BY score DESC, d.sort_key ASC LIMIT ?`;
     return {
-      sql: `SELECT g.generation AS generation, m.doc_id AS doc_id, m.id_type AS id_type, m.score AS score FROM (SELECT generation FROM ${this.resourcesTable} WHERE id = ?) g LEFT JOIN (${matches}) m ON 1 ORDER BY m.score DESC, m.doc_id ASC`,
+      sql: `SELECT g.generation AS generation, m.doc_id AS doc_id, m.id_type AS id_type, m.score AS score FROM (SELECT generation FROM ${this.resourcesTable} WHERE id = ?) g LEFT JOIN (${matches}) m ON 1 ORDER BY m.score DESC, m.sort_key ASC`,
       params,
     };
   }

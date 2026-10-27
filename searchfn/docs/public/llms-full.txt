@@ -3406,7 +3406,13 @@ async function getServer(env: Env) {
   await adapter.initialize({
     resources: [{ name: "articles", searchFields: ["title", "body"] }],
   });
-  sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+  sf = await createSearchFnServer({
+    adapter,
+    basePath: "/searchfn",
+    // Without authorize, anyone can call /searchfn/index, /remove and /clear.
+    // This Worker serves reads only; index from your own authenticated code with adapter.index().
+    authorize: (_ctx, action) => action === "status" || action === "search" || action === "searchAll",
+  });
   return sf;
 }
 
@@ -9670,7 +9676,7 @@ The server calls `initialize()` with each resource's `indices.search` fields at 
 - With `prefix: true`, every term matches as a prefix (`subs` matches `subset`).
 - Query text is always matched literally. FTS5 operators and syntax in user input (`AND`, `NEAR`, quotes, `*`, `column:`) are not interpreted. Only the first 32 distinct terms are used.
 - `fields` limits matching to those declared fields. Unknown field names are ignored; if none are known, the result is empty. An empty `fields` list selects no fields and returns no results, as does an empty `resources` list in `searchAll()`; omit either option to search every field or the default resources.
-- Results are ordered by BM25 (`bm25()`), highest first, with ties broken by resource name (in `searchAll()`) and then document id, both in Unicode code point order (SQLite's binary order). The same order applies before every `limit` and `limitPerResource` cut, so a smaller limit always returns a prefix of a larger one. `fieldBoosts` sets the per-field BM25 weight (default `1`); weights must be finite and `>= 0`.
+- Results are ordered by BM25 (`bm25()`), highest first, with ties broken by resource name (in `searchAll()`) and then document id, both in JavaScript string order (`<`, UTF-16 code units), the order the SearchFn client and `@datafn/server` use when they merge results. The same order applies before every `limit` and `limitPerResource` cut, so a smaller limit always returns a prefix of a larger one, also through those consumers. `fieldBoosts` sets the per-field BM25 weight (default `1`); weights must be finite and `>= 0`.
 - `namespaceFilter` and `regionFilter` match the `__ns` and `__region` document metadata. When a filter is set, documents without that metadata are excluded.
 
 ### Fuzzy search
@@ -9682,7 +9688,7 @@ Fuzzy search is not supported. The adapter reports `fuzzy: false` and ignores th
 For a table prefix `searchfn`, the adapter creates:
 
 - `searchfn_resources`: one row per resource with its declared fields and current index generation.
-- `searchfn_r<id>_docs`: the stored documents (id, id type, namespace, region and all fields as JSON).
+- `searchfn_r<id>_docs`: the stored documents (id, an id sort key, id type, namespace, region and all fields as JSON).
 - `searchfn_r<id>_fts_<generation>`: the FTS5 index, one column per declared search field.
 
 Table names come from an internal integer id, so resource and field names are never used as SQL identifiers. Every value is a bound parameter; each write binds one JSON parameter, which keeps D1 below its per-statement parameter limit. Writes are split so that no bound JSON value exceeds 512 KiB, and a single document or id that does not fit on its own is rejected with `DFQL_INVALID` before anything in the call is written.
@@ -9699,7 +9705,7 @@ Table names come from an internal integer id, so resource and field names are ne
 
 ### Lifecycle
 
-`dispose()` makes the adapter reject further calls until `initialize()` is called again. It does not close the driver, and the stored index persists.
+`dispose()` makes the adapter reject further calls until `initialize()` is called again and succeeds; a failed `initialize()` leaves it disposed. It does not close the driver, and the stored index persists.
 
 ## Testing
 

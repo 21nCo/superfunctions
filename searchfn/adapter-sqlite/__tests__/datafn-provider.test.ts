@@ -217,4 +217,23 @@ describe("@datafn/server search requests", () => {
 
     await server.close();
   });
+
+  it("keeps a smaller search limit a prefix of a larger one for tied scores", async () => {
+    const server = await startServer();
+    // JavaScript `<` (the order @datafn/server re-sorts by) puts U+10000 before U+E000.
+    const astral = "bookmark:\u{10000}";
+    const bmp = "bookmark:\uE000";
+    await insert(server, "a", "bookmark", bmp, { title: "Tied title" });
+    await insert(server, "a", "bookmark", astral, { title: "Tied title" });
+
+    const search = async (limit: number) => {
+      const result = await call(server, "search", "a", { query: "tied", limit });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      return result.result?.results?.map((item) => item.id);
+    };
+    expect(await search(1)).toEqual([astral]);
+    expect(await search(2)).toEqual([astral, bmp]);
+
+    await server.close();
+  });
 });

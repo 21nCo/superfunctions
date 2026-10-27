@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSearchClient } from "@searchfn/client";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import {
   FUZZY_UNSUPPORTED_WARNING,
   SEARCH_ADAPTER_DISPOSED,
@@ -210,32 +212,68 @@ describe("query semantics", () => {
 });
 
 describe("tie ordering", () => {
-  // U+E000 sorts before U+10000 in code point (SQLite BINARY) order but after it in UTF-16 order.
+  // U+10000 (a surrogate pair) sorts before U+E000 with JavaScript `<`, which the searchfn client
+  // and @datafn/server use to re-sort results, but after it in code point (SQLite BINARY) order.
   const BMP = "\uE000";
   const ASTRAL = "\u{10000}";
+  const LOW = `r${ASTRAL}`;
+  const HIGH = `r${BMP}`;
+  // Score ties in JavaScript string order: resource first, then id.
+  const ALL = [`${LOW}:${ASTRAL}`, `${LOW}:${BMP}`, `${HIGH}:${ASTRAL}`, `${HIGH}:${BMP}`];
+  const pairs = (results: Array<{ resource: string; id: string | number }>) =>
+    results.map(({ resource, id }) => `${resource}:${id}`);
 
-  it("orders equal scores by id code point at every truncation and in the cross-resource merge", async () => {
+  beforeEach(async () => {
     await adapter.initialize({
       resources: [
-        { name: "a", searchFields: ["title"] },
-        { name: "b", searchFields: ["title"] },
+        { name: HIGH, searchFields: ["title"] },
+        { name: LOW, searchFields: ["title"] },
       ],
     });
-    for (const resource of ["a", "b"]) {
-      await adapter.index({ resource, documents: [ASTRAL, BMP].map((id) => ({ id, fields: { title: "same text" } })) });
+    for (const resource of [HIGH, LOW]) {
+      await adapter.index({ resource, documents: [BMP, ASTRAL].map((id) => ({ id, fields: { title: "same text" } })) });
     }
-    const pairs = (results: Array<{ resource: string; id: string | number }>) =>
-      results.map(({ resource, id }) => `${resource}:${id}`);
-    const all = [`a:${BMP}`, `a:${ASTRAL}`, `b:${BMP}`, `b:${ASTRAL}`];
+  });
 
-    expect(await adapter.search({ resource: "a", query: "same", limit: 1 })).toEqual([BMP]);
-    expect(await adapter.search({ resource: "a", query: "same" })).toEqual([BMP, ASTRAL]);
-    expect(pairs(await adapter.searchAll({ query: "same" }))).toEqual(all);
-    for (let limit = 1; limit <= all.length; limit++) {
-      expect(pairs(await adapter.searchAll({ query: "same", limit }))).toEqual(all.slice(0, limit));
+  it("orders equal scores like JavaScript < at every adapter truncation and in the merge", async () => {
+    expect(await adapter.search({ resource: HIGH, query: "same", limit: 1 })).toEqual([ASTRAL]);
+    expect(await adapter.search({ resource: HIGH, query: "same" })).toEqual([ASTRAL, BMP]);
+    expect(pairs(await adapter.searchAll({ query: "same" }))).toEqual(ALL);
+    for (let limit = 1; limit <= ALL.length; limit++) {
+      expect(pairs(await adapter.searchAll({ query: "same", limit }))).toEqual(ALL.slice(0, limit));
     }
-    expect(pairs(await adapter.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([`a:${BMP}`, `b:${BMP}`]);
-    expect(pairs(await adapter.searchAll({ query: "same", resources: ["b", "a"], limit: 3 }))).toEqual(all.slice(0, 3));
+    expect(pairs(await adapter.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([ALL[0], ALL[2]]);
+    expect(pairs(await adapter.searchAll({ query: "same", resources: [HIGH, LOW], limit: 3 }))).toEqual(ALL.slice(0, 3));
+  });
+
+  it("keeps a smaller limit a prefix of a larger one through the searchfn client", async () => {
+    const client = createSearchClient({ adapter });
+    for (let limit = 1; limit <= ALL.length; limit++) {
+      expect(pairs(await client.searchAll({ query: "same", limit }))).toEqual(ALL.slice(0, limit));
+    }
+    expect(pairs(await client.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([ALL[0], ALL[2]]);
+    expect(pairs(await client.searchAll({ query: "same", limitPerResource: 1, limit: 1 }))).toEqual([ALL[0]]);
+    expect(await client.search({ resource: LOW, query: "same", limit: 1 })).toEqual([ASTRAL]);
+    expect(await client.search({ resource: LOW, query: "same", limit: 2 })).toEqual([ASTRAL, BMP]);
+  });
+
+  it("agrees with the client fallback for an adapter without searchAll", async () => {
+    const searchOnly: SearchAdapter = {
+      name: adapter.name,
+      capabilities: { ...adapter.capabilities, searchAll: false },
+      index: (params) => adapter.index(params),
+      search: (params) => adapter.search(params),
+      remove: (params) => adapter.remove(params),
+      clear: (resource) => adapter.clear(resource),
+    };
+    const client = createSearchClient({ adapter: searchOnly });
+    // Positional scores: each resource's first id ties with the other resource's first id.
+    const query = { query: "same", resources: [HIGH, LOW], limitPerResource: 2 };
+    const expected = [`${LOW}:${ASTRAL}`, `${HIGH}:${ASTRAL}`, `${LOW}:${BMP}`, `${HIGH}:${BMP}`];
+    for (let limit = 1; limit <= expected.length; limit++) {
+      expect(pairs(await client.searchAll({ ...query, limit }))).toEqual(expected.slice(0, limit));
+    }
+    expect(pairs(await client.searchAll({ ...query, limitPerResource: 1 }))).toEqual(expected.slice(0, 2));
   });
 });
 
@@ -787,6 +825,50 @@ describe("lifecycle and cancellation", () => {
     expect(await database.driver.all("SELECT 1 AS one")).toEqual([{ one: 1 }]);
     await adapter.initialize({ resources: BOOKMARKS });
     expect(await adapter.search({ resource: "bookmarks", query: "readers" })).toEqual(["b2"]);
+  });
+
+  it("stays disposed when initialize() fails after dispose()", async () => {
+    let down = false;
+    const failing: SqliteDriver = {
+      exec: (sql) => (down ? Promise.reject(new Error("driver down")) : database.driver.exec(sql)),
+      all: (sql, params) => (down ? Promise.reject(new Error("driver down")) : database.driver.all(sql, params)),
+      run: (sql, params) => (down ? Promise.reject(new Error("driver down")) : database.driver.run(sql, params)),
+      batch: (statements) => (down ? Promise.reject(new Error("driver down")) : database.driver.batch!(statements)),
+    };
+    const owned = new SqliteAdapter({ driver: failing });
+    await owned.initialize({ resources: BOOKMARKS });
+    const registered = async () =>
+      (await database.driver.all<{ resource: string }>(`SELECT resource FROM "searchfn_resources"`)).map((row) => row.resource);
+
+    const failures: Array<[string, () => Promise<void>]> = [
+      ["validation", () => owned.initialize({ resources: [{ name: "bookmarks", searchFields: [] }] })],
+      [
+        "driver",
+        () => {
+          down = true;
+          return owned.initialize({ resources: [{ name: "users", searchFields: ["email"] }] }).finally(() => {
+            down = false;
+          });
+        },
+      ],
+    ];
+    for (const [kind, initialize] of failures) {
+      await owned.dispose();
+      await expect(initialize(), kind).rejects.toThrow();
+      const disposed = { code: SEARCH_ADAPTER_DISPOSED };
+      await expect(
+        owned.index({ resource: "users", documents: [{ id: "u1", fields: { email: "a@example.com" } }] }),
+        kind,
+      ).rejects.toMatchObject(disposed);
+      await expect(owned.remove({ resource: "users", ids: ["u1"] }), kind).rejects.toMatchObject(disposed);
+      await expect(owned.search({ resource: "users", query: "example" }), kind).rejects.toMatchObject(disposed);
+      await expect(owned.searchAll({ query: "example" }), kind).rejects.toMatchObject(disposed);
+      expect(await registered(), kind).toEqual(["bookmarks"]);
+    }
+
+    await owned.initialize({ resources: BOOKMARKS });
+    await owned.index({ resource: "users", documents: [{ id: "u1", fields: { email: "a@example.com" } }] });
+    expect(await registered()).toEqual(["bookmarks"]);
   });
 
   it("rejects aborted operations with DFQL_ABORTED", async () => {
