@@ -149,7 +149,11 @@ has any id unchanged.
     unreachable collector cannot hold a connection, and `asyncio.run()` or
     interpreter exit never waits for it. Only DNS resolution is not
     interruptible (it finishes in its daemon thread, and no connect follows
-    it). Proxy environment variables are not used.
+    it). A lookup holds no sockets, and at most 8 lookups are outstanding in
+    the process: beyond that an attempt fails at once with
+    `ResolverBusyError` (retried like any network error) without starting a
+    thread, so a hung resolver cannot accumulate threads or descriptors.
+    Proxy environment variables are not used.
     Pass `transport=async (url, body, headers, timeout) -> status` to use
     another client; it should release its resources when cancelled.
   - Redaction runs on the caller's thread over the whole, untruncated event

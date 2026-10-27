@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import datetime
 import json
+import os
 import socket
 import threading
 import time
@@ -1021,8 +1022,77 @@ def test_the_default_transport_releases_its_attempt_when_its_thread_cannot_start
     def refuse(self: threading.Thread) -> None:
         raise RuntimeError("can't start new thread")
 
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(logfn.sinks, "_resolver_slots", slots)
     monkeypatch.setattr(logfn.sinks, "_Attempt", recording)
     monkeypatch.setattr(logfn.sinks.threading.Thread, "start", refuse)
     with pytest.raises(RuntimeError):
         asyncio.run(logfn.sinks.stdlib_transport("http://127.0.0.1:9/", b"{}", {}, 1.0))
-    assert attempts[0]._wake_reader.fileno() == -1 and attempts[0]._wake_writer.fileno() == -1
+    assert attempts[0]._wake_reader is None and attempts[0]._sock is None
+    assert slots.acquire(blocking=False), "the resolver slot was not released"
+
+
+def _open_fds() -> int:
+    for directory in ("/proc/self/fd", "/dev/fd"):
+        if os.path.isdir(directory):
+            return len(os.listdir(directory))
+    pytest.skip("cannot count open file descriptors on this platform")
+
+
+def _http_threads() -> list[threading.Thread]:
+    return [thread for thread in threading.enumerate() if thread.name == "logfn-http"]
+
+
+def test_a_stalled_resolver_holds_no_sockets_and_a_bounded_number_of_threads(
+    monkeypatch: pytest.MonkeyPatch, collector: tuple[str, list[dict[str, Any]], list[str]]
+) -> None:
+    # Name resolution cannot be interrupted. While it hangs, abandoned
+    # attempts must not pile up threads or descriptors: at most the cap is
+    # outstanding, further attempts fail at once without a thread, and
+    # delivery works again once the resolver answers.
+    url, received, _auth = collector
+    gate = threading.Event()
+    real_getaddrinfo = socket.getaddrinfo
+
+    def held(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == "stalled.test":
+            gate.wait(10)
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", held)
+    monkeypatch.setattr(logfn.sinks, "_resolver_slots", threading.BoundedSemaphore(3))
+    assert _http_threads() == []
+    errors: list[BaseException] = []
+    try:
+        base_fds = _open_fds()
+        sink = SinkHttp(
+            "http://stalled.test/ingest", batch_size=1, timeout=0.02, retry_attempts=3, backoff_ms=0, on_error=errors.append
+        )
+
+        async def main() -> float:
+            for i in range(20):
+                sink([event(f"m{i}")])
+                await sink.flush()
+                assert len(_http_threads()) <= 3
+            started = time.monotonic()
+            await sink.close()
+            return time.monotonic() - started
+
+        close_took = asyncio.run(main())
+        assert close_took < 0.5
+        assert len(_http_threads()) == 3
+        assert _open_fds() <= base_fds  # The stalled attempts hold no descriptors.
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 20, "failed_batches": 20}
+        assert any(isinstance(error, logfn.sinks.ResolverBusyError) for error in errors)
+    finally:
+        gate.set()
+    deadline = time.monotonic() + 5
+    while _http_threads() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _http_threads() == []
+
+    healthy = SinkHttp(url, batch_size=1)
+    healthy([event("after")])
+    asyncio.run(healthy.close())
+    assert [e["msg"] for e in received] == ["after"]
+    assert healthy.stats()["sent"] == 1

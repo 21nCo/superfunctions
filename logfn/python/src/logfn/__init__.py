@@ -16,7 +16,7 @@ from .redact import (
     is_sensitive_key,
     redact_event,
 )
-from .sinks import DeliveryError, SinkConsole, SinkHttp, Transport, stdlib_transport
+from .sinks import DeliveryError, ResolverBusyError, SinkConsole, SinkHttp, Transport, stdlib_transport
 from .types import (
     DEFAULT_VERSION,
     LOG_LEVEL_VALUES,
@@ -83,6 +83,7 @@ __all__ = [
     "MAX_TAGS",
     "PipelineStage",
     "REDACTED",
+    "ResolverBusyError",
     "Sink",
     "SinkConsole",
     "SinkHttp",

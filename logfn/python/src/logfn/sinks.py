@@ -72,6 +72,18 @@ Transport = Callable[[str, bytes, dict[str, str], float], Awaitable[int]]
 DropReason = Literal["queue_full", "delivery_failed", "closed", "redaction_failed"]
 
 
+# Name resolution cannot be interrupted, so a stalled resolver keeps each
+# attempt's thread alive after the attempt is abandoned. At most this many
+# lookups are outstanding in the process; beyond it an attempt fails at once
+# with ResolverBusyError (retried like any network error) and starts no thread.
+_RESOLVER_SLOTS = 8
+_resolver_slots = threading.BoundedSemaphore(_RESOLVER_SLOTS)
+
+
+class ResolverBusyError(ConnectionError):
+    """Every name-resolution slot is held by an outstanding lookup."""
+
+
 class _Attempt:
     """The sockets of one request, which abort() stops from any thread: a
     connect in progress fails at once, a later address is never tried, and a
@@ -83,10 +95,21 @@ class _Attempt:
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._aborted = False
-        # abort() writes here to wake a connect waiting in a selector.
-        self._wake_reader, self._wake_writer = socket.socketpair()
-        self._wake_reader.setblocking(False)
-        self._wake_writer.setblocking(False)
+        # abort() writes here to wake a connect waiting in a selector. Made
+        # only once the name is resolved, so a stalled lookup holds no fds.
+        self._wake_reader: socket.socket | None = None
+        self._wake_writer: socket.socket | None = None
+        # One of _RESOLVER_SLOTS, held until name resolution returns.
+        self._slots = _resolver_slots
+        if not self._slots.acquire(blocking=False):
+            raise ResolverBusyError("too many name resolutions are outstanding")
+        self._resolving = True
+
+    def _resolved(self) -> None:
+        with self._lock:
+            if self._resolving:
+                self._resolving = False
+                self._slots.release()
 
     def _attach(self, sock: socket.socket | None) -> None:
         with self._lock:
@@ -109,7 +132,16 @@ class _Attempt:
         limit = timeout if isinstance(timeout, (int, float)) else None
         # Name resolution cannot be interrupted; an abort during it stops the
         # loop before any connect.
-        infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        try:
+            infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        finally:
+            self._resolved()
+        with self._lock:
+            if self._aborted:
+                raise ConnectionAbortedError("request aborted")
+            self._wake_reader, self._wake_writer = socket.socketpair()
+            self._wake_reader.setblocking(False)
+            self._wake_writer.setblocking(False)
         first_error: OSError | None = None
         for family, socktype, proto, _name, sockaddr in infos:
             remaining = self._deadline - time.monotonic()
@@ -144,7 +176,8 @@ class _Attempt:
             pass
         with selectors.DefaultSelector() as selector:
             selector.register(sock, selectors.EVENT_WRITE)
-            selector.register(self._wake_reader, selectors.EVENT_READ)
+            if self._wake_reader is not None:
+                selector.register(self._wake_reader, selectors.EVENT_READ)
             ready = {key.fileobj for key, _ in selector.select(limit)}
         if self._aborted or self._wake_reader in ready:
             raise ConnectionAbortedError("request aborted")
@@ -159,8 +192,9 @@ class _Attempt:
             if self._aborted:
                 return
             self._aborted = True
-            with contextlib.suppress(OSError):
-                self._wake_writer.send(b"\0")
+            if self._wake_writer is not None:
+                with contextlib.suppress(OSError):
+                    self._wake_writer.send(b"\0")
             if self._sock is not None:
                 with contextlib.suppress(OSError):
                     self._sock.shutdown(socket.SHUT_RDWR)
@@ -171,8 +205,10 @@ class _Attempt:
             if self._sock is not None:
                 self._sock.close()
                 self._sock = None
-            self._wake_reader.close()
-            self._wake_writer.close()
+            if self._wake_reader is not None and self._wake_writer is not None:
+                self._wake_reader.close()
+                self._wake_writer.close()
+        self._resolved()  # The request ended before or without resolving.
 
 
 def _post(url: str, body: bytes, headers: dict[str, str], timeout: float, attempt: _Attempt) -> int:
@@ -202,7 +238,10 @@ async def stdlib_transport(url: str, body: bytes, headers: dict[str, str], timeo
     tried and a connected socket is shut down, so no connection outlives the
     attempt and interpreter or loop shutdown never waits for the collector.
     Only name resolution cannot be interrupted; it ends in its own thread
-    and no connect follows it.
+    and no connect follows it. It holds no sockets, and at most
+    ``_RESOLVER_SLOTS`` (8) lookups are outstanding in the process: beyond
+    that an attempt fails at once with ``ResolverBusyError`` and starts no
+    thread, so a hung resolver cannot accumulate threads.
     Proxy environment variables are not used."""
     loop = asyncio.get_running_loop()
     result: asyncio.Future[int] = loop.create_future()

@@ -11,7 +11,8 @@ const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
  * Register process signal handlers for graceful shutdown. On SIGTERM or
  * SIGINT the logger logs the signal, flushes once (nothing is logged after
  * that flush, so no event is left queued) and exits with 128 + the signal
- * number (143 or 130).
+ * number (143 or 130). A second signal while that flush is pending exits at
+ * once with its own code.
  */
 export function registerProcessHandlers(logger: Logger): () => void {
   if (typeof process === "undefined" || typeof process.on !== "function") {
@@ -21,9 +22,19 @@ export function registerProcessHandlers(logger: Logger): () => void {
   }
 
   let shuttingDown = false;
+  let exited = false;
+  const exit = (signal: string) => {
+    if (!exited) {
+      exited = true;
+      process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+    }
+  };
 
   const shutdownHandler = (signal: string) => async () => {
     if (shuttingDown) {
+      // A repeated signal while the flush is pending exits at once, so a
+      // sink whose flush never settles cannot make the process unkillable.
+      exit(signal);
       return;
     }
 
@@ -35,7 +46,7 @@ export function registerProcessHandlers(logger: Logger): () => void {
     } catch (error) {
       console.error("[logfn] Failed to flush on shutdown", error);
     } finally {
-      process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+      exit(signal);
     }
   };
 

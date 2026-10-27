@@ -281,7 +281,7 @@ describe("Logger", () => {
     });
   });
 
-  it("process handlers flush after the signal event, log nothing after that flush and exit 128 + signal", async () => {
+  it("process handlers flush after the signal event, log nothing after that flush, exit 128 + signal and exit at once on a repeated signal", async () => {
     const handlers = new Map<string, () => Promise<void>>();
     vi.spyOn(process, "on").mockImplementation(((event: string, handler: () => Promise<void>) => {
       handlers.set(event, handler);
@@ -310,6 +310,23 @@ describe("Logger", () => {
       expect(exit).toHaveBeenCalledExactlyOnceWith(code);
       unregister();
     }
+
+    // A flush that never settles: a repeated signal exits at once, once.
+    exit.mockClear();
+    let settle!: () => void;
+    const stuck = Object.assign((() => {}) as Sink, {
+      flush: () => new Promise<void>((resolve) => (settle = resolve)),
+    });
+    const unregister = registerProcessHandlers(createLogger({ name: "svc", sinks: [stuck] }));
+    const first = handlers.get("SIGTERM")!();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(exit).not.toHaveBeenCalled();
+    await handlers.get("SIGINT")!();
+    expect(exit).toHaveBeenCalledExactlyOnceWith(130);
+    settle();
+    await first;
+    expect(exit).toHaveBeenCalledOnce();
+    unregister();
   });
 
   it("defaults to a local console sink", () => {

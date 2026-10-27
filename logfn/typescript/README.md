@@ -62,8 +62,9 @@ when `url` is given.
   isolation: a throwing getter is reported, and sibling sinks still flush.
 - `registerProcessHandlers(logger)` (server entry): on SIGTERM or SIGINT it
   logs the signal, flushes once, logs nothing after that flush and exits
-  with 143 or 130 (128 + the signal number). It returns an unregister
-  function.
+  with 143 or 130 (128 + the signal number). A second signal while that
+  flush is pending exits at once with its own code, so a sink whose flush
+  never settles cannot block shutdown. It returns an unregister function.
 - A pipeline stage that throws drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
