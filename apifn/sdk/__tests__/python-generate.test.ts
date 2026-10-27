@@ -210,6 +210,12 @@ describe("python target: options", () => {
     ["a distribution name whose derived module shadows a dependency", option((options) => (options.package.name = "httpx")), "/options/package/name"],
     ["a distribution name whose derived module shadows typing_extensions", option((options) => (options.package.name = "typing-extensions")), "/options/package/name"],
     ["a distribution name whose derived module shadows the standard library", option((options) => (options.package.name = "asyncio")), "/options/package/name"],
+    // The distribution would require itself: no import name makes it installable.
+    ...["httpx", "typing-extensions", "httpcore", "anyio"].map((name): [string, any, string] => [
+      `the distribution name of the runtime dependency ${name}, with a safe module`,
+      option((options) => ((options.package.name = name), (options.module = "my_sdk"))),
+      "/options/package/name",
+    ]),
     ["a license that is not an SPDX expression", option((options) => (options.package.license = "see LICENSE, 2026")), "/options/package/license"],
     // Each of these passed a character check, then failed the build backend's license validation.
     ["a license expression missing an operand", option((options) => (options.package.license = "MIT AND")), "/options/package/license"],
@@ -223,6 +229,11 @@ describe("python target: options", () => {
     ["a base URL with a dot segment", option((options) => (options.baseUrl = "https://api.example.test/a/../v1")), "/options/baseUrl"],
     ["a base URL with user info", option((options) => (options.baseUrl = "https://user:pw@api.example.test")), "/options/baseUrl"],
     ["a base URL with a query", option((options) => (options.baseUrl = "https://api.example.test/?region=eu")), "/options/baseUrl"],
+    // A URL parser would accept these, but the runtime reads the URL as written and rejects them.
+    ["a base URL without //", option((options) => (options.baseUrl = "https:example.test")), "/options/baseUrl"],
+    ["a base URL with one /", option((options) => (options.baseUrl = "https:/example.test")), "/options/baseUrl"],
+    ["a base URL with port 0", option((options) => (options.baseUrl = "https://example.test:0")), "/options/baseUrl"],
+    ["a base URL with empty user info", option((options) => (options.baseUrl = "https://@example.test")), "/options/baseUrl"],
     ["a base URL with non-ASCII text", option((options) => (options.baseUrl = "https://api.example.test/größe")), "/options/baseUrl"],
     ["a client name that is a keyword", option((options) => (options.clientName = "None")), "/options/clientName"],
     ["a client name that is not an identifier", option((options) => (options.clientName = "tasks-client")), "/options/clientName"],
@@ -249,13 +260,17 @@ describe("python target: options", () => {
   });
 
   it("accepts normalized SPDX license expressions, and names the normalized form of one that is not", () => {
-    for (const license of ["MIT", "Apache-2.0 OR MIT", "(MIT AND BSD-3-Clause)", "GPL-2.0-only WITH Classpath-exception-2.0", "LicenseRef-Custom", "GPL-2.0+ OR (MIT AND LicenseRef-a.b-2)"]) {
+    for (const license of ["MIT", "Apache-2.0 OR MIT", "(MIT AND BSD-3-Clause)", "GPL-2.0-only WITH Classpath-exception-2.0", "LicenseRef-Custom", "GPL-2.0+ OR (MIT AND LicenseRef-a.b-2)", "(MIT)", "MIT AND (Apache-2.0 OR (0BSD))"]) {
       const result = generatePython(fixtureCatalog(), option((options) => (options.package.license = license)));
       expect(result.ok, `${license}: ${JSON.stringify(result.diagnostics)}`).toBe(true);
       expect(fileOf(result, "pyproject.toml")).toContain(`license = ${JSON.stringify(license)}`);
     }
     const lowercase = generatePython(fixtureCatalog(), option((options) => (options.package.license = "mit or apache-2.0 with llvm-exception")));
     expect(lowercase.diagnostics.find((diagnostic) => diagnostic.pointer === "/options/package/license")?.message).toContain('"MIT OR Apache-2.0 WITH LLVM-exception"');
+    // packaging 24.2, which hatchling still allows, rejects a parenthesis opening straight after another.
+    for (const license of ["((MIT))", "((MIT) AND BSD-3-Clause)", "MIT AND ((Apache-2.0))"]) {
+      expect(errors(generatePython(fixtureCatalog(), option((options) => (options.package.license = license)))).map((diagnostic) => diagnostic.pointer), license).toEqual(["/options/package/license"]);
+    }
   });
 
   it("escapes package metadata as TOML and keeps the generated files ASCII", () => {
@@ -264,6 +279,14 @@ describe("python target: options", () => {
     // Literal backslash sequences stay literal: TOML reads each value back as it was configured.
     const literal = generatePython(fixtureCatalog(), option((options) => (options.package.description = "literal \\x41, \\u00e9 and \\\\x7f")));
     expect(fileOf(literal, "pyproject.toml")).toContain('description = "literal \\\\x41, \\\\u00e9 and \\\\\\\\x7f"');
+  });
+
+  it("accepts a base URL with an explicit port, and reports a dependency's distribution name once", () => {
+    const result = generatePython(fixtureCatalog(), option((options) => (options.baseUrl = "http://localhost:65535/v1")));
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(fileOf(result, "src/example_tasks_sdk/client.py")).toContain('default_base_url="http://localhost:65535/v1"');
+    const derived = generatePython(fixtureCatalog(), option((options) => (options.package.name = "httpx")));
+    expect(derived.diagnostics.map((diagnostic) => diagnostic.pointer)).toEqual(["/options/package/name"]);
   });
 
   it("requires base_url in the constructor when the config has no default", () => {
@@ -407,11 +430,41 @@ describe("python target: schema types", () => {
     create.requestBody.contents[0].schema = { type: "object", properties: { task: { $ref: "#/components/schemas/TaskInput" }, note: { type: "object", properties: { text: { type: "string" } } } } };
     const result = generatePython(catalog);
     const models = fileOf(result, "src/example_tasks_sdk/models.py");
-    // Fields are typed before their object is named, so a nested object comes first.
-    expect(models).toContain('_CreateTask_1 = _te.TypedDict(\n    "_CreateTask_1",\n    {\n        "text": _te.NotRequired["str"],\n');
-    expect(models).toContain('_CreateTask_2 = _te.TypedDict(\n    "_CreateTask_2",\n    {\n        "note": _te.NotRequired["_CreateTask_1"],\n        "task": _te.NotRequired["TaskInput"],\n');
+    // An object is named before its fields are typed, so it comes before the objects nested in it.
+    expect(models).toContain('_CreateTask_1 = _te.TypedDict(\n    "_CreateTask_1",\n    {\n        "note": _te.NotRequired["_CreateTask_2"],\n        "task": _te.NotRequired["TaskInput"],\n');
+    expect(models).toContain('_CreateTask_2 = _te.TypedDict(\n    "_CreateTask_2",\n    {\n        "text": _te.NotRequired["str"],\n');
     expect(models).not.toContain("_m.");
-    expect(fileOf(result, "src/example_tasks_sdk/client.py")).toContain("        body: _m._CreateTask_2,\n");
+    expect(fileOf(result, "src/example_tasks_sdk/client.py")).toContain("        body: _m._CreateTask_1,\n");
+  });
+
+  it("synthesizes one TypedDict per inline object, so references back through wrappers stay linear", () => {
+    const node = { $ref: "#/components/schemas/Node" };
+    const generateNode = (properties: Record<string, unknown>) => {
+      const catalog = fixtureCatalog();
+      catalog.schemas.Node = { type: "object", properties: { v: { type: "string" }, ...properties } };
+      // The same wrapper shape in array items and in an operation's response body.
+      // (Named to sort after Node: an inline object is named for the schema that first needs it.)
+      catalog.schemas.Wood = { type: "array", items: { ...node, required: ["v"] } };
+      const get = catalog.operations.find((operation: any) => operation.id === "tasks.get");
+      get.responses.find((response: any) => response.status === "200").contents[0].schema = { allOf: [node, { required: ["v"] }] };
+      const started = Date.now();
+      const result = generatePython(catalog);
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+      const models = fileOf(result, "src/example_tasks_sdk/models.py");
+      return { models, inline: models.match(/^_(?:Node|Wood|GetTask)_\d+ = _te\.TypedDict\(/gm)?.length ?? 0 };
+    };
+    const self = generateNode({ next: { ...node, required: ["v"] } });
+    expect(self.models).toContain('_Node_1 = _te.TypedDict(\n    "_Node_1",\n    {\n        "next": _te.NotRequired["_Node_1"],\n        "v": "str",\n    },\n)');
+    expect(self.models).toContain('        "next": _te.NotRequired["_Node_1"],\n        "v": _te.NotRequired["str"],\n');
+    expect(self.models).toContain('Wood: _te.TypeAlias = "list[_Wood_1]"');
+    expect(self.models).toContain('_Wood_1 = _te.TypedDict(\n    "_Wood_1",\n    {\n        "next": _te.NotRequired["_Node_1"],\n        "v": "str",\n    },\n)');
+    // Node's property, Wood's items and the response body: one TypedDict each.
+    expect(self.inline).toBe(3);
+    const wrappers = (count: number, wrap: (index: number) => unknown) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`p${index}`, wrap(index)]));
+    expect(generateNode(wrappers(2, () => ({ ...node, required: ["v"] }))).inline).toBe(4);
+    expect(generateNode(wrappers(2, () => ({ allOf: [node, { required: ["v"] }] }))).inline).toBe(4);
+    expect(generateNode(wrappers(6, (index) => (index % 2 ? { allOf: [node, { required: ["v"] }] } : { ...node, required: ["v"] }))).inline).toBe(8);
   });
 
   it("widens alias cycles with a warning, and keeps recursion through objects and arrays", () => {
@@ -427,6 +480,23 @@ describe("python target: schema types", () => {
     expect(models).toContain('A: _te.TypeAlias = "B | float"');
     expect(models).toContain('B: _te.TypeAlias = "_t.Any"');
     expect(models).toContain('Tree: _te.TypeAlias = "list[Tree]"');
+  });
+});
+
+describe("python target: generated layout", () => {
+  it("indents every line of a TypedDict entry alike, comments included", () => {
+    const catalog = fixtureCatalog();
+    catalog.schemas.Documented = { type: "object", properties: { a: { type: "string", description: "First line.\nSecond line.", deprecated: true } } };
+    const models = fileOf(generatePython(catalog), "src/example_tasks_sdk/models.py");
+    expect(models).toContain('    {\n        # First line.\n        # Second line.\n        #\n        # Deprecated.\n        "a": _te.NotRequired["str"],\n    },\n');
+  });
+
+  it("imports custom code after the generated names, so it can import them from the package", () => {
+    const index = fileOf(generatePython(), "src/example_tasks_sdk/__init__.py");
+    const custom = index.indexOf("from . import custom as _custom\n");
+    expect(custom).toBeGreaterThan(index.indexOf("from .models import ("));
+    expect(custom).toBeGreaterThan(index.indexOf("from .client import ("));
+    expect(custom).toBeGreaterThan(index.indexOf("from ._runtime import ("));
   });
 });
 

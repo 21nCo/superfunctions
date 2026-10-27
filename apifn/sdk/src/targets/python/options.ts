@@ -3,7 +3,7 @@
 import { containsCredentialValue, PACKAGE_NAME_PATTERN, type OperationCatalog } from "@apifn/contracts";
 import type { SdkDiagnostic } from "../../types.js";
 import { PY_MODULE_NAME, PY_TYPE_NAME, pyPascalCase, PYTHON_KEYWORDS } from "./naming.js";
-import { RUNTIME_DEPENDENCY_MODULES, STDLIB_MODULES } from "./reserved-modules.js";
+import { RUNTIME_DEPENDENCY_DISTRIBUTIONS, RUNTIME_DEPENDENCY_MODULES, STDLIB_MODULES } from "./reserved-modules.js";
 import { canonicalLicenseExpression } from "./spdx.js";
 
 export interface PythonOptions {
@@ -76,6 +76,9 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
   const name = pkg.name;
   const nameValid = typeof name === "string" && name.length <= 214 && DISTRIBUTION_NAME.test(name) && PACKAGE_NAME_PATTERN.test(name);
   if (!nameValid) fail("/package/name", "Expected a normalized Python distribution name such as example-projects-sdk (lowercase letters and digits joined by single hyphens).");
+  // Whatever the import name: a distribution named as one it requires cannot be installed alongside it.
+  const nameTaken = nameValid && RUNTIME_DEPENDENCY_DISTRIBUTIONS.has(name as string);
+  if (nameTaken) fail("/package/name", `The distribution name "${name}" is that of a runtime dependency of the generated package; choose another name.`);
   const version = pkg.version;
   if (typeof version !== "string" || version.length > 64 || !PEP440_VERSION.test(version)) {
     fail("/package/version", "Expected a normalized PEP 440 version such as 1.0.0, 1.0.0rc1 or 1.0.0.post1.");
@@ -96,7 +99,7 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
     // The package would be imported in place of that module, by its own runtime and by everything else installed.
     const shadowed = STDLIB_MODULES.has(module) ? "a standard-library module" : "a runtime dependency of the generated package";
     const pointer = root.module !== undefined ? "/module" : "/package/name";
-    fail(pointer, `The import name "${module}" would shadow ${shadowed}; ${root.module !== undefined ? "choose another module" : "set module to another import name"}.`);
+    if (pointer === "/module" || !nameTaken) fail(pointer, `The import name "${module}" would shadow ${shadowed}; ${root.module !== undefined ? "choose another module" : "set module to another import name"}.`);
   }
 
   const clientName = root.clientName ?? `${pyPascalCase(catalog.api.id)}Client`;
@@ -113,10 +116,12 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
     } catch {
       url = null;
     }
-    // The runtime reads the URL as written, so it must already be in the form a URL parser would leave it.
-    const plain = baseUrl !== null && /^[\x21-\x7e]+$/.test(baseUrl) && !baseUrl.includes("\\") && !baseUrl.split("/").slice(3).some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
+    // The runtime reads the URL as written, so it must already be in the form a URL parser would leave it: a
+    // scheme, "//" and a host (a URL parser would add what is missing), and a port the runtime accepts.
+    const authority = /^https?:\/\/([^/?#]*)/i.exec(baseUrl ?? "")?.[1] ?? "";
+    const plain = baseUrl !== null && authority !== "" && !authority.includes("@") && url?.port !== "0" && /^[\x21-\x7e]+$/.test(baseUrl) && !baseUrl.includes("\\") && !baseUrl.split("/").slice(3).some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
     if (!url || !plain || (url.protocol !== "http:" && url.protocol !== "https:") || url.username !== "" || url.password !== "" || /[?#]/.test(baseUrl ?? "")) {
-      fail("/baseUrl", "Expected an absolute http or https URL of printable ASCII, without user info, query, fragment or dot segments.");
+      fail("/baseUrl", "Expected an absolute http or https URL of printable ASCII with a host and a port from 1 to 65535, without user info, query, fragment or dot segments.");
     }
   }
 

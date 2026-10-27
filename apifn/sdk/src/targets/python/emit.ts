@@ -71,11 +71,11 @@ function responseType(shape: ResponseShape, types: PythonTypes, owner: string): 
 
 function typedDict(name: string, fields: PyField[], total = true): string {
   const entries = fields.map((field) => {
-    const doc = pyComment([field.description, field.deprecated ? "Deprecated." : null], "    ");
+    const doc = pyComment([field.description, field.deprecated ? "Deprecated." : null], "        ");
     const type = field.required || !total ? pyString(field.type) : `_te.NotRequired[${pyString(field.type)}]`;
-    return `${doc}    ${pyString(field.key)}: ${type},\n`;
+    return `${doc}        ${pyString(field.key)}: ${type},\n`;
   });
-  return `${name} = _te.TypedDict(\n    ${pyString(name)},\n    {\n${entries.map((entry) => `    ${entry}`).join("")}    },${total ? "" : "\n    total=False,"}\n)\n`;
+  return `${name} = _te.TypedDict(\n    ${pyString(name)},\n    {\n${entries.join("")}    },${total ? "" : "\n    total=False,"}\n)\n`;
 }
 
 function list(values: string[], indent: string): string {
@@ -412,10 +412,11 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
   const exportedModels = modelExports.map((name) => `    ${name} as ${name},\n`).join("");
   const index =
     header(context) +
-    `\nfrom . import custom as _custom\nfrom ._runtime import (\n${runtimeExports})\n` +
+    `\nfrom ._runtime import (\n${runtimeExports})\n` +
     `from .client import (\n${exportedClient.map((name) => `    ${name} as ${name},\n`).join("")})\n` +
     (exportedModels ? `from .models import (\n${exportedModels})\n` : "") +
-    `from .custom import *  # noqa: F403\n\n` +
+    // Custom code is imported last, so it can import the generated names from the package.
+    `from . import custom as _custom\nfrom .custom import *  # noqa: F403\n\n` +
     `__all__ = ${list([...RUNTIME_EXPORTS, ...exportedClient, ...modelExports].sort(compareCodeUnits).map(pyString), "")}\n` +
     `__all__ += _custom.__all__\n`;
 

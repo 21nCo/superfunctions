@@ -1,6 +1,6 @@
-// SPDX identifiers a generated package's license expression may use: those the build backend (hatchling, through
-// packaging.licenses) accepts, taken from the SPDX 3.25.0 list of packaging 24.2, the oldest version hatchling allows, that
-// packaging 26.3 (SPDX 3.27.0) also lists.
+// SPDX license expressions a generated package may declare: those the build backend (hatchling, through
+// packaging.licenses) accepts with packaging 24.2, the oldest version hatchling allows, and with packaging 26.3. The
+// identifiers are those of the SPDX 3.25.0 list of packaging 24.2 that packaging 26.3 (SPDX 3.27.0) also lists.
 
 /** SPDX license identifiers, as SPDX writes them. */
 export const SPDX_LICENSES: readonly string[] = `
@@ -101,7 +101,8 @@ export function canonicalLicenseExpression(expression: string): string | null {
   let index = 0;
   const term = (): boolean => {
     const token = tokens[index++];
-    if (token === "(") return expressionAt() && tokens[index++] === ")";
+    // packaging 24.2 rejects a parenthesis that opens straight after another, as in "((MIT))".
+    if (token === "(") return tokens[index] !== "(" && expressionAt() && tokens[index++] === ")";
     return token !== undefined && !OPERATORS.has(token);
   };
   const expressionAt = (): boolean => {

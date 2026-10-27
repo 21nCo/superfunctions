@@ -17,7 +17,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 | [`@apifn/svelte`](./svelte) | The same UI surface for Svelte, shipped as `.svelte` source. |
 | [`@apifn/docsfn`](./docsfn) | docsfn plugin — render an OpenAPI spec as an interactive API reference. |
 | [`@apifn/contracts`](./contracts) | Versioned operation catalog, release descriptor and client-failure event contracts, with JSON Schemas and shared fixtures for SDK generators, agent tools and failure reporting. |
-| [`@apifn/sdk`](./sdk) | Generate installable SDKs from an operation catalog through deterministic target adapters; ships the TypeScript `fetch` target. |
+| [`@apifn/sdk`](./sdk) | Generate installable SDKs from an operation catalog through deterministic target adapters; ships the TypeScript `fetch` target and the async Python (`asyncio` + `httpx`) target. |
 
 ### npm release dependency order
 

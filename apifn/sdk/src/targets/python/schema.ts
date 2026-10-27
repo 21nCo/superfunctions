@@ -66,6 +66,12 @@ export interface InlineTypedDict {
   fields: PyField[];
 }
 
+/** What `objectFields` merges: the object parts, and the property names any of them requires. */
+interface FieldPlan {
+  parts: Array<Record<string, unknown>>;
+  required: ReadonlySet<string>;
+}
+
 /**
  * Where a schema sits in the component schema being typed: `direct` outside any object or array, `array`
  * inside plain array items, `tuple` inside `prefixItems`. A component reference that `cut` names is typed
@@ -153,6 +159,12 @@ export class PythonTypes {
    * constrains, as in the TypeScript target.
    */
   objectFields(schema: unknown, owner: string, cut: ReadonlySet<string> = NO_CUTS, depth = 0): PyField[] | null {
+    const plan = this.#fieldPlan(schema, cut, depth);
+    return plan === null ? null : this.#typeFields(plan, owner, depth);
+  }
+
+  /** The parts and required names `objectFields` merges, decided before any field is typed; null for no TypedDict. */
+  #fieldPlan(schema: unknown, cut: ReadonlySet<string>, depth: number): FieldPlan | null {
     if (!isRecord(schema)) return null;
     const own = isRecord(schema.properties) && Object.keys(schema.properties).length > 0 ? 1 : 0;
     const references = ("$ref" in schema ? 1 : 0) + (Array.isArray(schema.allOf) ? schema.allOf.length : 0);
@@ -173,6 +185,10 @@ export class PythonTypes {
       }
     }
     if (own === 0 && references === 1 && !added) return null;
+    return { parts, required };
+  }
+
+  #typeFields({ parts, required }: FieldPlan, owner: string, depth: number): PyField[] {
     const merged = new Map<string, PyField>();
     for (const part of parts) {
       if (!isRecord(part.properties)) continue;
@@ -193,19 +209,37 @@ export class PythonTypes {
     return [...merged.values()];
   }
 
+  /** Synthesized TypedDict names per schema object and cut set (null: the schema has none), shared by every module. */
+  readonly #inlineNames = new WeakMap<object, Map<ReadonlySet<string>, string | null>>();
+  /** The properties-only view `#object` types an object schema through, one per schema, so it is memoized too. */
+  readonly #propertyViews = new WeakMap<object, Record<string, unknown>>();
+
   /**
    * A reference to a synthesized private TypedDict (its name starts with `_` and the owner's name) for an object
-   * schema's fields. It is written to models.py, so its fields are typed there, without this module's prefix.
+   * schema's fields. It is written to models.py, so its fields are typed there, without this module's prefix. Each
+   * schema object gets one, named before its fields are typed, so a reference back to it (through a component it
+   * wraps) reuses the name: TypedDict fields are forward references, and the work stays linear in the schemas.
    */
   #inlineTypedDict(schema: Record<string, unknown>, owner: string, cut: ReadonlySet<string>, depth: number): string | null {
-    const fields = this.#models.objectFields(schema, owner, cut, depth);
-    if (fields === null) return null;
-    let index = 1;
-    while (this.taken.has(`_${owner}_${index}`)) index++;
-    const name = `_${owner}_${index}`;
-    this.taken.add(name);
-    this.inline.push({ name, fields });
-    return `${this.prefix}${name}`;
+    const models = this.#models;
+    let byCut = models.#inlineNames.get(schema);
+    if (byCut === undefined) models.#inlineNames.set(schema, (byCut = new Map()));
+    let name = byCut.get(cut);
+    if (name === undefined) {
+      const plan = models.#fieldPlan(schema, cut, depth);
+      if (plan === null) byCut.set(cut, (name = null));
+      else {
+        let index = 1;
+        while (this.taken.has(`_${owner}_${index}`)) index++;
+        name = `_${owner}_${index}`;
+        this.taken.add(name);
+        const entry: InlineTypedDict = { name, fields: [] };
+        this.inline.push(entry);
+        byCut.set(cut, name);
+        entry.fields = models.#typeFields(plan, owner, depth);
+      }
+    }
+    return name === null ? null : `${this.prefix}${name}`;
   }
 
   /**
@@ -289,7 +323,9 @@ export class PythonTypes {
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const map = input ? "_t.Mapping" : "dict";
     if (Object.keys(properties).length > 0) {
-      const inline = this.#inlineTypedDict({ properties, required: schema.required }, owner, NO_CUTS, depth);
+      let view = this.#models.#propertyViews.get(schema);
+      if (view === undefined) this.#models.#propertyViews.set(schema, (view = { properties, required: schema.required }));
+      const inline = this.#inlineTypedDict(view, owner, NO_CUTS, depth);
       if (inline !== null) return inline;
     }
     const additional = schema.additionalProperties;

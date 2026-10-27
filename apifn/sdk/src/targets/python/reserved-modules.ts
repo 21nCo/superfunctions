@@ -7,6 +7,9 @@ export const RUNTIME_DEPENDENCY_MODULES = new Set([
   "socksio", "typing_extensions", "zstandard",
 ]);
 
+/** The normalized (PEP 503) distribution names of those dependencies: a package taking one could not be installed with them. */
+export const RUNTIME_DEPENDENCY_DISTRIBUTIONS = new Set([...RUNTIME_DEPENDENCY_MODULES].map((module) => module.replace(/_/g, "-")));
+
 /** Lowercase names in `sys.stdlib_module_names` of CPython 3.10 to 3.14, which a module name can be. */
 export const STDLIB_MODULES = new Set([
   "__future__", "_abc", "_aix_support", "_android_support", "_apple_support", "_ast", "_ast_unparse", "_asyncio", "_bisect", "_blake2",

@@ -44,7 +44,11 @@ beforeAll(async () => {
   if (!first.ok) throw new Error(JSON.stringify(first.diagnostics));
   if (!(await writeSdk(sdk, first)).ok) throw new Error("write failed");
   writeFileSync(path.join(sdk, `src/${MODULE}/custom/__init__.py`), `from .greeting import ${CUSTOM_EXPORT}\n\n__all__: list[str] = ["${CUSTOM_EXPORT}"]\n`);
-  writeFileSync(path.join(sdk, `src/${MODULE}/custom/greeting.py`), `def ${CUSTOM_EXPORT}() -> str:\n    return "custom code survives regeneration"\n`);
+  // Custom code may import the generated names from the package, which imports it last.
+  writeFileSync(
+    path.join(sdk, `src/${MODULE}/custom/greeting.py`),
+    `from .. import TasksClient\n\n\ndef ${CUSTOM_EXPORT}() -> str:\n    assert TasksClient.__name__ == "TasksClient"\n    return "custom code survives regeneration"\n`
+  );
   const second = generate(fixtureCatalog(), config);
   const rewritten = await writeSdk(sdk, second);
   if (!rewritten.ok || rewritten.written.length + rewritten.seeded.length + rewritten.deleted.length > 0) throw new Error(`regeneration changed files: ${JSON.stringify(rewritten)}`);
@@ -156,6 +160,8 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       Optional: { type: "object", properties: { x: { type: "string" }, w: { type: "string" } } },
       OneRefReq: { allOf: [{ $ref: "#/components/schemas/Optional" }], required: ["x"] },
       RefSiblingReq: { $ref: "#/components/schemas/Optional", required: ["x"] },
+      // A wrapper that refers back to its own component: one inline TypedDict, whose field names itself.
+      Linked: { type: "object", properties: { v: { type: "string" }, next: { $ref: "#/components/schemas/Linked", required: ["v"] } } },
     });
     // Parameters whose schemas also admit values the client cannot serialize are narrowed to ParamValue and DeepObjectValue.
     const lookup = catalog.operations.find((operation: any) => operation.id === "tasks.lookup");
@@ -174,13 +180,18 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       expect(readFileSync(path.join(dir, "src/awkward_sdk/client.py"), "utf8")).toMatch(/extra: _ParamValue \| None = None,\n[\s\S]*where: _DeepObjectValue \| None = None,/);
       // The misuse module passes only while mypy reports the missing required key its ignore comment names.
       const misuse = ["RequiredSplit", "OneRefReq", "RefSiblingReq"].map((name) => `ok_${name}: ${name} = {"x": "a"}\nmissing_${name}: ${name} = {}  # type: ignore[typeddict-item]\n`);
-      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import OneRefReq, Optional, RefSiblingReq, RequiredSplit\n\noptional: Optional = {}\n${misuse.join("")}`);
+      const linked = `linked: Linked = {"next": {"v": "a", "next": {"v": "b"}}}\nmissing_inner: Linked = {"next": {"v": "a", "next": {}}}  # type: ignore[typeddict-item]\n`;
+      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import Linked, OneRefReq, Optional, RefSiblingReq, RequiredSplit\n\noptional: Optional = {}\n${misuse.join("")}${linked}`);
       log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "awkward_sdk", "required_misuse.py"], { cwd: path.join(dir, "src") });
       // And it imports: every quoted type and inline TypedDict is valid at runtime too.
       const keys = log.run(wheelPython, ["-c", "import json, awkward_sdk, typing; typing.get_type_hints(awkward_sdk.Keywords); print(json.dumps(sorted(awkward_sdk.Keywords.__required_keys__)))"], { cwd: path.join(dir, "src") });
       expect(JSON.parse(keys)).toEqual(["class"]);
-      const required = log.run(wheelPython, ["-c", "import json, awkward_sdk as m; print(json.dumps([sorted(t.__required_keys__) for t in (m.RequiredSplit, m.OneRefReq, m.RefSiblingReq, m.Optional)]))"], { cwd: path.join(dir, "src") });
-      expect(JSON.parse(required)).toEqual([["x"], ["x"], ["x"], []]);
+      const required = log.run(
+        wheelPython,
+        ["-c", "import json, typing, awkward_sdk as m; typing.get_type_hints(m.models._Linked_1); print(json.dumps([sorted(t.__required_keys__) for t in (m.RequiredSplit, m.OneRefReq, m.RefSiblingReq, m.Optional, m.Linked, m.models._Linked_1)]))"],
+        { cwd: path.join(dir, "src") }
+      );
+      expect(JSON.parse(required)).toEqual([["x"], ["x"], ["x"], [], [], ["v"]]);
     });
   });
 });
@@ -193,22 +204,35 @@ describe("license expressions", () => {
     const expressions = [
       "MIT", "Apache-2.0 OR MIT", "(MIT AND BSD-3-Clause)", "GPL-2.0-only WITH Classpath-exception-2.0", "LicenseRef-Custom", "GPL-2.0+", "GPL-2.0",
       "mit or apache-2.0 with llvm-exception", "licenseref-a.B-2 AND LicenseRef-A.b-2", "  MIT\u00a0OR  (Apache-2.0)", "((MIT))", "MIT AND (Apache-2.0 OR 0BSD)",
+      "(MIT)", "(((MIT)))", "((MIT) AND BSD-3-Clause)", "MIT AND ((Apache-2.0))", "MIT AND (Apache-2.0 OR (0BSD))",
       "MIT AND", "see LICENSE", "(", ")", "( )", "", "Foo-Bar", "Classpath-exception-2.0", "MIT WITH Apache-2.0", "MIT WITH", "WITH Classpath-exception-2.0",
       "MIT WITH Classpath-exception-2.0 WITH LLVM-exception", "(MIT) WITH LLVM-exception", "MIT (Apache-2.0)", "MIT OR OR Apache-2.0", "LicenseRef-", "LicenseRef-a_b",
       "LicenseRef-A+", "MIT+ WITH LLVM-exception", "Apache-2.0 WITH LicenseRef-X",
     ];
+    // packaging 24.2, the oldest hatchling allows, and the packaging 26.3 that requirements.txt pins.
+    const floor = path.join(work, "packaging-24.2");
+    log.run(tools, ["-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--no-deps", "--target", floor, "packaging==24.2"], { cwd: work });
     const script = [
       "import json, sys",
+      "if len(sys.argv) > 1: sys.path.insert(0, sys.argv[1])",
       "from packaging.licenses import InvalidLicenseExpression, canonicalize_license_expression",
       "def canonical(expression):",
       "    try:",
       "        return canonicalize_license_expression(expression)",
-      "    except InvalidLicenseExpression:",
+      // packaging 24.2 raises KeyError for a LicenseRef ending in +; the build backend fails on it either way.
+      "    except (InvalidLicenseExpression, KeyError):",
       "        return None",
       "print(json.dumps([canonical(expression) for expression in json.load(sys.stdin)]))",
     ].join("\n");
-    const expected = JSON.parse(log.run(tools, ["-I", "-c", script], { cwd: work, input: JSON.stringify(expressions) }));
+    const canonical = (...floorPath: string[]) => JSON.parse(log.run(tools, ["-I", "-c", script, ...floorPath], { cwd: work, input: JSON.stringify(expressions) })) as Array<string | null>;
+    const [current, oldest] = [canonical(), canonical(floor)];
+    expect(log.run(tools, ["-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import packaging; print(packaging.__version__)", floor], { cwd: work }).trim()).toBe("24.2");
+    // An expression is accepted only when both versions accept it, and then both normalize it alike.
+    const expected = expressions.map((_, index) => (current[index] !== null && current[index] === oldest[index] ? current[index] : null));
+    expect(expressions.filter((_, index) => current[index] !== null && oldest[index] !== null && current[index] !== oldest[index])).toEqual([]);
     expect(expressions.map(canonicalLicenseExpression)).toEqual(expected);
+    // Each version is exercised: some expression only the newer one accepts.
+    expect(expressions.filter((_, index) => current[index] !== null && oldest[index] === null)).toEqual(expect.arrayContaining(["((MIT))"]));
   });
 });
 
