@@ -1,0 +1,456 @@
+{
+  "schema": "logfn.redaction-vectors.v1",
+  "marker": "[redacted]",
+  "encoding": {
+    "input.$error": "An object {\"$error\": {name, message, stack?, cause?}} is built as a native error: in TypeScript an Error with that name, message, optional stack (else the native one) and cause; in Python an exception class with that name, raised once so it has a traceback (stack is ignored), with __cause__. cause must be another $error.",
+    "input.$ref": "An object {\"$ref\": \"dot.path\"} is replaced, after the whole ctx is built, by the object at that path from the ctx root (\"\" is the root), which creates circular or shared references.",
+    "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
+    "options": "Optional redaction options: keys (extra sensitive key names) and allowlist (exempt paths: ctx paths like a.b or a[0], or userId, tenantId).",
+    "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
+    "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId) are compared, by deep equality."
+  },
+  "vectors": [
+    {
+      "id": "nested-credential-keys",
+      "description": "Credential-named keys are redacted at any depth and for any value type; similar but non-credential keys are kept.",
+      "input": {
+        "msg": "loaded user profile",
+        "ctx": {
+          "user": {
+            "id": "u1",
+            "password": "hunter2",
+            "profile": {
+              "apiKey": "ak_live_123",
+              "displayName": "Ada"
+            }
+          },
+          "headers": {
+            "Authorization": "Bearer abc.def.ghi",
+            "X-Api-Key": "k-999",
+            "Content-Type": "application/json",
+            "Set-Cookie": "sid=s3cr3t; Path=/"
+          },
+          "db": {
+            "connection": {
+              "client_secret": {
+                "value": "cs-1",
+                "rotatedAt": 5
+              }
+            }
+          },
+          "items": [
+            {
+              "accessToken": "tok-1",
+              "name": "first"
+            },
+            {
+              "refresh_token": "tok-2"
+            }
+          ],
+          "tokenCount": 42,
+          "maxTokens": 100,
+          "author": "ada"
+        }
+      },
+      "expected": {
+        "msg": "loaded user profile",
+        "ctx": {
+          "user": {
+            "id": "u1",
+            "password": "[redacted]",
+            "profile": {
+              "apiKey": "[redacted]",
+              "displayName": "Ada"
+            }
+          },
+          "headers": {
+            "Authorization": "[redacted]",
+            "X-Api-Key": "[redacted]",
+            "Content-Type": "application/json",
+            "Set-Cookie": "[redacted]"
+          },
+          "db": {
+            "connection": {
+              "client_secret": "[redacted]"
+            }
+          },
+          "items": [
+            {
+              "accessToken": "[redacted]",
+              "name": "first"
+            },
+            {
+              "refresh_token": "[redacted]"
+            }
+          ],
+          "tokenCount": 42,
+          "maxTokens": 100,
+          "author": "ada"
+        }
+      }
+    },
+    {
+      "id": "non-string-values-under-sensitive-keys",
+      "description": "A sensitive key redacts numbers, arrays and objects too; nulls, booleans and unrelated values pass through.",
+      "input": {
+        "msg": "settings snapshot",
+        "ctx": {
+          "secret": 12345,
+          "credentials": [
+            "a",
+            "b"
+          ],
+          "privateKey": {
+            "pem": "-----BEGIN-----"
+          },
+          "pin": 1234,
+          "count": 3,
+          "enabled": true,
+          "nothing": null,
+          "note": "nothing sensitive here"
+        }
+      },
+      "expected": {
+        "msg": "settings snapshot",
+        "ctx": {
+          "secret": "[redacted]",
+          "credentials": "[redacted]",
+          "privateKey": "[redacted]",
+          "pin": 1234,
+          "count": 3,
+          "enabled": true,
+          "nothing": null,
+          "note": "nothing sensitive here"
+        }
+      }
+    },
+    {
+      "id": "url-credentials",
+      "description": "URL userinfo is redacted in the message and in nested string values; URLs without credentials are unchanged.",
+      "input": {
+        "msg": "fetching https://alice:s3cret@api.example.com/v1/items failed",
+        "ctx": {
+          "endpoint": "postgres://svc:pg-pass-9@db.internal:5432/app",
+          "mirror": "https://ghp_tokenvalue@github.com/org/repo.git",
+          "plain": "https://api.example.com/v1/items",
+          "nested": {
+            "urls": [
+              "redis://:r3dis@cache:6379/0"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "msg": "fetching https://[redacted]@api.example.com/v1/items failed",
+        "ctx": {
+          "endpoint": "postgres://[redacted]@db.internal:5432/app",
+          "mirror": "https://[redacted]@github.com/org/repo.git",
+          "plain": "https://api.example.com/v1/items",
+          "nested": {
+            "urls": [
+              "redis://[redacted]@cache:6379/0"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sensitive-query-values",
+      "description": "Query parameters with credential names keep their name and lose their value; other parameters are unchanged.",
+      "input": {
+        "msg": "retrying GET /v1/items?page=2&token=tk-77",
+        "ctx": {
+          "url": "https://api.example.com/cb?code_ok=1&access_token=at-123&state=xyz&api_key=k1",
+          "signed": "https://bucket.s3.amazonaws.com/o?X-Amz-Credential=AKIA%2F20260101&X-Amz-Signature=abcdef0123&X-Amz-Expires=300",
+          "search": "/search?q=password+reset&page=2"
+        }
+      },
+      "expected": {
+        "msg": "retrying GET /v1/items?page=2&token=[redacted]",
+        "ctx": {
+          "url": "https://api.example.com/cb?code_ok=1&access_token=[redacted]&state=xyz&api_key=[redacted]",
+          "signed": "https://bucket.s3.amazonaws.com/o?X-Amz-Credential=[redacted]&X-Amz-Signature=[redacted]&X-Amz-Expires=300",
+          "search": "/search?q=password+reset&page=2"
+        }
+      }
+    },
+    {
+      "id": "header-assignment-and-bearer-strings",
+      "description": "Header lines, key=value pairs, quoted JSON members and loose bearer tokens inside strings are redacted.",
+      "input": {
+        "msg": "upstream rejected Authorization: Bearer eyJhbGciOi.payload.sig",
+        "ctx": {
+          "curl": "curl -H 'X-Api-Key: k-123' -H \"Accept: text/plain\" https://x.test",
+          "line": "password=hunter2 user=ada",
+          "json": "{\"secret\":\"s-1\",\"ok\":true}",
+          "loose": "sent bearer tok_abcdef to proxy",
+          "raw": "GET / HTTP/1.1\r\nCookie: theme=dark; sid=abc123\r\nHost: x.test",
+          "signedUrl": "https://cdn.test/f?sig=abc&exp=9 then https://u:p@h.test/?token=t2"
+        }
+      },
+      "expected": {
+        "msg": "upstream rejected Authorization: [redacted]",
+        "ctx": {
+          "curl": "curl -H 'X-Api-Key: [redacted]' -H \"Accept: text/plain\" https://x.test",
+          "line": "password=[redacted] user=ada",
+          "json": "{\"secret\":\"[redacted]\",\"ok\":true}",
+          "loose": "sent bearer [redacted] to proxy",
+          "raw": "GET / HTTP/1.1\r\nCookie: [redacted]\r\nHost: x.test",
+          "signedUrl": "https://cdn.test/f?sig=[redacted]&exp=9 then https://[redacted]@h.test/?token=[redacted]"
+        }
+      }
+    },
+    {
+      "id": "error-message-stack-cause",
+      "description": "Errors become {name, message, stack, cause}; message and stack strings are redacted and causes are redacted recursively, including errors inside arrays.",
+      "input": {
+        "msg": "request failed",
+        "ctx": {
+          "error": {
+            "$error": {
+              "name": "FetchError",
+              "message": "request to https://u:pw-1@api.test/x failed with token=tk-9",
+              "stack": "FetchError: request to https://u:pw-1@api.test/x failed with token=tk-9\n    at send (client.js:10:5)",
+              "cause": {
+                "$error": {
+                  "name": "Error",
+                  "message": "connect ECONNREFUSED password=db-pass",
+                  "stack": "Error: connect ECONNREFUSED password=db-pass\n    at connect (net.js:1:1)"
+                }
+              }
+            }
+          },
+          "attempts": [
+            {
+              "$error": {
+                "name": "TimeoutError",
+                "message": "timed out sending Bearer abc123",
+                "cause": {
+                  "$error": {
+                    "name": "Error",
+                    "message": "apiKey=ak-2 phase=send"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "msg": "request failed",
+        "ctx": {
+          "error": {
+            "name": "FetchError",
+            "message": "request to https://[redacted]@api.test/x failed with token=[redacted]",
+            "stack": {
+              "$match": {
+                "includes": [
+                  "[redacted]"
+                ],
+                "excludes": [
+                  "pw-1",
+                  "tk-9"
+                ]
+              }
+            },
+            "cause": {
+              "name": "Error",
+              "message": "connect ECONNREFUSED password=[redacted]",
+              "stack": {
+                "$match": {
+                  "includes": [
+                    "[redacted]"
+                  ],
+                  "excludes": [
+                    "db-pass"
+                  ]
+                }
+              }
+            }
+          },
+          "attempts": [
+            {
+              "name": "TimeoutError",
+              "message": "timed out sending Bearer [redacted]",
+              "stack": {
+                "$match": {
+                  "excludes": [
+                    "abc123"
+                  ]
+                }
+              },
+              "cause": {
+                "name": "Error",
+                "message": "apiKey=[redacted] phase=send",
+                "stack": {
+                  "$match": {
+                    "excludes": [
+                      "ak-2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "circular-structures",
+      "description": "Back-references to an ancestor (direct or deeper) become [circular]; shared non-circular references are kept as copies; credentials inside cyclic objects are still redacted.",
+      "input": {
+        "msg": "cyclic request",
+        "ctx": {
+          "req": {
+            "id": "r1",
+            "token": "t-1",
+            "self": {
+              "$ref": "req"
+            },
+            "child": {
+              "up": {
+                "$ref": "req"
+              },
+              "label": "c"
+            }
+          },
+          "list": [
+            {
+              "$ref": "list"
+            },
+            "x"
+          ],
+          "shared": {
+            "a": {
+              "v": 1
+            }
+          },
+          "alias": {
+            "$ref": "shared.a"
+          }
+        }
+      },
+      "expected": {
+        "msg": "cyclic request",
+        "ctx": {
+          "req": {
+            "id": "r1",
+            "token": "[redacted]",
+            "self": "[circular]",
+            "child": {
+              "up": "[circular]",
+              "label": "c"
+            }
+          },
+          "list": [
+            "[circular]",
+            "x"
+          ],
+          "shared": {
+            "a": {
+              "v": 1
+            }
+          },
+          "alias": {
+            "v": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "caller-added-context",
+      "description": "Base, child, enrichment and call context, tags, userId and caller-supplied extra sensitive keys are all redacted; emails are redacted as personal data.",
+      "options": {
+        "keys": [
+          "cardNumber"
+        ]
+      },
+      "layers": {
+        "base": {
+          "service": "billing",
+          "dbUrl": "mysql://root:base-pw@db/billing"
+        },
+        "child": {
+          "module": "charges",
+          "sessionId": "sess-123"
+        },
+        "enrich": {
+          "region": "eu-1",
+          "webhookSecret": "whsec_abc"
+        }
+      },
+      "input": {
+        "msg": "charge failed for card",
+        "ctx": {
+          "customer": {
+            "id": "c1",
+            "cardNumber": "4242424242424242",
+            "email": "ada@example.com"
+          },
+          "attempt": 2
+        },
+        "tags": [
+          "billing",
+          "token=tag-secret"
+        ],
+        "userId": "ada@example.com",
+        "tenantId": "t-1"
+      },
+      "expected": {
+        "msg": "charge failed for card",
+        "ctx": {
+          "region": "eu-1",
+          "webhookSecret": "[redacted]",
+          "service": "billing",
+          "dbUrl": "mysql://[redacted]@db/billing",
+          "module": "charges",
+          "sessionId": "[redacted]",
+          "customer": {
+            "id": "c1",
+            "cardNumber": "[redacted]",
+            "email": "[redacted]"
+          },
+          "attempt": 2
+        },
+        "tags": [
+          "billing",
+          "token=[redacted]"
+        ],
+        "userId": "[redacted]",
+        "tenantId": "t-1"
+      }
+    },
+    {
+      "id": "allowlisted-paths",
+      "description": "Allowlisted paths skip redaction for that exact path only; siblings and the message are still redacted.",
+      "options": {
+        "allowlist": [
+          "support.email",
+          "userId"
+        ]
+      },
+      "input": {
+        "msg": "contact ada@example.com",
+        "ctx": {
+          "support": {
+            "email": "help@example.com",
+            "password": "pw"
+          },
+          "other": "bob@example.com"
+        },
+        "userId": "ada@example.com"
+      },
+      "expected": {
+        "msg": "contact [redacted]",
+        "ctx": {
+          "support": {
+            "email": "help@example.com",
+            "password": "[redacted]"
+          },
+          "other": "[redacted]"
+        },
+        "userId": "ada@example.com"
+      }
+    }
+  ]
+}

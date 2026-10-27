@@ -1,0 +1,245 @@
+/**
+ * Core Logger implementation
+ */
+
+import type {
+  LogEvent,
+  LogLevel,
+  LoggerOptions,
+  ChildLoggerOptions,
+  ErrorHandler,
+  PipelineStage,
+  Sink,
+} from "../types.js";
+import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
+import { validateAndSerialize } from "../validation.js";
+import { sinkConsole } from "../sinks/console.js";
+
+const defaultErrorHandler: ErrorHandler = (error, context) => {
+  console.error("[logfn internal error]", context, error);
+};
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+// A context argument that is not a plain record (an Error passed straight to
+// logger.error, a string) is kept under a named key instead of being spread.
+function normalizeContext(ctx: unknown): Record<string, unknown> | undefined {
+  if (ctx === undefined || ctx === null) return undefined;
+  if (ctx instanceof Error) return { error: ctx };
+  if (typeof ctx !== "object" || Array.isArray(ctx)) return { value: ctx };
+  return ctx as Record<string, unknown>;
+}
+
+interface ResolvedOptions {
+  name: string;
+  level: LogLevel;
+  pipeline: PipelineStage[];
+  sinks: Sink[];
+  now: () => Date;
+  baseContext?: Record<string, unknown>;
+  baseTags?: string[];
+  onError: ErrorHandler;
+}
+
+/**
+ * Logger class for structured logging. Logging calls and flush() never throw:
+ * pipeline and sink failures are reported to onError.
+ */
+export class Logger {
+  private readonly options: ResolvedOptions;
+
+  constructor(options: LoggerOptions) {
+    if (options.level !== undefined && !(options.level in LOG_LEVEL_VALUES)) {
+      throw new Error(`Unknown log level: ${String(options.level)}`);
+    }
+    if (options.sinks && options.sinks.length === 0) {
+      throw new Error("At least one sink is required");
+    }
+
+    this.options = {
+      name: options.name,
+      level: options.level ?? this.defaultLevel(),
+      pipeline: options.pipeline ?? [],
+      // The default is local console output only; no remote sink is implied.
+      sinks: options.sinks ?? [sinkConsole()],
+      now: options.now ?? (() => new Date()),
+      baseContext: options.baseContext,
+      baseTags: options.baseTags,
+      onError: options.onError ?? defaultErrorHandler,
+    };
+  }
+
+  /**
+   * Get default log level based on environment
+   */
+  private defaultLevel(): LogLevel {
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process?.env;
+    return env?.NODE_ENV === "production" ? "info" : "debug";
+  }
+
+  private report(error: unknown, context: { stage?: string; sink?: string }): void {
+    try {
+      this.options.onError(toError(error), context);
+    } catch {
+      // A failing error handler must not reach the caller either.
+    }
+  }
+
+  /**
+   * Check if a log level should be emitted
+   */
+  private shouldLog(level: LogLevel): boolean {
+    return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[this.options.level];
+  }
+
+  /**
+   * Core logging method
+   */
+  private log(level: LogLevel, msg: string, ctx?: unknown, tags?: string[]): void {
+    try {
+      this.emit(level, msg, ctx, tags);
+    } catch (error) {
+      this.report(error, {});
+    }
+  }
+
+  private emit(level: LogLevel, msg: string, ctx?: unknown, tags?: string[]): void {
+    if (!this.shouldLog(level)) {
+      return;
+    }
+
+    // Create base event
+    let event: LogEvent = {
+      ts: this.options.now().toISOString(),
+      level,
+      msg: String(msg),
+      name: this.options.name,
+      version: DEFAULT_VERSION,
+    };
+
+    // Merge context and tags
+    const callContext = normalizeContext(ctx);
+    if (this.options.baseContext || callContext) {
+      event.ctx = { ...this.options.baseContext, ...callContext };
+    }
+
+    if (this.options.baseTags || tags) {
+      event.tags = [...(this.options.baseTags ?? []), ...(Array.isArray(tags) ? tags : [])];
+    }
+
+    // Apply pipeline stages. A failing stage drops the event: a broken
+    // redaction stage must not let the unredacted event through.
+    for (const stage of this.options.pipeline) {
+      let result: LogEvent | null;
+      try {
+        result = stage(event);
+      } catch (error) {
+        this.report(error, { stage: stage.name || "unknown" });
+        return;
+      }
+      if (result === null || result === undefined) {
+        // Event dropped by sampling or filtering
+        return;
+      }
+      event = result;
+    }
+
+    // Validate and serialize
+    const { event: finalEvent } = validateAndSerialize(event);
+
+    // Send to sinks; each sink gets its own batch array.
+    for (const sink of this.options.sinks) {
+      try {
+        const result = sink([finalEvent]);
+        if (result && typeof (result as Promise<void>).then === "function") {
+          // Don't await - fire and forget
+          (result as Promise<void>).then(undefined, (error: unknown) => {
+            this.report(error, { sink: sink.name || "unknown" });
+          });
+        }
+      } catch (error) {
+        this.report(error, { sink: sink.name || "unknown" });
+      }
+    }
+  }
+
+  /**
+   * Log at trace level
+   */
+  trace(msg: string, ctx?: Record<string, unknown>, tags?: string[]): void {
+    this.log("trace", msg, ctx, tags);
+  }
+
+  /**
+   * Log at debug level
+   */
+  debug(msg: string, ctx?: Record<string, unknown>, tags?: string[]): void {
+    this.log("debug", msg, ctx, tags);
+  }
+
+  /**
+   * Log at info level
+   */
+  info(msg: string, ctx?: Record<string, unknown>, tags?: string[]): void {
+    this.log("info", msg, ctx, tags);
+  }
+
+  /**
+   * Log at warn level
+   */
+  warn(msg: string, ctx?: Record<string, unknown>, tags?: string[]): void {
+    this.log("warn", msg, ctx, tags);
+  }
+
+  /**
+   * Log at error level. An Error may be passed as ctx; it is logged as ctx.error.
+   */
+  error(msg: string, ctx?: Record<string, unknown> | Error, tags?: string[]): void {
+    this.log("error", msg, ctx, tags);
+  }
+
+  /**
+   * Log at fatal level. An Error may be passed as ctx; it is logged as ctx.error.
+   */
+  fatal(msg: string, ctx?: Record<string, unknown> | Error, tags?: string[]): void {
+    this.log("fatal", msg, ctx, tags);
+  }
+
+  /**
+   * Create a child logger with merged configuration
+   */
+  child(overrides: ChildLoggerOptions): Logger {
+    return new Logger({
+      name: overrides.name ?? this.options.name,
+      level: overrides.level ?? this.options.level,
+      pipeline: this.options.pipeline,
+      sinks: this.options.sinks,
+      now: this.options.now,
+      baseContext: {
+        ...this.options.baseContext,
+        ...overrides.ctx,
+      },
+      baseTags: [...(this.options.baseTags ?? []), ...(overrides.tags ?? [])],
+      onError: this.options.onError,
+    });
+  }
+
+  /**
+   * Flush all sinks. Resolves once every sink has settled; sink failures are
+   * reported to onError rather than rejected.
+   */
+  async flush(): Promise<void> {
+    const pending = this.options.sinks.map(async (sink) => {
+      if (typeof sink.flush !== "function") return;
+      try {
+        await sink.flush();
+      } catch (error) {
+        this.report(error, { sink: sink.name || "unknown" });
+      }
+    });
+    await Promise.all(pending);
+  }
+}
