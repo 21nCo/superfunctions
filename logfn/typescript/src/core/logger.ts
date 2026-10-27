@@ -12,7 +12,7 @@ import type {
   Sink,
 } from "../types.js";
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
-import { validateAndSerialize } from "../validation.js";
+import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
 
 const defaultErrorHandler: ErrorHandler = (error, context) => {
@@ -152,8 +152,10 @@ export class Logger {
       event = result;
     }
 
-    // Validate and serialize
-    const { event: finalEvent } = validateAndSerialize(event);
+    // JSON-safe but not size-bounded: truncating here could cut a secret's
+    // delimiter (an @, a closing quote) before a sink's own redaction runs,
+    // so each sink bounds the size after it redacts.
+    const finalEvent = sanitizeEvent(event);
 
     // Send to sinks; each sink gets its own batch array.
     for (const sink of this.options.sinks) {

@@ -3,6 +3,7 @@
  */
 
 import type { LogEvent, LogLevel, Sink } from "../types.js";
+import { validateAndSerialize } from "../validation.js";
 
 /**
  * Console sink options
@@ -121,7 +122,9 @@ export function sinkConsole(options: ConsoleSinkOptions = {}): Sink {
   const colors = { ...DEFAULT_COLORS, ...options.levelColors };
 
   const sink: Sink = function consoleSink(batch: LogEvent[]) {
-    for (const event of batch) {
+    for (const input of batch) {
+      // Loggers pass events that are not size-bounded; bound them here.
+      const { event } = validateAndSerialize(input);
       const method = getConsoleMethod(event.level);
 
       if (useJson) {

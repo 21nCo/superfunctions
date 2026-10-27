@@ -60,6 +60,7 @@ async def eventually(predicate: Any, timeout: float = 5.0) -> None:
         ({"url": URL, "max_queue": 1.5}, "max_queue"),
         ({"url": URL, "retry_attempts": 0}, "retry_attempts"),
         ({"url": URL, "timeout": -1}, "timeout"),
+        ({"url": URL, "timeout": 0}, "timeout must be a positive number"),
     ],
 )
 def test_rejects_invalid_configuration(kwargs: dict[str, Any], message: str) -> None:
@@ -412,6 +413,17 @@ def test_console_sink_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert json.loads(capsys.readouterr().out) == event("hello", ctx={"a": 1})
     SinkConsole(json=False, color=False)([event("hi", ctx={"a": 1})])
     assert capsys.readouterr().out.strip() == "[2026-01-14T12:00:00.000Z] INFO (t): hi a=1"
+
+
+def test_console_sink_bounds_each_event_itself(capsys: pytest.CaptureFixture[str]) -> None:
+    # Loggers pass events without a size bound; the sink applies it.
+    logger = create_logger("t", sinks=[SinkConsole(json=True)], level="info")
+    logger.info("€" * 40_000, blob="x" * 70_000)
+    line = capsys.readouterr().out.strip()
+    assert len(line.encode()) <= MAX_EVENT_SIZE
+    printed = json.loads(line)
+    assert printed["ctx"]["_truncated"] is True
+    assert printed["msg"].endswith("...[truncated]")
 
 
 def test_events_survive_a_finished_event_loop() -> None:

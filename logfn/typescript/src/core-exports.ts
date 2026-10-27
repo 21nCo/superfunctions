@@ -70,5 +70,6 @@ export type {
   HttpSinkFetch,
   HttpSinkOptions,
   HttpSinkRequest,
+  HttpSinkResponse,
   HttpSinkStats,
 } from "./sinks/http.js";

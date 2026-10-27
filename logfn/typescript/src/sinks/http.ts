@@ -17,11 +17,18 @@ export interface HttpSinkRequest {
   redirect: "manual";
 }
 
+/** Response fields used by the sink */
+export interface HttpSinkResponse {
+  ok: boolean;
+  status: number;
+  statusText?: string;
+  type?: string;
+  /** Never read: the sink cancels it so the connection is released */
+  body?: { cancel?(): Promise<void> } | null;
+}
+
 /** Minimal fetch contract used by the sink */
-export type HttpSinkFetch = (
-  url: string,
-  init: HttpSinkRequest
-) => Promise<{ ok: boolean; status: number; statusText?: string; type?: string }>;
+export type HttpSinkFetch = (url: string, init: HttpSinkRequest) => Promise<HttpSinkResponse>;
 
 /** Why events were dropped instead of delivered */
 export type HttpSinkDropReason =
@@ -43,7 +50,7 @@ export interface HttpSinkOptions {
   /** Flush interval in milliseconds for partial batches (default: 1000) */
   flushIntervalMs?: number;
 
-  /** Per-attempt request timeout in milliseconds (default: 3000) */
+  /** Per-attempt request timeout in milliseconds, above 0 (default: 3000) */
   timeoutMs?: number;
 
   /** Additional headers */
@@ -134,6 +141,14 @@ function nonNegative(value: number | undefined, fallback: number, name: string):
   return resolved;
 }
 
+function positive(value: number | undefined, fallback: number, name: string): number {
+  const resolved = value ?? fallback;
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new Error(`sinkHttp: ${name} must be a positive number`);
+  }
+  return resolved;
+}
+
 function validateUrl(url: string): void {
   let parsed: URL;
   try {
@@ -176,6 +191,17 @@ function isRedirect(response: { status: number; type?: string }): boolean {
   return response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400);
 }
 
+// Only the status is used. An unread body keeps its connection (and stream)
+// open for as long as the collector holds it, so it is cancelled at once.
+function release(response: HttpSinkResponse | undefined): void {
+  try {
+    const cancelled = response?.body?.cancel?.();
+    if (cancelled && typeof cancelled.then === "function") cancelled.then(undefined, () => {});
+  } catch {
+    // A locked or already closed body needs no release.
+  }
+}
+
 /**
  * Create an HTTP sink. Constructing it performs no I/O; events are redacted,
  * queued (bounded by maxQueue) and posted as `{"events": [...]}` in batches.
@@ -189,7 +215,8 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const attempts = positiveInteger(options.retry?.attempts, 5, "retry.attempts");
   const backoffMs = nonNegative(options.retry?.backoffMs, 200, "retry.backoffMs");
   const flushIntervalMs = nonNegative(options.flushIntervalMs, 1000, "flushIntervalMs");
-  const timeoutMs = nonNegative(options.timeoutMs, 3000, "timeoutMs");
+  // A zero timeout would fail every attempt and drop every batch.
+  const timeoutMs = positive(options.timeoutMs, 3000, "timeoutMs");
   const redact: PipelineStage = redactSecFn(options.redact);
   // What is sent is exactly what was redacted: JSON-safe values first, so
   // serialization cannot add text (toJSON, bigint), then size-bounded.
@@ -297,18 +324,22 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     const keepalive =
       typeof window !== "undefined" && encoder.encode(body).length <= KEEPALIVE_MAX_BYTES;
 
+    // Every response is released, also one that arrives after the timeout (a
+    // fetch that ignores the abort signal). The async wrapper turns a fetch
+    // that throws synchronously into a rejection.
+    const request = (async () =>
+      fetchImpl(url, {
+        method: "POST",
+        headers: requestHeaders,
+        body,
+        signal: controller?.signal,
+        redirect: "manual",
+        ...(keepalive ? { keepalive } : {}),
+      }))();
+    request.then(release, () => {});
+
     try {
-      const response = await Promise.race([
-        fetchImpl(url, {
-          method: "POST",
-          headers: requestHeaders,
-          body,
-          signal: controller?.signal,
-          redirect: "manual",
-          ...(keepalive ? { keepalive } : {}),
-        }),
-        timeout,
-      ]);
+      const response = await Promise.race([request, timeout]);
       if (isRedirect(response)) {
         // Following could send the body and credentials to another origin.
         return {
@@ -325,6 +356,9 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       return { kind: "retry", error: toError(error) };
     } finally {
       stopTimer(timer);
+      // Ends whatever the attempt still holds (a timed-out request, a body
+      // stream) on every outcome; a settled request is not affected.
+      controller?.abort();
     }
   }
 

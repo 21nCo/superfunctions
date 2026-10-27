@@ -44,7 +44,12 @@ PipelineStage = Callable[[LogEvent], LogEvent | None]
 
 class Sink(Protocol):
     """Receives batches of events. A sink may also define ``flush()``
-    (sync or async); the logger checks for it at runtime."""
+    (sync or async); the logger checks for it at runtime.
+
+    Loggers pass JSON-safe events that are not size-bounded, so that a sink
+    which redacts (SinkHttp) does so before any truncation; a sink that needs
+    the MAX_EVENT_SIZE bound applies ``validate_and_serialize`` itself, after
+    its own redaction. Both built-in sinks do."""
 
     def __call__(self, batch: list[LogEvent]) -> Any: ...
 

@@ -61,11 +61,15 @@ when `url` is given.
 - A pipeline stage that throws drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
-  stack, cause }`, cycles become `"[circular]"`, unserializable values become
-  `"[unserializable]"`, and an event never exceeds 64 KB of UTF-8 JSON: an
+  stack, cause }`, cycles become `"[circular]"` and unserializable values
+  become `"[unserializable]"`.
+- Sinks bound the size, after their own redaction, so truncation can never
+  cut a secret's delimiter before `sinkHttp` redacts it. Both built-in sinks
+  (`validateAndSerialize`) keep every event within 64 KB of UTF-8 JSON: an
   oversized event loses its context; if its other fields are still large,
   metadata is cut to the schema fields of at most 256 characters and tags are
-  removed; then the message is shortened.
+  removed; then the message is shortened. A custom sink receives the
+  sanitized event without a size bound.
 
 ## Redaction
 
@@ -130,7 +134,10 @@ Posts `{"events": [...]}` to `url` in batches.
 - The queue holds at most `maxQueue` events (default 5000); the oldest are
   dropped beyond that. A full `batch` (default 50) is sent at once, a partial
   one after `flushIntervalMs` (default 1000).
-- Each attempt times out after `timeoutMs` (default 3000). Network errors,
+- Each attempt times out after `timeoutMs` (default 3000; must be above 0).
+  The response body is never read: it is cancelled and the request aborted
+  once the status is known, so a collector that holds a body open keeps no
+  connection. Network errors,
   timeouts, 408, 429 and 5xx are retried up to `retry.attempts` (default 5)
   with exponential backoff from `retry.backoffMs` (default 200). Other
   responses, and exhausted retries, drop the batch. Redirects are never

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sinkConsole, type LogEvent } from "../src/index.js";
+import { MAX_EVENT_SIZE, createLogger, sinkConsole, type LogEvent } from "../src/index.js";
 
 const event = (overrides: Partial<LogEvent> = {}): LogEvent => ({
   ts: "2026-01-14T12:00:00.000Z",
@@ -36,5 +36,14 @@ describe("sinkConsole", () => {
     expect(line).toContain("#t");
     expect(line).toContain("trace=0af76519");
     expect(line).not.toContain("\x1b[");
+  });
+
+  it("bounds each event itself, since loggers pass events without a size bound", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logger = createLogger({ name: "svc", level: "info", sinks: [sinkConsole({ json: true })] });
+    logger.info("€".repeat(40_000), { blob: "x".repeat(70_000) });
+    const line = log.mock.calls[0][0] as string;
+    expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(MAX_EVENT_SIZE);
+    expect(JSON.parse(line)).toMatchObject({ ctx: { _truncated: true }, msg: expect.stringMatching(/\.\.\.\[truncated\]$/) });
   });
 });

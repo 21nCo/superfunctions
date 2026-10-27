@@ -21,7 +21,7 @@ from .types import (
     PipelineStage,
     Sink,
 )
-from .validation import validate_and_serialize
+from .validation import sanitize_event
 
 
 def default_now() -> datetime:
@@ -139,7 +139,10 @@ class Logger:
                 return
             current = result
 
-        final, _truncated = validate_and_serialize(current)
+        # JSON-safe but not size-bounded: truncating here could cut a secret's
+        # delimiter (an @, a closing quote) before a sink's own redaction runs,
+        # so each sink bounds the size after it redacts.
+        final = sanitize_event(current)
 
         for sink in self.sinks:
             try:

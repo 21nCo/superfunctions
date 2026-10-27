@@ -38,7 +38,9 @@ class SinkConsole:
         self.color = color
 
     def __call__(self, batch: list[LogEvent]) -> None:
-        for event in batch:
+        for raw in batch:
+            # Loggers pass events that are not size-bounded; bound them here.
+            event, _truncated = validate_and_serialize(raw)
             if self.json:
                 print(json.dumps(event, default=str))
             else:
@@ -111,6 +113,12 @@ def _non_negative(value: float, name: str) -> float:
     return float(value)
 
 
+def _positive(value: float, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+        raise ValueError(f"SinkHttp: {name} must be a positive number")
+    return float(value)
+
+
 def _validate_url(url: str) -> None:
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -164,7 +172,8 @@ class SinkHttp:
         self.retry_attempts = _positive_int(retry_attempts, "retry_attempts")
         self.backoff_ms = _non_negative(backoff_ms, "backoff_ms")
         self.flush_interval_ms = _non_negative(flush_interval_ms, "flush_interval_ms")
-        self.timeout = _non_negative(timeout, "timeout")
+        # A zero timeout would fail every attempt and drop every batch.
+        self.timeout = _positive(timeout, "timeout")
         self._transport: Transport = transport or urllib_transport
         self._on_error = on_error
         self._on_drop = on_drop

@@ -164,6 +164,44 @@ describe("shared redaction vectors", () => {
     expect(body).toContain("billing");
   });
 
+  it("no secret fragment reaches the sink body when the logger's message is cut at the size limit", async () => {
+    // No redaction stage: sinkHttp's own redaction is the only guard, so it
+    // must see the whole message, not one cut through a secret's delimiter.
+    const secrets = [
+      "https://u:QJURL1@host.test/path",
+      "contact qjmail.user@example.com today",
+      "Authorization: Bearer QJBEARER\n",
+      '{"password":"QJJSON"}',
+      "https://h.test/cb?token=QJQUERY&next=1",
+    ];
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch, maxQueue: 5000, batch: 5000 });
+    const logger = createLogger({ name: "t", level: "trace", sinks: [sink] });
+    const child = logger.child({ name: "child" });
+    // Characters of an oversized message the sink keeps (everything is ASCII).
+    logger.info("x".repeat(100_000));
+    await logger.flush();
+    const kept = spy.events()[0].msg.length - "...[truncated]".length;
+    spy.requests.length = 0;
+    let logged = 0;
+    for (const secret of secrets) {
+      for (const target of [logger, child]) {
+        // Cuts from just before the secret to just after it.
+        for (let start = kept - secret.length - 4; start <= kept + 2; start++) {
+          target.info(`${"x".repeat(start - 1)} ${secret} ${"z".repeat(2000)}`);
+          logged += 1;
+        }
+      }
+    }
+    await logger.flush();
+    const events = spy.events();
+    expect(events).toHaveLength(logged);
+    for (const sent of events) expect(sent.msg.endsWith("...[truncated]")).toBe(true);
+    const body = spy.requests.map((request) => request.body).join("\n");
+    expect(body.match(/qj\w*/gi)).toBeNull();
+    expect(body).toContain(REDACTED);
+  });
+
   it("serverLogger with a url redacts before its HTTP sink", async () => {
     const spy = fetchSpy();
     vi.stubGlobal("fetch", spy.fetch);

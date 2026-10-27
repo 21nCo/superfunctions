@@ -53,11 +53,15 @@ adds an HTTP sink only when `url` is given.
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
   stack, cause}` (`stack` is the formatted traceback, `cause` is
-  `__cause__`), cycles become `"[circular]"`, unknown objects become
-  `"[unserializable]"`, and an event never exceeds 64 KB of UTF-8 JSON: an
+  `__cause__`), cycles become `"[circular]"` and unknown objects become
+  `"[unserializable]"`.
+- Sinks bound the size, after their own redaction, so truncation can never
+  cut a secret's delimiter before `SinkHttp` redacts it. Both built-in sinks
+  (`validate_and_serialize`) keep every event within 64 KB of UTF-8 JSON: an
   oversized event loses its context; if its other fields are still large,
   metadata is cut to the schema fields of at most 256 characters and tags are
-  removed; then the message is shortened.
+  removed; then the message is shortened. A custom sink receives the
+  sanitized event without a size bound.
 - Timestamps are RFC3339 UTC with milliseconds (`2026-01-14T12:00:00.000Z`).
 
 ## Redaction
@@ -115,8 +119,10 @@ has any id unchanged.
     events logged while it waits keep their interval timer. `close()` drops
     later events and delivers, or drops as `"closed"`, everything accepted
     before it, also when the loop cancels its delivery. Request bodies are
-    UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit. `stats()` returns `queued`,
-    `in_flight`, `sent`, `dropped` and `failed_batches`.
+    UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit.
+    `stats()` returns `queued`, `in_flight`, `sent`, `dropped` and
+    `failed_batches`.
+  - `timeout` (seconds) must be above 0.
   - The default transport is the standard library (`urllib`) in a worker
     thread; pass `transport=async (url, body, headers, timeout) -> status` to
     use another client.

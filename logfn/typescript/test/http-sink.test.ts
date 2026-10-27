@@ -1,5 +1,5 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_EVENT_SIZE,
@@ -66,6 +66,7 @@ describe("sinkHttp", () => {
       ["fractional queue", { url: URL, maxQueue: 1.5 }, /maxQueue must be a positive integer/],
       ["zero attempts", { url: URL, retry: { attempts: 0 } }, /retry.attempts/],
       ["negative timeout", { url: URL, timeoutMs: -1 }, /timeoutMs/],
+      ["zero timeout", { url: URL, timeoutMs: 0 }, /timeoutMs must be a positive number/],
     ])("rejects %s", (_name, options, message) => {
       expect(() => sinkHttp(options)).toThrow(message);
     });
@@ -216,6 +217,64 @@ describe("sinkHttp", () => {
       await sink.flush();
       expect(fetch).toHaveBeenCalledTimes(3);
       expect(sink.stats()).toMatchObject({ sent: 1, dropped: 0 });
+    });
+  });
+
+  describe("response release", () => {
+    function cancellable(status: number, type?: string) {
+      const cancel = vi.fn(async () => {});
+      return { response: { ok: status >= 200 && status < 300, status, type, body: { cancel } }, cancel };
+    }
+
+    it.each([
+      ["2xx", [200]],
+      ["retried 5xx then 2xx", [503, 200]],
+      ["4xx", [400]],
+      ["3xx", [302]],
+      ["opaque redirect", [0]],
+    ])("cancels the unread body of every %s response", async (_name, statuses) => {
+      const replies = statuses.map((status) => cancellable(status, status === 0 ? "opaqueredirect" : undefined));
+      const fetch = vi.fn<HttpSinkFetch>(async () => replies.shift()!.response);
+      const cancels = replies.map((reply) => reply.cancel);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1, retry: { attempts: 2, backoffMs: 1 }, onError: () => {} });
+      sink([event("m")]);
+      await vi.runAllTimersAsync();
+      await sink.flush();
+      expect(fetch).toHaveBeenCalledTimes(statuses.length);
+      for (const cancel of cancels) expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts a timed-out request and cancels a response that arrives after the timeout", async () => {
+      let respond: (response: Awaited<ReturnType<HttpSinkFetch>>) => void = () => {};
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn<HttpSinkFetch>((_url, init) => {
+        signal = init.signal;
+        return new Promise((resolve) => (respond = resolve));
+      });
+      const sink = sinkHttp({ url: URL, fetch, batch: 1, timeoutMs: 50, retry: { attempts: 1 }, onError: () => {} });
+      sink([event("m")]);
+      await vi.advanceTimersByTimeAsync(60);
+      await sink.flush();
+      expect(signal?.aborted).toBe(true);
+      expect(sink.stats()).toMatchObject({ sent: 0, dropped: 1 });
+      const late = cancellable(200);
+      respond(late.response);
+      await vi.runAllTimersAsync();
+      expect(late.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("tolerates bodies that cannot be cancelled", async () => {
+      const replies = [
+        { ok: true, status: 200, body: { cancel: () => Promise.reject(new Error("locked")) } },
+        { ok: true, status: 200, body: { cancel: () => { throw new Error("locked"); } } },
+        { ok: true, status: 200, body: null },
+      ];
+      const fetch = vi.fn<HttpSinkFetch>(async () => replies.shift()!);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1 });
+      for (const name of ["a", "b", "c"]) sink([event(name)]);
+      await vi.runAllTimersAsync();
+      await sink.flush();
+      expect(sink.stats()).toMatchObject({ sent: 3, dropped: 0 });
     });
   });
 
@@ -491,7 +550,62 @@ describe("sinkHttp against a real collector", () => {
   }
 
   afterEach(async () => {
-    await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+    await Promise.all(
+      servers.splice(0).map((server) => {
+        server.closeAllConnections();
+        return new Promise((resolve) => server.close(resolve));
+      })
+    );
+  });
+
+  // A collector that sends the status and the start of a body, then never
+  // ends it. Tracks its unfinished responses and the open connections that
+  // carried a request (fetch's dispatcher may also open spare connections that
+  // never carry one and close on their own; those hold nothing of the sink's).
+  async function listenHolding(statuses: number[]) {
+    const sockets = new Set<Socket>();
+    const responses = new Set<ServerResponse>();
+    const server = createServer((request, response) => {
+      const socket = request.socket;
+      if (!socket.destroyed) {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+      }
+      request.resume();
+      request.on("end", () => {
+        const status = statuses.length > 1 ? statuses.shift()! : statuses[0];
+        response.writeHead(status, status >= 300 && status < 400 ? { Location: "http://127.0.0.1:1/" } : {});
+        response.write("partial");
+        responses.add(response);
+        response.on("close", () => responses.delete(response));
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest`, sockets, responses };
+  }
+
+  async function settled(check: () => boolean, ms = 3000): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    return check();
+  }
+
+  it.each([
+    ["2xx", [200], { sent: 5, dropped: 0 }],
+    ["5xx after retries", [503], { sent: 0, dropped: 5 }],
+    ["5xx retried to 2xx", [503, 200, 503, 200, 503, 200, 503, 200, 503, 200], { sent: 5, dropped: 0 }],
+    ["3xx", [302], { sent: 0, dropped: 5 }],
+  ] as const)("releases every response and connection after a %s with a body held open", async (_name, statuses, stats) => {
+    const collector = await listenHolding([...statuses]);
+    const sink = sinkHttp({ url: collector.url, batch: 1, retry: { attempts: 2, backoffMs: 1 }, onError: () => {} });
+    for (let index = 0; index < 5; index++) {
+      sink([event(`m${index}`)]);
+      await sink.flush();
+    }
+    await sink.close();
+    expect(sink.stats()).toMatchObject(stats);
+    expect(await settled(() => collector.responses.size === 0 && collector.sockets.size === 0)).toBe(true);
   });
 
   it.each([301, 302, 303, 307, 308])("does not follow a %i redirect to another origin", async (status) => {

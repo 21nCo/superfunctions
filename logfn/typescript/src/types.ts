@@ -79,7 +79,11 @@ export interface LogEvent {
 export type PipelineStage = (event: LogEvent) => LogEvent | null;
 
 /**
- * Sink receives batches of log events and sends them to a destination
+ * Sink receives batches of log events and sends them to a destination.
+ * Loggers pass JSON-safe events that are not size-bounded, so that a sink
+ * which redacts (sinkHttp) does so before any truncation; a sink that needs
+ * the MAX_EVENT_SIZE bound applies validateAndSerialize itself, after its own
+ * redaction. Both built-in sinks do.
  */
 export interface Sink {
   /** Process a batch of log events */
