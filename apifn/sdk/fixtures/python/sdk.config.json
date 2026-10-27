@@ -1,0 +1,11 @@
+{
+  "target": "python",
+  "unsupported": "exclude",
+  "options": {
+    "package": { "name": "example-tasks-sdk", "version": "1.0.0", "description": "Generated client for the shared ApiFn SDK fixture", "license": "MIT" },
+    "clientName": "TasksClient",
+    "baseUrl": "https://api.example.test/v1",
+    "timeoutMs": 2000,
+    "retry": { "maxAttempts": 3, "baseDelayMs": 0, "maxDelayMs": 20 }
+  }
+}

@@ -1,6 +1,6 @@
-// Public SDK generation contract. Every target (TypeScript here, Python in
-// SFNS-18) implements `SdkTarget`; fields are versioned with the artifact
-// manifest and change only additively within a version.
+// Public SDK generation contract. Every target (TypeScript and Python here)
+// implements `SdkTarget`; fields are versioned with the artifact manifest and
+// change only additively within a version.
 
 import type { CatalogOperation, OperationCatalog } from "@apifn/contracts";
 
@@ -104,6 +104,11 @@ export interface SdkTarget<Options = unknown> {
   readonly version: string;
   /** Directory, relative to the package root and ending in `/`, that generation never rewrites. */
   readonly customCodeRoot: string;
+  /**
+   * The custom-code directory for resolved options, when it depends on them (Python: inside the import package,
+   * whose name is an option). When present it replaces `customCodeRoot`; same rules.
+   */
+  customCodeRootFor?(options: Options): string;
   /** Validates target options and applies defaults. Unknown fields are errors. */
   resolveOptions(input: unknown, catalog: OperationCatalog): { options: Options | null; diagnostics: SdkDiagnostic[] };
   /** Package identity recorded in the artifact manifest and release identity. */

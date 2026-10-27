@@ -6,9 +6,11 @@ export { validateCatalog } from "./catalog.js";
 export { writeSdk, type WriteSdkOptions, type WriteSdkResult } from "./write.js";
 export { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
 export { typescriptTarget, TYPESCRIPT_TARGET_VERSION, type TypeScriptOptions } from "./targets/typescript/index.js";
+export { pythonTarget, PYTHON_TARGET_VERSION, type PythonOptions } from "./targets/python/index.js";
 
+import { pythonTarget } from "./targets/python/index.js";
 import { typescriptTarget } from "./targets/typescript/index.js";
 import type { SdkTarget } from "./types.js";
 
 /** Targets shipped with this package. */
-export const SDK_TARGETS: readonly SdkTarget<any>[] = [typescriptTarget];
+export const SDK_TARGETS: readonly SdkTarget<any>[] = [typescriptTarget, pythonTarget];

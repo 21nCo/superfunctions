@@ -112,7 +112,8 @@ export function generateSdk(input: GenerateSdkInput): SdkGenerationResult {
     releaseId: release.descriptor!.releaseId,
   });
   diagnostics.push(...output.diagnostics);
-  diagnostics.push(...checkFiles(output.files, target.customCodeRoot));
+  const customRoot = target.customCodeRootFor?.(options) ?? target.customCodeRoot;
+  diagnostics.push(...checkFiles(output.files, customRoot));
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return failed(diagnostics);
 
   const files = [...output.files].sort((a, b) => comparePaths(a.path, b.path));
@@ -130,7 +131,7 @@ export function generateSdk(input: GenerateSdkInput): SdkGenerationResult {
       included: included.map((operation) => ({ id: operation.id, name: operation.name })),
       excluded,
     },
-    customCode: { root: target.customCodeRoot, seeds: files.filter((file) => file.ownership === "seed").map((file) => file.path) },
+    customCode: { root: customRoot, seeds: files.filter((file) => file.ownership === "seed").map((file) => file.path) },
     files: files.filter((file) => file.ownership === "generated").map((file) => ({ path: file.path, sha256: sha256Hex(file.contents) })),
     diagnostics,
   };

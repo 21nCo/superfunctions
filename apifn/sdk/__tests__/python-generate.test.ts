@@ -1,0 +1,384 @@
+// The Python target at generation time: provenance, selection, options, names, schema typing and the
+// custom-code area. The generated package itself is built, installed and run in python-sdk.test.ts.
+
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { createReleaseDescriptor } from "@apifn/contracts";
+import { afterAll, describe, expect, it } from "vitest";
+import { PYTHON_TARGET_VERSION, SDK_ARTIFACT_MANIFEST_FILE, writeSdk } from "../src/index.js";
+import { PYTHON_RUNTIME_SOURCE } from "../src/targets/python/runtime-source.js";
+import { cleanupTemp, clone, fixtureCatalog, fixtureConfig, generate, PACKAGE_DIR, readJson, tempDir } from "./helpers.js";
+
+afterAll(cleanupTemp);
+
+const pythonConfig = (): any => readJson("python/sdk.config.json");
+const generatePython = (catalog: unknown = fixtureCatalog(), config: unknown = pythonConfig()) => generate(catalog, config);
+const fileOf = (result: ReturnType<typeof generate>, file: string) => result.files.find((entry) => entry.path === file)?.contents ?? "";
+const errors = (result: ReturnType<typeof generate>) => result.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+
+/** Reverses key order at every depth: canonical inputs must not depend on it. */
+function reorder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorder);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.entries(value).reverse().map(([key, entry]) => [key, reorder(entry)]));
+}
+
+function snapshot(dir: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const walk = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else files[path.relative(dir, full).split(path.sep).join("/")] = readFileSync(full, "utf8");
+    }
+  };
+  walk(dir);
+  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
+describe("python target: provenance", () => {
+  it("embeds the current runtime template", () => {
+    expect(PYTHON_RUNTIME_SOURCE).toBe(readFileSync(path.join(PACKAGE_DIR, "templates/python/runtime.py"), "utf8"));
+  });
+
+  it("is byte-identical for the same inputs, whatever their key order, and rewrites nothing when regenerated", async () => {
+    const first = generatePython();
+    expect(first.ok, JSON.stringify(first.diagnostics)).toBe(true);
+    expect(generatePython(reorder(fixtureCatalog()), reorder(pythonConfig())).files).toEqual(first.files);
+    const dir = tempDir();
+    expect((await writeSdk(dir, first)).ok).toBe(true);
+    const before = snapshot(dir);
+    for (const file of Object.keys(before)) utimesSync(path.join(dir, file), 0, 0);
+    const second = await writeSdk(dir, generatePython());
+    expect(second).toMatchObject({ ok: true, written: [], deleted: [], seeded: [] });
+    expect(snapshot(dir)).toEqual(before);
+    expect(Object.keys(before).filter((file) => statSync(path.join(dir, file)).mtimeMs !== 0)).toEqual([]);
+  });
+
+  it("records the TypeScript target's catalog digest, its own target and release, and the custom-code area", () => {
+    const python = generatePython().manifest!;
+    const typescript = generate(fixtureCatalog(), fixtureConfig()).manifest!;
+    expect(python.catalog).toEqual(typescript.catalog);
+    expect(python.api).toEqual(typescript.api);
+    expect(python.generator).toEqual(typescript.generator);
+    expect(python.target).toEqual({ id: "python", version: PYTHON_TARGET_VERSION });
+    expect(python.package).toEqual({ name: "example-tasks-sdk", version: "1.0.0" });
+    const release = createReleaseDescriptor({ catalog: fixtureCatalog(), generator: python.generator, artifacts: [{ kind: "sdk", target: "python", package: python.package }] });
+    expect(python.releaseId).toBe(release.descriptor!.releaseId);
+    expect(python.releaseId).not.toBe(typescript.releaseId);
+    expect(python.customCode).toEqual({ root: "src/example_tasks_sdk/custom/", seeds: ["src/example_tasks_sdk/custom/__init__.py"] });
+    expect(python.files.map((entry) => entry.path)).toEqual([
+      "README.md",
+      "pyproject.toml",
+      "src/example_tasks_sdk/__init__.py",
+      "src/example_tasks_sdk/_runtime.py",
+      "src/example_tasks_sdk/client.py",
+      "src/example_tasks_sdk/models.py",
+      "src/example_tasks_sdk/py.typed",
+    ]);
+    // The generated client reports the same catalog digest and its own release in failure observations.
+    const client = fileOf(generatePython(), "src/example_tasks_sdk/client.py");
+    expect(client).toContain(`catalog_digest="${typescript.catalog.digest}"`);
+    expect(client).toContain(`release_id="${python.releaseId}"`);
+  });
+
+  it("lists the same exclusions as the TypeScript target, marks deprecation and keeps writes unretried", () => {
+    const result = generatePython();
+    const manifest = result.manifest!;
+    expect(manifest.complete).toBe(false);
+    expect(manifest.operations.excluded).toEqual(generate(fixtureCatalog(), fixtureConfig()).manifest!.operations.excluded.map((entry) => ({ ...entry, details: expect.any(Array) })));
+    expect(manifest.operations.excluded.map(({ id, reason }) => [id, reason])).toEqual([
+      ["legacy.tasks.list", "target-excluded"],
+      ["reports.upload", "unsupported"],
+      ["session.get", "unsupported"],
+      ["system.ping", "sdk-include-false"],
+    ]);
+    const client = fileOf(result, "src/example_tasks_sdk/client.py");
+    expect(client).toContain('@_te.deprecated("Close tasks instead of deleting them. Use replace_task instead.")\n    async def delete_task(');
+    expect(client.match(/retry="(?:read|idempotent|never)"/g)!.filter((entry) => entry !== 'retry="read"')).toEqual(Array(6).fill('retry="never"'));
+    expect(client).not.toContain('retry="idempotent"');
+  });
+});
+
+describe("python target: unsupported constructs", () => {
+  it("fails by default, naming each unsupported operation and writing nothing", () => {
+    const config = pythonConfig();
+    delete config.unsupported;
+    const result = generatePython(fixtureCatalog(), config);
+    expect(result).toMatchObject({ ok: false, files: [], manifest: null });
+    expect(errors(result).map((diagnostic) => [diagnostic.code, diagnostic.operation])).toEqual([
+      ["SDK_UNSUPPORTED_OPERATION", "reports.upload"],
+      ["SDK_UNSUPPORTED_OPERATION", "session.get"],
+    ]);
+    expect(errors(result)[0]!.message).toMatch(/multipart\/form-data/);
+    expect(errors(result)[1]!.message).toMatch(/cookieAuth/);
+  });
+
+  it("produces a complete manifest when every included operation is supported", () => {
+    const catalog = fixtureCatalog();
+    for (const operation of catalog.operations) if (operation.id === "reports.upload" || operation.id === "session.get") operation.sdk.include = false;
+    const config = pythonConfig();
+    delete config.unsupported;
+    expect(generatePython(catalog, config).manifest!.complete).toBe(true);
+  });
+
+  /** The fixture catalog plus one clone of tasks.get, edited. */
+  function withOperation(edit: (operation: any, catalog: any) => void): { catalog: any; id: string } {
+    const catalog = fixtureCatalog();
+    const operation = { ...clone(catalog.operations.find((candidate: any) => candidate.id === "tasks.get")), id: "tasks.probe", name: "probeTask", openapiOperationId: "probeTask", path: "/probe" };
+    edit(operation, catalog);
+    catalog.operations.push(operation);
+    return { catalog, id: "tasks.probe" };
+  }
+
+  const cases: Array<[string, (operation: any, catalog: any) => void, RegExp]> = [
+    ["a cookie parameter", (operation) => operation.parameters.push({ name: "session", in: "cookie", required: false, deprecated: false, style: "form", explode: true, allowReserved: false, description: null, schema: { type: "string" } }), /cookie parameter "session"/],
+    ["a request body on GET", (operation) => (operation.requestBody = { required: false, contents: [{ mediaType: "application/json", schema: {}, encoding: {} }] }), /GET request has no content/],
+    ["a request body on TRACE", (operation) => ((operation.method = "trace"), (operation.requestBody = { required: true, contents: [{ mediaType: "text/plain", schema: {}, encoding: {} }] })), /TRACE request has no content/],
+    ["a form request body", (operation) => ((operation.method = "post"), (operation.requestBody = { required: true, contents: [{ mediaType: "application/x-www-form-urlencoded", schema: {}, encoding: {} }] })), /application\/x-www-form-urlencoded are not supported/],
+    ["a success documented only as XML", (operation) => (operation.responses = [{ status: "200", kind: "success", description: "XML", contents: [{ mediaType: "application/xml", schema: null, encoding: {} }] }]), /success response 200 media types application\/xml/],
+    [
+      "only an HTTP Digest security alternative",
+      (operation, catalog) => {
+        catalog.securitySchemes.digestAuth = { type: "http", scheme: "digest", description: null };
+        operation.security = { alternatives: [[{ scheme: "digestAuth", scopes: [] }]] };
+      },
+      /no security alternative uses only supported schemes \(unsupported: digestAuth\)/,
+    ],
+  ];
+  for (const [name, edit, reason] of cases) {
+    it(`names ${name} and excludes the operation, never yielding a complete manifest`, () => {
+      const { catalog, id } = withOperation(edit);
+      const failing = pythonConfig();
+      delete failing.unsupported;
+      const failed = generatePython(catalog, failing);
+      expect(failed.ok).toBe(false);
+      expect(errors(failed).find((diagnostic) => diagnostic.operation === id)).toMatchObject({ code: "SDK_UNSUPPORTED_OPERATION", message: expect.stringMatching(reason) });
+      const excluded = generatePython(catalog);
+      expect(excluded.manifest!.complete).toBe(false);
+      expect(excluded.manifest!.operations.excluded.find((entry) => entry.id === id)).toMatchObject({ reason: "unsupported", details: [expect.stringMatching(reason)] });
+    });
+  }
+
+  it("includes a TRACE operation without a body, which only fetch cannot send", () => {
+    const { catalog, id } = withOperation((operation) => (operation.method = "trace"));
+    expect(generatePython(catalog).manifest!.operations.included.map((entry) => entry.id)).toContain(id);
+    expect(generate(catalog, fixtureConfig()).manifest!.operations.excluded.map((entry) => entry.id)).toContain(id);
+  });
+
+  const vectors: any[] = readJson("vectors/parameters.json").cases;
+  for (const [index, vector] of vectors.entries()) {
+    it(`parameter vector: ${vector.name}`, () => {
+      const { catalog, id } = withOperation((operation, target) => {
+        const parameter = { allowReserved: false, deprecated: false, description: null, ...vector.parameter };
+        operation.path = parameter.in === "path" ? `/vectors/${index}/{${parameter.name}}` : `/vectors/${index}`;
+        operation.parameters = [parameter];
+        Object.assign(target.schemas, clone(vector.schemas ?? {}));
+      });
+      const result = generatePython(catalog);
+      expect(result.ok, JSON.stringify(errors(result))).toBe(true);
+      if (!vector.expect.supported) {
+        const entry = result.manifest!.operations.excluded.find((candidate) => candidate.id === id)!;
+        expect(entry.reason).toBe("unsupported");
+        expect(entry.details.join("\n")).toContain(vector.expect.reason);
+        return;
+      }
+      const method = fileOf(result, "src/example_tasks_sdk/client.py").match(/async def probe_task\([\s\S]*?\) ->/)![0];
+      expect(/_ParamValue|_DeepObjectValue/.test(method), method).toBe(vector.expect.admitsUnserializable);
+    });
+  }
+});
+
+describe("python target: options", () => {
+  const option = (edit: (options: any) => void) => {
+    const config = pythonConfig();
+    edit(config.options);
+    return config;
+  };
+  const cases: Array<[string, any, string]> = [
+    ["an npm-scoped package name", option((options) => (options.package.name = "@example/tasks-sdk")), "/options/package/name"],
+    ["a package name that is not normalized", option((options) => (options.package.name = "Example_Tasks")), "/options/package/name"],
+    ["a SemVer prerelease that PEP 440 would rewrite", option((options) => (options.package.version = "1.0.0-beta.1")), "/options/package/version"],
+    ["a version with a leading zero", option((options) => (options.package.version = "1.01")), "/options/package/version"],
+    ["a module that is a keyword", option((options) => (options.module = "class")), "/options/module"],
+    ["a module that is not lowercase", option((options) => (options.module = "Tasks")), "/options/module"],
+    ["a license that is not an SPDX expression", option((options) => (options.package.license = "see LICENSE, 2026")), "/options/package/license"],
+    ["a description with a line break", option((options) => (options.package.description = "two\nlines")), "/options/package/description"],
+    ["a base URL with a dot segment", option((options) => (options.baseUrl = "https://api.example.test/a/../v1")), "/options/baseUrl"],
+    ["a base URL with user info", option((options) => (options.baseUrl = "https://user:pw@api.example.test")), "/options/baseUrl"],
+    ["a base URL with a query", option((options) => (options.baseUrl = "https://api.example.test/?region=eu")), "/options/baseUrl"],
+    ["a base URL with non-ASCII text", option((options) => (options.baseUrl = "https://api.example.test/größe")), "/options/baseUrl"],
+    ["a client name that is a keyword", option((options) => (options.clientName = "None")), "/options/clientName"],
+    ["a client name that is not an identifier", option((options) => (options.clientName = "tasks-client")), "/options/clientName"],
+    ["a retry budget over 10", option((options) => (options.retry.maxAttempts = 11)), "/options/retry/maxAttempts"],
+    ["a config that declares writes idempotent", option((options) => (options.retry.idempotentOperations = ["tasks.replace"])), "/options/retry/idempotentOperations"],
+    ["a type name for an unknown schema", option((options) => (options.typeNames = { Nope: "Nope" })), "/options/typeNames/Nope"],
+    ["an unknown option", option((options) => (options.servers = [])), "/options/servers"],
+  ];
+  for (const [name, config, pointer] of cases) {
+    it(`rejects ${name}`, () => {
+      const result = generatePython(fixtureCatalog(), config);
+      expect(result).toMatchObject({ ok: false, files: [] });
+      expect(result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.pointer])).toContainEqual(["SDK_INVALID_CONFIG", pointer]);
+    });
+  }
+
+  it("derives the import name from the distribution name, and accepts PEP 440 pre-releases", () => {
+    const result = generatePython(fixtureCatalog(), option((options) => (options.package.version = "2.0.0rc1")));
+    expect(result.manifest!.package.version).toBe("2.0.0rc1");
+    expect(fileOf(result, "pyproject.toml")).toContain('version = "2.0.0rc1"');
+    const renamed = generatePython(fixtureCatalog(), option((options) => (options.module = "tasks")));
+    expect(renamed.manifest!.customCode.root).toBe("src/tasks/custom/");
+    expect(fileOf(renamed, "pyproject.toml")).toContain('packages = ["src/tasks"]');
+  });
+
+  it("escapes package metadata as TOML and keeps the generated files ASCII", () => {
+    const result = generatePython(fixtureCatalog(), option((options) => (options.package.description = 'Tasks "SDK" \\ für Ärzte')));
+    expect(fileOf(result, "pyproject.toml")).toContain('description = "Tasks \\"SDK\\" \\\\ f\\u00fcr \\u00c4rzte"');
+  });
+
+  it("requires base_url in the constructor when the config has no default", () => {
+    const result = generatePython(fixtureCatalog(), option((options) => delete options.baseUrl));
+    const client = fileOf(result, "src/example_tasks_sdk/client.py");
+    expect(client).toContain("        base_url: str,\n");
+    expect(client).toContain("    default_base_url=None,");
+  });
+});
+
+describe("python target: names", () => {
+  function withSchema(name: string, schema: unknown = { type: "object" }) {
+    const catalog = fixtureCatalog();
+    catalog.schemas[name] = schema;
+    return catalog;
+  }
+
+  it("names a component schema that collides with a runtime export, and resolves through typeNames", () => {
+    const result = generatePython(withSchema("ApiError"));
+    expect(errors(result).map((diagnostic) => diagnostic.code)).toEqual(["SDK_NAME_COLLISION"]);
+    expect(errors(result)[0]!.message).toMatch(/"ApiError".*runtime export ApiError.*component schema "ApiError"/);
+    const config = pythonConfig();
+    config.options.typeNames = { ApiError: "ApiErrorModel" };
+    expect(generatePython(withSchema("ApiError"), config).ok).toBe(true);
+  });
+
+  it("names schemas whose type names coincide, are keywords or collide with operation aliases", () => {
+    expect(errors(generatePython(withSchema("task-page")))[0]!.message).toMatch(/component schema "TaskPage" and component schema "task-page"/);
+    expect(errors(generatePython(withSchema("none")))[0]!.message).toMatch(/"None" is generated for both a Python keyword and component schema "none"/);
+    expect(errors(generatePython(withSchema("GetTaskResult")))[0]).toMatchObject({ code: "SDK_NAME_COLLISION", operation: "tasks.get" });
+  });
+
+  it("names operations whose methods coincide or replace a client member", () => {
+    const catalog = fixtureCatalog();
+    const health = catalog.operations.find((operation: any) => operation.id === "system.health");
+    health.name = "get_task";
+    expect(errors(generatePython(catalog)).map((diagnostic) => [diagnostic.code, diagnostic.operation])).toContainEqual(["SDK_NAME_COLLISION", expect.stringMatching(/^(?:tasks\.get|system\.health)$/)]);
+    health.name = "aclose";
+    expect(errors(generatePython(catalog))[0]!.message).toMatch(/method name "aclose" is also the method that closes the client's transport/);
+  });
+
+  it("names parameters that become one argument, or the body and request options arguments", () => {
+    const catalog = fixtureCatalog();
+    const list = catalog.operations.find((operation: any) => operation.id === "tasks.list");
+    list.parameters.push({ ...clone(list.parameters.find((parameter: any) => parameter.name === "X-Request-Id")), name: "x_request_id", in: "query", style: "form", explode: true });
+    expect(errors(generatePython(catalog))[0]!.message).toMatch(/tasks\.list: query parameter "x_request_id" and header parameter "X-Request-Id" both become the argument "x_request_id"/);
+    const create = fixtureCatalog();
+    const operation = create.operations.find((candidate: any) => candidate.id === "tasks.create");
+    operation.parameters.push({ ...clone(operation.parameters[1]), name: "Body" }, { ...clone(operation.parameters[1]), name: "Request-Options" });
+    expect(errors(generatePython(create)).map((diagnostic) => diagnostic.message)).toEqual([
+      expect.stringMatching(/header parameter "Body" and the request body both become the argument "body"/),
+      expect.stringMatching(/header parameter "Request-Options" and the request options argument both become the argument "request_options"/),
+    ]);
+  });
+
+  it("writes keyword and non-identifier names so Python reads them, keeping wire names", () => {
+    const catalog = fixtureCatalog();
+    const list = catalog.operations.find((operation: any) => operation.id === "tasks.list");
+    list.parameters.push(
+      { ...clone(list.parameters[2]), name: "from", required: false },
+      { ...clone(list.parameters[2]), name: "2fa", required: false },
+      { ...clone(list.parameters[2]), name: "self", required: false }
+    );
+    const client = fileOf(generatePython(catalog), "src/example_tasks_sdk/client.py");
+    for (const [argument, wire] of [["from_", "from"], ["p_2fa", "2fa"], ["self_", "self"]]) {
+      expect(client).toContain(`_ParameterSpec(key="${argument}", name="${wire}"`);
+      expect(client).toContain(`        ${argument}: int | None = None,\n`);
+    }
+  });
+});
+
+describe("python target: schema types", () => {
+  it("types component objects as TypedDicts, merging allOf, and other schemas as aliases", () => {
+    const models = fileOf(generatePython(), "src/example_tasks_sdk/models.py");
+    expect(models).toContain('Task = _te.TypedDict(\n    "Task",\n    {\n        "assignee": _te.NotRequired["str | None"],\n        "id": "str",\n');
+    expect(models).toContain('        "subtasks": _te.NotRequired["list[Task]"],\n');
+    expect(models).toContain('TaskStatus: _te.TypeAlias = "_t.Literal[\\"open\\"] | _t.Literal[\\"closed\\"]"');
+    // ValidationProblem = allOf [Problem, { fields }]: one TypedDict with both parts' fields.
+    expect(models).toContain('ValidationProblem = _te.TypedDict(\n    "ValidationProblem",\n    {\n        "status": "int",\n        "title": "str",\n        "type": _te.NotRequired["str"],\n        "fields": _te.NotRequired["dict[str, str]"],\n');
+  });
+
+  it("writes inline objects of operations to models.py, typed in its namespace", () => {
+    const catalog = fixtureCatalog();
+    const create = catalog.operations.find((operation: any) => operation.id === "tasks.create");
+    create.requestBody.contents[0].schema = { type: "object", properties: { task: { $ref: "#/components/schemas/TaskInput" }, note: { type: "object", properties: { text: { type: "string" } } } } };
+    const result = generatePython(catalog);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    // Fields are typed before their object is named, so a nested object comes first.
+    expect(models).toContain('_CreateTask_1 = _te.TypedDict(\n    "_CreateTask_1",\n    {\n        "text": _te.NotRequired["str"],\n');
+    expect(models).toContain('_CreateTask_2 = _te.TypedDict(\n    "_CreateTask_2",\n    {\n        "note": _te.NotRequired["_CreateTask_1"],\n        "task": _te.NotRequired["TaskInput"],\n');
+    expect(models).not.toContain("_m.");
+    expect(fileOf(result, "src/example_tasks_sdk/client.py")).toContain("        body: _m._CreateTask_2,\n");
+  });
+
+  it("widens alias cycles with a warning, and keeps recursion through objects and arrays", () => {
+    const catalog = fixtureCatalog();
+    catalog.schemas.A = { anyOf: [{ $ref: "#/components/schemas/B" }, { type: "number" }] };
+    catalog.schemas.B = { anyOf: [{ $ref: "#/components/schemas/A" }, { type: "string" }] };
+    catalog.schemas.Tree = { type: "array", items: { $ref: "#/components/schemas/Tree" } };
+    const result = generatePython(catalog);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "SDK_SCHEMA_CYCLE").map((diagnostic) => [diagnostic.pointer, diagnostic.message])).toEqual([
+      ["/schemas/B", expect.stringMatching(/refers back to "A".*Python type alias.*typed Any/)],
+    ]);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    expect(models).toContain('A: _te.TypeAlias = "B | float"');
+    expect(models).toContain('B: _te.TypeAlias = "_t.Any"');
+    expect(models).toContain('Tree: _te.TypeAlias = "list[Tree]"');
+  });
+});
+
+describe("python target: custom code", () => {
+  it("never rewrites or deletes the custom-code area, including when the import name changes", async () => {
+    const dir = tempDir();
+    expect((await writeSdk(dir, generatePython())).seeded).toEqual(["src/example_tasks_sdk/custom/__init__.py"]);
+    const seed = path.join(dir, "src/example_tasks_sdk/custom/__init__.py");
+    const extra = path.join(dir, "src/example_tasks_sdk/custom/extra.py");
+    writeFileSync(seed, '__all__ = ["greet"]\nfrom .extra import greet\n');
+    writeFileSync(extra, "def greet() -> str:\n    return 'hi'\n");
+
+    const changed = pythonConfig();
+    changed.options.timeoutMs = 3000;
+    const rewritten = await writeSdk(dir, generatePython(fixtureCatalog(), changed));
+    expect(rewritten).toMatchObject({ ok: true, written: ["apifn.sdk-manifest.json", "src/example_tasks_sdk/client.py"], seeded: [], deleted: [] });
+    expect(readFileSync(seed, "utf8")).toBe('__all__ = ["greet"]\nfrom .extra import greet\n');
+    expect(readFileSync(extra, "utf8")).toContain("def greet");
+
+    const moved = pythonConfig();
+    moved.options.module = "tasks_sdk";
+    const result = await writeSdk(dir, generatePython(fixtureCatalog(), moved));
+    expect(result.ok).toBe(true);
+    expect(result.seeded).toEqual(["src/tasks_sdk/custom/__init__.py"]);
+    expect(result.deleted).toEqual(["src/example_tasks_sdk/__init__.py", "src/example_tasks_sdk/_runtime.py", "src/example_tasks_sdk/client.py", "src/example_tasks_sdk/models.py", "src/example_tasks_sdk/py.typed"]);
+    expect(existsSync(seed) && existsSync(extra)).toBe(true);
+    const manifest = JSON.parse(readFileSync(path.join(dir, SDK_ARTIFACT_MANIFEST_FILE), "utf8"));
+    expect(manifest.customCode.root).toBe("src/tasks_sdk/custom/");
+  });
+
+  it("refuses to overwrite an unowned file where the package would go", async () => {
+    const dir = tempDir();
+    mkdirSync(path.join(dir, "src/example_tasks_sdk"), { recursive: true });
+    writeFileSync(path.join(dir, "src/example_tasks_sdk/client.py"), "# mine\n");
+    const result = await writeSdk(dir, generatePython());
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SDK_OUTPUT_CONFLICT", pointer: "src/example_tasks_sdk/client.py" })]);
+    expect(readFileSync(path.join(dir, "src/example_tasks_sdk/client.py"), "utf8")).toBe("# mine\n");
+  });
+});
