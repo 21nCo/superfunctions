@@ -137,10 +137,13 @@ has any id unchanged.
     attempt is made, so each event has exactly one outcome.
   - The default transport, `stdlib_transport`, posts with `http.client` on a
     new connection in a daemon thread. Each attempt is bounded by `timeout` as
-    a whole; on timeout or cancellation its socket is shut down, so a slow
-    collector cannot hold a connection, and `asyncio.run()` or interpreter
-    exit never waits for it. Only DNS resolution is not interruptible (it
-    finishes in its daemon thread). Proxy environment variables are not used.
+    a whole, including connecting to every address the name resolves to; on
+    timeout or cancellation a connect in progress is stopped, no further
+    address is tried and a connected socket is shut down, so a slow or
+    unreachable collector cannot hold a connection, and `asyncio.run()` or
+    interpreter exit never waits for it. Only DNS resolution is not
+    interruptible (it finishes in its daemon thread, and no connect follows
+    it). Proxy environment variables are not used.
     Pass `transport=async (url, body, headers, timeout) -> status` to use
     another client; it should release its resources when cancelled.
   - Redaction runs on the caller's thread over the whole, untruncated event

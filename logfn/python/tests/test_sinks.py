@@ -841,3 +841,110 @@ def test_default_transport_releases_the_connection_when_an_attempt_times_out() -
         assert closed.wait(3), "the collector still holds the connection"
     finally:
         server.close()
+
+
+@pytest.fixture
+def blackhole() -> Iterator[tuple[str, int]]:
+    """An address whose TCP connect neither completes nor fails: a listener
+    with a full accept queue (Linux drops further SYNs) or an unrouted
+    TEST-NET-1 address. Skips where neither behaves that way."""
+    kept: list[socket.socket] = []
+
+    def hangs(address: tuple[str, int]) -> bool:
+        probe = socket.socket()
+        probe.settimeout(0.3)
+        try:
+            probe.connect(address)
+        except TimeoutError:
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+        return False
+
+    try:
+        listener = socket.socket()
+        kept.append(listener)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(0)
+        address = listener.getsockname()
+        for _ in range(4):
+            filler = socket.socket()
+            kept.append(filler)
+            filler.setblocking(False)
+            with contextlib.suppress(OSError):
+                filler.connect(address)
+        time.sleep(0.05)
+        if hangs(address):
+            yield address
+        elif hangs(("192.0.2.1", 9)):
+            yield ("192.0.2.1", 9)
+        else:
+            pytest.skip("no blackholed address on this host")
+    finally:
+        for sock in kept:
+            sock.close()
+
+
+def _multi_address(monkeypatch: pytest.MonkeyPatch, address: tuple[str, int]) -> list[tuple[float, socket.socket]]:
+    """Resolves multi.test to three copies of ``address`` and records every connect."""
+    real_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == "multi.test":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", address)] * 3
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    connects: list[tuple[float, socket.socket]] = []
+    real_connect = socket.socket.connect
+
+    def connect(self: socket.socket, address: Any) -> None:
+        connects.append((time.monotonic(), self))
+        real_connect(self, address)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    return connects
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_default_transport_stops_connecting_at_the_attempt_deadline(
+    scheme: str, blackhole: tuple[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The name resolves to three blackholed addresses. Each attempt may try
+    # only until its deadline; after close() returns no connect may start and
+    # no socket may stay open.
+    connects = _multi_address(monkeypatch, blackhole)
+    sink = SinkHttp(f"{scheme}://multi.test:{blackhole[1]}/ingest", timeout=0.2, retry_attempts=2, backoff_ms=0, on_error=lambda e: None)
+    sink([event("m")])
+    asyncio.run(sink.close())
+    closed_at = time.monotonic()
+    time.sleep(0.6)  # Longer than the two remaining addresses would take.
+
+    assert sink.stats()["dropped"] == 1
+    assert [at for at, _ in connects if at > closed_at] == []
+    assert len(connects) == 2  # One address per attempt.
+    assert all(sock.fileno() == -1 for _, sock in connects)
+
+
+def test_cancelling_the_default_transport_stops_a_connect_in_progress(
+    blackhole: tuple[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connects = _multi_address(monkeypatch, blackhole)
+
+    async def main() -> float:
+        task = asyncio.create_task(logfn.sinks.stdlib_transport(f"http://multi.test:{blackhole[1]}/", b"{}", {}, 5.0))
+        await eventually(lambda: len(connects) == 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return time.monotonic()
+
+    cancelled_at = asyncio.run(main())
+    deadline = cancelled_at + 1
+    while connects[0][1].fileno() != -1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert connects[0][1].fileno() == -1, "the connecting socket outlived the cancellation"
+    time.sleep(0.3)
+    assert len(connects) == 1  # No further address after the abort.

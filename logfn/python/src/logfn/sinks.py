@@ -7,7 +7,9 @@ import contextlib
 import functools
 import http.client
 import math
+import os
 import random
+import selectors
 import socket
 import sys
 import threading
@@ -71,58 +73,120 @@ DropReason = Literal["queue_full", "delivery_failed", "closed", "redaction_faile
 
 
 class _Attempt:
-    """The socket of one request, which abort() shuts down from any thread."""
+    """The sockets of one request, which abort() stops from any thread: a
+    connect in progress fails at once, a later address is never tried, and a
+    connected socket is shut down. Connecting also stops at the deadline."""
 
-    def __init__(self) -> None:
+    def __init__(self, timeout: float) -> None:
+        # Taken before the caller's own timer starts, so it is never later.
+        self._deadline = time.monotonic() + timeout
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._aborted = False
+        # abort() writes here to wake a connect waiting in a selector.
+        self._wake_reader, self._wake_writer = socket.socketpair()
+        self._wake_reader.setblocking(False)
+        self._wake_writer.setblocking(False)
 
-    def attach(self, sock: socket.socket) -> None:
+    def _attach(self, sock: socket.socket | None) -> None:
         with self._lock:
+            if self._sock is not None:
+                self._sock.close()
+                self._sock = None
+            if sock is None:
+                return
             if self._aborted:
                 raise ConnectionAbortedError("request aborted")
             # A duplicate keeps the connection reachable until release(), so a
             # late abort can never hit a reused descriptor.
             self._sock = sock.dup()
 
+    def connect(self, address: tuple[str, int], timeout: Any = None, source_address: Any = None) -> socket.socket:
+        """socket.create_connection, with each address registered before its
+        connect starts so that abort() interrupts it. All addresses share the
+        attempt's deadline, so none is tried after it."""
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        # Name resolution cannot be interrupted; an abort during it stops the
+        # loop before any connect.
+        infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        first_error: OSError | None = None
+        for family, socktype, proto, _name, sockaddr in infos:
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("timed out")
+            sock = socket.socket(family, socktype, proto)
+            try:
+                self._attach(sock)
+                if source_address:
+                    sock.bind(source_address)
+                self._connect(sock, sockaddr, remaining)
+                sock.settimeout(limit)
+                return sock
+            except BaseException as error:
+                sock.close()
+                self._attach(None)
+                if self._aborted or not isinstance(error, OSError):
+                    raise
+                first_error = first_error or error
+        raise first_error or OSError("getaddrinfo returned an empty list")
+
+    def _connect(self, sock: socket.socket, sockaddr: Any, limit: float) -> None:
+        sock.setblocking(False)
+        try:
+            sock.connect(sockaddr)
+            return
+        except BlockingIOError:
+            pass
+        with selectors.DefaultSelector() as selector:
+            selector.register(sock, selectors.EVENT_WRITE)
+            selector.register(self._wake_reader, selectors.EVENT_READ)
+            ready = {key.fileobj for key, _ in selector.select(limit)}
+        if self._aborted or self._wake_reader in ready:
+            raise ConnectionAbortedError("request aborted")
+        if sock not in ready:
+            raise TimeoutError("timed out")
+        code = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+        if code:
+            raise OSError(code, os.strerror(code))
+
     def abort(self) -> None:
         with self._lock:
+            if self._aborted:
+                return
             self._aborted = True
+            with contextlib.suppress(OSError):
+                self._wake_writer.send(b"\0")
             if self._sock is not None:
                 with contextlib.suppress(OSError):
                     self._sock.shutdown(socket.SHUT_RDWR)
 
     def release(self) -> None:
         with self._lock:
+            self._aborted = True
             if self._sock is not None:
                 self._sock.close()
                 self._sock = None
+            self._wake_reader.close()
+            self._wake_writer.close()
 
 
 def _post(url: str, body: bytes, headers: dict[str, str], timeout: float, attempt: _Attempt) -> int:
-    parts = urlsplit(url)
-    https = parts.scheme == "https"
-    connection_class = http.client.HTTPSConnection if https else http.client.HTTPConnection
-    connection = connection_class(parts.hostname or "", parts.port or (443 if https else 80), timeout=timeout)
-
-    def create_connection(address: tuple[str, int], *args: Any, **kwargs: Any) -> socket.socket:
-        sock = socket.create_connection(address, *args, **kwargs)
-        try:
-            attempt.attach(sock)
-        except BaseException:
-            sock.close()
-            raise
-        return sock
-
-    connection._create_connection = create_connection  # type: ignore[attr-defined]
-    target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    connection: http.client.HTTPConnection | None = None
     try:
+        parts = urlsplit(url)
+        https = parts.scheme == "https"
+        connection_class = http.client.HTTPSConnection if https else http.client.HTTPConnection
+        connection = connection_class(parts.hostname or "", parts.port or (443 if https else 80), timeout=timeout)
+        # HTTPS wraps the connected socket in TLS, which abort() also stops.
+        connection._create_connection = attempt.connect  # type: ignore[attr-defined]
+        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
         connection.request("POST", target, body=body, headers=headers)
         # Only the status is used; the body is never read.
         return int(connection.getresponse().status)
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
         attempt.release()
 
 
@@ -130,13 +194,15 @@ async def stdlib_transport(url: str, body: bytes, headers: dict[str, str], timeo
     """Default transport: a standard-library (http.client) POST on its own
     connection in a daemon thread. Redirects are not followed; their status is
     returned. The whole request is bounded by ``timeout``: on timeout or
-    cancellation the socket is shut down, so no connection outlives the
+    cancellation a connect in progress is stopped, no further address is
+    tried and a connected socket is shut down, so no connection outlives the
     attempt and interpreter or loop shutdown never waits for the collector.
-    Only name resolution cannot be interrupted; it ends in its own thread.
+    Only name resolution cannot be interrupted; it ends in its own thread
+    and no connect follows it.
     Proxy environment variables are not used."""
     loop = asyncio.get_running_loop()
     result: asyncio.Future[int] = loop.create_future()
-    attempt = _Attempt()
+    attempt = _Attempt(timeout)
 
     def settle(status: int | None, error: BaseException | None) -> None:
         if result.done():

@@ -223,7 +223,9 @@ class Logger:
         """Wait for scheduled async sink calls, then flush every sink. Sink
         failures are reported to on_error, never raised."""
         loop = asyncio.get_running_loop()
-        pending = [task for task in self._pending if task.get_loop() is loop]
+        # Other threads add and discard tasks meanwhile: filter a copy (set.copy
+        # is atomic), never the live set.
+        pending = [task for task in self._pending.copy() if task.get_loop() is loop]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
