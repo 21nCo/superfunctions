@@ -312,10 +312,22 @@ describe("cross-language vectors", () => {
   const auth = readJson("vectors/auth.json");
   const errors = readJson("vectors/errors.json");
   const retry = readJson("vectors/retry.json");
+  // Beyond the shared vectors: redirects whose Location is not a valid URL, with retries on. Both clients return
+  // them as they arrived, after one request.
+  const redirects = [
+    ["an unclosed IPv6 host", 302, "http://[::1"],
+    ["an invalid IPv6 host", 301, "http://[zz]/"],
+  ].map(([what, status, location]) => ({
+    name: `a redirect whose Location has ${what} is returned after one request`,
+    operation: "tasks.get",
+    parameters: { path: { projectId: "p1", taskId: "t1" } },
+    response: { status, headers: { "content-type": "text/plain", location }, body: "moved" },
+  }));
   const groups: Array<[string, any[], (vector: any) => [any[], { credentials?: unknown; maxAttempts?: number }]]> = [
     ["serialization", [...serialization.cases, ...serialization.rejected], (vector) => [[okResponse(catalog, vector.operation)], {}]],
     ["auth", [...auth.cases, ...auth.rejected], (vector) => [[okResponse(catalog, vector.operation)], { credentials: vector.credentials }]],
     ["errors", errors.cases, (vector) => [[vector.response], { maxAttempts: 1 }]],
+    ["redirect", redirects, (vector) => [[vector.response], {}]],
     [
       "retry",
       retry.cases,

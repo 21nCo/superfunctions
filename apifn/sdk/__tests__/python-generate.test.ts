@@ -467,6 +467,28 @@ describe("python target: schema types", () => {
     expect(generateNode(wrappers(6, (index) => (index % 2 ? { allOf: [node, { required: ["v"] }] } : { ...node, required: ["v"] }))).inline).toBe(8);
   });
 
+  it("types each inline TypedDict the same however deep the schema that first needs it", () => {
+    const catalog = fixtureCatalog();
+    const count = 300;
+    const name = (index: number) => `C${String(index).padStart(3, "0")}`;
+    for (let index = 0; index < count; index++) {
+      const next = index + 1 < count ? { $ref: `#/components/schemas/${name(index + 1)}`, required: ["v"] } : { type: "string" };
+      catalog.schemas[name(index)] = { type: "object", properties: { v: { type: "string" }, p: next } };
+    }
+    const started = Date.now();
+    const result = generatePython(catalog);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    // Typing C000 reaches every wrapper in the chain, past the nesting bound; each still requires v.
+    expect(models).not.toMatch(/"p": _te\.NotRequired\["C\d+"\]/);
+    for (let index = 0; index + 1 < count; index++) {
+      const inline = `_${name(index)}_1`;
+      expect(models).toContain(`        "p": _te.NotRequired["${inline}"],\n`);
+      expect(models).toContain(`${inline} = _te.TypedDict(\n    "${inline}",\n    {\n        "p": _te.NotRequired["${index + 2 < count ? `_${name(index + 1)}_1` : "str"}"],\n        "v": "str",\n    },\n)`);
+    }
+  });
+
   it("widens alias cycles with a warning, and keeps recursion through objects and arrays", () => {
     const catalog = fixtureCatalog();
     catalog.schemas.A = { anyOf: [{ $ref: "#/components/schemas/B" }, { type: "number" }] };

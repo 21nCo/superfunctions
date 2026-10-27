@@ -708,6 +708,38 @@ def test_an_injected_httpx_client_adds_no_cookies_headers_parameters_or_auth(ser
     assert len(hooked) == 4
 
 
+@pytest.mark.parametrize("injected", [False, True], ids=["owned client", "injected client"])
+@pytest.mark.parametrize(("status", "location"), [(302, "http://[::1"), (301, "http://[zz]/"), (307, "http://127.0.0.1:9/elsewhere")])
+def test_returns_a_redirect_as_it_arrived_even_when_its_location_is_not_a_url(server: FixtureServer, injected: bool, status: int, location: str) -> None:
+    import httpx
+
+    server.reset([scripted({"status": status, "headers": {"location": location, "content-type": "text/plain", **COOKIE}, "body": "moved"}), scripted(HEALTH_WITH_COOKIE)])
+    events: list[Any] = []
+    responses: list[int] = []
+
+    async def hook(response: httpx.Response) -> None:
+        responses.append(response.status_code)
+
+    async def main() -> None:
+        async with httpx.AsyncClient(event_hooks={"response": [hook]}) as shared:
+            transport = pkg.HttpxTransport(shared) if injected else None
+            async with client(server, transport=transport, on_failure=events.append) as tasks:
+                with pytest.raises(pkg.ApiHttpError) as caught:
+                    await tasks.get_task(project_id="p", task_id="t")
+                assert (caught.value.kind, caught.value.status, caught.value.declared, caught.value.attempts) == ("http", status, False, 1)
+                assert caught.value.headers["location"] == location
+                assert caught.value.body == "moved"
+                assert await tasks.get_health() == "ok"
+            assert list(shared.cookies.jar) == []
+
+    run(main())
+    # One request, never retried or followed; no cookie from the redirect reaches the next call.
+    assert [request.path for request in server.requests] == ["/v1/projects/p/tasks/t", "/v1/health"]
+    assert "cookie" not in server.requests[1].headers
+    assert responses == ([status, 200] if injected else [])
+    assert [(event["failure"]["kind"], event["failure"].get("httpStatus"), event["failure"]["attempt"]) for event in events] == [("http", status, 1)]
+
+
 def test_classifies_a_transport_failure_as_a_network_error() -> None:
     failure = ConnectionError("refused")
 

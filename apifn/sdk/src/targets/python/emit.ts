@@ -406,7 +406,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
     `\nfrom __future__ import annotations\n\nimport typing as _t\n\nimport typing_extensions as _te\n\n` +
     `__all__ = ${list(modelExports.map(pyString), "")}\n` +
     modelDefinitions.map((definition) => `\n${definition}`).join("") +
-    modelTypes.inline.map(({ name, fields }) => `\n${typedDict(name, fields)}`).join("");
+    modelTypes.inlineTypedDicts().map(({ name, fields }) => `\n${typedDict(name, fields)}`).join("");
 
   const runtimeExports = RUNTIME_EXPORTS.map((name) => `    ${name} as ${name},\n`).join("");
   const exportedModels = modelExports.map((name) => `    ${name} as ${name},\n`).join("");

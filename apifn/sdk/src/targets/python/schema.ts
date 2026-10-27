@@ -93,8 +93,8 @@ export class PythonTypes {
     private readonly prefix: string,
     /** Names already used in models.py; inline names are chosen around them. */
     private readonly taken: Set<string>,
-    /** Inline TypedDicts in the order they were first needed, from every module; written to models.py. */
-    readonly inline: InlineTypedDict[] = [],
+    /** Inline TypedDicts in the order they were first needed, from every module (see `inlineTypedDicts`). */
+    private readonly inline: InlineTypedDict[] = [],
     /** The types of models.py, where inline TypedDicts and their fields are written. */
     models?: PythonTypes
   ) {
@@ -209,6 +209,22 @@ export class PythonTypes {
     return [...merged.values()];
   }
 
+  /**
+   * The inline TypedDicts every module needed, for models.py, in the order they were named. Fields are typed
+   * here, one TypedDict at a time, from the start of their schema: typing one may name more, and none is typed
+   * inside another, so its fields do not depend on where it was first needed and the stack stays shallow.
+   */
+  inlineTypedDicts(): InlineTypedDict[] {
+    const models = this.#models;
+    for (let job = models.#pendingFields.shift(); job !== undefined; job = models.#pendingFields.shift()) {
+      job.entry.fields = models.#typeFields(job.plan, job.owner, 0);
+    }
+    return models.inline;
+  }
+
+  /** Inline TypedDicts named whose fields `inlineTypedDicts` has yet to type. */
+  readonly #pendingFields: Array<{ entry: InlineTypedDict; plan: FieldPlan; owner: string }> = [];
+
   /** Synthesized TypedDict names per schema object and cut set (null: the schema has none), shared by every module. */
   readonly #inlineNames = new WeakMap<object, Map<ReadonlySet<string>, string | null>>();
   /** The properties-only view `#object` types an object schema through, one per schema, so it is memoized too. */
@@ -217,16 +233,17 @@ export class PythonTypes {
   /**
    * A reference to a synthesized private TypedDict (its name starts with `_` and the owner's name) for an object
    * schema's fields. It is written to models.py, so its fields are typed there, without this module's prefix. Each
-   * schema object gets one, named before its fields are typed, so a reference back to it (through a component it
-   * wraps) reuses the name: TypedDict fields are forward references, and the work stays linear in the schemas.
+   * schema object and cut set gets one, planned from the start of the schema whatever the depth it is reached at,
+   * and named before its fields are typed (see `inlineTypedDicts`), so a reference back to it (through a component
+   * it wraps) reuses the name: TypedDict fields are forward references, and the work stays linear in the schemas.
    */
-  #inlineTypedDict(schema: Record<string, unknown>, owner: string, cut: ReadonlySet<string>, depth: number): string | null {
+  #inlineTypedDict(schema: Record<string, unknown>, owner: string, cut: ReadonlySet<string>): string | null {
     const models = this.#models;
     let byCut = models.#inlineNames.get(schema);
     if (byCut === undefined) models.#inlineNames.set(schema, (byCut = new Map()));
     let name = byCut.get(cut);
     if (name === undefined) {
-      const plan = models.#fieldPlan(schema, cut, depth);
+      const plan = models.#fieldPlan(schema, cut, 0);
       if (plan === null) byCut.set(cut, (name = null));
       else {
         let index = 1;
@@ -236,7 +253,7 @@ export class PythonTypes {
         const entry: InlineTypedDict = { name, fields: [] };
         this.inline.push(entry);
         byCut.set(cut, name);
-        entry.fields = models.#typeFields(plan, owner, depth);
+        models.#pendingFields.push({ entry, plan, owner });
       }
     }
     return name === null ? null : `${this.prefix}${name}`;
@@ -251,7 +268,7 @@ export class PythonTypes {
     if (depth > MAX_DEPTH || schema === true || schema === undefined || schema === null) return ANY;
     if (schema === false) return NEVER;
     if (!isRecord(schema)) return ANY;
-    const inline = this.#inlineTypedDict(schema, owner, position === "array" ? NO_CUTS : cut, depth);
+    const inline = this.#inlineTypedDict(schema, owner, position === "array" ? NO_CUTS : cut);
     if (inline !== null) return inline;
     const next = depth + 1;
     const parts: string[] = [];
@@ -325,7 +342,7 @@ export class PythonTypes {
     if (Object.keys(properties).length > 0) {
       let view = this.#models.#propertyViews.get(schema);
       if (view === undefined) this.#models.#propertyViews.set(schema, (view = { properties, required: schema.required }));
-      const inline = this.#inlineTypedDict(view, owner, NO_CUTS, depth);
+      const inline = this.#inlineTypedDict(view, owner, NO_CUTS);
       if (inline !== null) return inline;
     }
     const additional = schema.additionalProperties;
