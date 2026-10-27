@@ -31,7 +31,15 @@ Use `createBillFnReconciliationWorker(config)` with the same BillFn config you m
 import { createBillFnReconciliationWorker } from "@billfn/core";
 
 const worker = createBillFnReconciliationWorker(config);
-await worker.runNext();
+try {
+  await worker.runNext();
+} catch (error) {
+  // The failed message is already released or dead-lettered; log and keep polling.
+}
 ```
 
 If you provide `queue`, webhook ingestion and manual ops jobs both enqueue `billfn-reconciliation` work items. If you do not provide a queue, webhook reconciliation is processed inline.
+
+`config.queue` must be a lease-based `QueueAdapter` from `@superfunctions/queue` 0.2, such as `MemoryQueueAdapter` or the durable `DatabaseQueueAdapter`. `FlowFnQueueAdapter` no longer implements that interface and cannot be used here.
+
+Each `runNext()` call claims one message with a 15-minute lease and returns `null` when none is available. The queue lease is extended whenever the job's own processing lease is renewed. On success the message is acked. When another runner holds the job's lease, the message is released for retry, up to 5 deliveries. Any other failure dead-letters the message and `runNext()` rethrows the run's error. BillFn does not run a loop: callers drive `runNext()` and should catch its errors.

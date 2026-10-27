@@ -1730,6 +1730,20 @@ describe('@billfn/core', () => {
       expect(job.ok && job.data.job).toMatchObject({ status: 'failed', attempts: 1 });
     });
 
+    it('dead-letters a run whose error has no message and rethrows that error', async () => {
+      const failure = new Error('');
+      failure.name = '';
+      const harness = await setupQueuedReconciliation(async () => {
+        throw failure;
+      });
+
+      await expect(harness.createWorker().runNext()).rejects.toBe(failure);
+
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+      harness.clock.current = new Date(start.getTime() + 60 * MINUTE);
+      expect(await harness.createWorker().runNext()).toBeNull();
+    });
+
     it('dead-letters a message refused by lease conflicts on every delivery up to the limit', async () => {
       const harness = await setupQueuedReconciliation(async () => {});
       const worker = harness.createWorker();

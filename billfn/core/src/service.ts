@@ -1261,7 +1261,9 @@ export function createBillFnReconciliationWorker(config: BillFnConfig) {
       try {
         result = await runQueuedJob(claimed.payload, extendQueueLease);
       } catch (error) {
-        const reason = error instanceof Error ? error.message || error.name : String(error);
+        // The queue rejects an empty dead-letter reason, which would mask the run's error.
+        const reason =
+          (error instanceof Error ? error.message || error.name : String(error)) || 'reconciliation run failed';
         try {
           if (
             isReconciliationLeaseConflict(error) &&
