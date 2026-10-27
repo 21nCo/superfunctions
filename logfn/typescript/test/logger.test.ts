@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLogger, Logger, type LogEvent, type Sink } from "../src/index.js";
+import { createLogger, Logger, registerProcessHandlers, type LogEvent, type Sink } from "../src/index.js";
 
 function capture() {
   const events: LogEvent[] = [];
@@ -169,6 +169,147 @@ describe("Logger", () => {
     releases.forEach((release) => release());
     await flushed;
     expect(delivered).toEqual(["root", "child"]);
+  });
+
+  describe("caller sinks and stages with throwing getters", () => {
+    function throwingName<T extends object>(target: T, message: string): T {
+      Object.defineProperty(target, "name", {
+        get() {
+          throw new Error(message);
+        },
+      });
+      return target;
+    }
+
+    async function settle(run: (onError: ReturnType<typeof vi.fn>, sibling: Sink & { flush: ReturnType<typeof vi.fn> }) => Promise<void> | void) {
+      const unhandled: unknown[] = [];
+      const listener = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", listener);
+      try {
+        const onError = vi.fn();
+        const sibling = Object.assign((() => {}) as Sink, { flush: vi.fn(async () => {}) });
+        await run(onError, sibling);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { onError, sibling, unhandled };
+      } finally {
+        process.off("unhandledRejection", listener);
+      }
+    }
+
+    it("reports a throwing flush getter and still flushes sibling sinks", async () => {
+      const broken = (() => {}) as Sink;
+      Object.defineProperty(broken, "flush", {
+        get() {
+          throw new Error("flush getter");
+        },
+      });
+      const { onError, sibling, unhandled } = await settle(async (onError, sibling) => {
+        const logger = createLogger({ name: "svc", sinks: [broken, sibling], onError });
+        logger.info("m");
+        await expect(logger.flush()).resolves.toBeUndefined();
+      });
+      expect(onError.mock.calls.map(([error, context]) => [error.message, context])).toEqual([
+        ["flush getter", { sink: "broken" }],
+      ]);
+      expect(sibling.flush).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+    });
+
+    it("calls flush with the sink as receiver", async () => {
+      const sink = Object.assign((() => {}) as Sink, {
+        flushed: false,
+        async flush(this: { flushed: boolean }) {
+          this.flushed = true;
+        },
+      });
+      const onError = vi.fn();
+      await createLogger({ name: "svc", sinks: [sink], onError }).flush();
+      expect(onError).not.toHaveBeenCalled();
+      expect(sink.flushed).toBe(true);
+    });
+
+    it.each([
+      ["sync sink", "sink"],
+      ["async sink", "sink"],
+      ["flush", "sink"],
+      ["stage", "stage"],
+    ] as const)("reports the %s failure, not a throwing name getter", async (kind, key) => {
+      const { onError, sibling, unhandled } = await settle(async (onError, sibling) => {
+        const failure = new Error(`${kind} failed`);
+        const sinks: Sink[] = [sibling];
+        const pipeline = [];
+        if (kind === "stage") {
+          pipeline.push(
+            throwingName(() => {
+              throw failure;
+            }, "name getter")
+          );
+        } else if (kind === "flush") {
+          sinks.unshift(
+            throwingName(
+              Object.assign((() => {}) as Sink, {
+                flush: async () => {
+                  throw failure;
+                },
+              }),
+              "name getter"
+            )
+          );
+        } else {
+          sinks.unshift(
+            throwingName(
+              kind === "sync sink"
+                ? ((() => {
+                    throw failure;
+                  }) as Sink)
+                : ((async () => {
+                    throw failure;
+                  }) as Sink),
+              "name getter"
+            )
+          );
+        }
+        const logger = createLogger({ name: "svc", sinks, pipeline, onError });
+        if (kind !== "flush") logger.info("m");
+        await expect(logger.flush()).resolves.toBeUndefined();
+      });
+      expect(onError.mock.calls.map(([error, context]) => [error.message, context])).toEqual([
+        [`${kind} failed`, { [key]: "unknown" }],
+      ]);
+      expect(sibling.flush).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+    });
+  });
+
+  it("process handlers flush after the signal event, log nothing after that flush and exit 128 + signal", async () => {
+    const handlers = new Map<string, () => Promise<void>>();
+    vi.spyOn(process, "on").mockImplementation(((event: string, handler: () => Promise<void>) => {
+      handlers.set(event, handler);
+      return process;
+    }) as typeof process.on);
+    vi.spyOn(process, "off").mockImplementation((() => process) as typeof process.off);
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as typeof process.exit);
+    const order: string[] = [];
+    const sink = Object.assign(((batch: LogEvent[]) => {
+      order.push(...batch.map((event) => `event:${event.msg}`));
+    }) as Sink, {
+      flush: async () => {
+        order.push("flush");
+      },
+    });
+
+    for (const [signal, code] of [
+      ["SIGTERM", 143],
+      ["SIGINT", 130],
+    ] as const) {
+      order.length = 0;
+      exit.mockClear();
+      const unregister = registerProcessHandlers(createLogger({ name: "svc", sinks: [sink] }));
+      await handlers.get(signal)!();
+      expect(order).toEqual([`event:Received ${signal}, flushing logs...`, "flush"]);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(code);
+      unregister();
+    }
   });
 
   it("defaults to a local console sink", () => {

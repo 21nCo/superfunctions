@@ -50,7 +50,9 @@ adds an HTTP sink only when `url` is given.
   first waits for async sink calls scheduled before it (also those made
   through child loggers, and those running on another thread's event loop),
   then flushes every sink. A call whose loop has stopped or closed is not
-  waited for, since nothing would run it.
+  waited for, since nothing would run it. Looking up a sink's `flush` or a
+  sink's or stage's `__name__` is inside the same isolation: a raising
+  property is reported, and sibling sinks still flush.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,

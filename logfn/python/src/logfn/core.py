@@ -46,7 +46,12 @@ def _default_error_handler(error: BaseException, context: dict[str, str]) -> Non
 
 
 def _callable_name(value: Any) -> str:
-    return str(getattr(value, "__name__", None) or type(value).__name__ or "unknown")
+    # Sinks and stages are caller objects: a __name__ property that raises
+    # must not replace the error being reported.
+    try:
+        return str(getattr(value, "__name__", None) or type(value).__name__ or "unknown")
+    except Exception:
+        return "unknown"
 
 
 def _normalize_context(ctx: Any) -> dict[str, Any] | None:
@@ -271,10 +276,12 @@ class Logger:
             self._report(error, {})
 
         async def flush_one(sink: Sink) -> None:
-            flush = getattr(sink, "flush", None)
-            if not callable(flush):
-                return
             try:
+                # Looked up inside the try: a raising flush property is this
+                # sink's failure, reported like any other; siblings still flush.
+                flush = getattr(sink, "flush", None)
+                if not callable(flush):
+                    return
                 result = flush()
                 if inspect.isawaitable(result):
                     await result

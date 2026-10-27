@@ -4,8 +4,14 @@
 
 import type { Logger } from "../core/logger.js";
 
+// Conventional shell exit status for a process ended by a signal (128 + n).
+const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
+
 /**
- * Register process signal handlers for graceful shutdown
+ * Register process signal handlers for graceful shutdown. On SIGTERM or
+ * SIGINT the logger logs the signal, flushes once (nothing is logged after
+ * that flush, so no event is left queued) and exits with 128 + the signal
+ * number (143 or 130).
  */
 export function registerProcessHandlers(logger: Logger): () => void {
   if (typeof process === "undefined" || typeof process.on !== "function") {
@@ -26,11 +32,10 @@ export function registerProcessHandlers(logger: Logger): () => void {
 
     try {
       await logger.flush();
-      logger.info("Logs flushed successfully");
     } catch (error) {
       console.error("[logfn] Failed to flush on shutdown", error);
     } finally {
-      process.exit(0);
+      process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
     }
   };
 

@@ -146,6 +146,80 @@ def test_flush_reports_failures_without_raising() -> None:
     assert errors == ["flush failed"]
 
 
+class _RaisingName:
+    """A sink or stage whose __name__ property raises."""
+
+    def __init__(self, fail: str) -> None:
+        self.fail = fail
+
+    @property
+    def __name__(self) -> str:
+        raise RuntimeError("name property")
+
+    def __call__(self, value: Any) -> Any:
+        if self.fail in ("sync", "stage"):
+            raise ValueError(f"{self.fail} failed")
+        if self.fail == "async":
+
+            async def failing() -> None:
+                raise ValueError("async failed")
+
+            return failing()
+        return None
+
+    async def flush(self) -> None:
+        if self.fail == "flush":
+            raise ValueError("flush failed")
+
+
+@pytest.mark.parametrize("fail", ["sync", "async", "flush", "stage"])
+def test_a_raising_name_property_does_not_hide_the_reported_error(fail: str) -> None:
+    errors: list[tuple[str, dict[str, str]]] = []
+    flushed: list[str] = []
+
+    class Good(MockSink):
+        async def flush(self) -> None:
+            flushed.append("good")
+
+    loop_errors: list[dict[str, Any]] = []
+    broken = _RaisingName(fail)
+    sinks: list[Any] = [Good()] if fail == "stage" else [broken, Good()]
+    pipeline: list[Any] = [broken] if fail == "stage" else []
+    logger = create_logger("svc", sinks=sinks, pipeline=pipeline, on_error=lambda e, c: errors.append((str(e), c)))
+
+    async def run() -> None:
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        if fail != "flush":
+            logger.info("m")
+        await logger.flush()
+
+    asyncio.run(run())
+    expected = {"stage": "unknown"} if fail == "stage" else {"sink": "unknown"}
+    assert errors == [(f"{fail} failed", expected)]
+    assert flushed == ["good"]
+    assert loop_errors == []
+
+
+def test_a_raising_flush_property_is_reported_and_siblings_still_flush() -> None:
+    errors: list[tuple[str, dict[str, str]]] = []
+    flushed: list[str] = []
+
+    class FlushProperty(MockSink):
+        @property
+        def flush(self) -> Any:
+            raise RuntimeError("flush property")
+
+    class Good(MockSink):
+        async def flush(self) -> None:
+            flushed.append("good")
+
+    logger = create_logger("svc", sinks=[FlushProperty(), Good()], on_error=lambda e, c: errors.append((str(e), c)))
+    logger.info("m")
+    asyncio.run(logger.flush())
+    assert errors == [("flush property", {"sink": "FlushProperty"})]
+    assert flushed == ["good"]
+
+
 def test_default_sink_is_local_console(capsys: pytest.CaptureFixture[str]) -> None:
     logger = Logger("svc", level="info")
     logger.info("hello")

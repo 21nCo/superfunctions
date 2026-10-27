@@ -19,6 +19,17 @@ const defaultErrorHandler: ErrorHandler = (error, context) => {
   console.error("[logfn internal error]", context, error);
 };
 
+// Sinks and stages are caller objects: reading their name may run a getter
+// that throws, which must not replace the error being reported.
+function callableName(fn: unknown): string {
+  try {
+    const name = (fn as { name?: unknown }).name;
+    return typeof name === "string" && name ? name : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -146,7 +157,7 @@ export class Logger {
       try {
         result = stage(event);
       } catch (error) {
-        this.report(error, { stage: stage.name || "unknown" });
+        this.report(error, { stage: callableName(stage) });
         return;
       }
       if (result === null || result === undefined) {
@@ -170,14 +181,14 @@ export class Logger {
           const settled = Promise.resolve(result).then(
             () => undefined,
             (error: unknown) => {
-              this.report(error, { sink: sink.name || "unknown" });
+              this.report(error, { sink: callableName(sink) });
             }
           );
           this.pending.add(settled);
           void settled.finally(() => this.pending.delete(settled));
         }
       } catch (error) {
-        this.report(error, { sink: sink.name || "unknown" });
+        this.report(error, { sink: callableName(sink) });
       }
     }
   }
@@ -253,11 +264,14 @@ export class Logger {
   async flush(): Promise<void> {
     await Promise.all([...this.pending]);
     const pending = this.options.sinks.map(async (sink) => {
-      if (typeof sink.flush !== "function") return;
       try {
-        await sink.flush();
+        // Read once inside the try: a throwing flush getter is this sink's
+        // failure, reported like any other, and siblings still flush.
+        const flush: unknown = sink.flush;
+        if (typeof flush !== "function") return;
+        await (flush as () => unknown).call(sink);
       } catch (error) {
-        this.report(error, { sink: sink.name || "unknown" });
+        this.report(error, { sink: callableName(sink) });
       }
     });
     await Promise.all(pending);

@@ -58,6 +58,12 @@ when `url` is given.
   `onError` (default `console.error`). `flush()` first waits for pending
   async sink calls (also those made through child loggers), then flushes
   every sink.
+  Reading a sink's `flush` or a sink's or stage's `name` is inside the same
+  isolation: a throwing getter is reported, and sibling sinks still flush.
+- `registerProcessHandlers(logger)` (server entry): on SIGTERM or SIGINT it
+  logs the signal, flushes once, logs nothing after that flush and exits
+  with 143 or 130 (128 + the signal number). It returns an unregister
+  function.
 - A pipeline stage that throws drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
