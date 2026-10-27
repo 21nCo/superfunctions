@@ -208,10 +208,11 @@ class HttpxTransport:
 
     A request carries only what the operation and its credentials decide. The client's cookies, default headers,
     default query parameters and auth are never added, so no state a response left behind (such as a Set-Cookie
-    session) and no ambient credential reaches another call: no response updates the client's cookie jar, and the
-    client created here keeps no cookies at all. A passed client's transport settings (proxies, TLS, limits,
-    mounts) and event hooks still apply. Every response is returned as it arrived, including a 3xx whose Location
-    is not a valid URL."""
+    session) and no ambient credential reaches another call. The client created here keeps no cookies at all; a
+    client passed in keeps its own cookie jar, which httpx may still update, but the SDK never sends from it. A
+    passed client's timeouts, transport settings (proxies, TLS, limits, mounts) and event hooks still apply, and
+    responses and errors are what its send would give. Every response is returned as it arrived, including a 3xx
+    whose Location is not a valid URL."""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._owned = client is None
@@ -233,17 +234,18 @@ class HttpxTransport:
         return TransportResponse(status=response.status_code, headers=headers, body=response.aiter_bytes(), close=response.aclose)
 
     async def _send(self, request: httpx.Request) -> httpx.Response:
-        # Not AsyncClient.send: for any 3xx with a Location, httpx builds the redirect request even when it will not
-        # follow it, and raises on a Location it cannot parse, discarding the response. The client's transport for
-        # the URL (its mounts and proxies) sends the request instead, and its event hooks run as send runs them.
-        # httpx is pinned below 0.29, whose AsyncClient has this transport lookup.
+        # AsyncClient.send without its redirect handling: for any 3xx with a Location, send builds the redirect
+        # request even when it will not follow it, and raises on a Location it cannot parse, discarding the
+        # response. The rest is as send does it with auth=None: the client's timeouts and event hooks, and its
+        # single-request send (the transport for the URL, errors carrying the request, a response stream that
+        # records elapsed, logging). httpx is pinned below 0.29, whose AsyncClient has these methods.
         client = self._client
         if client.is_closed:
-            raise RuntimeError("Cannot send a request, as the httpx client has been closed.")
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        client._set_timeout(request)
         for hook in client.event_hooks["request"]:
             await hook(request)
-        response = await client._transport_for_url(request.url).handle_async_request(request)
-        response.request = request
+        response = await client._send_single_request(request)
         try:
             for hook in client.event_hooks["response"]:
                 await hook(response)

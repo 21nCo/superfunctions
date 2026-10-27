@@ -715,10 +715,13 @@ def test_returns_a_redirect_as_it_arrived_even_when_its_location_is_not_a_url(se
 
     server.reset([scripted({"status": status, "headers": {"location": location, "content-type": "text/plain", **COOKIE}, "body": "moved"}), scripted(HEALTH_WITH_COOKIE)])
     events: list[Any] = []
-    responses: list[int] = []
+    responses: list[tuple[int, str]] = []
 
     async def hook(response: httpx.Response) -> None:
-        responses.append(response.status_code)
+        # A hook may read the response as with AsyncClient.send: its request, body and elapsed time are there.
+        await response.aread()
+        assert response.elapsed.total_seconds() >= 0
+        responses.append((response.status_code, response.request.url.path))
 
     async def main() -> None:
         async with httpx.AsyncClient(event_hooks={"response": [hook]}) as shared:
@@ -730,14 +733,38 @@ def test_returns_a_redirect_as_it_arrived_even_when_its_location_is_not_a_url(se
                 assert caught.value.headers["location"] == location
                 assert caught.value.body == "moved"
                 assert await tasks.get_health() == "ok"
-            assert list(shared.cookies.jar) == []
+            # httpx may store a passed client's cookies, but the SDK never sends them.
+            assert [cookie.name for cookie in shared.cookies.jar] == (["session"] if injected else [])
 
     run(main())
     # One request, never retried or followed; no cookie from the redirect reaches the next call.
     assert [request.path for request in server.requests] == ["/v1/projects/p/tasks/t", "/v1/health"]
     assert "cookie" not in server.requests[1].headers
-    assert responses == ([status, 200] if injected else [])
+    assert responses == ([(status, "/v1/projects/p/tasks/t"), (200, "/v1/health")] if injected else [])
     assert [(event["failure"]["kind"], event["failure"].get("httpStatus"), event["failure"]["attempt"]) for event in events] == [("http", status, 1)]
+
+
+@pytest.mark.parametrize("injected", [False, True], ids=["owned client", "injected client"])
+def test_a_connection_failure_through_httpx_is_a_network_error_carrying_its_request(injected: bool) -> None:
+    import socket
+
+    import httpx
+
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        port = unused.getsockname()[1]
+
+    async def main() -> None:
+        async with httpx.AsyncClient() as shared:
+            transport = pkg.HttpxTransport(shared) if injected else None
+            async with pkg.TasksClient(base_url=f"http://127.0.0.1:{port}/v1", transport=transport, retry={"max_attempts": 1}) as tasks:
+                with pytest.raises(pkg.ApiError) as caught:
+                    await tasks.get_health()
+        assert caught.value.kind == "network"
+        assert isinstance(caught.value.__cause__, httpx.ConnectError)
+        assert str(caught.value.__cause__.request.url) == f"http://127.0.0.1:{port}/v1/health"
+
+    run(main())
 
 
 def test_classifies_a_transport_failure_as_a_network_error() -> None:

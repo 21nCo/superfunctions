@@ -96,16 +96,21 @@ export class PythonTypes {
     /** Inline TypedDicts in the order they were first needed, from every module (see `inlineTypedDicts`). */
     private readonly inline: InlineTypedDict[] = [],
     /** The types of models.py, where inline TypedDicts and their fields are written. */
-    models?: PythonTypes
+    models?: PythonTypes,
+    /** How this module writes a builtin type name such as `str` (see `withPrefix`). */
+    private readonly builtin: (name: string) => string = (name) => name
   ) {
     this.#models = models ?? this;
   }
 
   readonly #models: PythonTypes;
 
-  /** Types for another module, which refers to models.py names through `prefix`; inline types still go to models.py. */
-  withPrefix(prefix: string): PythonTypes {
-    return new PythonTypes(this.schemas, this.resolve, this.cuts, prefix, this.taken, this.inline, this.#models);
+  /**
+   * Types for another module, which refers to models.py names through `prefix` and to builtin types through
+   * `builtin` (a class whose members shadow a builtin qualifies it); inline types still go to models.py.
+   */
+  withPrefix(prefix: string, builtin?: (name: string) => string): PythonTypes {
+    return new PythonTypes(this.schemas, this.resolve, this.cuts, prefix, this.taken, this.inline, this.#models, builtin);
   }
 
   /**
@@ -279,9 +284,9 @@ export class PythonTypes {
       const name = component === null || (position !== "array" && cut.has(component)) ? null : this.resolve(component);
       parts.push(name === null ? ANY : `${this.prefix}${name}`);
     }
-    if ("const" in schema) parts.push(literal(schema.const) ?? ANY);
+    if ("const" in schema) parts.push(this.#literal(schema.const) ?? ANY);
     if (Array.isArray(schema.enum)) {
-      const values = schema.enum.map(literal);
+      const values = schema.enum.map((value) => this.#literal(value));
       parts.push(values.includes(null) ? ANY : union(values as string[]));
     }
     // Literal values already narrow a primitive type.
@@ -296,6 +301,11 @@ export class PythonTypes {
     return intersection(parts);
   }
 
+  #literal(value: unknown): string | null {
+    const type = literal(value);
+    return type === "float" ? this.builtin(type) : type;
+  }
+
   #byType(schema: Record<string, unknown>, owner: string, depth: number, cut: ReadonlySet<string>, position: Position, input: boolean): string | null {
     const types = typeList(schema);
     if (types === null) return null;
@@ -303,13 +313,13 @@ export class PythonTypes {
       types.map((type) => {
         switch (type) {
           case "string":
-            return "str";
+            return this.builtin("str");
           case "integer":
-            return "int";
+            return this.builtin("int");
           case "number":
-            return "float";
+            return this.builtin("float");
           case "boolean":
-            return "bool";
+            return this.builtin("bool");
           case "null":
             return "None";
           case "array":
@@ -333,12 +343,12 @@ export class PythonTypes {
     } else {
       members.push(this.type(items, owner, depth, cut, position === "tuple" ? "tuple" : "array", input));
     }
-    return `${input ? "_t.Sequence" : "list"}[${union(members)}]`;
+    return `${input ? "_t.Sequence" : this.builtin("list")}[${union(members)}]`;
   }
 
   #object(schema: Record<string, unknown>, owner: string, depth: number, input: boolean): string {
     const properties = isRecord(schema.properties) ? schema.properties : {};
-    const map = input ? "_t.Mapping" : "dict";
+    const map = input ? "_t.Mapping" : this.builtin("dict");
     if (Object.keys(properties).length > 0) {
       let view = this.#models.#propertyViews.get(schema);
       if (view === undefined) this.#models.#propertyViews.set(schema, (view = { properties, required: schema.required }));
@@ -346,7 +356,7 @@ export class PythonTypes {
       if (inline !== null) return inline;
     }
     const additional = schema.additionalProperties;
-    if (additional === false && !isRecord(schema.patternProperties)) return `${map}[str, ${NEVER}]`;
-    return `${map}[str, ${additional === undefined || additional === true ? ANY : this.type(additional, owner, depth, NO_CUTS, "direct", input)}]`;
+    if (additional === false && !isRecord(schema.patternProperties)) return `${map}[${this.builtin("str")}, ${NEVER}]`;
+    return `${map}[${this.builtin("str")}, ${additional === undefined || additional === true ? ANY : this.type(additional, owner, depth, NO_CUTS, "direct", input)}]`;
   }
 }

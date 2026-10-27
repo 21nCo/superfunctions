@@ -289,6 +289,17 @@ describe("python target: options", () => {
     expect(derived.diagnostics.map((diagnostic) => diagnostic.pointer)).toEqual(["/options/package/name"]);
   });
 
+  it("reports an import name derived from an unusable distribution name at the distribution name", () => {
+    for (const name of ["3d-sdk", "a".repeat(120), "class"]) {
+      const result = generatePython(fixtureCatalog(), option((options) => (options.package.name = name)));
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.pointer]), name).toEqual([["SDK_INVALID_CONFIG", "/options/package/name"]]);
+      expect(result.diagnostics[0]!.message).toContain("set module");
+      const named = generatePython(fixtureCatalog(), option((options) => ((options.package.name = name), (options.module = "my_sdk"))));
+      expect(named.ok, JSON.stringify(named.diagnostics)).toBe(true);
+    }
+  });
+
   it("requires base_url in the constructor when the config has no default", () => {
     const result = generatePython(fixtureCatalog(), option((options) => delete options.baseUrl));
     const client = fileOf(result, "src/example_tasks_sdk/client.py");
@@ -326,6 +337,23 @@ describe("python target: names", () => {
     expect(errors(generatePython(catalog)).map((diagnostic) => [diagnostic.code, diagnostic.operation])).toContainEqual(["SDK_NAME_COLLISION", expect.stringMatching(/^(?:tasks\.get|system\.health)$/)]);
     health.name = "aclose";
     expect(errors(generatePython(catalog))[0]!.message).toMatch(/method name "aclose" is also the method that closes the client's transport/);
+  });
+
+  it("writes builtins through the builtins module in a client whose methods shadow one", () => {
+    const plain = fileOf(generatePython(fixtureCatalog()), "src/example_tasks_sdk/client.py");
+    expect(plain).not.toContain("import builtins");
+    expect(plain).toMatch(/^        base_url: str \| None = None,$/m);
+    const catalog = fixtureCatalog();
+    catalog.operations.find((operation: any) => operation.id === "system.health").name = "str";
+    const result = generatePython(catalog);
+    expect(result.ok, JSON.stringify(errors(result))).toBe(true);
+    const client = fileOf(result, "src/example_tasks_sdk/client.py");
+    expect(client).toContain("import builtins as _b\n");
+    expect(client).toMatch(/^    async def str\(\n/m);
+    // No bare builtin is left in the class body for the method to replace.
+    const body = client.slice(client.indexOf("\nclass TasksClient:"));
+    expect(body).toMatch(/^        base_url: _b\.str \| None = None,$/m);
+    expect(body).not.toMatch(/(?<![\w.])(?:str|int|float|bool|bytes|bytearray|memoryview|list|dict|object)\[|(?<![\w."])(?:str|int|float|bool|bytes|bytearray|memoryview|object)(?= \||,\n|\]|\))/);
   });
 
   it("names parameters that become one argument, or the body and request options arguments", () => {

@@ -170,6 +170,20 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
     const create = catalog.operations.find((operation: any) => operation.id === "tasks.create");
     create.requestBody.contents[0].schema = { type: "object", required: ["title"], properties: { title: { type: "string" }, meta: { type: "object", properties: { from: { $ref: "#/components/schemas/Keywords" } } } } };
     create.responses[0].contents[0].schema = { anyOf: [{ $ref: "#/components/schemas/Merged" }, { $ref: "#/components/schemas/Tuple" }, { $ref: "#/components/schemas/CycleA" }] };
+    // Methods named as builtins the client's annotations use (list, str, bytes, ...), ahead of methods using them.
+    const builtinNames: Record<string, string> = {
+      "tasks.export": "list",
+      "system.health": "str",
+      "tasks.attachment.download": "bytes",
+      "tasks.attachment.upload": "bytearray",
+      "tasks.replace": "memoryview",
+      "tasks.filter": "float",
+      "tasks.archive": "int",
+      "projects.summary.get": "dict",
+      "tasks.find": "bool",
+      "tasks.delete": "object",
+    };
+    for (const operation of catalog.operations) operation.name = builtinNames[operation.id] ?? operation.name;
     const config = readJson("python/sdk.config.json");
     config.options.package.name = "awkward-sdk";
     const result = generate(catalog, config);
@@ -177,11 +191,15 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
     const dir = tempDir();
     return writeSdk(dir, result).then((written) => {
       expect(written.ok).toBe(true);
-      expect(readFileSync(path.join(dir, "src/awkward_sdk/client.py"), "utf8")).toMatch(/extra: _ParamValue \| None = None,\n[\s\S]*where: _DeepObjectValue \| None = None,/);
+      const client = readFileSync(path.join(dir, "src/awkward_sdk/client.py"), "utf8");
+      expect(client).toMatch(/extra: _ParamValue \| None = None,\n[\s\S]*where: _DeepObjectValue \| None = None,/);
+      expect(client).toContain("    async def list(\n");
+      expect(client).toContain("        project_id: _b.str,\n");
       // The misuse module passes only while mypy reports the missing required key its ignore comment names.
       const misuse = ["RequiredSplit", "OneRefReq", "RefSiblingReq"].map((name) => `ok_${name}: ${name} = {"x": "a"}\nmissing_${name}: ${name} = {}  # type: ignore[typeddict-item]\n`);
       const linked = `linked: Linked = {"next": {"v": "a", "next": {"v": "b"}}}\nmissing_inner: Linked = {"next": {"v": "a", "next": {}}}  # type: ignore[typeddict-item]\n`;
-      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import Linked, OneRefReq, Optional, RefSiblingReq, RequiredSplit\n\noptional: Optional = {}\n${misuse.join("")}${linked}`);
+      const calls = `\n\nasync def call(client: TasksClient) -> None:\n    await client.str()\n    await client.int(project_id="p", task_id="t")\n    await client.int(project_id=1, task_id="t")  # type: ignore[arg-type]\n`;
+      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import Linked, OneRefReq, Optional, RefSiblingReq, RequiredSplit, TasksClient\n\noptional: Optional = {}\n${misuse.join("")}${linked}${calls}`);
       log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "awkward_sdk", "required_misuse.py"], { cwd: path.join(dir, "src") });
       // And it imports: every quoted type and inline TypedDict is valid at runtime too.
       const keys = log.run(wheelPython, ["-c", "import json, awkward_sdk, typing; typing.get_type_hints(awkward_sdk.Keywords); print(json.dumps(sorted(awkward_sdk.Keywords.__required_keys__)))"], { cwd: path.join(dir, "src") });

@@ -48,6 +48,13 @@ const RUNTIME_EXPORTS = [
 const CLIENT_MEMBERS = new Map<string, string>([["aclose", "the method that closes the client's transport"]]);
 
 /**
+ * Builtins the client class's annotations name. Type checkers resolve those annotations in the class body, where a
+ * method of the same name would replace the builtin, so when an operation method has one of these names the
+ * client module writes them all through `builtins`.
+ */
+const ANNOTATION_BUILTINS = new Set(["bool", "bytearray", "bytes", "dict", "float", "int", "list", "memoryview", "object", "str"]);
+
+/**
  * Whether the catalog declares that the server makes repeated calls of a write operation safe. Catalog v1
  * has no such field (method, schema and an `Idempotency-Key` parameter grant none), so no write is
  * retried; a later catalog version supplies the declaration here, not the SDK config.
@@ -62,8 +69,8 @@ function header(context: SdkTargetContext<PythonOptions>): string {
 
 const pointerOf = (name: string) => name.replace(/~/g, "~0").replace(/\//g, "~1");
 
-function responseType(shape: ResponseShape, types: PythonTypes, owner: string): string {
-  const members = shape.contents.map(({ kind, schema }) => (kind === "json" ? types.type(schema, owner) : kind === "text" ? "str" : kind === "binary" ? "bytes" : "None"));
+function responseType(shape: ResponseShape, types: PythonTypes, owner: string, builtin: (name: string) => string): string {
+  const members = shape.contents.map(({ kind, schema }) => (kind === "json" ? types.type(schema, owner) : kind === "text" ? builtin("str") : kind === "binary" ? builtin("bytes") : "None"));
   const unique = [...new Set(members)];
   if (unique.includes(ANY)) return ANY;
   return unique.join(" | ") || ANY;
@@ -139,7 +146,9 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
   const resolve = (component: string) => typeNames.get(component) ?? null;
   const taken = new Set<string>(typeNames.values());
   const modelTypes = new PythonTypes(catalog.schemas, resolve, cuts, "", taken);
-  const clientTypes = modelTypes.withPrefix("_m.");
+  const shadowsBuiltins = context.operations.some((operation) => ANNOTATION_BUILTINS.has(snakeCase(operation.name)));
+  const b = (name: string) => (shadowsBuiltins ? `_b.${name}` : name);
+  const clientTypes = modelTypes.withPrefix("_m.", b);
 
   const modelDefinitions: string[] = [];
   for (const schema of schemaNames) {
@@ -233,8 +242,8 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
         shape.body.kind === "json"
           ? clientTypes.type(shape.body.schema, prefix)
           : shape.body.kind === "text"
-            ? "str"
-            : "bytes | bytearray | memoryview | _t.AsyncIterable[bytes]";
+            ? b("str")
+            : `${b("bytes")} | ${b("bytearray")} | ${b("memoryview")} | _t.AsyncIterable[${b("bytes")}]`;
       if (shape.body.required) required.push(`body: ${bodyType}`);
       else optional.push(`body: ${bodyType === ANY ? ANY : `${bodyType} | None`} = None`);
       values.push(`"body": body`);
@@ -273,8 +282,8 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
       ].join("\n")
     );
 
-    const resultType = shape.success ? responseType(shape.success, clientTypes, prefix) : ANY;
-    const errorBodies = [...new Set(shape.errors.map(({ shape: response }) => responseType(response, clientTypes, prefix)))];
+    const resultType = shape.success ? responseType(shape.success, clientTypes, prefix, b) : ANY;
+    const errorBodies = [...new Set(shape.errors.map(({ shape: response }) => responseType(response, clientTypes, prefix, b)))];
     const errorBody = errorBodies.length === 0 ? NEVER : errorBodies.includes(ANY) ? ANY : errorBodies.join(" | ");
     aliases.push(`${prefix}Result: _te.TypeAlias = ${pyString(resultType)}\n${prefix}ErrorBody: _te.TypeAlias = ${pyString(errorBody)}\n`);
     declaredOverloads.push({ id: operation.id, body: `${prefix}ErrorBody` });
@@ -369,16 +378,16 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
   const constructorArguments = [
     "self",
     "*",
-    `base_url: str${options.baseUrl === null ? "" : " | None = None"}`,
+    `base_url: ${b("str")}${options.baseUrl === null ? "" : " | None = None"}`,
     "transport: _Transport | None = None",
     `credentials: ${client}Credentials | None = None`,
-    "timeout: float | None = None",
+    `timeout: ${b("float")} | None = None`,
     "retry: _RetryOptions | None = None",
-    "on_failure: _t.Callable[[_ClientFailureObservation], object] | None = None",
+    `on_failure: _t.Callable[[_ClientFailureObservation], ${b("object")}] | None = None`,
   ];
   const clientSource =
     header(context) +
-    `\nfrom __future__ import annotations\n\nimport typing as _t\n\nimport typing_extensions as _te\n\nfrom . import models as _m\nfrom ._runtime import (\n${runtimeImports.map((name) => `    ${name} as _${name},\n`).join("")})\n\n` +
+    `\nfrom __future__ import annotations\n\n${shadowsBuiltins ? "import builtins as _b\n" : ""}import typing as _t\n\nimport typing_extensions as _te\n\nfrom . import models as _m\nfrom ._runtime import (\n${runtimeImports.map((name) => `    ${name} as _${name},\n`).join("")})\n\n` +
     `__all__ = ${list(exportedClient.map(pyString), "")}\n\n` +
     `_METADATA = _SdkMetadata(\n${metadata.join("\n")}\n)\n\n` +
     `_OPERATIONS: dict[str, _OperationSpec] = {\n${specs.join("\n")}\n}\n\n` +
@@ -395,7 +404,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
     `\n    def __init__(\n${constructorArguments.map((part) => `        ${part},\n`).join("")}    ) -> None:\n` +
     `        self._runtime = _ApiRuntime(\n            _METADATA,\n            base_url=base_url,\n            transport=transport,\n            credentials=credentials,\n            timeout=timeout,\n            retry=retry,\n            on_failure=on_failure,\n        )\n\n` +
     `    async def __aenter__(self) -> _te.Self:\n        return self\n\n` +
-    `    async def __aexit__(self, *exc_info: object) -> None:\n        await self.aclose()\n\n` +
+    `    async def __aexit__(self, *exc_info: ${b("object")}) -> None:\n        await self.aclose()\n\n` +
     `    async def aclose(self) -> None:\n        """Closes the transport this client created; an injected transport is left open."""\n        await self._runtime.aclose()\n` +
     (methods.length > 0 ? `\n${methods.join("\n")}` : "");
 

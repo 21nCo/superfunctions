@@ -94,7 +94,8 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
 
   const module = root.module ?? (nameValid ? (name as string).replace(/-/g, "_") : "");
   if (typeof module !== "string" || module.length > 100 || !PY_MODULE_NAME.test(module) || PYTHON_KEYWORDS.has(module)) {
-    if (nameValid || root.module !== undefined) fail("/module", "Expected a lowercase Python import name such as example_projects_sdk that is not a keyword.");
+    if (root.module !== undefined) fail("/module", "Expected a lowercase Python import name such as example_projects_sdk that is not a keyword.");
+    else if (nameValid) fail("/package/name", `The import name "${module}" derived from it is not a lowercase Python import name of at most 100 characters that is not a keyword; set module to one such as example_projects_sdk.`);
   } else if (STDLIB_MODULES.has(module) || RUNTIME_DEPENDENCY_MODULES.has(module)) {
     // The package would be imported in place of that module, by its own runtime and by everything else installed.
     const shadowed = STDLIB_MODULES.has(module) ? "a standard-library module" : "a runtime dependency of the generated package";
