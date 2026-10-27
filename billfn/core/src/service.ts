@@ -85,6 +85,25 @@ const TABLES = {
 const PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY = 'billfnProviderEventOccurredAt';
 const WEBHOOK_RECEIPT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
+/** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
+const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
+
+/**
+ * `BILLFN_CONFLICT` errors raised because another runner holds, or took over,
+ * a reconciliation job's processing lease. Membership, not the error code,
+ * separates them from domain conflicts raised while processing the job.
+ */
+const reconciliationLeaseConflicts = new WeakSet<object>();
+
+function reconciliationLeaseConflict(message: string) {
+  const error = createBillFnError({ code: 'BILLFN_CONFLICT', message });
+  reconciliationLeaseConflicts.add(error);
+  return error;
+}
+
+function isReconciliationLeaseConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && reconciliationLeaseConflicts.has(error);
+}
 const DUPLICATE_RECORD_ERROR_CODES = new Set([
   'P2002',
   '23505',
@@ -354,10 +373,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       Number.isFinite(previousUpdatedAt) &&
       claimTime.getTime() - previousUpdatedAt < RECONCILIATION_JOB_CLAIM_LEASE_MS;
     if (runningClaimIsFresh) {
-      throw createBillFnError({
-        code: 'BILLFN_CONFLICT',
-        message: 'Reconciliation job is already running'
-      });
+      throw reconciliationLeaseConflict('Reconciliation job is already running');
     }
 
     const runningAt = toIsoString(claimTime);
@@ -382,10 +398,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       if (current?.status === 'succeeded') {
         return current;
       }
-      throw createBillFnError({
-        code: 'BILLFN_CONFLICT',
-        message: 'Reconciliation job was claimed by another runner'
-      });
+      throw reconciliationLeaseConflict('Reconciliation job was claimed by another runner');
     }
     job = {
       ...job,
@@ -419,10 +432,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         namespace: deps.namespace
       });
       if (finalized !== 1) {
-        throw createBillFnError({
-          code: 'BILLFN_CONFLICT',
-          message: 'Reconciliation job processing lease was lost before finalization'
-        });
+        throw reconciliationLeaseConflict('Reconciliation job processing lease was lost before finalization');
       }
       const completedJob: BillFnReconciliationJob = {
         ...job,
@@ -1253,15 +1263,19 @@ export function createBillFnReconciliationWorker(config: BillFnConfig) {
       } catch (error) {
         const reason = error instanceof Error ? error.message || error.name : String(error);
         try {
-          if (hasErrorCode(error, 'BILLFN_CONFLICT')) {
-            // Another runner holds the job's processing lease; retry once it has finished or expired.
+          if (
+            isReconciliationLeaseConflict(error) &&
+            claimed.attempt < RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS
+          ) {
+            // Another runner holds or took over the job's processing lease; retry once it has finished or expired.
             await queue.fail(claimed.id, {
               retryAt: now().getTime() + RECONCILIATION_JOB_CLAIM_LEASE_MS,
               reason,
               ...fence
             });
           } else {
-            // Failed runs are not redelivered; the reconciliation job record keeps its own status.
+            // Failed runs, including domain conflicts, are not redelivered; the
+            // reconciliation job record keeps its own status.
             await queue.fail(claimed.id, { deadLetter: true, reason, ...fence });
           }
         } catch (queueError) {
@@ -1964,10 +1978,7 @@ async function renewReconciliationJobLease(deps: ServiceDeps, id: string, attemp
     namespace: deps.namespace
   });
   if (renewed !== 1) {
-    throw createBillFnError({
-      code: 'BILLFN_CONFLICT',
-      message: 'Reconciliation job processing lease is no longer active'
-    });
+    throw reconciliationLeaseConflict('Reconciliation job processing lease is no longer active');
   }
 }
 

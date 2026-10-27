@@ -16,6 +16,22 @@ export interface QueueSqlClient {
   execute(sql: string, params: readonly QueueSqlValue[]): Promise<void>;
 }
 
+/**
+ * Structural form of a `@superfunctions/db` adapter's optional `rawSql`
+ * executor. It is declared here, not imported, because `@superfunctions/db`
+ * is an optional peer and the published declarations must not reference it.
+ */
+export interface QueueRawSqlExecutor {
+  readonly dialect: 'postgres' | 'mysql' | 'sqlite';
+  query(sql: string, params?: readonly QueueSqlValue[]): Promise<Record<string, unknown>[]>;
+  execute(sql: string, params?: readonly QueueSqlValue[]): Promise<void>;
+}
+
+/** Any `@superfunctions/db` adapter, seen only through its `rawSql`. */
+export interface QueueRawSqlSource {
+  readonly rawSql?: QueueRawSqlExecutor;
+}
+
 /** Structural subset of a better-sqlite3 `Database`. */
 export interface BetterSqlite3DatabaseLike {
   prepare(sql: string): {

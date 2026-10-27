@@ -1,6 +1,5 @@
-import type { Adapter } from '@superfunctions/db';
 import { DEFAULT_QUEUE_JOBS_TABLE, queueJobsMigrationStatements, quoteQueueTableName } from './migrations.js';
-import type { QueueSqlClient, QueueSqlValue } from './sql-client.js';
+import type { QueueRawSqlSource, QueueSqlClient, QueueSqlValue } from './sql-client.js';
 import type {
   ClaimOptions,
   ClaimedJob,
@@ -42,7 +41,7 @@ export type DatabaseQueueAdapterOptions = DatabaseQueueAdapterBaseOptions &
          * A `@superfunctions/db` SQL adapter (`drizzleAdapter` or `kyselyAdapter`
          * on SQLite, D1 or Postgres). Statements run through its `rawSql`.
          */
-        db: Pick<Adapter, 'rawSql'>;
+        db: QueueRawSqlSource;
         client?: never;
       }
     | {

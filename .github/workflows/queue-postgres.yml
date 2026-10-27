@@ -5,12 +5,16 @@ on:
     branches: [dev, next, main]
     paths:
       - "packages/queue/**"
+      - "packages/db/**"
+      - "packages/observability/**"
       - "package-lock.json"
       - ".github/workflows/queue-postgres.yml"
   pull_request:
     branches: [dev, next, main]
     paths:
       - "packages/queue/**"
+      - "packages/db/**"
+      - "packages/observability/**"
       - "package-lock.json"
       - ".github/workflows/queue-postgres.yml"
 
@@ -45,14 +49,23 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install queue workspace from the root lockfile
-        run: npm ci --ignore-scripts --workspace @superfunctions/queue --include-workspace-root=false
+      - name: Install the queue workspace and its workspace dependencies from the root lockfile
+        run: >-
+          npm ci --ignore-scripts --include-workspace-root=false
+          --workspace @superfunctions/observability
+          --workspace @superfunctions/db
+          --workspace @superfunctions/queue
 
       - name: Build trusted native bindings
         run: npm rebuild esbuild better-sqlite3
 
       - name: Ensure Rollup native package
         run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Build workspace dependencies (@superfunctions/db exports resolve to dist/)
+        run: |
+          npm run build --workspace @superfunctions/observability
+          npm run build --workspace @superfunctions/db
 
       - name: Run queue tests, including the Postgres server suite
         env:

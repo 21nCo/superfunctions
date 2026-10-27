@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TransactionAdapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { MemoryQueueAdapter } from '@superfunctions/queue';
-import { createBillFn, createBillFnReconciliationWorker, getSchema } from '../index.js';
+import { createBillFn, createBillFnError, createBillFnReconciliationWorker, getSchema } from '../index.js';
 import type { BillFnCatalog, BillFnProviderAdapter, BillFnQueuedJob } from '../types.js';
 
 const catalog: BillFnCatalog = {
@@ -1624,6 +1624,7 @@ describe('@billfn/core', () => {
       return {
         billfn,
         clock,
+        db,
         queue,
         jobId: enqueued.data.job.id,
         createWorker: () => createBillFnReconciliationWorker(config)
@@ -1710,6 +1711,52 @@ describe('@billfn/core', () => {
       harness.clock.current = new Date(start.getTime() + 15 * MINUTE);
       expect(await worker.runNext()).toMatchObject({ id: harness.jobId, status: 'succeeded', attempts: 1 });
       expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+    });
+
+    it('dead-letters a message whose run raises a domain conflict on its first delivery', async () => {
+      const harness = await setupQueuedReconciliation(async () => {
+        throw createBillFnError({
+          code: 'BILLFN_CONFLICT',
+          message: 'Provider billing reference belongs to a different billing account'
+        });
+      });
+
+      await expect(harness.createWorker().runNext()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+      harness.clock.current = new Date(start.getTime() + 60 * MINUTE);
+      expect(await harness.createWorker().runNext()).toBeNull();
+      const job = await harness.billfn.getReconciliationJob({ jobId: harness.jobId });
+      expect(job.ok && job.data.job).toMatchObject({ status: 'failed', attempts: 1 });
+    });
+
+    it('dead-letters a message refused by lease conflicts on every delivery up to the limit', async () => {
+      const harness = await setupQueuedReconciliation(async () => {});
+      const worker = harness.createWorker();
+      const holdJobLease = async () => {
+        // Another runner keeps renewing the job's processing lease.
+        await harness.db.updateMany({
+          model: 'reconciliationJobs',
+          where: [{ field: 'id', operator: 'eq', value: harness.jobId }],
+          data: { status: 'running', updatedAt: harness.clock.current.toISOString() },
+          namespace: 'billfn'
+        });
+      };
+
+      for (let delivery = 1; delivery < 5; delivery += 1) {
+        await holdJobLease();
+        await expect(worker.runNext()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+        expect(await harness.queue.peek('billfn-reconciliation', 10)).toMatchObject([
+          { state: 'pending', attempt: delivery }
+        ]);
+        harness.clock.current = new Date(harness.clock.current.getTime() + 15 * MINUTE);
+      }
+      await holdJobLease();
+      await expect(worker.runNext()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+      harness.clock.current = new Date(harness.clock.current.getTime() + 60 * MINUTE);
+      expect(await worker.runNext()).toBeNull();
     });
 
     it('returns a finished run whose message was reclaimed meanwhile', async () => {

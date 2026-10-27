@@ -19,6 +19,8 @@ export type {
   BetterSqlite3DatabaseLike,
   D1DatabaseLike,
   PostgresQueryableLike,
+  QueueRawSqlExecutor,
+  QueueRawSqlSource,
   QueueSqlClient,
   QueueSqlDialect,
   QueueSqlValue,
