@@ -55,6 +55,13 @@ const MAX_QUERY_TERMS = 32;
 const DEFAULT_LIMIT = 10;
 const MAX_SCHEMA_ATTEMPTS = 3;
 
+/** A search read a generation that is no longer published. Internal; triggers a reload. */
+class StaleGenerationError extends Error {
+  constructor(resource: string) {
+    super(`Search generation of ${resource} changed during the query`);
+  }
+}
+
 export const FUZZY_UNSUPPORTED_WARNING =
   "SqliteAdapter does not support fuzzy search; the fuzzy option is ignored and exact (or prefix) matching is used.";
 
@@ -220,6 +227,7 @@ export class SqliteAdapter implements SearchAdapter {
     this.assertNotDisposed();
     assertNotAborted(signal, "Clear operation");
     requireResourceName(resource);
+    if (!this.isDeclared(resource)) return;
 
     await this.withResource(
       resource,
@@ -232,13 +240,14 @@ export class SqliteAdapter implements SearchAdapter {
   /**
    * Recreate the FTS index of a resource from its stored documents in one transaction.
    * Use it to repair an index after a partial write from a driver without `batch()`.
-   * Rebuilds the persisted field list, never this instance's cached one. Idempotent; a no-op
-   * for an unknown resource.
+   * Rebuilds the persisted field list, never this instance's cached one, and drops every
+   * older FTS generation. Idempotent; a no-op for an unknown or undeclared resource.
    */
   async rebuild(resource: string, signal?: AbortSignal): Promise<void> {
     this.assertNotDisposed();
     assertNotAborted(signal, "Rebuild operation");
     requireResourceName(resource);
+    if (!this.isDeclared(resource)) return;
 
     await this.applyFields(resource, undefined, true);
   }
@@ -288,10 +297,20 @@ export class SqliteAdapter implements SearchAdapter {
     };
     if (state.generation === PENDING_GENERATION) {
       if (!complete) return undefined;
-      await this.execute(this.schema.completeRegistration(state));
+      try {
+        await this.execute(this.schema.completeRegistration(state));
+      } catch (error) {
+        // Another instance finished the registration first.
+        if (!this.schema.isStaleGenerationError(error)) throw error;
+      }
       const completed = await this.loadState(resource, false);
       if (!completed) {
         throw new SearchAdapterError("SEARCH_BACKEND_ERROR", `Could not register search resource ${resource}`);
+      }
+      if (completed.generation > 0) {
+        // Generation 0 is retired. A driver without batch() may have recreated it after the
+        // guard passed; drop it so it does not linger.
+        await this.driver.exec(this.schema.dropFtsTable(completed, 0));
       }
       state = completed;
     }
@@ -355,20 +374,34 @@ export class SqliteAdapter implements SearchAdapter {
       if (!force && sameFields(state.fields, target)) return;
 
       try {
-        await this.execute(this.schema.rebuild(state, target));
+        await this.execute(this.schema.rebuild(state, target, await this.listFtsGenerations(state)));
         this.resources.set(resource, { ...state, fields: target, generation: state.generation + 1 });
         return;
       } catch (error) {
-        const current = await this.loadState(resource, false);
-        if (current?.generation === state.generation && isTableExistsError(error)) {
-          // A driver without batch() left the next generation behind; it was never published.
-          await this.driver.exec(this.schema.dropFtsTable(state, state.generation + 1));
-        } else if (current?.generation === state.generation) {
+        this.resources.delete(resource);
+        if (isTableExistsError(error)) {
+          const current = await this.loadState(resource, false);
+          if (current?.generation === state.generation) {
+            // A driver without batch() left the next generation behind; it was never published.
+            await this.driver.exec(this.schema.dropFtsTable(state, state.generation + 1));
+          }
+        } else if (!this.schema.isStaleGenerationError(error)) {
+          // Not a lost compare-and-swap. Without batch() the swap may already be published;
+          // older generations left behind are dropped by the next rebuild.
           throw error;
         }
         if (attempt >= MAX_SCHEMA_ATTEMPTS) throw error;
       }
     }
+  }
+
+  private async listFtsGenerations(state: ResourceState): Promise<number[]> {
+    const statement = this.schema.selectFtsTables(state);
+    const rows = await this.driver.all<{ name: string }>(statement.sql, statement.params);
+    return rows.flatMap(({ name }) => {
+      const generation = this.schema.ftsGeneration(state, String(name));
+      return generation === undefined ? [] : [generation];
+    });
   }
 
   private async listResources(): Promise<string[]> {
@@ -382,8 +415,10 @@ export class SqliteAdapter implements SearchAdapter {
   }
 
   /**
-   * Run `operation` against the cached resource state. When the FTS generation it targeted
-   * has been swapped out by another instance, reload the state once and retry.
+   * Run `operation` against the cached resource state. Every operation verifies the published
+   * generation (writes with a guard statement, searches through the generation column), so
+   * when another instance swapped the FTS generation out, reload the state and retry. A
+   * missing table alone is not trusted as the signal: a retired table may still exist.
    */
   private async withResource<T>(
     resource: string,
@@ -391,18 +426,20 @@ export class SqliteAdapter implements SearchAdapter {
     operation: (state: ResourceState) => Promise<T>,
     missing: T,
   ): Promise<T> {
-    const state = await resolve();
-    if (!state) return missing;
-    try {
-      return await operation(state);
-    } catch (error) {
-      if (!isMissingTableError(error)) throw error;
-      this.resources.delete(resource);
-      const refreshed = await resolve();
-      if (!refreshed) return missing;
-      if (refreshed.generation === state.generation && refreshed.id === state.id) throw error;
-      return operation(refreshed);
+    let state = await resolve();
+    for (let attempt = 1; state; attempt++) {
+      try {
+        return await operation(state);
+      } catch (error) {
+        const stale = error instanceof StaleGenerationError || this.schema.isStaleGenerationError(error);
+        if (attempt >= MAX_SCHEMA_ATTEMPTS || (!stale && !isMissingTableError(error))) throw error;
+        this.resources.delete(resource);
+        const refreshed = await resolve();
+        if (refreshed?.id === state.id && refreshed.generation === state.generation) throw error;
+        state = refreshed;
+      }
     }
+    return missing;
   }
 
   private async execute(statements: SqliteStatement[]): Promise<void> {
@@ -474,7 +511,11 @@ export class SqliteAdapter implements SearchAdapter {
           regionFilter: search.regionFilter,
           limit: search.limit,
         });
-        return this.driver.all<SearchRow>(statement.sql, statement.params);
+        const result = await this.driver.all<SearchRow>(statement.sql, statement.params);
+        if (result.length === 0 || Number(result[0].generation) !== state.generation) {
+          throw new StaleGenerationError(resource);
+        }
+        return result.filter((row) => row.doc_id !== null && row.doc_id !== undefined);
       },
       [] as SearchRow[],
     );

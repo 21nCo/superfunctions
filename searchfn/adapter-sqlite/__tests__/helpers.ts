@@ -40,3 +40,13 @@ export async function generationOf(driver: SqliteDriver, resource: string, prefi
   );
   return Number(row.generation);
 }
+
+/** Names of the FTS tables (not FTS5 shadow tables) that exist, in generation order. */
+export async function ftsTables(driver: SqliteDriver, prefix = "searchfn"): Promise<string[]> {
+  const rows = await driver.all<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'`);
+  const pattern = new RegExp(`^${prefix}_r\\d+_fts_\\d+$`);
+  return rows
+    .map((row) => String(row.name))
+    .filter((name) => pattern.test(name))
+    .sort((left, right) => Number(left.split("_").pop()) - Number(right.split("_").pop()));
+}

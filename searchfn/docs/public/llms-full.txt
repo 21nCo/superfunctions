@@ -9688,12 +9688,12 @@ Table names come from an internal integer id, so resource and field names are ne
 ### Writes and idempotency
 
 - `initialize()` creates tables idempotently. Calling it again with the same fields, in any order, changes nothing.
-- When the declared fields change, `initialize()` rebuilds the FTS index from the stored documents in one transaction, including fields that were stored but not indexed before. Other adapter instances on the same database detect the new index generation on their next operation and reload.
+- When the declared fields change, `initialize()` rebuilds the FTS index from the stored documents in one transaction, including fields that were stored but not indexed before. Every write checks the published index generation in the same transaction, and every search reads it with the results, so other adapter instances on the same database detect the new generation on their next operation and reload. They never read or write a retired index, even if its table still exists.
 - `index()` upserts. Re-indexing a document replaces its fields and metadata; within one call the last document with a given id wins. Number ids come back as numbers. Documents are keyed by the string form of their id, so `5` and `"5"` are the same document and the last write sets the returned type.
-- After `initialize()`, the adapter works only with the resources it declared: `index()` and `remove()` on any other resource are no-ops, `search()` returns no results for it, and `searchAll()` searches declared resources only (and drops undeclared names from `resources`). Each `initialize()` call replaces the declared set.
+- After `initialize()`, the adapter works only with the resources it declared: `index()`, `remove()`, `clear()` and `rebuild()` on any other resource are no-ops, `search()` returns no results for it, and `searchAll()` searches declared resources only (and drops undeclared names from `resources`). Each `initialize()` call replaces the declared set.
 - On an instance that was never initialized, `index()` registers an unknown resource with the field names in that call, and `searchAll()` without `resources` searches every resource in the database.
 - `remove()` and `clear()` are idempotent, and both are no-ops for unknown resources.
-- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction, using the field list stored in the database (not one cached by this instance). It is idempotent.
+- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction, using the field list stored in the database (not one cached by this instance), and drops every older index generation, including one left behind by an interrupted write from a driver without `batch()`. It is idempotent.
 
 ### Lifecycle
 

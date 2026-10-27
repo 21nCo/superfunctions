@@ -76,4 +76,27 @@ describe("SqliteAdapter on D1 (workerd)", () => {
     await writer.remove({ resource: "notes", ids: ["n1"] });
     expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual([]);
   });
+
+  it("keeps stale instances off a retired generation that still exists and drops it on rebuild", async () => {
+    const driver = fromD1(env.DB);
+    const prefix = `d1t${++run}`;
+    const writer = adapterOn(driver, prefix);
+    const reader = adapterOn(driver, prefix);
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await writer.rebuild("notes");
+    await driver.exec(`CREATE VIRTUAL TABLE "${prefix}_r1_fts_0" USING fts5(c0)`);
+
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await reader.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    expect(await writer.search({ resource: "notes", query: "gamma" })).toEqual(["n2"]);
+
+    await writer.rebuild("notes");
+    const tables = await driver.all<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)`,
+      [`${prefix}_r1_fts_0`, `${prefix}_r1_fts_1`, `${prefix}_r1_fts_2`],
+    );
+    expect(tables.map((table) => table.name)).toEqual([`${prefix}_r1_fts_2`]);
+  });
 });

@@ -29,9 +29,12 @@ export interface ResourceState {
 }
 
 export interface SearchRow {
-  doc_id: string;
-  id_type: string;
-  score: number;
+  /** Published generation of the resource, present on every row. */
+  generation: number;
+  /** Null on the single row returned when nothing matched. */
+  doc_id: string | null;
+  id_type: string | null;
+  score: number | null;
 }
 
 export interface ResourceRow {
@@ -79,6 +82,44 @@ export class SqliteSchema {
     return `SELECT id, fields, generation FROM ${this.resourcesTable} WHERE resource = ?`;
   }
 
+  /** Names of the FTS tables of a resource, including retired or orphaned generations. */
+  selectFtsTables(state: Pick<ResourceState, "id">): SqliteStatement {
+    return {
+      sql: `SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, ?) = ?`,
+      params: [this.ftsTablePrefix(state).length, this.ftsTablePrefix(state)],
+    };
+  }
+
+  /** Generation encoded in an FTS table name of this resource, or undefined for shadow tables. */
+  ftsGeneration(state: Pick<ResourceState, "id">, name: string): number | undefined {
+    const prefix = this.ftsTablePrefix(state);
+    const suffix = name.startsWith(prefix) ? name.slice(prefix.length) : "";
+    return /^\d+$/.test(suffix) ? Number(suffix) : undefined;
+  }
+
+  private ftsTablePrefix(state: Pick<ResourceState, "id">): string {
+    return `${this.prefix}_r${state.id}_fts_`;
+  }
+
+  /**
+   * Abort the enclosing batch unless the published generation is still `expected`: the
+   * UPDATE writes nothing when it is, and sets NULL into a NOT NULL column when it is not.
+   * Detect the abort with `isStaleGenerationError()`.
+   */
+  guardGeneration(state: Pick<ResourceState, "id">, expected: number): SqliteStatement {
+    return {
+      sql: `UPDATE ${this.resourcesTable} SET generation = NULL WHERE id = ? AND generation <> ?`,
+      params: [state.id, expected],
+    };
+  }
+
+  isStaleGenerationError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.includes(`NOT NULL constraint failed: ${this.prefix}_resources.generation`)
+    );
+  }
+
   selectResourceNames(): string {
     return `SELECT resource FROM ${this.resourcesTable} WHERE generation >= 0 ORDER BY resource`;
   }
@@ -90,9 +131,13 @@ export class SqliteSchema {
     };
   }
 
-  /** Creates generation 0 for a pending resource. Idempotent, so any instance may finish it. */
+  /**
+   * Creates generation 0 for a pending resource. The leading guard aborts once the row has
+   * left pending, so a delayed completion never recreates a generation a rebuild retired.
+   */
   completeRegistration(state: ResourceState): SqliteStatement[] {
     return [
+      this.guardGeneration(state, PENDING_GENERATION),
       {
         sql: `CREATE TABLE IF NOT EXISTS ${this.docsTable(state)} (seq INTEGER PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, id_type TEXT NOT NULL, ns TEXT, region TEXT, fields TEXT NOT NULL)`,
       },
@@ -132,18 +177,21 @@ export class SqliteSchema {
   /**
    * Swap the FTS index to `fields` under a new generation in one transaction. The UPDATE is a
    * compare-and-swap: when another writer already moved the generation it sets NULL into a
-   * NOT NULL column, which aborts the whole batch.
+   * NOT NULL column, which aborts the whole batch. Every older generation in `retired` is
+   * dropped, including orphans left by interrupted writes.
    */
-  rebuild(state: ResourceState, fields: string[]): SqliteStatement[] {
+  rebuild(state: ResourceState, fields: string[], retired: number[]): SqliteStatement[] {
     const next = state.generation + 1;
+    const dropped = Array.from(new Set([state.generation, ...retired])).filter((generation) => generation < next);
     return [
+      this.guardGeneration(state, state.generation),
       { sql: this.createFtsTable(state, next, fields.length, false) },
       { sql: this.populateFts(state, next, fields, "") },
       {
         sql: `UPDATE ${this.resourcesTable} SET fields = ?, generation = CASE generation WHEN ? THEN ? ELSE NULL END WHERE id = ?`,
         params: [JSON.stringify(fields), state.generation, next, state.id],
       },
-      { sql: `DROP TABLE IF EXISTS ${this.ftsTable(state, state.generation)}` },
+      ...dropped.map((generation) => ({ sql: this.dropFtsTable(state, generation) })),
     ];
   }
 
@@ -152,6 +200,9 @@ export class SqliteSchema {
   }
 
   /**
+   * Write statements (upsert, remove, clear) start with a generation guard, so an instance
+   * whose cached generation was retired never writes into a lingering old table.
+   *
    * Upsert a JSON array of `{ i, t, n, r, f }` documents: drop their old FTS rows, upsert
    * the docs rows (seq is stable across updates), then index the new values.
    */
@@ -160,6 +211,7 @@ export class SqliteSchema {
     const docs = this.docsTable(state);
     const ids = `SELECT json_extract(value, '$.i') FROM json_each(?)`;
     return [
+      this.guardGeneration(state, state.generation),
       {
         sql: `DELETE FROM ${fts} WHERE rowid IN (SELECT seq FROM ${docs} WHERE doc_id IN (${ids}))`,
         params: [documentsJson],
@@ -180,6 +232,7 @@ export class SqliteSchema {
     const docs = this.docsTable(state);
     const ids = `SELECT value FROM json_each(?)`;
     return [
+      this.guardGeneration(state, state.generation),
       {
         sql: `DELETE FROM ${this.ftsTable(state, state.generation)} WHERE rowid IN (SELECT seq FROM ${docs} WHERE doc_id IN (${ids}))`,
         params: [idsJson],
@@ -190,11 +243,17 @@ export class SqliteSchema {
 
   clear(state: ResourceState): SqliteStatement[] {
     return [
+      this.guardGeneration(state, state.generation),
       { sql: `DELETE FROM ${this.ftsTable(state, state.generation)}` },
       { sql: `DELETE FROM ${this.docsTable(state)}` },
     ];
   }
 
+  /**
+   * Ranked matches, each row carrying the published generation. When nothing matches, one
+   * row with null doc_id still reports it, so the caller can tell an empty result from a
+   * read of a retired generation.
+   */
   search(
     state: ResourceState,
     options: {
@@ -206,7 +265,7 @@ export class SqliteSchema {
     },
   ): SqliteStatement {
     const fts = this.ftsTable(state, state.generation);
-    const params: Array<string | number> = [options.match];
+    const params: Array<string | number> = [state.id, options.match];
     let filters = "";
     if (options.namespaceFilter && options.namespaceFilter.length > 0) {
       filters += ` AND d.ns IN (SELECT value FROM json_each(?))`;
@@ -219,8 +278,9 @@ export class SqliteSchema {
     params.push(options.limit);
     // bm25() is lower-is-better; negate it so callers see higher-is-better scores.
     const weights = options.weights.map((weight) => String(weight)).join(", ");
+    const matches = `SELECT d.doc_id AS doc_id, d.id_type AS id_type, -bm25(${fts}, ${weights}) AS score FROM ${fts} JOIN ${this.docsTable(state)} d ON d.seq = ${fts}.rowid WHERE ${fts} MATCH ?${filters} ORDER BY score DESC, d.doc_id ASC LIMIT ?`;
     return {
-      sql: `SELECT d.doc_id AS doc_id, d.id_type AS id_type, -bm25(${fts}, ${weights}) AS score FROM ${fts} JOIN ${this.docsTable(state)} d ON d.seq = ${fts}.rowid WHERE ${fts} MATCH ?${filters} ORDER BY score DESC, d.doc_id ASC LIMIT ?`,
+      sql: `SELECT g.generation AS generation, m.doc_id AS doc_id, m.id_type AS id_type, m.score AS score FROM (SELECT generation FROM ${this.resourcesTable} WHERE id = ?) g LEFT JOIN (${matches}) m ON 1 ORDER BY m.score DESC, m.doc_id ASC`,
       params,
     };
   }

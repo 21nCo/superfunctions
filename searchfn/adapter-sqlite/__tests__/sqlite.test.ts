@@ -6,7 +6,7 @@ import {
   type SqliteDriver,
   type SqliteStatement,
 } from "../src/index";
-import { betterSqlite, countRows, generationOf, type TestDatabase } from "./helpers";
+import { betterSqlite, countRows, ftsTables, generationOf, type TestDatabase } from "./helpers";
 
 const BOOKMARKS = [{ name: "bookmarks", searchFields: ["title", "body"] }];
 
@@ -401,6 +401,64 @@ describe("multiple adapter instances on one database", () => {
     }
   });
 
+  it("a registration completed after a rebuild does not resurrect the retired generation", async () => {
+    let release!: () => void;
+    let paused!: () => void;
+    const pausedCompletion = new Promise<void>((resolve) => (paused = resolve));
+    const inner = database.driver;
+    const delayed: SqliteDriver = {
+      ...inner,
+      batch: async (statements) => {
+        if (statements.some((statement) => statement.sql.includes("SET generation = 0"))) {
+          paused();
+          await new Promise<void>((resolve) => (release = resolve));
+        }
+        return inner.batch!(statements);
+      },
+    };
+    const late = new SqliteAdapter({ driver: delayed });
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+
+    const lateInitialize = late.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await pausedCompletion;
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await writer.rebuild("notes");
+    release();
+    await lateInitialize;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await reader.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    expect(await writer.search({ resource: "notes", query: "gamma" })).toEqual(["n2"]);
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+
+  it("stale instances do not read or write a retired generation that still exists", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await writer.rebuild("notes");
+    // A lingering copy of the retired generation, as an interrupted write could leave it.
+    await database.driver.exec(`CREATE VIRTUAL TABLE "searchfn_r1_fts_0" USING fts5(c0)`);
+
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await reader.clear("notes");
+    expect(await writer.search({ resource: "notes", query: "alpha" })).toEqual([]);
+    await reader.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    await reader.remove({ resource: "notes", ids: ["n2"] });
+    await reader.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "delta" } }] });
+    expect(await writer.search({ resource: "notes", query: "delta" })).toEqual(["n3"]);
+    expect(await writer.search({ resource: "notes", query: "gamma" })).toEqual([]);
+
+    await writer.rebuild("notes");
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+  });
+
   it("concurrent registrations of one resource converge", async () => {
     const instances = Array.from({ length: 4 }, () => new SqliteAdapter({ driver: database.driver }));
     await Promise.all(instances.map((instance) => instance.initialize({ resources: BOOKMARKS })));
@@ -450,6 +508,57 @@ describe("drivers without batch()", () => {
     await sequential.initialize({ resources: BOOKMARKS });
     expect(await generationOf(database.driver, "bookmarks")).toBe(1);
     expect(await sequential.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1"]);
+  });
+  it("stale instances converge after a rebuild that failed after publishing", async () => {
+    const driver = sequentialDriver();
+    const writer = new SqliteAdapter({ driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    driver.failOn = /^DROP TABLE IF EXISTS "searchfn_r1_fts_0"/;
+    await expect(writer.rebuild("notes")).rejects.toThrow("injected failure");
+    driver.failOn = undefined;
+    expect(await generationOf(database.driver, "notes")).toBe(1);
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_0", "searchfn_r1_fts_1"]);
+
+    await writer.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    expect(await reader.search({ resource: "notes", query: "gamma" })).toEqual(["n2"]);
+    await reader.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "delta" } }] });
+    expect(await writer.search({ resource: "notes", query: "delta" })).toEqual(["n3"]);
+
+    await writer.rebuild("notes");
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+
+  it("drops a generation 0 that a delayed registration recreated after a rebuild", async () => {
+    let release!: () => void;
+    let paused!: () => void;
+    const pausedCreate = new Promise<void>((resolve) => (paused = resolve));
+    const driver = sequentialDriver();
+    const run = driver.run;
+    driver.run = async (sql, params) => {
+      if (sql.startsWith(`CREATE VIRTUAL TABLE IF NOT EXISTS "searchfn_r1_fts_0"`)) {
+        paused();
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return run(sql, params);
+    };
+    const late = new SqliteAdapter({ driver });
+    const writer = new SqliteAdapter({ driver: database.driver });
+
+    const lateInitialize = late.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await pausedCreate;
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    await writer.rebuild("notes");
+    release();
+    await lateInitialize;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
   });
 });
 
@@ -531,6 +640,18 @@ describe("declared resources", () => {
       { resource: "bookmarks", id: "b1" },
     ]);
     expect(await adapter.searchAll({ query: "zebra" })).toHaveLength(1);
+  });
+  it("clear and rebuild leave undeclared resources untouched", async () => {
+    const legacy = new SqliteAdapter({ driver: database.driver });
+    await legacy.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra" } }] });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+
+    await adapter.clear("users");
+    await adapter.rebuild("users");
+
+    expect(await countRows(database.driver, "users", "docs")).toBe(1);
+    expect(await generationOf(database.driver, "users")).toBe(0);
+    expect(await legacy.search({ resource: "users", query: "zebra" })).toEqual(["u1"]);
   });
 });
 
