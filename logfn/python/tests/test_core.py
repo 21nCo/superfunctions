@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -198,3 +200,69 @@ def test_flush_waits_for_async_sink_calls_made_through_a_child() -> None:
     asyncio.run(scenario())
     assert delivered == ["root", "child"]
 
+
+
+def test_flush_waits_for_async_sink_calls_running_on_another_loop() -> None:
+    gate = threading.Event()
+    delivered: list[str] = []
+
+    async def slow(batch: list[LogEvent]) -> None:
+        await asyncio.to_thread(gate.wait, 5)
+        delivered.extend(event["msg"] for event in batch)
+
+    logger = create_logger("svc", sinks=[slow])
+    logged = threading.Event()
+    stop = threading.Event()
+
+    def loop_a() -> None:
+        async def main() -> None:
+            logger.child(name="child").info("before flush")
+            logged.set()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+
+        asyncio.run(main())
+
+    thread = threading.Thread(target=loop_a, daemon=True)
+    thread.start()
+    assert logged.wait(5)
+
+    async def flush_on_b() -> None:
+        flushing = asyncio.ensure_future(logger.flush())
+        await asyncio.sleep(0.2)
+        assert not flushing.done(), "flush returned before the call on loop A settled"
+        gate.set()
+        await asyncio.wait_for(flushing, 5)
+
+    try:
+        asyncio.run(flush_on_b())
+        assert delivered == ["before flush"]
+    finally:
+        gate.set()
+        stop.set()
+        thread.join(5)
+
+
+def test_flush_does_not_wait_for_calls_whose_loop_stopped_or_closed() -> None:
+    async def never(batch: list[LogEvent]) -> None:
+        await asyncio.Event().wait()
+
+    logger = create_logger("svc", sinks=[never])
+    stopped = asyncio.new_event_loop()
+    closed = asyncio.new_event_loop()
+
+    async def log() -> None:
+        logger.info("pending")
+
+    try:
+        stopped.run_until_complete(log())  # Stopped, not closed: its call stays pending.
+        closed.run_until_complete(log())
+        closed.close()
+        started = time.monotonic()
+        asyncio.run(asyncio.wait_for(logger.flush(), 5))
+        assert time.monotonic() - started < 1
+    finally:
+        for task in asyncio.all_tasks(stopped):
+            task.cancel()
+        stopped.run_until_complete(asyncio.sleep(0))
+        stopped.close()

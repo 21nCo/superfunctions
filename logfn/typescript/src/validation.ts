@@ -4,9 +4,8 @@
 
 import type { LogEvent, SerializationResult } from "./types.js";
 import { MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
-import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH } from "./pipeline/redact.js";
+import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, isBinary } from "./pipeline/redact.js";
 
-const UNSERIALIZABLE = "[unserializable]";
 const TRUNCATED_SUFFIX = "...[truncated]";
 const encoder = new TextEncoder();
 
@@ -38,6 +37,10 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
   }
   const object = value as object;
+  // Each byte would become a number that no text rule can redact.
+  if (isBinary(object)) {
+    return UNSERIALIZABLE;
+  }
   if (ancestors.has(object)) {
     return CIRCULAR;
   }

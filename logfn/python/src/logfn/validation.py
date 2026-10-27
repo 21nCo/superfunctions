@@ -7,10 +7,16 @@ import math
 from datetime import date
 from typing import Any, cast
 
-from .redact import CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, exception_message, format_exception_stack
+from .redact import (
+    CIRCULAR,
+    MAX_DEPTH,
+    MAX_REDACTION_DEPTH,
+    UNSERIALIZABLE,
+    exception_message,
+    format_exception_stack,
+)
 from .types import MAX_EVENT_SIZE, MAX_TAGS, LogEvent
 
-UNSERIALIZABLE = "[unserializable]"
 TRUNCATED_SUFFIX = "...[truncated]"
 
 

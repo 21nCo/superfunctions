@@ -21,6 +21,9 @@ from .types import LogEvent
 REDACTED = "[redacted]"
 CIRCULAR = "[circular]"
 MAX_DEPTH = "[max-depth]"
+# Replacement for values with no JSON form, binary data included: text rules
+# cannot see secrets in bytes, so their content is never kept.
+UNSERIALIZABLE = "[unserializable]"
 MAX_REDACTION_DEPTH = 32
 
 # Keys are compared lowercased with every non-alphanumeric character removed.
@@ -395,6 +398,8 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
         return value if path in redactor.allowlist else _redact_text(value, redactor)
     if value is None or isinstance(value, (bool, int, float, date)):
         return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return UNSERIALIZABLE
     if not isinstance(value, (dict, list, tuple, set, frozenset, BaseException)):
         # Left for sanitization, which renders unknown objects as "[unserializable]".
         return value

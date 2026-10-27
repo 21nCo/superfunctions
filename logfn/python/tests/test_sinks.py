@@ -948,3 +948,81 @@ def test_cancelling_the_default_transport_stops_a_connect_in_progress(
     assert connects[0][1].fileno() == -1, "the connecting socket outlived the cancellation"
     time.sleep(0.3)
     assert len(connects) == 1  # No further address after the abort.
+
+
+@pytest.mark.parametrize(("reply", "outcome"), [(204, "sent"), (400, "delivery_failed")])
+def test_a_drain_cancelled_after_its_delivery_finished_keeps_its_outcome(reply: int, outcome: str) -> None:
+    # The drain is cancelled (asyncio.run teardown, a loop cancel) after its
+    # delivery finished but before it resumed: the batch has its real outcome
+    # and is not sent again.
+    transport = Scripted(reply)
+    errors: list[BaseException] = []
+
+    def named(suffix: str) -> asyncio.Task[Any]:
+        return next(t for t in asyncio.all_tasks() if t.get_coro().__qualname__.endswith(suffix))  # type: ignore[union-attr]
+
+    async def cancelling(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        drain = named("._drain")
+        named("._deliver").add_done_callback(lambda _delivery: drain.cancel())
+        return await transport(url, body, headers, timeout)
+
+    sink = SinkHttp(URL, transport=cancelling, batch_size=1, on_error=errors.append)
+
+    async def main() -> None:
+        sink([event("once")])
+        await eventually(lambda: sink.stats()["in_flight"] == 0)
+
+    asyncio.run(main())
+    asyncio.run(sink.close())
+    assert transport.batches == [["once"]]
+    stats = sink.stats()
+    if outcome == "sent":
+        assert stats == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}
+        assert errors == []
+    else:
+        assert stats == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 1}
+        assert [type(error) for error in errors] == [logfn.sinks.DeliveryError]
+
+
+def test_an_abort_during_a_connect_that_completes_at_once_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A non-blocking connect may complete synchronously; an abort that landed
+    # meanwhile must still stop the request.
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+
+    def connect_at_once(self: Any, sock: socket.socket, sockaddr: Any, limit: float) -> None:
+        self.abort()  # From another thread in reality.
+        sock.setblocking(True)
+        sock.connect(sockaddr)
+
+    monkeypatch.setattr(logfn.sinks._Attempt, "_connect", connect_at_once)
+    attempt = logfn.sinks._Attempt(2.0)
+    try:
+        with pytest.raises(ConnectionAbortedError):
+            logfn.sinks._post(f"http://127.0.0.1:{server.getsockname()[1]}/", b"{}", {}, 2.0, attempt)
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(2)
+            assert connection.recv(1024) == b""  # Closed without a request.
+    finally:
+        server.close()
+
+
+def test_the_default_transport_releases_its_attempt_when_its_thread_cannot_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[Any] = []
+    real = logfn.sinks._Attempt
+
+    def recording(timeout: float) -> Any:
+        attempts.append(real(timeout))
+        return attempts[-1]
+
+    def refuse(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(logfn.sinks, "_Attempt", recording)
+    monkeypatch.setattr(logfn.sinks.threading.Thread, "start", refuse)
+    with pytest.raises(RuntimeError):
+        asyncio.run(logfn.sinks.stdlib_transport("http://127.0.0.1:9/", b"{}", {}, 1.0))
+    assert attempts[0]._wake_reader.fileno() == -1 and attempts[0]._wake_writer.fileno() == -1

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo, Socket } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createLogger,
   MAX_EVENT_SIZE,
   sinkHttp,
   type HttpSinkFetch,
@@ -589,6 +590,42 @@ describe("sinkHttp", () => {
       expect(sent.ctx).toEqual({ leaky: { toJSON: "[unserializable]" }, count: "[unserializable]", "https://[redacted]@h.test": 1 });
       expect(sent.userId).toEqual({ password: "[redacted]" });
       expect(sent.extra).toEqual({ password: "[redacted]" });
+    });
+
+    it("sends no byte of binary data, called directly or through a logger", async () => {
+      const text = (secret: string) => new TextEncoder().encode(`password=${secret}`);
+      const binary = () => ({
+        buffer: Buffer.from("password=BUFFER_SECRET"),
+        u8: text("U8_SECRET"),
+        f64: new Float64Array(text("F64_SECRET").buffer.slice(0, 16)),
+        view: new DataView(text("VIEW_SECRET").buffer),
+        array: text("ARRAYBUFFER_SECRET").buffer,
+        shared: new SharedArrayBuffer(8),
+        list: [text("LIST_SECRET")],
+      });
+      const unserializable = {
+        buffer: "[unserializable]",
+        u8: "[unserializable]",
+        f64: "[unserializable]",
+        view: "[unserializable]",
+        array: "[unserializable]",
+        shared: "[unserializable]",
+        list: ["[unserializable]"],
+      };
+      const { fetch, requests } = scriptedFetch(ok);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1 });
+      sink([{ ...event("direct"), ctx: binary(), tags: [text("TAG_SECRET")] as unknown as string[] }]);
+      createLogger({ name: "svc", sinks: [sink] }).info("logged", binary());
+      await sink.flush();
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        // Neither the text nor the bytes as numbers ("p", "a", "s" are 112, 97, 115).
+        for (const secret of ["SECRET", "112,97,115"]) expect(request.body).not.toContain(secret);
+        const [sent] = (JSON.parse(request.body) as { events: LogEvent[] }).events;
+        expect(sent.ctx).toEqual(unserializable);
+      }
+      const [direct] = (JSON.parse(requests[0].body) as { events: LogEvent[] }).events;
+      expect(direct.tags).toEqual(['"[unserializable]"']);
     });
 
     it("bounds the size of each queued event", async () => {

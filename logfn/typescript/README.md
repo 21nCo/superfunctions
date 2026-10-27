@@ -62,7 +62,10 @@ when `url` is given.
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
   stack, cause }`, cycles become `"[circular]"` and unserializable values
-  become `"[unserializable]"`.
+  become `"[unserializable]"`. Binary data (`Buffer`, typed arrays,
+  `DataView`, `ArrayBuffer`, `SharedArrayBuffer`) becomes `"[unserializable]"`
+  too, also in the redaction stage: no text rule could find a secret in its
+  bytes.
 - Sinks bound the size, after their own redaction, so truncation can never
   cut a secret's delimiter before `sinkHttp` redacts it. Both built-in sinks
   (`validateAndSerialize`) keep every event within 64 KB of UTF-8 JSON: an

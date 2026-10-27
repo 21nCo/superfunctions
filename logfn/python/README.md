@@ -47,14 +47,18 @@ adds an HTTP sink only when `url` is given.
 - `child(name=, level=, ctx=, tags=)` inherits sinks, pipeline and context.
 - Logging calls and `await logger.flush()` never raise. Pipeline and sink
   failures go to `on_error(error, context)` (default: stderr). `flush()`
-  first waits for pending async sink calls (also those made through child
-  loggers), then flushes every sink.
+  first waits for async sink calls scheduled before it (also those made
+  through child loggers, and those running on another thread's event loop),
+  then flushes every sink. A call whose loop has stopped or closed is not
+  waited for, since nothing would run it.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
   stack, cause}` (`stack` is the formatted traceback, `cause` is
   `__cause__`), cycles become `"[circular]"` and unknown objects become
-  `"[unserializable]"`.
+  `"[unserializable]"`. Binary data (`bytes`, `bytearray`, `memoryview`)
+  becomes `"[unserializable]"` too, also in the redaction stage: no text rule
+  could find a secret in its bytes.
 - Sinks bound the size, after their own redaction, so truncation can never
   cut a secret's delimiter before `SinkHttp` redacts it. Both built-in sinks
   (`validate_and_serialize`) keep every event within 64 KB of UTF-8 JSON: an

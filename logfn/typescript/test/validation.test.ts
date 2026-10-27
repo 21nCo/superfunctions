@@ -46,6 +46,27 @@ describe("sanitizeValue", () => {
     expect(result.error).toMatchObject({ name: "Error", message: "outer", cause: { name: "Error", message: "inner" } });
   });
 
+  it("replaces binary data instead of expanding it byte by byte", () => {
+    const bytes = new TextEncoder().encode("token=SECRET");
+    expect(
+      sanitizeValue({
+        buffer: Buffer.from(bytes),
+        u8: bytes,
+        i16: new Int16Array(2),
+        view: new DataView(bytes.buffer),
+        array: bytes.buffer,
+        shared: new SharedArrayBuffer(4),
+      })
+    ).toEqual({
+      buffer: "[unserializable]",
+      u8: "[unserializable]",
+      i16: "[unserializable]",
+      view: "[unserializable]",
+      array: "[unserializable]",
+      shared: "[unserializable]",
+    });
+  });
+
   it("replaces cycles but keeps shared references", () => {
     const shared = { v: 1 };
     const root: Record<string, unknown> = { a: shared, b: shared };

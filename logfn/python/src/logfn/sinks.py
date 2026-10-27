@@ -121,6 +121,10 @@ class _Attempt:
                 if source_address:
                     sock.bind(source_address)
                 self._connect(sock, sockaddr, remaining)
+                with self._lock:
+                    # An abort that landed while a connect completed at once.
+                    if self._aborted:
+                        raise ConnectionAbortedError("request aborted")
                 sock.settimeout(limit)
                 return sock
             except BaseException as error:
@@ -220,7 +224,11 @@ async def stdlib_transport(url: str, body: bytes, headers: dict[str, str], timeo
         with contextlib.suppress(RuntimeError):  # The loop is already closed.
             loop.call_soon_threadsafe(settle, status, error)
 
-    threading.Thread(target=run, name="logfn-http", daemon=True).start()
+    try:
+        threading.Thread(target=run, name="logfn-http", daemon=True).start()
+    except BaseException:
+        attempt.release()
+        raise
     try:
         return await asyncio.wait_for(result, timeout)
     finally:
@@ -550,20 +558,34 @@ class SinkHttp:
             try:
                 await asyncio.wait([delivery])
             except asyncio.CancelledError:
-                # The loop is shutting down: keep the batch for a later flush,
-                # unless the sink is closed and nothing will send it again.
-                delivery.cancel()
-                self._settle(batch, "closed" if self._closed else "requeue")
+                # A delivery that already finished keeps its real outcome;
+                # cancelling the drain must not send that batch again.
+                if delivery.done() and not delivery.cancelled():
+                    self._record(batch, delivery)
+                else:
+                    delivery.cancel()
+                    self._unfinished(batch)
                 raise
-            if delivery.cancelled():
-                continue  # Settled elsewhere, which aborted this delivery.
-            error = delivery.exception()
-            if isinstance(error, _Abandoned):
-                continue
-            if error is None:
-                self._settle(batch, "sent")
-            elif self._settle(batch, "delivery_failed"):
-                self._report(error)
+            self._record(batch, delivery)
+
+    def _unfinished(self, batch: _Batch) -> None:
+        # The loop is shutting down: keep the batch for a later flush, unless
+        # the sink is closed and nothing will send it again. A no-op when the
+        # batch was settled elsewhere (which is what cancels a delivery).
+        self._settle(batch, "closed" if self._closed else "requeue")
+
+    def _record(self, batch: _Batch, delivery: asyncio.Task[None]) -> None:
+        """Settles a batch from its finished delivery."""
+        if delivery.cancelled():
+            self._unfinished(batch)
+            return
+        error = delivery.exception()
+        if isinstance(error, _Abandoned):
+            return  # Settled elsewhere; it has its one outcome.
+        if error is None:
+            self._settle(batch, "sent")
+        elif self._settle(batch, "delivery_failed"):
+            self._report(error)
 
     def _registered(self, batch: _Batch) -> bool:
         with self._lock:

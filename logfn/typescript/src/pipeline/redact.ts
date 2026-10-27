@@ -16,6 +16,21 @@ export const CIRCULAR = "[circular]";
 /** Replacement for values nested deeper than MAX_REDACTION_DEPTH */
 export const MAX_DEPTH = "[max-depth]";
 
+/**
+ * Replacement for values with no JSON form, binary data included: text rules
+ * cannot see secrets in bytes, so their content is never kept.
+ */
+export const UNSERIALIZABLE = "[unserializable]";
+
+/** ArrayBuffer, SharedArrayBuffer and every view on one (typed arrays, DataView, Buffer) */
+export function isBinary(value: object): boolean {
+  return (
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer ||
+    (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer)
+  );
+}
+
 /** Nesting depth after which values are replaced by MAX_DEPTH */
 export const MAX_REDACTION_DEPTH = 32;
 
@@ -402,6 +417,9 @@ function redactNode(
   }
   if (value === null || typeof value !== "object" || value instanceof Date) {
     return value;
+  }
+  if (isBinary(value)) {
+    return UNSERIALIZABLE;
   }
   if (ancestors.has(value)) {
     return CIRCULAR;

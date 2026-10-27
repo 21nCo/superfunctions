@@ -23,6 +23,9 @@ from .types import (
 )
 from .validation import sanitize_event
 
+# How often flush() checks that another loop it waits on is still running.
+_FOREIGN_POLL_SECONDS = 0.05
+
 
 def default_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -219,15 +222,53 @@ class Logger:
         child._pending = self._pending
         return child
 
-    async def flush(self) -> None:
-        """Wait for scheduled async sink calls, then flush every sink. Sink
-        failures are reported to on_error, never raised."""
+    async def _wait_pending(self) -> None:
+        """Waits for the async sink calls scheduled before the call, on this
+        and on any other running loop. A call whose loop stops or closes
+        is no longer waited for: nothing would run it."""
         loop = asyncio.get_running_loop()
-        # Other threads add and discard tasks meanwhile: filter a copy (set.copy
+        current = asyncio.current_task()
+        own: list[asyncio.Future[Any]] = []
+        foreign: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
+        # Other threads add and discard tasks meanwhile: read a copy (set.copy
         # is atomic), never the live set.
-        pending = [task for task in self._pending.copy() if task.get_loop() is loop]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        for task in self._pending.copy():
+            if task.done() or task is current:
+                continue
+            owner = task.get_loop()
+            if owner is loop:
+                own.append(task)
+                continue
+            # Another loop's task is only touched on its own thread; its
+            # completion is passed back to this loop as a future.
+            settled: asyncio.Future[None] = loop.create_future()
+
+            def watch(task: asyncio.Task[Any] = task, settled: asyncio.Future[None] = settled) -> None:
+                task.add_done_callback(lambda _task: _wake_threadsafe(loop, settled))
+
+            try:
+                owner.call_soon_threadsafe(watch)
+            except RuntimeError:
+                continue  # Its loop is closed.
+            foreign.append((owner, settled))
+        if own:
+            await asyncio.wait(own)
+        while foreign:
+            await asyncio.wait([settled for _, settled in foreign], timeout=_FOREIGN_POLL_SECONDS)
+            foreign = [
+                (owner, settled)
+                for owner, settled in foreign
+                if not settled.done() and owner.is_running() and not owner.is_closed()
+            ]
+
+    async def flush(self) -> None:
+        """Wait for async sink calls scheduled before the call, also on other
+        threads' loops and through child loggers, then flush every sink. Sink
+        failures are reported to on_error, never raised."""
+        try:
+            await self._wait_pending()
+        except Exception as error:
+            self._report(error, {})
 
         async def flush_one(sink: Sink) -> None:
             flush = getattr(sink, "flush", None)
@@ -241,6 +282,15 @@ class Logger:
                 self._report(error, {"sink": _callable_name(sink)})
 
         await asyncio.gather(*(flush_one(sink) for sink in self.sinks))
+
+
+def _wake_threadsafe(loop: asyncio.AbstractEventLoop, future: asyncio.Future[None]) -> None:
+    def wake() -> None:
+        if not future.done():
+            future.set_result(None)
+
+    with contextlib.suppress(RuntimeError):  # The flushing loop is closed.
+        loop.call_soon_threadsafe(wake)
 
 
 def create_logger(

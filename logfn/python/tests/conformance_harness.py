@@ -46,6 +46,10 @@ def build_context_value(value: Any, refs: list[tuple[Any, Any, str]], parent: An
     if isinstance(value.get("$ref"), str):
         refs.append((parent, key, value["$ref"]))
         return None
+    if isinstance(value.get("$bytes"), dict):
+        data = value["$bytes"]["text"].encode("utf-8")
+        kind = value["$bytes"]["kind"]
+        return data if kind == "bytes" else bytearray(data) if kind == "mutable" else memoryview(data)
     if isinstance(value.get("$error"), dict):
         return _build_error(value["$error"])
     built: dict[str, Any] = {}
@@ -55,7 +59,8 @@ def build_context_value(value: Any, refs: list[tuple[Any, Any, str]], parent: An
 
 
 def build_context(ctx: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Builds a vector ctx: ``$error`` becomes an exception, ``$ref`` a shared or circular reference."""
+    """Builds a vector ctx: ``$error`` becomes an exception, ``$bytes`` binary data, ``$ref`` a
+    shared or circular reference."""
     if ctx is None:
         return None
     refs: list[tuple[Any, Any, str]] = []

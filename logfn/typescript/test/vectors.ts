@@ -49,7 +49,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Builds a vector's ctx: `$error` becomes an Error, `$ref` a shared or circular reference. */
+/** Builds a vector's ctx: `$error` becomes an Error, `$bytes` binary data, `$ref` a shared or circular reference. */
 export function buildContext(ctx: Record<string, Json> | undefined): Record<string, unknown> | undefined {
   if (ctx === undefined) return undefined;
   const refs: Array<{ parent: Record<string, unknown> | unknown[]; key: string | number; path: string }> = [];
@@ -65,6 +65,13 @@ export function buildContext(ctx: Record<string, Json> | undefined): Record<stri
       if (parent === null) throw new Error("$ref at the root is not supported");
       refs.push({ parent, key, path: value.$ref });
       return null;
+    }
+    if (isObject(value.$bytes)) {
+      const { text, kind } = value.$bytes as { text: string; kind: "bytes" | "mutable" | "view" };
+      const bytes = Buffer.from(text, "utf8");
+      if (kind === "bytes") return bytes;
+      const copy = new Uint8Array(bytes).buffer;
+      return kind === "mutable" ? copy : new DataView(copy);
     }
     if (isObject(value.$error)) {
       const spec = value.$error as unknown as ErrorSpec;
