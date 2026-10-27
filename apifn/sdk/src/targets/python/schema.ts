@@ -355,8 +355,11 @@ export class PythonTypes {
       const inline = this.#inlineTypedDict(view, owner, NO_CUTS);
       if (inline !== null) return inline;
     }
+    // A key matching a pattern takes that pattern's value schema and any other key additionalProperties, so the
+    // value type is the union of them all: false additional properties leave only the pattern values.
     const additional = schema.additionalProperties;
-    if (additional === false && !isRecord(schema.patternProperties)) return `${map}[${this.builtin("str")}, ${NEVER}]`;
-    return `${map}[${this.builtin("str")}, ${additional === undefined || additional === true ? ANY : this.type(additional, owner, depth, NO_CUTS, "direct", input)}]`;
+    if (additional === undefined || additional === true) return `${map}[${this.builtin("str")}, ${ANY}]`;
+    const values = [...(isRecord(schema.patternProperties) ? Object.values(schema.patternProperties) : []), ...(additional === false ? [] : [additional])];
+    return `${map}[${this.builtin("str")}, ${union(values.map((value) => this.type(value, owner, depth, NO_CUTS, "direct", input)))}]`;
   }
 }

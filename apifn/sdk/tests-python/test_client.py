@@ -13,6 +13,7 @@ import warnings
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import pytest
 from fixture_server import FixtureServer, scripted
@@ -203,6 +204,32 @@ def test_json_bodies_that_cannot_be_serialized_are_validation_failures(server: F
     run(main())
     assert server.requests == []
     assert [(event["failure"]["kind"], event["failure"]["retryable"]) for event in events] == [("validation", False)] * 3
+
+
+def test_an_optional_body_left_out_sends_none_and_none_is_sent_as_json_null(server: FixtureServer) -> None:
+    async def main() -> None:
+        async with client(server, credentials={"bearerAuth": "t"}) as tasks:
+            for arguments, body, content_type in (({}, b"", None), ({"body": None}, b"null", "application/json"), ({"body": {"text": "a"}}, b'{"text":"a"}', "application/json")):
+                server.reset([ok_response("tasks.search")])
+                await tasks.search_tasks(project_id="p", **arguments)
+                assert (server.requests[0].body, server.requests[0].headers.get("content-type")) == (body, content_type), arguments
+
+    run(main())
+
+
+def test_orders_deep_object_keys_like_javascript_whatever_their_length(server: FixtureServer) -> None:
+    # Array-index keys first, ascending, then the rest in order. The long key has more digits than int() converts
+    # (sys.get_int_max_str_digits), so only a length bound keeps it an ordinary key rather than a failure.
+    huge = "9" * 5000
+    server.reset([ok_response("tasks.list")])
+
+    async def main() -> None:
+        async with client(server, credentials={"bearerAuth": "t"}) as tasks:
+            await tasks.list_tasks(project_id="p", filter={"b": "1", "10": "2", huge: "3", "2": "4", "4294967295": "5", "01": "6", "a": "7"})
+
+    run(main())
+    names = [unquote(pair.split("=", 1)[0]) for pair in server.requests[0].query.split("&")]
+    assert names == [f"filter[{key}]" for key in ("2", "10", "b", huge, "4294967295", "01", "a")]
 
 
 def test_retry_options_are_validated() -> None:
@@ -767,6 +794,41 @@ def test_a_connection_failure_through_httpx_is_a_network_error_carrying_its_requ
     run(main())
 
 
+@pytest.mark.parametrize("where", ["connect", "response", "body"])
+def test_a_timeout_of_an_injected_httpx_client_is_a_timeout(server: FixtureServer, where: str) -> None:
+    import httpx
+
+    class Stalled(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'{"id"'
+            raise httpx.ReadTimeout("the body stalled")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if where == "connect":
+            raise httpx.ConnectTimeout("the connection stalled", request=request)
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=Stalled())
+
+    # "response": a real server slower than the injected client's read timeout, and far faster than the SDK's.
+    server.reset([scripted({"status": 200, "headers": {"content-type": "application/json"}, "body": "{}", "delayMs": 500})] * 2)
+    events: list[Any] = []
+
+    async def main() -> None:
+        injected = httpx.AsyncClient(timeout=0.05) if where == "response" else httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        async with injected:
+            transport = pkg.HttpxTransport(injected)
+            async with client(server, transport=transport, credentials={"apiKeyQuery": "k"}, retry={"max_attempts": 2}, on_failure=events.append) as tasks:
+                with pytest.raises(pkg.ApiTimeoutError) as caught:
+                    await tasks.get_task(project_id="p", task_id="t")
+        assert (caught.value.kind, caught.value.attempts) == ("timeout", 2)
+        assert isinstance(caught.value.__cause__, httpx.TimeoutException)
+
+    started = time.monotonic()
+    run(main())
+    assert time.monotonic() - started < 5
+    assert [event["failure"] for event in events] == [{"kind": "timeout", "retryable": True, "attempt": 2}]
+    assert settled_requests(server) == (2 if where == "response" else 0)
+
+
 def test_classifies_a_transport_failure_as_a_network_error() -> None:
     failure = ConnectionError("refused")
 
@@ -883,6 +945,31 @@ def test_never_lets_an_observer_change_the_outcome(server: FixtureServer) -> Non
     run(guarded())
     assert observed == ["raising", "async"]
     assert loop_errors == []
+
+
+def test_an_observer_raising_cancellation_changes_no_outcome_and_a_cancelled_call_stays_cancelled(server: FixtureServer) -> None:
+    observed: list[str] = []
+
+    def cancelling(event: Any) -> None:
+        observed.append(event["failure"]["kind"])
+        raise asyncio.CancelledError()
+
+    async def main() -> None:
+        server.reset([scripted({"status": 404, "headers": {"content-type": "application/problem+json"}, "body": '{"title":"x","status":404}'})])
+        async with client(server, credentials={"apiKeyQuery": "k"}, on_failure=cancelling) as tasks:
+            with pytest.raises(pkg.ApiHttpError) as caught:
+                await tasks.get_task(project_id="p", task_id="t")
+            assert caught.value.status == 404
+            server.reset([scripted({"status": 200, "headers": {"content-type": "application/json"}, "body": "{}", "delayMs": 1000})])
+            call = asyncio.ensure_future(tasks.get_task(project_id="p", task_id="t"))
+            await asyncio.sleep(0.2)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+            assert call.cancelled()
+
+    run(main())
+    assert observed == ["http", "aborted"]
 
 
 # Installation.

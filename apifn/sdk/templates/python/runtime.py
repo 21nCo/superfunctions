@@ -14,8 +14,9 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Itera
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from enum import Enum
 from http.cookiejar import Cookie, CookieJar
-from typing import Any, Generic, Literal, TypeVar, Union
+from typing import Any, Final, Generic, Literal, TypeVar, Union
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
@@ -167,6 +168,15 @@ class Headers(Mapping[str, str]):
         return f"Headers({self._values!r})"
 
 
+class Omitted(Enum):
+    """The type of OMITTED, the default of an optional request body: no body is sent. None is a JSON null."""
+
+    OMITTED = "OMITTED"
+
+
+OMITTED: Final = Omitted.OMITTED
+
+
 @dataclass(frozen=True)
 class TransportRequest:
     """One HTTP request: header values are Latin-1 text; `content` is None, bytes, or a stream sent once."""
@@ -189,7 +199,8 @@ class TransportResponse:
 
 
 Transport: TypeAlias = Callable[[TransportRequest], Awaitable[TransportResponse]]
-"""Sends a request. Redirects must not be followed. Raising an exception is a network failure."""
+"""Sends a request. Redirects must not be followed. Raising httpx.TimeoutException, while sending or while the body
+is read, is a timeout; raising any other exception is a network failure."""
 
 
 class _NoCookies(CookieJar):
@@ -464,7 +475,8 @@ def _primitive(value: object, where: str) -> str:
 
 
 def _is_array_index(key: str) -> bool:
-    return key.isascii() and key.isdigit() and (key == "0" or key[0] != "0") and int(key) < 4_294_967_295
+    # The length is bounded first: int() refuses digit strings longer than sys.get_int_max_str_digits().
+    return key.isascii() and key.isdigit() and len(key) <= 10 and (key == "0" or key[0] != "0") and int(key) < 4_294_967_295
 
 
 def _ordered_keys(mapping: Mapping[Any, object], where: str) -> list[str]:
@@ -654,6 +666,10 @@ class _TimedOut(Exception):
 
 class _TransportFailure(Exception):
     pass
+
+
+class _TransportTimeout(_TransportFailure):
+    """The transport's own timeout (httpx.TimeoutException) fired before the SDK's: still a timeout."""
 
 
 class _Abandonment:
@@ -904,9 +920,10 @@ class ApiRuntime:
         content: bytes | AsyncIterable[bytes] | None = None
         replayable = True
         if op.body is not None:
-            body = values.get("body")
-            if body is None and not op.body.required:
-                pass
+            body = values.get("body", OMITTED)
+            if body is OMITTED:
+                if op.body.required:
+                    raise _InputError("Parameter body is required.")
             elif op.body.kind == "json":
                 content = _json_body(body)
             elif op.body.kind == "text":
@@ -981,7 +998,7 @@ class ApiRuntime:
         except _TimedOut:
             return _Outcome(error=ApiTimeoutError(op.id, f"{label} timed out after {timeout:g} s.", attempt), retryable=True)
         except _TransportFailure as failure:
-            error = ApiError("network", op.id, f"{label} {failure}.", attempt)
+            error = ApiTimeoutError(op.id, f"{label} {failure}.", attempt) if isinstance(failure, _TransportTimeout) else ApiError("network", op.id, f"{label} {failure}.", attempt)
             error.__cause__ = failure.__cause__
             return _Outcome(error=error, retryable=True)
         body = _decode(status, headers, data, op.method)
@@ -1002,7 +1019,7 @@ class ApiRuntime:
         )
         if entry is not None:
             body = _as_documented(body, entry.kinds)
-        # Malformed JSON is undeclared text.
+        # Malformed JSON reads as text, so it is declared only where the status documents a text body, as in TypeScript.
         declared = entry is not None and body.kind in entry.kinds
         error = ApiHttpError(op.id, f"{label} returned HTTP {status}.", attempt, status, body.value, declared, headers)
         return _Outcome(error=error, retryable=status in _RETRY_STATUSES, retry_after=_retry_after(headers))
@@ -1010,6 +1027,8 @@ class ApiRuntime:
     async def _exchange(self, request: TransportRequest, state: _Abandonment) -> tuple[int, Headers, bytes]:
         try:
             response = await self._transport(request)
+        except httpx.TimeoutException as error:
+            raise _TransportTimeout("timed out before a response was received") from error
         except Exception as error:
             raise _TransportFailure("failed before a response was received") from error
         if not isinstance(response, TransportResponse):
@@ -1025,6 +1044,8 @@ class ApiRuntime:
             headers = Headers(response.headers)
             try:
                 data = await _read_body(response.body, state)
+            except httpx.TimeoutException as error:
+                raise _TransportTimeout("timed out while reading the response body") from error
             except Exception as error:
                 raise _TransportFailure("failed while reading the response body") from error
             return status, headers, data
@@ -1053,12 +1074,13 @@ class ApiRuntime:
             "failure": failure,
         }
         # An observer never changes the call's outcome: what it raises is ignored, and an awaitable it returns is
-        # awaited in the background with its failure ignored.
+        # awaited in the background with its failure ignored. That includes a CancelledError a synchronous observer
+        # raises itself: a cancellation of the call is already propagating, and the caller re-raises it.
         try:
             result = hook(event)
             if inspect.isawaitable(result):
                 _drain(result)
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             pass
 
 

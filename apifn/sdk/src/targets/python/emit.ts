@@ -170,7 +170,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
   const methodNames = new NameRegistry();
   for (const [name, owner] of CLIENT_MEMBERS) methodNames.claim(name, owner);
   const unsupportedSchemes = new Set<string>();
-  const narrowings = new Set<string>();
+  const runtimeUses = new Set<string>();
   for (const operation of context.operations) {
     const shape = analyzePythonOperation(operation, catalog);
     const pointer = `/operations/${catalog.operations.indexOf(operation)}`;
@@ -227,7 +227,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
       const credential = suppliedByCredential(parameter, shape.security);
       // A type that also admits values the client cannot serialize is narrowed to the ones it can.
       const narrowing = shape.parameters[position];
-      if (narrowing !== null && narrowing !== undefined) narrowings.add(narrowing === "value" ? "ParamValue" : "DeepObjectValue");
+      if (narrowing !== null && narrowing !== undefined) runtimeUses.add(narrowing === "value" ? "ParamValue" : "DeepObjectValue");
       const type = narrowing === "value" ? "_ParamValue" : narrowing === "deepObject" ? "_DeepObjectValue" : clientTypes.type(parameter.schema, prefix, 0, undefined, "direct", true);
       if (isRequired && !credential) required.push(`${key}: ${type}`);
       else optional.push(`${key}: ${type === ANY ? ANY : `${type} | None`} = None`);
@@ -244,10 +244,14 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
           : shape.body.kind === "text"
             ? b("str")
             : `${b("bytes")} | ${b("bytearray")} | ${b("memoryview")} | _t.AsyncIterable[${b("bytes")}]`;
+      // An optional body left out sends none; None is a value (a JSON null), as undefined and null are in TypeScript.
       if (shape.body.required) required.push(`body: ${bodyType}`);
-      else optional.push(`body: ${bodyType === ANY ? ANY : `${bodyType} | None`} = None`);
+      else {
+        runtimeUses.add("OMITTED").add("Omitted");
+        optional.push(`body: ${bodyType === ANY ? ANY : `${bodyType} | _Omitted`} = _OMITTED`);
+      }
       values.push(`"body": body`);
-      argumentDocs.push(`body: request body sent as ${shape.body.mediaType}${shape.body.required ? "" : "; None sends none"}.`);
+      argumentDocs.push(`body: request body sent as ${shape.body.mediaType}${shape.body.required ? "" : "; left out, none is sent"}.`);
     }
 
     const terms = shape.security.map(
@@ -373,7 +377,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
     "SdkMetadata",
     "SecurityTerm",
     "Transport",
-    ...narrowings,
+    ...runtimeUses,
   ].sort(compareCodeUnits);
   const constructorArguments = [
     "self",

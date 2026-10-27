@@ -8,7 +8,7 @@ import { resolvePythonOptions, type PythonOptions } from "./options.js";
 export type { PythonOptions } from "./options.js";
 
 /** Bumped with any change to generated Python output. */
-export const PYTHON_TARGET_VERSION = "0.1.2";
+export const PYTHON_TARGET_VERSION = "0.1.3";
 
 export const pythonTarget: SdkTarget<PythonOptions> = {
   id: "python",

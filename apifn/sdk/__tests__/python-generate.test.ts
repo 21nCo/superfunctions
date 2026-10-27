@@ -396,6 +396,29 @@ describe("python target: schema types", () => {
     expect(models).toContain('ValidationProblem = _te.TypedDict(\n    "ValidationProblem",\n    {\n        "status": "int",\n        "title": "str",\n        "type": _te.NotRequired["str"],\n        "fields": _te.NotRequired["dict[str, str]"],\n');
   });
 
+  it("types a map's values as the union of its pattern and additional property values", () => {
+    const catalog = fixtureCatalog();
+    const pattern = { "^x": { type: "string" }, "^n": { type: "boolean" } };
+    Object.assign(catalog.schemas, {
+      PatternOnly: { type: "object", patternProperties: pattern },
+      PatternClosed: { type: "object", patternProperties: pattern, additionalProperties: false },
+      PatternInt: { type: "object", patternProperties: pattern, additionalProperties: { type: "integer" } },
+      Closed: { type: "object", additionalProperties: false },
+    });
+    const models = fileOf(generatePython(catalog), "src/example_tasks_sdk/models.py");
+    expect(models).toContain('PatternOnly: _te.TypeAlias = "dict[str, _t.Any]"');
+    expect(models).toContain('PatternClosed: _te.TypeAlias = "dict[str, bool | str]"');
+    expect(models).toContain('PatternInt: _te.TypeAlias = "dict[str, bool | str | int]"');
+    expect(models).toContain('Closed: _te.TypeAlias = "dict[str, _te.Never]"');
+  });
+
+  it("defaults an optional body to the runtime's OMITTED, so None is a value it sends", () => {
+    const client = fileOf(generatePython(), "src/example_tasks_sdk/client.py");
+    expect(client).toContain("    OMITTED as _OMITTED,\n    Omitted as _Omitted,\n");
+    expect(client).toMatch(/async def search_tasks\([^)]*        body: _m\._SearchTasks_1 \| _Omitted = _OMITTED,\n/);
+    expect(client).not.toMatch(/body: .*= None/);
+  });
+
   it("requires a property that any allOf part, or the enclosing schema, requires, even a part declaring no property", () => {
     const catalog = fixtureCatalog();
     const object = (properties: Record<string, unknown>) => ({ type: "object", properties });

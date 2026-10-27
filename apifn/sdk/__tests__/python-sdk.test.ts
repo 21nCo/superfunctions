@@ -162,6 +162,10 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       RefSiblingReq: { $ref: "#/components/schemas/Optional", required: ["x"] },
       // A wrapper that refers back to its own component: one inline TypedDict, whose field names itself.
       Linked: { type: "object", properties: { v: { type: "string" }, next: { $ref: "#/components/schemas/Linked", required: ["v"] } } },
+      // Maps whose keys may match patterns: values of every pattern, plus additional properties unless false.
+      PatternOnly: { type: "object", patternProperties: { "^x": { type: "string" } } },
+      PatternClosed: { type: "object", patternProperties: { "^x": { type: "string" } }, additionalProperties: false },
+      PatternInt: { type: "object", patternProperties: { "^x": { type: "string" } }, additionalProperties: { type: "integer" } },
     });
     // Parameters whose schemas also admit values the client cannot serialize are narrowed to ParamValue and DeepObjectValue.
     const lookup = catalog.operations.find((operation: any) => operation.id === "tasks.lookup");
@@ -198,8 +202,13 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       // The misuse module passes only while mypy reports the missing required key its ignore comment names.
       const misuse = ["RequiredSplit", "OneRefReq", "RefSiblingReq"].map((name) => `ok_${name}: ${name} = {"x": "a"}\nmissing_${name}: ${name} = {}  # type: ignore[typeddict-item]\n`);
       const linked = `linked: Linked = {"next": {"v": "a", "next": {"v": "b"}}}\nmissing_inner: Linked = {"next": {"v": "a", "next": {}}}  # type: ignore[typeddict-item]\n`;
-      const calls = `\n\nasync def call(client: TasksClient) -> None:\n    await client.str()\n    await client.int(project_id="p", task_id="t")\n    await client.int(project_id=1, task_id="t")  # type: ignore[arg-type]\n`;
-      writeFileSync(path.join(dir, "src/required_misuse.py"), `from awkward_sdk import Linked, OneRefReq, Optional, RefSiblingReq, RequiredSplit, TasksClient\n\noptional: Optional = {}\n${misuse.join("")}${linked}${calls}`);
+      const patterns = `pattern_only: PatternOnly = {"x": "a", "y": object()}\npattern_closed: PatternClosed = {"x": "a"}\npattern_int: PatternInt = {"x": "a", "y": 1}\npattern_wrong: PatternClosed = {"x": 1}  # type: ignore[dict-item]\n`;
+      // An optional body may be left out; None is a value, so a body type without null rejects it.
+      const calls = `\n\nasync def call(client: TasksClient) -> None:\n    await client.str()\n    await client.int(project_id="p", task_id="t")\n    await client.int(project_id=1, task_id="t")  # type: ignore[arg-type]\n    await client.search_tasks(project_id="p")\n    await client.search_tasks(project_id="p", body={"text": "a"})\n    await client.search_tasks(project_id="p", body=None)  # type: ignore[arg-type]\n`;
+      writeFileSync(
+        path.join(dir, "src/required_misuse.py"),
+        `from awkward_sdk import Linked, OneRefReq, Optional, PatternClosed, PatternInt, PatternOnly, RefSiblingReq, RequiredSplit, TasksClient\n\noptional: Optional = {}\n${misuse.join("")}${linked}${patterns}${calls}`
+      );
       log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "awkward_sdk", "required_misuse.py"], { cwd: path.join(dir, "src") });
       // And it imports: every quoted type and inline TypedDict is valid at runtime too.
       const keys = log.run(wheelPython, ["-c", "import json, awkward_sdk, typing; typing.get_type_hints(awkward_sdk.Keywords); print(json.dumps(sorted(awkward_sdk.Keywords.__required_keys__)))"], { cwd: path.join(dir, "src") });
@@ -341,11 +350,18 @@ describe("cross-language vectors", () => {
     parameters: { path: { projectId: "p1", taskId: "t1" } },
     response: { status, headers: { "content-type": "text/plain", location }, body: "moved" },
   }));
+  // An optional JSON body left out, null or a value: TypeScript's undefined, null and object.
+  const bodies = [
+    ["left out", {}],
+    ["null", { body: null }],
+    ["an object", { body: { text: "a" } }],
+  ].map(([what, body]) => ({ name: `an optional body ${what}`, operation: "tasks.search", parameters: { path: { projectId: "p1" } }, ...(body as object) }));
   const groups: Array<[string, any[], (vector: any) => [any[], { credentials?: unknown; maxAttempts?: number }]]> = [
     ["serialization", [...serialization.cases, ...serialization.rejected], (vector) => [[okResponse(catalog, vector.operation)], {}]],
     ["auth", [...auth.cases, ...auth.rejected], (vector) => [[okResponse(catalog, vector.operation)], { credentials: vector.credentials }]],
     ["errors", errors.cases, (vector) => [[vector.response], { maxAttempts: 1 }]],
     ["redirect", redirects, (vector) => [[vector.response], {}]],
+    ["optional body", bodies, (vector) => [[okResponse(catalog, vector.operation)], { credentials: { bearerAuth: "t" } }]],
     [
       "retry",
       retry.cases,

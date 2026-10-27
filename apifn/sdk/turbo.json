@@ -4,7 +4,8 @@
   "tasks": {
     "test": {
       "dependsOn": ["^build", "build"],
-      "passThroughEnv": ["APIFN_SDK_PYTHON", "APIFN_SDK_PYTHON_LOG"]
+      "env": ["APIFN_SDK_PYTHON"],
+      "passThroughEnv": ["APIFN_SDK_PYTHON_LOG"]
     }
   }
 }
