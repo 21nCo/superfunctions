@@ -350,7 +350,8 @@ describe("Logger", () => {
   });
   it("does not re-enter onError for a failure it causes", () => {
     // An onError that logs through the failing sink fails again; that nested
-    // failure must not call onError recursively.
+    // failure goes to the console reporter, not back into onError.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const calls: string[] = [];
     const logger = createLogger({
       name: "svc",
@@ -367,5 +368,79 @@ describe("Logger", () => {
     logger.info("one");
     logger.info("two");
     expect(calls).toEqual(["sink down", "sink down"]);
+    expect(consoleError).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["logger", "child"] as const)(
+    "does not re-enter onError for an async sink rejection it causes (via %s)",
+    async (via) => {
+      // The rejection of a sink call made while onError ran arrives after
+      // the handler returned; it must still not call that handler again.
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      let sinkCalls = 0;
+      const calls: string[] = [];
+      const root = createLogger({
+        name: "svc",
+        sinks: [
+          async () => {
+            sinkCalls++;
+            throw new Error("sink down");
+          },
+        ],
+        onError: (error) => {
+          calls.push(error.message);
+          target.error("sink failed", { error: error.message });
+        },
+      });
+      const target = via === "child" ? root.child({ name: "child" }) : root;
+      const started = Date.now();
+      const timer = new Promise<number>((resolve) => {
+        setTimeout(() => resolve(Date.now() - started), 10);
+      });
+      target.info("one event");
+      await target.flush();
+      expect(await timer).toBeLessThan(50);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls).toEqual(["sink down"]);
+      expect(sinkCalls).toBe(2);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+
+      // A later independent failure is still reported to onError.
+      target.info("two");
+      await target.flush();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls).toEqual(["sink down", "sink down"]);
+      expect(sinkCalls).toBe(4);
+    }
+  );
+
+  it("stops a reporting cycle between two loggers whose handlers log through each other", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let sinkCalls = 0;
+    const failing = async () => {
+      sinkCalls++;
+      throw new Error("down");
+    };
+    const calls: string[] = [];
+    const a: Logger = createLogger({
+      name: "a",
+      sinks: [failing],
+      onError: () => {
+        calls.push("a");
+        b.error("a failed");
+      },
+    });
+    const b: Logger = createLogger({
+      name: "b",
+      sinks: [failing],
+      onError: () => {
+        calls.push("b");
+        a.error("b failed");
+      },
+    });
+    a.info("one event");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(calls).toEqual(["a", "b"]);
+    expect(sinkCalls).toBe(3);
   });
 });

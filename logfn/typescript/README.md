@@ -60,8 +60,10 @@ when `url` is given.
   every sink.
   Reading a sink's `flush` or a sink's or stage's `name` is inside the same
   isolation: a throwing getter is reported, and sibling sinks still flush.
-  An `onError` that logs through a failing sink is not called again for that
-  nested failure while it runs.
+  An `onError` that logs through a failing sink is never called for the
+  failure it caused, whether the sink throws at once or its promise rejects
+  later (also through child loggers or another logger's `onError`); that
+  failure goes to `console.error` instead, so one error cannot start a loop.
 - `registerProcessHandlers(logger)` (server entry): on SIGTERM or SIGINT it
   logs the signal, flushes once, logs nothing after that flush and exits
   with 143 or 130 (128 + the signal number). A second signal while that

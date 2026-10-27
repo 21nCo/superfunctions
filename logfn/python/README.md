@@ -53,8 +53,10 @@ adds an HTTP sink only when `url` is given.
   waited for, since nothing would run it. Looking up a sink's `flush` or a
   sink's or stage's `__name__` is inside the same isolation: a raising
   property is reported, and sibling sinks still flush. An `on_error` that
-  logs through a failing sink is not called again for that nested failure
-  while it runs on the same thread.
+  logs through a failing sink is never called for the failure it caused,
+  whether the sink raises at once or its awaitable fails later in a task
+  (also through child loggers or another logger's `on_error`); that failure
+  goes to stderr instead, so one error cannot start a loop.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,

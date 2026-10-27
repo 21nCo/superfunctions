@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import inspect
 import os
 import sys
-import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -27,8 +27,12 @@ from .validation import sanitize_event
 # How often flush() checks that another loop it waits on is still running.
 _FOREIGN_POLL_SECONDS = 0.05
 
-# The error handlers running on each thread.
-_reporting = threading.local()
+# The ids of the error handlers whose work is running. A context variable:
+# each thread has its own, and a sink task scheduled while a handler runs
+# copies it, so the handler's provenance survives the task boundary.
+_active_handlers: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
+    "logfn_active_handlers", default=frozenset()
+)
 
 
 def default_now() -> datetime:
@@ -103,20 +107,19 @@ class Logger:
             print("Warning: Logger created without sinks", file=sys.stderr)
 
     def _report(self, error: BaseException, context: dict[str, str]) -> None:
-        # An on_error that logs through a failing sink fails again; that nested
-        # failure is not reported to the handler already running on this
-        # thread, so one error cannot start a recursion.
-        running: set[int] = _reporting.__dict__.setdefault("handlers", set())
-        handler = self.on_error
-        if id(handler) in running:
-            return
-        running.add(id(handler))
+        # An on_error that logs through a failing sink fails again, at once or
+        # in the async sink task. That nested failure goes to the default
+        # stderr reporter, never back into the handler that caused it, so one
+        # error cannot start a recursion.
+        active = _active_handlers.get()
+        handler = _default_error_handler if id(self.on_error) in active else self.on_error
+        token = _active_handlers.set(active | {id(handler)})
         try:
             # A failing error handler must not reach the caller either.
             with contextlib.suppress(Exception):
                 handler(error, context)
         finally:
-            running.discard(id(handler))
+            _active_handlers.reset(token)
 
     def should_log(self, level: LogLevel) -> bool:
         return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[self.level]
@@ -187,6 +190,8 @@ class Logger:
             )
             return
 
+        # The task copies the current context, so a failure of a call made
+        # while on_error runs is not reported back into that on_error.
         async def run() -> None:
             try:
                 await awaitable

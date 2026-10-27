@@ -342,9 +342,9 @@ def test_flush_does_not_wait_for_calls_whose_loop_stopped_or_closed() -> None:
         stopped.close()
 
 
-def test_on_error_is_not_reentered_by_a_failure_it_causes() -> None:
+def test_on_error_is_not_reentered_by_a_failure_it_causes(capsys: pytest.CaptureFixture[str]) -> None:
     # An on_error that logs through the failing sink fails again; that nested
-    # failure must not call on_error recursively.
+    # failure goes to the stderr reporter, not back into on_error.
     calls: list[str] = []
 
     def failing(batch: list[LogEvent]) -> None:
@@ -358,3 +358,74 @@ def test_on_error_is_not_reentered_by_a_failure_it_causes() -> None:
     logger.info("one")
     logger.info("two")
     assert calls == ["sink down", "sink down"]
+    assert capsys.readouterr().err.count("[logfn internal error]") == 2
+
+
+@pytest.mark.parametrize("via", ["logger", "child"])
+def test_on_error_is_not_reentered_by_an_async_sink_failure_it_causes(
+    via: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The failure of a sink call made while on_error ran surfaces in a later
+    # task, after the handler returned; it must still not call that handler.
+    calls: list[str] = []
+    sink_calls = 0
+
+    async def failing(batch: list[LogEvent]) -> None:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise RuntimeError("sink down")
+
+    def on_error(error: BaseException, context: dict[str, str]) -> None:
+        calls.append(str(error))
+        target.error("sink failed", ctx={"error": str(error)})
+
+    root = create_logger("svc", sinks=[failing], on_error=on_error)
+    target = root.child(name="child") if via == "child" else root
+
+    async def scenario() -> None:
+        target.info("one event")
+        await target.flush()
+        await asyncio.sleep(0.05)
+        assert calls == ["sink down"]
+        assert sink_calls == 2
+        assert capsys.readouterr().err.count("[logfn internal error]") == 1
+
+        # A later independent failure is still reported to on_error.
+        target.info("two")
+        await target.flush()
+        await asyncio.sleep(0.05)
+        assert calls == ["sink down", "sink down"]
+        assert sink_calls == 4
+
+    asyncio.run(scenario())
+
+
+def test_a_reporting_cycle_between_two_loggers_stops() -> None:
+    # Handlers that log through each other's failing async sinks: the
+    # provenance is carried through both tasks, so the cycle ends.
+    calls: list[str] = []
+    sink_calls = 0
+
+    async def failing(batch: list[LogEvent]) -> None:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise RuntimeError("down")
+
+    def on_error_a(error: BaseException, context: dict[str, str]) -> None:
+        calls.append("a")
+        b.error("a failed")
+
+    def on_error_b(error: BaseException, context: dict[str, str]) -> None:
+        calls.append("b")
+        a.error("b failed")
+
+    a = create_logger("a", sinks=[failing], on_error=on_error_a)
+    b = create_logger("b", sinks=[failing], on_error=on_error_b)
+
+    async def scenario() -> None:
+        a.info("one event")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert calls == ["a", "b"]
+    assert sink_calls == 3

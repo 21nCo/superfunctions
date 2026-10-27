@@ -15,8 +15,10 @@ import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
 
-// The error handlers currently running (synchronously).
-const runningHandlers = new Set<ErrorHandler>();
+// The error handlers whose work is running: those on the stack, plus, while
+// an async sink failure is reported, those that were running when that sink
+// was called. Replaced, never mutated, so a snapshot keeps its provenance.
+let activeHandlers: ReadonlySet<ErrorHandler> = new Set();
 
 const defaultErrorHandler: ErrorHandler = (error, context) => {
   console.error("[logfn internal error]", context, error);
@@ -101,19 +103,26 @@ export class Logger {
     return env?.NODE_ENV === "production" ? "info" : "debug";
   }
 
-  private report(error: unknown, context: { stage?: string; sink?: string }): void {
-    // An onError that logs through a failing sink fails again; that nested
-    // failure is not reported to the handler already running, so one error
-    // cannot start a recursion.
-    const handler = this.options.onError;
-    if (runningHandlers.has(handler)) return;
-    runningHandlers.add(handler);
+  private report(
+    error: unknown,
+    context: { stage?: string; sink?: string },
+    provenance: ReadonlySet<ErrorHandler> = activeHandlers
+  ): void {
+    // An onError that logs through a failing sink fails again, at once or
+    // when the async sink call rejects. That nested failure goes to the
+    // default console reporter, never back into the handler that caused it,
+    // so one error cannot start a recursion.
+    const handler = provenance.has(this.options.onError)
+      ? defaultErrorHandler
+      : this.options.onError;
+    const previous = activeHandlers;
+    activeHandlers = new Set(provenance).add(handler);
     try {
       handler(toError(error), context);
     } catch {
       // A failing error handler must not reach the caller either.
     } finally {
-      runningHandlers.delete(handler);
+      activeHandlers = previous;
     }
   }
 
@@ -183,7 +192,10 @@ export class Logger {
     // so each sink bounds the size after it redacts.
     const finalEvent = sanitizeEvent(event);
 
-    // Send to sinks; each sink gets its own batch array.
+    // Send to sinks; each sink gets its own batch array. A later rejection is
+    // reported with the handlers running now, so an onError that logged this
+    // event is not called for that rejection.
+    const provenance = activeHandlers;
     for (const sink of this.options.sinks) {
       try {
         const result = sink([finalEvent]);
@@ -192,7 +204,7 @@ export class Logger {
           const settled = Promise.resolve(result).then(
             () => undefined,
             (error: unknown) => {
-              this.report(error, { sink: callableName(sink) });
+              this.report(error, { sink: callableName(sink) }, provenance);
             }
           );
           this.pending.add(settled);
