@@ -1,5 +1,9 @@
+import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
+import { kyselyAdapter } from '@superfunctions/db/adapters';
 import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { build } from 'esbuild';
+import { Kysely, SqliteDialect } from 'kysely';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +43,23 @@ async function openQueue(file: string, now?: () => number) {
 describeQueueContract('sqlite (better-sqlite3 file)', async (now) => {
   const { db, queue } = await openQueue(tempFile(), now);
   return { queue, cleanup: async () => void db.close() };
+});
+
+describeQueueContract('sqlite (@superfunctions/db drizzleAdapter)', async (now) => {
+  const db = new Database(tempFile());
+  const queue = new DatabaseQueueAdapter<unknown>({ db: drizzleAdapter({ db: drizzle(db), dialect: 'sqlite' }), now });
+  await queue.migrate();
+  return { queue, cleanup: async () => void db.close() };
+});
+
+describeQueueContract('sqlite (@superfunctions/db kyselyAdapter)', async (now) => {
+  const kysely = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(tempFile()) }) });
+  const queue = new DatabaseQueueAdapter<unknown>({
+    db: kyselyAdapter({ db: kysely, dialect: 'sqlite', schema: {} }),
+    now,
+  });
+  await queue.migrate();
+  return { queue, cleanup: () => kysely.destroy() };
 });
 
 describe('DatabaseQueueAdapter on SQLite', () => {
@@ -111,6 +132,7 @@ describe('DatabaseQueueAdapter on SQLite', () => {
         statements.push(sql);
         return inner.query(sql, params);
       },
+      execute: (sql, params) => inner.execute(sql, params),
     };
     const queue = new DatabaseQueueAdapter<string>({ client });
     await queue.migrate();
@@ -155,6 +177,17 @@ describe('DatabaseQueueAdapter on SQLite', () => {
     expect(await queue.enqueue('jobs', 'y', { dedupeKey: 'k' })).toMatchObject({ deduplicated: true });
   });
 
+  it('requires a @superfunctions/db adapter with SQLite or Postgres rawSql', () => {
+    const rawSql = { query: async () => [], execute: async () => {} };
+    expect(() => new DatabaseQueueAdapter({ db: {} })).toThrow('FLOWFN_QUEUE_RAW_SQL_UNAVAILABLE');
+    expect(() => new DatabaseQueueAdapter({ db: { rawSql: { ...rawSql, dialect: 'mysql' } } })).toThrow(
+      'FLOWFN_QUEUE_DIALECT_INVALID'
+    );
+    expect(() => new DatabaseQueueAdapter({ client: { ...rawSql, dialect: 'mysql' } as never })).toThrow(
+      'FLOWFN_QUEUE_DIALECT_INVALID'
+    );
+  });
+
   it('ships a Postgres migration matching the generated DDL', () => {
     const sql = readFileSync(join(packageRoot, 'migrations/postgres/0001_queue_jobs.sql'), 'utf8');
     expect(sql).toBe(queueJobsMigrationSql('postgres'));
@@ -178,7 +211,7 @@ describe('SQLite concurrency', () => {
     modulePath = pathToFileURL(file).href;
   });
 
-  it('acks each of 500 jobs exactly once across 8 claimer threads', async () => {
+  it.each(['client', 'drizzle'] as const)('acks each of 500 jobs exactly once across 8 claimer threads (%s)', async (via) => {
     const file = tempFile();
     const { db, queue } = await openQueue(file);
     db.pragma('journal_mode = WAL');
@@ -190,7 +223,7 @@ describe('SQLite concurrency', () => {
       { length: 8 },
       () =>
         new Worker(new URL('./fixtures/sqlite-claimer.mjs', import.meta.url), {
-          workerData: { modulePath, file, queueName: 'jobs' },
+          workerData: { modulePath, file, queueName: 'jobs', via },
         })
     );
     try {

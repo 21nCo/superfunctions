@@ -1,4 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
+import { kyselyAdapter } from '@superfunctions/db/adapters';
+import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
+import { drizzle as drizzleNodePostgres } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
+import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DatabaseQueueAdapter, createPostgresQueueClient, type QueueSqlClient } from '../index.js';
@@ -22,6 +27,7 @@ describe('Postgres claim statement', () => {
         statements.push(sql);
         return [];
       },
+      async execute() {},
     };
     const queue = new DatabaseQueueAdapter({ client });
     expect(await queue.claim('jobs', { leaseMs: 1_000 })).toBeNull();
@@ -29,7 +35,21 @@ describe('Postgres claim statement', () => {
     expect(statements[0]).toMatch(
       /^UPDATE "queue_jobs" SET .* WHERE id = \(SELECT id FROM "queue_jobs" .* LIMIT 1 FOR UPDATE SKIP LOCKED\) RETURNING /
     );
-    expect(statements[0]).not.toContain('?');
+  });
+
+  it('numbers the placeholders for node-postgres', async () => {
+    const sent: { text: string; values?: unknown[] }[] = [];
+    const client = createPostgresQueueClient({
+      async query(text, values) {
+        sent.push({ text, values });
+        return { rows: [] };
+      },
+    });
+    await new DatabaseQueueAdapter({ client }).claim('jobs', { leaseMs: 1_000 });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).not.toContain('?');
+    expect(sent[0].text.match(/\$\d+/g)).toEqual(['$1', '$2', '$3', '$4', '$5']);
+    expect(sent[0].values).toHaveLength(5);
   });
 });
 
@@ -46,6 +66,17 @@ describe('PGlite', () => {
   describeQueueContract('postgres (PGlite)', async (now) => {
     const tableName = nextTable();
     const queue = new DatabaseQueueAdapter<unknown>({ client: createPostgresQueueClient(db), tableName, now });
+    await queue.migrate();
+    return { queue, cleanup: async () => void (await db.query(`DROP TABLE "${tableName}"`)) };
+  });
+
+  describeQueueContract('postgres (PGlite, @superfunctions/db drizzleAdapter)', async (now) => {
+    const tableName = nextTable();
+    const queue = new DatabaseQueueAdapter<unknown>({
+      db: drizzleAdapter({ db: drizzlePglite(db), dialect: 'postgres' }),
+      tableName,
+      now,
+    });
     await queue.migrate();
     return { queue, cleanup: async () => void (await db.query(`DROP TABLE "${tableName}"`)) };
   });
@@ -91,7 +122,31 @@ describe.skipIf(!postgresUrl)('Postgres server', () => {
     return { queue };
   });
 
-  it('acks each of 500 jobs exactly once across 8 claimers on separate connections', async () => {
+  describeQueueContract('postgres (server, @superfunctions/db drizzleAdapter)', async (now) => {
+    const tableName = nextTable();
+    tables.push(tableName);
+    const db = drizzleAdapter({ db: drizzleNodePostgres(admin), dialect: 'postgres' });
+    const queue = new DatabaseQueueAdapter<unknown>({ db, tableName, now });
+    await queue.migrate();
+    return { queue };
+  });
+
+  describeQueueContract('postgres (server, @superfunctions/db kyselyAdapter)', async (now) => {
+    const tableName = nextTable();
+    tables.push(tableName);
+    const kysely = new Kysely<any>({ dialect: new PostgresDialect({ pool: admin }) });
+    const queue = new DatabaseQueueAdapter<unknown>({
+      db: kyselyAdapter({ db: kysely, dialect: 'postgres', schema: {} }),
+      tableName,
+      now,
+    });
+    await queue.migrate();
+    return { queue };
+  });
+
+  it.each(['client', 'drizzle', 'kysely'] as const)(
+    'acks each of 500 jobs exactly once across 8 claimers on separate connections (%s)',
+    async (via) => {
     const tableName = nextTable();
     tables.push(tableName);
     const seed = new DatabaseQueueAdapter<{ n: number }>({ client: createPostgresQueueClient(admin), tableName });
@@ -104,6 +159,14 @@ describe.skipIf(!postgresUrl)('Postgres server', () => {
       // One dedicated connection per claimer, so claims race inside Postgres.
       const pool = new pg.Pool({ connectionString: postgresUrl, max: 1 });
       pools.push(pool);
+      if (via === 'drizzle') {
+        const db = drizzleAdapter({ db: drizzleNodePostgres(pool), dialect: 'postgres' });
+        return new DatabaseQueueAdapter<unknown>({ db, tableName });
+      }
+      if (via === 'kysely') {
+        const kysely = new Kysely<any>({ dialect: new PostgresDialect({ pool }) });
+        return new DatabaseQueueAdapter<unknown>({ db: kyselyAdapter({ db: kysely, dialect: 'postgres', schema: {} }), tableName });
+      }
       return new DatabaseQueueAdapter<unknown>({ client: createPostgresQueueClient(pool), tableName });
     });
     const perClaimer = await drainConcurrently(claimers, 'jobs');
@@ -115,7 +178,9 @@ describe.skipIf(!postgresUrl)('Postgres server', () => {
     expect(await seed.size('jobs')).toBe(0);
     const { rows } = await admin.query(`SELECT COUNT(*)::int AS n FROM "${tableName}"`);
     expect(rows).toEqual([{ n: 0 }]);
-  }, 120_000);
+    },
+    120_000
+  );
 
   it('deduplicates concurrent enqueues with the same key to one job', async () => {
     const tableName = nextTable();

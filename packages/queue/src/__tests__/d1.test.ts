@@ -1,3 +1,5 @@
+import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
+import { drizzle } from 'drizzle-orm/d1';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import { readFileSync } from 'node:fs';
@@ -11,12 +13,17 @@ const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 // A Worker that drives the adapter from inside workerd against its D1 binding.
 const workerEntry = `
+import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
+import { drizzle } from 'drizzle-orm/d1';
 import { DatabaseQueueAdapter, createD1QueueClient } from './src/index.ts';
 
 export default {
   async fetch(request, env) {
-    const { table, jobs, claimers } = await request.json();
-    const queue = new DatabaseQueueAdapter({ client: createD1QueueClient(env.DB), tableName: table });
+    const { table, jobs, claimers, via } = await request.json();
+    const queue =
+      via === 'drizzle'
+        ? new DatabaseQueueAdapter({ db: drizzleAdapter({ db: drizzle(env.DB), dialect: 'sqlite' }), tableName: table })
+        : new DatabaseQueueAdapter({ client: createD1QueueClient(env.DB), tableName: table });
     await queue.migrate();
     for (let n = 0; n < jobs; n += 1) {
       await queue.enqueue('jobs', { n });
@@ -72,11 +79,21 @@ describeQueueContract('D1 (workerd)', async (now) => {
   return { queue };
 });
 
+describeQueueContract('D1 (workerd, @superfunctions/db drizzleAdapter)', async (now) => {
+  const queue = new DatabaseQueueAdapter<unknown>({
+    db: drizzleAdapter({ db: drizzle(d1 as never), dialect: 'sqlite' }),
+    tableName: `queue_jobs_${++tableCounter}`,
+    now,
+  });
+  await queue.migrate();
+  return { queue };
+});
+
 describe('D1 inside a Worker', () => {
-  it('runs the claim statement in workerd and acks every job exactly once', async () => {
+  it.each(['client', 'drizzle'])('runs the claim statement in workerd and acks every job exactly once (%s)', async (via) => {
     const response = await mf.dispatchFetch('http://queue.test/', {
       method: 'POST',
-      body: JSON.stringify({ table: 'queue_jobs_worker', jobs: 60, claimers: 4 }),
+      body: JSON.stringify({ table: `queue_jobs_worker_${via}`, jobs: 60, claimers: 4, via }),
     });
     expect(response.status).toBe(200);
     const { acked, size } = (await response.json()) as { acked: string[][]; size: number };

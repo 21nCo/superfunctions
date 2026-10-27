@@ -3,20 +3,22 @@ export type QueueSqlDialect = 'sqlite' | 'postgres';
 export type QueueSqlValue = string | number | null;
 
 /**
- * The single primitive `DatabaseQueueAdapter` needs: run one statement with
- * positional parameters and return its result rows (empty for statements
- * without a result set). Placeholders are `?` for SQLite and `$1..$n` for
- * Postgres; the adapter writes them for the client's dialect.
+ * The SQL primitive `DatabaseQueueAdapter` runs on. It has the shape of the
+ * `rawSql` executor on `@superfunctions/db` SQL adapters: each `?` marks one
+ * positional parameter, which the client renders for its dialect. The
+ * adapter's statements contain no other `?`.
  */
 export interface QueueSqlClient {
   readonly dialect: QueueSqlDialect;
+  /** Runs a statement that returns rows (`SELECT`, `… RETURNING`). */
   query(sql: string, params: readonly QueueSqlValue[]): Promise<Record<string, unknown>[]>;
+  /** Runs a statement without a result set (the migration DDL). */
+  execute(sql: string, params: readonly QueueSqlValue[]): Promise<void>;
 }
 
 /** Structural subset of a better-sqlite3 `Database`. */
 export interface BetterSqlite3DatabaseLike {
   prepare(sql: string): {
-    readonly reader: boolean;
     all(...params: unknown[]): unknown[];
     run(...params: unknown[]): unknown;
   };
@@ -27,12 +29,10 @@ export function createSqliteQueueClient(db: BetterSqlite3DatabaseLike): QueueSql
   return {
     dialect: 'sqlite',
     async query(sql, params) {
-      const statement = db.prepare(sql);
-      if (statement.reader) {
-        return statement.all(...params) as Record<string, unknown>[];
-      }
-      statement.run(...params);
-      return [];
+      return db.prepare(sql).all(...params) as Record<string, unknown>[];
+    },
+    async execute(sql, params) {
+      db.prepare(sql).run(...params);
     },
   };
 }
@@ -42,6 +42,7 @@ export interface D1DatabaseLike {
   prepare(sql: string): {
     bind(...values: unknown[]): {
       all(): Promise<{ results?: unknown[] }>;
+      run(): Promise<unknown>;
     };
   };
 }
@@ -54,12 +55,20 @@ export function createD1QueueClient(db: D1DatabaseLike): QueueSqlClient {
       const result = await db.prepare(sql).bind(...params).all();
       return (result.results ?? []) as Record<string, unknown>[];
     },
+    async execute(sql, params) {
+      await db.prepare(sql).bind(...params).run();
+    },
   };
 }
 
 /** Structural subset of a node-postgres `Pool`/`Client`, also satisfied by PGlite. */
 export interface PostgresQueryableLike {
   query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+function numberPlaceholders(sql: string): string {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
 }
 
 /**
@@ -70,8 +79,11 @@ export function createPostgresQueueClient(db: PostgresQueryableLike): QueueSqlCl
   return {
     dialect: 'postgres',
     async query(sql, params) {
-      const result = await db.query(sql, [...params]);
+      const result = await db.query(numberPlaceholders(sql), [...params]);
       return result.rows as Record<string, unknown>[];
+    },
+    async execute(sql, params) {
+      await db.query(numberPlaceholders(sql), [...params]);
     },
   };
 }

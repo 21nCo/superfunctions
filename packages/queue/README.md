@@ -27,15 +27,20 @@ interface QueueAdapter<T> {
 
 ## Durable adapter
 
+`DatabaseQueueAdapter` runs on a `@superfunctions/db` SQL adapter. `drizzleAdapter` and `kyselyAdapter` (0.3.1 or later) expose `rawSql`, a parameterized-statement executor on the adapter's own connection, because the CRUD API cannot express the single-statement claim. Pass the same adapter the rest of the app uses:
+
 ```ts
 import Database from 'better-sqlite3';
-import { DatabaseQueueAdapter, createSqliteQueueClient } from '@superfunctions/queue';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
+import { DatabaseQueueAdapter } from '@superfunctions/queue';
 
-const db = new Database('app.db');
-db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 5000');
+const sqlite = new Database('app.db');
+sqlite.pragma('journal_mode = WAL');
+sqlite.pragma('busy_timeout = 5000');
+const db = drizzleAdapter({ db: drizzle(sqlite), dialect: 'sqlite' });
 
-const queue = new DatabaseQueueAdapter<{ url: string }>({ client: createSqliteQueueClient(db) });
+const queue = new DatabaseQueueAdapter<{ url: string }>({ db });
 await queue.migrate();
 
 await queue.enqueue('fetch', { url: 'https://example.com' }, { dedupeKey: 'https://example.com' });
@@ -53,13 +58,21 @@ if (job) {
 }
 ```
 
-Clients:
+The same works for the other backends:
+
+- D1: `drizzleAdapter({ db: drizzle(env.DB), dialect: 'sqlite' })` with `drizzle-orm/d1`.
+- Postgres: `drizzleAdapter({ db: drizzle(pool), dialect: 'postgres' })` with `drizzle-orm/node-postgres` (or `drizzle-orm/pglite`), or `kyselyAdapter({ db: new Kysely({ dialect: new PostgresDialect({ pool }) }), dialect: 'postgres', schema: {} })`.
+- SQLite through Kysely: `kyselyAdapter({ db: new Kysely({ dialect: new SqliteDialect({ database }) }), dialect: 'sqlite', schema: {} })`.
+
+An adapter without `rawSql` (memory, Prisma, DynamoDB, Cloudflare KV) is rejected with `FLOWFN_QUEUE_RAW_SQL_UNAVAILABLE`, and a MySQL one with `FLOWFN_QUEUE_DIALECT_INVALID`. `rawSql` bypasses the db adapter's schema mapping and row-level namespaces, so the queue table is shared by every namespace; use `tableName` to separate queues per app.
+
+Without `@superfunctions/db`, pass a driver client instead of `db`:
 
 - `createSqliteQueueClient(db)` for a better-sqlite3 database (SQLite >= 3.35 for `RETURNING`). Use WAL and a `busy_timeout` when several processes share the file.
 - `createD1QueueClient(env.DB)` for a Cloudflare D1 binding.
 - `createPostgresQueueClient(pool)` for a node-postgres `Pool` or `Client`, or anything with `query(text, values) => { rows }`, such as PGlite.
 
-Any other driver can implement `QueueSqlClient` (`dialect` plus `query(sql, params)` returning rows).
+Any other driver can implement `QueueSqlClient`, which has the shape of `rawSql`: `dialect`, `query(sql, params)` returning rows and `execute(sql, params)`, where each `?` is a positional parameter.
 
 `claim` is one statement, `UPDATE … WHERE id = (SELECT … ORDER BY available_at, id LIMIT 1) RETURNING …`. On Postgres the subquery uses `FOR UPDATE SKIP LOCKED`, so concurrent claimers take different rows without waiting; SQLite and D1 run the statement under their single writer lock.
 
@@ -85,4 +98,4 @@ Dead-lettered rows stay in the table with `state = 'dead'` and `last_error`; del
 
 ## Tests
 
-`npm test` runs the shared contract against memory, a better-sqlite3 file, D1 under workerd (Miniflare) and Postgres via PGlite, plus 8 claimer threads against 500 jobs on SQLite. Set `SUPERFUNCTIONS_QUEUE_POSTGRES_URL` to also run the contract, an 8-connection concurrency test and concurrent dedupe against a Postgres server; each test uses its own table and drops it.
+`npm test` runs the shared contract against memory, a better-sqlite3 file, D1 under workerd (Miniflare) and Postgres via PGlite, each through a driver client and through `@superfunctions/db` (`drizzleAdapter`, plus `kyselyAdapter` on SQLite), and 8 claimer threads against 500 jobs on SQLite through both paths. Set `SUPERFUNCTIONS_QUEUE_POSTGRES_URL` to also run the contract (client, Drizzle and Kysely), an 8-connection concurrency test on each path and concurrent dedupe against a Postgres server; each test uses its own table and drops it.

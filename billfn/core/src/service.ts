@@ -124,6 +124,10 @@ type ProjectionResult = {
 type ReconciliationLeaseGuard = () => Promise<void>;
 
 export function createBillFnService(config: BillFnConfig) {
+  return createBillFnServiceWithInternals(config).service;
+}
+
+function createBillFnServiceWithInternals(config: BillFnConfig) {
   const namespace = config.namespace ?? 'billfn';
   const now = config.now ?? (() => new Date());
   const generateId = config.generateId ?? defaultIdFactory;
@@ -314,7 +318,7 @@ export function createBillFnService(config: BillFnConfig) {
     const job = await createReconciliationJobRecord(input);
     const queuedJob = jobToQueuePayload(job);
     if (deps.queue) {
-      await deps.queue.enqueue('billfn-reconciliation', queuedJob);
+      await deps.queue.enqueue(RECONCILIATION_QUEUE, queuedJob);
     }
     await recordBillingEvent(deps, {
       id: deps.generateId('evt'),
@@ -331,7 +335,8 @@ export function createBillFnService(config: BillFnConfig) {
     return job;
   }
 
-  async function runReconciliationJobInternal(jobId: string) {
+  /** `onLeaseRenewed` runs after every renewal of the job's processing lease. */
+  async function runReconciliationJobInternal(jobId: string, onLeaseRenewed?: ReconciliationLeaseGuard) {
     let job = await getReconciliationJobRecord(deps, jobId);
     if (!job) {
       throw createBillFnError({
@@ -390,7 +395,10 @@ export function createBillFnService(config: BillFnConfig) {
       updatedAt: runningAt
     };
 
-    const assertLease = () => renewReconciliationJobLease(deps, job.id, attempts);
+    const assertLease = async () => {
+      await renewReconciliationJobLease(deps, job.id, attempts);
+      await onLeaseRenewed?.();
+    };
     try {
       await assertLease();
       await processReconciliationJob(deps, job, assertLease);
@@ -459,7 +467,7 @@ export function createBillFnService(config: BillFnConfig) {
     }
   }
 
-  return {
+  const service = {
     namespace,
     async getCatalog() {
       return deps.catalog;
@@ -1177,58 +1185,102 @@ export function createBillFnService(config: BillFnConfig) {
     subscriptionProvider,
     quotaProvider
   };
+  return { service, now, runReconciliationJob: runReconciliationJobInternal };
+}
+
+const RECONCILIATION_QUEUE = 'billfn-reconciliation';
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (error as { code?: unknown } | null)?.code === code;
+}
+
+function isQueueLeaseLost(error: unknown): boolean {
+  return hasErrorCode(error, 'FLOWFN_QUEUE_JOB_NOT_LEASED');
 }
 
 export function createBillFnReconciliationWorker(config: BillFnConfig) {
-  const service = createBillFnService(config);
+  const { service, now, runReconciliationJob } = createBillFnServiceWithInternals(config);
   const queue = config.queue;
+
+  async function runQueuedJob(job: BillFnQueuedJob, onLeaseRenewed?: ReconciliationLeaseGuard) {
+    if (job.jobId) {
+      return runReconciliationJob(job.jobId, onLeaseRenewed);
+    }
+
+    const enqueued = await service.enqueueReconciliationJob({
+      kind: job.type,
+      provider: 'provider' in job ? job.provider : undefined,
+      billingAccountId: 'billingAccountId' in job ? job.billingAccountId : undefined,
+      subscriptionId: 'subscriptionId' in job ? job.subscriptionId : undefined,
+      providerEventId: 'providerEventId' in job ? job.providerEventId : undefined,
+      cursor: 'cursor' in job ? job.cursor : undefined
+    });
+    if (!enqueued.ok) {
+      return null;
+    }
+    return runReconciliationJob(enqueued.data.job.id, onLeaseRenewed);
+  }
 
   return {
     async run(job: BillFnQueuedJob) {
-      if (job.jobId) {
-        const result = await service.runReconciliationJob({ jobId: job.jobId });
-        return result.ok ? result.data.job : null;
-      }
-
-      const enqueued = await service.enqueueReconciliationJob({
-        kind: job.type,
-        provider: 'provider' in job ? job.provider : undefined,
-        billingAccountId: 'billingAccountId' in job ? job.billingAccountId : undefined,
-        subscriptionId: 'subscriptionId' in job ? job.subscriptionId : undefined,
-        providerEventId: 'providerEventId' in job ? job.providerEventId : undefined,
-        cursor: 'cursor' in job ? job.cursor : undefined
-      });
-      if (!enqueued.ok) {
-        return null;
-      }
-      const ran = await service.runReconciliationJob({ jobId: enqueued.data.job.id });
-      return ran.ok ? ran.data.job : null;
+      return runQueuedJob(job);
     },
     async runNext() {
       if (!queue) {
         return null;
       }
-      const claimed = await queue.claim('billfn-reconciliation', { leaseMs: RECONCILIATION_JOB_CLAIM_LEASE_MS });
+      const claimed = await queue.claim(RECONCILIATION_QUEUE, { leaseMs: RECONCILIATION_JOB_CLAIM_LEASE_MS });
       if (!claimed) {
         return null;
       }
+      const fence = { attempt: claimed.attempt };
+      // Every renewal of the job's processing lease also extends the queue
+      // lease, so the message stays leased at least as long as the job is.
+      const extendQueueLease = async () => {
+        try {
+          await queue.extendLease(claimed.id, RECONCILIATION_JOB_CLAIM_LEASE_MS, fence);
+        } catch (error) {
+          // Another worker reclaimed the message; it retries until this run ends.
+          if (!isQueueLeaseLost(error)) {
+            throw error;
+          }
+        }
+      };
+
       let result: BillFnReconciliationJob | null;
       try {
-        result = await this.run(claimed.payload);
+        result = await runQueuedJob(claimed.payload, extendQueueLease);
       } catch (error) {
-        // Failed runs are not redelivered; the reconciliation job record keeps its own status.
+        const reason = error instanceof Error ? error.message || error.name : String(error);
         try {
-          await queue.fail(claimed.id, {
-            deadLetter: true,
-            reason: error instanceof Error ? error.message || error.name : String(error),
-            attempt: claimed.attempt
-          });
-        } catch {
-          // The lease was already lost to another worker; report the run's own error.
+          if (hasErrorCode(error, 'BILLFN_CONFLICT')) {
+            // Another runner holds the job's processing lease; retry once it has finished or expired.
+            await queue.fail(claimed.id, {
+              retryAt: now().getTime() + RECONCILIATION_JOB_CLAIM_LEASE_MS,
+              reason,
+              ...fence
+            });
+          } else {
+            // Failed runs are not redelivered; the reconciliation job record keeps its own status.
+            await queue.fail(claimed.id, { deadLetter: true, reason, ...fence });
+          }
+        } catch (queueError) {
+          // A lost lease means another worker owns the message; report the run's own error.
+          if (!isQueueLeaseLost(queueError)) {
+            throw queueError;
+          }
         }
         throw error;
       }
-      await queue.ack(claimed.id, { attempt: claimed.attempt });
+
+      try {
+        await queue.ack(claimed.id, fence);
+      } catch (error) {
+        // The run finished; a worker that reclaimed the message finds the job done and acks it.
+        if (!isQueueLeaseLost(error)) {
+          throw error;
+        }
+      }
       return result;
     }
   };

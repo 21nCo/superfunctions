@@ -1566,6 +1566,179 @@ describe('@billfn/core', () => {
     expect(await worker.runNext()).toBeNull();
   });
 
+  describe('queued reconciliation leases', () => {
+    const MINUTE = 60 * 1000;
+    const start = new Date('2026-04-20T00:00:00.000Z');
+
+    // fetchSubscription calls `onFetch` with its 1-based call number.
+    async function setupQueuedReconciliation(onFetch: (call: number) => Promise<void>, subscriptionCount = 1) {
+      const db = memoryAdapter({ debug: false });
+      const baseProvider = createMockProvider('dodo');
+      const clock = { current: start };
+      const queue = new MemoryQueueAdapter<BillFnQueuedJob>({ now: () => clock.current.getTime() });
+      let fetchCalls = 0;
+      const provider: BillFnProviderAdapter = {
+        ...baseProvider,
+        async fetchSubscription(input) {
+          fetchCalls += 1;
+          await onFetch(fetchCalls);
+          return baseProvider.fetchSubscription!(input);
+        }
+      };
+      const config = { db, catalog, queue, now: () => clock.current, providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      const created = await billfn.createCheckout({
+        subject: { principalId: 'queued_lease_user' },
+        planKey: 'pro',
+        provider: 'dodo',
+        interval: 'month'
+      });
+      if (!created.ok) {
+        throw new Error('expected success');
+      }
+      const verified = await billfn.verifyCheckout({
+        subject: { principalId: 'queued_lease_user' },
+        checkoutSessionId: created.data.checkoutSession.checkoutSessionId
+      });
+      if (!verified.ok) {
+        throw new Error('expected success');
+      }
+      const subscription = verified.data.subscription;
+      for (let n = 1; n < subscriptionCount; n += 1) {
+        // An account holds one subscription through checkout; scans also cover older ones.
+        await db.create({
+          model: 'subscriptions',
+          data: { ...subscription, id: `${subscription.id}_${n}`, providerSubscriptionId: `${subscription.providerSubscriptionId}_${n}` },
+          namespace: 'billfn'
+        });
+      }
+      const enqueued = await billfn.enqueueReconciliationJob(
+        subscriptionCount > 1
+          ? { kind: 'account-scan', billingAccountId: subscription.billingAccountId }
+          : { kind: 'subscription-sync', provider: 'dodo', subscriptionId: subscription.id }
+      );
+      if (!enqueued.ok) {
+        throw new Error('expected success');
+      }
+      expect(await queue.size('billfn-reconciliation')).toBe(1);
+      return {
+        billfn,
+        clock,
+        queue,
+        jobId: enqueued.data.job.id,
+        createWorker: () => createBillFnReconciliationWorker(config)
+      };
+    }
+
+    it('keeps the message leased while a run renews its own lease past the queue lease', async () => {
+      let competing: unknown = 'not-run';
+      const harness = await setupQueuedReconciliation(async (call) => {
+        // Each provider call takes 10 minutes; the run renews its lease between them.
+        harness.clock.current = new Date(harness.clock.current.getTime() + 10 * MINUTE);
+        if (call === 2) {
+          competing = await harness.createWorker().runNext().catch((error: unknown) => error);
+        }
+      }, 2);
+
+      const result = await harness.createWorker().runNext();
+
+      expect(competing).toBeNull();
+      expect(result).toMatchObject({ id: harness.jobId, status: 'succeeded', attempts: 1 });
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+    });
+
+    it('recovers an interrupted run through runNext once both leases have expired', async () => {
+      let notifyHung!: () => void;
+      const hung = new Promise<void>((resolve) => {
+        notifyHung = resolve;
+      });
+      const harness = await setupQueuedReconciliation(async (call) => {
+        if (call === 1) {
+          harness.clock.current = new Date(harness.clock.current.getTime() + 10 * MINUTE);
+        }
+        if (call === 2) {
+          // The first worker dies here, after renewing its lease at minute 10.
+          notifyHung();
+          await new Promise(() => {});
+        }
+      }, 2);
+      void harness.createWorker().runNext();
+      await hung;
+
+      harness.clock.current = new Date(start.getTime() + 15 * MINUTE);
+      const recoverer = harness.createWorker();
+      expect(await recoverer.runNext()).toBeNull();
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(1);
+
+      harness.clock.current = new Date(start.getTime() + 25 * MINUTE);
+      expect(await recoverer.runNext()).toMatchObject({ id: harness.jobId, status: 'succeeded', attempts: 2 });
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+    });
+
+    it('releases a message whose job another runner holds and acks it once that run finished', async () => {
+      let notifyFetch!: () => void;
+      let releaseFetch!: () => void;
+      const fetchStarted = new Promise<void>((resolve) => {
+        notifyFetch = resolve;
+      });
+      const fetchGate = new Promise<void>((resolve) => {
+        releaseFetch = resolve;
+      });
+      const harness = await setupQueuedReconciliation(async (call) => {
+        if (call === 1) {
+          notifyFetch();
+          await fetchGate;
+        }
+      });
+      const directRun = harness.billfn.runReconciliationJob({ jobId: harness.jobId });
+      await fetchStarted;
+
+      const worker = harness.createWorker();
+      await expect(worker.runNext()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+      const [released] = await harness.queue.peek('billfn-reconciliation', 10);
+      expect(released).toMatchObject({
+        state: 'pending',
+        attempt: 1,
+        availableAt: new Date(start.getTime() + 15 * MINUTE),
+        lastError: 'Reconciliation job is already running'
+      });
+
+      releaseFetch();
+      await expect(directRun).resolves.toMatchObject({ ok: true, data: { job: { status: 'succeeded' } } });
+      expect(await worker.runNext()).toBeNull();
+
+      harness.clock.current = new Date(start.getTime() + 15 * MINUTE);
+      expect(await worker.runNext()).toMatchObject({ id: harness.jobId, status: 'succeeded', attempts: 1 });
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(0);
+    });
+
+    it('returns a finished run whose message was reclaimed meanwhile', async () => {
+      let notifyFetch!: () => void;
+      let releaseFetch!: () => void;
+      const fetchStarted = new Promise<void>((resolve) => {
+        notifyFetch = resolve;
+      });
+      const fetchGate = new Promise<void>((resolve) => {
+        releaseFetch = resolve;
+      });
+      const harness = await setupQueuedReconciliation(async () => {
+        notifyFetch();
+        await fetchGate;
+      });
+      const run = harness.createWorker().runNext();
+      await fetchStarted;
+
+      // Another consumer takes the message over while the run is in flight.
+      const [leased] = await harness.queue.peek('billfn-reconciliation', 1);
+      await harness.queue.fail(leased.id, { retryAt: 0 });
+      expect(await harness.queue.claim('billfn-reconciliation', { leaseMs: MINUTE })).toMatchObject({ attempt: 2 });
+
+      releaseFetch();
+      await expect(run).resolves.toMatchObject({ id: harness.jobId, status: 'succeeded' });
+      expect(await harness.queue.size('billfn-reconciliation')).toBe(1);
+    });
+  });
+
   it('allows only one runner to claim and process a reconciliation job', async () => {
     const db = memoryAdapter({ debug: false });
     const baseProvider = createMockProvider('dodo');

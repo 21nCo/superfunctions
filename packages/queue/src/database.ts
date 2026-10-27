@@ -1,3 +1,4 @@
+import type { Adapter } from '@superfunctions/db';
 import { DEFAULT_QUEUE_JOBS_TABLE, queueJobsMigrationStatements, quoteQueueTableName } from './migrations.js';
 import type { QueueSqlClient, QueueSqlValue } from './sql-client.js';
 import type {
@@ -23,8 +24,7 @@ import {
   readClock,
 } from './validation.js';
 
-export interface DatabaseQueueAdapterOptions {
-  client: QueueSqlClient;
+interface DatabaseQueueAdapterBaseOptions {
   /** Defaults to `queue_jobs`. */
   tableName?: string;
   /**
@@ -33,6 +33,41 @@ export interface DatabaseQueueAdapterOptions {
    * and leases longer than their skew.
    */
   now?: () => number;
+}
+
+export type DatabaseQueueAdapterOptions = DatabaseQueueAdapterBaseOptions &
+  (
+    | {
+        /**
+         * A `@superfunctions/db` SQL adapter (`drizzleAdapter` or `kyselyAdapter`
+         * on SQLite, D1 or Postgres). Statements run through its `rawSql`.
+         */
+        db: Pick<Adapter, 'rawSql'>;
+        client?: never;
+      }
+    | {
+        /** A driver client from `createSqliteQueueClient`, `createD1QueueClient` or `createPostgresQueueClient`. */
+        client: QueueSqlClient;
+        db?: never;
+      }
+  );
+
+function resolveClient(options: DatabaseQueueAdapterOptions): QueueSqlClient {
+  if (options?.db !== undefined) {
+    const rawSql = options.db?.rawSql;
+    if (!rawSql) {
+      throw new QueueError('FLOWFN_QUEUE_RAW_SQL_UNAVAILABLE');
+    }
+    if (rawSql.dialect !== 'sqlite' && rawSql.dialect !== 'postgres') {
+      throw new QueueError('FLOWFN_QUEUE_DIALECT_INVALID');
+    }
+    return rawSql as QueueSqlClient;
+  }
+  const client = options?.client;
+  if (client?.dialect !== 'sqlite' && client?.dialect !== 'postgres') {
+    throw new QueueError('FLOWFN_QUEUE_DIALECT_INVALID');
+  }
+  return client;
 }
 
 interface Statements {
@@ -60,7 +95,7 @@ function buildStatements(client: QueueSqlClient, table: string): Statements {
   const columns = `id, queue, ${payload}, state, attempt, available_at, lease_until, dedupe_key, last_error, created_at, updated_at`;
   const leased = (fenced: boolean) => `id = ? AND state = 'leased'${fenced ? ' AND attempt = ?' : ''} RETURNING id`;
 
-  const statements: Statements = {
+  return {
     insert:
       `INSERT INTO ${table} (queue, payload, state, attempt, available_at, dedupe_key, created_at, updated_at) ` +
       `VALUES (?, ?, 'pending', 0, ?, ?, ?, ?) ` +
@@ -87,17 +122,6 @@ function buildStatements(client: QueueSqlClient, table: string): Statements {
     peek: `SELECT ${columns} FROM ${table} WHERE queue = ? AND ${LIVE_STATES} ORDER BY available_at, id LIMIT ?`,
     size: `SELECT COUNT(*) AS count FROM ${table} WHERE queue = ? AND ${LIVE_STATES}`,
   };
-
-  if (!postgres) {
-    return statements;
-  }
-  // Every statement above is written with `?`; none contains a literal `?`.
-  const numbered = {} as Statements;
-  for (const [name, sql] of Object.entries(statements) as [keyof Statements, string][]) {
-    let index = 0;
-    numbered[name] = sql.replace(/\?/g, () => `$${++index}`);
-  }
-  return numbered;
 }
 
 function toNumber(value: unknown): number {
@@ -133,8 +157,8 @@ function serializePayload(payload: unknown): string {
 }
 
 /**
- * Durable queue on a SQL table, for SQLite (better-sqlite3, >= 3.35), D1 and
- * Postgres. Create the table with `migrate()` or the shipped migration files
+ * Durable queue on a SQL table, for SQLite (>= 3.35), D1 and Postgres, run
+ * through a `@superfunctions/db` SQL adapter or a driver client. Create the table with `migrate()` or the shipped migration files
  * before use. Payloads are stored as JSON, so they must be JSON-serializable
  * and are returned as their JSON round trip.
  */
@@ -145,11 +169,7 @@ export class DatabaseQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly now: () => number;
 
   constructor(options: DatabaseQueueAdapterOptions) {
-    const dialect = options?.client?.dialect;
-    if (dialect !== 'sqlite' && dialect !== 'postgres') {
-      throw new QueueError('FLOWFN_QUEUE_DIALECT_INVALID');
-    }
-    this.client = options.client;
+    this.client = resolveClient(options);
     this.tableName = options.tableName ?? DEFAULT_QUEUE_JOBS_TABLE;
     this.statements = buildStatements(this.client, quoteQueueTableName(this.tableName));
     this.now = options.now ?? Date.now;
@@ -158,7 +178,7 @@ export class DatabaseQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   /** Creates the jobs table and its indexes if they do not exist. */
   async migrate(): Promise<void> {
     for (const statement of queueJobsMigrationStatements(this.client.dialect, this.tableName)) {
-      await this.client.query(statement, []);
+      await this.client.execute(statement, []);
     }
   }
 
