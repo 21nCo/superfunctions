@@ -22,7 +22,8 @@
   },
   "scripts": {
     "build": "node scripts/embed-runtime.mjs && tsup",
-    "test": "vitest run && node scripts/verify-packed-sdk.mjs",
+    "test": "vitest run --exclude __tests__/python-sdk.test.ts && npm run test:python && node scripts/verify-packed-sdk.mjs",
+    "test:python": "vitest run __tests__/python-sdk.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p templates/tsconfig.json",
     "lint": "node scripts/embed-runtime.mjs --check && tsc --noEmit",
     "verify:packed": "node scripts/verify-packed-sdk.mjs"

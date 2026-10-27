@@ -3,7 +3,9 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "dependsOn": ["^build", "build"]
+      "dependsOn": ["^build", "build"],
+      "env": ["APIFN_SDK_PYTHON"],
+      "passThroughEnv": ["APIFN_SDK_PYTHON_LOG"]
     }
   }
 }

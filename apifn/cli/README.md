@@ -177,9 +177,9 @@ apifn sdk generate --sdk-config sdk.config.json --spec openapi.json --manifest a
 apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk --check
 ```
 
-- `--sdk-config <path>` — `{ "target": "typescript", "unsupported": "fail" | "exclude", "options": { … } }` (see `@apifn/sdk`)
+- `--sdk-config <path>` — `{ "target": "typescript" | "python", "unsupported": "fail" | "exclude", "options": { … } }` (see `@apifn/sdk`)
 - `--catalog <path>` — catalog built by `@apifn/contracts`; or `--spec <path>` with `--manifest <path>` to build it
-- `--out <dir>` — package directory; only files the generator owns are written, and `src/custom/` is never touched
+- `--out <dir>` — package directory; only files the generator owns are written, and the custom-code area (`src/custom/` for TypeScript, `src/<module>/custom/` for Python) is never touched
 - `--check` — write nothing (a read-only directory works); exit `1` if the directory is out of date, or if another run holds its lock or keeps writing it while it is checked
 - `--format <type>` — `text` (default) or `json`
 
