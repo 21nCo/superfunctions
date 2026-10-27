@@ -46,6 +46,13 @@ interface MemoryJob<TPayload> {
   updatedAt: number;
 }
 
+interface MemoryQueueIndex<TPayload> {
+  /** Pending and leased jobs of one queue, keyed by id. */
+  jobs: Map<number, MemoryJob<TPayload>>;
+  /** The job holding each dedupe key in that queue. */
+  dedupe: Map<string, MemoryJob<TPayload>>;
+}
+
 function isClaimable(job: MemoryJob<unknown>, now: number): boolean {
   return job.state === 'pending' ? job.availableAt <= now : (job.leaseUntil as number) <= now;
 }
@@ -61,6 +68,8 @@ function compareClaimOrder(a: MemoryJob<unknown>, b: MemoryJob<unknown>): number
  */
 export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly jobs = new Map<number, MemoryJob<TPayload>>();
+  // Per-queue indexes keep enqueue O(1) and queues isolated from each other's backlogs.
+  private readonly queues = new Map<string, MemoryQueueIndex<TPayload>>();
   private readonly maxSize?: number;
   private readonly now: () => number;
   private nextId = 1;
@@ -80,22 +89,17 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     const { delayMs, dedupeKey } = normalizeEnqueueOptions(options);
     const now = readClock(this.now);
 
-    let live = 0;
-    for (const job of this.jobs.values()) {
-      if (job.queue !== queue) {
-        continue;
-      }
-      if (dedupeKey !== null && job.dedupeKey === dedupeKey) {
-        return { id: String(job.id), deduplicated: true };
-      }
-      live += 1;
+    const existing = this.queues.get(queue);
+    const duplicate = dedupeKey === null ? undefined : existing?.dedupe.get(dedupeKey);
+    if (duplicate) {
+      return { id: String(duplicate.id), deduplicated: true };
     }
-    if (this.maxSize !== undefined && live >= this.maxSize) {
+    if (this.maxSize !== undefined && (existing?.jobs.size ?? 0) >= this.maxSize) {
       throw new QueueError('FLOWFN_QUEUE_FULL');
     }
 
     const id = this.nextId++;
-    this.jobs.set(id, {
+    const job: MemoryJob<TPayload> = {
       id,
       queue,
       payload,
@@ -107,7 +111,14 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    const index = existing ?? { jobs: new Map(), dedupe: new Map() };
+    this.queues.set(queue, index);
+    this.jobs.set(id, job);
+    index.jobs.set(id, job);
+    if (dedupeKey !== null) {
+      index.dedupe.set(dedupeKey, job);
+    }
     return { id: String(id), deduplicated: false };
   }
 
@@ -117,8 +128,8 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     const now = readClock(this.now);
 
     let next: MemoryJob<TPayload> | undefined;
-    for (const job of this.jobs.values()) {
-      if (job.queue === queue && isClaimable(job, now) && (!next || compareClaimOrder(job, next) < 0)) {
+    for (const job of this.queues.get(queue)?.jobs.values() ?? []) {
+      if (isClaimable(job, now) && (!next || compareClaimOrder(job, next) < 0)) {
         next = job;
       }
     }
@@ -135,14 +146,14 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
 
   async ack(id: string, fence?: LeaseFence): Promise<void> {
     const job = this.requireLeased(id, normalizeFence(fence));
-    this.jobs.delete(job.id);
+    this.remove(job);
   }
 
   async fail(id: string, options: FailOptions): Promise<void> {
     const normalized = normalizeFailOptions(options);
     const job = this.requireLeased(id, normalized.attempt);
     if (normalized.kind === 'dead') {
-      this.jobs.delete(job.id);
+      this.remove(job);
       return;
     }
     job.state = 'pending';
@@ -163,8 +174,7 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   async peek(queueName: string, limit: number): Promise<QueueJob<TPayload>[]> {
     const queue = normalizeQueueName(queueName);
     const normalizedLimit = normalizeLimit(limit);
-    return [...this.jobs.values()]
-      .filter((job) => job.queue === queue)
+    return [...(this.queues.get(queue)?.jobs.values() ?? [])]
       .sort(compareClaimOrder)
       .slice(0, normalizedLimit)
       .map((job) => ({
@@ -184,13 +194,22 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
 
   async size(queueName: string): Promise<number> {
     const queue = normalizeQueueName(queueName);
-    let count = 0;
-    for (const job of this.jobs.values()) {
-      if (job.queue === queue) {
-        count += 1;
-      }
+    return this.queues.get(queue)?.jobs.size ?? 0;
+  }
+
+  private remove(job: MemoryJob<TPayload>): void {
+    this.jobs.delete(job.id);
+    const index = this.queues.get(job.queue);
+    if (!index) {
+      return;
     }
-    return count;
+    index.jobs.delete(job.id);
+    if (job.dedupeKey !== null) {
+      index.dedupe.delete(job.dedupeKey);
+    }
+    if (index.jobs.size === 0) {
+      this.queues.delete(job.queue);
+    }
   }
 
   private requireLeased(id: string, attempt: number | null): MemoryJob<TPayload> {
