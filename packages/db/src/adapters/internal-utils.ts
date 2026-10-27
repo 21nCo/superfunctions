@@ -96,3 +96,23 @@ export function normalizeInternalResultCount(result: any): number {
     normalizedResult;
   return typeof count === 'number' ? count : Number(count ?? 0);
 }
+
+/**
+ * Splits raw SQL at its `?` placeholders, one more text chunk than params.
+ * Callers interleave the chunks with bound parameters.
+ */
+export function splitRawSqlPlaceholders(
+  sql: string,
+  params: readonly unknown[],
+): string[] {
+  if (typeof sql !== 'string' || sql.trim() === '') {
+    throw new TypeError('rawSql: statement must be a non-empty string');
+  }
+  const chunks = sql.split('?');
+  if (chunks.length - 1 !== params.length) {
+    throw new RangeError(
+      `rawSql: statement has ${chunks.length - 1} placeholders but ${params.length} params`,
+    );
+  }
+  return chunks;
+}

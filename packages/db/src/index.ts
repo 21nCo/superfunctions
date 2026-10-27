@@ -73,6 +73,8 @@ export type {
   RedisAdapterFactory,
   InternalCrud,
   InternalColumnDef,
+  RawSqlExecutor,
+  RawSqlValue,
 } from './adapter/types.js';
 
 // Capabilities

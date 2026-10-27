@@ -27,7 +27,7 @@ import type {
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
-import { createDrizzleInternalCrud } from './internal.js';
+import { createDrizzleInternalCrud, createDrizzleRawSql } from './internal.js';
 import { normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
 import { normalizeInternalResultCount } from '../internal-utils.js';
 
@@ -461,5 +461,6 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
     schema: normalizeAdapterSchema(config.adapterSchema),
   });
   const internalCrud = createDrizzleInternalCrud(config.db, config.dialect, drizzleOps.sql);
-  return Object.assign(adapter, { internal: internalCrud });
+  const rawSql = createDrizzleRawSql(config.db, config.dialect, drizzleOps.sql);
+  return Object.assign(adapter, { internal: internalCrud, rawSql });
 }

@@ -44,7 +44,7 @@
     "@superfunctions/http": "0.2.0",
     "@superfunctions/metrics": "0.1.0",
     "@superfunctions/middleware": "0.2.0",
-    "@superfunctions/queue": "0.1.0",
+    "@superfunctions/queue": "0.2.0",
     "@superfunctions/webhooks": "0.1.0",
     "@superfunctions/db": "0.2.0",
     "zod": "^3.22.4"

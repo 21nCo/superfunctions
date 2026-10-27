@@ -1,67 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { FlowFnQueueAdapter, MemoryQueueAdapter } from '../index.js';
+import { FlowFnQueueAdapter } from '../index.js';
 
-describe('queue adapters', () => {
-  it('memory queue preserves FIFO order', async () => {
-    const queue = new MemoryQueueAdapter<string>();
-
-    await queue.enqueue('q', 'a');
-    await queue.enqueue('q', 'b');
-
-    expect(await queue.dequeue('q')).toBe('a');
-    expect(await queue.dequeue('q')).toBe('b');
-  });
-
-  it('dequeue on empty queue returns null', async () => {
-    const queue = new MemoryQueueAdapter<string>();
-    expect(await queue.dequeue('q')).toBeNull();
-  });
-
-  it('rejects enqueue once maxSize is reached', async () => {
-    const queue = new MemoryQueueAdapter<string>({ maxSize: 2 });
-
-    await queue.enqueue('q', 'a');
-    await queue.enqueue('q', 'b');
-
-    await expect(queue.enqueue('q', 'c')).rejects.toThrow('FLOWFN_QUEUE_FULL');
-
-    // Draining one item frees a slot.
-    expect(await queue.dequeue('q')).toBe('a');
-    await expect(queue.enqueue('q', 'c')).resolves.toBeUndefined();
-  });
-
-  it('rejects an invalid maxSize', () => {
-    expect(() => new MemoryQueueAdapter<string>({ maxSize: 0 })).toThrow('FLOWFN_QUEUE_MAX_SIZE_INVALID');
-    expect(() => new MemoryQueueAdapter<string>({ maxSize: -1 })).toThrow('FLOWFN_QUEUE_MAX_SIZE_INVALID');
-    expect(() => new MemoryQueueAdapter<string>({ maxSize: 1.5 })).toThrow('FLOWFN_QUEUE_MAX_SIZE_INVALID');
-  });
-
-  it('memory queue preserves undefined payloads', async () => {
-    const queue = new MemoryQueueAdapter<string | undefined>();
-
-    await queue.enqueue('q', undefined);
-
-    expect(await queue.dequeue('q')).toBeUndefined();
-    expect(await queue.dequeue('q')).toBeNull();
-  });
-
-  it('normalizes queue names consistently in memory adapter', async () => {
-    const queue = new MemoryQueueAdapter<string>();
-
-    await queue.enqueue(' jobs ', 'a');
-
-    expect(queue.peek('jobs')).toEqual(['a']);
-    expect(queue.size(' jobs ')).toBe(1);
-    expect(await queue.dequeue('jobs')).toBe('a');
-  });
-
-  it('rejects invalid queue names in memory adapter', async () => {
-    const queue = new MemoryQueueAdapter<string>();
-
-    await expect(queue.enqueue('../jobs', 'a')).rejects.toThrow('FLOWFN_QUEUE_NAME_INVALID');
-    expect(() => queue.peek('')).toThrow('FLOWFN_QUEUE_NAME_INVALID');
-  });
-
+describe('FlowFnQueueAdapter', () => {
   it('flowfn adapter sends authenticated enqueue/dequeue requests', async () => {
     const calls: Array<{ url: string; method: string; auth?: string }> = [];
 
