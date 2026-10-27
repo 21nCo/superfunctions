@@ -152,3 +152,18 @@ def test_server_logger_with_url_redacts_before_http(monkeypatch: pytest.MonkeyPa
     for secret in (b"pw-123", b"hunter2", b"t-1"):
         assert secret not in bodies[0]
     assert "hunter2" not in capsys.readouterr().out
+
+
+def test_server_logger_redacts_a_credential_bearing_exception_name(capsys: pytest.CaptureFixture[str]) -> None:
+    remote = type("RemoteError token=NAME_SECRET", (Exception,), {})
+    upstream = type("Upstream https://u:CAUSE_SECRET@h.test/x", (Exception,), {})
+    try:
+        try:
+            raise upstream("refused")
+        except Exception as cause:
+            raise remote("failed") from cause
+    except Exception as error:
+        logfn.server_logger("svc").error("failed", error)
+    output = capsys.readouterr().out
+    assert "RemoteError token=[redacted]" in output
+    assert "NAME_SECRET" not in output and "CAUSE_SECRET" not in output

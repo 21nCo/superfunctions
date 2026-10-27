@@ -74,7 +74,7 @@ when `url` is given.
 ## Redaction
 
 `redactSecFn(options)` (stage) and `redactEvent(event, options)` redact the
-message, context (recursively, including error message, stack and cause) and
+message, context (recursively, including error name, message, stack and cause) and
 every other event field, object keys and top-level field names included:
 
 - Values under credential-named keys at any depth, of any type (`password`,

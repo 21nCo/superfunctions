@@ -420,7 +420,8 @@ function redactNode(
 
     if (value instanceof Error) {
       const error: Record<string, unknown> = {
-        name: String(value.name),
+        // The name is caller-controlled text (`error.name = ...`), like the message.
+        name: redactNode(String(value.name), redactor, childPath(path, "name"), ancestors, depth + 1),
         message: redactNode(String(value.message), redactor, childPath(path, "message"), ancestors, depth + 1),
       };
       if (typeof value.stack === "string") {

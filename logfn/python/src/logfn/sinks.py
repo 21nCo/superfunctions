@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import http.client
+import math
 import random
 import socket
 import sys
@@ -174,15 +176,21 @@ def _positive_int(value: int, name: str) -> int:
     return value
 
 
+def _finite(value: float) -> bool:
+    # Infinite limits would make a batch's retry budget, and so flush() and
+    # close(), unbounded.
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+
+
 def _non_negative(value: float, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value >= 0:
-        raise ValueError(f"SinkHttp: {name} must be a non-negative number")
+    if not _finite(value) or not value >= 0:
+        raise ValueError(f"SinkHttp: {name} must be a finite non-negative number")
     return float(value)
 
 
 def _positive(value: float, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
-        raise ValueError(f"SinkHttp: {name} must be a positive number")
+    if not _finite(value) or not value > 0:
+        raise ValueError(f"SinkHttp: {name} must be a finite positive number")
     return float(value)
 
 
@@ -274,6 +282,8 @@ class SinkHttp:
             + sum(self.backoff_ms * 2 ** (attempt - 1) + 100 for attempt in range(1, self.retry_attempts)) / 1000
             + 1.0
         )
+        if not math.isfinite(self._batch_budget):
+            raise ValueError("SinkHttp: timeout, backoff_ms and retry_attempts make an unbounded retry budget")
         self._closed = False
         self._drains: dict[asyncio.AbstractEventLoop, asyncio.Task[None]] = {}
         self._timer: asyncio.TimerHandle | None = None
@@ -462,26 +472,46 @@ class SinkHttp:
                 batch = _Batch([self._queue.popleft() for _ in range(count)], time.monotonic() + self._batch_budget)
                 self._batches.append(batch)
             budget -= count
+            # Delivery runs as its own task so that a flush() or close() on
+            # another loop that settles the batch can abort the attempt.
+            loop = asyncio.get_running_loop()
+            delivery = loop.create_task(self._deliver(batch))
+            batch.abort = functools.partial(loop.call_soon_threadsafe, delivery.cancel)
             try:
-                await self._deliver([event for _, event in batch.items])
+                await asyncio.wait([delivery])
             except asyncio.CancelledError:
                 # The loop is shutting down: keep the batch for a later flush,
                 # unless the sink is closed and nothing will send it again.
+                delivery.cancel()
                 self._settle(batch, "closed" if self._closed else "requeue")
                 raise
-            except Exception as error:
-                if self._settle(batch, "delivery_failed"):
-                    self._report(error)
-            else:
+            if delivery.cancelled():
+                continue  # Settled elsewhere, which aborted this delivery.
+            error = delivery.exception()
+            if isinstance(error, _Abandoned):
+                continue
+            if error is None:
                 self._settle(batch, "sent")
+            elif self._settle(batch, "delivery_failed"):
+                self._report(error)
 
-    async def _deliver(self, events: list[LogEvent]) -> None:
-        body = json_bytes({"events": events})
+    def _registered(self, batch: _Batch) -> bool:
+        with self._lock:
+            return batch in self._batches
+
+    async def _deliver(self, batch: _Batch) -> None:
+        body = json_bytes({"events": [event for _, event in batch.items]})
         last_error: BaseException = RuntimeError("not sent")
         for attempt in range(self.retry_attempts):
             if attempt > 0:
+                if not self._registered(batch):
+                    raise _Abandoned
                 # Exponential backoff with jitter
                 await asyncio.sleep((self.backoff_ms * 2 ** (attempt - 1) + random.random() * 100) / 1000)
+            # A batch settled elsewhere (dropped by flush() or close() on
+            # another loop) has its one outcome: no further attempt is made.
+            if not self._registered(batch):
+                raise _Abandoned
             try:
                 status = await asyncio.wait_for(
                     self._transport(self.url, body, dict(self._headers), self.timeout), self.timeout
@@ -537,6 +567,7 @@ class SinkHttp:
                 now = time.monotonic()
                 for batch in pending:
                     if batch.deadline <= now and self._settle(batch, "closed" if self._closed else "delivery_failed"):
+                        batch.cancel()
                         self._report(TimeoutError(f"batch not settled within {self._batch_budget:.1f}s"))
         except Exception as error:
             self._report(error)
@@ -567,12 +598,23 @@ class SinkHttp:
             }
 
 
+class _Abandoned(Exception):
+    """The batch was settled elsewhere; its delivery stops without an outcome."""
+
+
 class _Batch:
-    __slots__ = ("deadline", "items")
+    __slots__ = ("abort", "deadline", "items")
 
     def __init__(self, items: list[tuple[int, LogEvent]], deadline: float):
         self.items = items
         self.deadline = deadline
+        # Cancels the delivery on its own loop; set once delivery starts.
+        self.abort: Callable[[], object] | None = None
+
+    def cancel(self) -> None:
+        if self.abort is not None:
+            with contextlib.suppress(RuntimeError):  # Its loop is closed.
+                self.abort()
 
 
 def _wake(waiter: asyncio.Future[None]) -> None:

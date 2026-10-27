@@ -408,7 +408,10 @@ def _redact_node(value: Any, redactor: _Redactor, path: str, ancestors: set[int]
     try:
         if isinstance(value, BaseException):
             error: dict[str, Any] = {
-                "name": type(value).__name__,
+                # Class names are caller-controlled text (type(name, ...)), like messages.
+                "name": _redact_node(
+                    type(value).__name__, redactor, _child_path(path, "name"), ancestors, depth + 1
+                ),
                 "message": _redact_node(
                     exception_message(value), redactor, _child_path(path, "message"), ancestors, depth + 1
                 ),

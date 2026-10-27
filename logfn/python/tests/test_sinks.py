@@ -63,7 +63,13 @@ async def eventually(predicate: Any, timeout: float = 5.0) -> None:
         ({"url": URL, "max_queue": 1.5}, "max_queue"),
         ({"url": URL, "retry_attempts": 0}, "retry_attempts"),
         ({"url": URL, "timeout": -1}, "timeout"),
-        ({"url": URL, "timeout": 0}, "timeout must be a positive number"),
+        ({"url": URL, "timeout": 0}, "timeout must be a finite positive number"),
+        # Infinite limits would leave a batch, and so flush() and close(), unbounded.
+        ({"url": URL, "timeout": float("inf")}, "timeout must be a finite"),
+        ({"url": URL, "timeout": float("nan")}, "timeout must be a finite"),
+        ({"url": URL, "backoff_ms": float("inf")}, "backoff_ms must be a finite"),
+        ({"url": URL, "flush_interval_ms": float("inf")}, "flush_interval_ms must be a finite"),
+        ({"url": URL, "backoff_ms": 1e308, "retry_attempts": 3}, "unbounded retry budget"),
     ],
 )
 def test_rejects_invalid_configuration(kwargs: dict[str, Any], message: str) -> None:
@@ -721,6 +727,62 @@ def test_close_drops_a_batch_whose_loop_stopped_after_its_retry_budget() -> None
         gate.release.set()
         stopped.run_until_complete(asyncio.sleep(0.1))
         assert sink.stats()["dropped"] == 1 and sink.stats()["sent"] == 0
+    finally:
+        for task in asyncio.all_tasks(stopped):
+            task.cancel()
+        stopped.run_until_complete(asyncio.sleep(0))
+        stopped.close()
+
+
+@pytest.mark.parametrize(("held", "abortable"), [(True, True), (False, True), (False, False)])
+def test_a_batch_dropped_by_close_on_another_loop_gets_no_further_attempt(
+    held: bool, abortable: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The owner loop stops during the first attempt; close() on another loop
+    # drops the batch once its retry budget passes. held: the attempt only ends
+    # when cancelled. Otherwise it ends with a retryable 503 once the owner
+    # resumes, which used to be followed by a second, successful attempt; with
+    # the abort disabled only the per-attempt settlement check prevents that.
+    if not abortable:
+        monkeypatch.setattr("logfn.sinks._Batch.cancel", lambda self: None)
+    release = threading.Event()
+    calls: list[str] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        calls.append("call")
+        try:
+            while held or not release.is_set():
+                await asyncio.sleep(0.005)
+        except asyncio.CancelledError:
+            calls.append("cancelled")
+            raise
+        return 503 if len(calls) == 1 else 204
+
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(
+        URL, transport=transport, timeout=0.05 if held else 30, retry_attempts=3, backoff_ms=0,
+        on_drop=lambda n, r: drops.append((n, r)), on_error=lambda _: None,
+    )
+    sink._batch_budget = 0.3  # Keeps the test short; the budget itself is tested above.
+    stopped = asyncio.new_event_loop()
+
+    async def start_sending() -> None:
+        sink([event("stranded")])
+        await eventually(lambda: calls == ["call"])
+
+    try:
+        stopped.run_until_complete(start_sending())
+        asyncio.run(sink.close())
+        settled = sink.stats()
+        assert drops == [(1, "closed")]
+        assert settled == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 0}
+        release.set()
+        stopped.run_until_complete(asyncio.sleep(0.3))
+        # One outcome per event: a held attempt is aborted, and none follows.
+        assert calls.count("call") == 1
+        if held:
+            assert calls == ["call", "cancelled"]
+        assert sink.stats() == settled and drops == [(1, "closed")]
     finally:
         for task in asyncio.all_tasks(stopped):
             task.cancel()

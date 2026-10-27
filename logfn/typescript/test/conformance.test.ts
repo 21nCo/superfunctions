@@ -213,4 +213,22 @@ describe("shared redaction vectors", () => {
     const body = spy.requests[0].body;
     for (const secret of ["pw-123", "hunter2", "t-1"]) expect(body).not.toContain(secret);
   });
+
+  it("serverLogger redacts a credential-bearing error name before the console", () => {
+    const lines: string[] = [];
+    for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        lines.push(String(args[0]));
+      });
+    }
+    const error = new Error("failed", { cause: new Error("refused") });
+    error.name = "RemoteError token=NAME_SECRET";
+    (error.cause as Error).name = "Upstream https://u:CAUSE_SECRET@h.test/x";
+    serverLogger({ name: "svc" }).error("failed", error);
+    const output = lines.join("\n");
+    expect(lines).toHaveLength(1);
+    expect(output).toContain("RemoteError token=[redacted]");
+    expect(output).not.toContain("NAME_SECRET");
+    expect(output).not.toContain("CAUSE_SECRET");
+  });
 });

@@ -68,7 +68,8 @@ adds an HTTP sink only when `url` is given.
 
 `redact(patterns=None, replacement="[redacted]", keys=None, allowlist=None)`
 and `redact_event(event, ...)` apply the same rules as `@logfn/core` to every
-event field, object keys and top-level field names included: values under
+event field, object keys, top-level field names and exception class names,
+messages, tracebacks and causes included: values under
 credential-named keys at any depth, URL credentials (up to the last `@` of
 the authority), credential query and
 fragment values (percent-decoded names; the value runs to the next `&`, `#`,
@@ -101,7 +102,8 @@ has any id unchanged.
 - `SinkHttp(url, auth_token=None, batch_size=10, flush_interval_ms=1000,
   timeout=5.0, *, headers=None, secret_header=None, max_queue=5000,
   retry_attempts=5, backoff_ms=200, redact_patterns=None, redact_keys=None,
-  redact_allowlist=None, transport=None, on_error=None, on_drop=None)`:
+  redact_allowlist=None, redact_replacement="[redacted]", transport=None,
+  on_error=None, on_drop=None)`:
   - Constructing it performs no I/O; the url must be absolute http(s) without
     embedded credentials.
   - Every event is made JSON-safe, redacted (every field, keys included) and
@@ -123,12 +125,16 @@ has any id unchanged.
     UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit.
     `stats()` returns `queued`, `in_flight`, `sent`, `dropped` and
     `failed_batches`.
-  - `timeout` (seconds) must be above 0.
+  - `timeout` (seconds) must be above 0; `timeout`, `backoff_ms` and
+    `flush_interval_ms` must be finite, so every batch has a bounded retry
+    budget.
   - The sink may be called from any thread, and `flush()`/`close()` awaited
     on any event loop: they also wait for batches that another loop is
     sending. A batch whose loop stopped without finishing it is dropped by the
     waiting `flush()`/`close()` once its retry budget
-    (`retry_attempts × timeout` plus backoff, plus 1 s) has passed.
+    (`retry_attempts × timeout` plus backoff, plus 1 s) has passed; its
+    current attempt is cancelled when that loop runs again and no further
+    attempt is made, so each event has exactly one outcome.
   - The default transport, `stdlib_transport`, posts with `http.client` on a
     new connection in a daemon thread. Each attempt is bounded by `timeout` as
     a whole; on timeout or cancellation its socket is shut down, so a slow

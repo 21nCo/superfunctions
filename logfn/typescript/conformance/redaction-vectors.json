@@ -792,6 +792,78 @@
         "GLUE_TWO",
         "ESC_GLUE"
       ]
+    },
+    {
+      "id": "error-names",
+      "description": "An error's name is caller-controlled text (TypeScript error.name, Python exception class name) and is redacted like its message, causes included; allowlisted name paths are kept.",
+      "input": {
+        "msg": "remote call failed",
+        "ctx": {
+          "error": {
+            "$error": {
+              "name": "RemoteError token=NAME_SECRET",
+              "message": "failed",
+              "cause": {
+                "$error": {
+                  "name": "Upstream https://u:CAUSE_NAME_SECRET@h.test/x",
+                  "message": "refused"
+                }
+              }
+            }
+          },
+          "kept": {
+            "$error": {
+              "name": "Kept password=ALLOWED_NAME",
+              "message": "ok"
+            }
+          }
+        }
+      },
+      "options": {
+        "allowlist": [
+          "kept.name"
+        ]
+      },
+      "expected": {
+        "msg": "remote call failed",
+        "ctx": {
+          "error": {
+            "name": "RemoteError token=[redacted]",
+            "message": "failed",
+            "stack": {
+              "$match": {
+                "excludes": [
+                  "NAME_SECRET"
+                ]
+              }
+            },
+            "cause": {
+              "name": "Upstream https://[redacted]@h.test/x",
+              "message": "refused",
+              "stack": {
+                "$match": {
+                  "excludes": [
+                    "CAUSE_NAME_SECRET"
+                  ]
+                }
+              }
+            }
+          },
+          "kept": {
+            "name": "Kept password=ALLOWED_NAME",
+            "message": "ok",
+            "stack": {
+              "$match": {
+                "excludes": []
+              }
+            }
+          }
+        }
+      },
+      "absent": [
+        "NAME_SECRET",
+        "CAUSE_NAME_SECRET"
+      ]
     }
   ]
 }
