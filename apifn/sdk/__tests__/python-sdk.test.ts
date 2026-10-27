@@ -147,6 +147,8 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       CycleA: { anyOf: [{ $ref: "#/components/schemas/CycleB" }, { type: "number" }] },
       CycleB: { anyOf: [{ $ref: "#/components/schemas/CycleA" }, { type: "string" }] },
       Tree: { type: "object", properties: { children: { type: "array", items: { $ref: "#/components/schemas/Tree" } }, parent: { $ref: "#/components/schemas/Tree" } } },
+      // One part declares x, another only requires it.
+      RequiredSplit: { allOf: [{ type: "object", properties: { x: { type: "string" } } }, { type: "object", required: ["x"] }] },
     });
     // Parameters whose schemas also admit values the client cannot serialize are narrowed to ParamValue and DeepObjectValue.
     const lookup = catalog.operations.find((operation: any) => operation.id === "tasks.lookup");
@@ -163,10 +165,14 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
     return writeSdk(dir, result).then((written) => {
       expect(written.ok).toBe(true);
       expect(readFileSync(path.join(dir, "src/awkward_sdk/client.py"), "utf8")).toMatch(/extra: _ParamValue \| None = None,\n[\s\S]*where: _DeepObjectValue \| None = None,/);
-      log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "-p", "awkward_sdk"], { cwd: path.join(dir, "src") });
+      // The misuse module passes only while mypy reports the missing required key its ignore comment names.
+      writeFileSync(path.join(dir, "src/required_misuse.py"), 'from awkward_sdk import RequiredSplit\n\nok: RequiredSplit = {"x": "a"}\nmissing: RequiredSplit = {}  # type: ignore[typeddict-item]\n');
+      log.run(wheelPython, ["-m", "mypy", "--strict", "--python-version", "3.10", "--no-incremental", "awkward_sdk", "required_misuse.py"], { cwd: path.join(dir, "src") });
       // And it imports: every quoted type and inline TypedDict is valid at runtime too.
       const keys = log.run(wheelPython, ["-c", "import json, awkward_sdk, typing; typing.get_type_hints(awkward_sdk.Keywords); print(json.dumps(sorted(awkward_sdk.Keywords.__required_keys__)))"], { cwd: path.join(dir, "src") });
       expect(JSON.parse(keys)).toEqual(["class"]);
+      const split = log.run(wheelPython, ["-c", "import json, awkward_sdk; print(json.dumps(sorted(awkward_sdk.RequiredSplit.__required_keys__)))"], { cwd: path.join(dir, "src") });
+      expect(JSON.parse(split)).toEqual(["x"]);
     });
   });
 });

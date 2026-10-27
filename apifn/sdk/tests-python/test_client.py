@@ -559,6 +559,53 @@ def test_closes_an_abandoned_response_at_once_when_its_body_ignores_cancellation
     assert closed == [True]
 
 
+@pytest.mark.parametrize("ending", ["timeout", "cancellation"])
+def test_a_close_in_progress_when_the_attempt_is_abandoned_runs_to_completion(ending: str) -> None:
+    log: list[str] = []
+    released = asyncio.Event()
+
+    async def transport(request: Any) -> Any:
+        async def close() -> None:
+            # Suspends once the body has been read, so the attempt is given up while its close is in progress.
+            log.append("close-start")
+            try:
+                await released.wait()
+            except asyncio.CancelledError:
+                log.append("close-cancelled")
+                raise
+            log.append("close-done")
+
+        return pkg.TransportResponse(status=200, headers=[("content-type", "application/json")], body=b"{}", close=close)
+
+    async def main() -> None:
+        try:
+            async with pkg.TasksClient(transport=transport, timeout=0.05 if ending == "timeout" else 5, retry={"max_attempts": 1}) as tasks:
+                started = time.monotonic()
+                if ending == "timeout":
+                    with pytest.raises(pkg.ApiTimeoutError):
+                        await tasks.get_health()
+                else:
+                    call = asyncio.ensure_future(tasks.get_health())
+                    await asyncio.sleep(0.05)
+                    assert log == ["close-start"]
+                    call.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await call
+                assert time.monotonic() - started < 1
+                await asyncio.sleep(0.02)
+                assert log == ["close-start"]
+                assert len(runtime._PENDING) == 1
+                released.set()
+                await asyncio.sleep(0.02)
+                assert log == ["close-start", "close-done"]
+                assert not runtime._PENDING
+        finally:
+            released.set()
+
+    run(main())
+    assert log == ["close-start", "close-done"]
+
+
 # Destinations and transports.
 
 

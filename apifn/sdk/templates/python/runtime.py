@@ -640,27 +640,32 @@ class _Abandonment:
     def __init__(self) -> None:
         self.abandoned = False
         self._response: TransportResponse | None = None
+        self._closing: asyncio.Future[None] | None = None
 
     def hold(self, response: TransportResponse) -> None:
         """Records a received response, which `close` or `abandon` closes."""
         self._response = response
 
-    def _take(self) -> TransportResponse | None:
-        response, self._response = self._response, None
-        return response
+    def _start_closing(self) -> asyncio.Future[None] | None:
+        """Closes the held response exactly once, as its own task: giving the attempt up cancels the attempt's task,
+        never the close, so a close that has started always runs to completion."""
+        if self._closing is None and self._response is not None:
+            response, self._response = self._response, None
+            self._closing = asyncio.ensure_future(_close(response))
+            _PENDING.add(self._closing)
+            self._closing.add_done_callback(_settled)
+        return self._closing
 
     async def close(self) -> None:
-        """Closes the response unless it was already closed: whichever of this and `abandon` comes first closes it."""
-        response = self._take()
-        if response is not None:
-            await _close(response)
+        """Closes the response, or waits for the close `abandon` started; cancelling the wait leaves the close running."""
+        closing = self._start_closing()
+        if closing is not None:
+            await asyncio.shield(closing)
 
     def abandon(self) -> None:
         self.abandoned = True
-        response = self._take()
-        if response is not None:
-            # In the background: a body that ignores cancellation must not hold the call, nor keep its response open.
-            _drain(_close(response))
+        # In the background: a body or close that ignores cancellation must not hold the call, nor keep its response open.
+        self._start_closing()
 
 
 # Tasks given up but not yet finished, and observer tasks, held so they are not collected while pending.

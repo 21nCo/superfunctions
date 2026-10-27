@@ -103,34 +103,46 @@ export class PythonTypes {
   }
 
   /**
-   * The object schemas whose declared properties a TypedDict for `schema` merges, when every part of it is
-   * an object: the schema itself, each `allOf` member and the component it refers to, recursively. Null
-   * when some part is not an object type. Reads only; creates no types.
+   * The object schemas a TypedDict for `schema` merges, when every part of it is an object: the schema itself,
+   * each `allOf` member and the component it refers to, recursively, each once (a part reached again adds
+   * nothing, so shared references cost one visit). Includes parts that declare no property, whose `required`
+   * still applies. Null when some part is not an object type. Reads only; creates no types.
    */
   #objectParts(schema: unknown, cut: ReadonlySet<string>, depth: number): Array<Record<string, unknown>> | null {
-    if (depth > MAX_DEPTH || !isRecord(schema)) return null;
-    if ("const" in schema || "enum" in schema || "anyOf" in schema || "oneOf" in schema || "$dynamicRef" in schema || "not" in schema) return null;
-    const types = typeList(schema);
-    if (types !== null && (types.length !== 1 || types[0] !== "object")) return null;
     const parts: Array<Record<string, unknown>> = [];
+    return this.#collectParts(schema, cut, depth, new Map(), parts) ? parts : null;
+  }
+
+  /** Adds the parts of `schema` to `parts`; false when some part is not an object type, or on a reference cycle. */
+  #collectParts(
+    schema: unknown,
+    cut: ReadonlySet<string>,
+    depth: number,
+    visits: Map<object, "open" | "done">,
+    parts: Array<Record<string, unknown>>
+  ): boolean {
+    if (depth > MAX_DEPTH || !isRecord(schema)) return false;
+    const visit = visits.get(schema);
+    // A part still being collected is a cycle, which yields no TypedDict, as when the depth limit stopped it.
+    if (visit !== undefined) return visit === "done";
+    if ("const" in schema || "enum" in schema || "anyOf" in schema || "oneOf" in schema || "$dynamicRef" in schema || "not" in schema) return false;
+    const types = typeList(schema);
+    if (types !== null && (types.length !== 1 || types[0] !== "object")) return false;
+    visits.set(schema, "open");
     if ("$ref" in schema) {
       const component = typeof schema.$ref === "string" ? componentName(schema.$ref) : null;
-      if (component === null || cut.has(component) || !Object.prototype.hasOwnProperty.call(this.schemas, component) || this.resolve(component) === null) return null;
-      const referenced = this.#objectParts(this.schemas[component], this.cuts.get(component) ?? NO_CUTS, depth + 1);
-      if (referenced === null) return null;
-      parts.push(...referenced);
+      if (component === null || cut.has(component) || !Object.prototype.hasOwnProperty.call(this.schemas, component) || this.resolve(component) === null) return false;
+      if (!this.#collectParts(this.schemas[component], this.cuts.get(component) ?? NO_CUTS, depth + 1, visits, parts)) return false;
     }
     if ("allOf" in schema) {
-      if (!Array.isArray(schema.allOf)) return null;
+      if (!Array.isArray(schema.allOf)) return false;
       for (const member of schema.allOf) {
-        const found = this.#objectParts(member, cut, depth + 1);
-        if (found === null) return null;
-        parts.push(...found);
+        if (!this.#collectParts(member, cut, depth + 1, visits, parts)) return false;
       }
     }
-    if (isRecord(schema.properties) && Object.keys(schema.properties).length > 0) parts.push(schema);
-    // A part declaring no property (say, only `required`) adds nothing but keeps the whole an object.
-    return parts;
+    visits.set(schema, "done");
+    parts.push(schema);
+    return true;
   }
 
   /**
@@ -145,25 +157,26 @@ export class PythonTypes {
     const references = ("$ref" in schema ? 1 : 0) + (Array.isArray(schema.allOf) ? schema.allOf.length : 0);
     if (own === 0 && references < 2) return null;
     const parts = this.#objectParts(schema, cut, depth);
-    if (parts === null || parts.length === 0) return null;
+    if (parts === null) return null;
     const merged = new Map<string, PyField>();
     for (const part of parts) {
-      const properties = part.properties as Record<string, unknown>;
-      const required = new Set(Array.isArray(part.required) ? part.required.filter((name): name is string => typeof name === "string") : []);
+      if (!isRecord(part.properties)) continue;
+      const properties = part.properties;
       for (const key of Object.keys(properties)) {
         const property = properties[key];
         const field: PyField = {
           key,
           type: this.type(property, owner, depth + 1),
-          required: required.has(key),
+          required: false,
           description: isRecord(property) && typeof property.description === "string" ? property.description : null,
           deprecated: isRecord(property) && property.deprecated === true,
         };
         const previous = merged.get(key);
-        merged.set(key, previous ? { ...previous, type: previous.type === field.type ? field.type : ANY, required: previous.required || field.required } : field);
+        merged.set(key, previous ? { ...previous, type: previous.type === field.type ? field.type : ANY } : field);
       }
     }
-    // A part may require a property another part declares.
+    if (merged.size === 0) return null;
+    // Any part may require a property any part declares, including a part that declares none itself.
     for (const part of parts) {
       for (const name of Array.isArray(part.required) ? part.required : []) {
         const field = typeof name === "string" ? merged.get(name) : undefined;

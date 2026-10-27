@@ -327,6 +327,37 @@ describe("python target: schema types", () => {
     expect(models).toContain('ValidationProblem = _te.TypedDict(\n    "ValidationProblem",\n    {\n        "status": "int",\n        "title": "str",\n        "type": _te.NotRequired["str"],\n        "fields": _te.NotRequired["dict[str, str]"],\n');
   });
 
+  it("requires a property that any allOf part, or the enclosing schema, requires, even a part declaring no property", () => {
+    const catalog = fixtureCatalog();
+    const object = (properties: Record<string, unknown>) => ({ type: "object", properties });
+    catalog.schemas.RequiredSplit = { allOf: [object({ x: { type: "string" } }), { type: "object", required: ["x"] }] };
+    catalog.schemas.Enclosing = { required: ["y"], allOf: [{ $ref: "#/components/schemas/RequiredSplit" }, object({ y: { type: "integer" }, z: { type: "boolean" } })] };
+    const result = generatePython(catalog);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    expect(models).toContain('RequiredSplit = _te.TypedDict(\n    "RequiredSplit",\n    {\n        "x": "str",\n    },\n)');
+    expect(models).toContain('Enclosing = _te.TypedDict(\n    "Enclosing",\n    {\n        "x": "str",\n        "y": "int",\n        "z": _te.NotRequired["bool"],\n    },\n)');
+  });
+
+  it("merges each shared allOf reference once, so a doubling chain generates in linear time", () => {
+    const catalog = fixtureCatalog();
+    catalog.schemas.Base = { type: "object", required: ["x"], properties: { x: { type: "string" } } };
+    let previous = "Base";
+    for (let level = 1; level <= 40; level++) {
+      const ref = { $ref: `#/components/schemas/${previous}` };
+      catalog.schemas[`Layer${level}`] = { allOf: [ref, ref] };
+      previous = `Layer${level}`;
+    }
+    const started = Date.now();
+    const result = generatePython(catalog);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const models = fileOf(result, "src/example_tasks_sdk/models.py");
+    expect(models).toContain('Layer32 = _te.TypedDict(\n    "Layer32",\n    {\n        "x": "str",\n    },\n)');
+    // Past the nesting bound a layer is typed as the identical layer it refers to.
+    expect(models).toContain('Layer40: _te.TypeAlias = "Layer39"\n');
+  });
+
   it("writes inline objects of operations to models.py, typed in its namespace", () => {
     const catalog = fixtureCatalog();
     const create = catalog.operations.find((operation: any) => operation.id === "tasks.create");
