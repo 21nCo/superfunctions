@@ -221,8 +221,10 @@ class Logger:
     async def flush(self) -> None:
         """Wait for scheduled async sink calls, then flush every sink. Sink
         failures are reported to on_error, never raised."""
-        if self._pending:
-            await asyncio.gather(*list(self._pending), return_exceptions=True)
+        loop = asyncio.get_running_loop()
+        pending = [task for task in self._pending if task.get_loop() is loop]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
         async def flush_one(sink: Sink) -> None:
             flush = getattr(sink, "flush", None)

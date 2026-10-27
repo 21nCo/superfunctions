@@ -169,6 +169,7 @@ class SinkHttp:
         self._closed = False
         self._drain_task: asyncio.Task[None] | None = None
         self._timer: asyncio.TimerHandle | None = None
+        self._timer_loop: asyncio.AbstractEventLoop | None = None
 
     # -- reporting -------------------------------------------------------
 
@@ -243,9 +244,11 @@ class SinkHttp:
         loop = self._running_loop()
         if loop is None or self._active_drain(loop) is not None:
             return
-        if self._timer is not None and not self._timer.cancelled():
+        # A handle left by an earlier, finished loop never fires; replace it.
+        if self._timer is not None and not self._timer.cancelled() and self._timer_loop is loop:
             return
         self._timer = loop.call_later(self.flush_interval_ms / 1000, self._on_timer)
+        self._timer_loop = loop
 
     def _on_timer(self) -> None:
         self._timer = None
@@ -267,6 +270,8 @@ class SinkHttp:
     def _after_drain(self, task: asyncio.Task[None]) -> None:
         if self._drain_task is task:
             self._drain_task = None
+        if task.cancelled():
+            return  # The loop is going away; the next flush picks the queue up.
         queued = len(self._queue)
         if queued >= self.batch_size:
             self._start_drain()
@@ -290,6 +295,11 @@ class SinkHttp:
             try:
                 await self._deliver(events)
                 self._sent += len(events)
+            except asyncio.CancelledError:
+                # The loop is shutting down: keep the batch for a later flush.
+                with self._lock:
+                    self._queue.extendleft(reversed(events))
+                raise
             except Exception as error:
                 self._failed_batches += 1
                 self._drop(len(events), "delivery_failed")

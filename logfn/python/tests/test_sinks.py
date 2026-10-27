@@ -280,3 +280,35 @@ def test_console_sink_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert json.loads(capsys.readouterr().out) == event("hello", ctx={"a": 1})
     SinkConsole(json=False, color=False)([event("hi", ctx={"a": 1})])
     assert capsys.readouterr().out.strip() == "[2026-01-14T12:00:00.000Z] INFO (t): hi a=1"
+
+
+def test_events_survive_a_finished_event_loop() -> None:
+    transport = Scripted()
+    sink = SinkHttp(URL, transport=transport, batch_size=10, flush_interval_ms=20)
+
+    async def queue_without_flush(msg: str) -> None:
+        sink([event(msg)])
+
+    asyncio.run(queue_without_flush("first"))  # leaves a timer on a closed loop
+
+    async def second_loop() -> None:
+        sink([event("second")])
+        await asyncio.sleep(0.1)
+
+    asyncio.run(second_loop())
+    assert transport.batches == [["first", "second"]]
+
+
+def test_cancelled_drain_keeps_its_batch() -> None:
+    transport = Scripted("hang", 200)
+
+    async def cancelled() -> None:
+        sink([event("kept")])
+        await asyncio.sleep(0.01)
+        assert sink.stats()["in_flight"] == 1
+
+    sink = SinkHttp(URL, transport=transport, batch_size=1, timeout=60)
+    asyncio.run(cancelled())  # asyncio.run cancels the hanging drain on exit
+    assert sink.stats()["queued"] == 1 and sink.stats()["dropped"] == 0
+    asyncio.run(sink.flush())
+    assert transport.batches == [["kept"], ["kept"]] and sink.stats()["sent"] == 1
