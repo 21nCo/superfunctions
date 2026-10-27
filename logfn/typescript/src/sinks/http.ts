@@ -242,13 +242,13 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   const queue: LogEvent[] = [];
   const counters = { sent: 0, dropped: 0, failedBatches: 0 };
-  let inFlight = 0;
   // Positions in the stream of accepted events: `accepted` events were queued
   // so far, `removed` left the front of the queue (sent, in flight or
-  // dropped), and the batch in flight starts at `inFlightStart`.
+  // dropped). Each batch in flight is recorded by its first position, so no
+  // drain can hide another's batch from flush().
   let accepted = 0;
   let removed = 0;
-  let inFlightStart = 0;
+  const inFlight = new Set<{ start: number; count: number }>();
   let closed = false;
   let flushTimer: Timer | null = null;
   let draining: Promise<void> | null = null;
@@ -398,37 +398,48 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   // Sends the events queued when it starts, one batch at a time. Later events
   // are picked up by the next drain so a flush cannot be held open forever.
+  // The guard is set before any caller code runs: fetch, onDrop and onError
+  // run synchronously inside the drain and may log to this sink or call
+  // flush()/close(), which then join this drain instead of starting another.
   function drain(): Promise<void> {
     if (draining) return draining;
     clearFlushTimer();
-    draining = (async () => {
-      let budget = queue.length;
-      while (budget > 0 && queue.length > 0) {
-        const events = queue.splice(0, Math.min(batchSize, budget));
-        budget -= events.length;
-        inFlightStart = removed;
-        removed += events.length;
-        inFlight = events.length;
-        try {
-          await deliver(events);
-          counters.sent += events.length;
-        } catch (error) {
-          counters.failedBatches += 1;
-          drop(events.length, "delivery_failed");
-          safely(() => onError(toError(error)));
-        } finally {
-          inFlight = 0;
+    let settle!: () => void;
+    const current = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    draining = current;
+    void (async () => {
+      try {
+        let budget = queue.length;
+        while (budget > 0 && queue.length > 0) {
+          const events = queue.splice(0, Math.min(batchSize, budget));
+          budget -= events.length;
+          const batch = { start: removed, count: events.length };
+          removed += events.length;
+          inFlight.add(batch);
+          try {
+            await deliver(events);
+            counters.sent += events.length;
+          } catch (error) {
+            counters.failedBatches += 1;
+            drop(events.length, "delivery_failed");
+            safely(() => onError(toError(error)));
+          } finally {
+            inFlight.delete(batch);
+          }
+        }
+      } finally {
+        draining = null;
+        settle();
+        if (queue.length >= batchSize) {
+          void drain();
+        } else if (queue.length > 0 && !closed) {
+          scheduleFlush();
         }
       }
-    })().finally(() => {
-      draining = null;
-      if (queue.length >= batchSize) {
-        void drain();
-      } else if (queue.length > 0 && !closed) {
-        scheduleFlush();
-      }
-    });
-    return draining;
+    })();
+    return current;
   }
 
   const sink = function httpSink(batch: LogEvent[]): void {
@@ -451,10 +462,10 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           safely(() => onError(toError(error)));
           continue;
         }
-        // Preparation runs caller code (toJSON) that could close the sink.
-        // Enqueueing is synchronous on one thread, so this is the only way
-        // an event can arrive after close() started; it is dropped, never
-        // queued behind close()'s flush (the Python sink checks under a lock).
+        // Preparation and onDrop/onError run caller code (toJSON, callbacks)
+        // that could close the sink, so each event is checked again: one
+        // arriving after close() started is dropped, never queued behind
+        // close()'s flush (the Python sink checks under a lock).
         if (closed) {
           drop(1, "closed");
         } else if (redacted) {
@@ -479,7 +490,9 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   // Whether an event accepted before position `target` is still queued or in flight
   function unsettled(target: number): boolean {
-    return removed < target || (inFlight > 0 && inFlightStart < target);
+    if (removed < target) return true;
+    for (const batch of inFlight) if (batch.start < target) return true;
+    return false;
   }
 
   // Waits until every event accepted before the call is sent or dropped, across
@@ -504,7 +517,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   sink.stats = (): HttpSinkStats => ({
     queued: queue.length,
-    inFlight,
+    inFlight: [...inFlight].reduce((total, batch) => total + batch.count, 0),
     sent: counters.sent,
     dropped: counters.dropped,
     failedBatches: counters.failedBatches,

@@ -413,6 +413,10 @@ class SinkHttp:
         if active is not None:
             return active
         self._cancel_timer(loop)
+        # create_task does not run the drain yet, so it is registered before
+        # any caller code (transport, on_drop, on_error) can log to this sink
+        # or call flush()/close(); those then join it instead of starting
+        # another drain on this loop.
         task = loop.create_task(self._drain())
         task.add_done_callback(self._after_drain)
         # Only this loop's thread reads or writes its own entry.

@@ -54,7 +54,11 @@ export class Logger {
   private pending = new Set<Promise<void>>();
 
   constructor(options: LoggerOptions) {
-    if (options.level !== undefined && !(options.level in LOG_LEVEL_VALUES)) {
+    // An own-key check: `in` would accept inherited names such as "toString".
+    if (
+      options.level !== undefined &&
+      !Object.prototype.hasOwnProperty.call(LOG_LEVEL_VALUES, options.level)
+    ) {
       throw new Error(`Unknown log level: ${String(options.level)}`);
     }
     if (options.sinks && options.sinks.length === 0) {

@@ -31,6 +31,11 @@ describe("Logger", () => {
 
   it("rejects an unknown level and an explicitly empty sink list", () => {
     expect(() => createLogger({ name: "x", level: "verbose" as never })).toThrow(/Unknown log level/);
+    // Inherited object keys are not levels (they would silently drop every event).
+    for (const level of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      expect(() => createLogger({ name: "x", level: level as never })).toThrow(/Unknown log level/);
+      expect(() => createLogger({ name: "x" }).child({ level: level as never })).toThrow(/Unknown log level/);
+    }
     expect(() => createLogger({ name: "x", sinks: [] })).toThrow(/At least one sink/);
   });
 

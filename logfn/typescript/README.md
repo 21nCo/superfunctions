@@ -156,6 +156,10 @@ Posts `{"events": [...]}` to `url` in batches.
   browsers the request uses `keepalive` when the body is at most 60,000 bytes
   of UTF-8.
 - `fetch` can be supplied; by default `globalThis.fetch` is used per request.
+  An instrumented `fetch`, `onDrop` or `onError` may log to the same sink or
+  call its `flush()`/`close()`: those calls join the running delivery and
+  settle with it. A `fetch` that awaits its own sink's `flush()` before
+  responding waits on itself, so that attempt ends only at `timeoutMs`.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.

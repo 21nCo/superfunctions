@@ -440,8 +440,8 @@ describe("sinkHttp", () => {
     });
 
     it("drops events of a batch whose preparation closed the sink", async () => {
-      // Enqueueing is synchronous, so caller code run during preparation (a
-      // getter) is the only way close() can start mid-batch.
+      // Caller code run during preparation (a getter) can start close()
+      // while a batch is being enqueued.
       const { fetch } = scriptedFetch(ok);
       const onDrop = vi.fn();
       const sink = sinkHttp({ url: URL, fetch, onDrop, batch: 1 });
@@ -458,6 +458,89 @@ describe("sinkHttp", () => {
       expect(fetch).not.toHaveBeenCalled();
       expect(onDrop.mock.calls).toEqual([[1, "closed"], [1, "closed"]]);
       expect(sink.stats()).toMatchObject({ queued: 0, sent: 0, dropped: 2 });
+    });
+
+    // fetch runs synchronously inside the drain, before its first await, so an
+    // instrumented fetch that logs to the same sink must join that drain.
+    it.each(["flush", "close"] as const)(
+      "%s waits for an event a fetch logged to the same sink",
+      async (method) => {
+        let release!: () => void;
+        const messages: string[][] = [];
+        let sink!: ReturnType<typeof sinkHttp>;
+        const fetch = vi.fn<HttpSinkFetch>((_url, init) => {
+          messages.push((JSON.parse(init.body) as { events: LogEvent[] }).events.map((e) => e.msg));
+          if (messages.length === 1) {
+            sink([event("logged-by-fetch")]);
+            return Promise.resolve(ok);
+          }
+          return new Promise((resolve) => (release = () => resolve(ok)));
+        });
+        sink = sinkHttp({ url: URL, fetch, batch: 1, timeoutMs: 60_000, onError: vi.fn() });
+        sink([event("first")]);
+        let settled = false;
+        const done = sink[method]().then(() => {
+          settled = true;
+          return sink.stats();
+        });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(settled).toBe(false);
+        expect(sink.stats()).toEqual({ queued: 0, inFlight: 1, sent: 1, dropped: 0, failedBatches: 0 });
+        release();
+        expect(await done).toEqual({ queued: 0, inFlight: 0, sent: 2, dropped: 0, failedBatches: 0 });
+        expect(messages).toEqual([["first"], ["logged-by-fetch"]]);
+      }
+    );
+
+    it.each(["flush", "close"] as const)(
+      "a fetch that calls %s on its own sink does not deadlock or miscount",
+      async (method) => {
+        let sink!: ReturnType<typeof sinkHttp>;
+        let reentrant: Promise<void> | undefined;
+        let reentrantSettled = false;
+        const fetch = vi.fn<HttpSinkFetch>(() => {
+          if (!reentrant) {
+            sink([event("logged-by-fetch")]);
+            reentrant = sink[method]().then(() => {
+              reentrantSettled = true;
+            });
+          }
+          return Promise.resolve(ok);
+        });
+        const onDrop = vi.fn();
+        sink = sinkHttp({ url: URL, fetch, batch: 1, onDrop, onError: vi.fn() });
+        sink([event("first")]);
+        await vi.advanceTimersByTimeAsync(0);
+        await reentrant;
+        await sink.flush();
+        expect(reentrantSettled).toBe(true);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(onDrop).not.toHaveBeenCalled();
+        expect(sink.stats()).toEqual({ queued: 0, inFlight: 0, sent: 2, dropped: 0, failedBatches: 0 });
+      }
+    );
+
+    it("an onError callback that logs and closes during a drain settles both events", async () => {
+      let sink!: ReturnType<typeof sinkHttp>;
+      let closing: Promise<void> | undefined;
+      const { fetch, sentMessages } = scriptedFetch({ ok: false, status: 400 }, ok);
+      const onDrop = vi.fn();
+      sink = sinkHttp({
+        url: URL,
+        fetch,
+        batch: 1,
+        onDrop,
+        onError: () => {
+          sink([event("logged-by-onError")]);
+          closing ??= sink.close();
+        },
+      });
+      sink([event("first")]);
+      await vi.advanceTimersByTimeAsync(0);
+      await closing;
+      expect(sentMessages()).toEqual([["first"], ["logged-by-onError"]]);
+      expect(onDrop.mock.calls).toEqual([[1, "delivery_failed"]]);
+      expect(sink.stats()).toEqual({ queued: 0, inFlight: 0, sent: 1, dropped: 1, failedBatches: 1 });
     });
   });
 
