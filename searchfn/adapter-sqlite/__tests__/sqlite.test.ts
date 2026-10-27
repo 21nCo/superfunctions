@@ -206,6 +206,14 @@ describe("documents and ids", () => {
     expect(await adapter.search({ resource: "items", query: "alpha" })).toEqual(["0042"]);
   });
 
+  it("keys documents by their string form, so 5 and \"5\" are one document", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    await adapter.index({ resource: "items", documents: [{ id: 5, fields: { title: "alpha" } }] });
+    await adapter.index({ resource: "items", documents: [{ id: "5", fields: { title: "alpha" } }] });
+    expect(await adapter.search({ resource: "items", query: "alpha" })).toEqual(["5"]);
+    expect(await countRows(database.driver, "items", "docs")).toBe(1);
+  });
+
   it("keeps the last duplicate id within one batch", async () => {
     await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
     await adapter.index({
@@ -362,6 +370,37 @@ describe("multiple adapter instances on one database", () => {
     expect(await writer.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1", "b2"]);
   });
 
+  it("a stale instance restricted to a newly declared field re-reads the field list", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title", "body"] }] });
+
+    expect(await reader.search({ resource: "notes", query: "beta", fields: ["body"] })).toEqual(["n1"]);
+    expect(
+      (await reader.searchAll({ query: "beta", fields: ["body"] })).map((result) => result.id),
+    ).toEqual(["n1"]);
+  });
+
+  it("rebuild on a stale instance keeps the persisted field list", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title", "body"] }] });
+    await reader.rebuild("notes");
+
+    expect(await generationOf(database.driver, "notes")).toBe(2);
+    for (const instance of [writer, reader, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "beta", fields: ["body"] })).toEqual(["n1"]);
+    }
+  });
+
   it("concurrent registrations of one resource converge", async () => {
     const instances = Array.from({ length: 4 }, () => new SqliteAdapter({ driver: database.driver }));
     await Promise.all(instances.map((instance) => instance.initialize({ resources: BOOKMARKS })));
@@ -463,6 +502,35 @@ describe("lifecycle and cancellation", () => {
     });
     await expect(adapter.clear("bookmarks", signal)).rejects.toMatchObject({ code: "DFQL_ABORTED" });
     expect(await countRows(database.driver, "bookmarks", "docs")).toBe(5);
+  });
+});
+
+describe("declared resources", () => {
+  it("ignores resources that initialize() did not declare", async () => {
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await adapter.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "zebra" } }] });
+    await adapter.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra@example.com" } }] });
+    await adapter.remove({ resource: "users", ids: ["u1"] });
+
+    const [registered] = await database.driver.all<{ n: number }>(
+      `SELECT count(*) AS n FROM "searchfn_resources" WHERE resource = 'users'`,
+    );
+    expect(Number(registered.n)).toBe(0);
+    expect(await adapter.search({ resource: "users", query: "zebra" })).toEqual([]);
+    expect((await adapter.searchAll({ query: "zebra" })).map((result) => result.resource)).toEqual(["bookmarks"]);
+  });
+
+  it("does not search persisted resources that the current declaration dropped", async () => {
+    const legacy = new SqliteAdapter({ driver: database.driver });
+    await legacy.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra" } }] });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await adapter.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "zebra" } }] });
+
+    expect(await adapter.search({ resource: "users", query: "zebra" })).toEqual([]);
+    expect(await adapter.searchAll({ query: "zebra", resources: ["users", "bookmarks"] })).toMatchObject([
+      { resource: "bookmarks", id: "b1" },
+    ]);
+    expect(await adapter.searchAll({ query: "zebra" })).toHaveLength(1);
   });
 });
 

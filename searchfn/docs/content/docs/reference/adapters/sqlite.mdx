@@ -117,7 +117,7 @@ const server = await createDatafnServer({
 });
 ```
 
-The server calls `initialize()` with each resource's `indices.search` fields at startup, updates the index after mutations, and passes the request namespace as `namespaceFilter` on search queries.
+The server calls `initialize()` with each resource's `indices.search` fields at startup, updates the index after mutations, and passes the request namespace as `namespaceFilter` on search queries. The server sends every mutation to the search provider, including mutations of resources without `indices.search`; the adapter ignores those, so their records are never stored or returned by cross-resource search.
 
 ## Configuration
 
@@ -170,10 +170,11 @@ Table names come from an internal integer id, so resource and field names are ne
 
 - `initialize()` creates tables idempotently. Calling it again with the same fields, in any order, changes nothing.
 - When the declared fields change, `initialize()` rebuilds the FTS index from the stored documents in one transaction, including fields that were stored but not indexed before. Other adapter instances on the same database detect the new index generation on their next operation and reload.
-- `index()` upserts. Re-indexing a document replaces its fields and metadata; within one call the last document with a given id wins. Ids keep their type: number ids come back as numbers.
-- `index()` on a resource that was never initialized registers it with the field names in that call.
+- `index()` upserts. Re-indexing a document replaces its fields and metadata; within one call the last document with a given id wins. Number ids come back as numbers. Documents are keyed by the string form of their id, so `5` and `"5"` are the same document and the last write sets the returned type.
+- After `initialize()`, the adapter works only with the resources it declared: `index()` and `remove()` on any other resource are no-ops, `search()` returns no results for it, and `searchAll()` searches declared resources only (and drops undeclared names from `resources`). Each `initialize()` call replaces the declared set.
+- On an instance that was never initialized, `index()` registers an unknown resource with the field names in that call, and `searchAll()` without `resources` searches every resource in the database.
 - `remove()` and `clear()` are idempotent, and both are no-ops for unknown resources.
-- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction. It is idempotent.
+- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction, using the field list stored in the database (not one cached by this instance). It is idempotent.
 
 ### Lifecycle
 

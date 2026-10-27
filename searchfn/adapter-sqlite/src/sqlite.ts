@@ -84,6 +84,8 @@ export class SqliteAdapter implements SearchAdapter {
   private readonly defaults: SearchDefaults;
   private readonly logger?: ObservationLogger;
   private readonly resources = new Map<string, ResourceState>();
+  /** Resources named by the last initialize(); null until then. */
+  private declared: Set<string> | null = null;
   private resourcesTableReady: Promise<void> | null = null;
   private disposed = false;
   private fuzzyWarned = false;
@@ -135,13 +137,14 @@ export class SqliteAdapter implements SearchAdapter {
     for (const { name, fields } of declared) {
       await this.applyFields(name, fields, false);
     }
+    this.declared = new Set(declared.map(({ name }) => name));
   }
 
   async index({ resource, documents, signal }: IndexParams): Promise<void> {
     this.assertNotDisposed();
     assertNotAborted(signal, "Index operation");
     requireResourceName(resource);
-    if (documents.length === 0) return;
+    if (documents.length === 0 || !this.isDeclared(resource)) return;
 
     const normalized = normalizeDocuments(documents);
     await this.ensureResourcesTable();
@@ -162,6 +165,7 @@ export class SqliteAdapter implements SearchAdapter {
     this.assertNotDisposed();
     assertNotAborted(params.signal, "Search operation");
     requireResourceName(params.resource);
+    if (!this.isDeclared(params.resource)) return [];
 
     const rows = await this.searchResource(params.resource, this.resolveSearch(params, params.limit));
     return rows.map((row) => row.id);
@@ -173,10 +177,13 @@ export class SqliteAdapter implements SearchAdapter {
 
     const limit = normalizeLimit(params.limit);
     const resolved = this.resolveSearch(params, params.limitPerResource ?? limit);
-    const resources =
+    const resources = (
       params.resources && params.resources.length > 0
         ? Array.from(new Set(params.resources.map(requireResourceName)))
-        : await this.listResources();
+        : this.declared
+          ? Array.from(this.declared).sort()
+          : await this.listResources()
+    ).filter((resource) => this.isDeclared(resource));
 
     const results: SearchAllResult[] = [];
     for (const resource of resources) {
@@ -194,7 +201,7 @@ export class SqliteAdapter implements SearchAdapter {
     this.assertNotDisposed();
     assertNotAborted(signal, "Remove operation");
     requireResourceName(resource);
-    if (ids.length === 0) return;
+    if (ids.length === 0 || !this.isDeclared(resource)) return;
 
     const keys = Array.from(new Set(ids.map((id) => documentKey(id))));
     for (let offset = 0; offset < keys.length; offset += this.maxBatchSize) {
@@ -225,22 +232,22 @@ export class SqliteAdapter implements SearchAdapter {
   /**
    * Recreate the FTS index of a resource from its stored documents in one transaction.
    * Use it to repair an index after a partial write from a driver without `batch()`.
-   * Idempotent; a no-op for an unknown resource.
+   * Rebuilds the persisted field list, never this instance's cached one. Idempotent; a no-op
+   * for an unknown resource.
    */
   async rebuild(resource: string, signal?: AbortSignal): Promise<void> {
     this.assertNotDisposed();
     assertNotAborted(signal, "Rebuild operation");
     requireResourceName(resource);
 
-    const state = await this.resolveForRead(resource);
-    if (!state) return;
-    await this.applyFields(resource, state.fields, true);
+    await this.applyFields(resource, undefined, true);
   }
 
   /** Mark the adapter disposed. The injected driver stays open; its owner closes it. */
   async dispose(): Promise<void> {
     this.disposed = true;
     this.resources.clear();
+    this.declared = null;
     this.resourcesTableReady = null;
   }
 
@@ -302,6 +309,14 @@ export class SqliteAdapter implements SearchAdapter {
     return state;
   }
 
+  /**
+   * After initialize(), only declared resources are indexed and searched, so records of
+   * resources without search fields (for example every @datafn/server mutation) are ignored.
+   */
+  private isDeclared(resource: string): boolean {
+    return this.declared === null || this.declared.has(resource);
+  }
+
   private async resolveForRead(resource: string): Promise<ResourceState | undefined> {
     return this.resources.get(resource) ?? (await this.loadState(resource, true));
   }
@@ -326,16 +341,22 @@ export class SqliteAdapter implements SearchAdapter {
 
   /**
    * Make `fields` the indexed field list of a resource, rebuilding the FTS table when the
-   * list changes (or always, with `force`). Retries when another writer rebuilt concurrently.
+   * list changes (or always, with `force`). Without `fields`, rebuild the persisted list of an
+   * existing resource. Retries when another writer rebuilt concurrently.
    */
-  private async applyFields(resource: string, fields: string[], force: boolean): Promise<void> {
+  private async applyFields(resource: string, fields: string[] | undefined, force: boolean): Promise<void> {
     for (let attempt = 1; ; attempt++) {
-      const state = (await this.loadState(resource, true)) ?? (await this.register(resource, fields));
-      if (!force && sameFields(state.fields, fields)) return;
+      let state = await this.loadState(resource, true);
+      if (!state) {
+        if (!fields) return;
+        state = await this.register(resource, fields);
+      }
+      const target = fields ?? state.fields;
+      if (!force && sameFields(state.fields, target)) return;
 
       try {
-        await this.execute(this.schema.rebuild(state, fields));
-        this.resources.set(resource, { ...state, fields, generation: state.generation + 1 });
+        await this.execute(this.schema.rebuild(state, target));
+        this.resources.set(resource, { ...state, fields: target, generation: state.generation + 1 });
         return;
       } catch (error) {
         const current = await this.loadState(resource, false);
@@ -421,6 +442,12 @@ export class SqliteAdapter implements SearchAdapter {
     resource: string,
     search: ResolvedSearch,
   ): Promise<Array<{ id: string | number; score: number }>> {
+    const cached = this.resources.get(resource);
+    if (cached && search.fields?.length && !search.fields.some((field) => cached.fields.includes(field))) {
+      // No SQL would run against the cached generation, so a stale field list would never be
+      // noticed. Re-read it before concluding that none of the requested fields is indexed.
+      this.resources.delete(resource);
+    }
     const rows = await this.withResource(
       resource,
       () => this.resolveForRead(resource),

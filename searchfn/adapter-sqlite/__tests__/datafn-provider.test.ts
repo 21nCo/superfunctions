@@ -108,6 +108,14 @@ describe("@datafn/server search requests", () => {
         ],
         indices: { search: ["title"] },
       },
+      {
+        name: "user",
+        version: 1,
+        fields: [
+          { name: "email", type: "string", required: true },
+          { name: "secretNote", type: "string", required: false },
+        ],
+      },
     ],
     relations: [],
   };
@@ -128,13 +136,20 @@ describe("@datafn/server search requests", () => {
         body: JSON.stringify(body),
       }),
     );
-    return response.json() as Promise<{ ok: boolean; result?: { data: Array<{ id: string; title: string }> }; error?: unknown }>;
+    return response.json() as Promise<{
+      ok: boolean;
+      result?: {
+        data?: Array<{ id: string; title: string }>;
+        results?: Array<{ id: string; resource: string; data: Record<string, unknown> }>;
+      };
+      error?: unknown;
+    }>;
   }
 
-  it("indexes mutations and answers search queries scoped to the request namespace", async () => {
+  async function startServer() {
     const db = memoryAdapter();
     await db.initialize();
-    const server = await createDatafnServer({
+    return createDatafnServer({
       allowUnknownResources: true,
       schema,
       database: db,
@@ -142,6 +157,23 @@ describe("@datafn/server search requests", () => {
       namespaceProvider: { getNamespace: (ctx: { tenant: string }) => `tenant-${ctx.tenant}` },
       searchProvider: createSearchProvider(new SqliteAdapter({ driver: database.driver })),
     } as Parameters<typeof createDatafnServer>[0]);
+  }
+
+  async function insert(server: Awaited<ReturnType<typeof startServer>>, tenant: string, resource: string, id: string, record: object) {
+    const result = await call(server, "mutation", tenant, {
+      resource,
+      version: 1,
+      operation: "insert",
+      clientId: `client-${tenant}`,
+      mutationId: `m-${id}`,
+      id,
+      record,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+  }
+
+  it("indexes mutations and answers search queries scoped to the request namespace", async () => {
+    const server = await startServer();
 
     const inserts: Array<[string, string, string]> = [
       ["a", "bookmark:1", "Subset bookmarks sync"],
@@ -149,16 +181,7 @@ describe("@datafn/server search requests", () => {
       ["b", "bookmark:3", "Subset bookmarks archive"],
     ];
     for (const [tenant, id, title] of inserts) {
-      const result = await call(server, "mutation", tenant, {
-        resource: "bookmark",
-        version: 1,
-        operation: "insert",
-        clientId: `client-${tenant}`,
-        mutationId: `m-${id}`,
-        id,
-        record: { title },
-      });
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      await insert(server, tenant, "bookmark", id, { title });
     }
     expect(await countRows(database.driver, "bookmark", "docs")).toBe(3);
 
@@ -172,10 +195,25 @@ describe("@datafn/server search requests", () => {
 
     const tenantA = await search("a", "subs bookm");
     expect(tenantA.ok).toBe(true);
-    expect(tenantA.result?.data.map((row) => row.id)).toEqual(["bookmark:1"]);
+    expect(tenantA.result?.data?.map((row) => row.id)).toEqual(["bookmark:1"]);
     const tenantB = await search("b", "subs");
-    expect(tenantB.result?.data.map((row) => row.id)).toEqual(["bookmark:3"]);
-    expect((await search("a", "groceries")).result?.data.map((row) => row.title)).toEqual(["Weekly groceries"]);
+    expect(tenantB.result?.data?.map((row) => row.id)).toEqual(["bookmark:3"]);
+    expect((await search("a", "groceries")).result?.data?.map((row) => row.title)).toEqual(["Weekly groceries"]);
+
+    await server.close();
+  });
+
+  it("never indexes or returns records of a resource without search indices", async () => {
+    const server = await startServer();
+    await insert(server, "a", "user", "user:1", { email: "zebra@example.com", secretNote: "zebra zebra zebra" });
+    await insert(server, "a", "bookmark", "bookmark:1", { title: "Zebra crossing" });
+
+    const tables = await database.driver.all<{ resource: string }>(`SELECT resource FROM "searchfn_resources"`);
+    expect(tables.map((row) => row.resource)).toEqual(["bookmark"]);
+
+    const result = await call(server, "search", "a", { query: "zebra" });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(result.result?.results?.map((item) => [item.resource, item.id])).toEqual([["bookmark", "bookmark:1"]]);
 
     await server.close();
   });
