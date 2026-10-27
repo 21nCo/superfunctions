@@ -177,14 +177,16 @@ export class SqliteSchema {
   /**
    * Swap the FTS index to `fields` under a new generation in one transaction. The UPDATE is a
    * compare-and-swap: when another writer already moved the generation it sets NULL into a
-   * NOT NULL column, which aborts the whole batch. Every older generation in `retired` is
-   * dropped, including orphans left by interrupted writes.
+   * NOT NULL column, which aborts the whole batch. Cleanup runs only after the guard, inside
+   * the same transaction: a next-generation table left by an interrupted rebuild is dropped
+   * before it is recreated, and every older generation in `retired` is dropped after the swap.
    */
   rebuild(state: ResourceState, fields: string[], retired: number[]): SqliteStatement[] {
     const next = state.generation + 1;
     const dropped = Array.from(new Set([state.generation, ...retired])).filter((generation) => generation < next);
     return [
       this.guardGeneration(state, state.generation),
+      { sql: this.dropFtsTable(state, next) },
       { sql: this.createFtsTable(state, next, fields.length, false) },
       { sql: this.populateFts(state, next, fields, "") },
       {
@@ -316,8 +318,4 @@ export function compileMatch(
 
 export function isMissingTableError(error: unknown): boolean {
   return error instanceof Error && /no such table/i.test(error.message);
-}
-
-export function isTableExistsError(error: unknown): boolean {
-  return error instanceof Error && /already exists/i.test(error.message);
 }

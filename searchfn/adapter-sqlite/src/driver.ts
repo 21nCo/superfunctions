@@ -26,8 +26,10 @@ export interface SqliteDriver {
   run(sql: string, params?: readonly SqliteValue[]): Promise<SqliteRunResult>;
   /**
    * Execute statements in order inside one transaction: all commit or none do.
-   * Optional; without it the adapter runs statements one by one and a failure
-   * can leave a partial write (repair it with `SqliteAdapter.rebuild()`).
+   * Optional, but required for concurrent use: the adapter checks the index generation in
+   * the same batch as the writes and rebuilds that depend on it. Without it statements run
+   * one by one, so every operation on the database must be serialized by the caller, and a
+   * failure can leave a partial write (repair it with `SqliteAdapter.rebuild()`).
    */
   batch?(statements: readonly SqliteStatement[]): Promise<void>;
 }

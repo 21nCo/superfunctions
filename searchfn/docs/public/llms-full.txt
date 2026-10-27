@@ -9539,7 +9539,7 @@ For the on-device Swift SQLite index, see [Apple: SQLite adapter](/docs/document
 npm install @searchfn/adapter-sqlite
 ```
 
-Install the driver you use as well. `better-sqlite3` and `@libsql/client` are optional peer dependencies; D1 needs no package.
+Install the driver you use as well. `better-sqlite3` and `@libsql/client` are optional peer dependencies; D1 needs no package. The package is ESM-only: load it with `import`, not `require()`.
 
 ## Drivers
 
@@ -9564,7 +9564,9 @@ interface SqliteDriver {
 }
 ```
 
-`batch()` must run its statements in one transaction. Without it the adapter runs statements one by one, so an error part-way through a write can leave the index out of step with the stored documents. Call `rebuild(resource)` to repair it.
+`batch()` must run its statements in one transaction. The adapter checks the index generation in the same batch as the writes, rebuild and cleanup that depend on it, which is what keeps several adapter instances on one database consistent. All three bindings above provide it.
+
+Without `batch()` the adapter runs statements one by one. That gives no protection against concurrent use: every operation on the database must then be serialized by the caller (one adapter instance, no overlapping calls), otherwise a write that overlaps a rebuild can be lost from the index. An error part-way through a write can also leave the index out of step with the stored documents; call `rebuild(resource)` to repair it.
 
 ## Usage
 
@@ -9683,17 +9685,17 @@ For a table prefix `searchfn`, the adapter creates:
 - `searchfn_r<id>_docs`: the stored documents (id, id type, namespace, region and all fields as JSON).
 - `searchfn_r<id>_fts_<generation>`: the FTS5 index, one column per declared search field.
 
-Table names come from an internal integer id, so resource and field names are never used as SQL identifiers. Every value is a bound parameter; each write binds one JSON parameter, which keeps D1 below its per-statement parameter limit.
+Table names come from an internal integer id, so resource and field names are never used as SQL identifiers. Every value is a bound parameter; each write binds one JSON parameter, which keeps D1 below its per-statement parameter limit. Writes are split so that no bound JSON value exceeds 512 KiB, and a single document or id that does not fit on its own is rejected with `DFQL_INVALID` before anything in the call is written.
 
 ### Writes and idempotency
 
 - `initialize()` creates tables idempotently. Calling it again with the same fields, in any order, changes nothing.
 - When the declared fields change, `initialize()` rebuilds the FTS index from the stored documents in one transaction, including fields that were stored but not indexed before. Every write checks the published index generation in the same transaction, and every search reads it with the results, so other adapter instances on the same database detect the new generation on their next operation and reload. They never read or write a retired index, even if its table still exists.
 - `index()` upserts. Re-indexing a document replaces its fields and metadata; within one call the last document with a given id wins. Number ids come back as numbers. Documents are keyed by the string form of their id, so `5` and `"5"` are the same document and the last write sets the returned type.
-- After `initialize()`, the adapter works only with the resources it declared: `index()`, `remove()`, `clear()` and `rebuild()` on any other resource are no-ops, `search()` returns no results for it, and `searchAll()` searches declared resources only (and drops undeclared names from `resources`). Each `initialize()` call replaces the declared set.
+- After `initialize()`, the adapter registers and searches only the resources it declared: `search()` returns no results for any other resource, `searchAll()` searches declared resources only (and drops undeclared names from `resources`), and `clear()` and `rebuild()` on them are no-ops. `index()` and `remove()` on an undeclared resource are no-ops unless the resource is already registered in the database (by another instance or an earlier declaration); then they still apply, so its index never misses a change and declaring it again cannot return stale or deleted records. Each `initialize()` call replaces the declared set.
 - On an instance that was never initialized, `index()` registers an unknown resource with the field names in that call, and `searchAll()` without `resources` searches every resource in the database.
 - `remove()` and `clear()` are idempotent, and both are no-ops for unknown resources.
-- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction, using the field list stored in the database (not one cached by this instance), and drops every older index generation, including one left behind by an interrupted write from a driver without `batch()`. It is idempotent.
+- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction, using the field list stored in the database (not one cached by this instance), and drops every older index generation, plus any table left behind by an interrupted rebuild from a driver without `batch()`. That cleanup runs in the same transaction, after the generation check, so it never drops an index another instance published. It is idempotent.
 
 ### Lifecycle
 

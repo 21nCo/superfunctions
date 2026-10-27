@@ -23,6 +23,38 @@ afterEach(() => {
   database.close();
 });
 
+/**
+ * Wraps the shared driver like another process: pauses before the first call whose SQL (or any
+ * statement of its batch) matches `pauseOn`, and with `dieAfter` fails every later call.
+ */
+function gatedDriver(pauseOn: RegExp, { dieAfter = false } = {}) {
+  const inner = database.driver;
+  let reached!: () => void;
+  let release!: () => void;
+  const paused = new Promise<void>((resolve) => (reached = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let state: "waiting" | "passed" | "dead" = "waiting";
+  async function call<T>(sql: string[], run: () => Promise<T>): Promise<T> {
+    if (state === "dead") throw new Error("interrupted");
+    if (state !== "waiting" || !sql.some((text) => pauseOn.test(text))) return run();
+    state = "passed";
+    reached();
+    await gate;
+    try {
+      return await run();
+    } finally {
+      if (dieAfter) state = "dead";
+    }
+  }
+  const driver: SqliteDriver = {
+    exec: (sql) => call([sql], () => inner.exec(sql)),
+    all: (sql, params) => call([sql], () => inner.all(sql, params)),
+    run: (sql, params) => call([sql], () => inner.run(sql, params)),
+    batch: (statements) => call(statements.map((statement) => statement.sql), () => inner.batch!(statements)),
+  };
+  return { driver, paused, release };
+}
+
 async function seedBookmarks(target: SqliteAdapter = adapter): Promise<void> {
   await target.initialize({ resources: BOOKMARKS });
   await target.index({
@@ -272,6 +304,44 @@ describe("documents and ids", () => {
     expect(await countRows(database.driver, "items", "docs")).toBe(0);
   });
 
+  it("bounds every write payload by serialized bytes and rejects an oversized document or id before writing", async () => {
+    const payloadBytes: number[] = [];
+    const inner = database.driver;
+    const recording = new SqliteAdapter({
+      driver: {
+        ...inner,
+        batch: (statements) => {
+          for (const { params = [] } of statements) {
+            for (const param of params) if (typeof param === "string") payloadBytes.push(Buffer.byteLength(param));
+          }
+          return inner.batch!(statements);
+        },
+      },
+    });
+    const wide = (length: number) => "é".repeat(length); // two UTF-8 bytes per character
+    await recording.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await recording.index({
+      resource: "notes",
+      documents: [1, 2, 3].map((n) => ({ id: `n${n}`, fields: { title: `doc${n} ${wide(100_000)}` } })),
+    });
+    // 300 ids are within the 500-item count limit but serialize to about 600 KB.
+    await recording.remove({ resource: "notes", ids: Array.from({ length: 300 }, (_, n) => `${n}${wide(1_000)}`) });
+    expect(await countRows(database.driver, "notes", "docs")).toBe(3);
+    expect(Math.max(...payloadBytes)).toBeLessThanOrEqual(512 * 1024);
+
+    await expect(
+      recording.index({
+        resource: "notes",
+        documents: [{ id: "small", fields: { title: "kept" } }, { id: "big", fields: { title: wide(300_000) } }],
+      }),
+    ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+    await expect(recording.remove({ resource: "notes", ids: ["n1", wide(300_000)] })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+    });
+    expect(await recording.search({ resource: "notes", query: "kept" })).toEqual([]);
+    expect(await recording.search({ resource: "notes", query: "doc1" })).toEqual(["n1"]);
+  });
+
   it("handles hostile resource and field names as data", async () => {
     const resource = 'x"; DROP TABLE "searchfn_resources"; --';
     const field = "it's \"quoted\" ]";
@@ -459,6 +529,57 @@ describe("multiple adapter instances on one database", () => {
     expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
   });
 
+  it("cleanup of an interrupted rebuild never drops a generation another instance published", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    // A next-generation table left by a rebuild that stopped before publishing.
+    await database.driver.exec(`CREATE VIRTUAL TABLE "searchfn_r1_fts_1" USING fts5(c0)`);
+    const cleaner = gatedDriver(/^DROP TABLE IF EXISTS "searchfn_r1_fts_1"/, { dieAfter: true });
+    const rebuilding = new SqliteAdapter({ driver: cleaner.driver }).rebuild("notes").catch((error: Error) => error);
+
+    await cleaner.paused;
+    await writer.rebuild("notes");
+    cleaner.release();
+    expect(await rebuilding).toBeInstanceOf(Error);
+
+    expect(await generationOf(database.driver, "notes")).toBe(1);
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    for (const instance of [writer, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    }
+  });
+
+  it("writes and rebuilds that overlap across instances all reach the published generation", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+
+    // A rebuild waits at its transaction while another instance writes: the rebuild includes the write.
+    const slowRebuild = gatedDriver(/^CREATE VIRTUAL TABLE "searchfn_r1_fts_1"/);
+    const rebuilding = new SqliteAdapter({ driver: slowRebuild.driver }).rebuild("notes");
+    await slowRebuild.paused;
+    await writer.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "beta" } }] });
+    slowRebuild.release();
+    await rebuilding;
+
+    // A write waits at its transaction while another instance publishes: the write retries on it.
+    const slowWrite = gatedDriver(/^INSERT INTO "searchfn_r1_docs"/);
+    const late = new SqliteAdapter({ driver: slowWrite.driver });
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    const writing = late.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "gamma" } }] });
+    await slowWrite.paused;
+    await writer.rebuild("notes");
+    slowWrite.release();
+    await writing;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+    for (const instance of [writer, late, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "beta" })).toEqual(["n2"]);
+      expect(await instance.search({ resource: "notes", query: "gamma" })).toEqual(["n3"]);
+    }
+  });
+
   it("concurrent registrations of one resource converge", async () => {
     const instances = Array.from({ length: 4 }, () => new SqliteAdapter({ driver: database.driver }));
     await Promise.all(instances.map((instance) => instance.initialize({ resources: BOOKMARKS })));
@@ -531,6 +652,31 @@ describe("drivers without batch()", () => {
     await writer.rebuild("notes");
     expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
     expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+
+  it.each([
+    `UPDATE "searchfn_resources" SET generation = NULL`,
+    `DROP TABLE IF EXISTS "searchfn_r1_fts_1"`,
+    `CREATE VIRTUAL TABLE "searchfn_r1_fts_1"`,
+    `INSERT INTO "searchfn_r1_fts_1"`,
+    `UPDATE "searchfn_resources" SET fields`,
+    `DROP TABLE IF EXISTS "searchfn_r1_fts_0"`,
+  ])("a serialized rebuild that stops at %s is repaired by the next rebuild", async (statement) => {
+    const driver = sequentialDriver();
+    const sequential = new SqliteAdapter({ driver });
+    await sequential.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await sequential.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+
+    driver.failOn = new RegExp(`^${statement}`);
+    await expect(sequential.rebuild("notes")).rejects.toThrow("injected failure");
+    driver.failOn = undefined;
+    await sequential.rebuild("notes");
+
+    const generation = await generationOf(database.driver, "notes");
+    expect(await ftsTables(database.driver)).toEqual([`searchfn_r1_fts_${generation}`]);
+    for (const instance of [sequential, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    }
   });
 
   it("drops a generation 0 that a delayed registration recreated after a rebuild", async () => {
@@ -641,6 +787,25 @@ describe("declared resources", () => {
     ]);
     expect(await adapter.searchAll({ query: "zebra" })).toHaveLength(1);
   });
+  it("keeps a registered resource current while undeclared, so re-declaring it exposes no stale records", async () => {
+    const notes = [{ name: "notes", searchFields: ["title"] }];
+    await adapter.initialize({ resources: notes });
+    await adapter.index({
+      resource: "notes",
+      documents: [{ id: "n1", fields: { title: "alpha" } }, { id: "n2", fields: { title: "gamma" } }],
+    });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "beta" } }] });
+    await adapter.remove({ resource: "notes", ids: ["n2"] });
+    expect(await adapter.search({ resource: "notes", query: "beta" })).toEqual([]);
+
+    await adapter.initialize({ resources: notes });
+    expect(await adapter.search({ resource: "notes", query: "alpha" })).toEqual([]);
+    expect(await adapter.search({ resource: "notes", query: "beta" })).toEqual(["n1"]);
+    expect(await adapter.search({ resource: "notes", query: "gamma" })).toEqual([]);
+  });
+
   it("clear and rebuild leave undeclared resources untouched", async () => {
     const legacy = new SqliteAdapter({ driver: database.driver });
     await legacy.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra" } }] });

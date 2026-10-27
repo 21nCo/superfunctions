@@ -4,6 +4,11 @@
  * Supports: initialize, index (upsert), search, searchAll, remove, clear, rebuild, dispose.
  * Ranking is FTS5 bm25() with per-field weights; prefix search uses `"term"*`; namespace and
  * region filters are enforced in SQL. Fuzzy matching is not supported and is ignored.
+ *
+ * Concurrency: every generation check runs in one `driver.batch()` transaction with the writes,
+ * rebuild publication and cleanup that depend on it, so instances sharing a database stay
+ * consistent. A driver without `batch()` cannot give that guarantee; callers must serialize
+ * all operations on its database.
  */
 import type {
   SearchAdapter,
@@ -29,7 +34,6 @@ import {
   SqliteSchema,
   compileMatch,
   isMissingTableError,
-  isTableExistsError,
   isValidTablePrefix,
   type ResourceRow,
   type ResourceState,
@@ -151,14 +155,14 @@ export class SqliteAdapter implements SearchAdapter {
     this.assertNotDisposed();
     assertNotAborted(signal, "Index operation");
     requireResourceName(resource);
-    if (documents.length === 0 || !this.isDeclared(resource)) return;
+    if (documents.length === 0 || !(await this.isMaintained(resource))) return;
 
     const normalized = normalizeDocuments(documents);
+    const payloads = chunkJson(normalized, this.maxBatchSize, "document");
     await this.ensureResourcesTable();
 
-    for (const chunk of chunkDocuments(normalized, this.maxBatchSize)) {
+    for (const payload of payloads) {
       assertNotAborted(signal, "Index operation");
-      const payload = `[${chunk.map((document) => document.json).join(",")}]`;
       await this.withResource(
         resource,
         () => this.resolveForWrite(resource, normalized),
@@ -188,7 +192,7 @@ export class SqliteAdapter implements SearchAdapter {
       params.resources && params.resources.length > 0
         ? Array.from(new Set(params.resources.map(requireResourceName)))
         : this.declared
-          ? Array.from(this.declared).sort()
+          ? Array.from(this.declared).sort(compareText)
           : await this.listResources()
     ).filter((resource) => this.isDeclared(resource));
 
@@ -208,12 +212,16 @@ export class SqliteAdapter implements SearchAdapter {
     this.assertNotDisposed();
     assertNotAborted(signal, "Remove operation");
     requireResourceName(resource);
-    if (ids.length === 0 || !this.isDeclared(resource)) return;
+    if (ids.length === 0 || !(await this.isMaintained(resource))) return;
 
     const keys = Array.from(new Set(ids.map((id) => documentKey(id))));
-    for (let offset = 0; offset < keys.length; offset += this.maxBatchSize) {
+    const payloads = chunkJson(
+      keys.map((key) => ({ key, json: JSON.stringify(key) })),
+      this.maxBatchSize,
+      "id",
+    );
+    for (const payload of payloads) {
       assertNotAborted(signal, "Remove operation");
-      const payload = JSON.stringify(keys.slice(offset, offset + this.maxBatchSize));
       await this.withResource(
         resource,
         () => this.resolveForRead(resource),
@@ -329,11 +337,19 @@ export class SqliteAdapter implements SearchAdapter {
   }
 
   /**
-   * After initialize(), only declared resources are indexed and searched, so records of
+   * After initialize(), only declared resources are registered and searched, so records of
    * resources without search fields (for example every @datafn/server mutation) are ignored.
    */
   private isDeclared(resource: string): boolean {
     return this.declared === null || this.declared.has(resource);
+  }
+
+  /**
+   * Writes also reach a resource that is registered but not declared here, so its index never
+   * misses a mutation and re-declaring it cannot expose stale records. They never register one.
+   */
+  private async isMaintained(resource: string): Promise<boolean> {
+    return this.isDeclared(resource) || (await this.resolveForRead(resource)) !== undefined;
   }
 
   private async resolveForRead(resource: string): Promise<ResourceState | undefined> {
@@ -379,18 +395,9 @@ export class SqliteAdapter implements SearchAdapter {
         return;
       } catch (error) {
         this.resources.delete(resource);
-        if (isTableExistsError(error)) {
-          const current = await this.loadState(resource, false);
-          if (current?.generation === state.generation) {
-            // A driver without batch() left the next generation behind; it was never published.
-            await this.driver.exec(this.schema.dropFtsTable(state, state.generation + 1));
-          }
-        } else if (!this.schema.isStaleGenerationError(error)) {
-          // Not a lost compare-and-swap. Without batch() the swap may already be published;
-          // older generations left behind are dropped by the next rebuild.
-          throw error;
-        }
-        if (attempt >= MAX_SCHEMA_ATTEMPTS) throw error;
+        // Retry only a lost compare-and-swap. Any other failure aborted the batch; without
+        // batch() it may leave tables behind, which the next rebuild drops in its transaction.
+        if (!this.schema.isStaleGenerationError(error) || attempt >= MAX_SCHEMA_ATTEMPTS) throw error;
       }
     }
   }
@@ -660,21 +667,36 @@ function normalizeDocuments(documents: SearchDocument[]): NormalizedDocument[] {
 
 const encoder = new TextEncoder();
 
-function chunkDocuments(documents: NormalizedDocument[], maxBatchSize: number): NormalizedDocument[][] {
-  const chunks: NormalizedDocument[][] = [];
-  let current: NormalizedDocument[] = [];
+/**
+ * Group serialized values into JSON array payloads of at most `maxBatchSize` items and
+ * MAX_BATCH_PAYLOAD_BYTES UTF-8 bytes. Runs before any write, so a value that cannot fit is
+ * rejected before an earlier chunk commits.
+ */
+function chunkJson(
+  items: ReadonlyArray<{ key: string; json: string }>,
+  maxBatchSize: number,
+  kind: "document" | "id",
+): string[] {
+  const chunks: string[] = [];
+  let current: string[] = [];
   let bytes = 2;
-  for (const document of documents) {
-    const size = encoder.encode(document.json).length + 1;
+  for (const { key, json } of items) {
+    const size = encoder.encode(json).length + 1;
+    if (2 + size > MAX_BATCH_PAYLOAD_BYTES) {
+      throw new SearchAdapterError(
+        "DFQL_INVALID",
+        `Serialized ${kind} ${key.slice(0, 64)} exceeds the ${MAX_BATCH_PAYLOAD_BYTES}-byte write limit`,
+      );
+    }
     if (current.length > 0 && (current.length >= maxBatchSize || bytes + size > MAX_BATCH_PAYLOAD_BYTES)) {
-      chunks.push(current);
+      chunks.push(`[${current.join(",")}]`);
       current = [];
       bytes = 2;
     }
-    current.push(document);
+    current.push(json);
     bytes += size;
   }
-  if (current.length > 0) chunks.push(current);
+  if (current.length > 0) chunks.push(`[${current.join(",")}]`);
   return chunks;
 }
 
@@ -696,10 +718,13 @@ function fieldWeight(boosts: Record<string, number> | undefined, field: string):
   return weight;
 }
 
+/** Code-unit order, independent of the host locale. */
+function compareText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 function compareResults(left: SearchAllResult, right: SearchAllResult): number {
   if (left.score !== right.score) return right.score - left.score;
-  if (left.resource !== right.resource) return left.resource < right.resource ? -1 : 1;
-  const leftId = String(left.id);
-  const rightId = String(right.id);
-  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  return compareText(left.resource, right.resource) || compareText(String(left.id), String(right.id));
 }
