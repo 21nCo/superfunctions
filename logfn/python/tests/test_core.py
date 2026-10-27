@@ -340,3 +340,21 @@ def test_flush_does_not_wait_for_calls_whose_loop_stopped_or_closed() -> None:
             task.cancel()
         stopped.run_until_complete(asyncio.sleep(0))
         stopped.close()
+
+
+def test_on_error_is_not_reentered_by_a_failure_it_causes() -> None:
+    # An on_error that logs through the failing sink fails again; that nested
+    # failure must not call on_error recursively.
+    calls: list[str] = []
+
+    def failing(batch: list[LogEvent]) -> None:
+        raise RuntimeError("sink down")
+
+    def on_error(error: BaseException, context: dict[str, str]) -> None:
+        calls.append(str(error))
+        logger.error("sink failed", ctx={"error": str(error)})
+
+    logger = create_logger("svc", sinks=[failing], on_error=on_error)
+    logger.info("one")
+    logger.info("two")
+    assert calls == ["sink down", "sink down"]

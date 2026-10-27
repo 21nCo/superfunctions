@@ -348,4 +348,24 @@ describe("Logger", () => {
     expect(events[0].ctx).toEqual({ id: 1, self: { id: 1, self: "[circular]" } });
     expect(() => JSON.stringify(events[0])).not.toThrow();
   });
+  it("does not re-enter onError for a failure it causes", () => {
+    // An onError that logs through the failing sink fails again; that nested
+    // failure must not call onError recursively.
+    const calls: string[] = [];
+    const logger = createLogger({
+      name: "svc",
+      sinks: [
+        () => {
+          throw new Error("sink down");
+        },
+      ],
+      onError: (error) => {
+        calls.push(error.message);
+        logger.error("sink failed", { error: error.message });
+      },
+    });
+    logger.info("one");
+    logger.info("two");
+    expect(calls).toEqual(["sink down", "sink down"]);
+  });
 });

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import functools
 import http.client
+import ipaddress
 import math
 import os
 import random
@@ -73,15 +74,52 @@ DropReason = Literal["queue_full", "delivery_failed", "closed", "redaction_faile
 
 
 # Name resolution cannot be interrupted, so a stalled resolver keeps each
-# attempt's thread alive after the attempt is abandoned. At most this many
-# lookups are outstanding in the process; beyond it an attempt fails at once
-# with ResolverBusyError (retried like any network error) and starts no thread.
-_RESOLVER_SLOTS = 8
-_resolver_slots = threading.BoundedSemaphore(_RESOLVER_SLOTS)
+# attempt's thread alive after the attempt is abandoned. Outstanding lookups
+# are capped per host, so one host's stalled lookups cannot fail delivery to
+# another host, and in the process as a whole. Beyond a cap an attempt fails
+# at once with ResolverBusyError (retried like any network error) and starts
+# no thread. An IP-literal host needs no lookup and takes no slot.
+_RESOLVER_SLOTS_PER_HOST = 4
+_RESOLVER_SLOTS = 64
 
 
 class ResolverBusyError(ConnectionError):
-    """Every name-resolution slot is held by an outstanding lookup."""
+    """Every name-resolution slot for the host, or in the process, is held by
+    an outstanding lookup."""
+
+
+class _ResolverSlots:
+    def __init__(self, per_host: int, total: int) -> None:
+        self._per_host = per_host
+        self._total = total
+        self._lock = threading.Lock()
+        self._held: dict[str, int] = {}
+
+    def acquire(self, host: str) -> None:
+        with self._lock:
+            held = self._held.get(host, 0)
+            if held >= self._per_host or sum(self._held.values()) >= self._total:
+                raise ResolverBusyError(f"too many name resolutions are outstanding for {host!r}")
+            self._held[host] = held + 1
+
+    def release(self, host: str) -> None:
+        with self._lock:
+            held = self._held.get(host, 0) - 1
+            if held > 0:
+                self._held[host] = held
+            else:
+                self._held.pop(host, None)
+
+
+_resolver_slots = _ResolverSlots(_RESOLVER_SLOTS_PER_HOST, _RESOLVER_SLOTS)
+
+
+def _ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 class _Attempt:
@@ -89,7 +127,7 @@ class _Attempt:
     connect in progress fails at once, a later address is never tried, and a
     connected socket is shut down. Connecting also stops at the deadline."""
 
-    def __init__(self, timeout: float) -> None:
+    def __init__(self, timeout: float, host: str) -> None:
         # Taken before the caller's own timer starts, so it is never later.
         self._deadline = time.monotonic() + timeout
         self._lock = threading.Lock()
@@ -99,17 +137,18 @@ class _Attempt:
         # only once the name is resolved, so a stalled lookup holds no fds.
         self._wake_reader: socket.socket | None = None
         self._wake_writer: socket.socket | None = None
-        # One of _RESOLVER_SLOTS, held until name resolution returns.
+        # A resolver slot for the host, held until name resolution returns.
+        self._host = host.lower()
         self._slots = _resolver_slots
-        if not self._slots.acquire(blocking=False):
-            raise ResolverBusyError("too many name resolutions are outstanding")
-        self._resolving = True
+        self._resolving = not _ip_literal(self._host)
+        if self._resolving:
+            self._slots.acquire(self._host)
 
     def _resolved(self) -> None:
         with self._lock:
             if self._resolving:
                 self._resolving = False
-                self._slots.release()
+                self._slots.release(self._host)
 
     def _attach(self, sock: socket.socket | None) -> None:
         with self._lock:
@@ -239,13 +278,15 @@ async def stdlib_transport(url: str, body: bytes, headers: dict[str, str], timeo
     attempt and interpreter or loop shutdown never waits for the collector.
     Only name resolution cannot be interrupted; it ends in its own thread
     and no connect follows it. It holds no sockets, and at most
-    ``_RESOLVER_SLOTS`` (8) lookups are outstanding in the process: beyond
-    that an attempt fails at once with ``ResolverBusyError`` and starts no
-    thread, so a hung resolver cannot accumulate threads.
+    ``_RESOLVER_SLOTS_PER_HOST`` (4) lookups per host and ``_RESOLVER_SLOTS``
+    (64) in the process are outstanding: beyond that an attempt fails at once
+    with ``ResolverBusyError`` and starts no thread, so a hung resolver cannot
+    accumulate threads and a stalled host does not hold up other hosts. An
+    IP-literal host takes no slot.
     Proxy environment variables are not used."""
     loop = asyncio.get_running_loop()
     result: asyncio.Future[int] = loop.create_future()
-    attempt = _Attempt(timeout)
+    attempt = _Attempt(timeout, urlsplit(url).hostname or "")
 
     def settle(status: int | None, error: BaseException | None) -> None:
         if result.done():
@@ -367,6 +408,7 @@ class SinkHttp:
         self._transport: Transport = transport or stdlib_transport
         self._on_error = on_error
         self._on_drop = on_drop
+        self._reporting = threading.local()
         self._redact = make_redactor(redact_patterns, redact_replacement, redact_keys, redact_allowlist)
 
         self._headers = {"Content-Type": "application/json", **(headers or {})}
@@ -404,7 +446,15 @@ class SinkHttp:
 
     # -- reporting -------------------------------------------------------
 
+    # on_error and on_drop may log to this sink, which can fail or drop again
+    # (a closed sink, a full queue). Such a nested error or drop is counted
+    # but not reported to the callback that is running on this thread, so a
+    # callback is never re-entered and one event cannot start a recursion.
+
     def _report(self, error: BaseException) -> None:
+        if getattr(self._reporting, "error", False):
+            return
+        self._reporting.error = True
         try:
             if self._on_error is not None:
                 self._on_error(error)
@@ -412,11 +462,19 @@ class SinkHttp:
                 print(f"[logfn http-sink error] {error!r}", file=sys.stderr)
         except Exception:
             pass  # A failing handler must not break delivery.
+        finally:
+            self._reporting.error = False
 
     def _notify_drop(self, count: int, reason: DropReason) -> None:
-        if count > 0 and self._on_drop is not None:
-            with contextlib.suppress(Exception):
-                self._on_drop(count, reason)
+        if count <= 0 or self._on_drop is None or getattr(self._reporting, "drop", False):
+            return
+        self._reporting.drop = True
+        try:
+            self._on_drop(count, reason)
+        except Exception:
+            pass
+        finally:
+            self._reporting.drop = False
 
     def _drop(self, count: int, reason: DropReason) -> None:
         if count <= 0:
@@ -644,9 +702,7 @@ class SinkHttp:
             if not self._registered(batch):
                 raise _Abandoned
             try:
-                status = await asyncio.wait_for(
-                    self._transport(self.url, body, dict(self._headers), self.timeout), self.timeout
-                )
+                status = await self._attempt(body)
             except asyncio.TimeoutError:
                 last_error = TimeoutError(f"timed out after {self.timeout}s")
                 continue
@@ -659,6 +715,32 @@ class SinkHttp:
             if not _retryable(status):
                 break
         raise last_error
+
+    async def _call(self, body: bytes) -> int:
+        return await self._transport(self.url, body, dict(self._headers), self.timeout)
+
+    async def _attempt(self, body: bytes) -> int:
+        """One transport call, bounded by the timeout. It runs as its own task,
+        so a CancelledError the transport raises (its own request was
+        cancelled) is a failed attempt, not a cancellation of the delivery:
+        only the sink or the loop cancels a delivery, which puts its batch
+        back. Treating it as one would put the batch back with a fresh budget
+        and retry it at once, without end."""
+        call = asyncio.get_running_loop().create_task(self._call(body))
+        try:
+            done, _ = await asyncio.wait([call], timeout=self.timeout)
+            if not done:
+                call.cancel()
+                await asyncio.wait([call])  # Let it stop, as wait_for does.
+        except asyncio.CancelledError:
+            call.cancel()
+            call.add_done_callback(_retrieve)
+            raise
+        if call.cancelled():
+            if not done:
+                raise asyncio.TimeoutError
+            raise ConnectionAbortedError("the transport was cancelled")
+        return call.result()
 
     # -- public ----------------------------------------------------------
 
@@ -746,6 +828,12 @@ class _Batch:
         if self.abort is not None:
             with contextlib.suppress(RuntimeError):  # Its loop is closed.
                 self.abort()
+
+
+def _retrieve(task: asyncio.Task[Any]) -> None:
+    # An abandoned call's failure has no outcome to change; it is not logged.
+    if not task.cancelled():
+        task.exception()
 
 
 def _wake(waiter: asyncio.Future[None]) -> None:

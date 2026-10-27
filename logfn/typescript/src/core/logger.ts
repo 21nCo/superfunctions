@@ -15,6 +15,9 @@ import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
 
+// The error handlers currently running (synchronously).
+const runningHandlers = new Set<ErrorHandler>();
+
 const defaultErrorHandler: ErrorHandler = (error, context) => {
   console.error("[logfn internal error]", context, error);
 };
@@ -99,10 +102,18 @@ export class Logger {
   }
 
   private report(error: unknown, context: { stage?: string; sink?: string }): void {
+    // An onError that logs through a failing sink fails again; that nested
+    // failure is not reported to the handler already running, so one error
+    // cannot start a recursion.
+    const handler = this.options.onError;
+    if (runningHandlers.has(handler)) return;
+    runningHandlers.add(handler);
     try {
-      this.options.onError(toError(error), context);
+      handler(toError(error), context);
     } catch {
       // A failing error handler must not reach the caller either.
+    } finally {
+      runningHandlers.delete(handler);
     }
   }
 

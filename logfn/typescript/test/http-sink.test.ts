@@ -753,3 +753,42 @@ describe("sinkHttp against a real collector", () => {
     expect(sink.stats()).toMatchObject({ sent: 0, dropped: 1, failedBatches: 1 });
   });
 });
+
+describe("sinkHttp drop reporting", () => {
+  // An onDrop that logs to its own sink drops again (closed, or full with
+  // maxQueue 1); that drop is counted but must not call onDrop recursively
+  // until the stack overflows.
+  it.each(["closed", "queue_full"] as const)("does not re-enter onDrop for a %s drop it causes", async (reason) => {
+    const { fetch } = scriptedFetch(ok);
+    const drops: Array<[number, string]> = [];
+    const sink = sinkHttp({
+      url: URL,
+      fetch,
+      batch: 100,
+      maxQueue: 1,
+      onDrop: (count, why) => {
+        drops.push([count, why]);
+        sink([event("diagnostic")]);
+      },
+    });
+    if (reason === "closed") {
+      await sink.close();
+      sink([event("late")]);
+    } else {
+      sink([event("first")]);
+      sink([event("second")]);
+    }
+    expect(drops).toEqual([[1, reason]]);
+    expect(sink.stats().dropped).toBe(2); // Every event that was dropped, once.
+    await sink.close();
+  });
+
+  it("still reports later drops once onDrop has returned", async () => {
+    const drops: string[] = [];
+    const sink = sinkHttp({ url: URL, fetch: scriptedFetch(ok).fetch, onDrop: (_count, why) => drops.push(why) });
+    await sink.close();
+    sink([event("a")]);
+    sink([event("b")]);
+    expect(drops).toEqual(["closed", "closed"]);
+  });
+});

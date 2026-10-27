@@ -297,10 +297,33 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     }
   }
 
+  // onError and onDrop may log to this sink, which can fail or drop again (a
+  // closed sink, a full queue). Such a nested error or drop is counted but
+  // not reported to the callback that is running, so a callback is never
+  // re-entered and one event cannot start a recursion.
+  let reportingError = false;
+  let reportingDrop = false;
+
+  function report(error: unknown): void {
+    if (reportingError) return;
+    reportingError = true;
+    try {
+      safely(() => onError(toError(error)));
+    } finally {
+      reportingError = false;
+    }
+  }
+
   function drop(count: number, reason: HttpSinkDropReason): void {
     if (count <= 0) return;
     counters.dropped += count;
-    if (options.onDrop) safely(() => options.onDrop?.(count, reason));
+    if (!options.onDrop || reportingDrop) return;
+    reportingDrop = true;
+    try {
+      safely(() => options.onDrop?.(count, reason));
+    } finally {
+      reportingDrop = false;
+    }
   }
 
   async function attempt(body: string): Promise<AttemptResult> {
@@ -424,7 +447,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           } catch (error) {
             counters.failedBatches += 1;
             drop(events.length, "delivery_failed");
-            safely(() => onError(toError(error)));
+            report(error);
           } finally {
             inFlight.delete(batch);
           }
@@ -459,7 +482,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           redacted = prepare(event);
         } catch (error) {
           drop(1, "redaction_failed");
-          safely(() => onError(toError(error)));
+          report(error);
           continue;
         }
         // Preparation and onDrop/onError run caller code (toJSON, callbacks)
@@ -484,7 +507,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
         scheduleFlush();
       }
     } catch (error) {
-      safely(() => onError(toError(error)));
+      report(error);
     }
   } as HttpSink;
 

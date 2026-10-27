@@ -999,7 +999,7 @@ def test_an_abort_during_a_connect_that_completes_at_once_sends_nothing(monkeypa
         sock.connect(sockaddr)
 
     monkeypatch.setattr(logfn.sinks._Attempt, "_connect", connect_at_once)
-    attempt = logfn.sinks._Attempt(2.0)
+    attempt = logfn.sinks._Attempt(2.0, "127.0.0.1")
     try:
         with pytest.raises(ConnectionAbortedError):
             logfn.sinks._post(f"http://127.0.0.1:{server.getsockname()[1]}/", b"{}", {}, 2.0, attempt)
@@ -1015,21 +1015,21 @@ def test_the_default_transport_releases_its_attempt_when_its_thread_cannot_start
     attempts: list[Any] = []
     real = logfn.sinks._Attempt
 
-    def recording(timeout: float) -> Any:
-        attempts.append(real(timeout))
+    def recording(timeout: float, host: str) -> Any:
+        attempts.append(real(timeout, host))
         return attempts[-1]
 
     def refuse(self: threading.Thread) -> None:
         raise RuntimeError("can't start new thread")
 
-    slots = threading.BoundedSemaphore(1)
+    slots = logfn.sinks._ResolverSlots(1, 1)
     monkeypatch.setattr(logfn.sinks, "_resolver_slots", slots)
     monkeypatch.setattr(logfn.sinks, "_Attempt", recording)
     monkeypatch.setattr(logfn.sinks.threading.Thread, "start", refuse)
     with pytest.raises(RuntimeError):
-        asyncio.run(logfn.sinks.stdlib_transport("http://127.0.0.1:9/", b"{}", {}, 1.0))
+        asyncio.run(logfn.sinks.stdlib_transport("http://localhost:9/", b"{}", {}, 1.0))
     assert attempts[0]._wake_reader is None and attempts[0]._sock is None
-    assert slots.acquire(blocking=False), "the resolver slot was not released"
+    assert slots._held == {}, "the resolver slot was not released"
 
 
 def _open_fds() -> int:
@@ -1060,7 +1060,7 @@ def test_a_stalled_resolver_holds_no_sockets_and_a_bounded_number_of_threads(
         return real_getaddrinfo(host, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", held)
-    monkeypatch.setattr(logfn.sinks, "_resolver_slots", threading.BoundedSemaphore(3))
+    monkeypatch.setattr(logfn.sinks, "_resolver_slots", logfn.sinks._ResolverSlots(3, 64))
     assert _http_threads() == []
     errors: list[BaseException] = []
     try:
@@ -1096,3 +1096,135 @@ def test_a_stalled_resolver_holds_no_sockets_and_a_bounded_number_of_threads(
     asyncio.run(healthy.close())
     assert [e["msg"] for e in received] == ["after"]
     assert healthy.stats()["sent"] == 1
+
+
+def test_a_host_whose_lookups_stall_does_not_hold_up_sinks_for_other_hosts(
+    monkeypatch: pytest.MonkeyPatch, collector: tuple[str, list[dict[str, Any]], list[str]]
+) -> None:
+    # The resolver cap bounds one host's stalled lookups; a sink posting to an
+    # IP literal or to another hostname keeps delivering meanwhile.
+    url, received, _auth = collector
+    port = url.split(":")[2].split("/")[0]
+    gate = threading.Event()
+    real_getaddrinfo = socket.getaddrinfo
+
+    def held(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == "stalled.test":
+            gate.wait(10)
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", held)
+    assert _http_threads() == []
+    errors: list[BaseException] = []
+    try:
+        stalled = SinkHttp("http://stalled.test/ingest", batch_size=1, timeout=0.02, retry_attempts=1, backoff_ms=0)
+        literal = SinkHttp(url, batch_size=1, retry_attempts=1, on_error=errors.append)
+        named = SinkHttp(f"http://localhost:{port}/ingest", batch_size=1, retry_attempts=1, on_error=errors.append)
+
+        async def main() -> None:
+            base_fds = _open_fds()
+            for i in range(10):
+                stalled([event(f"s{i}")])
+                await stalled.flush()
+            assert len(_http_threads()) <= 4  # The per-host cap.
+            assert _open_fds() <= base_fds  # The stalled lookups hold none.
+            for i in range(3):
+                literal([event(f"ip{i}")])
+                await literal.flush()
+                named([event(f"name{i}")])
+                await named.flush()
+
+        asyncio.run(main())
+        assert errors == []
+        assert literal.stats()["sent"] == 3 and named.stats()["sent"] == 3
+        assert sorted(e["msg"] for e in received) == ["ip0", "ip1", "ip2", "name0", "name1", "name2"]
+        assert stalled.stats()["dropped"] == 10
+        assert len(_http_threads()) <= 4
+    finally:
+        gate.set()
+    deadline = time.monotonic() + 5
+    while _http_threads() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _http_threads() == []
+
+
+async def _cancelled_request(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+    future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+    future.cancel()
+    return await future  # The transport's own request was cancelled.
+
+
+def _cancelled_at_once(url: str, body: bytes, headers: dict[str, str], timeout: float) -> Any:
+    raise asyncio.CancelledError
+
+
+@pytest.mark.parametrize("raises", [_cancelled_request, _cancelled_at_once])
+def test_a_cancelled_error_from_the_transport_is_a_failed_attempt(raises: Any) -> None:
+    # Not a cancellation of the delivery: it must not put the batch back with
+    # a fresh budget (an endless retry loop), but use up the retry budget.
+    calls = 0
+
+    def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> Any:
+        nonlocal calls
+        calls += 1
+        return raises(url, body, headers, timeout)
+
+    errors: list[BaseException] = []
+    sink = SinkHttp(URL, transport=transport, batch_size=1, retry_attempts=2, timeout=0.001, backoff_ms=0, on_error=errors.append)
+
+    async def main() -> float:
+        sink([event("m")])
+        started = time.monotonic()
+        await asyncio.wait_for(sink.flush(), 3)
+        return time.monotonic() - started
+
+    assert asyncio.run(main()) < sink._batch_budget
+    assert calls == 2
+    assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 1}
+    assert [type(error) for error in errors] == [ConnectionAbortedError]
+
+
+@pytest.mark.parametrize("reason", ["closed", "queue_full"])
+def test_on_drop_is_not_reentered_by_a_drop_it_causes(reason: str) -> None:
+    # An on_drop that logs to its own sink drops again (closed, or full with
+    # max_queue 1); that drop is counted but must not call on_drop
+    # recursively until the stack overflows.
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(URL, transport=Scripted(), batch_size=100, max_queue=1, on_drop=lambda n, r: on_drop(n, r))
+
+    def on_drop(count: int, why: str) -> None:
+        drops.append((count, why))
+        sink([event("diagnostic")])
+
+    if reason == "closed":
+        asyncio.run(sink.close())
+        sink([event("late")])
+    else:
+        sink([event("first")])
+        sink([event("second")])
+    assert drops == [(1, reason)]
+    assert sink.stats()["dropped"] == 2  # Every event that was dropped, once.
+
+
+def test_on_drop_still_reports_drops_from_other_threads_while_it_runs() -> None:
+    # The guard is per thread: another thread's drop is not its own nesting.
+    drops: list[str] = []
+    entered, release = threading.Event(), threading.Event()
+    sink = SinkHttp(URL, transport=Scripted(), on_drop=lambda n, r: on_drop(n, r))
+
+    def on_drop(count: int, reason: str) -> None:
+        drops.append(threading.current_thread().name)
+        if len(drops) == 1:
+            entered.set()
+            release.wait(5)
+
+    asyncio.run(sink.close())
+    first = threading.Thread(target=sink, args=([event("a")],), name="first")
+    first.start()
+    assert entered.wait(5)
+    second = threading.Thread(target=sink, args=([event("b")],), name="second")
+    second.start()
+    second.join(5)
+    release.set()
+    first.join(5)
+    assert drops == ["first", "second"]

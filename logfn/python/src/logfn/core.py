@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import os
 import sys
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +26,9 @@ from .validation import sanitize_event
 
 # How often flush() checks that another loop it waits on is still running.
 _FOREIGN_POLL_SECONDS = 0.05
+
+# The error handlers running on each thread.
+_reporting = threading.local()
 
 
 def default_now() -> datetime:
@@ -99,9 +103,20 @@ class Logger:
             print("Warning: Logger created without sinks", file=sys.stderr)
 
     def _report(self, error: BaseException, context: dict[str, str]) -> None:
-        # A failing error handler must not reach the caller either.
-        with contextlib.suppress(Exception):
-            self.on_error(error, context)
+        # An on_error that logs through a failing sink fails again; that nested
+        # failure is not reported to the handler already running on this
+        # thread, so one error cannot start a recursion.
+        running: set[int] = _reporting.__dict__.setdefault("handlers", set())
+        handler = self.on_error
+        if id(handler) in running:
+            return
+        running.add(id(handler))
+        try:
+            # A failing error handler must not reach the caller either.
+            with contextlib.suppress(Exception):
+                handler(error, context)
+        finally:
+            running.discard(id(handler))
 
     def should_log(self, level: LogLevel) -> bool:
         return LOG_LEVEL_VALUES[level] >= LOG_LEVEL_VALUES[self.level]

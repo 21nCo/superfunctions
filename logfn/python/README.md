@@ -52,7 +52,9 @@ adds an HTTP sink only when `url` is given.
   then flushes every sink. A call whose loop has stopped or closed is not
   waited for, since nothing would run it. Looking up a sink's `flush` or a
   sink's or stage's `__name__` is inside the same isolation: a raising
-  property is reported, and sibling sinks still flush.
+  property is reported, and sibling sinks still flush. An `on_error` that
+  logs through a failing sink is not called again for that nested failure
+  while it runs on the same thread.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
@@ -130,7 +132,13 @@ has any id unchanged.
     before it, also when the loop cancels its delivery. Request bodies are
     UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit.
     `stats()` returns `queued`, `in_flight`, `sent`, `dropped` and
-    `failed_batches`.
+    `failed_batches`. A drop or error caused while `on_drop` or `on_error`
+    runs (for example by logging to a closed or full sink) is counted in
+    `stats()` but not reported to that callback again on that thread, so a
+    callback is never re-entered.
+  - A `CancelledError` raised by a custom transport (its own request was
+    cancelled) is a failed attempt within the retry budget. Only cancelling
+    the delivering loop's work (loop shutdown) puts a batch back.
   - `timeout` (seconds) must be above 0; `timeout`, `backoff_ms` and
     `flush_interval_ms` must be finite, so every batch has a bounded retry
     budget.
@@ -149,10 +157,12 @@ has any id unchanged.
     unreachable collector cannot hold a connection, and `asyncio.run()` or
     interpreter exit never waits for it. Only DNS resolution is not
     interruptible (it finishes in its daemon thread, and no connect follows
-    it). A lookup holds no sockets, and at most 8 lookups are outstanding in
-    the process: beyond that an attempt fails at once with
+    it). A lookup holds no sockets, and at most 4 lookups per host and 64 in
+    the process are outstanding: beyond that an attempt fails at once with
     `ResolverBusyError` (retried like any network error) without starting a
-    thread, so a hung resolver cannot accumulate threads or descriptors.
+    thread, so a hung resolver cannot accumulate threads or descriptors. The
+    cap is per host, so a host whose lookups stall does not hold up sinks
+    for other hosts; an IP-literal host needs no lookup and takes no slot.
     Proxy environment variables are not used.
     Pass `transport=async (url, body, headers, timeout) -> status` to use
     another client; it should release its resources when cancelled.

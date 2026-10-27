@@ -60,6 +60,8 @@ when `url` is given.
   every sink.
   Reading a sink's `flush` or a sink's or stage's `name` is inside the same
   isolation: a throwing getter is reported, and sibling sinks still flush.
+  An `onError` that logs through a failing sink is not called again for that
+  nested failure while it runs.
 - `registerProcessHandlers(logger)` (server entry): on SIGTERM or SIGINT it
   logs the signal, flushes once, logs nothing after that flush and exits
   with 143 or 130 (128 + the signal number). A second signal while that
@@ -170,6 +172,9 @@ Posts `{"events": [...]}` to `url` in batches.
   call its `flush()`/`close()`: those calls join the running delivery and
   settle with it. A `fetch` that awaits its own sink's `flush()` before
   responding waits on itself, so that attempt ends only at `timeoutMs`.
+  A drop or error caused while `onDrop` or `onError` runs (for example by
+  logging to a closed or full sink) is counted in `stats()` but not reported
+  to that callback again, so a callback is never re-entered.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.
