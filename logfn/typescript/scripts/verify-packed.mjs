@@ -3,7 +3,7 @@
 // outside the repository and runs ESM, CommonJS and typed consumers against
 // it: enrichment, sampling, bounded delivery to a local collector, redaction
 // before the HTTP sink, failure isolation and a short-lived process whose
-// awaited flush outlives the retry backoff. Run after `npm run build`.
+// awaited flush or close outlives the retry backoff. Run after `npm run build`.
 // `--keep` keeps the temp directory.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -32,6 +32,20 @@ await sink.flush();
 console.log(JSON.stringify({ stats: sink.stats(), errors }));
 `;
 
+// Two batches are queued while the first is in flight; the second gets a 503
+// and is retried after a backoff. close() must settle both before the process
+// may exit.
+const closeChild = `
+import { sinkHttp } from "@logfn/core";
+const errors = [];
+const sink = sinkHttp({ url: process.argv[2], batch: 2, flushIntervalMs: 60000, retry: { attempts: 3, backoffMs: 300 }, onError: (error) => errors.push(error.message) });
+const event = (msg) => ({ ts: new Date().toISOString(), level: "info", msg, name: "child", version: "0" });
+sink([event("one"), event("two")]);
+sink([event("three"), event("four")]);
+await sink.close();
+console.log(JSON.stringify({ stats: sink.stats(), errors }));
+`;
+
 const esmConsumer = `
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -40,18 +54,22 @@ import { promisify } from "node:util";
 import { createLogger, enrichContext, sample, sinkHttp, REDACTED } from "@logfn/core";
 
 const received = [];
-let failNext = 0;
+// What the collector does with the next requests: "fail" answers 503, "slow"
+// accepts after 300 ms; anything else is accepted at once.
+const plan = [];
 const server = createServer((request, response) => {
   let body = "";
   request.on("data", (chunk) => (body += chunk));
   request.on("end", () => {
-    if (failNext > 0) {
-      failNext -= 1;
+    const step = plan.shift();
+    if (step === "fail") {
       response.writeHead(503).end();
       return;
     }
-    received.push(...JSON.parse(body).events);
-    response.writeHead(204).end();
+    setTimeout(() => {
+      received.push(...JSON.parse(body).events);
+      response.writeHead(204).end();
+    }, step === "slow" ? 300 : 0);
   });
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -88,7 +106,7 @@ assert.deepEqual(received.map((event) => event.msg), ["3", "4", "5"]);
 
 // A 503 is retried; redaction happens inside the sink without a pipeline stage.
 received.length = 0;
-failNext = 1;
+plan.push("fail");
 const retrying = sinkHttp({ url, batch: 1, retry: { attempts: 3, backoffMs: 5 }, ...quiet });
 createLogger({ name: "secret", sinks: [retrying] }).error("db postgres://svc:pw-1@db/app", { apiKey: "ak-1" });
 await retrying.flush();
@@ -112,10 +130,18 @@ assert.equal(unreachable.stats().dropped, 1);
 
 // An awaited flush keeps a short-lived process alive through the backoff.
 received.length = 0;
-failNext = 1;
+plan.push("fail");
 const child = await promisify(execFile)(process.execPath, ["flush-child.mjs", url]);
 assert.deepEqual(JSON.parse(child.stdout), { stats: { queued: 0, inFlight: 0, sent: 1, dropped: 0, failedBatches: 0 }, errors: [] });
 assert.deepEqual(received.map((event) => event.msg), ["flushed before exit"]);
+
+// An awaited close settles every accepted batch, including one that a drain
+// handed over to the next while the retry backoff runs.
+received.length = 0;
+plan.push("slow", "fail");
+const closing = await promisify(execFile)(process.execPath, ["close-child.mjs", url]);
+assert.deepEqual(JSON.parse(closing.stdout), { stats: { queued: 0, inFlight: 0, sent: 4, dropped: 0, failedBatches: 0 }, errors: [] });
+assert.deepEqual(received.map((event) => event.msg), ["one", "two", "three", "four"]);
 
 server.close();
 console.log(JSON.stringify({ consumer: "esm", ok: true }));
@@ -184,6 +210,7 @@ try {
 
   writeFileSync(path.join(consumer, "main.mjs"), esmConsumer);
   writeFileSync(path.join(consumer, "flush-child.mjs"), flushChild);
+  writeFileSync(path.join(consumer, "close-child.mjs"), closeChild);
   writeFileSync(path.join(consumer, "main.cjs"), cjsConsumer);
   console.log(run("node", ["main.mjs"], consumer).trim());
   console.log(run("node", ["main.cjs"], consumer).trim());

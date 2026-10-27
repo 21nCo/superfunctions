@@ -9,6 +9,7 @@ from logfn import (
     MAX_METADATA_CHARS,
     MAX_REDACTION_DEPTH,
     MAX_TAGS,
+    SinkHttp,
     enrich_context,
     is_sensitive_key,
     parse_w3c_trace_context,
@@ -77,6 +78,16 @@ def test_cause_cycles_and_depth() -> None:
     assert "[max-depth]" in out and "password=x" not in out
 
 
+def test_empty_replacement_is_rejected() -> None:
+    # An empty marker would make ``password= next`` read as a password of ``next``.
+    with pytest.raises(ValueError, match="non-empty"):
+        redact(replacement="")
+    with pytest.raises(ValueError, match="non-empty"):
+        redact_event(make_event(msg="password=x"), replacement="")
+    with pytest.raises(ValueError, match="non-empty"):
+        SinkHttp("https://collector.test/ingest", redact_replacement="")
+
+
 def test_linear_time_on_adversarial_input() -> None:
     inputs = [
         "a" * 200_000,
@@ -91,6 +102,15 @@ def test_linear_time_on_adversarial_input() -> None:
         "?token=" + "\\" * 200_000 + "'",
         "&token=" * 30_000,
         '\\"token\\":' * 20_000,
+        "password=" + "[" * 200_000,
+        "token=[" + '\\"' * 100_000,
+        "secret={" + '"a\\' * 60_000,
+        "token=[redacted]" * 15_000,
+        "%3Fa" * 50_000,
+        "%3Fapi_key%3D" + "%2F" * 60_000,
+        '"a ' * 60_000,
+        '"' + "a " * 100_000,
+        "\\" * 100_000 + '"a b',
     ]
     started = time.monotonic()
     for msg in inputs:

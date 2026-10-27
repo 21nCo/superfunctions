@@ -30,6 +30,8 @@ export interface RedactionVector {
     fields?: Record<string, Json>;
   };
   expected: Record<string, Json>;
+  /** Text that must not appear anywhere in the serialized event */
+  absent?: string[];
 }
 
 export function loadVectors(): { marker: string; vectors: RedactionVector[] } {
@@ -139,9 +141,13 @@ function matchValue(actual: unknown, expected: Json, where: string): void {
   expect(actual, where).toEqual(expected);
 }
 
-/** Compares the fields present in `expected` (msg, ctx, tags, userId, tenantId, fields). */
+/** Compares the fields present in `expected` (msg, ctx, tags, userId, tenantId, fields) and checks `absent`. */
 export function expectVector(actual: LogEvent, vector: RedactionVector, mode: string): void {
   for (const [field, expected] of Object.entries(vector.expected)) {
     matchValue((actual as unknown as Record<string, unknown>)[field], expected, `${vector.id} (${mode}) ${field}`);
+  }
+  const serialized = JSON.stringify(actual);
+  for (const text of vector.absent ?? []) {
+    expect(serialized, `${vector.id} (${mode}) does not contain ${text}`).not.toContain(text);
   }
 }

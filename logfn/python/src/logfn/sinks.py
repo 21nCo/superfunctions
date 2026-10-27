@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from .redact import REDACTED, make_redactor
 from .types import LogEvent
-from .validation import UNSERIALIZABLE, sanitize_event, validate_and_serialize
+from .validation import json_bytes, sanitize_event, validate_and_serialize
 
 _COLORS = {
     "trace": "\033[90m",  # Gray
@@ -123,10 +123,6 @@ def _retryable(status: int) -> bool:
     return status in (408, 429) or status >= 500
 
 
-def _unserializable(_value: object) -> str:
-    return UNSERIALIZABLE
-
-
 class SinkHttp:
     """Bounded, batched HTTP delivery of ``{"events": [...]}``.
 
@@ -187,6 +183,13 @@ class SinkHttp:
         self._dropped = 0
         self._failed_batches = 0
         self._in_flight = 0
+        # Positions in the stream of accepted events: ``_accepted`` events were
+        # queued so far, ``_removed`` left the front of the queue (sent, in
+        # flight or dropped), and the batch in flight starts at
+        # ``_in_flight_start``.
+        self._accepted = 0
+        self._removed = 0
+        self._in_flight_start = 0
         self._closed = False
         self._drain_task: asyncio.Task[None] | None = None
         self._timer: asyncio.TimerHandle | None = None
@@ -235,9 +238,11 @@ class SinkHttp:
                     self._report(error)
             with self._lock:
                 self._queue.extend(redacted)
-                overflow = len(self._queue) - self.max_queue
-                for _ in range(max(0, overflow)):
+                self._accepted += len(redacted)
+                overflow = max(0, len(self._queue) - self.max_queue)
+                for _ in range(overflow):
                     self._queue.popleft()
+                self._removed += overflow
                 queued = len(self._queue)
             self._drop(overflow, "queue_full")
             if queued >= self.batch_size:
@@ -315,6 +320,8 @@ class SinkHttp:
             with self._lock:
                 count = min(self.batch_size, budget, len(self._queue))
                 events = [self._queue.popleft() for _ in range(count)]
+                self._in_flight_start = self._removed
+                self._removed += count
             if not events:
                 break
             budget -= len(events)
@@ -323,14 +330,27 @@ class SinkHttp:
                 await self._deliver(events)
                 self._sent += len(events)
             except asyncio.CancelledError:
-                # The loop is shutting down: keep the batch for a later flush,
-                # within max_queue. It is the oldest, so it is dropped first.
+                reason: DropReason
                 with self._lock:
-                    self._queue.extendleft(reversed(events))
-                    overflow = max(0, len(self._queue) - self.max_queue)
-                    for _ in range(overflow):
-                        self._queue.popleft()
-                self._drop(overflow, "queue_full")
+                    if self._closed:
+                        # Nothing will drain a closed sink again: drop the batch
+                        # and whatever is still queued.
+                        left = len(self._queue)
+                        self._queue.clear()
+                        self._removed += left
+                        dropped, reason = len(events) + left, "closed"
+                    else:
+                        # The loop is shutting down: keep the batch for a later
+                        # flush, within max_queue. It is the oldest, so it is
+                        # dropped first.
+                        self._queue.extendleft(reversed(events))
+                        self._removed -= len(events)
+                        overflow = max(0, len(self._queue) - self.max_queue)
+                        for _ in range(overflow):
+                            self._queue.popleft()
+                        self._removed += overflow
+                        dropped, reason = overflow, "queue_full"
+                self._drop(dropped, reason)
                 raise
             except Exception as error:
                 self._failed_batches += 1
@@ -340,9 +360,7 @@ class SinkHttp:
                 self._in_flight = 0
 
     async def _deliver(self, events: list[LogEvent]) -> None:
-        body = json.dumps({"events": events}, separators=(",", ":"), default=_unserializable).encode(
-            "utf-8", "replace"
-        )
+        body = json_bytes({"events": events})
         last_error: BaseException = RuntimeError("not sent")
         for attempt in range(self.retry_attempts):
             if attempt > 0:
@@ -367,26 +385,39 @@ class SinkHttp:
 
     # -- public ----------------------------------------------------------
 
+    def _unsettled(self, target: int, loop: asyncio.AbstractEventLoop) -> bool:
+        # Whether an event accepted before position ``target`` is still queued,
+        # or in flight in a drain that this loop can wait for.
+        if self._removed < target:
+            return True
+        return self._in_flight > 0 and self._in_flight_start < target and self._active_drain(loop) is not None
+
     async def flush(self) -> None:
-        """Send everything queued so far. Never raises. Events logged while
-        this waits are not part of it; they keep their interval timer."""
+        """Wait until every event accepted before the call is sent or dropped,
+        across as many drains as that takes. Never raises. Events logged
+        while this waits are not part of it; they keep their interval timer."""
         try:
             self._cancel_timer()
             loop = asyncio.get_running_loop()
-            active = self._active_drain(loop)
-            if active is not None:
-                await asyncio.wait([active])
-            if self._queue:
+            target = self._accepted
+            while self._unsettled(target, loop):
                 task = self._start_drain()
-                if task is not None:
-                    await asyncio.wait([task])
+                if task is None:
+                    break
+                await asyncio.wait([task])
         except Exception as error:
             self._report(error)
 
     async def close(self) -> None:
-        """Stop accepting events, then flush. Never raises."""
+        """Stop accepting events, then deliver or drop everything accepted.
+        Never raises; events that cannot be sent are dropped as "closed"."""
         self._closed = True
         await self.flush()
+        with self._lock:
+            left = len(self._queue)
+            self._queue.clear()
+            self._removed += left
+        self._drop(left, "closed")
 
     def stats(self) -> dict[str, int]:
         """Delivery counters: queued, in_flight, sent, dropped, failed_batches."""

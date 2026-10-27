@@ -71,7 +71,7 @@ when `url` is given.
 
 `redactSecFn(options)` (stage) and `redactEvent(event, options)` redact the
 message, context (recursively, including error message, stack and cause) and
-every other event field, object keys included:
+every other event field, object keys and top-level field names included:
 
 - Values under credential-named keys at any depth, of any type (`password`,
   `secret`, `apiKey`, `authorization`, `cookie`, `credentials`, keys ending in
@@ -80,15 +80,19 @@ every other event field, object keys included:
   `tokenCount` are kept.
 - URL credentials (`scheme://user:pass@host`), credential query and fragment
   values (names are percent-decoded; the value runs to the next `&`, `#`,
-  whitespace or quote), `name=value` or `Name: value` pairs inside strings
-  (quoted values are consumed whole, escaped quotes and once-escaped JSON
-  included), and bearer tokens.
+  whitespace or quote; parameters inside a percent-encoded URL such as a
+  redirect target are found too), `name=value` or `Name: value` pairs inside
+  strings (quoted names may contain spaces; quoted values are consumed whole,
+  escaped quotes and once-escaped JSON included; an object or array value is
+  consumed to its balanced closing bracket, across lines, or to the end of the
+  text when unbalanced), and bearer tokens. A value that already starts with
+  the replacement is left alone only when the replacement is all of it.
 - Email addresses, by default. `patterns` replaces this default extra list but
   never disables the credential rules.
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`), `patterns`, `replacement`
-(default `"[redacted]"`). Cycles become `"[circular]"` and nesting beyond 32
+(default `"[redacted]"`; it must not be empty, which throws). Cycles become `"[circular]"` and nesting beyond 32
 levels becomes `"[max-depth]"`.
 
 The rules are shared with the Python package through
@@ -119,9 +123,11 @@ Posts `{"events": [...]}` to `url` in batches.
   responses, and exhausted retries, drop the batch. Redirects are never
   followed (`redirect: "manual"`): a 3xx drops the batch without a retry, so
   the body and credentials cannot reach another origin.
-- Calling the sink never throws or waits. `flush()` sends what is queued and
-  never rejects; events logged while it waits keep their interval timer.
-  `close()` flushes and drops later events. `stats()` returns
+- Calling the sink never throws or waits. `flush()` resolves once every event
+  accepted before the call is sent or dropped, across as many batches and
+  retries as that takes, and never rejects; events logged while it waits keep
+  their interval timer. `close()` drops later events and settles everything
+  accepted before it. `stats()` returns
   `{ queued, inFlight, sent, dropped, failedBatches }`; `onDrop(count, reason)`
   and `onError(error)` report losses.
 - Background timers are unref'd so they do not keep a Node process alive;

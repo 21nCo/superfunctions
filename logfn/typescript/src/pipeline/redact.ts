@@ -40,7 +40,10 @@ export interface RedactionOptions {
   /** Extra key names to treat as sensitive (compared after normalization) */
   keys?: string[];
 
-  /** Replacement text (default: REDACTED) */
+  /**
+   * Replacement text (default: REDACTED). It must not be empty: an empty
+   * marker would make `password= next` read as a password of `next`.
+   */
   replacement?: string;
 }
 
@@ -85,16 +88,24 @@ const HEADER_LINE_KEYS = new Set([
 const URL_USERINFO = /(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^ \t\n\r\f\v/?#@]+@/g;
 // A query or fragment parameter: `?name=`, `&name=` or `#name=`.
 const QUERY_PARAM = /[?&#]([^=&#? \t\n\r\f\v"'<>]+)=/g;
+// The same parameter inside a percent-encoded URL (a redirect target):
+// `%3Fname%3D`, `%26name%3D` or `%23name%3D`.
+const ENCODED_QUERY_PARAM = /%(?:3F|26|23)((?:[A-Za-z0-9_.~-]|%(?!3D|3F|26|23)[0-9A-Fa-f]{2})+)%3D/gi;
 // A query value ends at the next parameter, whitespace, a double quote or an
 // escaped quote (a URL inside escaped JSON); commas and semicolons are kept.
 // A backslash run is consumed whole, so matching stays linear.
 const QUERY_VALUE = /(?:[^&# \t\n\r\f\v"<>\\]|\\+(?![\\"']))*/y;
+// An encoded value also ends at an encoded `&` or `#`.
+const ENCODED_QUERY_VALUE = /(?:[^&#% \t\n\r\f\v"<>\\]|%(?!2[36])|\\+(?![\\"']))*/iy;
 // The name may be quoted, also with escaped quotes (`\"name\":` in JSON
 // that was itself serialized into a string), and may be percent-encoded. At
 // most seven backslashes (three levels of escaping) keep matching linear.
 const KEY_SEPARATOR = /(\\{0,7}["']?)(?<![A-Za-z0-9_.%-])([A-Za-z0-9_.%-]+)\1([ \t]*[:=][ \t]*)/g;
+// A quoted name made of several words, such as `"api key":`.
+const SPACED_KEY_SEPARATOR = /(\\{0,7}["'])([A-Za-z0-9_.%-]+(?: [A-Za-z0-9_.%-]+)+)\1([ \t]*:[ \t]*)/g;
 const AUTH_SCHEME = /(?:bearer|basic|digest|negotiate)[ \t]+/iy;
-const UNQUOTED_VALUE = /[^ \t\n\r\f\v&;,#"'}\]]+/y;
+// Characters that end an unquoted value
+const UNQUOTED_STOP = new Set([" ", "\t", "\n", "\r", "\f", "\v", "&", ";", ",", "#", '"', "'"]);
 const LINE_REST = /[^\r\n]*/y;
 const BEARER_TOKEN = /(?<![A-Za-z0-9])(bearer)[ \t]+[A-Za-z0-9\-._~+/]+=*/gi;
 const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![A-Za-z0-9])/g;
@@ -140,8 +151,12 @@ interface CompiledRedactor {
 function compile(options: RedactionOptions): CompiledRedactor {
   const extraKeys = new Set((options.keys ?? []).map(normalizeKey));
   extraKeys.delete("");
+  const replacement = options.replacement ?? REDACTED;
+  if (typeof replacement !== "string" || replacement === "") {
+    throw new Error("redaction replacement must be a non-empty string");
+  }
   return {
-    replacement: options.replacement ?? REDACTED,
+    replacement,
     patterns: (options.patterns ?? DEFAULT_PATTERNS).map((pattern) =>
       pattern.global ? pattern : new RegExp(pattern.source, `${pattern.flags}g`)
     ),
@@ -177,15 +192,75 @@ function quotedValueEnd(input: string, from: number, slashes: number, quote: str
   return index;
 }
 
+// End of an unquoted value: whitespace, a separator, a quote or a closing
+// bracket it did not open (`{token=x}`) ends it. Brackets opened inside it
+// are part of it, so `abc[1]TAIL` is one value.
+function unquotedValueEnd(input: string, from: number): number {
+  let depth = 0;
+  let index = from;
+  for (; index < input.length; index++) {
+    const char = input[index];
+    if (UNQUOTED_STOP.has(char)) break;
+    if (char === "{" || char === "[") {
+      depth++;
+    } else if (char === "}" || char === "]") {
+      if (depth === 0) break;
+      depth--;
+    }
+  }
+  return index;
+}
+
 interface ScannedValue {
   end: number;
   /** Quote, with its escaping backslashes, written around the replacement */
   quote: string;
 }
 
-// The credential value starting at `start`: an optional auth scheme, then a
-// complete quoted string (escaped quotes included) or an unquoted token.
-function scanValue(input: string, start: number): ScannedValue | null {
+// End of the bracketed value opening at `start` (`{` or `[`), across lines;
+// quoted strings, also escaped ones, are skipped so brackets inside them do
+// not count. An unbalanced value runs to the end of the input.
+function bracketedValueEnd(input: string, start: number): number {
+  let depth = 0;
+  let index = start;
+  while (index < input.length) {
+    const char = input[index];
+    if (char === "{" || char === "[") {
+      depth++;
+      index++;
+    } else if (char === "}" || char === "]") {
+      depth--;
+      index++;
+      if (depth === 0) return index;
+    } else if (char === "\\" || char === '"' || char === "'") {
+      let slashes = 0;
+      while (input[index + slashes] === "\\") slashes++;
+      const quote = input[index + slashes];
+      if (quote === '"' || quote === "'") {
+        index = quotedValueEnd(input, index + slashes + 1, slashes, quote);
+      } else {
+        index += slashes;
+      }
+    } else {
+      index++;
+    }
+  }
+  return index;
+}
+
+// The credential value starting at `start`: a value already replaced by
+// `replacement` together with anything appended to it, a bracketed value, or
+// an optional auth scheme followed by a complete quoted string (escaped quotes
+// included) or an unquoted token. Null when nothing is left to redact.
+function scanValue(input: string, start: number, replacement: string): ScannedValue | null {
+  if (replacement !== "" && input.startsWith(replacement, start)) {
+    const end = unquotedValueEnd(input, start + replacement.length);
+    return end > start + replacement.length ? { end, quote: "" } : null;
+  }
+  if (input[start] === "{" || input[start] === "[") {
+    // Text glued to the closing bracket, as in `[x]TAIL`, is part of the value.
+    return { end: unquotedValueEnd(input, bracketedValueEnd(input, start)), quote: "" };
+  }
   AUTH_SCHEME.lastIndex = start;
   const position = AUTH_SCHEME.exec(input) ? AUTH_SCHEME.lastIndex : start;
   let slashes = 0;
@@ -198,8 +273,8 @@ function scanValue(input: string, start: number): ScannedValue | null {
     };
   }
   for (const from of position === start ? [start] : [position, start]) {
-    UNQUOTED_VALUE.lastIndex = from;
-    if (UNQUOTED_VALUE.exec(input)) return { end: UNQUOTED_VALUE.lastIndex, quote: "" };
+    const end = unquotedValueEnd(input, from);
+    if (end > from) return { end, quote: "" };
   }
   return null;
 }
@@ -211,23 +286,28 @@ function lineEnd(input: string, start: number): number {
 }
 
 // Redacts the values of sensitive query and fragment parameters up to the
-// next parameter, so `?password=one,two` loses all of `one,two`.
-function redactQueryParams(input: string, redactor: CompiledRedactor): string {
-  const { replacement } = redactor;
+// next parameter, so `?password=one,two` loses all of `one,two`. A value that
+// is exactly the replacement is rewritten to itself, so this is idempotent.
+function redactQueryParams(
+  input: string,
+  redactor: CompiledRedactor,
+  param: RegExp,
+  value: RegExp
+): string {
   let output = "";
   let copied = 0;
-  QUERY_PARAM.lastIndex = 0;
+  param.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = QUERY_PARAM.exec(input)) !== null) {
+  while ((match = param.exec(input)) !== null) {
     const valueStart = match.index + match[0].length;
-    if (!redactor.isSensitive(match[1]) || input.startsWith(replacement, valueStart)) continue;
-    QUERY_VALUE.lastIndex = valueStart;
-    QUERY_VALUE.exec(input);
-    const valueEnd = QUERY_VALUE.lastIndex;
+    if (!redactor.isSensitive(match[1])) continue;
+    value.lastIndex = valueStart;
+    value.exec(input);
+    const valueEnd = value.lastIndex;
     if (valueEnd === valueStart) continue;
-    output += input.slice(copied, valueStart) + replacement;
+    output += input.slice(copied, valueStart) + redactor.replacement;
     copied = valueEnd;
-    QUERY_PARAM.lastIndex = valueEnd;
+    param.lastIndex = valueEnd;
   }
   return copied === 0 ? input : output + input.slice(copied);
 }
@@ -235,29 +315,29 @@ function redactQueryParams(input: string, redactor: CompiledRedactor): string {
 // Scans `name<sep>value` pairs. A non-sensitive pair consumes only its name and
 // separator so a credential inside the value (for example a query string after
 // `https:`) is still found.
-function redactAssignments(input: string, redactor: CompiledRedactor): string {
+function redactAssignments(input: string, redactor: CompiledRedactor, separator: RegExp): string {
   const { replacement } = redactor;
   let output = "";
   let copied = 0;
-  KEY_SEPARATOR.lastIndex = 0;
+  separator.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = KEY_SEPARATOR.exec(input)) !== null) {
+  while ((match = separator.exec(input)) !== null) {
     const valueStart = match.index + match[0].length;
-    if (!redactor.isSensitive(match[2]) || input.startsWith(replacement, valueStart)) {
-      continue;
-    }
-    const value = scanValue(input, valueStart);
+    if (!redactor.isSensitive(match[2])) continue;
+    const value = scanValue(input, valueStart, replacement);
     // An unquoted `Authorization:` or `Cookie:` header value is the whole line.
     const headerLine =
       (value === null || value.quote === "") &&
       match[3].includes(":") &&
       HEADER_LINE_KEYS.has(normalizeKey(match[2]));
-    const valueEnd = headerLine ? lineEnd(input, valueStart) : (value?.end ?? valueStart);
+    const valueEnd = headerLine
+      ? Math.max(lineEnd(input, valueStart), value?.end ?? valueStart)
+      : (value?.end ?? valueStart);
     if (valueEnd === valueStart) continue;
     const quote = headerLine ? "" : (value?.quote ?? "");
     output += input.slice(copied, valueStart) + quote + replacement + quote;
     copied = valueEnd;
-    KEY_SEPARATOR.lastIndex = copied;
+    separator.lastIndex = copied;
   }
   return copied === 0 ? input : output + input.slice(copied);
 }
@@ -265,8 +345,10 @@ function redactAssignments(input: string, redactor: CompiledRedactor): string {
 function redactText(value: string, redactor: CompiledRedactor): string {
   const { replacement } = redactor;
   let result = value.replace(URL_USERINFO, (_match, scheme: string) => `${scheme}${replacement}@`);
-  result = redactQueryParams(result, redactor);
-  result = redactAssignments(result, redactor);
+  result = redactQueryParams(result, redactor, QUERY_PARAM, QUERY_VALUE);
+  result = redactQueryParams(result, redactor, ENCODED_QUERY_PARAM, ENCODED_QUERY_VALUE);
+  result = redactAssignments(result, redactor, KEY_SEPARATOR);
+  result = redactAssignments(result, redactor, SPACED_KEY_SEPARATOR);
   result = result.replace(BEARER_TOKEN, (_match, scheme: string) => `${scheme} ${replacement}`);
   for (const pattern of redactor.patterns) {
     pattern.lastIndex = 0;
@@ -349,10 +431,13 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
       redacted.msg = redactText(String(value), redactor);
     } else if (key === "ctx") {
       redacted.ctx = redactNode(value, redactor, "", new Set(), 0);
-    } else if (redactor.isSensitive(key) && !redactor.allowlist.has(key)) {
-      redacted[key] = redactor.replacement;
-    } else {
+    } else if (redactor.allowlist.has(key)) {
       redacted[key] = redactNode(value, redactor, key, new Set(), 0);
+    } else {
+      // Field names are text too, exactly like nested keys.
+      redacted[redactText(key, redactor)] = redactor.isSensitive(key)
+        ? redactor.replacement
+        : redactNode(value, redactor, key, new Set(), 0);
     }
   }
   return redacted as unknown as LogEvent;

@@ -223,6 +223,83 @@ def test_flush_waits_for_in_flight_then_sends_the_rest() -> None:
     assert sink.stats()["sent"] == 2 and sink.stats()["queued"] == 0
 
 
+def _gated_then(*replies: int) -> tuple[Any, list[list[str]], Any]:
+    # The first request waits for the returned gate; later ones reply in order.
+    gate: dict[str, asyncio.Event] = {}
+    batches: list[list[str]] = []
+    rest = list(replies)
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        batches.append([e["msg"] for e in json.loads(body)["events"]])
+        if len(batches) == 1:
+            await gate.setdefault("first", asyncio.Event()).wait()
+            return 200
+        return rest.pop(0) if len(rest) > 1 else rest[0]
+
+    def release() -> None:
+        gate.setdefault("first", asyncio.Event()).set()
+
+    return transport, batches, release
+
+
+def test_flush_settles_events_handed_to_the_next_drain() -> None:
+    transport, batches, release = _gated_then(200)
+
+    async def scenario() -> dict[str, int]:
+        sink = SinkHttp(URL, transport=transport, batch_size=2, flush_interval_ms=60_000, timeout=60)
+        sink([event("1"), event("2")])
+        await eventually(lambda: sink.stats()["in_flight"] == 2)
+        sink([event("3"), event("4")])
+        flushing = asyncio.ensure_future(sink.flush())
+        await asyncio.sleep(0)
+        release()
+        await flushing
+        return sink.stats()
+
+    stats = asyncio.run(scenario())
+    assert stats == {"queued": 0, "in_flight": 0, "sent": 4, "dropped": 0, "failed_batches": 0}
+    assert batches == [["1", "2"], ["3", "4"]]
+
+
+def test_close_settles_a_handed_over_batch_through_retries() -> None:
+    transport, batches, release = _gated_then(503, 200)
+    errors: list[BaseException] = []
+
+    async def scenario() -> dict[str, int]:
+        sink = SinkHttp(
+            URL, transport=transport, batch_size=2, flush_interval_ms=60_000, timeout=60, backoff_ms=10, on_error=errors.append
+        )
+        sink([event("1"), event("2")])
+        await eventually(lambda: sink.stats()["in_flight"] == 2)
+        sink([event("3"), event("4")])
+        closing = asyncio.ensure_future(sink.close())
+        await asyncio.sleep(0)
+        release()
+        await closing
+        return sink.stats()
+
+    stats = asyncio.run(scenario())
+    assert stats == {"queued": 0, "in_flight": 0, "sent": 4, "dropped": 0, "failed_batches": 0}
+    assert batches == [["1", "2"], ["3", "4"], ["3", "4"]] and errors == []
+
+
+def test_closed_sink_drops_what_a_cancelled_drain_held_or_left_queued() -> None:
+    transport = Scripted("hang")
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(URL, transport=transport, batch_size=2, timeout=60, on_drop=lambda n, r: drops.append((n, r)))
+
+    async def scenario() -> None:
+        sink([event("a"), event("b")])
+        await eventually(lambda: sink.stats()["in_flight"] == 2)
+        sink([event("c")])
+        asyncio.ensure_future(sink.close())
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())  # asyncio.run cancels the hanging drain and close on exit
+    assert sink.stats()["queued"] == 0 and sink.stats()["dropped"] == 3
+    assert drops == [(3, "closed")]
+
+
 def test_close_flushes_then_drops() -> None:
     transport = Scripted()
     drops: list[tuple[int, str]] = []
@@ -413,6 +490,24 @@ def test_direct_call_bounds_each_event() -> None:
     asyncio.run(sink.flush())
     sent = json.loads(bodies[0])["events"][0]
     assert len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode()) <= MAX_EVENT_SIZE
+
+
+def test_request_body_is_encoded_as_measured_by_the_size_limit() -> None:
+    bodies: list[bytes] = []
+
+    async def capture(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return 200
+
+    sink = SinkHttp(URL, transport=capture, batch_size=1)
+    sink([event("€" * 15_000), event("€" * 40_000)])
+    asyncio.run(sink.flush())
+    envelope = len(b'{"events":[]}')
+    assert len(bodies) == 2
+    for body in bodies:
+        assert len(body) <= MAX_EVENT_SIZE + envelope
+        assert b"\\u20ac" not in body
+    assert json.loads(bodies[0])["events"][0]["msg"] == "€" * 15_000
 
 
 def _server(status: int, location: str | None, received: list[dict[str, Any]]) -> ThreadingHTTPServer:

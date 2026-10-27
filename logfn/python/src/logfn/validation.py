@@ -64,8 +64,21 @@ MAX_METADATA_CHARS = 256
 _METADATA_FIELDS = ("ts", "level", "name", "version", "traceId", "spanId", "requestId", "userId", "tenantId")
 
 
+def _unserializable(_value: object) -> str:
+    return UNSERIALIZABLE
+
+
+def json_bytes(value: Any) -> bytes:
+    """Compact UTF-8 JSON, the encoding both measured by the size limit and
+    sent by SinkHttp. Non-ASCII text is not escaped, so a measured event is
+    never larger on the wire."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_unserializable).encode(
+        "utf-8", "replace"
+    )
+
+
 def _byte_length(event: Any) -> int:
-    return len(json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "replace"))
+    return len(json_bytes(event))
 
 
 def _tag_text(tag: Any) -> str:

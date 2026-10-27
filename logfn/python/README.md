@@ -64,12 +64,15 @@ adds an HTTP sink only when `url` is given.
 
 `redact(patterns=None, replacement="[redacted]", keys=None, allowlist=None)`
 and `redact_event(event, ...)` apply the same rules as `@logfn/core` to every
-event field, object keys included: values under credential-named keys at any
-depth, URL credentials, credential query and fragment values (percent-decoded
-names; the value runs to the next `&`, `#`, whitespace or quote),
-`name=value` / `Name: value` pairs inside strings (quoted values consumed
-whole, escaped quotes included), bearer tokens, and email addresses by
-default. `patterns` replaces the default extra list
+event field, object keys and top-level field names included: values under
+credential-named keys at any depth, URL credentials, credential query and
+fragment values (percent-decoded names; the value runs to the next `&`, `#`,
+whitespace or quote; also inside a percent-encoded URL), `name=value` /
+`Name: value` pairs inside strings (quoted names may contain spaces; quoted
+values consumed whole, escaped quotes included; object and array values to
+their balanced closing bracket), bearer tokens, and email addresses by
+default. A value is left alone only when the replacement is all of it, and
+`replacement` must not be empty (`ValueError`). `patterns` replaces the default extra list
 (emails) but never disables the credential rules; `keys` adds sensitive key
 names; `allowlist` exempts exact paths such as `user.email` or `userId`.
 
@@ -93,8 +96,12 @@ names; `allowlist` exempts exact paths such as `user.email` or `userId`.
     backoff; other responses and exhausted retries drop the batch. Redirects
     are never followed: a 3xx drops the batch without a retry, so the body
     and credentials cannot reach another origin.
-  - `flush()` and `close()` never raise; events logged while `flush()` waits
-    keep their interval timer. `stats()` returns `queued`,
+  - `flush()` and `close()` never raise. `flush()` returns once every event
+    accepted before the call is sent or dropped, across batches and retries;
+    events logged while it waits keep their interval timer. `close()` drops
+    later events and delivers, or drops as `"closed"`, everything accepted
+    before it, also when the loop cancels its delivery. Request bodies are
+    UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit. `stats()` returns `queued`,
     `in_flight`, `sent`, `dropped` and `failed_batches`.
   - The default transport is the standard library (`urllib`) in a worker
     thread; pass `transport=async (url, body, headers, timeout) -> status` to

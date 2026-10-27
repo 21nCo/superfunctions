@@ -5,10 +5,11 @@
     "input.$error": "An object {\"$error\": {name, message, stack?, cause?}} is built as a native error: in TypeScript an Error with that name, message, optional stack (else the native one) and cause; in Python an exception class with that name, raised once so it has a traceback (stack is ignored), with __cause__. cause must be another $error.",
     "input.$ref": "An object {\"$ref\": \"dot.path\"} is replaced, after the whole ctx is built, by the object at that path from the ctx root (\"\" is the root), which creates circular or shared references.",
     "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
-    "options": "Optional redaction options: keys (extra sensitive key names) and allowlist (exempt paths: ctx paths like a.b or a[0], or userId, tenantId).",
+    "options": "Optional redaction options: keys (extra sensitive key names), allowlist (exempt paths: ctx paths like a.b or a[0], or userId, tenantId) and replacement (a non-empty marker used instead of the default).",
     "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
     "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId or a fields key) are compared, by deep equality.",
-    "input.fields": "Optional extra top-level event fields (request ids, fields outside the LogEvent schema) set by a caller-added stage."
+    "input.fields": "Optional extra top-level event fields (request ids, fields outside the LogEvent schema) set by a caller-added stage.",
+    "absent": "Optional list of strings that must not appear anywhere in the serialized redacted event (field names included)."
   },
   "vectors": [
     {
@@ -455,14 +456,15 @@
     },
     {
       "id": "escaped-quoted-values",
-      "description": "A quoted credential value is consumed whole: escaped quotes inside it, a trailing escaped backslash, single quotes and JSON that was serialized into a string again.",
+      "description": "A quoted credential value is consumed whole: escaped quotes inside it, a trailing escaped backslash, single quotes and JSON that was serialized into a string again. A quoted name of several words, such as \"api key\", is a key too.",
       "input": {
         "msg": "rejected {\"apiKey\":\"k\\\"MSG_TAIL\"}",
         "ctx": {
           "json": "{\"password\":\"prefix\\\"TAIL_SECRET\",\"ok\":true}",
           "backslashEnd": "{\"secret\":\"ends\\\\\",\"ok\":1}",
           "single": "password='it\\'s SINGLE_TAIL' user=ada",
-          "escapedJson": "\"{\\\"token\\\":\\\"abc\\\\\\\"ESCAPED_TAIL\\\",\\\"ok\\\":true}\""
+          "escapedJson": "\"{\\\"token\\\":\\\"abc\\\\\\\"ESCAPED_TAIL\\\",\\\"ok\\\":true}\"",
+          "spacedKey": "{\"api key\": \"SPACED_SECRET\", \"display name\": \"Ada\"}"
         }
       },
       "expected": {
@@ -471,13 +473,21 @@
           "json": "{\"password\":\"[redacted]\",\"ok\":true}",
           "backslashEnd": "{\"secret\":\"[redacted]\",\"ok\":1}",
           "single": "password='[redacted]' user=ada",
-          "escapedJson": "\"{\\\"token\\\":\\\"[redacted]\\\",\\\"ok\\\":true}\""
+          "escapedJson": "\"{\\\"token\\\":\\\"[redacted]\\\",\\\"ok\\\":true}\"",
+          "spacedKey": "{\"api key\": \"[redacted]\", \"display name\": \"Ada\"}"
         }
-      }
+      },
+      "absent": [
+        "MSG_TAIL",
+        "TAIL_SECRET",
+        "SINGLE_TAIL",
+        "ESCAPED_TAIL",
+        "SPACED_SECRET"
+      ]
     },
     {
       "id": "query-parameter-values",
-      "description": "A sensitive query or fragment parameter loses its whole value up to the next parameter, commas and semicolons included; names are percent-decoded and may be bracketed.",
+      "description": "A sensitive query or fragment parameter loses its whole value up to the next parameter, commas and semicolons included; names are percent-decoded and may be bracketed. A parameter inside a percent-encoded URL (a redirect target) is found too.",
       "input": {
         "msg": "GET /cb?password=one,TWO_SECRET&page=2",
         "ctx": {
@@ -486,7 +496,9 @@
           "fragment": "https://app.test/cb#access_token=FRAG,SECRET&state=s",
           "form": "grant_type=client&client%5Fsecret=FORM;SECRET",
           "inJson": "{\"url\":\"https://x.test/?token=JSON_Q_SECRET\",\"ok\":1}",
-          "safe": "/search?q=a,b;c&page=2"
+          "safe": "/search?q=a,b;c&page=2",
+          "nestedRedirect": "https://x.test/cb?redirect=https%3A%2F%2Fy.test%2Fcb%3Fapi_key%3DNESTED_SECRET%26page%3D2&x=1",
+          "nestedLower": "/login?next=%2Fhome%3fsecret%3dLOWER_SECRET%23top"
         }
       },
       "expected": {
@@ -497,13 +509,25 @@
           "fragment": "https://app.test/cb#access_token=[redacted]&state=s",
           "form": "grant_type=client&client%5Fsecret=[redacted]",
           "inJson": "{\"url\":\"https://x.test/?token=[redacted]\",\"ok\":1}",
-          "safe": "/search?q=a,b;c&page=2"
+          "safe": "/search?q=a,b;c&page=2",
+          "nestedRedirect": "https://x.test/cb?redirect=https%3A%2F%2Fy.test%2Fcb%3Fapi_key%3D[redacted]%26page%3D2&x=1",
+          "nestedLower": "/login?next=%2Fhome%3fsecret%3d[redacted]%23top"
         }
-      }
+      },
+      "absent": [
+        "TWO_SECRET",
+        "WHOLE_SECRET",
+        "BRACKET_SECRET",
+        "FRAG",
+        "FORM",
+        "JSON_Q_SECRET",
+        "NESTED_SECRET",
+        "LOWER_SECRET"
+      ]
     },
     {
       "id": "all-fields-and-keys",
-      "description": "Every top-level field is redacted, including request ids and fields outside the schema that a stage added, and credential text in object keys is redacted.",
+      "description": "Every top-level field is redacted, including request ids and fields outside the schema that a stage added, and credential text in object keys and top-level field names is redacted.",
       "input": {
         "msg": "sync finished",
         "ctx": {
@@ -527,7 +551,8 @@
             },
             "url": "/cb?code=1&state=s&id_token=ID_SECRET"
           },
-          "password": "TOP_LEVEL_SECRET"
+          "password": "TOP_LEVEL_SECRET",
+          "https://svc:FIELD_KEY_PW@h.test": "primary"
         }
       },
       "expected": {
@@ -552,8 +577,108 @@
           },
           "url": "/cb?code=1&state=s&id_token=[redacted]"
         },
-        "password": "[redacted]"
-      }
+        "password": "[redacted]",
+        "https://[redacted]@h.test": "primary"
+      },
+      "absent": [
+        "KEY_PW",
+        "ada@example.com",
+        "REQ_SECRET",
+        "STAGE_SECRET",
+        "ID_SECRET",
+        "TOP_LEVEL_SECRET",
+        "FIELD_KEY_PW"
+      ]
+    },
+    {
+      "id": "marker-prefixed-values",
+      "description": "A value that starts with the marker is only skipped when the marker is the whole value: text appended to it, or glued to a bracketed value, is redacted too. Already redacted text is unchanged.",
+      "input": {
+        "msg": "retry /cb?token=[redacted]QUERY_TAIL&page=2 password=[redacted]ASSIGN_TAIL done",
+        "ctx": {
+          "already": "password=[redacted] Cookie: [redacted]",
+          "glued": "api_key=abc[def]GLUED_TAIL next",
+          "json": "{\"secret\":\"[redacted]\",\"token\":[redacted]JSON_TAIL}"
+        }
+      },
+      "expected": {
+        "msg": "retry /cb?token=[redacted]&page=2 password=[redacted] done",
+        "ctx": {
+          "already": "password=[redacted] Cookie: [redacted]",
+          "glued": "api_key=[redacted] next",
+          "json": "{\"secret\":\"[redacted]\",\"token\":[redacted]}"
+        }
+      },
+      "absent": [
+        "QUERY_TAIL",
+        "ASSIGN_TAIL",
+        "GLUED_TAIL",
+        "JSON_TAIL"
+      ]
+    },
+    {
+      "id": "bracketed-values",
+      "description": "A credential key followed by an object or array loses the whole balanced value, in plain and escaped JSON and across lines; brackets inside quoted strings do not count, and an unbalanced value runs to the end of the text.",
+      "input": {
+        "msg": "upstream {\"credentials\":[\"AKIA_ONE\",\"AKIA_TWO\"],\"region\":\"eu\"}",
+        "ctx": {
+          "object": "{\"client_secret\":{\"value\":\"CS_VALUE\",\"note\":\"}\"},\"ok\":true}",
+          "escaped": "\"{\\\"apiKeys\\\":[\\\"TOK_ONE\\\",\\\"TOK_TWO\\\"],\\\"n\\\":1}\"",
+          "multiline": "password: {\n  \"v\": \"MULTI_SECRET\"\n}\nnext line",
+          "nested": "{\"auth\":{\"inner\":[{\"x\":\"]\"}],\"k\":\"NESTED_B\"},\"keep\":1}",
+          "unbalanced": "secret=[UNBALANCED_SECRET, more text"
+        }
+      },
+      "expected": {
+        "msg": "upstream {\"credentials\":[redacted],\"region\":\"eu\"}",
+        "ctx": {
+          "object": "{\"client_secret\":[redacted],\"ok\":true}",
+          "escaped": "\"{\\\"apiKeys\\\":[redacted],\\\"n\\\":1}\"",
+          "multiline": "password: [redacted]\nnext line",
+          "nested": "{\"auth\":[redacted],\"keep\":1}",
+          "unbalanced": "secret=[redacted]"
+        }
+      },
+      "absent": [
+        "AKIA_ONE",
+        "AKIA_TWO",
+        "CS_VALUE",
+        "TOK_ONE",
+        "TOK_TWO",
+        "MULTI_SECRET",
+        "NESTED_B",
+        "UNBALANCED_SECRET"
+      ]
+    },
+    {
+      "id": "custom-replacement",
+      "description": "A custom marker is used everywhere and is trusted only as a whole value, like the default one.",
+      "options": {
+        "replacement": "***"
+      },
+      "input": {
+        "msg": "login password=***TAIL_ONE token=[x]TAIL_TWO ?api_key=***&page=1",
+        "ctx": {
+          "note": "secret: {\"a\": [1, 2]} ok",
+          "password": "p-1",
+          "dsn": "postgres://svc:DSN_PW@db/app"
+        }
+      },
+      "expected": {
+        "msg": "login password=*** token=*** ?api_key=***&page=1",
+        "ctx": {
+          "note": "secret: *** ok",
+          "password": "***",
+          "dsn": "postgres://***@db/app"
+        }
+      },
+      "absent": [
+        "TAIL_ONE",
+        "TAIL_TWO",
+        "p-1",
+        "DSN_PW",
+        "[redacted]"
+      ]
     }
   ]
 }

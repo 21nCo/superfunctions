@@ -6,6 +6,7 @@ import {
   parseW3CTraceContext,
   redactEvent,
   redactSecFn,
+  sinkHttp,
   sample,
   withRequestIds,
   type LogEvent,
@@ -72,6 +73,12 @@ describe("redaction", () => {
     expect(out).not.toContain("password=x");
   });
 
+  it("rejects an empty replacement, which would make redacted text ambiguous", () => {
+    expect(() => redactSecFn({ replacement: "" })).toThrow("non-empty");
+    expect(() => redactEvent(event({ msg: "password=x" }), { replacement: "" })).toThrow("non-empty");
+    expect(() => sinkHttp({ url: "https://collector.test/ingest", redact: { replacement: "" } })).toThrow("non-empty");
+  });
+
   it("runs in linear time on adversarial input", () => {
     const inputs = [
       "a".repeat(200_000),
@@ -86,6 +93,15 @@ describe("redaction", () => {
       "?token=" + "\\".repeat(200_000) + "'",
       "&token=".repeat(30_000),
       '\\"token\\":'.repeat(20_000),
+      "password=" + "[".repeat(200_000),
+      "token=[" + '\\"'.repeat(100_000),
+      "secret={" + '"a\\'.repeat(60_000),
+      "token=[redacted]".repeat(15_000),
+      "%3Fa".repeat(50_000),
+      "%3Fapi_key%3D" + "%2F".repeat(60_000),
+      '"a '.repeat(60_000),
+      '"' + "a ".repeat(100_000),
+      "\\".repeat(100_000) + '"a b',
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));

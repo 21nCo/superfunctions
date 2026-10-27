@@ -280,6 +280,71 @@ describe("sinkHttp", () => {
       expect(sink.stats()).toMatchObject({ queued: 0, sent: 2 });
     });
 
+    it("flush settles events queued before the call even when a drain hands them to the next one", async () => {
+      let release!: () => void;
+      const requests: string[][] = [];
+      const fetch = vi.fn<HttpSinkFetch>((_url, init) => {
+        requests.push((JSON.parse(init.body) as { events: LogEvent[] }).events.map((e) => e.msg));
+        if (requests.length === 1) return new Promise((resolve) => (release = () => resolve(ok)));
+        return new Promise((resolve) => setTimeout(() => resolve(ok), 50));
+      });
+      const sink = sinkHttp({ url: URL, fetch, batch: 2, flushIntervalMs: 60_000, timeoutMs: 60_000 });
+      sink([event("1"), event("2")]);
+      sink([event("3"), event("4")]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sink.stats()).toMatchObject({ queued: 2, inFlight: 2 });
+      // Stats are read the moment flush resolves, not after the timers ran.
+      const settled = sink.flush().then(() => sink.stats());
+      release();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await settled).toMatchObject({ queued: 0, inFlight: 0, sent: 4, dropped: 0 });
+      expect(requests).toEqual([["1", "2"], ["3", "4"]]);
+    });
+
+    it("close settles a handed-over batch through its retries before resolving", async () => {
+      let release!: () => void;
+      let calls = 0;
+      const fetch = vi.fn<HttpSinkFetch>(() => {
+        calls += 1;
+        if (calls === 1) return new Promise((resolve) => (release = () => resolve(ok)));
+        if (calls === 2) return Promise.resolve({ ok: false, status: 503 });
+        return Promise.resolve(ok);
+      });
+      const onError = vi.fn();
+      const sink = sinkHttp({ url: URL, fetch, batch: 2, flushIntervalMs: 60_000, onError });
+      sink([event("1"), event("2")]);
+      sink([event("3"), event("4")]);
+      await vi.advanceTimersByTimeAsync(0);
+      const closed = sink.close().then(() => sink.stats());
+      release();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await closed).toEqual({ queued: 0, inFlight: 0, sent: 4, dropped: 0, failedBatches: 0 });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("close resolves only after a failing handed-over batch is dropped and reported", async () => {
+      let release!: () => void;
+      let calls = 0;
+      const fetch = vi.fn<HttpSinkFetch>(() => {
+        calls += 1;
+        if (calls === 1) return new Promise((resolve) => (release = () => resolve(ok)));
+        return new Promise((resolve) => setTimeout(() => resolve({ ok: false, status: 400 }), 50));
+      });
+      const onError = vi.fn();
+      const onDrop = vi.fn();
+      const sink = sinkHttp({ url: URL, fetch, batch: 2, flushIntervalMs: 60_000, onError, onDrop });
+      sink([event("1"), event("2")]);
+      sink([event("3"), event("4")]);
+      await vi.advanceTimersByTimeAsync(0);
+      const closed = sink.close().then(() => sink.stats());
+      release();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await closed).toEqual({ queued: 0, inFlight: 0, sent: 2, dropped: 2, failedBatches: 1 });
+      expect(onDrop).toHaveBeenCalledWith(2, "delivery_failed");
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+
     it("close flushes and then drops later events", async () => {
       const { fetch, sentMessages } = scriptedFetch(ok);
       const onDrop = vi.fn();

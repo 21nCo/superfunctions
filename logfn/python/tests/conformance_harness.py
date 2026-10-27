@@ -116,6 +116,9 @@ def _match(actual: Any, expected: Any, where: str) -> None:
 def expect_vector(actual: dict[str, Any], vector: dict[str, Any], mode: str) -> None:
     for field, expected in vector["expected"].items():
         _match(actual.get(field), expected, f"{vector['id']} ({mode}) {field}")
+    serialized = json.dumps(actual, ensure_ascii=False, default=str)
+    for text in vector.get("absent", []):
+        assert text not in serialized, f"{vector['id']} ({mode}): {text!r} is in the event"
 
 
 def _log_vector(logfn: ModuleType, vector: dict[str, Any], pipeline: list[Any], sink: Any) -> None:
@@ -169,6 +172,7 @@ def run_vector(logfn: ModuleType, vector: dict[str, Any]) -> list[str]:
             transport=transport,
             redact_keys=options.get("keys"),
             redact_allowlist=options.get("allowlist"),
+            **({"redact_replacement": options["replacement"]} if "replacement" in options else {}),
         )
 
     sink = http_sink()

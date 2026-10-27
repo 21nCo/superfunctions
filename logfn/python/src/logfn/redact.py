@@ -48,18 +48,32 @@ _HEADER_LINE_KEYS = frozenset({"authorization", "proxyauthorization", "cookie", 
 _URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+.\-]*://)[^ \t\n\r\f\v/?#@]+@", re.ASCII)
 # A query or fragment parameter: ``?name=``, ``&name=`` or ``#name=``.
 _QUERY_PARAM = re.compile(r"""[?&#]([^=&#? \t\n\r\f\v"'<>]+)=""", re.ASCII)
+# The same parameter inside a percent-encoded URL (a redirect target):
+# ``%3Fname%3D``, ``%26name%3D`` or ``%23name%3D``.
+_ENCODED_QUERY_PARAM = re.compile(
+    r"%(?:3F|26|23)((?:[A-Za-z0-9_.~\-]|%(?!3D|3F|26|23)[0-9A-Fa-f]{2})+)%3D", re.ASCII | re.IGNORECASE
+)
 # A query value ends at the next parameter, whitespace, a double quote or an
 # escaped quote (a URL inside escaped JSON); commas and semicolons are kept.
 # A backslash run is consumed whole, so matching stays linear.
 _QUERY_VALUE = re.compile(r"""(?:[^&# \t\n\r\f\v"<>\\]|\\+(?![\\"']))*""", re.ASCII)
+# An encoded value also ends at an encoded ``&`` or ``#``.
+_ENCODED_QUERY_VALUE = re.compile(
+    r"""(?:[^&#% \t\n\r\f\v"<>\\]|%(?!2[36])|\\+(?![\\"']))*""", re.ASCII | re.IGNORECASE
+)
 # The name may be quoted, also with escaped quotes (``\"name\":`` in JSON that
 # was itself serialized into a string), and may be percent-encoded. At most
 # seven backslashes (three levels of escaping) keep matching linear.
 _KEY_SEPARATOR = re.compile(
     r"""(\\{0,7}["']?)(?<![A-Za-z0-9_.%\-])([A-Za-z0-9_.%\-]+)\1([ \t]*[:=][ \t]*)""", re.ASCII
 )
+# A quoted name made of several words, such as ``"api key":``.
+_SPACED_KEY_SEPARATOR = re.compile(
+    r"""(\\{0,7}["'])([A-Za-z0-9_.%\-]+(?: [A-Za-z0-9_.%\-]+)+)\1([ \t]*:[ \t]*)""", re.ASCII
+)
 _AUTH_SCHEME = re.compile(r"(?:bearer|basic|digest|negotiate)[ \t]+", re.ASCII | re.IGNORECASE)
-_UNQUOTED_VALUE = re.compile(r"""[^ \t\n\r\f\v&;,#"'}\]]+""", re.ASCII)
+# Characters that end an unquoted value
+_UNQUOTED_STOP = frozenset(" \t\n\r\f\v&;,#\"'")
 _LINE_REST = re.compile(r"[^\r\n]*", re.ASCII)
 _BEARER_TOKEN = re.compile(r"(?<![A-Za-z0-9])(bearer)[ \t]+[A-Za-z0-9\-._~+/]+=*", re.ASCII | re.IGNORECASE)
 EMAIL_PATTERN = re.compile(
@@ -130,6 +144,9 @@ def _compile(
         if patterns is None
         else tuple(re.compile(p) if isinstance(p, str) else p for p in patterns)
     )
+    # An empty marker would make ``password= next`` read as a password of ``next``.
+    if not isinstance(replacement, str) or not replacement:
+        raise ValueError("redaction replacement must be a non-empty string")
     extra = frozenset(k for k in (_normalize_key(key) for key in (keys or ())) if k)
     return _Redactor(replacement, compiled, frozenset(allowlist or ()), extra)
 
@@ -161,11 +178,71 @@ def _quoted_value_end(text: str, start: int, slashes: int, quote: str) -> int:
     return index
 
 
-def _scan_value(text: str, start: int) -> tuple[int, str] | None:
-    # The credential value at ``start``: an optional auth scheme, then a
-    # complete quoted string (escaped quotes included) or an unquoted token.
-    # Returns its end and the quote, with its escaping backslashes, written
-    # around the replacement.
+def _unquoted_value_end(text: str, start: int) -> int:
+    # End of an unquoted value: whitespace, a separator, a quote or a closing
+    # bracket it did not open (``{token=x}``) ends it. Brackets opened inside
+    # it are part of it, so ``abc[1]TAIL`` is one value.
+    depth = 0
+    index = start
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in _UNQUOTED_STOP:
+            break
+        if char in "{[":
+            depth += 1
+        elif char in "}]":
+            if depth == 0:
+                break
+            depth -= 1
+        index += 1
+    return index
+
+
+def _bracketed_value_end(text: str, start: int) -> int:
+    # End of the bracketed value opening at ``start`` (``{`` or ``[``), across
+    # lines; quoted strings, also escaped ones, are skipped so brackets inside
+    # them do not count. An unbalanced value runs to the end of the input.
+    depth = 0
+    index = start
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in "{[":
+            depth += 1
+            index += 1
+        elif char in "}]":
+            depth -= 1
+            index += 1
+            if depth == 0:
+                return index
+        elif char in "\\\"'":
+            slashes = 0
+            while index + slashes < length and text[index + slashes] == "\\":
+                slashes += 1
+            quote = text[index + slashes : index + slashes + 1]
+            if quote in ('"', "'"):
+                index = _quoted_value_end(text, index + slashes + 1, slashes, quote)
+            else:
+                index += slashes
+        else:
+            index += 1
+    return index
+
+
+def _scan_value(text: str, start: int, replacement: str) -> tuple[int, str] | None:
+    # The credential value at ``start``: a value already replaced by
+    # ``replacement`` together with anything appended to it, a bracketed
+    # value, or an optional auth scheme followed by a complete quoted string
+    # (escaped quotes included) or an unquoted token. Returns its end and the
+    # quote, with its escaping backslashes, written around the replacement;
+    # None when nothing is left to redact.
+    if replacement and text.startswith(replacement, start):
+        end = _unquoted_value_end(text, start + len(replacement))
+        return (end, "") if end > start + len(replacement) else None
+    if text[start : start + 1] in ("{", "["):
+        # Text glued to the closing bracket, as in ``[x]TAIL``, is part of the value.
+        return _unquoted_value_end(text, _bracketed_value_end(text, start)), ""
     scheme = _AUTH_SCHEME.match(text, start)
     position = scheme.end() if scheme else start
     slashes = 0
@@ -176,31 +253,32 @@ def _scan_value(text: str, start: int) -> tuple[int, str] | None:
         end = _quoted_value_end(text, position + slashes + 1, slashes, quote)
         return end, text[position : position + slashes + 1]
     for origin in (start,) if position == start else (position, start):
-        unquoted = _UNQUOTED_VALUE.match(text, origin)
-        if unquoted:
-            return unquoted.end(), ""
+        end = _unquoted_value_end(text, origin)
+        if end > origin:
+            return end, ""
     return None
 
 
-def _redact_query_params(text: str, redactor: _Redactor) -> str:
+def _redact_query_params(text: str, redactor: _Redactor, param: Pattern[str], value: Pattern[str]) -> str:
     # Redacts sensitive query and fragment parameter values up to the next
-    # parameter, so ``?password=one,two`` loses all of ``one,two``.
-    replacement = redactor.replacement
+    # parameter, so ``?password=one,two`` loses all of ``one,two``. A value
+    # that is exactly the replacement is rewritten to itself, so this is
+    # idempotent.
     parts: list[str] = []
     copied = 0
     position = 0
     while True:
-        match = _QUERY_PARAM.search(text, position)
+        match = param.search(text, position)
         if match is None:
             break
         value_start = match.end()
         position = value_start
-        if not redactor.is_sensitive(match.group(1)) or text.startswith(replacement, value_start):
+        if not redactor.is_sensitive(match.group(1)):
             continue
-        value_end = cast(re.Match[str], _QUERY_VALUE.match(text, value_start)).end()
+        value_end = cast(re.Match[str], value.match(text, value_start)).end()
         if value_end == value_start:
             continue
-        parts.append(text[copied:value_start] + replacement)
+        parts.append(text[copied:value_start] + redactor.replacement)
         copied = value_end
         position = value_end
     if copied == 0:
@@ -209,7 +287,7 @@ def _redact_query_params(text: str, redactor: _Redactor) -> str:
     return "".join(parts)
 
 
-def _redact_assignments(text: str, redactor: _Redactor) -> str:
+def _redact_assignments(text: str, redactor: _Redactor, separator: Pattern[str]) -> str:
     # A non-sensitive pair consumes only its name and separator so a
     # credential inside the value (for example a query after ``https:``) is
     # still found.
@@ -218,14 +296,14 @@ def _redact_assignments(text: str, redactor: _Redactor) -> str:
     copied = 0
     position = 0
     while True:
-        match = _KEY_SEPARATOR.search(text, position)
+        match = separator.search(text, position)
         if match is None:
             break
         value_start = match.end()
         position = value_start
-        if not redactor.is_sensitive(match.group(2)) or text.startswith(replacement, value_start):
+        if not redactor.is_sensitive(match.group(2)):
             continue
-        value = _scan_value(text, value_start)
+        value = _scan_value(text, value_start, replacement)
         # An unquoted ``Authorization:`` or ``Cookie:`` header value is the whole line.
         header_line = (
             (value is None or value[1] == "")
@@ -233,7 +311,8 @@ def _redact_assignments(text: str, redactor: _Redactor) -> str:
             and _normalize_key(match.group(2)) in _HEADER_LINE_KEYS
         )
         if header_line:
-            value_end = cast(re.Match[str], _LINE_REST.match(text, value_start)).end()
+            line_end = cast(re.Match[str], _LINE_REST.match(text, value_start)).end()
+            value_end = max(line_end, value[0] if value else value_start)
         else:
             value_end = value[0] if value else value_start
         if value_end == value_start:
@@ -251,8 +330,10 @@ def _redact_assignments(text: str, redactor: _Redactor) -> str:
 def _redact_text(value: str, redactor: _Redactor) -> str:
     replacement = redactor.replacement
     result = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{replacement}@", value)
-    result = _redact_query_params(result, redactor)
-    result = _redact_assignments(result, redactor)
+    result = _redact_query_params(result, redactor, _QUERY_PARAM, _QUERY_VALUE)
+    result = _redact_query_params(result, redactor, _ENCODED_QUERY_PARAM, _ENCODED_QUERY_VALUE)
+    result = _redact_assignments(result, redactor, _KEY_SEPARATOR)
+    result = _redact_assignments(result, redactor, _SPACED_KEY_SEPARATOR)
     result = _BEARER_TOKEN.sub(lambda m: f"{m.group(1)} {replacement}", result)
     for pattern in redactor.patterns:
         result = pattern.sub(replacement, result)
@@ -339,10 +420,15 @@ def _redact_with(event: LogEvent, redactor: _Redactor) -> LogEvent:
             redacted[key] = _redact_text(str(value), redactor)
         elif key == "ctx":
             redacted[key] = _redact_node(value, redactor, "", set(), 0)
-        elif redactor.is_sensitive(key) and key not in redactor.allowlist:
-            redacted[key] = redactor.replacement
-        else:
+        elif key in redactor.allowlist:
             redacted[key] = _redact_node(value, redactor, key, set(), 0)
+        else:
+            # Field names are text too, exactly like nested keys.
+            redacted[_redact_text(key, redactor)] = (
+                redactor.replacement
+                if redactor.is_sensitive(key)
+                else _redact_node(value, redactor, key, set(), 0)
+            )
     return cast(LogEvent, redacted)
 
 

@@ -108,9 +108,9 @@ export interface HttpSinkStats {
 
 /** Sink returned by sinkHttp */
 export interface HttpSink extends Sink {
-  /** Send everything queued so far; never rejects */
+  /** Send or drop every event accepted before the call; never rejects */
   flush(): Promise<void>;
-  /** Stop accepting events, then flush; never rejects */
+  /** Stop accepting events, then send or drop everything accepted; never rejects */
   close(): Promise<void>;
   /** Snapshot of the delivery counters */
   stats(): HttpSinkStats;
@@ -216,6 +216,12 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const queue: LogEvent[] = [];
   const counters = { sent: 0, dropped: 0, failedBatches: 0 };
   let inFlight = 0;
+  // Positions in the stream of accepted events: `accepted` events were queued
+  // so far, `removed` left the front of the queue (sent, in flight or
+  // dropped), and the batch in flight starts at `inFlightStart`.
+  let accepted = 0;
+  let removed = 0;
+  let inFlightStart = 0;
   let closed = false;
   let flushTimer: Timer | null = null;
   let draining: Promise<void> | null = null;
@@ -366,6 +372,8 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       while (budget > 0 && queue.length > 0) {
         const events = queue.splice(0, Math.min(batchSize, budget));
         budget -= events.length;
+        inFlightStart = removed;
+        removed += events.length;
         inFlight = events.length;
         try {
           await deliver(events);
@@ -405,10 +413,15 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
           safely(() => onError(toError(error)));
           continue;
         }
-        if (redacted) queue.push(redacted);
+        if (redacted) {
+          queue.push(redacted);
+          accepted += 1;
+        }
       }
       if (queue.length > maxQueue) {
-        drop(queue.splice(0, queue.length - maxQueue).length, "queue_full");
+        const overflow = queue.splice(0, queue.length - maxQueue).length;
+        removed += overflow;
+        drop(overflow, "queue_full");
       }
       if (queue.length >= batchSize) {
         void drain();
@@ -420,14 +433,21 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     }
   } as HttpSink;
 
-  // Events logged while this waits are not part of it; drain() leaves them
-  // with an interval timer (or a new drain for a full batch).
+  // Whether an event accepted before position `target` is still queued or in flight
+  function unsettled(target: number): boolean {
+    return removed < target || (inFlight > 0 && inFlightStart < target);
+  }
+
+  // Waits until every event accepted before the call is sent or dropped, across
+  // as many drains as that takes (a drain only sends what was queued when it
+  // started). Events logged while this waits are not part of it; drain()
+  // leaves them with an interval timer (or a new drain for a full batch).
   sink.flush = async (): Promise<void> => {
     const release = hold();
+    const target = accepted;
     try {
       clearFlushTimer();
-      if (draining) await draining;
-      if (queue.length > 0) await drain();
+      while (unsettled(target)) await drain();
     } finally {
       release();
     }
