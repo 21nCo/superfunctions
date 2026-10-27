@@ -12,6 +12,7 @@ import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from re import Pattern
 from typing import Any, cast
 
@@ -62,23 +63,31 @@ DEFAULT_PATTERNS: tuple[Pattern[str], ...] = (EMAIL_PATTERN,)
 _NON_ALNUM = re.compile(r"[^a-z0-9]", re.ASCII)
 
 
+# Keys repeat heavily (the same names in every event, every query string), so
+# the per-key work is cached.
+@lru_cache(maxsize=4096)
 def _normalize_key(key: str) -> str:
     return _NON_ALNUM.sub("", key.lower())
 
 
-def is_sensitive_key(key: str, extra_keys: Iterable[str] = ()) -> bool:
-    """Whether a key name denotes a credential, using the built-in rules plus
-    any extra names (normalized the same way)."""
-    normalized = _normalize_key(key)
+@lru_cache(maxsize=4096)
+def _builtin_sensitive(normalized: str) -> bool:
     if not normalized:
         return False
     if normalized in _SENSITIVE_EXACT:
         return True
     if any(part in normalized for part in _SENSITIVE_PARTS):
         return True
-    if normalized.endswith(_SENSITIVE_SUFFIXES):
+    return normalized.endswith(_SENSITIVE_SUFFIXES)
+
+
+def is_sensitive_key(key: str, extra_keys: Iterable[str] = ()) -> bool:
+    """Whether a key name denotes a credential, using the built-in rules plus
+    any extra names (normalized the same way)."""
+    normalized = _normalize_key(key)
+    if _builtin_sensitive(normalized):
         return True
-    return any(_normalize_key(extra) == normalized for extra in extra_keys)
+    return bool(normalized) and any(_normalize_key(extra) == normalized for extra in extra_keys)
 
 
 @dataclass(frozen=True)
@@ -89,7 +98,8 @@ class _Redactor:
     extra_keys: frozenset[str]
 
     def is_sensitive(self, key: str) -> bool:
-        return is_sensitive_key(key) or _normalize_key(key) in self.extra_keys
+        normalized = _normalize_key(key)
+        return _builtin_sensitive(normalized) or normalized in self.extra_keys
 
 
 def _compile(

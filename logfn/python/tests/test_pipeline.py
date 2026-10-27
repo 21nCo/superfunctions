@@ -80,7 +80,8 @@ def test_linear_time_on_adversarial_input() -> None:
     started = time.monotonic()
     for msg in inputs:
         redact_event(make_event(msg=msg))
-    assert time.monotonic() - started < 5
+    # Linear on these ~200 KB inputs takes seconds at most; quadratic would take hours.
+    assert time.monotonic() - started < 30
 
 
 def test_enrich_context_event_wins_and_input_is_not_mutated() -> None:

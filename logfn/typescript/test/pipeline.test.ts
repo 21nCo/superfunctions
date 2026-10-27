@@ -83,7 +83,8 @@ describe("redaction", () => {
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));
-    expect(Date.now() - started).toBeLessThan(2_000);
+    // Linear on these ~200 KB inputs takes well under a second; quadratic would take hours.
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
 

@@ -40,6 +40,14 @@ class Scripted:
         return [messages for _, _, messages in self.calls]
 
 
+async def eventually(predicate: Any, timeout: float = 5.0) -> None:
+    """Polls instead of sleeping a fixed time, so a loaded machine cannot reorder the check."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "condition not reached in time"
+        await asyncio.sleep(0.005)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -69,18 +77,18 @@ def test_full_batch_on_running_loop_and_interval_for_partial() -> None:
     transport = Scripted()
 
     async def scenario() -> None:
-        sink = SinkHttp(URL, transport=transport, batch_size=3, flush_interval_ms=50)
+        sink = SinkHttp(URL, transport=transport, batch_size=3, flush_interval_ms=300)
         sink([event("1")])
         sink([event("2")])
         await asyncio.sleep(0)
         assert transport.calls == []
         sink([event("3")])
-        await asyncio.sleep(0.01)
+        await eventually(lambda: sink.stats()["sent"] == 3)
         assert transport.batches == [["1", "2", "3"]]
+        started = asyncio.get_running_loop().time()
         sink([event("4")])
-        await asyncio.sleep(0.01)
-        assert len(transport.calls) == 1
-        await asyncio.sleep(0.1)
+        await eventually(lambda: sink.stats()["sent"] == 4)
+        assert asyncio.get_running_loop().time() - started >= 0.29
         assert transport.batches == [["1", "2", "3"], ["4"]]
 
     asyncio.run(scenario())
@@ -293,7 +301,7 @@ def test_events_survive_a_finished_event_loop() -> None:
 
     async def second_loop() -> None:
         sink([event("second")])
-        await asyncio.sleep(0.1)
+        await eventually(lambda: sink.stats()["sent"] == 2)
 
     asyncio.run(second_loop())
     assert transport.batches == [["first", "second"]]
