@@ -7,6 +7,7 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 
 ## What works on Workers
 
+- **`@searchfn/adapter-sqlite`** — SQLite FTS5 search inside a [D1](https://developers.cloudflare.com/d1/) database through the `fromD1(env.DB)` binding. No external service. See [SQLite on D1](#sqlite-on-d1).
 - **`@searchfn/adapter-meilisearch`** — talks to Meili over HTTP. Works on Workers.
 - **`@searchfn/adapter-elasticsearch`** / **`@searchfn/adapter-opensearch`** — same; HTTP-based.
 
@@ -66,6 +67,63 @@ MEILI_URL = "https://search.example.com"
 # MEILI_API_KEY set via `wrangler secret put`
 ```
 
+## SQLite on D1
+
+`@searchfn/adapter-sqlite` keeps the index in FTS5 tables in a D1 database, so search needs no service outside Cloudflare.
+
+```typescript
+// worker.ts
+import { createSearchFnServer } from "@searchfn/server";
+import { SqliteAdapter, fromD1 } from "@searchfn/adapter-sqlite";
+
+interface Env {
+  SEARCH_DB: D1Database;
+}
+
+let sf: Awaited<ReturnType<typeof createSearchFnServer>> | null = null;
+
+async function getServer(env: Env) {
+  if (sf) return sf;
+  const adapter = new SqliteAdapter({ driver: fromD1(env.SEARCH_DB) });
+  // Idempotent: creates the tables on first run and is a no-op afterwards.
+  await adapter.initialize({
+    resources: [{ name: "articles", searchFields: ["title", "body"] }],
+  });
+  sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+  return sf;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    const server = await getServer(env);
+    return server.router.handle(request);
+  },
+};
+```
+
+`wrangler.toml`:
+
+```toml
+name = "searchfn-worker"
+main = "worker.ts"
+compatibility_date = "2026-03-01"
+
+[[d1_databases]]
+binding = "SEARCH_DB"
+database_name = "search"
+database_id = "<your-d1-database-id>"
+```
+
+With `@datafn/server`, pass `createSearchProvider(new SqliteAdapter({ driver: fromD1(env.DB) }))` as `searchProvider`; the index can share the database that holds your DataFn data.
+
+Notes:
+
+- Fuzzy search is not available; the adapter ignores `fuzzy` and logs a warning. Use `prefix: true` for search-as-you-type.
+- Every write is one `db.batch()` (one transaction). Large `index()` calls are split into transactions of `maxBatchSize` documents (default 500), and each statement binds a single parameter, well under D1's per-statement limit.
+- `wrangler dev` and `@cloudflare/vitest-pool-workers` run the same code against a local D1 database.
+
+See the [SQLite adapter reference](/docs/reference/adapters/sqlite) for query behavior and storage.
+
 ## Caveats
 
 - Worker invocations are short. If `initialize()` takes more than a few seconds, the first invocation after a deploy may time out. Mitigation: hit `/searchfn/status` from a warmer cron after deploy.
@@ -103,5 +161,6 @@ Each tenant gets a dedicated DO instance, which gets a dedicated Meilisearch ind
 
 ## See also
 
+- [SQLite adapter](/docs/reference/adapters/sqlite)
 - [Meilisearch adapter](/docs/reference/adapters/meilisearch)
 - [Scaling](/docs/documentation/deploy/scaling)

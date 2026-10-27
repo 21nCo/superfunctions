@@ -1,0 +1,184 @@
+---
+title: SQLite Adapter
+description: Server-side full-text search on SQLite FTS5 for Node, libSQL/Turso and Cloudflare D1.
+---
+
+The SQLite Adapter stores a SearchFn index in SQLite [FTS5](https://www.sqlite.org/fts5.html) tables inside a database you already have. It talks to SQLite through an injected driver, so the same package runs on Node with `better-sqlite3`, on libSQL or Turso with `@libsql/client`, and on Cloudflare Workers with a D1 binding.
+
+## When to Use
+
+- Server-side search without running a separate search service
+- Cloudflare Workers apps that keep their data in D1
+- Apps on SQLite, libSQL or Turso that want search next to their data
+- `@datafn/server` deployments on any of those backends
+
+For the on-device Swift SQLite index, see [Apple: SQLite adapter](/docs/documentation/apple/sqlite-adapter).
+
+## Installation
+
+```bash
+npm install @searchfn/adapter-sqlite
+```
+
+Install the driver you use as well. `better-sqlite3` and `@libsql/client` are optional peer dependencies; D1 needs no package.
+
+## Drivers
+
+| Binding | Driver | Transactions |
+| --- | --- | --- |
+| `fromBetterSqlite3(db)` | `better-sqlite3` `Database` | `db.transaction()` |
+| `fromLibsql(client)` | `@libsql/client` `Client` (file, embedded replica or Turso URL) | `client.batch(..., "write")` |
+| `fromD1(env.DB)` | Cloudflare D1 binding | `db.batch()` |
+
+The adapter never closes the driver: the code that opened the database owns it.
+
+### Custom drivers
+
+Any object with this shape works:
+
+```typescript
+interface SqliteDriver {
+  exec(sql: string): Promise<void>;
+  all<T>(sql: string, params?: readonly (string | number | null)[]): Promise<T[]>;
+  run(sql: string, params?: readonly (string | number | null)[]): Promise<{ changes?: number }>;
+  batch?(statements: { sql: string; params?: readonly (string | number | null)[] }[]): Promise<void>;
+}
+```
+
+`batch()` must run its statements in one transaction. Without it the adapter runs statements one by one, so an error part-way through a write can leave the index out of step with the stored documents. Call `rebuild(resource)` to repair it.
+
+## Usage
+
+### Node (better-sqlite3)
+
+```typescript
+import Database from "better-sqlite3";
+import { SqliteAdapter, fromBetterSqlite3 } from "@searchfn/adapter-sqlite";
+
+const adapter = new SqliteAdapter({ driver: fromBetterSqlite3(new Database("app.db")) });
+
+await adapter.initialize({
+  resources: [{ name: "bookmarks", searchFields: ["title", "notes"] }],
+});
+
+await adapter.index({
+  resource: "bookmarks",
+  documents: [
+    { id: "b1", fields: { title: "Subset bookmarks", notes: "sync design" }, metadata: { __ns: "team-a" } },
+  ],
+});
+
+const ids = await adapter.search({
+  resource: "bookmarks",
+  query: "subs book",
+  prefix: true,
+  fieldBoosts: { title: 3 },
+  namespaceFilter: ["team-a"],
+});
+```
+
+### libSQL / Turso
+
+```typescript
+import { createClient } from "@libsql/client";
+import { SqliteAdapter, fromLibsql } from "@searchfn/adapter-sqlite";
+
+const client = createClient({ url: process.env.TURSO_URL!, authToken: process.env.TURSO_TOKEN });
+const adapter = new SqliteAdapter({ driver: fromLibsql(client) });
+```
+
+### Cloudflare D1
+
+```typescript
+import { SqliteAdapter, fromD1 } from "@searchfn/adapter-sqlite";
+
+export default {
+  async fetch(request: Request, env: { DB: D1Database }) {
+    const adapter = new SqliteAdapter({ driver: fromD1(env.DB) });
+    const ids = await adapter.search({ resource: "bookmarks", query: "subset", prefix: true });
+    return Response.json(ids);
+  },
+};
+```
+
+See [Deploy: Cloudflare Workers](/docs/documentation/deploy/cloudflare-workers) for a full Worker.
+
+### With DataFn
+
+```typescript
+import { createDatafnServer } from "@datafn/server";
+import { createSearchProvider } from "@searchfn/datafn-provider";
+import { SqliteAdapter, fromD1 } from "@searchfn/adapter-sqlite";
+
+const server = await createDatafnServer({
+  schema,
+  database,
+  searchProvider: createSearchProvider(new SqliteAdapter({ driver: fromD1(env.DB) })),
+});
+```
+
+The server calls `initialize()` with each resource's `indices.search` fields at startup, updates the index after mutations, and passes the request namespace as `namespaceFilter` on search queries.
+
+## Configuration
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `driver` | `SqliteDriver` | — | Required. Use `fromBetterSqlite3`, `fromLibsql`, `fromD1` or your own driver. |
+| `tablePrefix` | `string` | `"searchfn"` | Prefix for adapter-owned tables. Letters, digits and underscores, up to 48 characters. |
+| `maxBatchSize` | `number` | `500` | Documents per write transaction. Larger `index()` calls are split into several transactions. |
+| `defaults` | `SearchDefaults` | — | `prefix` and `fieldBoosts` used when a query omits them. |
+| `observability` | `ObservabilityInput` | — | Logger and instrumentation. |
+
+## Capabilities
+
+| Capability | Supported |
+| --- | --- |
+| `persistent` | Yes |
+| `searchAll` | Yes |
+| `fuzzy` | No |
+| `prefix` | Yes |
+| `fieldBoosts` | Yes |
+| `metadataFilters` | Yes |
+
+## Behavior
+
+### Queries
+
+- Text is tokenized with FTS5's `unicode61 remove_diacritics 2` tokenizer, so matching ignores case and diacritics (`cafe` matches `Café`).
+- Every query term must match (terms are ANDed). A term may match in any searched field.
+- With `prefix: true`, every term matches as a prefix (`subs` matches `subset`).
+- Query text is always matched literally. FTS5 operators and syntax in user input (`AND`, `NEAR`, quotes, `*`, `column:`) are not interpreted. Only the first 32 distinct terms are used.
+- `fields` limits matching to those declared fields. Unknown field names are ignored; if none are known, the result is empty.
+- Results are ordered by BM25 (`bm25()`), highest first, with ties broken by document id. `fieldBoosts` sets the per-field BM25 weight (default `1`); weights must be finite and `>= 0`.
+- `namespaceFilter` and `regionFilter` match the `__ns` and `__region` document metadata. When a filter is set, documents without that metadata are excluded.
+
+### Fuzzy search
+
+Fuzzy search is not supported. The adapter reports `fuzzy: false` and ignores the `fuzzy` option (or a `fuzzy` default) instead of failing: the query runs as an exact or prefix match. The first such query logs a warning once per adapter instance, through the `observability` logger when one is configured and `console.warn` otherwise. Use `prefix: true` for search-as-you-type.
+
+### Storage
+
+For a table prefix `searchfn`, the adapter creates:
+
+- `searchfn_resources`: one row per resource with its declared fields and current index generation.
+- `searchfn_r<id>_docs`: the stored documents (id, id type, namespace, region and all fields as JSON).
+- `searchfn_r<id>_fts_<generation>`: the FTS5 index, one column per declared search field.
+
+Table names come from an internal integer id, so resource and field names are never used as SQL identifiers. Every value is a bound parameter; each write binds one JSON parameter, which keeps D1 below its per-statement parameter limit.
+
+### Writes and idempotency
+
+- `initialize()` creates tables idempotently. Calling it again with the same fields, in any order, changes nothing.
+- When the declared fields change, `initialize()` rebuilds the FTS index from the stored documents in one transaction, including fields that were stored but not indexed before. Other adapter instances on the same database detect the new index generation on their next operation and reload.
+- `index()` upserts. Re-indexing a document replaces its fields and metadata; within one call the last document with a given id wins. Ids keep their type: number ids come back as numbers.
+- `index()` on a resource that was never initialized registers it with the field names in that call.
+- `remove()` and `clear()` are idempotent, and both are no-ops for unknown resources.
+- `rebuild(resource)` recreates the FTS index from the stored documents in one transaction. It is idempotent.
+
+### Lifecycle
+
+`dispose()` makes the adapter reject further calls until `initialize()` is called again. It does not close the driver, and the stored index persists.
+
+## Testing
+
+The package runs the shared adapter conformance suite against `better-sqlite3`, `@libsql/client` and D1 inside workerd (`@cloudflare/vitest-pool-workers`). The D1 tests use a local database and need no Cloudflare account.

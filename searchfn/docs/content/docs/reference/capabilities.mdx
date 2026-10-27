@@ -36,6 +36,7 @@ interface SearchAdapterCapabilities {
 | `MemoryAdapter` | no | yes | yes | yes | yes | yes | 10_000 |
 | `IndexedDbAdapter` | yes (browser) | yes | yes | yes | yes | yes | 10_000 |
 | `PostgresAdapter` | yes | yes | partial (`pg_trgm`) | no | no | partial | 10_000 |
+| `SqliteAdapter` | yes | yes | no | yes | yes | partial | 500 (per transaction) |
 | `MeilisearchAdapter` | yes | yes | yes | partial | yes | yes | 10_000 |
 | `ElasticsearchAdapter` | yes | yes | yes | yes | yes | yes | 10_000 |
 | `OpenSearchAdapter` | yes | yes | yes | yes | yes | yes | 10_000 |
@@ -46,6 +47,7 @@ interface SearchAdapterCapabilities {
 
 - `PostgresAdapter` fuzzy requires the `pg_trgm` extension and uses similarity rather than Levenshtein.
 - `PostgresAdapter` multi-language uses Postgres's built-in language configs (`english`, `simple`, etc.), not the SearchFn pipeline.
+- `SqliteAdapter` multi-language folds case and diacritics with FTS5's `unicode61` tokenizer; it has no stemming or stop words. It ignores `fuzzy` and logs a warning once.
 - `MeilisearchAdapter` fieldBoosts use Meili's `attributesToSearchOn`/`rankingRules`, which aren't the same as in-engine boosts.
 - Swift multi-language ships English stemming and stop words; ES/FR/DE require custom pipelines.
 

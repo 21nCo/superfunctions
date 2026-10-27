@@ -1,0 +1,79 @@
+/// <reference types="@cloudflare/vitest-pool-workers" />
+import { env } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+import { SqliteAdapter, fromD1, type SqliteDriver } from "../../src/index";
+
+let run = 0;
+
+function adapterOn(driver: SqliteDriver, prefix: string): SqliteAdapter {
+  return new SqliteAdapter({ driver, tablePrefix: prefix });
+}
+
+async function generation(driver: SqliteDriver, prefix: string, resource: string): Promise<number> {
+  const [row] = await driver.all<{ generation: number }>(
+    `SELECT generation FROM "${prefix}_resources" WHERE resource = ?`,
+    [resource],
+  );
+  return row.generation;
+}
+
+describe("SqliteAdapter on D1 (workerd)", () => {
+  it("indexes 1,000 documents in one call and answers prefix queries with a namespace filter", async () => {
+    const driver = fromD1(env.DB);
+    const prefix = `d1t${++run}`;
+    const adapter = adapterOn(driver, prefix);
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title", "body"] }] });
+    await adapter.index({
+      resource: "bookmarks",
+      documents: Array.from({ length: 1000 }, (_, i) => ({
+        id: i,
+        fields: { title: i === 7 ? "Subset bookmarks" : `entry ${i}`, body: i % 5 === 0 ? "subscription" : "misc" },
+        metadata: { __ns: i % 2 === 0 ? "ns-a" : "ns-b" },
+      })),
+    });
+
+    const [count] = await driver.all<{ n: number }>(`SELECT count(*) AS n FROM "${prefix}_r1_docs"`);
+    expect(count.n).toBe(1000);
+    const ids = await adapter.search({ resource: "bookmarks", query: "sub", prefix: true, namespaceFilter: ["ns-b"], limit: 500 });
+    expect(ids).toHaveLength(101);
+    expect(ids).toContain(7);
+    expect(ids.every((id) => typeof id === "number" && id % 2 === 1)).toBe(true);
+    expect(await adapter.search({ resource: "bookmarks", query: "subset bookmarks", fieldBoosts: { title: 5 } })).toEqual([7]);
+  });
+
+  it("rolls back a failed D1 batch", async () => {
+    const driver = fromD1(env.DB);
+    await driver.exec("CREATE TABLE IF NOT EXISTS atomic_probe (label TEXT)");
+    await expect(
+      driver.batch!([
+        { sql: "INSERT INTO atomic_probe (label) VALUES (?)", params: ["kept?"] },
+        { sql: "INSERT INTO missing_table (label) VALUES (?)", params: ["boom"] },
+      ]),
+    ).rejects.toThrow(/missing_table/);
+    expect(await driver.all("SELECT label FROM atomic_probe")).toEqual([]);
+  });
+
+  it("rebuilds idempotently and lets a stale instance reload the new generation", async () => {
+    const driver = fromD1(env.DB);
+    const prefix = `d1t${++run}`;
+    const writer = adapterOn(driver, prefix);
+    const reader = adapterOn(driver, prefix);
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title", "body"] }] });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["body", "title"] }] });
+    expect(await generation(driver, prefix, "notes")).toBe(1);
+
+    expect(await reader.search({ resource: "notes", query: "beta" })).toEqual(["n1"]);
+    await reader.rebuild("notes");
+    await reader.rebuild("notes");
+    expect(await generation(driver, prefix, "notes")).toBe(3);
+    expect(await writer.search({ resource: "notes", query: "beta" })).toEqual(["n1"]);
+
+    await writer.remove({ resource: "notes", ids: ["n1"] });
+    await writer.remove({ resource: "notes", ids: ["n1"] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual([]);
+  });
+});

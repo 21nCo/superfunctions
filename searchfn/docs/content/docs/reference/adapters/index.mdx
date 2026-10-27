@@ -3,7 +3,7 @@ title: Adapters
 description: Choose the right search adapter — built-in engine or external backend.
 ---
 
-SearchFn ships five adapters that all implement the `SearchAdapter` contract. Two use SearchFn's **built-in search engine** (tokenization, BM25 scoring, inverted index, fuzzy matching). Three delegate to **external search backends**. Swap between them without changing your application code.
+SearchFn ships six adapters that all implement the `SearchAdapter` contract. Two use SearchFn's **built-in search engine** (tokenization, BM25 scoring, inverted index, fuzzy matching). Four delegate to **external search backends**. Swap between them without changing your application code.
 
 ## Adapter Comparison
 
@@ -23,6 +23,7 @@ These adapters are thin wrappers that translate the `SearchAdapter` contract int
 | Adapter | Environment | Persistent | Fuzzy | Field Boosts | Best for |
 | --- | --- | --- | --- | --- | --- |
 | [PostgresAdapter](/docs/reference/adapters/postgres) | Server | Yes | Yes | No | Production apps already using Postgres |
+| [SqliteAdapter](/docs/reference/adapters/sqlite) | Node / Workers (D1) / libSQL | Yes | No | Yes | Search inside SQLite, Turso or D1, including Cloudflare Workers |
 | [MeilisearchAdapter](/docs/reference/adapters/meilisearch) | Server | Yes | Yes | No | Dedicated search with typo tolerance and faceting |
 | [Elasticsearch/OpenSearch](/docs/reference/adapters/elastic-opensearch) | Server | Yes | Yes | Yes | Large-scale search with advanced relevance tuning |
 
@@ -35,9 +36,11 @@ These adapters are thin wrappers that translate the `SearchAdapter` contract int
 Both built-in engine adapters are production-ready. **Use an external backend** when your use case specifically needs:
 - Shared search state across multiple clients or servers
 - Datasets that exceed process or browser memory
-- Backend-specific features (Postgres `tsvector` tuning, Meilisearch facets, Elasticsearch analyzers)
+- Backend-specific features (Postgres `tsvector` tuning, SQLite FTS5 on D1, Meilisearch facets, Elasticsearch analyzers)
 
 **PostgresAdapter** is the simplest external option if you already run Postgres. It uses native `tsvector` full-text search with no additional infrastructure.
+
+**SqliteAdapter** keeps the index in SQLite FTS5 tables in your own database through an injected driver: `better-sqlite3` on Node, `@libsql/client` for libSQL or Turso, or a D1 binding on Cloudflare Workers. It ranks with BM25 and supports prefix search and field boosts, but not fuzzy matching.
 
 **MeilisearchAdapter** gives you a dedicated search engine with built-in typo tolerance and fast indexing. Good for user-facing search with high relevance requirements.
 

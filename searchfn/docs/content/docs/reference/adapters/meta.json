@@ -5,6 +5,7 @@
     "memory",
     "indexeddb",
     "postgres",
+    "sqlite",
     "meilisearch",
     "elastic-opensearch"
   ]
