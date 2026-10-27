@@ -202,6 +202,14 @@ describe("python target: options", () => {
     ["a version with a leading zero", option((options) => (options.package.version = "1.01")), "/options/package/version"],
     ["a module that is a keyword", option((options) => (options.module = "class")), "/options/module"],
     ["a module that is not lowercase", option((options) => (options.module = "Tasks")), "/options/module"],
+    ["a module that shadows the HTTP dependency", option((options) => (options.module = "httpx")), "/options/module"],
+    ["a module that shadows typing_extensions", option((options) => (options.module = "typing_extensions")), "/options/module"],
+    ["a module that shadows a dependency of httpx", option((options) => (options.module = "anyio")), "/options/module"],
+    ["a module that shadows a standard-library module the runtime imports", option((options) => (options.module = "asyncio")), "/options/module"],
+    ["a module that shadows a standard-library module the runtime does not import", option((options) => (options.module = "sqlite3")), "/options/module"],
+    ["a distribution name whose derived module shadows a dependency", option((options) => (options.package.name = "httpx")), "/options/package/name"],
+    ["a distribution name whose derived module shadows typing_extensions", option((options) => (options.package.name = "typing-extensions")), "/options/package/name"],
+    ["a distribution name whose derived module shadows the standard library", option((options) => (options.package.name = "asyncio")), "/options/package/name"],
     ["a license that is not an SPDX expression", option((options) => (options.package.license = "see LICENSE, 2026")), "/options/package/license"],
     ["a description with a line break", option((options) => (options.package.description = "two\nlines")), "/options/package/description"],
     ["a base URL with a dot segment", option((options) => (options.baseUrl = "https://api.example.test/a/../v1")), "/options/baseUrl"],
@@ -235,6 +243,9 @@ describe("python target: options", () => {
   it("escapes package metadata as TOML and keeps the generated files ASCII", () => {
     const result = generatePython(fixtureCatalog(), option((options) => (options.package.description = 'Tasks "SDK" \\ für Ärzte')));
     expect(fileOf(result, "pyproject.toml")).toContain('description = "Tasks \\"SDK\\" \\\\ f\\u00fcr \\u00c4rzte"');
+    // Literal backslash sequences stay literal: TOML reads each value back as it was configured.
+    const literal = generatePython(fixtureCatalog(), option((options) => (options.package.description = "literal \\x41, \\u00e9 and \\\\x7f")));
+    expect(fileOf(literal, "pyproject.toml")).toContain('description = "literal \\\\x41, \\\\u00e9 and \\\\\\\\x7f"');
   });
 
   it("requires base_url in the constructor when the config has no default", () => {

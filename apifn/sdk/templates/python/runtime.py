@@ -14,6 +14,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Itera
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from http.cookiejar import Cookie, CookieJar
 from typing import Any, Generic, Literal, TypeVar, Union
 from urllib.parse import quote, unquote, urlsplit
 
@@ -178,7 +179,8 @@ class TransportRequest:
 
 @dataclass
 class TransportResponse:
-    """A response whose body the client reads to the end, or abandons; `close` is awaited either way."""
+    """A response whose body the client reads to the end, or abandons; `close` is awaited once either way. When an
+    attempt times out or is cancelled, `close` runs at once, without waiting for a body read in progress to end."""
 
     status: int
     headers: Sequence[tuple[str, str]]
@@ -190,22 +192,42 @@ Transport: TypeAlias = Callable[[TransportRequest], Awaitable[TransportResponse]
 """Sends a request. Redirects must not be followed. Raising an exception is a network failure."""
 
 
+class _NoCookies(CookieJar):
+    """A cookie jar that keeps nothing, for the client HttpxTransport creates."""
+
+    def extract_cookies(self, response: Any, request: Any) -> None:
+        pass
+
+    def set_cookie(self, cookie: Cookie) -> None:
+        pass
+
+
 class HttpxTransport:
     """The default transport: an httpx.AsyncClient, created here unless one is passed. Redirects are never
-    followed and the client's own timeouts are off when it is created here: the SDK bounds every attempt."""
+    followed and the client's own timeouts are off when it is created here: the SDK bounds every attempt.
+
+    A request carries only what the operation and its credentials decide. The client's cookies, default headers,
+    default query parameters and auth are never added, so no state a response left behind (such as a Set-Cookie
+    session) and no ambient credential reaches another call. The client created here keeps no cookies at all; a
+    client passed in keeps its own cookie jar, which httpx may still update, but the SDK never sends from it. A
+    passed client's transport settings (proxies, TLS, limits, mounts) and event hooks still apply."""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._owned = client is None
-        self._client = client if client is not None else httpx.AsyncClient(timeout=None, follow_redirects=False)
+        self._client = client if client is not None else httpx.AsyncClient(timeout=None, follow_redirects=False, cookies=_NoCookies())
 
     async def __call__(self, request: TransportRequest) -> TransportResponse:
-        sent = self._client.build_request(
+        headers = list(request.headers)
+        if not any(name.lower() == "accept" for name, _ in headers):
+            # What fetch, and an httpx client by default, send when nothing else is asked for.
+            headers.append(("accept", "*/*"))
+        sent = httpx.Request(
             request.method,
             request.url,
-            headers=[(name.encode("latin-1"), value.encode("latin-1")) for name, value in request.headers],
+            headers=[(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers],
             content=request.content,
         )
-        response = await self._client.send(sent, stream=True, follow_redirects=False)
+        response = await self._client.send(sent, stream=True, auth=None, follow_redirects=False)
         headers = [(name.decode("latin-1"), value.decode("latin-1")) for name, value in response.headers.raw]
         return TransportResponse(status=response.status_code, headers=headers, body=response.aiter_bytes(), close=response.aclose)
 
@@ -612,9 +634,33 @@ class _TransportFailure(Exception):
 
 
 class _Abandonment:
-    """Set when a bounded task is given up, so a transport that ignored cancellation is not read any further."""
+    """The state of a bounded task. Once it is given up, a transport that ignored cancellation is not read any
+    further, and the response it returned is closed at once rather than when the task gets round to it."""
 
-    abandoned = False
+    def __init__(self) -> None:
+        self.abandoned = False
+        self._response: TransportResponse | None = None
+
+    def hold(self, response: TransportResponse) -> None:
+        """Records a received response, which `close` or `abandon` closes."""
+        self._response = response
+
+    def _take(self) -> TransportResponse | None:
+        response, self._response = self._response, None
+        return response
+
+    async def close(self) -> None:
+        """Closes the response unless it was already closed: whichever of this and `abandon` comes first closes it."""
+        response = self._take()
+        if response is not None:
+            await _close(response)
+
+    def abandon(self) -> None:
+        self.abandoned = True
+        response = self._take()
+        if response is not None:
+            # In the background: a body that ignores cancellation must not hold the call, nor keep its response open.
+            _drain(_close(response))
 
 
 # Tasks given up but not yet finished, and observer tasks, held so they are not collected while pending.
@@ -628,8 +674,8 @@ def _settled(task: asyncio.Future[Any]) -> None:
 
 
 def _abandon(task: asyncio.Future[Any], state: _Abandonment) -> None:
-    state.abandoned = True
     task.cancel()
+    state.abandon()
     _PENDING.add(task)
     task.add_done_callback(_settled)
 
@@ -940,6 +986,7 @@ class ApiRuntime:
             raise _TransportFailure("failed before a response was received") from error
         if not isinstance(response, TransportResponse):
             raise _TransportFailure(f"received {type(response).__name__} from the transport instead of a TransportResponse")
+        state.hold(response)
         try:
             if state.abandoned:
                 # The attempt was given up while a transport that ignored cancellation was still sending.
@@ -954,7 +1001,7 @@ class ApiRuntime:
                 raise _TransportFailure("failed while reading the response body") from error
             return status, headers, data
         finally:
-            await _close(response)
+            await state.close()
 
     def _observe(self, op: OperationSpec, error: ApiError, retryable: bool) -> None:
         hook = self._on_failure

@@ -91,6 +91,7 @@ import importlib.metadata, json, pathlib, sys
 import ${MODULE} as sdk
 root = pathlib.Path(sdk.__file__).parent
 print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.metadata.version("example-tasks-sdk"),
+  "summary": importlib.metadata.metadata("example-tasks-sdk")["Summary"],
   "requires": importlib.metadata.requires("example-tasks-sdk"), "digest": json.loads((root / "apifn.sdk-manifest.json").read_text())["catalog"]["digest"],
   "custom": sdk.${CUSTOM_EXPORT}(), "exports": sorted(sdk.__all__)}))
 `;
@@ -102,6 +103,8 @@ print(json.dumps({"file": sdk.__file__, "path": sys.path, "version": importlib.m
       expect(seen.file.startsWith(environment), name).toBe(true);
       expect(seen.path.filter((entry: string) => [repository, sdk, tests, empty].some((root) => entry.startsWith(root))), name).toEqual([]);
       expect(seen.version, name).toBe("1.0.0");
+      // The description, with quotes, non-ASCII text and literal backslash sequences, reads back from pyproject.toml unchanged.
+      expect(seen.summary, name).toBe(readJson("python/sdk.config.json").options.package.description);
       expect(seen.requires, name).toEqual(["httpx<0.29,>=0.28.1", "typing-extensions<5,>=4.12"]);
       expect(seen.digest, name).toBe(manifest.catalog.digest);
       expect(seen.custom, name).toBe("custom code survives regeneration");

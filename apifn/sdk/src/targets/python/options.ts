@@ -3,6 +3,7 @@
 import { containsCredentialValue, PACKAGE_NAME_PATTERN, type OperationCatalog } from "@apifn/contracts";
 import type { SdkDiagnostic } from "../../types.js";
 import { PY_MODULE_NAME, PY_TYPE_NAME, pyPascalCase, PYTHON_KEYWORDS } from "./naming.js";
+import { RUNTIME_DEPENDENCY_MODULES, STDLIB_MODULES } from "./reserved-modules.js";
 
 export interface PythonOptions {
   /** Distribution name (normalized PEP 503 form) and normalized PEP 440 version, so installed metadata equals the manifest. */
@@ -86,6 +87,11 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
   const module = root.module ?? (nameValid ? (name as string).replace(/-/g, "_") : "");
   if (typeof module !== "string" || module.length > 100 || !PY_MODULE_NAME.test(module) || PYTHON_KEYWORDS.has(module)) {
     if (nameValid || root.module !== undefined) fail("/module", "Expected a lowercase Python import name such as example_projects_sdk that is not a keyword.");
+  } else if (STDLIB_MODULES.has(module) || RUNTIME_DEPENDENCY_MODULES.has(module)) {
+    // The package would be imported in place of that module, by its own runtime and by everything else installed.
+    const shadowed = STDLIB_MODULES.has(module) ? "a standard-library module" : "a runtime dependency of the generated package";
+    const pointer = root.module !== undefined ? "/module" : "/package/name";
+    fail(pointer, `The import name "${module}" would shadow ${shadowed}; ${root.module !== undefined ? "choose another module" : "set module to another import name"}.`);
   }
 
   const clientName = root.clientName ?? `${pyPascalCase(catalog.api.id)}Client`;

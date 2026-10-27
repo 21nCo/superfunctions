@@ -512,6 +512,53 @@ def test_closes_a_response_that_arrives_after_the_attempt_gave_up() -> None:
     assert reads == []
 
 
+@pytest.mark.parametrize("ending", ["timeout", "cancellation"])
+def test_closes_an_abandoned_response_at_once_when_its_body_ignores_cancellation(ending: str) -> None:
+    closed: list[bool] = []
+    released = asyncio.Event()
+
+    async def stubborn() -> AsyncIterator[bytes]:
+        yield b"{"
+        # Ignores cancellation, and ends only once the response is closed.
+        while not released.is_set():
+            try:
+                await released.wait()
+            except asyncio.CancelledError:
+                pass
+
+    async def transport(request: Any) -> Any:
+        async def close() -> None:
+            closed.append(True)
+            released.set()
+
+        return pkg.TransportResponse(status=200, headers=[("content-type", "application/json")], body=stubborn(), close=close)
+
+    async def main() -> None:
+        try:
+            async with pkg.TasksClient(transport=transport, timeout=0.05 if ending == "timeout" else 5, retry={"max_attempts": 1}) as tasks:
+                started = time.monotonic()
+                if ending == "timeout":
+                    with pytest.raises(pkg.ApiTimeoutError):
+                        await tasks.get_health()
+                else:
+                    call = asyncio.ensure_future(tasks.get_health())
+                    await asyncio.sleep(0.05)
+                    call.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await call
+                assert time.monotonic() - started < 1
+                await asyncio.sleep(0.05)
+                # Closed without waiting for the reader, which the close then let finish: nothing is left pending.
+                assert closed == [True]
+                assert not runtime._PENDING
+        finally:
+            # Lets the reader end whatever happened, so a failure here cannot hang the event loop's shutdown.
+            released.set()
+
+    run(main())
+    assert closed == [True]
+
+
 # Destinations and transports.
 
 
@@ -558,6 +605,60 @@ def test_uses_an_injected_transport_for_every_attempt() -> None:
 
     assert run(main()) == {"items": []}
     assert seen == [("GET", "https://mock.example.test/projects/p/tasks")] * 2
+
+
+COOKIE = {"set-cookie": "session=secret; Path=/"}
+HEALTH_WITH_COOKIE = {"status": 200, "headers": {"content-type": "text/plain", **COOKIE}, "body": "ok"}
+
+
+def test_the_default_transport_never_stores_or_sends_response_cookies(server: FixtureServer) -> None:
+    # Each response sets a cookie: the first call's, a retried 503's, and those of two concurrent calls.
+    server.reset([scripted(HEALTH_WITH_COOKIE), scripted({"status": 503, "headers": COOKIE}), *[scripted(HEALTH_WITH_COOKIE)] * 3])
+
+    async def main() -> None:
+        async with client(server, credentials={"bearerAuth": "t"}) as tasks:
+            assert await tasks.get_health() == "ok"
+            assert await tasks.get_health() == "ok"
+            assert await asyncio.gather(tasks.get_health(), tasks.get_health()) == ["ok", "ok"]
+            await tasks.list_tasks(project_id="p")
+            kept.extend(tasks._runtime._owned_transport._client.cookies.jar)
+
+    kept: list[Any] = []
+    run(main())
+    assert len(server.requests) == 6
+    assert [request.headers.get("cookie") for request in server.requests] == [None] * 6
+    assert [request.headers.get("authorization") for request in server.requests] == [None] * 5 + ["Bearer t"]
+    assert kept == []
+
+
+def test_an_injected_httpx_client_adds_no_cookies_headers_parameters_or_auth(server: FixtureServer) -> None:
+    import httpx
+
+    task = {"status": 200, "headers": {"content-type": "application/json", **COOKIE}, "body": "{}"}
+    server.reset([scripted(HEALTH_WITH_COOKIE), scripted({"status": 503, "headers": COOKIE}), scripted(task), scripted(HEALTH_WITH_COOKIE)])
+    hooked: list[str] = []
+
+    async def hook(request: httpx.Request) -> None:
+        hooked.append(request.url.path)
+
+    async def main() -> None:
+        async with httpx.AsyncClient(
+            cookies={"preset": "1"}, headers={"x-ambient": "1"}, params={"ambient": "1"}, auth=("user", "password"), event_hooks={"request": [hook]}
+        ) as shared:
+            async with client(server, transport=pkg.HttpxTransport(shared), credentials={"apiKeyQuery": "k"}) as tasks:
+                assert await tasks.get_health() == "ok"
+                await tasks.get_task(project_id="p", task_id="t")
+                await tasks.get_health()
+            assert not shared.is_closed
+
+    run(main())
+    assert [(request.path, request.query) for request in server.requests] == [("/v1/health", ""), ("/v1/projects/p/tasks/t", "key=k"), ("/v1/projects/p/tasks/t", "key=k"), ("/v1/health", "")]
+    for request in server.requests:
+        assert "cookie" not in request.headers
+        assert "x-ambient" not in request.headers
+        assert "authorization" not in request.headers
+    # The client's transport configuration, such as its event hooks, still applies.
+    assert len(hooked) == 4
 
 
 def test_classifies_a_transport_failure_as_a_network_error() -> None:

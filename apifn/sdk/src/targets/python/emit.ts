@@ -433,9 +433,21 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
   return { files, diagnostics };
 }
 
-/** A TOML basic string; `pyString` writes only escapes TOML also reads (`\x` is replaced by `\u00`). */
+/** A TOML basic string of ASCII text: every other code point, and every character TOML gives meaning to, is escaped. */
 function toml(value: string): string {
-  return pyString(value).replace(/\\x([0-9a-f]{2})/g, "\\u00$1");
+  let out = '"';
+  for (const char of value) {
+    const code = char.codePointAt(0)!;
+    if (char === "\\") out += "\\\\";
+    else if (char === '"') out += '\\"';
+    else if (char === "\n") out += "\\n";
+    else if (char === "\r") out += "\\r";
+    else if (char === "\t") out += "\\t";
+    else if (code >= 0x20 && code < 0x7f) out += char;
+    else if (code <= 0xffff) out += `\\u${code.toString(16).padStart(4, "0")}`;
+    else out += `\\U${code.toString(16).padStart(8, "0")}`;
+  }
+  return `${out}"`;
 }
 
 function pyproject(context: SdkTargetContext<PythonOptions>): string {

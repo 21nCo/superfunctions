@@ -2,7 +2,7 @@
   "target": "python",
   "unsupported": "exclude",
   "options": {
-    "package": { "name": "example-tasks-sdk", "version": "1.0.0", "description": "Generated client for the shared ApiFn SDK fixture", "license": "MIT" },
+    "package": { "name": "example-tasks-sdk", "version": "1.0.0", "description": "Generated client for the shared ApiFn SDK fixture: \"quoted\", f\u00fcr, literal \\x41 and \\u00e9", "license": "MIT" },
     "clientName": "TasksClient",
     "baseUrl": "https://api.example.test/v1",
     "timeoutMs": 2000,
