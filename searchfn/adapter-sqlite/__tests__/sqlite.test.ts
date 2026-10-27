@@ -159,6 +159,23 @@ describe("query semantics", () => {
     expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: ["unknown"] })).toEqual([]);
   });
 
+  it("selects nothing for an explicitly empty fields or resources list and the defaults when omitted", async () => {
+    await adapter.initialize({ resources: [...BOOKMARKS, { name: "notes", searchFields: ["text"] }] });
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { text: "subset readers" } }] });
+    const ids = (results: Array<{ resource: string; id: string | number }>) =>
+      results.map(({ resource, id }) => `${resource}:${id}`).sort();
+
+    expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", fields: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", resources: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", resources: [], fields: ["body"] })).toEqual([]);
+
+    expect(await adapter.search({ resource: "bookmarks", query: "readers" })).toEqual(["b2"]);
+    expect(ids(await adapter.searchAll({ query: "readers" }))).toEqual(["bookmarks:b2", "notes:n1"]);
+    expect(ids(await adapter.searchAll({ query: "readers", resources: ["notes"] }))).toEqual(["notes:n1"]);
+    expect(ids(await adapter.searchAll({ query: "readers", fields: ["body"] }))).toEqual(["bookmarks:b2"]);
+  });
+
   it("enforces namespace and region filters and excludes documents without metadata", async () => {
     const teamA = await adapter.search({ resource: "bookmarks", query: "sub", prefix: true, namespaceFilter: ["team-a"] });
     expect([...teamA].sort()).toEqual(["b1", "b2", "b4"]);
@@ -189,6 +206,36 @@ describe("query semantics", () => {
     await reader.rebuild("nope");
     expect(await fresh.driver.all("SELECT name FROM sqlite_master")).toEqual([]);
     fresh.close();
+  });
+});
+
+describe("tie ordering", () => {
+  // U+E000 sorts before U+10000 in code point (SQLite BINARY) order but after it in UTF-16 order.
+  const BMP = "\uE000";
+  const ASTRAL = "\u{10000}";
+
+  it("orders equal scores by id code point at every truncation and in the cross-resource merge", async () => {
+    await adapter.initialize({
+      resources: [
+        { name: "a", searchFields: ["title"] },
+        { name: "b", searchFields: ["title"] },
+      ],
+    });
+    for (const resource of ["a", "b"]) {
+      await adapter.index({ resource, documents: [ASTRAL, BMP].map((id) => ({ id, fields: { title: "same text" } })) });
+    }
+    const pairs = (results: Array<{ resource: string; id: string | number }>) =>
+      results.map(({ resource, id }) => `${resource}:${id}`);
+    const all = [`a:${BMP}`, `a:${ASTRAL}`, `b:${BMP}`, `b:${ASTRAL}`];
+
+    expect(await adapter.search({ resource: "a", query: "same", limit: 1 })).toEqual([BMP]);
+    expect(await adapter.search({ resource: "a", query: "same" })).toEqual([BMP, ASTRAL]);
+    expect(pairs(await adapter.searchAll({ query: "same" }))).toEqual(all);
+    for (let limit = 1; limit <= all.length; limit++) {
+      expect(pairs(await adapter.searchAll({ query: "same", limit }))).toEqual(all.slice(0, limit));
+    }
+    expect(pairs(await adapter.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([`a:${BMP}`, `b:${BMP}`]);
+    expect(pairs(await adapter.searchAll({ query: "same", resources: ["b", "a"], limit: 3 }))).toEqual(all.slice(0, 3));
   });
 });
 

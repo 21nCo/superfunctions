@@ -188,8 +188,9 @@ export class SqliteAdapter implements SearchAdapter {
 
     const limit = normalizeLimit(params.limit);
     const resolved = this.resolveSearch(params, params.limitPerResource ?? limit);
+    // An explicit empty list selects no resources; only an omitted list means the default set.
     const resources = (
-      params.resources && params.resources.length > 0
+      params.resources
         ? Array.from(new Set(params.resources.map(requireResourceName)))
         : this.declared
           ? Array.from(this.declared).sort(compareText)
@@ -486,6 +487,8 @@ export class SqliteAdapter implements SearchAdapter {
     resource: string,
     search: ResolvedSearch,
   ): Promise<Array<{ id: string | number; score: number }>> {
+    // An explicit empty field list selects no fields; only an omitted list means every field.
+    if (search.fields?.length === 0) return [];
     const cached = this.resources.get(resource);
     if (cached && search.fields?.length && !search.fields.some((field) => cached.fields.includes(field))) {
       // No SQL would run against the cached generation, so a stale field list would never be
@@ -497,7 +500,7 @@ export class SqliteAdapter implements SearchAdapter {
       () => this.resolveForRead(resource),
       async (state) => {
         let columns: number[] | undefined;
-        if (search.fields && search.fields.length > 0) {
+        if (search.fields) {
           const requested = new Set(search.fields);
           columns = state.fields.flatMap((field, index) => (requested.has(field) ? [index] : []));
           if (columns.length === 0) return [];
@@ -718,10 +721,20 @@ function fieldWeight(boosts: Record<string, number> | undefined, field: string):
   return weight;
 }
 
-/** Code-unit order, independent of the host locale. */
+/**
+ * Code point order, independent of the host locale. It equals SQLite's BINARY collation on
+ * UTF-8 text, so ties merged here rank the same as ties truncated by `ORDER BY ... LIMIT`.
+ * UTF-16 code-unit order (`<`) would put U+10000 before U+E000.
+ */
 function compareText(left: string, right: string): number {
   if (left === right) return 0;
-  return left < right ? -1 : 1;
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index++) {
+    if (left.charCodeAt(index) !== right.charCodeAt(index)) {
+      return (left.codePointAt(index) ?? 0) < (right.codePointAt(index) ?? 0) ? -1 : 1;
+    }
+  }
+  return left.length < right.length ? -1 : 1;
 }
 
 function compareResults(left: SearchAllResult, right: SearchAllResult): number {

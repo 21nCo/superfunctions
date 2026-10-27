@@ -11,3 +11,4 @@
 - `index()` and `remove()` keep a registered but undeclared resource current, so declaring it again never returns stale records.
 - Writes are split by serialized bytes (512 KiB per bound value); an oversized document or id is rejected before anything is written.
 - The package is ESM-only; the CommonJS entry, which could not load its ESM dependencies, is removed.
+- An explicitly empty `fields` or `resources` list selects nothing instead of everything. Score ties break by resource and id in code point order (SQLite's binary order) before every limit and in the cross-resource merge.

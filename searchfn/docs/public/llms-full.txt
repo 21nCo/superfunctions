@@ -9669,8 +9669,8 @@ The server calls `initialize()` with each resource's `indices.search` fields at 
 - Every query term must match (terms are ANDed). A term may match in any searched field.
 - With `prefix: true`, every term matches as a prefix (`subs` matches `subset`).
 - Query text is always matched literally. FTS5 operators and syntax in user input (`AND`, `NEAR`, quotes, `*`, `column:`) are not interpreted. Only the first 32 distinct terms are used.
-- `fields` limits matching to those declared fields. Unknown field names are ignored; if none are known, the result is empty.
-- Results are ordered by BM25 (`bm25()`), highest first, with ties broken by document id. `fieldBoosts` sets the per-field BM25 weight (default `1`); weights must be finite and `>= 0`.
+- `fields` limits matching to those declared fields. Unknown field names are ignored; if none are known, the result is empty. An empty `fields` list selects no fields and returns no results, as does an empty `resources` list in `searchAll()`; omit either option to search every field or the default resources.
+- Results are ordered by BM25 (`bm25()`), highest first, with ties broken by resource name (in `searchAll()`) and then document id, both in Unicode code point order (SQLite's binary order). The same order applies before every `limit` and `limitPerResource` cut, so a smaller limit always returns a prefix of a larger one. `fieldBoosts` sets the per-field BM25 weight (default `1`); weights must be finite and `>= 0`.
 - `namespaceFilter` and `regionFilter` match the `__ns` and `__region` document metadata. When a filter is set, documents without that metadata are excluded.
 
 ### Fuzzy search

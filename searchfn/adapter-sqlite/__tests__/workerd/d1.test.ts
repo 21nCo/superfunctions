@@ -53,6 +53,16 @@ describe("SqliteAdapter on D1 (workerd)", () => {
     expect(await driver.all("SELECT label FROM atomic_probe")).toEqual([]);
   });
 
+  it("breaks score ties by id in code point order, the same before and after the merge", async () => {
+    const prefix = `d1t${++run}`;
+    const adapter = adapterOn(fromD1(env.DB), prefix);
+    await adapter.initialize({ resources: [{ name: "a", searchFields: ["title"] }] });
+    const ids = ["\u{10000}", "\uE000"];
+    await adapter.index({ resource: "a", documents: ids.map((id) => ({ id, fields: { title: "same text" } })) });
+    expect(await adapter.search({ resource: "a", query: "same", limit: 1 })).toEqual(["\uE000"]);
+    expect((await adapter.searchAll({ query: "same" })).map((result) => result.id)).toEqual(["\uE000", "\u{10000}"]);
+  });
+
   it("rebuilds idempotently and lets a stale instance reload the new generation", async () => {
     const driver = fromD1(env.DB);
     const prefix = `d1t${++run}`;
