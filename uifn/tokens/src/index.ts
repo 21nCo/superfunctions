@@ -1,6 +1,8 @@
 export * from './schema';
 export * from './validate';
 export * from './oklch';
+export * from './gamut';
+export * from './swift';
 
 export const tokensPackage = {
   name: '@uifn/tokens',

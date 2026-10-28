@@ -6,6 +6,8 @@ on:
     paths:
       - "Package.swift"
       - "*/swift/**"
+      - "uifn/tokens/**"
+      - "uifn/theme/**"
       - "scripts/swift-release.mjs"
       - "scripts/swift-release.test.mjs"
       - ".github/workflows/swift.yml"
@@ -14,6 +16,8 @@ on:
     paths:
       - "Package.swift"
       - "*/swift/**"
+      - "uifn/tokens/**"
+      - "uifn/theme/**"
       - "scripts/swift-release.mjs"
       - "scripts/swift-release.test.mjs"
       - ".github/workflows/swift.yml"
@@ -48,3 +52,40 @@ jobs:
         run: swift build --only-use-versions-from-resolved-file
       - name: swift test
         run: swift test --only-use-versions-from-resolved-file
+      - name: UIFnSwiftUI tests on an iOS simulator (UIKit trait collections)
+        run: |
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if ".SimRuntime.iOS-" in runtime:
+                  for device in devices[runtime]:
+                      if device["name"].startswith("iPhone"):
+                          print(device["udid"])
+                          raise SystemExit
+          raise SystemExit("no available iPhone simulator")
+          ')
+          xcodebuild test -scheme SuperfunctionsSwift-Package -destination "id=$udid" \
+            -only-testing:UIFnSwiftUITests -disableAutomaticPackageResolution
+
+  tokens:
+    name: Swift tokens match their themes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build @uifn/tokens and @uifn/theme
+        run: ./node_modules/.bin/turbo run build --filter=@uifn/theme
+      - name: Regenerating the committed Swift tokens produces no diff
+        run: |
+          node uifn/swift/scripts/generate-tokens.mjs
+          git diff --exit-code -- uifn/swift
+          test -z "$(git status --porcelain -- uifn/swift)"

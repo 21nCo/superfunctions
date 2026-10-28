@@ -1,7 +1,7 @@
 {
   "name": "@uifn/tokens",
   "version": "0.0.1",
-  "description": "Semantic design token schema and validation for uifn",
+  "description": "Semantic design token schema, validation and Swift token generation for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -12,9 +12,12 @@
       "require": "./dist/index.js"
     }
   },
+  "bin": {
+    "uifn-swift-tokens": "bin/uifn-swift-tokens.cjs"
+  },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts",
-    "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "build": "tsup src/index.ts src/swift-cli.ts --format esm,cjs --dts",
+    "dev": "tsup src/index.ts src/swift-cli.ts --format esm,cjs --dts --watch",
     "test": "vitest run --config vitest.config.ts",
     "lint": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -26,6 +29,7 @@
     "vitest": "^1.0.0"
   },
   "files": [
+    "bin",
     "dist",
     "README.md"
   ],
