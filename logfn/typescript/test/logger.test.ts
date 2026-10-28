@@ -141,6 +141,17 @@ describe("Logger", () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "async sink" }), { sink: "rejectingSink" });
   });
 
+  it("reports a thrown value with no string form to onError", async () => {
+    const onError = vi.fn();
+    const bare = Object.create(null) as object;
+    const logger = createLogger({ name: "svc", sinks: [function bareSink() { throw bare; }, async function bareAsync() { throw bare; }], onError });
+    expect(() => logger.info("m")).not.toThrow();
+    await Promise.resolve();
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "[unserializable]" }), { sink: "bareSink" });
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "[unserializable]" }), { sink: "bareAsync" });
+  });
+
   it("does not throw when onError itself throws", () => {
     const logger = createLogger({
       name: "svc",

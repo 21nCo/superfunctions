@@ -3,7 +3,7 @@
  */
 
 import type { LogEvent, PipelineStage, Sink } from "../types.js";
-import { isErrorValue, redactSecFn, type RedactionOptions } from "../pipeline/redact.js";
+import { redactSecFn, toError, type RedactionOptions } from "../pipeline/redact.js";
 import { sanitizeEvent, validateAndSerialize } from "../validation.js";
 
 /** Request passed to the fetch implementation */
@@ -178,10 +178,6 @@ const encoder = new TextEncoder();
 
 // Browsers reject keepalive requests whose body is over 64 KiB.
 const KEEPALIVE_MAX_BYTES = 60_000;
-
-function toError(error: unknown): Error {
-  return isErrorValue(error) ? error : new Error(String(error));
-}
 
 function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;

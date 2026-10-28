@@ -132,7 +132,7 @@ or a proxy keeps no inherited `toJSON`) and functions, symbols and bigints
 become `"[unserializable]"`, so serializing it runs no caller code. Own `__proto__` keys are kept as ordinary keys, here and in
 sanitization. Distinct keys that redact
 to the same text (two email keys) keep every value: later ones are stored
-under `"<key>#2"`, `"#3"` and so on, in key order.
+under `"<key>#2"`, `"#3"` and so on, in key order (an allowlisted top-level name too).
 
 Every value kind is handled alike by redaction and sanitization: `NaN` and
 `Infinity` become text; `new String`, `new Number` and `new Boolean` (JS only) become
@@ -141,7 +141,7 @@ their primitive, read with the built-in `valueOf` (never an own `toString` or
 character; boxed bigints and symbols, like bigints, symbols, functions and
 binary data, become `"[unserializable]"`. Any other object (class instances,
 `Map`, `Set`, `URL`, proxies) becomes a plain object of its own enumerable
-string keys and `toJSON` is never called, so a `URL` becomes `{}`. Kinds are found by brand, not `instanceof`, so an error, date or buffer from another realm (a `vm` context, an iframe) is handled like a local one (before Node 24, without `Error.isError`, a foreign error whose class sets its own tag, such as a `DOMException`, is read as a record).
+string keys and `toJSON` is never called, so a `URL` becomes `{}`. Kinds are found by brand, not `instanceof`, so an error, date or buffer from another realm (a `vm` context, an iframe) is handled like a local one (an error is what `Error.isError` or the brand check accepts, so a `DOMException` stays an error on every engine; a foreign one, whose class sets its own tag, is read as a record).
 Tags are text: strings (also `String` wrappers) are kept, numbers and booleans written as text, and any other tag value becomes `"[unserializable]"` in sanitization and redaction alike, as its JSON text would hide sensitive keys from redaction.
 
 Text rules are heuristics with known limits (the same in both runtimes):

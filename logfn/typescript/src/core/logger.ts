@@ -14,7 +14,7 @@ import type {
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
-import { isErrorValue, isRecord } from "../pipeline/redact.js";
+import { isErrorValue, isRecord, toError } from "../pipeline/redact.js";
 
 // The error handlers whose work is running: those on the stack, plus, while
 // an async sink failure is reported, those that were running when that sink
@@ -34,10 +34,6 @@ function callableName(fn: unknown): string {
   } catch {
     return "unknown";
   }
-}
-
-function toError(error: unknown): Error {
-  return isErrorValue(error) ? error : new Error(String(error));
 }
 
 // A call, base or child context that is not a record is kept under a key, never spread.

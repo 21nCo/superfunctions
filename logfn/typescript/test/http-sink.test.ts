@@ -210,6 +210,16 @@ describe("sinkHttp", () => {
       expect(sink.stats()).toMatchObject({ sent: 0, dropped: 1, failedBatches: 1 });
     });
 
+    it("reports a fetch rejection with no string form to onError", async () => {
+      const onError = vi.fn();
+      const fetch = vi.fn<HttpSinkFetch>(() => Promise.reject(Object.create(null)));
+      const sink = sinkHttp({ url: URL, fetch, batch: 1, retry: { attempts: 1 }, onError });
+      sink([event("m")]);
+      await sink.flush();
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "[unserializable]" }));
+      expect(sink.stats()).toMatchObject({ dropped: 1, failedBatches: 1 });
+    });
+
     it("times out each attempt separately", async () => {
       const { fetch } = scriptedFetch("hang", "hang", ok);
       const sink = sinkHttp({ url: URL, fetch, batch: 1, timeoutMs: 50, retry: { attempts: 3, backoffMs: 10 } });

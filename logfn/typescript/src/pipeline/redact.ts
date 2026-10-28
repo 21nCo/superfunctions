@@ -39,9 +39,10 @@ const BUFFER_BRANDS = new Map([["[object ArrayBuffer]", byteLength(ArrayBuffer)]
 export const isBinary = (value: object): boolean => ArrayBuffer.isView(value) || hasBrand(BUFFER_BRANDS.get(tagOf(value)), value);
 export const isDateValue = (value: unknown): value is Date =>
   typeof value === "object" && value !== null && (value instanceof Date || tagOf(value) === "[object Date]") && hasBrand(Date.prototype.getTime, value);
-export const isErrorValue = (value: unknown): value is Error => (Error as { isError?: (value: unknown) => boolean }).isError?.(value) ??
+export const isErrorValue = (value: unknown): value is Error => (Error as { isError?: (value: unknown) => boolean }).isError?.(value) === true ||
   (typeof value === "object" && value !== null && (value instanceof Error ? tagOf(value) !== "[object Object]" :
     tagOf(value) === "[object Error]" && attempt(() => typeof (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag] !== "string", false)));
+export const toError = (error: unknown): Error => isErrorValue(error) ? error : new Error(attempt(() => String(error), UNSERIALIZABLE));
 
 /** Nesting depth after which values are replaced by MAX_DEPTH */
 export const MAX_REDACTION_DEPTH = 32;
@@ -570,14 +571,13 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
       redacted.ctx = redactNode(value, redactor, "", new Set(), 0);
     } else if (key === "tags" && Array.isArray(value)) {
       redacted.tags = redactNode(Array.from({ length: value.length }, (_, index) => tagText(value[index])), redactor, key, new Set(), 0);
-    } else if (redactor.allowlist.has(key)) {
-      setOwn(redacted, key, redactNode(value, redactor, key, new Set(), 0));
     } else {
-      // Field names are text too, exactly like nested keys.
+      // Field names are text too, exactly like nested keys; an allowlisted name is kept, and any collision keeps both values.
+      const allowed = redactor.allowlist.has(key);
       setOwn(
         redacted,
-        uniqueKey(redacted, redactText(key, redactor), used),
-        redactor.isSensitive(key) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0)
+        uniqueKey(redacted, allowed ? key : redactText(key, redactor), used),
+        !allowed && redactor.isSensitive(key) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0)
       );
     }
   }

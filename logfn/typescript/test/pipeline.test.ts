@@ -138,6 +138,13 @@ describe("redaction", () => {
     // Linear on these ~200 KB inputs takes well under a second; quadratic would take hours.
     expect(Date.now() - started).toBeLessThan(10_000);
   });
+
+  it("keeps both values when an allowlisted top-level name collides with a redacted one", () => {
+    const input = { ...event(), "a@example.com": 1, "[redacted]": 2 } as LogEvent;
+    expect(redactEvent(input, { allowlist: ["[redacted]"] })).toMatchObject({ "[redacted]": 1, "[redacted]#2": 2 });
+    const reversed = { ...event(), "[redacted]": 2, "a@example.com": 1 } as LogEvent;
+    expect(redactEvent(reversed, { allowlist: ["[redacted]"] })).toMatchObject({ "[redacted]": 2, "[redacted]#2": 1 });
+  });
 });
 
 describe("enrichContext", () => {
@@ -179,6 +186,11 @@ describe("request ids", () => {
     expect(generated.spanId).toMatch(/^[0-9a-f]{16}$/);
     expect(generated.requestId).toMatch(/^[0-9a-f]{32}$/);
     expect(withRequestIds()(event({ requestId: "r1" }))).toEqual(event({ requestId: "r1" }));
+  });
+
+  it("has no header option: ids come from generate or the event, never a header", () => {
+    // @ts-expect-error header was documented but never read, so it is not an option
+    expect(withRequestIds({ header: "traceparent" })(event({ requestId: "r1" }))).toEqual(event({ requestId: "r1" }));
   });
 
   it("parses valid traceparent headers only", () => {

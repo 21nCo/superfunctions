@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isNativeError } from "node:util/types";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -583,15 +584,22 @@ describe("shared redaction vectors", () => {
       expect(isValidLogEvent(event(foreign("({ a: 1 })")))).toBe(true);
     });
 
-    describe("Error.isError, when present, decides; without it the fallback agrees on these values", () => {
+    describe("Error.isError or the brand fallback decides, so every engine branch agrees", () => {
       const native = Object.getOwnPropertyDescriptor(Error, "isError");
       afterEach(() => {
         if (native) Object.defineProperty(Error, "isError", native);
         else delete (Error as { isError?: unknown }).isError;
       });
-      const withoutIsError = () => Object.defineProperty(Error, "isError", { value: undefined, configurable: true, writable: true });
+      const setIsError = (value: unknown) => Object.defineProperty(Error, "isError", { value, configurable: true, writable: true });
+      // Engine branches: no Error.isError (Node < 24), a slot-based one as engines ship it (a DOMException has no
+      // [[ErrorData]], so it reads false), and the real one where present.
+      const branches: Array<[string, () => void]> = [
+        ["without Error.isError", () => setIsError(undefined)],
+        ["with a slot-based Error.isError", () => setIsError((value: unknown) => isNativeError(value))],
+        ...(native ? [["with the native Error.isError", () => Object.defineProperty(Error, "isError", native)] as [string, () => void]] : []),
+      ];
       const proxied = () => new Proxy(new Error("proxied"), {});
-      // [value, is an error] as Error.isError reads them (by internal slot).
+      // [value, is an error]
       const cases = (): Array<[string, unknown, boolean]> => [
         ["Error", new Error("m"), true],
         ["foreign Error", error(), true],
@@ -607,24 +615,78 @@ describe("shared redaction vectors", () => {
         return typeof out === "object" && out !== null && "name" in out && "message" in out && !("token" in out);
       };
 
-      it.each(cases().map(([name]) => name))("without Error.isError: %s", (name) => {
-        withoutIsError();
+      it("the slot-based Error.isError reads a DOMException as no error, as Node and Bun do", () => {
+        expect(isNativeError(new DOMException("m"))).toBe(false);
+        expect(isNativeError(new Error("m"))).toBe(true);
+      });
+
+      it.each(branches.flatMap(([branch]) => cases().map(([name]) => [branch, name])))("%s: %s", (branch, name) => {
+        branches.find(([label]) => label === branch)![1]();
         const [, value, expected] = cases().find(([label]) => label === name)!;
         expect(kind(value)).toBe(expected);
         expect(isValidLogEvent({ ts: iso, level: "info", msg: "m", name: "n", version: "1", ctx: value })).toBe(!expected);
       });
 
-      it("with Error.isError present, its answer is used at each call", () => {
-        const isError = vi.fn((value: unknown) => value === marked);
-        const marked = { message: "decided by Error.isError" };
-        Object.defineProperty(Error, "isError", { value: isError, configurable: true, writable: true });
-        expect(sanitizeValue(marked)).toMatchObject({ message: "decided by Error.isError", name: "undefined" });
-        expect(sanitizeValue(new Error("m"))).toEqual({});
-        expect(isError).toHaveBeenCalled();
+      // Everything a DOMException reaches: sanitizeValue, redactEvent, sinkHttp body and serverLogger console JSON.
+      const domOutputs = async () => {
+        const dom = () => new DOMException("aborted token=DOM_SECRET", "AbortError");
+        const controller = new AbortController();
+        controller.abort();
+        const reason = controller.signal.reason as DOMException;
+        const spy = fetchSpy();
+        const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+        const lines: string[] = [];
+        vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
+        for (const logger of [createLogger({ name: "dom", sinks: [sink], pipeline: [redactSecFn()] }), serverLogger({ name: "svc" })]) {
+          logger.error("direct", dom() as unknown as Record<string, unknown>);
+          logger.error("nested", { err: dom() });
+          logger.error("fetch aborted", reason as unknown as Record<string, unknown>);
+        }
+        await sink.flush();
+        vi.restoreAllMocks();
+        const event: LogEvent = { ts: iso, level: "error", msg: "m", name: "n", version: "1", ctx: { err: dom(), reason } };
+        const logged = [...spy.events(), ...lines.map((line) => JSON.parse(line) as LogEvent)].map((out) => out.ctx);
+        return { sanitized: sanitizeValue({ err: dom() }), redacted: redactEvent(event).ctx, logged, valid: isValidLogEvent({ ...event, ctx: dom() }) };
+      };
+      const stackless = (value: unknown) => JSON.parse(JSON.stringify(value).replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"-"'));
+
+      it.each(branches.map(([branch]) => branch))("%s: a DOMException keeps name, message and stack, direct, nested and as an abort reason", async (branch) => {
+        branches.find(([label]) => label === branch)![1]();
+        const out = await domOutputs();
+        const expectDom = (value: unknown, message = "aborted token=[redacted]") => {
+          expect(value).toMatchObject({ name: "AbortError", message });
+          expect(String((value as { stack?: unknown }).stack)).toContain("AbortError");
+        };
+        expect(out.sanitized).toMatchObject({ err: { name: "AbortError", message: "aborted token=DOM_SECRET" } });
+        expectDom((out.redacted as Record<string, unknown>).err);
+        expectDom((out.redacted as Record<string, unknown>).reason, "This operation was aborted");
+        expect(out.logged).toHaveLength(6);
+        for (const [index, ctx] of out.logged.entries()) {
+          const shape = ctx as Record<string, unknown>;
+          if (index % 3 === 0) expectDom(shape.error);
+          if (index % 3 === 1) expectDom(shape.err);
+          if (index % 3 === 2) expectDom(shape.error, "This operation was aborted");
+        }
+        expect(JSON.stringify([out.redacted, out.logged])).not.toContain("DOM_SECRET");
+        expect(out.valid).toBe(false);
       });
 
-      it.skipIf(!native)("the native Error.isError agrees with the fallback on every case", () => {
-        for (const [, value, expected] of cases()) expect(kind(value)).toBe(expected);
+      it("every branch writes the same DOMException output", async () => {
+        const outputs = [];
+        for (const [, select] of branches) {
+          select();
+          outputs.push(stackless(await domOutputs()));
+        }
+        for (const output of outputs.slice(1)) expect(output).toEqual(outputs[0]);
+      });
+
+      it("a value Error.isError reads as an error is one, at each call", () => {
+        const marked = { message: "decided by Error.isError" };
+        const isError = vi.fn((value: unknown) => value === marked);
+        setIsError(isError);
+        expect(sanitizeValue(marked)).toMatchObject({ message: "decided by Error.isError", name: "undefined" });
+        expect(sanitizeValue(new Error("m"))).toMatchObject({ name: "Error", message: "m" });
+        expect(isError).toHaveBeenCalled();
       });
     });
 

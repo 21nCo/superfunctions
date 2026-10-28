@@ -8,9 +8,6 @@ import type { LogEvent, PipelineStage } from "../types.js";
  * Request ID options
  */
 export interface RequestIdOptions {
-  /** Header name containing W3C TraceContext (default: 'traceparent') */
-  header?: string;
-
   /** Custom ID generator function */
   generate?: () => { traceId?: string; spanId?: string; requestId?: string };
 }
@@ -95,8 +92,6 @@ export function withRequestIds(options: RequestIdOptions = {}): PipelineStage {
       return event;
     }
 
-    // Try to parse from header if available (in practice this would come from context)
-    // For now, just generate new IDs
     const ids = generate();
 
     return {
