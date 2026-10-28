@@ -38,7 +38,7 @@ official `OAuthClientProvider`, including the McpFn provider from
 `MCPFN_AUTHORIZATION_REQUIRED`; pass the callback code to
 `completeAuthorization({ code, state })` and the client validates callback
 correlation, completes the SDK exchange, and reconnects without replaying a
-domain operation.
+domain operation. Generic OAuth providers must implement `validateAuthorizationState(state)` for interactive callback completion. The McpFn auth provider already implements it. Hosts that validate callback state themselves may explicitly configure `authorizationStateValidatedExternally: true` on `streamableHttpTarget`; this transfers correlation responsibility to the host. Migration: providers without a validator now fail closed at callback completion instead of silently exchanging an uncorrelated code.
 
 McpFn retries only connection establishment when explicitly configured. It
 never implicitly replays tool calls, writes, or other capability operations.

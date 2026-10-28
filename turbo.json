@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["**/.env.*local"],
+  "globalDependencies": ["**/.env.*local", "mcpfn/core/scripts/bundled-inputs.mjs", "mcpfn/core/scripts/verify-bundled-zod.mjs", "mcpfn/core/scripts/verify-bundled-inputs.mjs", "mcpfn/core/scripts/bundled-inputs.d.mts"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

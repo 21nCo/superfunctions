@@ -1,4 +1,4 @@
-import { terminateConformanceRunner } from "./conformance-process.js";
+import { terminateConformanceRunner, terminateConformanceRunnerOnExit } from "./conformance-process.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -24,6 +24,11 @@ import {
   type McpFnReportFailure,
 } from "./reports.js";
 
+const ownedConformanceSignalHandlers = new Set<() => void>();
+function hasForeignSignalHandler(signal: "SIGINT" | "SIGTERM"): boolean {
+  return process.listeners(signal).some(listener => !ownedConformanceSignalHandlers.has(listener as () => void));
+}
+
 export const OFFICIAL_CONFORMANCE_VERSION = "0.1.16";
 
 export interface OfficialConformanceOptions {
@@ -36,6 +41,10 @@ export interface OfficialConformanceOptions {
   verbose?: boolean;
   cwd?: string;
   stdio?: "inherit" | "pipe";
+  /** Runner deadline in milliseconds (1..2,147,483,647); defaults to 120,000. */
+  timeoutMs?: number;
+  /** Cancels the runner and its owned process group. */
+  signal?: AbortSignal;
   /** Environment names removed before spawning the upstream runner. */
   sensitiveEnvironmentVariables?: readonly string[];
 }
@@ -262,11 +271,14 @@ async function runConformance(
       `Official MCP conformance ${OFFICIAL_CONFORMANCE_VERSION} requires Node.js 22 or newer; current runtime is ${process.versions.node}`,
     );
   }
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
+    throw new RangeError("Conformance timeoutMs must be an integer from 1 through 2147483647");
+  }
+  if (options.signal?.aborted) return failedConformance("Official conformance was aborted");
   const args = buildOfficialConformanceArgs(options);
   const invocation = npxInvocation(args);
-  const childEnvironment = buildOfficialConformanceEnvironment(
-    options.sensitiveEnvironmentVariables,
-  );
+  const childEnvironment = buildOfficialConformanceEnvironment(options.sensitiveEnvironmentVariables);
 
   return await new Promise<OfficialConformanceResult>((resolve) => {
     const child = spawn(invocation.command, invocation.args, {
@@ -278,76 +290,115 @@ async function runConformance(
     let stdout = "";
     let stderr = "";
     let capturedBytes = 0;
-    let outputExceeded = false;
-    const capture = (chunk: string, stream: "stdout" | "stderr") => {
-      if (outputExceeded) return;
-      capturedBytes += Buffer.byteLength(chunk, "utf8");
-      if (capturedBytes > 262_144) {
-        outputExceeded = true;
-        stdout = ""; stderr = "";
-        // Always settle the failed report after the bounded termination attempt,
-        // even if the wrapper never emits close (for example, a failed taskkill).
-        void terminateConformanceRunner(child).finally(() => finish(1));
+    let settled = false;
+    let stopping = false;
+    let termination: Promise<void> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
+      process.removeListener("exit", onExit);
+      ownedConformanceSignalHandlers.delete(onSigint);
+      ownedConformanceSignalHandlers.delete(onSigterm);
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+      child.stdout?.removeListener("data", onStdout);
+      child.stderr?.removeListener("data", onStderr);
+    };
+    const finish = (code: number | null, forcedMessage?: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (forcedMessage !== undefined) {
+        resolve(failedConformance(forcedMessage));
         return;
       }
-      if (stream === "stdout") stdout += chunk.toString();
-      else stderr += chunk.toString();
-    };
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", chunk => capture(chunk, "stdout"));
-    child.stderr?.on("data", chunk => capture(chunk, "stderr"));
-    let settled = false;
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      const failure = normalizeMcpFnReportFailure(error, "upstream-conformance");
-      resolve({
-        formatVersion: 1,
-        kind: "mcpfn.official-conformance-report",
-        ok: false,
-        suiteVersion: OFFICIAL_CONFORMANCE_VERSION,
-        exitCode: 1,
-        stdout: "",
-        stderr: failure.message,
-        failure,
-      });
-    });
-    const finish = (code: number | null) => {
-      if (settled) return;
-      settled = true;
       let safeStdout = "";
       let safeStderr = "";
-      let outputFailure = false;
       try {
-        if (outputExceeded) throw new Error("capture limit");
         safeStdout = redactOutput(stdout);
         safeStderr = redactOutput(stderr);
       } catch {
-        outputFailure = true;
-        safeStdout = "";
-        safeStderr = outputExceeded ? "Conformance output exceeded its capture limit" : "Conformance output omitted because credential redaction exceeded its bounds";
+        resolve(failedConformance("Conformance output omitted because credential redaction exceeded its bounds"));
+        return;
       }
-      const exitCode = outputFailure ? 1 : (code ?? 1);
-      const failure = exitCode === 0
-        ? undefined
-        : normalizeMcpFnReportFailure(
-          new Error(safeStderr || safeStdout || `Official conformance exited ${exitCode}`),
-          "upstream-conformance",
-        );
-      resolve({
-        formatVersion: 1,
-        kind: "mcpfn.official-conformance-report",
-        ok: exitCode === 0,
-        suiteVersion: OFFICIAL_CONFORMANCE_VERSION,
-        exitCode,
-        stdout: safeStdout,
-        stderr: safeStderr,
+      const exitCode = code ?? 1;
+      const failure = exitCode === 0 ? undefined : normalizeMcpFnReportFailure(
+        new Error(safeStderr || safeStdout || `Official conformance exited ${exitCode}`), "upstream-conformance",
+      );
+      resolve({ formatVersion: 1, kind: "mcpfn.official-conformance-report", ok: exitCode === 0,
+        suiteVersion: OFFICIAL_CONFORMANCE_VERSION, exitCode, stdout: safeStdout, stderr: safeStderr,
         ...(failure ? { failure } : {}),
       });
     };
-    child.once("close", finish);
+    const stop = (message: string) => {
+      if (settled || stopping) return termination ?? Promise.resolve();
+      stopping = true;
+      // Wait for bounded group cleanup even when the wrapper emits close first.
+      termination = terminateConformanceRunner(child).finally(() => finish(1, message));
+      return termination;
+    };
+    const onExit = () => terminateConformanceRunnerOnExit(child);
+    const onAbort = () => { void stop("Official conformance was aborted"); };
+    const onProcessSignal = (signal: "SIGINT" | "SIGTERM") => {
+      // once() listeners may already be removed while their async shutdown is
+      // still running. Remember foreign handlers seen before or during dispatch.
+      const hostOwnsShutdown = foreignAtRegistration[signal] || hasForeignSignalHandler(signal);
+      void stop(`Official conformance interrupted by ${signal}`).finally(() => {
+        // Existing application handlers already received the original signal. If
+        // none remain, restore Node's default termination after group cleanup.
+        if (!hostOwnsShutdown && process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+      });
+    };
+    const onSigint = () => onProcessSignal("SIGINT");
+    const onSigterm = () => onProcessSignal("SIGTERM");
+    const onError = (error: Error) => {
+      if (!stopping) stop(String(redactOAuthValue(error.message)));
+    };
+    const onClose = (code: number | null) => {
+      if (stopping || settled) return;
+      stopping = true;
+      // A wrapper may exit while descendants with detached stdio remain alive.
+      termination = terminateConformanceRunner(child).finally(() => finish(code));
+    };
+    const capture = (chunk: string, stream: "stdout" | "stderr") => {
+      if (settled || stopping) return;
+      capturedBytes += Buffer.byteLength(chunk, "utf8");
+      if (capturedBytes > 262_144) {
+        stdout = ""; stderr = "";
+        stop("Conformance output exceeded its capture limit");
+        return;
+      }
+      if (stream === "stdout") stdout += chunk;
+      else stderr += chunk;
+    };
+    const onStdout = (chunk: string) => capture(chunk, "stdout");
+    const onStderr = (chunk: string) => capture(chunk, "stderr");
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.once("error", onError);
+    child.once("close", onClose);
+    const foreignAtRegistration = { SIGINT: hasForeignSignalHandler("SIGINT"), SIGTERM: hasForeignSignalHandler("SIGTERM") };
+    ownedConformanceSignalHandlers.add(onSigint);
+    ownedConformanceSignalHandlers.add(onSigterm);
+    process.on("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
+    process.once("exit", onExit);
+    timer = setTimeout(() => stop(`Official conformance timed out after ${timeoutMs}ms`), timeoutMs);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    // Cover cancellation between the initial check and listener registration.
+    if (options.signal?.aborted) onAbort();
   });
+}
+
+function failedConformance(message: string): OfficialConformanceResult {
+  const failure = normalizeMcpFnReportFailure(new Error(message), "upstream-conformance");
+  return { formatVersion: 1, kind: "mcpfn.official-conformance-report", ok: false,
+    suiteVersion: OFFICIAL_CONFORMANCE_VERSION, exitCode: 1, stdout: "", stderr: failure.message, failure };
 }
 
 const retainedConformanceCleanup = new WeakMap<Error, () => Promise<void>>();
@@ -381,6 +432,7 @@ export async function runAuthenticatedOfficialConformance(
   if ((headers === undefined) === (credential === undefined)) {
     throw new TypeError("Provide exactly one of credential or headers for authenticated conformance");
   }
+  if (options.signal?.aborted) return failedConformance("Official conformance was aborted");
   validateAuthenticatedConformanceUrl(conformance.url);
   const lease = await acquireRemoteCredential(
     credential ?? { headers: headers! },

@@ -68,10 +68,15 @@ export type McpFnAuthProviderLike<TSession extends McpFnAuthSessionLike> =
 export interface McpFnAuthProviderAdapterOptions<TSession extends McpFnAuthSessionLike> {
   provider: McpFnAuthProviderLike<TSession>;
   resource: string | URL;
+  /** Explicitly permit resource-agnostic sessions. Defaults to reject. */
+  unboundSessions?: "reject" | "allow";
+  /** Map trusted identity claims; nonempty resourceIds must bind this resource. Empty IDs require unboundSessions: "allow". */
   map?(session: TSession, request: Request): McpFnPrincipal | Promise<McpFnPrincipal>;
   authorize?(input: {
     principal: McpFnPrincipal;
     request: Request;
+    resource: URL;
+    resourceBound: boolean;
   }): boolean | Promise<boolean>;
   requiredScopes?:
     | string[]
@@ -108,23 +113,30 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           credentials: "omit",
         }));
       if (!session) return null;
-      const principal = options.map
+      if (session.expiresAt !== undefined && !(session.expiresAt instanceof Date)) return null;
+      if (session.resourceIds?.length && !session.resourceIds.some(id => matchesResource(id, resource))) return null;
+      const sessionExpiresAt = session.expiresAt === undefined
+        ? undefined : Math.floor(session.expiresAt.getTime() / 1_000);
+      const now = Math.floor(Date.now() / 1_000);
+      if (sessionExpiresAt !== undefined &&
+          (!Number.isFinite(sessionExpiresAt) || sessionExpiresAt <= now)) return null;
+      const mappedPrincipal = options.map
         ? await withRequestClone(request, (mapRequest) =>
           options.map!(session, mapRequest))
         : defaultPrincipal(session);
-      if (
-        options.provider.authorize &&
-        !(await options.provider.authorize(session, resource.toString()))
-      ) {
-        return null;
-      }
-      if (
-        options.authorize &&
-        !(await withRequestClone(request, (authorizeRequest) =>
-          options.authorize!({ principal, request: authorizeRequest })))
-      ) {
-        return null;
-      }
+      if (mappedPrincipal.expiresAt !== undefined &&
+          (!Number.isFinite(mappedPrincipal.expiresAt) || mappedPrincipal.expiresAt <= now)) return null;
+      // Mapping cannot extend the lifetime of the authenticated credential.
+      const expiresAt = sessionExpiresAt === undefined ? mappedPrincipal.expiresAt
+        : Math.min(sessionExpiresAt, mappedPrincipal.expiresAt ?? sessionExpiresAt);
+      const principal = { ...mappedPrincipal, ...(expiresAt !== undefined ? { expiresAt } : {}) };
+      const hasBinding = principal.resourceIds.some((id) => matchesResource(id, resource));
+      if (!hasBinding && (principal.resourceIds.length > 0 || options.unboundSessions !== "allow")) return null;
+      if (options.provider.authorize && !(await options.provider.authorize(session, resource.toString()))) return null;
+      if (options.authorize && !(await withRequestClone(request, authorizeRequest =>
+        options.authorize!({ principal, request: authorizeRequest, resource: new URL(resource), resourceBound: hasBinding })))) return null;
+      // Async policy evaluation must not carry credentials past their expiry.
+      if (expiresAt !== undefined && expiresAt <= Math.floor(Date.now() / 1_000)) return null;
       return {
         session,
         principal,
@@ -133,19 +145,30 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           clientId: principal.clientId,
           scopes: [...principal.scopes],
           ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
-          resource,
+          resource: new URL(resource),
           extra: {
             ...principal.extra,
+            resourceBinding: hasBinding ? "bound" : "unbound",
             subject: principal.subject,
             resourceIds: [...principal.resourceIds],
-            ...(principal.tenantId ? { tenantId: principal.tenantId } : {}),
-            ...(principal.regionId ? { regionId: principal.regionId } : {}),
+            tenantId: principal.tenantId,
+            regionId: principal.regionId,
             ...(principal.authMethods ? { authMethods: [...principal.authMethods] } : {}),
           },
         },
       };
     },
   };
+}
+
+function matchesResource(id: string, resource: URL): boolean {
+  try {
+    const candidate = new URL(id);
+    candidate.hash = "";
+    return candidate.toString() === resource.toString();
+  } catch {
+    return false;
+  }
 }
 
 async function withRequestClone<T>(

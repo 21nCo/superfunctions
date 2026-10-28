@@ -26,7 +26,7 @@ The wrapper publishes protected-resource metadata and passes verified auth infor
 
 ## Complete client OAuth
 
-`createMcpFnOAuthClientProvider()` implements the official provider contract. It validates redirects before browser launch, correlates callback state, and defaults to in-memory PKCE and token storage. Pass an encrypted application-provided store when persistence is needed. Native private-use redirects follow RFC 8252's reverse-domain policy by default; compatibility schemes need an explicit allowlist. The client completes the code exchange only after both `code` and `state` are supplied.
+`createMcpFnOAuthClientProvider()` implements the official provider contract. It validates redirects before browser launch, correlates callback state, and defaults to in-memory PKCE and token storage. Pass an encrypted application-provided store when persistence is needed. Native private-use redirects follow RFC 8252's reverse-domain policy by default; compatibility schemes need an explicit allowlist. With a state-validating provider, the client completes the code exchange only after both `code` and `state` are supplied and validation succeeds. Generic providers must implement `validateAuthorizationState`; hosts that validate correlation themselves can explicitly set `authorizationStateValidatedExternally: true` on `streamableHttpTarget`. Providers without either contract now fail closed.
 
 ## Reuse hosted identity
 

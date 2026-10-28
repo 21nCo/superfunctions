@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveReleaseTag } from './resolve-release-tag.mjs';
@@ -37,5 +37,17 @@ if (packed.length !== 1 || packed[0].name !== target.name || packed[0].version !
   throw new Error('Packed artifact identity does not match resolved release target');
 }
 const tarball = path.join(destination, packed[0].filename);
+// Check the exact core/auth archive that will be published, not just dist in
+// the checkout. These bundles must be produced from the repository lockfile.
+if (["@mcpfn/core", "@mcpfn/auth"].includes(target.name)) {
+  const extracted = await mkdtemp(path.join(tmpdir(), 'mcp-release-inventory-'));
+  try {
+    execFileSync('tar', ['-xzf', tarball, '-C', extracted], { stdio: 'pipe' });
+    execFileSync(process.execPath, [path.join(root, 'mcpfn/core/scripts/verify-bundled-inputs.mjs'), path.join(extracted, 'package')], { stdio: 'inherit' });
+  } finally {
+    await rm(extracted, { recursive: true, force: true });
+  }
+}
+
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `tarball=${tarball}\n`);
 console.log(JSON.stringify({ ...target, gitHead, tarball, integrity: packed[0].integrity }, null, 2));

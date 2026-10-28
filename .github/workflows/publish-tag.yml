@@ -60,9 +60,23 @@ jobs:
           exit 1
 
       - name: Install package dependencies
-        if: '!inputs.channel_only'
+        if: '!inputs.channel_only && steps.resolve.outputs.pkg_name != ''@mcpfn/core'' && steps.resolve.outputs.pkg_name != ''@mcpfn/auth'''
         working-directory: ${{ steps.resolve.outputs.pkg_path }}
         run: npm install --workspaces=false --package-lock=false
+
+      - name: Install locked MCP bundle build dependencies
+        if: '!inputs.channel_only && (steps.resolve.outputs.pkg_name == ''@mcpfn/core'' || steps.resolve.outputs.pkg_name == ''@mcpfn/auth'')'
+        run: npm ci --ignore-scripts --workspace "$PACKAGE_PATH" --include-workspace-root
+        env:
+          PACKAGE_PATH: ${{ steps.resolve.outputs.pkg_path }}
+
+      - name: Build MCP bundle dependencies from the lockfile
+        if: '!inputs.channel_only && (steps.resolve.outputs.pkg_name == ''@mcpfn/core'' || steps.resolve.outputs.pkg_name == ''@mcpfn/auth'')'
+        run: |
+          npm rebuild esbuild
+          ./node_modules/.bin/turbo run build --filter="$PACKAGE_NAME..." --concurrency=1
+        env:
+          PACKAGE_NAME: ${{ steps.resolve.outputs.pkg_name }}
 
       - name: Generate, build, typecheck, test and pack exact artifact
         if: '!inputs.channel_only'

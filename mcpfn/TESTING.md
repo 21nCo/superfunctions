@@ -195,3 +195,28 @@ the exact published version into a clean temporary consumer using the configured
 npm registry and runs the SDK-only external server fixture. Registry propagation
 is retried within a fixed window. This post-publication check is the published
 proof level; pull requests and the local gate remain workspace/packed proof.
+
+
+### Minimum runtimes and bundled inputs
+
+The Node 22 release gate requires `NODE18` and `NODE20` executable paths for
+exact Node 18.18.0 and 20.0.0. CI provisions these versions before restoring
+Node 22 as the gate host. The seven-package packed ecosystem fixture exercises
+installed imports, client/testing operations, OAuth discovery, CLI commands,
+stdio and authenticated HTTP on both minima. Node 18 HTTP requires the documented
+`--experimental-global-webcrypto` flag; the combined fixture uses that flag for
+its entire Node 18 process and does not prove non-HTTP operation without it.
+
+Core/Auth builds record actual SDK/Zod input versions and file hashes in
+`dist/embedded-inputs-{esm,cjs}.json`, then record final bundle hashes. The gate
+verifies those inventories after packing/installing, in addition to production
+`npm audit`. Inventory consistency is not an independent signature or a registry
+integrity comparison. Build from a clean integrity-checked install.
+
+Each gate command runs in an owned process group with a default ten-minute
+limit (individual steps can use shorter limits). The conformance API has a
+separate default two-minute deadline and supports cancellation. Both paths test
+cleanup of real descendants in their owned process groups. The release gate
+currently requires a POSIX host. Independently detached descendants need their
+own lifecycle cleanup; these tests do not establish arbitrary descendant cleanup
+or qualify Windows behavior.

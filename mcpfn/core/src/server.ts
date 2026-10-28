@@ -100,6 +100,10 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
    * therefore invoke it without retaining a session. This is the correct
    * place to attach protocol instrumentation.
    */
+  /** Maximum retained sessions plus pending initialization attempts (default 1024). */
+  maxSessions?: number;
+  /** Idle milliseconds after all HTTP responses finish (default 30 minutes). */
+  idleTimeoutMs?: number;
   configureRequestServer?: (
     server: McpFnServer<TContext>,
   ) => void | Promise<void>;
@@ -225,6 +229,7 @@ export class McpFnServer<TContext = undefined> {
   private readonly manifestOptions: CreateManifestOptions;
   private readonly pageSize: number;
   private readonly serverOptions: McpFnServerOptions<TContext>;
+  private readonly handlerClosers = new Set<() => Promise<void>>();
   private readonly requestServers = new Set<McpFnServer<TContext>>();
   private connected = false;
 
@@ -482,7 +487,8 @@ export class McpFnServer<TContext = undefined> {
                 error instanceof McpFnError ? error.code : "MCPFN_TOOL_ERROR",
               ...(issues ? { issues } : {}),
             });
-            if (error instanceof McpError && (error === routingError ||
+            // SDK classes may come from a different copy than the bundled runtime.
+            if (error instanceof Error && error.name === "McpError" && "code" in error && Number.isSafeInteger(error.code) && (error === routingError ||
                 ["profile-resolution", "catalog-projection", "argument-enrichment"].includes(currentStage))) throw error;
             const lifecycleError =
               error instanceof McpFnError && (error.details === undefined || (error.details !== null && typeof error.details === "object" && !Array.isArray(error.details)))
@@ -688,6 +694,7 @@ export class McpFnServer<TContext = undefined> {
       const result = await buildMcpFnEffectiveCatalog({
         canonicalTools: tools,
         knownTools,
+        schemaResources: this.registry.schemaDefinitions(),
         resolved,
       });
       await this.emitProfileEvidence({
@@ -761,8 +768,17 @@ export class McpFnServer<TContext = undefined> {
   ): Promise<
     (request: Request, options?: HandleRequestOptions) => Promise<Response>
   > {
-    const { configureRequestServer, ...transportOptions } = options;
+    const { configureRequestServer, maxSessions = 1024, idleTimeoutMs = 30 * 60 * 1000, ...transportOptions } = options;
+    if (!Number.isSafeInteger(maxSessions) || maxSessions <= 0) {
+      throw new RangeError("maxSessions must be a positive safe integer");
+    }
+    if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs <= 0 || idleTimeoutMs > 2_147_483_647) {
+      throw new RangeError("idleTimeoutMs must be a positive integer no greater than 2147483647");
+    }
     if (!transportOptions.sessionIdGenerator) {
+      if (this.serverOptions.taskStore) {
+        throw new Error("HTTP task storage requires sessionIdGenerator; stateless requests cannot isolate tasks between callers");
+      }
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
       }
@@ -795,70 +811,128 @@ export class McpFnServer<TContext = undefined> {
       };
     }
 
-    const sessions = new Map<
-      string,
-      {
-        server: McpFnServer<TContext>;
-        transport: WebStandardStreamableHTTPServerTransport;
-      }
-    >();
+    type Session = {
+      transport: WebStandardStreamableHTTPServerTransport;
+      authenticatedOwner?: string;
+      active: number;
+      timer?: ReturnType<typeof setTimeout>;
+      released: boolean;
+      release: () => Promise<void>;
+    };
+    const sessions = new Map<string, Session>();
+    // Reservations are taken synchronously, before configuration or SDK initialization.
+    const reservations = new Set<Session>();
+    let closed = false;
+    const closeHandler = async () => {
+      closed = true;
+      await Promise.all([...reservations].map((session) => session.release()));
+    };
+    this.handlerClosers.add(closeHandler);
+    const failure = (status: number, message: string) => new Response(JSON.stringify({
+      jsonrpc: "2.0", error: { code: status === 404 ? -32001 : -32000, message }, id: null,
+    }), { status, headers: { "content-type": "application/json" } });
+    const cancelIdle = (session: Session) => {
+      if (session.timer !== undefined) clearTimeout(session.timer);
+      session.timer = undefined;
+    };
+    const finishRequest = (session: Session) => {
+      let finished = false;
+      return async () => {
+        if (finished) return;
+        finished = true;
+        session.active--;
+        if (session.released || closed || session.active !== 0) return;
+        session.timer = setTimeout(() => {
+          // Remove ownership synchronously even if transport close takes time.
+          void session.release().catch(() => {});
+        }, idleTimeoutMs);
+        (session.timer as { unref?: () => void }).unref?.();
+      };
+    };
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
+      if (closed) return failure(503, "Server closed");
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (!session) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32001, message: "Session not found" },
-              id: null,
-            }),
-            {
-              status: 404,
-              headers: { "content-type": "application/json" },
-            },
-          );
+        if (!session || session.authenticatedOwner !== authenticatedSessionOwner(handleOptions)) {
+          return failure(404, "Session not found");
         }
-        return session.transport.handleRequest(request, handleOptions);
+        cancelIdle(session);
+        session.active++;
+        const finish = finishRequest(session);
+        try {
+          const response = await session.transport.handleRequest(request, handleOptions);
+          return await releaseAfterResponse(response, finish);
+        } catch (error) {
+          await finish();
+          throw error;
+        }
       }
 
+      const authenticatedOwner = authenticatedSessionOwner(handleOptions);
+      if (authenticatedOwner === null) {
+        return failure(403, "Authenticated HTTP sessions require a valid verified identity with a stable authInfo.extra.subject");
+      }
+      if (reservations.size >= maxSessions) return failure(503, "Session capacity reached");
       const requestServer = new McpFnServer(this.serverOptions);
       let initializedSessionId: string | undefined;
-      let released = false;
-      let transport: WebStandardStreamableHTTPServerTransport;
-      const release = async () => {
-        if (released) return;
-        released = true;
-        if (initializedSessionId) sessions.delete(initializedSessionId);
-        this.requestServers.delete(requestServer);
-        await requestServer.close();
-      };
-      transport = new WebStandardStreamableHTTPServerTransport({
+      const transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
         onsessioninitialized: async (id) => {
-          await transportOptions.onsessioninitialized?.(id);
+          if (closed || session.released) throw new Error("Server closed");
+          if (sessions.has(id)) throw new Error("Session ID is already in use");
           initializedSessionId = id;
-          sessions.set(id, { server: requestServer, transport });
+          sessions.set(id, session);
+          try {
+            await transportOptions.onsessioninitialized?.(id);
+            if (closed || session.released) throw new Error("Server closed");
+          } catch (error) {
+            await session.release();
+            throw error;
+          }
         },
         onsessionclosed: async (id) => {
-          sessions.delete(id);
+          if (sessions.get(id) === session) sessions.delete(id);
           try {
             await transportOptions.onsessionclosed?.(id);
           } finally {
-            await release();
+            await session.release();
           }
         },
       });
+      const session: Session = {
+        transport,
+        authenticatedOwner,
+        active: 1,
+        released: false,
+        release: async () => {
+          if (session.released) return;
+          session.released = true;
+          cancelIdle(session);
+          if (initializedSessionId && sessions.get(initializedSessionId) === session) {
+            sessions.delete(initializedSessionId);
+          }
+          reservations.delete(session);
+          this.requestServers.delete(requestServer);
+          await requestServer.close();
+        },
+      };
+      reservations.add(session);
       this.requestServers.add(requestServer);
-
+      const finish = finishRequest(session);
       try {
         await configureRequestServer?.(requestServer);
+        if (closed || session.released) return failure(503, "Server closed");
         await requestServer.connect(transport);
+        if (closed || session.released) return failure(503, "Server closed");
         const response = await transport.handleRequest(request, handleOptions);
-        if (initializedSessionId) return response;
-        return releaseAfterResponse(response, release);
+        // SDK initialization can convert callback errors into an HTTP error response.
+        if (!initializedSessionId || session.released || response.status >= 400) {
+          return await releaseAfterResponse(response, session.release);
+        }
+        return await releaseAfterResponse(response, finish);
       } catch (error) {
-        await release();
+        await session.release();
         throw error;
       }
     };
@@ -944,6 +1018,9 @@ export class McpFnServer<TContext = undefined> {
   }
 
   async close(): Promise<void> {
+    const handlerClosers = [...this.handlerClosers];
+    this.handlerClosers.clear();
+    await Promise.all(handlerClosers.map((close) => close()));
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));
@@ -961,4 +1038,26 @@ export function createMcpFnServer<TContext = undefined>(
 const PROFILE_EVIDENCE_CODES = new Set(["MCPFN_PROFILE_RESOLUTION_FAILED", "MCPFN_CATALOG_PROJECTION_FAILED", "MCPFN_AMBIGUOUS_CLIENT_PROFILE", "MCPFN_DUPLICATE_CLIENT_PROFILE", "MCPFN_FORGED_SERVER_ARGUMENT", "MCPFN_INVALID_ARGUMENTS", "MCPFN_INVALID_CLIENT_PROFILE", "MCPFN_INVALID_OUTPUT", "MCPFN_INVALID_PROFILE_ARGUMENTS", "MCPFN_INVALID_PROJECTED_CATALOG", "MCPFN_INVALID_VERIFIED_IDENTITY", "MCPFN_MISSING_TRUSTED_CONTEXT", "MCPFN_PROFILE_ARGUMENT_MUTATION", "MCPFN_PROFILE_ASYMMETRIC", "MCPFN_PROFILE_ENRICHER_REQUIRED", "MCPFN_PROJECTED_TOOL_DUPLICATE", "MCPFN_PROJECTED_TOOL_UNKNOWN", "MCPFN_SERVER_ARGUMENT_NOT_REQUIRED", "MCPFN_SERVER_ARGUMENT_TOOL_UNKNOWN", "MCPFN_TOOL_ERROR"]);
 function profileEvidenceCode(code: string): string {
   return PROFILE_EVIDENCE_CODES.has(code) ? code : "MCPFN_TOOL_ERROR";
+}
+
+/** Bind verified identity, never bearer-token bytes, so token refresh keeps its session. */
+function authenticatedSessionOwner(options?: HandleRequestOptions): string | undefined | null {
+  const auth = options?.authInfo;
+  if (!auth) return undefined;
+  // OAuth clientId identifies the application, not the human using it.
+  // Missing subject cannot safely fall back to that shared application ID.
+  if (typeof auth.clientId !== "string" || !auth.clientId ||
+      typeof auth.extra?.subject !== "string" || !auth.extra.subject.trim()) return null;
+  for (const claim of [auth.extra.tenantId, auth.extra.regionId]) {
+    if (claim !== undefined && typeof claim !== "string") return null;
+  }
+  if (auth.extra.issuer !== undefined &&
+      (typeof auth.extra.issuer !== "string" || !auth.extra.issuer.trim())) return null;
+  return JSON.stringify([
+    auth.clientId,
+    auth.extra.issuer ?? null,
+    auth.extra?.subject ?? null,
+    auth.extra?.tenantId ?? null,
+    auth.extra?.regionId ?? null,
+  ]);
 }

@@ -36,6 +36,14 @@ const MCPFN_PATTERNS = [
   /^scripts\/(?:gate|test)-mcpfn.*\.mjs$/,
 ];
 
+// Shared inputs must trigger the MCP gate without suppressing general JS CI.
+const MCPFN_TRIGGER_PATTERNS = [
+  ...MCPFN_PATTERNS,
+  ...JS_GLOBAL_PATTERNS,
+  /^packages\/(?:oauth-core|oauth-storage|auth|admin|db|http|observability)\//,
+  /^datafn\/(?:core|server)\//,
+];
+
 const MCPFN_SUPPORT_PATTERNS = [
   /^README\.md$/,
   /^release-packages\.json$/,
@@ -254,7 +262,7 @@ let fullPython = false;
 
 const changedJsDirs = new Set();
 const changedPythonNames = new Set();
-const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
+const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_TRIGGER_PATTERNS, changedPath));
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {

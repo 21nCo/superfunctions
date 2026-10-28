@@ -1,9 +1,10 @@
-import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
+import { bundledInputs } from "./scripts/bundled-inputs.mjs";
 
-const require = createRequire(import.meta.url);
-const zodRoot = dirname(require.resolve("zod/package.json"));
+const packageRoot = dirname(fileURLToPath(import.meta.url));
+const { zodRoot, plugin } = bundledInputs(packageRoot);
 
 export default defineConfig({
   entry: ["src/index.ts"],
@@ -23,5 +24,6 @@ export default defineConfig({
   esbuildOptions(options) {
     options.alias = { ...options.alias, zod: zodRoot };
   },
+  esbuildPlugins: [plugin],
   noExternal: ["@modelcontextprotocol/sdk", "zod"],
 });

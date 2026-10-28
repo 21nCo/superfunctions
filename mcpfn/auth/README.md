@@ -18,6 +18,8 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
+Provider adapters require a matching normalized resource claim by default. `authorize` hooks do not implicitly permit resource-agnostic credentials. Set `unboundSessions: "allow"` only when the deployment intentionally accepts them; the resulting `authInfo.extra.resourceBinding` is `"unbound"`. Nonempty conflicting raw or mapped resource claims are rejected even with this option. Adapter authorization hooks receive the configured `resource` and `resourceBound` status. Malformed expiry values fail with 401; provider sessions use `Date` and mapped principals/verifiers use epoch seconds. Stateful HTTP also requires a stable verified `authInfo.extra.subject`, with tenant/region claims where applicable; OAuth client ID alone cannot distinguish users sharing an application.
+
 ## Client provider
 
 `createMcpFnOAuthClientProvider()` implements the official
@@ -37,6 +39,8 @@ const provider = createMcpFnOAuthClientProvider({
   openAuthorization: (url) => browser.open(url),
 });
 ```
+
+Credentials saved by SDK 1.32.1 carry an `issuer` binding. Custom session stores must preserve that field unchanged on client registrations and tokens. On upgrade, registrations or tokens without this binding are discarded before the provider returns them to the SDK, requiring registration/authorization again. This intentionally prevents an MCP server's changed authorization metadata from sending old client secrets or refresh tokens to a different issuer. Do not stamp legacy secrets with an issuer selected by fresh discovery; obtain new credentials from the trusted authorization server. Encrypted stores follow the same migration rule. For operator-pre-registered clients, reseed credentials with the exact authorization-server URL from trusted local configuration before upgrade; do not infer it from an MCP server's newly advertised metadata. Legacy unbound registrations are cleared, so retain provisioning configuration outside session storage. Saves verify that bound issuer values survive storage and report MCPFN_OAUTH_STORE_DROPPED_ISSUER if a custom store strips them. Legacy tokens are cleared locally during revoke; remote revocation callbacks receive only issuer-bound tokens and must use that trusted issuer.
 
 Pass it to `streamableHttpTarget`. Complete interactive authorization with
 `client.completeAuthorization({ code, state })`; a missing or mismatched state

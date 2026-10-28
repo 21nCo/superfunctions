@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, resolve, relative, sep } from 'node:path';
+import { dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Optional package directory lets other self-contained MCP bundles share this
+// provenance check. With no argument, keep the core build's existing behavior.
+const root = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(root, 'package.json'));
 const packagePath = require.resolve('zod/package.json');
 const zodRoot = await realpath(dirname(packagePath));
@@ -18,7 +22,7 @@ for (const file of ['index.js.map', 'index.cjs.map']) {
     if (!source.includes('/zod/')) continue;
     const actual = await realpath(resolve(dirname(mapPath), source));
     const within = relative(zodRoot, actual);
-    assert(!within.startsWith(`..${sep}`) && within !== '..', `foreign Zod source: ${source}`);
+    assert(!isAbsolute(within) && !within.startsWith(`..${sep}`) && within !== '..', `foreign Zod source: ${source}`);
     assert.equal(map.sourcesContent[index], await readFile(actual, 'utf8'), `embedded bytes differ: ${source}`);
     sources.push(within);
   }
