@@ -59,10 +59,14 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
   ancestors.add(object);
   try {
     if (Array.isArray(object)) {
-      return object.map((item) => {
-        const cleaned = sanitizeNode(item, ancestors, depth + 1);
-        return cleaned === undefined ? null : cleaned;
-      });
+      // A fresh plain array filled by index: map() follows Symbol.species and
+      // would keep a subclass whose toJSON serialization later runs.
+      const items: unknown[] = [];
+      for (let index = 0; index < object.length; index += 1) {
+        const cleaned = sanitizeNode(object[index], ancestors, depth + 1);
+        items[index] = cleaned === undefined ? null : cleaned;
+      }
+      return items;
     }
 
     if (object instanceof Error) {
@@ -137,7 +141,10 @@ export function sanitizeEvent(event: LogEvent): LogEvent {
     if (key === "msg") {
       sanitized.msg = String(value);
     } else if (key === "tags" && Array.isArray(value)) {
-      sanitized.tags = value.slice(0, MAX_TAGS).map(tagText);
+      const tags: string[] = [];
+      const count = Math.min(value.length, MAX_TAGS);
+      for (let index = 0; index < count; index += 1) tags[index] = tagText(value[index]);
+      sanitized.tags = tags;
     } else {
       setOwn(sanitized, key, sanitizeValue(value));
     }

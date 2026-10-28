@@ -6,6 +6,7 @@ import {
   redactEvent,
   redactSecFn,
   REDACTED,
+  sanitizeValue,
   serverLogger,
   sinkHttp,
   type HttpSinkFetch,
@@ -249,5 +250,79 @@ describe("shared redaction vectors", () => {
     expect(output).toContain("RemoteError token=[redacted]");
     expect(output).not.toContain("NAME_SECRET");
     expect(output).not.toContain("CAUSE_SECRET");
+  });
+  describe("output is plain data, so serialization runs no caller code", () => {
+    // Array.prototype.map and slice follow Symbol.species, so a copy made with
+    // them keeps a subclass and its toJSON, which JSON.stringify later runs.
+    class Items extends Array {
+      toJSON() {
+        return { password: "ARRAY_TOJSON_SECRET" };
+      }
+    }
+    class Species extends Array {
+      static get [Symbol.species](): ArrayConstructor {
+        return Items as unknown as ArrayConstructor;
+      }
+    }
+    const proxied = () =>
+      new Proxy(["safe"], {
+        get: (target, key, receiver) => (key === "constructor" ? Items : Reflect.get(target, key, receiver)),
+      });
+    const hostile = () => ({
+      items: Items.of("safe"),
+      nested: { list: [Items.of("deep")] },
+      species: Species.of("safe"),
+      proxy: proxied(),
+      hooked: { toJSON: () => ({ password: "OWN_TOJSON_SECRET" }) },
+    });
+    const hostileTags = () => Items.of("t") as unknown as string[];
+    const SECRETS = ["ARRAY_TOJSON_SECRET", "OWN_TOJSON_SECRET"];
+    const expectPlain = (ctx: Record<string, any>) => {
+      for (const array of [ctx.items, ctx.nested.list, ctx.nested.list[0], ctx.species, ctx.proxy]) {
+        expect(Object.getPrototypeOf(array)).toBe(Array.prototype);
+      }
+    };
+    const expectNoSecret = (text: string) => {
+      for (const secret of SECRETS) expect(text).not.toContain(secret);
+    };
+
+    it("redactEvent, redactSecFn and sanitizeValue return plain arrays and no functions", () => {
+      const input = { ...vectorEvent(vectors[0]), ctx: hostile(), tags: hostileTags() };
+      for (const out of [redactEvent(input), redactSecFn()(input) as LogEvent]) {
+        expectPlain(out.ctx as Record<string, any>);
+        expect(Object.getPrototypeOf(out.tags)).toBe(Array.prototype);
+        expect((out.ctx as Record<string, any>).hooked).toEqual({ toJSON: "[unserializable]" });
+        expectNoSecret(JSON.stringify(out));
+        expect(JSON.parse(JSON.stringify(out)).ctx.items).toEqual(["safe"]);
+      }
+      const sanitized = sanitizeValue(hostile()) as Record<string, any>;
+      expectPlain(sanitized);
+      expectNoSecret(JSON.stringify(sanitized));
+    });
+
+    it("sinkHttp sends no secret through a logger or a direct call", async () => {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      createLogger({ name: "plain", sinks: [sink] }).info("m", hostile());
+      sink([{ ...vectorEvent(vectors[0]), ctx: hostile(), tags: hostileTags() }]);
+      await sink.flush();
+      expectNoSecret(spy.requests.map((request) => request.body).join("\n"));
+      const [logged, direct] = spy.events();
+      expect((logged.ctx as Record<string, any>).items).toEqual(["safe"]);
+      expect(direct.tags).toEqual(["t"]);
+    });
+
+    it("serverLogger console JSON holds no secret", () => {
+      const lines: string[] = [];
+      for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+          lines.push(String(args[0]));
+        });
+      }
+      serverLogger({ name: "svc" }).error("arrays", hostile());
+      expect(lines).toHaveLength(1);
+      expectNoSecret(lines[0]);
+      expect(lines[0]).toContain('"items":["safe"]');
+    });
   });
 });

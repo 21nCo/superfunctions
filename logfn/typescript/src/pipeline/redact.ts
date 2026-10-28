@@ -451,6 +451,11 @@ function redactNode(
   if (value instanceof Date) {
     return redactNode(dateText(value), redactor, path, ancestors, depth);
   }
+  // The output is plain data only: a function (an own toJSON included) would
+  // be run by serialization, after redaction.
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    return UNSERIALIZABLE;
+  }
   if (value === null || typeof value !== "object") {
     return value;
   }
@@ -467,9 +472,13 @@ function redactNode(
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      return value.map((item, index) =>
-        redactNode(item, redactor, `${path}[${index}]`, ancestors, depth + 1)
-      );
+      // A fresh plain array filled by index, as in sanitization: map() would
+      // keep a subclass (Symbol.species) with its inherited toJSON.
+      const items: unknown[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        items[index] = redactNode(value[index], redactor, `${path}[${index}]`, ancestors, depth + 1);
+      }
+      return items;
     }
 
     if (value instanceof Error) {

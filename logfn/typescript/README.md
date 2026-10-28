@@ -123,7 +123,10 @@ and other fields are named by their field name, in one namespace, so
 literally, `$&` or `$1` are not expanded). Cycles become `"[circular]"` and
 nesting beyond 32 levels becomes `"[max-depth]"`. Dates are redacted as the
 ISO text sanitization writes, so the output is final: no later step adds
-unredacted text. Own `__proto__` keys are kept as ordinary keys, here and in
+unredacted text. The output, like sanitization's, is plain data only: arrays
+become fresh plain arrays (an `Array` subclass, a `Symbol.species` override
+or a proxy keeps no inherited `toJSON`) and functions, symbols and bigints
+become `"[unserializable]"`, so serializing it runs no caller code. Own `__proto__` keys are kept as ordinary keys, here and in
 sanitization. Distinct keys that redact
 to the same text (two email keys) keep every value: later ones are stored
 under `"<key>#2"`, `"#3"` and so on, in key order.
@@ -139,7 +142,9 @@ under a credential key rather than inside free text.
 The rules are shared with the Python package through
 `conformance/redaction-vectors.json`; both test suites run every vector, and
 whenever `logfn/python` is present the TypeScript suite checks that its copy
-matches byte for byte.
+matches byte for byte. Rules JSON cannot express (dates, plain-data output
+for subclassed or proxied arrays, lists and tuples, own `toJSON` functions)
+are covered by each runtime's own tests.
 
 ## Sinks
 
@@ -199,7 +204,12 @@ Posts `{"events": [...]}` to `url` in batches.
   its diagnostics. Events the sink's own `fetch` logs synchronously are
   diagnostics too, and a queue holding only them is sent after
   `flushIntervalMs` rather than at once, so a `fetch` that logs every
-  request adds at most one request per interval, never a tight loop.
+  request synchronously adds at most one request per interval. Events it
+  logs after an `await` (for example when the response arrives) are
+  ordinary events: with a small `batch` (such as 1) each one fills a batch
+  and starts the next request at once, an endless chain of requests. Do not
+  log from a sink's own `fetch` asynchronously, or log through a logger
+  without that sink.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.
