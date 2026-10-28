@@ -53,7 +53,9 @@ when `url` is given.
 - Levels: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. The default is
   `info` when `NODE_ENV` is `production`, otherwise `debug`.
 - `child({ name, level, ctx, tags })` inherits sinks, pipeline and context.
-- An `Error` passed as the context argument is logged as `ctx.error`.
+- An `Error` context is logged as `ctx.error`; any other non-record context
+  (string, array, `Date`, `String` wrapper, bytes) as `ctx.value`, never
+  spread. Non-array tags (also `baseTags` and child `tags`) are ignored.
 - Logging calls and `flush()` never throw. Pipeline and sink failures go to
   `onError` (default `console.error`). `flush()` first waits for pending
   async sink calls (also those made through child loggers), then flushes

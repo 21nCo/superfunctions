@@ -417,8 +417,7 @@ const BOXED_VALUE_OF = new Map<string, () => unknown>([
   ["[object Symbol]", Symbol.prototype.valueOf],
 ]);
 
-// The primitive in a wrapper such as `new String(x)` (by its keys, one
-// character per key), read with the built-in valueOf; other objects as is.
+// The primitive in a wrapper such as `new String(x)`, by built-in valueOf.
 export function unboxPrimitive(value: object): unknown {
   if (Array.isArray(value)) return value;
   // Every String wrapper has an own length, whatever its tag; the tag only
@@ -440,10 +439,7 @@ export function unboxPrimitive(value: object): unknown {
   return value;
 }
 
-/**
- * Sets an own data property, also for the key `__proto__`, which plain
- * assignment would turn into a prototype change and drop from the output.
- */
+/** Sets an own data property, also `__proto__`, which assignment would drop */
 export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
   if (key === "__proto__") {
     Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
@@ -478,13 +474,11 @@ function redactNode(
   if (typeof value === "string") {
     return redactor.allowlist.has(path) ? value : redactText(value, redactor);
   }
-  // A date is redacted as the text sanitization would write, so the stage's
-  // output is final: no later step can turn it into unredacted text.
+  // Redacted as the text sanitization writes, so the output is final text.
   if (value instanceof Date) {
     return redactNode(dateText(value), redactor, path, ancestors, depth);
   }
-  // The output is plain data only: a function (an own toJSON included) would
-  // be run by serialization, after redaction.
+  // Plain data only: serialization would run a function (an own toJSON).
   if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
     return UNSERIALIZABLE;
   }
@@ -511,8 +505,7 @@ function redactNode(
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      // A fresh plain array filled by index, as in sanitization: map() would
-      // keep a subclass (Symbol.species) with its inherited toJSON.
+      // A fresh plain array by index, as in sanitization.
       const items: unknown[] = [];
       for (let index = 0; index < value.length; index += 1) {
         items[index] = redactNode(value[index], redactor, `${path}[${index}]`, ancestors, depth + 1);

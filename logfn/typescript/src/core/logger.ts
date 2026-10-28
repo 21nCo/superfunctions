@@ -14,6 +14,7 @@ import type {
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
+import { isBinary, unboxPrimitive } from "../pipeline/redact.js";
 
 // The error handlers whose work is running: those on the stack, plus, while
 // an async sink failure is reported, those that were running when that sink
@@ -39,14 +40,18 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-// A context argument that is not a plain record (an Error passed straight to
-// logger.error, a string) is kept under a named key instead of being spread.
+// A context (call, base or child) that is not a plain record (an Error, a
+// string, a String wrapper, bytes) is kept under a named key, never spread.
 function normalizeContext(ctx: unknown): Record<string, unknown> | undefined {
   if (ctx === undefined || ctx === null) return undefined;
   if (ctx instanceof Error) return { error: ctx };
-  if (typeof ctx !== "object" || Array.isArray(ctx)) return { value: ctx };
+  const isRecord = typeof ctx === "object" && !Array.isArray(ctx) && !(ctx instanceof Date);
+  if (!isRecord || unboxPrimitive(ctx) !== ctx || isBinary(ctx)) return { value: ctx };
   return ctx as Record<string, unknown>;
 }
+
+// Tags that are not an array are ignored, never split into characters.
+const normalizeTags = (tags: unknown): string[] => (Array.isArray(tags) ? [...(tags as string[])] : []);
 
 interface ResolvedOptions {
   name: string;
@@ -88,8 +93,8 @@ export class Logger {
       // The default is local console output only; no remote sink is implied.
       sinks: options.sinks ?? [sinkConsole()],
       now: options.now ?? (() => new Date()),
-      baseContext: options.baseContext,
-      baseTags: options.baseTags,
+      baseContext: normalizeContext(options.baseContext),
+      baseTags: normalizeTags(options.baseTags),
       onError: options.onError ?? defaultErrorHandler,
     };
   }
@@ -270,9 +275,9 @@ export class Logger {
       now: this.options.now,
       baseContext: {
         ...this.options.baseContext,
-        ...overrides.ctx,
+        ...normalizeContext(overrides.ctx),
       },
-      baseTags: [...(this.options.baseTags ?? []), ...(overrides.tags ?? [])],
+      baseTags: [...(this.options.baseTags ?? []), ...normalizeTags(overrides.tags)],
       onError: this.options.onError,
     });
     child.pending = this.pending;

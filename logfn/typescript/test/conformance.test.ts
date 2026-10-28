@@ -8,6 +8,7 @@ import {
   REDACTED,
   sanitizeValue,
   serverLogger,
+  sinkConsole,
   sinkHttp,
   type HttpSinkFetch,
   type HttpSinkRequest,
@@ -399,6 +400,76 @@ describe("shared redaction vectors", () => {
     it("a proxy is read as an object, as JSON.stringify reads it", () => {
       const proxy = new Proxy(new String("ab"), {});
       expect(sanitizeValue(proxy)).toEqual(JSON.parse(JSON.stringify(proxy)));
+    });
+  });
+
+  describe("a non-record context or tags value is never spread into one key per character or byte", () => {
+    const kinds: Array<[string, () => unknown, unknown]> = [
+      ["String wrapper", () => new String("token=CTX_SECRET"), "token=[redacted]"],
+      ["Buffer", () => Buffer.from("password=CTX_SECRET"), "[unserializable]"],
+      ["Uint8Array", () => new TextEncoder().encode("password=CTX_SECRET"), "[unserializable]"],
+    ];
+    const asCtx = (value: unknown) => value as Record<string, unknown>;
+    const expectClean = (text: string) => {
+      expect(text).not.toContain("CTX_SECRET");
+      expect(text).not.toContain("TAG_SECRET");
+      expect(text).not.toContain('"0":');
+      expect(text).not.toMatch(/112,\s*97,\s*115/);
+      expect(text).not.toContain('"t","o","k"');
+    };
+    const loggers = (make: () => unknown, sinks: Sink[], pipeline: PipelineStage[] = []) => {
+      const root = createLogger({ name: "ctx", sinks, pipeline });
+      return [
+        root,
+        createLogger({ name: "ctx", sinks, pipeline, baseContext: asCtx(make()) }),
+        root.child({ ctx: asCtx(make()) }),
+      ];
+    };
+
+    describe.each(kinds)("%s", (_kind, make, expected) => {
+      it("sinkHttp body as call ctx, baseContext and child ctx", async () => {
+        const spy = fetchSpy();
+        const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+        for (const logger of loggers(make, [sink])) logger.info("m", asCtx(make()));
+        await sink.flush();
+        expectClean(spy.requests.map((request) => request.body).join("\n"));
+        expect(spy.events().map((event) => event.ctx)).toEqual([{ value: expected }, { value: expected }, { value: expected }]);
+      });
+
+      it("serverLogger console JSON as call ctx and child ctx, and a redacting console logger with baseContext", () => {
+        const lines: string[] = [];
+        for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+          vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+            lines.push(String(args[0]));
+          });
+        }
+        const server = serverLogger({ name: "svc" });
+        server.error("m", asCtx(make()));
+        server.child({ ctx: asCtx(make()) }).error("m");
+        const consoleSink = sinkConsole({ json: true, color: false });
+        createLogger({ name: "ctx", sinks: [consoleSink], pipeline: [redactSecFn()], baseContext: asCtx(make()) }).error("m");
+        expect(lines).toHaveLength(3);
+        for (const line of lines) {
+          expectClean(line);
+          expect(JSON.parse(line).ctx).toEqual({ value: expected });
+        }
+      });
+    });
+
+    it("a string or String wrapper as baseTags, child tags or log tags is not split into characters", async () => {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      const text = () => "token=TAG_SECRET" as unknown as string[];
+      const boxed = () => new String("token=TAG_SECRET") as unknown as string[];
+      const root = createLogger({ name: "tags", sinks: [sink], baseTags: text() });
+      root.info("base string");
+      createLogger({ name: "tags", sinks: [sink], baseTags: boxed() }).info("base wrapper");
+      root.child({ tags: text() }).info("child string");
+      root.child({ tags: boxed() }).info("child wrapper", undefined, boxed());
+      root.child({ tags: ["kept"] }).info("array", undefined, ["also"]);
+      await sink.flush();
+      expectClean(spy.requests.map((request) => request.body).join("\n"));
+      expect(spy.events().map((event) => event.tags)).toEqual([undefined, undefined, undefined, undefined, ["kept", "also"]]);
     });
   });
 });

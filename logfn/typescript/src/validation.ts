@@ -64,8 +64,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
   ancestors.add(object);
   try {
     if (Array.isArray(object)) {
-      // A fresh plain array filled by index: map() follows Symbol.species and
-      // would keep a subclass whose toJSON serialization later runs.
+      // A fresh plain array by index: map() would keep a subclass's toJSON.
       const items: unknown[] = [];
       for (let index = 0; index < object.length; index += 1) {
         const cleaned = sanitizeNode(object[index], ancestors, depth + 1);
