@@ -90,6 +90,9 @@ Imports do not read browser globals. The same contracts work with same-origin if
 npm run verify:uifn-dom-platform
 npm --workspace @uifn/dom run typecheck
 npm --workspace @uifn/dom run test
+npm --workspace @uifn/dom run test:browser -- --project=chromium --project=firefox --project=webkit
 ```
+
+`test:browser` runs the Playwright specs under `browser/`. Without `--project` it also runs the mobile projects. Adapter-level scenarios, which mount Svelte, React, and Solid fixtures, live in [`browser/adapters`](browser/adapters/README.md). The `uifn browser tests` workflow runs the three desktop engines on every pull request that changes `uifn/**`.
 
 The phase gate builds and packs the public package, imports it in a clean consumer, rejects seeded framework-local behavior forks, and runs all `TV-DOM-001` through `TV-DOM-007` positive/negative vectors in Chromium, Firefox, and WebKit with screenshots and traces.

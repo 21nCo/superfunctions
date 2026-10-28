@@ -34,11 +34,21 @@ export default defineConfig({
     { name: 'mobile-chromium', testMatch: /(?:overlay|navigation|input|phase10)-primitives\.spec\.ts/, use: { ...devices['Pixel 7'] } },
     { name: 'mobile-webkit', testMatch: /(?:overlay|navigation|input|phase10)-primitives\.spec\.ts/, use: { ...devices['iPhone 13'] } },
   ],
-  webServer: {
-    command: 'npx vite --host 127.0.0.1 --port 4175 --strictPort',
-    cwd: path.resolve(__dirname),
-    url: 'http://127.0.0.1:4175/browser/index.html',
-    reuseExistingServer: false,
-    timeout: 30_000,
-  },
+  webServer: [
+    {
+      command: 'npx vite --host 127.0.0.1 --port 4175 --strictPort',
+      cwd: path.resolve(__dirname),
+      url: 'http://127.0.0.1:4175/browser/index.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      // Adapter scenarios (browser/adapters) mount built React, Svelte, and Solid fixtures.
+      command: 'npx vite --config browser/adapters/vite.config.mts',
+      cwd: path.resolve(__dirname),
+      url: 'http://127.0.0.1:4176/index.html',
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
 });

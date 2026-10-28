@@ -1,0 +1,125 @@
+name: uifn browser tests
+
+# Adapter unit suites plus @uifn/dom's Playwright suite (including browser/adapters
+# scenarios) in Chromium, Firefox, and WebKit. Mobile projects are not run here.
+on:
+  pull_request:
+    branches:
+      - dev
+      - next
+      - main
+    paths:
+      - "uifn/**"
+      - ".github/workflows/uifn-browser.yml"
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uifn-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adapters:
+    name: uifn adapter tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build trusted esbuild native binding
+        run: npm rebuild esbuild
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Build adapters and their uifn dependencies
+        run: ./node_modules/.bin/turbo run build --filter=@uifn/react... --filter=@uifn/svelte... --filter=@uifn/solid...
+
+      - name: React adapter tests
+        run: npm --workspace @uifn/react run test
+
+      - name: Svelte adapter tests
+        run: npm --workspace @uifn/svelte run test
+
+      - name: Solid adapter tests
+        run: npm --workspace @uifn/solid run test
+
+  browser:
+    name: uifn browser (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build trusted esbuild native binding
+        run: npm rebuild esbuild
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      # browser/ vectors import @uifn/dom; browser/adapters fixtures import the built adapters.
+      - name: Build @uifn/dom and the adapters
+        run: ./node_modules/.bin/turbo run build --filter=@uifn/dom... --filter=@uifn/react... --filter=@uifn/svelte... --filter=@uifn/solid...
+
+      # Workspace exec resolves the Playwright version @uifn/dom pins, so browser revisions match.
+      - name: Install Playwright ${{ matrix.engine }}
+        run: npm --workspace @uifn/dom exec -- playwright install --with-deps ${{ matrix.engine }}
+
+      - name: Run @uifn/dom browser suite in ${{ matrix.engine }}
+        env:
+          UIFN_PHASE05_BROWSER_OUTPUT: ${{ runner.temp }}/uifn-browser-${{ matrix.engine }}
+        run: npm --workspace @uifn/dom run test:browser -- --project=${{ matrix.engine }}
+
+      - name: Summarize ${{ matrix.engine }} results
+        if: always()
+        env:
+          UIFN_PHASE05_BROWSER_OUTPUT: ${{ runner.temp }}/uifn-browser-${{ matrix.engine }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const file = `${process.env.UIFN_PHASE05_BROWSER_OUTPUT}/results.json`;
+            if (!fs.existsSync(file)) { console.log("No Playwright results were written."); process.exit(0); }
+            const { stats } = JSON.parse(fs.readFileSync(file, "utf8"));
+            // "expected" counts passes and test.fail() annotations that failed as declared.
+            const line = `${stats.expected} as expected, ${stats.unexpected} unexpected, ${stats.flaky} flaky, ${stats.skipped} skipped`;
+            console.log(`${process.argv[1]}: ${line}`);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### uifn browser (${process.argv[1]})\n\n${line}\n`);
+          ' "${{ matrix.engine }}"
+
+      - name: Upload ${{ matrix.engine }} results and traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uifn-browser-${{ matrix.engine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/uifn-browser-${{ matrix.engine }}
+          if-no-files-found: warn
+          retention-days: 14
