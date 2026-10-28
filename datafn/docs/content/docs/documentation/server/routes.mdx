@@ -248,7 +248,7 @@ The `clientId` and `mutationId` fields enable idempotency. Replaying the same mu
 
 ## POST /datafn/transact
 
-Execute multiple query and mutation steps atomically.
+Execute multiple query and mutation steps atomically. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), an atomic request with a mutation step returns `DFQL_UNSUPPORTED` before anything is written; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 **Request:**
 

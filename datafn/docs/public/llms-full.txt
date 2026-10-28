@@ -7114,7 +7114,7 @@ async function evaluateGuard(
 
 ## TOCTOU Prevention
 
-Guards run within the same database transaction as the mutation they protect. This prevents time-of-check-to-time-of-use (TOCTOU) race conditions:
+Guards run within the same database transaction as the mutation they protect. This prevents time-of-check-to-time-of-use (TOCTOU) race conditions. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), the guard check and the write are separate statements, so another writer can change the record in between; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ```typescript
 // Both the guard check and the update happen atomically
@@ -11255,11 +11255,11 @@ await client.transact([
 ]);
 ```
 
-All mutations within a transact call run in a single database transaction. If any mutation fails, all are rolled back.
+All mutations within a transact call run in a single database transaction. If any mutation fails, all are rolled back. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), an atomic transact with a mutation step is rejected with `DFQL_UNSUPPORTED` before anything is written; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ### Guard Evaluation
 
-[Guards](/docs/documentation/advanced/guards) (conditional mutations) run within the same transaction as the mutation they protect. This prevents TOCTOU (time-of-check-to-time-of-use) race conditions:
+[Guards](/docs/documentation/advanced/guards) (conditional mutations) run within the same transaction as the mutation they protect. This prevents TOCTOU (time-of-check-to-time-of-use) race conditions. On an adapter without transactions, the guard check and the write are separate statements; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ```typescript
 // The guard check and the update happen in the same transaction
@@ -11470,7 +11470,7 @@ D1 has no interactive transactions, so the Drizzle adapter reports `transactions
 
 - **`transact` with `atomic: true` (the default) and any mutation step is rejected** with HTTP 400 and error code `DFQL_UNSUPPORTED` (`details.path: "atomic"`) before anything is written. DataFn never applies part of an atomic transact. Send `atomic: false` to apply the steps one at a time; a failed step then leaves earlier steps applied. Query-only transacts run normally.
 - **Guarded mutations (`if`) and `push`** run without a database transaction. The guard is checked and the write applied as separate statements, so a writer in another isolate can change the record in between. Each pushed mutation is applied on its own.
-- **Server sequence numbers** use a compare-and-swap on `__datafn_meta`, so concurrent writers in different isolates still get distinct `server_seq` values. This needs `@superfunctions/db` 0.3.1 or later, which reads D1's affected-row count (`meta.changes`).
+- **Server sequence numbers** use a compare-and-swap on `__datafn_meta`, so concurrent writers in different isolates still get distinct `server_seq` values. This needs `@superfunctions/db` 0.3.2 or later, which reads D1's affected-row count (`meta.changes`).
 - **Generate the schema with `@datafn/cli` 0.1.2 or later.** Earlier versions emitted plain `integer` columns for `boolean` fields and plain `text` for `object`, `array` and `json` fields. D1 then returned booleans as `0`/`1`, and better-sqlite3 refused to store them. See [SQLite column modes](/docs/cli/drizzle-codegen#sqlite-column-modes) for how to upgrade an existing schema.
 
 Live D1 has not been exercised by the suite yet; it runs against Miniflare's local D1 only.
@@ -16272,7 +16272,7 @@ The `clientId` and `mutationId` fields enable idempotency. Replaying the same mu
 
 ## POST /datafn/transact
 
-Execute multiple query and mutation steps atomically.
+Execute multiple query and mutation steps atomically. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), an atomic request with a mutation step returns `DFQL_UNSUPPORTED` before anything is written; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 **Request:**
 
@@ -23664,7 +23664,7 @@ DataFn follows [semver](https://semver.org/): until 1.0 minor versions may inclu
 
 - `@datafn/server`: an atomic `transact` with mutation steps on an adapter without transactions (Drizzle on SQLite or Cloudflare D1) now returns `DFQL_UNSUPPORTED` before writing anything. It previously ran the steps one by one, so a failed step left earlier steps applied. See [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 - `@datafn/cli`: SQLite codegen emits `integer({ mode: "boolean" })` for `boolean` fields and `text({ mode: "json" })` for `object`, `array` and `json` fields. See [SQLite column modes](/docs/cli/drizzle-codegen#sqlite-column-modes) for upgrading an existing schema.
-- `@superfunctions/db`: the Drizzle adapter reads Cloudflare D1 affected-row counts, so concurrent writers on D1 no longer receive duplicate `server_seq` values.
+- `@superfunctions/db` 0.3.2: the Drizzle adapter reads Cloudflare D1 affected-row counts, so concurrent writers on D1 no longer receive duplicate `server_seq` values. `@datafn/server` 0.2.1 requires it.
 
 ## 0.3.0
 

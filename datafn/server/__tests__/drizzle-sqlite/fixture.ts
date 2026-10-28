@@ -26,6 +26,7 @@ export const conformanceSchema: DatafnSchema = {
         { name: "done", type: "boolean", required: true },
         { name: "projectId", type: "string", required: false, nullable: true },
         { name: "meta", type: "object", required: false, nullable: true },
+        { name: "labels", type: "array", required: false, nullable: true },
       ],
     },
     {
@@ -85,6 +86,7 @@ export const task = sqliteTable("task", {
   __ns: text("__ns").notNull(),
   done: integer("done", { mode: "boolean" }).notNull(),
   id: text("id").notNull(),
+  labels: text("labels", { mode: "json" }),
   meta: text("meta", { mode: "json" }),
   priority: integer("priority").notNull(),
   projectId: text("project_id"),

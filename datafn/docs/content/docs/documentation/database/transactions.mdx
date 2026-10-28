@@ -64,11 +64,11 @@ await client.transact([
 ]);
 ```
 
-All mutations within a transact call run in a single database transaction. If any mutation fails, all are rolled back.
+All mutations within a transact call run in a single database transaction. If any mutation fails, all are rolled back. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), an atomic transact with a mutation step is rejected with `DFQL_UNSUPPORTED` before anything is written; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ### Guard Evaluation
 
-[Guards](/docs/documentation/advanced/guards) (conditional mutations) run within the same transaction as the mutation they protect. This prevents TOCTOU (time-of-check-to-time-of-use) race conditions:
+[Guards](/docs/documentation/advanced/guards) (conditional mutations) run within the same transaction as the mutation they protect. This prevents TOCTOU (time-of-check-to-time-of-use) race conditions. On an adapter without transactions, the guard check and the write are separate statements; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ```typescript
 // The guard check and the update happen in the same transaction

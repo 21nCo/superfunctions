@@ -387,25 +387,26 @@ export function describeDrizzleSqliteConformance(
       it("creates through POST and reads through GET with booleans and JSON intact", async () => {
         const app = await start();
         const meta = { labels: ["edge", "d1"], estimate: { hours: 2 } };
+        const labels = ["edge", 2, { nested: true }];
         const created = await app.call("POST", "/datafn/resources/task", {
           operation: "insert",
           id: "task:r",
           clientId: "c1",
           mutationId: "rest-1",
-          record: { title: "Rest", priority: 4, done: true, meta },
+          record: { title: "Rest", priority: 4, done: true, meta, labels },
         });
         expect(created.status).toBe(200);
         expect(created.body).toMatchObject({ ok: true, result: { ok: true, affectedIds: ["task:r"] } });
 
         const q = encodeURIComponent(
-          JSON.stringify({ select: ["id", "title", "done", "meta"], filters: { priority: 4, done: true } }),
+          JSON.stringify({ select: ["id", "title", "done", "meta", "labels"], filters: { priority: 4, done: true } }),
         );
         const read = await app.call("GET", `/datafn/resources/task?q=${q}`);
         expect(read.status).toBe(200);
-        expect(read.body.result.data).toEqual([{ id: "task:r", title: "Rest", done: true, meta }]);
+        expect(read.body.result.data).toEqual([{ id: "task:r", title: "Rest", done: true, meta, labels }]);
         // Storage stays plain SQLite: 0/1 integers and JSON text.
-        expect(await harness.all(`SELECT done, meta FROM task WHERE id = 'task:r'`)).toEqual([
-          { done: 1, meta: JSON.stringify(meta) },
+        expect(await harness.all(`SELECT done, meta, labels FROM task WHERE id = 'task:r'`)).toEqual([
+          { done: 1, meta: JSON.stringify(meta), labels: JSON.stringify(labels) },
         ]);
       });
     });
