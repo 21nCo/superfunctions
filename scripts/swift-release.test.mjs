@@ -6,7 +6,11 @@ import test from 'node:test';
 
 const root = path.resolve(import.meta.dirname, '..');
 const script = path.join(root, 'scripts/swift-release.mjs');
-const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byCodeUnit = (a, b) => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
 const run = tag => spawnSync(process.execPath, [script, 'resolve', tag], { cwd: root, encoding: 'utf8' });
 
 test('root Swift stable and prerelease tags preserve release semantics', () => {
@@ -28,7 +32,7 @@ test('npm, Python, noncanonical and unsafe root tags fail', () => {
   }
 });
 
-test('release validation lists every root Package.swift library product', () => {
+test('resolve emits every root Package.swift library product', () => {
   const manifest = readFileSync(path.join(root, 'Package.swift'), 'utf8');
   const declared = [...manifest.matchAll(/\.library\(\s*name:\s*"([^"]+)"/g)].map(match => match[1]).sort(byCodeUnit);
   const resolved = run('v0.0.0-manifest.0');

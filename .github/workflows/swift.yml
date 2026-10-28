@@ -45,6 +45,6 @@ jobs:
       - name: Release product list matches Package.swift
         run: node --test scripts/swift-release.test.mjs
       - name: swift build
-        run: swift build
+        run: swift build --only-use-versions-from-resolved-file
       - name: swift test
-        run: swift test
+        run: swift test --only-use-versions-from-resolved-file

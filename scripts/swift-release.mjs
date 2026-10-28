@@ -35,7 +35,11 @@ if (!prerelease) {
 }
 if (command === 'validate') {
   const manifest = JSON.parse(run('swift', ['package', 'dump-package'], 'pipe'));
-  const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const byCodeUnit = (a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  };
   const actual = manifest.products.filter(product => product.type.library).map(product => product.name).sort(byCodeUnit);
   if (JSON.stringify(actual) !== JSON.stringify([...products].sort(byCodeUnit))) throw new Error('Root Swift package must expose the 13 supported library products');
   run('swift', ['package', 'resolve']);
