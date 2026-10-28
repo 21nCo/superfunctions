@@ -656,17 +656,122 @@ describe("live host cleanup handlers", () => {
   const stopped = { status: { state: "stopped", instanceId: "i1" }, ports: { allocations: [] }, down: { ok: true } };
 
   it("reads a runtime back after devfn down and before any reaping, leaving shared process groups to their own resources", async () => {
-    // The run's Caddy (group 900) inherited the checkout as its working directory; 4242 is a fixture process that outlived devfn down; 77 runs in a sibling checkout.
-    const { host, inventory, calls } = await fixtureHost({ devfn: stopped, ps: "4242 4242\n4343 900\n77 77\n",
-      lsof: (root) => `p4242\nn${root}/qabcdef12-app\np4343\nn${root}/qabcdef12-app/sub\np77\nn${root}/qabcdef12-app-b\n` });
-    const runtime = path.join(dir, "qabcdef12-app");
-    await writeFile(path.join(host.stateDir, "proxy-owner.json"), JSON.stringify({ pid: 900 }));
-    inventory.record("runtime", runtime, "s");
+    // The run's Caddy (a live group leader) inherited the checkout as its working directory; 4242 is a fixture process that outlived devfn down; 77 runs in a sibling checkout.
+    const caddy = await survivor();
+    try {
+      const { host, inventory, calls } = await fixtureHost({ devfn: stopped, ps: `4242 4242\n4343 ${caddy.pid}\n77 77\n`,
+        lsof: (root) => `p4242\nn${root}/qabcdef12-app\np4343\nn${root}/qabcdef12-app/sub\np77\nn${root}/qabcdef12-app-b\n` });
+      const runtime = path.join(dir, "qabcdef12-app");
+      const birthSignature = (await processBirthSignature(caddy.pid))!;
+      await writeFile(path.join(host.stateDir, "proxy-owner.json"), JSON.stringify({ pid: caddy.pid, birthSignature, startedAt: new Date().toISOString() }));
+      inventory.record("runtime", runtime, "s");
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "still present on read-back: processes: 4242" });
+      // Removal is devfn down alone; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
+      // Every check runs: without a readable manifest the Compose resources of the owner are listed too.
+      expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps", "docker ps -a", "docker network ls"]);
+      // A record whose PID no longer carries its birth identity (reused, or without one) is no shared leader, so its group is read back.
+      for (const owner of [{ pid: caddy.pid, birthSignature: foreignSignature(birthSignature), startedAt: new Date().toISOString() }, { pid: caddy.pid }]) {
+        await writeFile(path.join(host.stateDir, "proxy-owner.json"), JSON.stringify(owner));
+        expect(await host.sharedLeaders()).toEqual(new Set());
+        await inventory.cleanup(host.handlers(), "s");
+        expect(inventory.list("s")[0].cleanup?.detail).toBe("still present on read-back: processes: 4242, 4343");
+      }
+    } finally { await caddy.stop(); }
+  });
+
+  it("confirms no process absence from an lsof listing it did not complete", async () => {
+    let lsof = { code: -1, stdout: "p1\nn/\n" };
+    const { host, inventory } = await fixtureHost({ devfn: stopped }, undefined, {}, { run: async (command) => command === "lsof" ? { ...lsof, stderr: "" } : { code: 0, stdout: "", stderr: "" } });
+    const runs = dir;
+    inventory.record("run-processes", runs, "s");
+    // Killed, timed out or overflowing (-1) with partial output, another status, or a cut last line: unreadable, never absent.
+    for (const listing of [{ code: -1, stdout: "p1\nn/\n" }, { code: 2, stdout: "p1\nn/\n" }, { code: 0, stdout: "p1\nn/" }, { code: 1, stdout: "" }]) {
+      lsof = listing;
+      await expect(host.processesIn(runs, new Set())).rejects.toThrow(/lsof could not list every process working directory/);
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: expect.stringMatching(/^read-back failed: lsof could not list/) });
+    }
+    // Exit 1 for a process the run cannot inspect still completes the listing.
+    lsof = { code: 1, stdout: `p1\nn/\np4242\nn${runs}/x\n` };
+    expect(await host.processesIn(runs, new Set())).toEqual([4242]);
+    lsof = { code: 0, stdout: "p1\nn/\n" };
     await inventory.cleanup(host.handlers(), "s");
-    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "still present on read-back: processes: 4242" });
-    // Removal is devfn down alone; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
-    // Every check runs: without a readable manifest the Compose resources of the owner are listed too.
-    expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps", "docker ps -a", "docker network ls"]);
+    expect(inventory.list("s")[0].cleanup?.absent).toBe(true);
+  });
+
+  /** A loopback server answering each request with how(response); its sockets are destroyed on close. */
+  async function probeServer(how: (response: http.ServerResponse) => void) {
+    const sockets = new Set<net.Socket>();
+    const server = http.createServer((_request, response) => how(response));
+    server.on("connection", (socket) => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return { port: (server.address() as net.AddressInfo).port, close: async () => { for (const socket of sockets) socket.destroy(); await new Promise((resolve) => server.close(resolve)); } };
+  }
+  /** Headers and part of a Content-Length body, then the connection is cut. */
+  const truncated = (response: http.ServerResponse) => { response.writeHead(200, { "content-type": "application/json", "content-length": "64" }); response.write("{\"marker\":"); setTimeout(() => response.socket?.destroy(), 20); };
+  const settlesWithin = async <T>(promise: Promise<T>, ms: number) => await Promise.race([promise.then((value) => ({ value }), (error: Error) => ({ error })), new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms))]);
+
+  it("settles every HTTP probe: a cut response, the overall deadline and an interrupt reject it, and a complete answer resolves", async () => {
+    const { host } = await fixtureHost({ devfn: stopped });
+    const cut = await probeServer(truncated);
+    const trickle = await probeServer((response) => { response.writeHead(200, { "content-length": "1000" }); const timer = setInterval(() => response.write("x"), 20); response.once("close", () => clearInterval(timer)); });
+    const hold = await probeServer((response) => { response.writeHead(200, { "content-length": "10" }); response.write("x"); });
+    const whole = await probeServer((response) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ marker: "qabcdef12-app" })); });
+    try {
+      expect(await host.request("http://app.localhost/", { port: whole.port })).toMatchObject({ status: 200, json: { marker: "qabcdef12-app" } });
+      expect(await settlesWithin(host.request("http://app.localhost/", { port: cut.port }), 2_000)).toMatchObject({ error: expect.objectContaining({ message: expect.stringMatching(/before its response was complete|aborted/) }) });
+      // A socket that keeps sending never idles out; the overall deadline still ends the probe.
+      expect(await settlesWithin(host.request("http://app.localhost/", { port: trickle.port, deadlineMs: 300 }), 2_000)).toMatchObject({ error: expect.objectContaining({ message: "http://app.localhost/ passed its deadline" }) });
+      // A cloudflared metrics answer cut short is no connector ID.
+      expect(await settlesWithin(cloudflaredConnectorId(cut.port), 2_000)).toEqual({ value: undefined });
+      // An interrupt rejects a probe in flight and refuses new ones; a cleanup read-back still runs.
+      const inFlight = host.request("http://app.localhost/", { port: hold.port });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      host.abort();
+      expect(await settlesWithin(inFlight, 1_000)).toMatchObject({ error: expect.objectContaining({ message: "http://app.localhost/ was interrupted" }) });
+      await expect(host.request("http://app.localhost/", { port: whole.port })).rejects.toThrow(/interrupted; requesting http:\/\/app.localhost\/ is refused/);
+      expect(await host.request("http://app.localhost/", { port: whole.port, afterAbort: true })).toMatchObject({ status: 200 });
+    } finally { for (const server of [cut, trickle, hold, whole]) await server.close(); }
+  });
+
+  it("returns from a driver whose probe is cut short and cleans up every resource it recorded", async () => {
+    const cut = await probeServer(truncated);
+    const gone = await survivor();
+    await gone.stop();
+    try {
+      // The native journey starts its fixture and probes the URL the process saw; the answer is cut after its headers.
+      const { host, inventory } = await fixtureHost({ devfn: { ...stopped, url: { ok: true, urls: { web: "https://web-o-1.localhost:8443/" } },
+        up: async (_signal?: AbortSignal, cwd?: string) => {
+          await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: gone.pid, env: { DEVFN_URL_WEB: `http://127.0.0.1:${cut.port}`, DEVFN_PORT_WEB: String(cut.port), DEVFN_INSTANCE_ID: "i1" } }));
+          return { code: 0, stdout: JSON.stringify({ ok: true, state: "ready", instanceId: "i1", allocations: [{ instanceId: "i1", port: cut.port }] }), stderr: "" };
+        } } });
+      const scenario = NETWORKING_MATRIX.find((item) => item.id === "host.native-prestart")!;
+      const outcome = await settlesWithin(runScenarios({ scenarios: [scenario], platform: "linux", prerequisites: allPrerequisites, drivers: { [scenario.id]: liveDrivers(host, parseApproval(approval))[scenario.id] },
+        inventory, resources: host.handlers(), snapshot: async () => ({ routes: [] }) }), 10_000);
+      expect(outcome).toMatchObject({ value: [{ status: "failed", reason: expect.stringMatching(/^driver: .*(before its response was complete|aborted)/) }] });
+      const resources = inventory.list(scenario.id);
+      expect(resources.map((entry) => entry.kind)).toEqual(["fixture-repository", "runtime"]);
+      expect(resources.every((entry) => entry.cleanup?.absent === true)).toBe(true);
+    } finally { await cut.close(); }
+  });
+
+  it("reads only an absent checkout as having no surviving fixtures, and keeps any other unreadable checkout", async (test) => {
+    if (process.getuid?.() === 0) test.skip();
+    const { host, inventory } = await fixtureHost({ devfn: stopped });
+    expect(await host.survivingFixtures(path.join(dir, "qabcdef12-gone"))).toEqual([]);
+    const runtime = path.join(dir, "qabcdef12-app");
+    await mkdir(runtime);
+    await chmod(runtime, 0o000);
+    try {
+      await expect(host.survivingFixtures(runtime)).rejects.toThrow(/EACCES/);
+      inventory.record("runtime", runtime, "s");
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: expect.stringContaining("read-back failed: EACCES") });
+    } finally { await chmod(runtime, 0o700); }
+    const file = path.join(dir, "qabcdef12-file");
+    await writeFile(file, "");
+    await expect(host.survivingFixtures(file)).rejects.toThrow(/ENOTDIR/);
   });
 
   it("reports a removed working directory and the Compose containers and networks an owner left on the pinned engine", async () => {
@@ -889,6 +994,28 @@ describe("live host cleanup handlers", () => {
     } finally { await relay.stop().catch(() => undefined); }
   });
 
+  it("never confirms a relay absent whose record was unreadable before stop, nor a checkout whose path cannot be read", async (test) => {
+    if (process.getuid?.() === 0) test.skip();
+    const { host, inventory, calls } = await fixtureHost({ devfn: { "oauth-relay stop": { ok: true }, "oauth-relay status": { relay: { running: false, routeActive: false } } } });
+    const { service } = relayPaths(host.stateDir);
+    await mkdir(path.dirname(service), { recursive: true });
+    await writeFile(service, "{ not a relay record");
+    inventory.record("oauth-relay", "dev.example.test", "s", { cwd: dir });
+    await inventory.cleanup(host.handlers(), "s");
+    // Stop still ran, but the processes it had to end are unknown, so status alone confirms nothing.
+    expect(calls).toContain("devfn oauth-relay stop");
+    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: expect.stringContaining("still present on read-back: the relay record was unreadable before stop") });
+    const parent = path.join(dir, "locked");
+    await mkdir(path.join(parent, "qabcdef12-app"), { recursive: true });
+    await chmod(parent, 0o000);
+    try {
+      const checkout = path.join(parent, "qabcdef12-app");
+      inventory.record("fixture-repository", checkout, "t");
+      await inventory.cleanup({ ...host.handlers(), remove: async () => undefined }, "t");
+      expect(inventory.list("t")[0].cleanup).toMatchObject({ absent: false, detail: expect.stringContaining("read-back failed: EACCES") });
+    } finally { await chmod(parent, 0o700); }
+  });
+
   it("records an ngrok-ephemeral public name before up, so a publish that then fails is still read back at the provider", async () => {
     let published = false;
     const fail = { code: 1, stdout: JSON.stringify({ ok: false, error: { code: "DEVFN_TUNNEL_PROVIDER_FAILED" } }), stderr: "" };
@@ -919,11 +1046,12 @@ describe("live host cleanup handlers", () => {
   /** A well-formed birth signature, in own's format, of a process that started at the epoch: never a live test process. */
   const foreignSignature = (own: string) => own.startsWith("linux:") ? "linux:1" : "darwin-utc:Thu Jan  1 00:00:00 1970";
   type FixtureConnector = { pid: number; metricsPort: number; birthSignature?: string };
+  /** Each record carries the process's own birth identity unless the fixture gives one. */
   async function recordConnectors(stateDir: string, name: string, connector: FixtureConnector | undefined, retired: FixtureConnector[] = []) {
-    const record = (item: FixtureConnector) => ({ birthSignature: "fixture", ...item, startedAt: new Date().toISOString(), configDigest: "0".repeat(64), hostnames: [] });
+    const record = async (item: FixtureConnector) => ({ birthSignature: await processBirthSignature(item.pid) ?? "fixture", ...item, startedAt: new Date().toISOString(), configDigest: "0".repeat(64), hostnames: [] });
     const state = tunnelPaths(stateDir, name).state;
     await mkdir(path.dirname(state), { recursive: true });
-    await writeFile(state, JSON.stringify({ version: 1, binding: name, hostnames: [], retired: retired.map(record), residue: [], ...(connector ? { connector: record(connector) } : {}) }));
+    await writeFile(state, JSON.stringify({ version: 1, binding: name, hostnames: [], retired: await Promise.all(retired.map(record)), residue: [], ...(connector ? { connector: await record(connector) } : {}) }));
   }
 
   /** A Cloudflare binding registered in the run state as the journeys register it. */
@@ -972,11 +1100,19 @@ describe("live host cleanup handlers", () => {
       identities.set(4102, "operator-connector");
       await b.stop();
       await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/\(operator-connector\)/);
+      // Nor can a stale record whose PID now runs another process: a foreign connector on its old metrics port is not the run's.
+      const reused = await survivor();
+      try {
+        identities.set(4104, "operator-connector");
+        await recordConnectors(host.stateDir, bound.name, { pid: reused.pid, metricsPort: 4104, birthSignature: foreignSignature((await processBirthSignature(reused.pid))!) });
+        await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/\(operator-connector\) before the step/);
+      } finally { await reused.stop(); }
       connected = undefined;
       await expect(host.soleTunnelUser(bound, async () => { steps.push("never"); })).rejects.toThrow(/HTTP 403/);
       expect(steps).toEqual(["start", "swap", "recover", "foreign attaches"]);
     } finally { for (const item of [a, b, c]) await item.stop().catch(() => undefined); }
-  });
+    // Every connector read verifies recorded birth identities, a ps read each on macOS.
+  }, 60_000);
 
   it("reads a cloudflared connector ID from its metrics /ready and nothing else", async () => {
     const server = http.createServer((request, response) => {

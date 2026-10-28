@@ -219,18 +219,48 @@ const reasons = (items: ReadonlyArray<string | undefined>): string | false => it
 /** A lifecycle lock a killed DevFn command held is recoverable only once stale (five minutes); cleanup waits that long for it. */
 const LOCK_STALE_WAIT_MS = 360_000;
 
-/** The connector ID a cloudflared reports on its metrics GET /ready ({"status":200,"readyConnections":n,"connectorId":"<uuid>"}); undefined when it does not answer one. */
-export async function cloudflaredConnectorId(metricsPort: number): Promise<string | undefined> {
-  return await new Promise((resolve) => {
-    const request = http.get({ host: "127.0.0.1", port: metricsPort, path: "/ready", timeout: 5_000, agent: false }, (response) => {
+/** The longest an HTTP probe may take, however its socket behaves. */
+export const REQUEST_DEADLINE_MS = 30_000;
+
+/**
+ * One GET that always settles. It resolves only on a complete response; a
+ * connection or response error, a response cut before it was complete, an
+ * idle socket, the overall deadline or stop (the run's interrupt) rejects it
+ * and destroys the request. The deadline is a plain timer, held until the
+ * probe settles, so it fires however long the socket keeps sending.
+ */
+async function boundedGet(client: typeof http | typeof https, options: https.RequestOptions, bound: { deadlineMs: number; stop?: AbortSignal }, what: string): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => finish(new Error(`${what} was interrupted`));
+    const deadline = setTimeout(() => finish(new Error(`${what} passed its deadline`)), bound.deadlineMs);
+    const finish = (error: Error | undefined, answer?: { status: number; body: string; headers: http.IncomingHttpHeaders }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      bound.stop?.removeEventListener("abort", onAbort);
+      if (error) { request.destroy(); reject(error); } else resolve(answer!);
+    };
+    const request = client.request({ ...options, method: "GET", agent: false }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk: string) => { body += chunk; });
-      response.on("end", () => { try { const id = (JSON.parse(body) as { connectorId?: unknown }).connectorId; resolve(typeof id === "string" && id ? id : undefined); } catch { resolve(undefined); } });
+      response.once("end", () => finish(response.complete ? undefined : new Error(`${what} ended before its response was complete`), { status: response.statusCode ?? 0, body, headers: response.headers }));
+      response.once("error", (error) => finish(error));
+      // A response that closes without its end was cut, whatever its socket does next.
+      response.once("close", () => finish(new Error(`${what} closed before its response was complete`)));
     });
-    request.once("timeout", () => request.destroy());
-    request.once("error", () => resolve(undefined));
+    request.once("timeout", () => request.destroy(new Error(`${what} timed out`)));
+    request.once("error", (error) => finish(error));
+    if (bound.stop?.aborted) onAbort(); else bound.stop?.addEventListener("abort", onAbort, { once: true });
+    request.end();
   });
+}
+
+/** The connector ID a cloudflared reports on its metrics GET /ready ({"status":200,"readyConnections":n,"connectorId":"<uuid>"}); undefined when it does not answer one. */
+export async function cloudflaredConnectorId(metricsPort: number): Promise<string | undefined> {
+  const answer = await boundedGet(http, { host: "127.0.0.1", port: metricsPort, path: "/ready", timeout: 5_000 }, { deadlineMs: 10_000 }, `cloudflared metrics on ${metricsPort}`).catch(() => undefined);
+  try { const id = (JSON.parse(answer?.body ?? "") as { connectorId?: unknown }).connectorId; return typeof id === "string" && id ? id : undefined; } catch { return undefined; }
 }
 
 /** Times DevFn rewrites without a material change; every other field of a protected record is compared. */
@@ -267,7 +297,7 @@ export class LiveHost {
   /** Compose containers and networks of the run's own owners that a read-back found; reaped only after that read-back was recorded. */
   private readonly composeLeft = new Set<string>();
   /** The relay and connector processes, and the binding, a resource had when its removal began; its read-back confirms them gone. */
-  private readonly removed = new Map<string, { pids: Set<number>; binding?: TunnelBinding }>();
+  private readonly removed = new Map<string, { pids: Set<number>; binding?: TunnelBinding; unreadable?: string }>();
   /** Connector IDs the run's own cloudflared processes reported on their metrics /ready; never inferred from timing. */
   private readonly ownConnectors = new Set<string>();
   private readonly connectors: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>;
@@ -288,11 +318,16 @@ export class LiveHost {
     this.connectorReads = options.connectorReads ?? { reads: 6, intervalMs: 5_000 };
   }
 
-  /** Learn the connector ID of every running connector the run state records for binding, from its own metrics endpoint. */
+  /**
+   * Learn the connector ID of every connector the run state records for
+   * binding, from its own metrics endpoint, only while its process matches
+   * the recorded birth identity: an exited, reused or unverifiable PID
+   * vouches for nothing. IDs learned so are kept for delayed read-back.
+   */
   private async identifyOwnConnectors(binding: TunnelBinding): Promise<void> {
     const state = await readTunnelState(this.stateDir, binding.name);
     for (const record of [state.connector, ...state.retired]) {
-      if (!record || !alive(record.pid)) continue;
+      if (!record || !await matchesProcessIdentity(record.pid, record.birthSignature, record.startedAt)) continue;
       const id = await this.connectorIdentity(record.metricsPort).catch(() => undefined);
       if (id) this.ownConnectors.add(id);
     }
@@ -493,29 +528,22 @@ export class LiveHost {
    * GET url. Local names connect to loopback at the DevFn proxy port for the
    * scheme, with the URL's Host and SNI; public URLs use real DNS. ca
    * replaces the default trust store; without it the default store applies.
+   * It settles within deadlineMs and rejects an incomplete response. An
+   * interrupt rejects a driver's probe in flight and refuses new ones; only a
+   * cleanup read-back (afterAbort) still runs once the run is interrupted.
    */
-  public async request(target: string, options: { ca?: string; address?: string; port?: number; host?: string; cookie?: string; publicDns?: boolean } = {}): Promise<Answer> {
+  public async request(target: string, options: { ca?: string; address?: string; port?: number; host?: string; cookie?: string; publicDns?: boolean; deadlineMs?: number; afterAbort?: boolean } = {}): Promise<Answer> {
+    if (!options.afterAbort) this.refuseIfAborted(`requesting ${target}`);
     const url = new URL(target);
     const ports = proxyListenerPorts();
     const port = options.port ?? (url.port ? Number(url.port) : options.publicDns ? (url.protocol === "https:" ? 443 : 80) : url.protocol === "https:" ? ports.httpsPort : ports.httpPort);
-    return await new Promise((resolve, reject) => {
-      const client = url.protocol === "https:" ? https : http;
-      const request = client.request({ ...(options.publicDns ? { hostname: url.hostname } : { host: options.address ?? "127.0.0.1" }), port, path: `${url.pathname}${url.search}`, method: "GET",
-        headers: { host: options.host ?? url.host, connection: "close", ...(options.cookie ? { cookie: options.cookie } : {}) }, timeout: 15_000, agent: false,
-        ...(url.protocol === "https:" ? { servername: url.hostname, ...(options.ca ? { ca: options.ca } : {}) } : {}) }, (response) => {
-        let body = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk: string) => { body += chunk; });
-        response.on("end", () => {
-          let json: Record<string, any> | undefined;
-          try { json = JSON.parse(body) as Record<string, any>; } catch { json = undefined; }
-          resolve({ status: response.statusCode ?? 0, body, headers: response.headers, ...(json ? { json } : {}) });
-        });
-      });
-      request.once("timeout", () => request.destroy(new Error(`${target} timed out`)));
-      request.once("error", reject);
-      request.end();
-    });
+    const answer = await boundedGet(url.protocol === "https:" ? https : http, { ...(options.publicDns ? { hostname: url.hostname } : { host: options.address ?? "127.0.0.1" }), port, path: `${url.pathname}${url.search}`,
+      headers: { host: options.host ?? url.host, connection: "close", ...(options.cookie ? { cookie: options.cookie } : {}) }, timeout: 15_000,
+      ...(url.protocol === "https:" ? { servername: url.hostname, ...(options.ca ? { ca: options.ca } : {}) } : {}) },
+      { deadlineMs: options.deadlineMs ?? REQUEST_DEADLINE_MS, ...(options.afterAbort ? {} : { stop: this.stop.signal }) }, target);
+    let json: Record<string, any> | undefined;
+    try { json = JSON.parse(answer.body) as Record<string, any>; } catch { json = undefined; }
+    return { ...answer, ...(json ? { json } : {}) };
   }
 
   /** Routes of an owner in the run's DevFn proxy state. */
@@ -524,17 +552,23 @@ export class LiveHost {
     return text === undefined ? [] : parsePersistedProxyRoutes(JSON.parse(text)).filter((route) => route.instanceId === instanceId).map((route) => route.hostname);
   }
 
-  /** Recorded fixture process IDs of a checkout that still run. */
+  /** Recorded fixture process IDs of a checkout that still run. Only an absent checkout has none; any other failed read throws. */
   public async survivingFixtures(cwd: string): Promise<number[]> {
-    const pids = await Promise.all((await readdir(cwd).catch(() => [] as string[])).filter((file) => /^seen-.+\.json$/.test(file)).map(async (file) => (JSON.parse(await readFile(path.join(cwd, file), "utf8")) as { pid: number }).pid));
+    const files = await readdir(cwd).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return [] as string[]; throw error; });
+    const pids = await Promise.all(files.filter((file) => /^seen-.+\.json$/.test(file)).map(async (file) => (JSON.parse(await readFile(path.join(cwd, file), "utf8")) as { pid: number }).pid));
     return pids.filter(alive);
   }
 
-  /** Record the processes, and binding, a resource has before its removal begins; repeated removals keep every one seen. */
-  private beforeRemoval(key: string, pids: readonly number[], binding?: TunnelBinding): void {
+  /**
+   * Record the processes, and binding, a resource has before its removal
+   * begins; repeated removals keep every one seen. When they could not be
+   * read, unreadable says why, and the resource is never confirmed absent.
+   */
+  private beforeRemoval(key: string, pids: readonly number[], binding?: TunnelBinding, unreadable?: string): void {
     const seen = this.removed.get(key) ?? { pids: new Set<number>() };
     for (const pid of pids) seen.pids.add(pid);
-    this.removed.set(key, { pids: seen.pids, ...(binding ?? seen.binding ? { binding: binding ?? seen.binding } : {}) });
+    const why = seen.unreadable ?? unreadable;
+    this.removed.set(key, { pids: seen.pids, ...(binding ?? seen.binding ? { binding: binding ?? seen.binding } : {}), ...(why ? { unreadable: why } : {}) });
   }
 
   /** The processes recorded for a resource before its removal that still run. */
@@ -548,7 +582,8 @@ export class LiveHost {
    * The run reaps leftovers only after every read-back. Read-back failures throw.
    */
   public handlers(): ResourceHandlers {
-    const exists = async (file: string) => await access(file).then(() => true, () => false);
+    // Only an absent path is absence; any other failed access throws.
+    const exists = async (file: string) => await access(file).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return false; throw error; });
     const describe = (what: string, items: readonly unknown[]) => items.length ? `${what}: ${items.join(", ")}` : undefined;
     const key = (entry: { kind: string; id: string }) => `${entry.kind} ${entry.id}`;
     return {
@@ -566,14 +601,16 @@ export class LiveHost {
         if (entry.kind === "proxy") await this.stopProxy();
         if (entry.kind === "registered-domain") await this.must(cwd!, ["domains", "unregister", entry.id]);
         if (entry.kind === "oauth-relay") {
-          const relay = await readRelayService(this.stateDir).catch(() => undefined);
-          this.beforeRemoval(key(entry), relay ? [relay.pid] : []);
+          const relay = await readRelayService(this.stateDir).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+          this.beforeRemoval(key(entry), relay && !(relay instanceof Error) ? [relay.pid] : [], undefined, relay instanceof Error ? `the relay record was unreadable before stop: ${relay.message}` : undefined);
           await this.must(cwd!, ["oauth-relay", "stop"]);
         }
         if (entry.kind === "tunnel-binding") {
           const registered = (await readTunnelBindings(this.stateDir)).find((item) => item.name === entry.id);
-          const state = registered ? await readTunnelState(this.stateDir, entry.id).catch(() => undefined) : undefined;
-          this.beforeRemoval(key(entry), [state?.connector, ...(state?.retired ?? [])].flatMap((connector) => connector ? [connector.pid] : []), registered);
+          const state = registered ? await readTunnelState(this.stateDir, entry.id).catch((error: unknown) => error instanceof Error ? error : new Error(String(error))) : undefined;
+          const read = state instanceof Error ? undefined : state;
+          this.beforeRemoval(key(entry), [read?.connector, ...(read?.retired ?? [])].flatMap((connector) => connector ? [connector.pid] : []), registered,
+            state instanceof Error ? `the connector state was unreadable before unregister: ${state.message}` : undefined);
           await this.must(cwd!, ["tunnel", "unregister", entry.id]);
         }
       },
@@ -595,13 +632,13 @@ export class LiveHost {
         if (entry.kind === "registered-domain") return (await readRegisteredDomains(this.stateDir)).some((item) => item.domain === entry.id);
         if (entry.kind === "oauth-relay") {
           const { relay } = await this.must(cwd!, ["oauth-relay", "status"]);
-          return reasons([relay.running === true || relay.routeActive === true ? "the relay runs or is routed" : undefined, describe("relay processes", this.stillRunning(key(entry)))]);
+          return reasons([relay.running === true || relay.routeActive === true ? "the relay runs or is routed" : undefined, describe("relay processes", this.stillRunning(key(entry))), this.removed.get(key(entry))?.unreadable]);
         }
         if (entry.kind === "tunnel-binding") {
           // A binding that was never registered never published; otherwise the provider must hold nothing carrying its marker.
           const registered = (await readTunnelBindings(this.stateDir)).find((item) => item.name === entry.id);
           const bound = registered ?? this.removed.get(key(entry))?.binding;
-          return reasons([registered ? "still registered" : undefined, describe("connector processes", this.stillRunning(key(entry))),
+          return reasons([registered ? "still registered" : undefined, describe("connector processes", this.stillRunning(key(entry))), this.removed.get(key(entry))?.unreadable,
             bound ? describe(`held by ${bound.provider}`, await this.readBack(bound, undefined, undefined)) : undefined]);
         }
         // A public name is absent when DevFn no longer routes or journals it, the provider read-back holds nothing for it, and its URL no longer serves the run.
@@ -611,7 +648,7 @@ export class LiveHost {
         if (JSON.stringify([tunnel.hostnames, tunnel.outstanding, tunnel.residue ?? []]).includes(entry.id)) return "routed or journaled by DevFn";
         const held = await this.readBack(bound, entry.id, url);
         if (held.length) return `held by ${bound.provider}: ${held.join(", ")}`;
-        const served = await this.request(url ?? `https://${entry.id}/`, { publicDns: true }).catch(() => undefined);
+        const served = await this.request(url ?? `https://${entry.id}/`, { publicDns: true, afterAbort: true }).catch(() => undefined);
         return served?.json?.marker !== undefined && String(served.json.marker).startsWith(this.prefix) ? "still serves the run" : false;
       },
     };
@@ -640,25 +677,37 @@ export class LiveHost {
    * Process group leaders the run state records as shared by every lifecycle:
    * its Caddy, OAuth relay and tunnel connectors. They inherit the working
    * directory of whichever checkout started them, so per-checkout read-back
-   * and reaping leave their groups to their own resources.
+   * and reaping leave their groups to their own resources. A record counts
+   * only while its process matches the recorded birth identity, so a reused
+   * PID never hides a process from a read-back; an unreadable record hides
+   * nothing either.
    */
   public async sharedLeaders(): Promise<Set<number>> {
-    const leaders = new Set<number>();
+    const recorded: Array<{ pid: number; birthSignature?: string; startedAt?: string }> = [];
     const owner = await readFile(path.join(this.stateDir, "proxy-owner.json"), "utf8").then(parseProxyOwner, () => undefined);
-    if (owner) leaders.add(owner.pid);
+    if (owner) recorded.push(owner);
     const relay = await readRelayService(this.stateDir).catch(() => undefined);
-    if (relay) leaders.add(relay.pid);
+    if (relay) recorded.push(relay);
     for (const binding of await readTunnelBindings(this.stateDir).catch(() => [])) {
       const state = await readTunnelState(this.stateDir, binding.name).catch(() => undefined);
-      for (const connector of [state?.connector, ...(state?.retired ?? [])]) if (connector) leaders.add(connector.pid);
+      for (const connector of [state?.connector, ...(state?.retired ?? [])]) if (connector) recorded.push(connector);
     }
+    const leaders = new Set<number>();
+    for (const item of recorded) if (await matchesProcessIdentity(item.pid, item.birthSignature, item.startedAt)) leaders.add(item.pid);
     return leaders;
   }
 
-  /** Processes whose working directory is inside dir, except groups led by shared leaders: only the run's own paths are ever passed. */
+  /**
+   * Processes whose working directory is inside dir, except groups led by
+   * shared leaders: only the run's own paths are ever passed. Only a listing
+   * lsof completed counts: exit 0, or 1 when it could not inspect a process
+   * the run does not own (-w hides that warning), ending with a full line. A
+   * killed, timed-out or overflowing listing (-1), or any other status,
+   * throws, so its partial output never confirms absence.
+   */
   public async processesIn(dir: string, shared: ReadonlySet<number>): Promise<number[]> {
     const result = await this.exec("lsof", ["-n", "-w", "-d", "cwd", "-Fpn"], { timeoutMs: 30_000 });
-    if (!result.stdout) throw new Error("lsof could not list process working directories");
+    if ((result.code !== 0 && result.code !== 1) || !result.stdout.endsWith("\n")) throw new Error(`lsof could not list every process working directory (exit ${result.code})`);
     const groups = new Map<number, number>();
     if (shared.size) {
       const table = await this.exec("ps", ["-A", "-o", "pid=,pgid="], { timeoutMs: 30_000 });
@@ -700,7 +749,8 @@ export class LiveHost {
       const settings: string[] = [];
       for (const [domain, args] of [["user", []], ["admin", ["-d"]]] as const) {
         const dump = await run("security", ["dump-trust-settings", ...args]);
-        if (dump.code !== 0 && !dump.stderr.includes("No Trust Settings were found")) throw new Error(`the macOS ${domain} trust settings are unreadable`);
+        // Only security's own exit reporting no settings is none; a killed or timed-out read (-1) is unreadable.
+        if (dump.code !== 0 && (dump.code < 1 || !dump.stderr.includes("No Trust Settings were found"))) throw new Error(`the macOS ${domain} trust settings are unreadable`);
         settings.push(`trust-settings:${domain}:${dump.code === 0 ? createHash("sha256").update(dump.stdout).digest("hex") : "none"}`);
       }
       return [...result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()), ...settings].sort();
