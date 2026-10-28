@@ -11,6 +11,7 @@ import {
   UNSERIALIZABLE,
   dateText,
   isBinary,
+  isRecord,
   setOwn,
   unboxPrimitive,
 } from "./pipeline/redact.js";
@@ -225,7 +226,7 @@ const OPTIONAL_STRING_FIELDS = ["traceId", "spanId", "requestId", "userId", "ten
 /**
  * Validates a log event schema: non-empty ts, name and version strings, a
  * known level, a string msg (possibly empty), and, when present, string ids,
- * a plain-object ctx and an array of string tags.
+ * a record ctx (see isRecord) and an array of string tags without holes.
  */
 export function isValidLogEvent(event: unknown): event is LogEvent {
   if (!event || typeof event !== "object") {
@@ -248,11 +249,10 @@ export function isValidLogEvent(event: unknown): event is LogEvent {
   for (const field of OPTIONAL_STRING_FIELDS) {
     if (e[field] !== undefined && typeof e[field] !== "string") return false;
   }
-  if (e.ctx !== undefined && (e.ctx === null || typeof e.ctx !== "object" || Array.isArray(e.ctx))) {
-    return false;
-  }
-  if (e.tags !== undefined && !(Array.isArray(e.tags) && e.tags.every((tag) => typeof tag === "string"))) {
-    return false;
+  if (e.ctx !== undefined && !isRecord(e.ctx)) return false;
+  if (e.tags !== undefined) {
+    if (!Array.isArray(e.tags)) return false;
+    for (let i = 0; i < e.tags.length; i++) if (typeof e.tags[i] !== "string") return false;
   }
 
   return true;

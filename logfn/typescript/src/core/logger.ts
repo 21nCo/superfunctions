@@ -14,7 +14,7 @@ import type {
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
-import { isBinary, unboxPrimitive } from "../pipeline/redact.js";
+import { isRecord } from "../pipeline/redact.js";
 
 // The error handlers whose work is running: those on the stack, plus, while
 // an async sink failure is reported, those that were running when that sink
@@ -40,14 +40,11 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-// A context (call, base or child) that is not a plain record (an Error, a
-// string, a String wrapper, bytes) is kept under a named key, never spread.
+// A call, base or child context that is not a record is kept under a key, never spread.
 function normalizeContext(ctx: unknown): Record<string, unknown> | undefined {
   if (ctx === undefined || ctx === null) return undefined;
   if (ctx instanceof Error) return { error: ctx };
-  const isRecord = typeof ctx === "object" && !Array.isArray(ctx) && !(ctx instanceof Date);
-  if (!isRecord || unboxPrimitive(ctx) !== ctx || isBinary(ctx)) return { value: ctx };
-  return ctx as Record<string, unknown>;
+  return isRecord(ctx) ? ctx : { value: ctx };
 }
 
 // Tags that are not an array are ignored, never split into characters.

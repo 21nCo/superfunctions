@@ -439,6 +439,10 @@ export function unboxPrimitive(value: object): unknown {
   return value;
 }
 
+/** A record read by own keys: not an Error, Date, array, boxed primitive or binary data */
+export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null &&
+  !(value instanceof Error || value instanceof Date || Array.isArray(value) || isBinary(value)) && unboxPrimitive(value) === value;
+
 /** Sets an own data property, also `__proto__`, which assignment would drop */
 export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
   if (key === "__proto__") {

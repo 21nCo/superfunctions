@@ -151,6 +151,7 @@ describe("isValidLogEvent", () => {
     expect(isValidLogEvent({ ...event(), msg: "" })).toBe(true);
     const ids = { traceId: "t", spanId: "s", requestId: "r", userId: "u", tenantId: "x" };
     expect(isValidLogEvent(event({ ctx: { a: 1 }, tags: ["t"], ...ids }))).toBe(true);
+    expect(isValidLogEvent(event({ ctx: Object.assign(Object.create(null), { a: 1 }), tags: [] }))).toBe(true);
     expect(isValidLogEvent("event")).toBe(false);
   });
 
@@ -170,6 +171,15 @@ describe("isValidLogEvent", () => {
     ["a string ctx", { ctx: "x" }],
     ["a non-string tag", { tags: ["a", 1] }],
     ["string tags", { tags: "a" }],
+    // Containers that JSON writes as something other than their own keys
+    ["a Date ctx", { ctx: new Date(0) }],
+    ["a String wrapper ctx", { ctx: new String("x") }],
+    ["a Number wrapper ctx", { ctx: new Number(1) }],
+    ["a Buffer ctx", { ctx: Buffer.from("x") }],
+    ["a Uint8Array ctx", { ctx: new Uint8Array([1]) }],
+    ["an Error ctx", { ctx: new Error("x") }],
+    ["empty tag slots", { tags: new Array(2) }],
+    ["a sparse tag array", { tags: ["a", , "b"] }],
   ])("rejects %s", (_name, overrides) => {
     expect(isValidLogEvent({ ...event(), ...overrides })).toBe(false);
   });
