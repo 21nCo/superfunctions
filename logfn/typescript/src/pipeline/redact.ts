@@ -6,6 +6,7 @@
  */
 
 import type { LogEvent, PipelineStage } from "../types.js";
+import { sanitizeEvent } from "../validation.js";
 
 /** Replacement written in place of a redacted value */
 export const REDACTED = "[redacted]";
@@ -15,6 +16,9 @@ export const CIRCULAR = "[circular]";
 
 /** Replacement for values nested deeper than MAX_REDACTION_DEPTH */
 export const MAX_DEPTH = "[max-depth]";
+
+/** Replacement for values past one walk's MAX_TRAVERSAL budget */
+export const MAX_SIZE = "[max-size]";
 
 /**
  * Replacement for values with no JSON form, binary data included: text rules
@@ -482,26 +486,8 @@ function redactNode(
   if (typeof value === "string") {
     return redactor.allowlist.has(path) ? value : redactText(value, redactor);
   }
-  // Redacted as the text sanitization writes, so the output is final text.
-  if (isDateValue(value)) {
-    return redactNode(dateText(value), redactor, path, ancestors, depth);
-  }
-  // Plain data only: serialization would run a function (an own toJSON).
-  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
-    return UNSERIALIZABLE;
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : String(value);
-  }
   if (value === null || typeof value !== "object") {
     return value;
-  }
-  const unboxed = unboxPrimitive(value);
-  if (unboxed !== value) {
-    return redactNode(unboxed, redactor, path, ancestors, depth);
-  }
-  if (isBinary(value)) {
-    return UNSERIALIZABLE;
   }
   if (ancestors.has(value)) {
     return CIRCULAR;
@@ -519,22 +505,6 @@ function redactNode(
         items[index] = redactNode(value[index], redactor, `${path}[${index}]`, ancestors, depth + 1);
       }
       return items;
-    }
-
-    if (isErrorValue(value)) {
-      const error: Record<string, unknown> = {
-        // The name is caller-controlled text (`error.name = ...`), like the message.
-        name: redactNode(String(value.name), redactor, childPath(path, "name"), ancestors, depth + 1),
-        message: redactNode(String(value.message), redactor, childPath(path, "message"), ancestors, depth + 1),
-      };
-      if (typeof value.stack === "string") {
-        error.stack = redactNode(value.stack, redactor, childPath(path, "stack"), ancestors, depth + 1);
-      }
-      const cause = (value as { cause?: unknown }).cause;
-      if (cause !== undefined) {
-        error.cause = redactNode(cause, redactor, childPath(path, "cause"), ancestors, depth + 1);
-      }
-      return error;
     }
 
     const result: Record<string, unknown> = {};
@@ -561,10 +531,11 @@ function redactNode(
 // Every top-level field is redacted, including fields outside the LogEvent
 // schema that a caller-added stage may have set. Paths for fields other than
 // ctx are their names (`userId`, `tags[0]`); ctx paths start at the ctx root.
+// It redacts the JSON-safe copy (one bounded walk), where an error is a record whose fields obey the key rules.
 function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
   const redacted: Record<string, unknown> = {};
   const used = new Map<string, number>();
-  for (const [key, value] of Object.entries(event)) {
+  for (const [key, value] of Object.entries(sanitizeEvent(event))) {
     if (key === "msg") {
       redacted.msg = redactText(String(value), redactor);
     } else if (key === "ctx") {

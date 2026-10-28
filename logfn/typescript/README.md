@@ -58,7 +58,7 @@ when `url` is given.
   spread. Non-array tags (also `baseTags` and child `tags`) are ignored; a child without `ctx` adds none.
 - Logging calls and `flush()` never throw. Pipeline and sink failures go to
   `onError` (default `console.error`). `flush()` first waits for pending
-  async sink calls (also those made through child loggers), then flushes
+  async sink calls (also those made through child loggers, and for up to 16 rounds those an `onError` starts meanwhile), then flushes
   every sink.
   Reading a sink's `flush` or a sink's or stage's `name` is inside the same
   isolation: a throwing getter is reported, and sibling sinks still flush.
@@ -76,7 +76,7 @@ when `url` is given.
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
   stack, cause }`, cycles become `"[circular]"` and unserializable values
-  become `"[unserializable]"`. Binary data (`Buffer`, typed arrays,
+  become `"[unserializable]"`. One walk copies at most `MAX_TRAVERSAL` (256K) values and string or key characters; past it values become `"[max-size]"` and object entries stop, so objects shared many times cannot expand exponentially. Binary data (`Buffer`, typed arrays,
   `DataView`, `ArrayBuffer`, `SharedArrayBuffer`) becomes `"[unserializable]"`
   too, also in the redaction stage: no text rule could find a secret in its
   bytes.
@@ -92,7 +92,7 @@ when `url` is given.
 
 `redactSecFn(options)` (stage) and `redactEvent(event, options)` redact the
 message, context (recursively, including error name, message, stack and cause) and
-every other event field, object keys and top-level field names included:
+every other event field, object keys and top-level field names included (it redacts the sanitized copy, so error fields obey `keys` and `allowlist` like record keys):
 
 - Values under credential-named keys at any depth, of any type (`password`,
   `secret`, `apiKey`, `authorization`, `cookie`, `credentials`, keys ending in

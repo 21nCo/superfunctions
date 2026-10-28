@@ -284,7 +284,7 @@ export class Logger {
     // stack: a flush that onError started reports its failures to the
     // default reporter, not back into that handler.
     const provenance = activeHandlers;
-    await Promise.all([...this.pending]);
+    await this.drain();
     const pending = this.options.sinks.map(async (sink) => {
       try {
         // Read once inside the try: a throwing flush getter is this sink's
@@ -297,5 +297,11 @@ export class Logger {
       }
     });
     await Promise.all(pending);
+    await this.drain();
+  }
+
+  // Also waits for calls an onError starts meanwhile, for at most 16 rounds, so an onError that keeps logging cannot hold flush().
+  private async drain(): Promise<void> {
+    for (let round = 0; this.pending.size > 0 && round < 16; round++) await Promise.all([...this.pending]);
   }
 }

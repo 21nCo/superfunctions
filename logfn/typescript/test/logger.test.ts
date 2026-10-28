@@ -201,6 +201,47 @@ describe("Logger", () => {
     expect(delivered).toEqual(["root", "child"]);
   });
 
+  describe("flush waits for sink calls that onError starts while it drains", () => {
+    // Rejects "boom" after a delay and delivers everything else after a delay.
+    function delayed(delivered: string[]): Sink {
+      return (batch) =>
+        new Promise<void>((resolve, reject) =>
+          setTimeout(() => {
+            if (batch[0].msg === "boom") reject(new Error("boom failed"));
+            else {
+              delivered.push(batch[0].msg);
+              resolve();
+            }
+          }, 20)
+        );
+    }
+
+    it.each(["root", "child"])("an onError diagnostic from a %s logger is delivered before flush resolves", async (via) => {
+      const delivered: string[] = [];
+      const root: Logger = createLogger({ name: "svc", sinks: [delayed(delivered)], onError: () => root.info("from onError") });
+      const logger = via === "child" ? root.child({ name: "child" }) : root;
+      logger.info("boom");
+      await (via === "child" ? root : logger.child({ name: "other" })).flush();
+      expect(delivered).toEqual(["from onError"]);
+    });
+
+    it("an onError that keeps logging through a failing sink outside its own call still lets flush resolve", async () => {
+      let calls = 0;
+      const failing: Sink = () => Promise.reject(new Error("down"));
+      const logger: Logger = createLogger({
+        name: "svc",
+        sinks: [failing],
+        // Logging from a microtask leaves the handler's call, so each failure calls onError again (here 100 times).
+        onError: () => void queueMicrotask(() => calls < 100 && (calls++, logger.info("again"))),
+      });
+      logger.info("m");
+      await expect(logger.flush()).resolves.toBeUndefined();
+      // flush waited for several rounds of that work, but not for all of it.
+      expect(calls).toBeGreaterThan(1);
+      expect(calls).toBeLessThan(100);
+    });
+  });
+
   describe("caller sinks and stages with throwing getters", () => {
     function throwingName<T extends object>(target: T, message: string): T {
       Object.defineProperty(target, "name", {

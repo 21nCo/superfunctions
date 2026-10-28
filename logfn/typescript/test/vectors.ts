@@ -149,7 +149,9 @@ function matchValue(actual: unknown, expected: Json, where: string): void {
   }
   if (isObject(expected)) {
     expect(isObject(actual), `${where} is an object`).toBe(true);
-    expect(Object.keys(actual as object).sort(), `${where} keys`).toEqual(Object.keys(expected).sort());
+    // Both sides use the same comparator, which is all a key-set comparison needs.
+    const sorted = (keys: string[]) => keys.sort((left, right) => left.localeCompare(right));
+    expect(sorted(Object.keys(actual as object)), `${where} keys`).toEqual(sorted(Object.keys(expected)));
     for (const [key, item] of Object.entries(expected)) {
       matchValue((actual as Record<string, unknown>)[key], item, `${where}.${key}`);
     }

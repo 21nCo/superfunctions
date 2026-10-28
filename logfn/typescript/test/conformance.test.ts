@@ -591,11 +591,13 @@ describe("shared redaction vectors", () => {
         else delete (Error as { isError?: unknown }).isError;
       });
       const setIsError = (value: unknown) => Object.defineProperty(Error, "isError", { value, configurable: true, writable: true });
-      // Engine branches: no Error.isError (Node < 24), a slot-based one as engines ship it (a DOMException has no
-      // [[ErrorData]], so it reads false), and the real one where present.
+      // Engine branches: no Error.isError (Node < 24), one that reads a DOMException as no error (engines differ:
+      // Bun does, Node 22.23+ does not), so the fallback must decide, and the real one where present. The stub
+      // models that engine explicitly, whatever this runtime's isNativeError says about a DOMException.
+      const slotOnly = (value: unknown) => !(value instanceof DOMException) && isNativeError(value);
       const branches: Array<[string, () => void]> = [
         ["without Error.isError", () => setIsError(undefined)],
-        ["with a slot-based Error.isError", () => setIsError((value: unknown) => isNativeError(value))],
+        ["with an Error.isError that reads a DOMException as no error", () => setIsError(slotOnly)],
         ...(native ? [["with the native Error.isError", () => Object.defineProperty(Error, "isError", native)] as [string, () => void]] : []),
       ];
       const proxied = () => new Proxy(new Error("proxied"), {});
@@ -615,9 +617,8 @@ describe("shared redaction vectors", () => {
         return typeof out === "object" && out !== null && "name" in out && "message" in out && !("token" in out);
       };
 
-      it("the slot-based Error.isError reads a DOMException as no error, as Node and Bun do", () => {
-        expect(isNativeError(new DOMException("m"))).toBe(false);
-        expect(isNativeError(new Error("m"))).toBe(true);
+      it("the stub reads a DOMException as no error and a local or foreign Error as one", () => {
+        expect([slotOnly(new DOMException("m")), slotOnly(new Error("m")), slotOnly(error()), slotOnly({ message: "m" })]).toEqual([false, true, true, false]);
       });
 
       it.each(branches.flatMap(([branch]) => cases().map(([name]) => [branch, name])))("%s: %s", (branch, name) => {

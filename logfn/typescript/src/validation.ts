@@ -4,7 +4,7 @@
 
 import type { LogEvent, SerializationResult } from "./types.js";
 import { LOG_LEVEL_VALUES, MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
-import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, dateText, isBinary, isDateValue, isErrorValue, isRecord, setOwn, tagText, unboxPrimitive } from "./pipeline/redact.js";
+import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, MAX_SIZE, UNSERIALIZABLE, dateText, isBinary, isDateValue, isErrorValue, isRecord, setOwn, tagText, unboxPrimitive } from "./pipeline/redact.js";
 
 const TRUNCATED_SUFFIX = "...[truncated]";
 const encoder = new TextEncoder();
@@ -17,7 +17,18 @@ export function isSerializable(value: unknown): boolean {
   return type !== "function" && type !== "symbol" && type !== "bigint";
 }
 
+/** Values plus string and key characters one walk copies, each charged first; past it values are MAX_SIZE, so shared objects cannot expand to 2^depth copies */
+export const MAX_TRAVERSAL = 4 * MAX_EVENT_SIZE;
+let budget = 0;
+
+// A walk that a getter starts inside another gets its own budget; the outer one resumes after it.
+function bounded<T>(walk: () => T, outer = budget): T {
+  budget = MAX_TRAVERSAL;
+  try { return walk(); } finally { budget = outer; }
+}
+
 function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): unknown {
+  if ((budget -= typeof value === "string" ? value.length + 1 : 1) < 0) return MAX_SIZE;
   if (value === undefined || value === null) {
     return value;
   }
@@ -57,7 +68,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     if (Array.isArray(object)) {
       // A fresh plain array by index: map() would keep a subclass's toJSON.
       const items: unknown[] = [];
-      for (let index = 0; index < object.length; index += 1) {
+      for (let index = 0; index < object.length && budget >= 0; index += 1) {
         const cleaned = sanitizeNode(object[index], ancestors, depth + 1);
         items[index] = cleaned === undefined ? null : cleaned;
       }
@@ -66,11 +77,11 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
 
     if (isErrorValue(object)) {
       const error: Record<string, unknown> = {
-        name: String(object.name),
-        message: String(object.message),
+        name: sanitizeNode(String(object.name), ancestors, depth + 1),
+        message: sanitizeNode(String(object.message), ancestors, depth + 1),
       };
       if (typeof object.stack === "string") {
-        error.stack = object.stack;
+        error.stack = sanitizeNode(object.stack, ancestors, depth + 1);
       }
       const cause = (object as { cause?: unknown }).cause;
       if (cause !== undefined) {
@@ -81,6 +92,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
 
     const sanitized: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(object)) {
+      if ((budget -= key.length) < 0) break;
       const cleaned = sanitizeNode(item, ancestors, depth + 1);
       if (cleaned !== undefined) {
         setOwn(sanitized, key, cleaned);
@@ -97,9 +109,10 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
  * symbols and bigints become "[unserializable]", wrapped primitives
  * (`new String("x")`) their primitive, dates become ISO strings,
  * errors become {name, message, stack, cause} and cycles become "[circular]".
+ * Values past MAX_TRAVERSAL become "[max-size]".
  */
 export function sanitizeValue(value: unknown): unknown {
-  return sanitizeNode(value, new Set(), 0);
+  return bounded(() => sanitizeNode(value, new Set(), 0));
 }
 
 /** Longest kept string for a metadata field once an event is over the size limit */
@@ -127,19 +140,21 @@ function byteLength(event: LogEvent): number {
  * ctx. Undefined fields are removed.
  */
 export function sanitizeEvent(event: LogEvent): LogEvent {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(event)) {
-    if (value === undefined) continue;
-    if (key === "msg") {
-      sanitized.msg = String(value);
-    } else if (key === "tags" && Array.isArray(value)) {
-      sanitized.tags = Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => tagText(value[index]));
-    } else {
-      setOwn(sanitized, key, sanitizeValue(value));
+  return bounded(() => {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(event)) {
+      if (value === undefined) continue;
+      if (key === "msg") {
+        sanitized.msg = String(value);
+      } else if (key === "tags" && Array.isArray(value)) {
+        sanitized.tags = Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => tagText(value[index]));
+      } else {
+        setOwn(sanitized, key, sanitizeNode(value, new Set(), 0));
+      }
     }
-  }
-  if (sanitized.msg === undefined) sanitized.msg = "";
-  return sanitized as unknown as LogEvent;
+    if (sanitized.msg === undefined) sanitized.msg = "";
+    return sanitized as unknown as LogEvent;
+  });
 }
 
 function truncate(text: string, keep: number): string {

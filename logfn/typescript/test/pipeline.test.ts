@@ -1,16 +1,43 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  createLogger,
   enrichContext,
   isSensitiveKey,
+  MAX_EVENT_SIZE,
   MAX_REDACTION_DEPTH,
   parseW3CTraceContext,
   redactEvent,
   redactSecFn,
+  REDACTED,
+  sanitizeEvent,
+  sanitizeValue,
+  serverLogger,
   sinkHttp,
   sample,
   withRequestIds,
+  type HttpSinkFetch,
+  type HttpSinkRequest,
   type LogEvent,
+  type RedactionOptions,
+  type Sink,
 } from "../src/index.js";
+import { MAX_SIZE } from "../src/pipeline/redact.js";
+import { MAX_TRAVERSAL } from "../src/validation.js";
+
+function capture() {
+  const events: LogEvent[] = [];
+  const sink: Sink = (batch) => void events.push(...batch);
+  return { events, sink };
+}
+
+function fetchSpy() {
+  const requests: HttpSinkRequest[] = [];
+  const fetch: HttpSinkFetch = async (_url, init) => {
+    requests.push(init);
+    return { ok: true, status: 200 };
+  };
+  return { fetch, requests };
+}
 
 const event = (overrides: Partial<LogEvent> = {}): LogEvent => ({
   ts: "2026-01-14T12:00:00.000Z",
@@ -144,6 +171,118 @@ describe("redaction", () => {
     expect(redactEvent(input, { allowlist: ["[redacted]"] })).toMatchObject({ "[redacted]": 1, "[redacted]#2": 2 });
     const reversed = { ...event(), "[redacted]": 2, "a@example.com": 1 } as LogEvent;
     expect(redactEvent(reversed, { allowlist: ["[redacted]"] })).toMatchObject({ "[redacted]": 2, "[redacted]#2": 1 });
+  });
+
+  describe("error fields obey the sensitive-key rules and the allowlist, like record keys", () => {
+    const failure = () => {
+      const cause = new Error("cause PRIVATE_CAUSE");
+      return new Error("message PRIVATE_MESSAGE", { cause });
+    };
+    const keys = ["message", "stack"];
+    const outputs = (options: RedactionOptions) => {
+      const captured = capture();
+      createLogger({ name: "k", pipeline: [redactSecFn(options)], sinks: [captured.sink] }).error("m", { err: failure() });
+      return [redactEvent(event({ ctx: { err: failure() } }), options).ctx, captured.events[0].ctx];
+    };
+
+    it("redactEvent and a logger's redactSecFn stage redact message and stack, also of a nested cause", () => {
+      for (const ctx of outputs({ keys })) {
+        expect(ctx).toEqual({
+          err: { name: "Error", message: REDACTED, stack: REDACTED, cause: { name: "Error", message: REDACTED, stack: REDACTED } },
+        });
+        expect(JSON.stringify(ctx)).not.toContain("PRIVATE");
+      }
+    });
+
+    it("an allowlisted error field path is kept, as for a record", () => {
+      for (const ctx of outputs({ keys, allowlist: ["err.message", "err.cause.stack"] })) {
+        const err = (ctx as { err: { message: string; stack: string; cause: { message: string; stack: string } } }).err;
+        expect(err.message).toBe("message PRIVATE_MESSAGE");
+        expect(err.cause.stack).toContain("PRIVATE_CAUSE");
+        expect([err.stack, err.cause.message]).toEqual([REDACTED, REDACTED]);
+      }
+    });
+  });
+});
+
+describe("traversal budget", () => {
+  // n = {a: n1, b: n1}: depth objects, 2^depth paths.
+  const shared = (depth: number) => {
+    let node: Record<string, unknown> = { leaf: "token=DAG_SECRET" };
+    for (let level = 0; level < depth; level++) node = { a: node, b: node };
+    return node;
+  };
+  const timed = async (run: () => unknown) => {
+    const started = Date.now();
+    const output = JSON.stringify(await run());
+    return { elapsed: Date.now() - started, size: output.length, output };
+  };
+
+  it.each([20, 30])("a shared graph of depth %i is walked once per budget through every path", async (depth) => {
+    const node = shared(depth);
+    const captured = capture();
+    const logger = createLogger({ name: "dag", pipeline: [redactSecFn()], sinks: [captured.sink] });
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => void lines.push(String(line)));
+    const runs = [
+      () => sanitizeValue({ node }),
+      () => sanitizeEvent(event({ ctx: { node } })),
+      () => redactEvent(event({ ctx: { node } })),
+      () => (logger.info("m", { node }), captured.events[0]),
+      () => (serverLogger({ name: "dag" }).info("m", { node }), lines[0]),
+      async () => (sink([event({ ctx: { node } })]), await sink.flush(), spy.requests[0].body),
+    ];
+    try {
+      for (const [index, run] of runs.entries()) {
+        const { elapsed, size, output } = await timed(run);
+        expect(elapsed).toBeLessThan(5000);
+        expect(size).toBeLessThan(2 * MAX_TRAVERSAL);
+        // Sanitization alone does not redact; every other path does.
+        if (index > 1) expect(output.includes("DAG_SECRET")).toBe(false);
+      }
+      // The sinks still bound what they write by MAX_EVENT_SIZE.
+      for (const text of [lines[0], spy.requests[0].body]) expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(MAX_EVENT_SIZE + 20);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("wide arrays, sparse arrays, wide objects and long strings stop at the budget", () => {
+    const wide = Object.fromEntries(Array.from({ length: 200_000 }, (_, index) => [`k${index}`, index]));
+    for (const value of [Array.from({ length: 300_000 }, (_, index) => index), new Array(2 ** 32 - 1), wide, ["x".repeat(MAX_TRAVERSAL)]]) {
+      const started = Date.now();
+      const ctx = redactEvent(event({ ctx: { value } })).ctx as { value: unknown[] | Record<string, unknown> };
+      const output = JSON.stringify(ctx);
+      expect(Date.now() - started).toBeLessThan(5000);
+      // A value costs 1 and writes at most a number's text.
+      expect(output.length).toBeLessThan(8 * MAX_TRAVERSAL);
+      // An array ends with MAX_SIZE; an object ends at the first key past the budget.
+      if (Array.isArray(ctx.value)) expect(ctx.value.at(-1)).toBe(MAX_SIZE);
+      else expect(Object.keys(ctx.value).length).toBeLessThan(MAX_TRAVERSAL / 4);
+    }
+  });
+
+  it("values past the budget are never written, redacted or not, and values within it are unchanged", () => {
+    // ts, level, name, version, ctx and the key "fill" cost 42; fill costs its length plus 1, "late" 4.
+    const fill = "f".repeat(MAX_TRAVERSAL - 50);
+    const ctx = redactEvent(event({ ctx: { fill, late: "token=LATE_SECRET", nested: { password: "LATE_PASSWORD" } } })).ctx;
+    expect(ctx).toEqual({ fill, late: MAX_SIZE });
+    expect(JSON.stringify(ctx)).not.toMatch(/LATE_/);
+    const within = { list: [1, "token=x", { password: "p" }], text: "y".repeat(MAX_EVENT_SIZE) };
+    expect(redactEvent(event({ ctx: within })).ctx).toEqual({ list: [1, "token=[redacted]", { password: REDACTED }], text: within.text });
+  });
+
+  it("each walk has its own budget, also one started by a getter inside another, and the outer one resumes", () => {
+    const half = "o".repeat(MAX_TRAVERSAL / 2);
+    const inner = { get length() {
+      return (sanitizeValue("i".repeat(MAX_TRAVERSAL - 100)) as string).length;
+    } };
+    const output = sanitizeValue({ half, inner, after: "a".repeat(MAX_TRAVERSAL / 4) });
+    expect(output).toEqual({ half, inner: { length: MAX_TRAVERSAL - 100 }, after: "a".repeat(MAX_TRAVERSAL / 4) });
+    expect(sanitizeValue("s".repeat(MAX_TRAVERSAL - 1))).toHaveLength(MAX_TRAVERSAL - 1);
+    expect(sanitizeValue("s".repeat(MAX_TRAVERSAL))).toBe(MAX_SIZE);
   });
 });
 
