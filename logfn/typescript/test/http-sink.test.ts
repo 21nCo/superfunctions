@@ -856,6 +856,33 @@ describe("sinkHttp callback diagnostics", () => {
     }
   );
 
+  // Sending what an instrumented fetch logged makes it log again; with
+  // batch 1 a drain started at once for each would never end.
+  it("waits for the interval before sending events its own fetch logged", async () => {
+    let logger: ReturnType<typeof createLogger> | undefined;
+    const fetch = vi.fn<HttpSinkFetch>(async () => {
+      logger?.info("fetch called");
+      return ok;
+    });
+    const sink = sinkHttp({ url: URL, fetch, batch: 1, flushIntervalMs: 60_000 });
+    logger = createLogger({ name: "svc", sinks: [sink] });
+
+    // fetch logs while logger.info("one") runs, so flush() also sends that
+    // event; what fetch logs while sending it waits for the interval.
+    logger.info("one");
+    await sink.flush();
+    await sleep(100);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(sink.stats()).toMatchObject({ queued: 1, sent: 2 });
+
+    // An independent event still sends a full batch at once.
+    logger.info("two");
+    await sleep(100);
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(sink.stats()).toMatchObject({ queued: 2, sent: 4 });
+    await sink.close();
+  });
+
   it("reports a batch that mixes a diagnostic with an independent event", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { fetch } = scriptedFetch({ ok: false, status: 400 });

@@ -38,6 +38,16 @@ describe("sinkConsole", () => {
     expect(line).not.toContain("\x1b[");
   });
 
+  it("pretty-prints an event whose ids a stage set to non-strings", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    sinkConsole({ json: false, color: false })([
+      event({ traceId: 123 as unknown as string, requestId: "req-12345678" }),
+    ]);
+    const line = log.mock.calls[0][0] as string;
+    expect(line).toContain("req=req-1234");
+    expect(line).not.toContain("trace=");
+  });
+
   it("bounds each event itself, since loggers pass events without a size bound", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const logger = createLogger({ name: "svc", level: "info", sinks: [sinkConsole({ json: true })] });

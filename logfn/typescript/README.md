@@ -105,19 +105,26 @@ every other event field, object keys and top-level field names included:
   strings (any JSON whitespace, newlines and CRLF included, may surround the
   separator, and escaped `\n`/`\r`/`\t` may follow it in once-escaped JSON;
   quoted names may contain spaces; quoted values are consumed whole, escaped
-  quotes and once-escaped JSON included, with any text glued to the closing
-  quote; an object or array value is consumed to its balanced closing
-  bracket, across lines, or to the end of the text when unbalanced), and
-  bearer tokens. A value that already starts with
+  quotes and once-escaped JSON included, across lines to the closing quote
+  (a multi-line PEM key included) or to the end of the text when
+  unterminated, with any text glued to the closing quote; an object or
+  array value is consumed to its balanced closing bracket, across lines, or
+  to the end of the text when unbalanced), and bearer tokens. A value that already starts with
   the replacement is left alone only when the replacement is all of it.
 - Email addresses, by default. `patterns` replaces this default extra list but
   never disables the credential rules.
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
-such as `user.email`, `items[0]`, `userId`), `patterns`, `replacement`
+such as `user.email`, `items[0]`, `userId`; ctx paths start at the ctx root
+and other fields are named by their field name, in one namespace, so
+`userId` exempts both the `userId` field and `ctx.userId`, but not
+`ctx.user.userId`), `patterns`, `replacement`
 (default `"[redacted]"`; it must not be empty, which throws; it is inserted
 literally, `$&` or `$1` are not expanded). Cycles become `"[circular]"` and
-nesting beyond 32 levels becomes `"[max-depth]"`. Distinct keys that redact
+nesting beyond 32 levels becomes `"[max-depth]"`. Dates are redacted as the
+ISO text sanitization writes, so the output is final: no later step adds
+unredacted text. Own `__proto__` keys are kept as ordinary keys, here and in
+sanitization. Distinct keys that redact
 to the same text (two email keys) keep every value: later ones are stored
 under `"<key>#2"`, `"#3"` and so on, in key order.
 
@@ -189,7 +196,10 @@ Posts `{"events": [...]}` to `url` in batches.
   always fails cannot turn one event into an endless chain of requests. A
   batch that also holds an independent event is reported as usual. Events a
   callback logs later (after an `await` or a timer) are not recognized as
-  its diagnostics.
+  its diagnostics. Events the sink's own `fetch` logs synchronously are
+  diagnostics too, and a queue holding only them is sent after
+  `flushIntervalMs` rather than at once, so a `fetch` that logs every
+  request adds at most one request per interval, never a tight loop.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.

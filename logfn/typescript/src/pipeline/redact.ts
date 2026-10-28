@@ -48,7 +48,8 @@ export interface RedactionOptions {
   /**
    * Paths that skip redaction: ctx paths such as `user.email` or `items[0]`,
    * and other event fields by name, such as `userId` or `tenantId`. Only the
-   * exact path is exempt.
+   * exact path is exempt. Both kinds share one namespace: `userId` exempts the
+   * `userId` field and `ctx.userId`, but not `ctx.user.userId`.
    */
   allowlist?: string[];
 
@@ -198,13 +199,14 @@ function compile(options: RedactionOptions): CompiledRedactor {
 // backslashes; `from` is just after the opening quote. Each level of string
 // escaping doubles the backslashes, so a quote closes the value when the
 // backslash run before it is congruent to `slashes` modulo 2 * (slashes + 1):
-// 0 (mod 2) for plain quotes, 1 (mod 4) for once-escaped quotes. An
-// unterminated value runs to the end of the line.
+// 0 (mod 2) for plain quotes, 1 (mod 4) for once-escaped quotes. The value
+// runs across lines to its closing quote, so a multi-line credential (a PEM
+// key) is consumed whole; an unterminated value runs to the end of the input.
+// Callers redact through the returned end, so no text is scanned twice.
 function quotedValueEnd(input: string, from: number, slashes: number, quote: string): number {
   let index = from;
   while (index < input.length) {
     const char = input[index];
-    if (char === "\r" || char === "\n") return index;
     if (char === "\\" || char === quote) {
       let run = 0;
       while (input[index + run] === "\\") run++;
@@ -401,6 +403,23 @@ function redactText(value: string, redactor: CompiledRedactor): string {
   return result;
 }
 
+/** Text of a date, exactly as sanitization writes it (caller code may override either method) */
+export function dateText(value: Date): string {
+  return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+}
+
+/**
+ * Sets an own data property, also for the key `__proto__`, which plain
+ * assignment would turn into a prototype change and drop from the output.
+ */
+export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+  } else {
+    target[key] = value;
+  }
+}
+
 function childPath(path: string, key: string): string {
   return path ? `${path}.${key}` : key;
 }
@@ -427,7 +446,12 @@ function redactNode(
   if (typeof value === "string") {
     return redactor.allowlist.has(path) ? value : redactText(value, redactor);
   }
-  if (value === null || typeof value !== "object" || value instanceof Date) {
+  // A date is redacted as the text sanitization would write, so the stage's
+  // output is final: no later step can turn it into unredacted text.
+  if (value instanceof Date) {
+    return redactNode(dateText(value), redactor, path, ancestors, depth);
+  }
+  if (value === null || typeof value !== "object") {
     return value;
   }
   if (isBinary(value)) {
@@ -471,10 +495,13 @@ function redactNode(
       const allowed = redactor.allowlist.has(itemPath);
       // Keys are text too: a map keyed by URL or email must not leak them.
       const outputKey = uniqueKey(result, allowed ? key : redactText(key, redactor), used);
-      result[outputKey] =
+      setOwn(
+        result,
+        outputKey,
         redactor.isSensitive(key) && !allowed
           ? redactor.replacement
-          : redactNode(item, redactor, itemPath, ancestors, depth + 1);
+          : redactNode(item, redactor, itemPath, ancestors, depth + 1)
+      );
     }
     return result;
   } finally {
@@ -494,12 +521,14 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
     } else if (key === "ctx") {
       redacted.ctx = redactNode(value, redactor, "", new Set(), 0);
     } else if (redactor.allowlist.has(key)) {
-      redacted[key] = redactNode(value, redactor, key, new Set(), 0);
+      setOwn(redacted, key, redactNode(value, redactor, key, new Set(), 0));
     } else {
       // Field names are text too, exactly like nested keys.
-      redacted[uniqueKey(redacted, redactText(key, redactor), used)] = redactor.isSensitive(key)
-        ? redactor.replacement
-        : redactNode(value, redactor, key, new Set(), 0);
+      setOwn(
+        redacted,
+        uniqueKey(redacted, redactText(key, redactor), used),
+        redactor.isSensitive(key) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0)
+      );
     }
   }
   return redacted as unknown as LogEvent;

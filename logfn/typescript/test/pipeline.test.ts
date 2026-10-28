@@ -73,6 +73,17 @@ describe("redaction", () => {
     expect(out).not.toContain("password=x");
   });
 
+  it("redacts dates as the text sanitization writes, so its output is final", () => {
+    const date = new Date("2026-01-01T00:00:00.000Z");
+    date.toISOString = () => "token=DATE_SECRET";
+    const invalid = new Date(Number.NaN);
+    invalid.toString = () => "password=INVALID_SECRET";
+    const plain = new Date("2026-01-01T00:00:00.000Z");
+    const expected = { date: "token=[redacted]", invalid: "password=[redacted]", plain: "2026-01-01T00:00:00.000Z" };
+    expect(redactEvent(event({ ctx: { date, invalid, plain } })).ctx).toEqual(expected);
+    expect((redactSecFn()(event({ ctx: { date, invalid, plain } })) as LogEvent).ctx).toEqual(expected);
+  });
+
   it("rejects an empty replacement, which would make redacted text ambiguous", () => {
     expect(() => redactSecFn({ replacement: "" })).toThrow("non-empty");
     expect(() => redactEvent(event({ msg: "password=x" }), { replacement: "" })).toThrow("non-empty");
@@ -108,6 +119,14 @@ describe("redaction", () => {
       "https://" + "a@".repeat(100_000),
       ("a://" + "b:".repeat(10) + " ").repeat(10_000),
       'password="x"' + "a".repeat(200_000),
+      // Quoted values that span lines, terminated late or never.
+      'password="a\n'.repeat(50_000),
+      "token='a\r\n".repeat(40_000),
+      'token=\\"a\n'.repeat(40_000),
+      'token="' + "a\n".repeat(100_000),
+      "token={" + '"a\n'.repeat(60_000),
+      '{"api key": "' + "a\n".repeat(100_000),
+      Array.from({ length: 600 }, (_, n) => "token=" + "\\".repeat(n) + '"a\n').join(""),
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));

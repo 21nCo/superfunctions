@@ -3,8 +3,16 @@
  */
 
 import type { LogEvent, SerializationResult } from "./types.js";
-import { MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
-import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, isBinary } from "./pipeline/redact.js";
+import { LOG_LEVEL_VALUES, MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
+import {
+  CIRCULAR,
+  MAX_DEPTH,
+  MAX_REDACTION_DEPTH,
+  UNSERIALIZABLE,
+  dateText,
+  isBinary,
+  setOwn,
+} from "./pipeline/redact.js";
 
 const TRUNCATED_SUFFIX = "...[truncated]";
 const encoder = new TextEncoder();
@@ -34,7 +42,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
   }
 
   if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+    return dateText(value);
   }
   const object = value as object;
   // Each byte would become a number that no text rule can redact.
@@ -76,7 +84,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     for (const [key, item] of Object.entries(object)) {
       const cleaned = sanitizeNode(item, ancestors, depth + 1);
       if (cleaned !== undefined) {
-        sanitized[key] = cleaned;
+        setOwn(sanitized, key, cleaned);
       }
     }
     return sanitized;
@@ -131,7 +139,7 @@ export function sanitizeEvent(event: LogEvent): LogEvent {
     } else if (key === "tags" && Array.isArray(value)) {
       sanitized.tags = value.slice(0, MAX_TAGS).map(tagText);
     } else {
-      sanitized[key] = sanitizeValue(value);
+      setOwn(sanitized, key, sanitizeValue(value));
     }
   }
   if (sanitized.msg === undefined) sanitized.msg = "";
@@ -199,22 +207,40 @@ export function validateAndSerialize(event: LogEvent): SerializationResult {
   return { event: finalEvent, truncated: true };
 }
 
+const OPTIONAL_STRING_FIELDS = ["traceId", "spanId", "requestId", "userId", "tenantId"] as const;
+
 /**
- * Validates a log event schema
+ * Validates a log event schema: non-empty ts, name and version strings, a
+ * known level, a string msg (possibly empty), and, when present, string ids,
+ * a plain-object ctx and an array of string tags.
  */
 export function isValidLogEvent(event: unknown): event is LogEvent {
   if (!event || typeof event !== "object") {
     return false;
   }
 
-  const e = event as Partial<LogEvent>;
+  const e = event as Record<string, unknown>;
 
   // Required fields
   if (!e.ts || typeof e.ts !== "string") return false;
-  if (!e.level || typeof e.level !== "string") return false;
-  if (!e.msg || typeof e.msg !== "string") return false;
+  // An own-key check: `in` would accept inherited names such as "toString".
+  if (typeof e.level !== "string" || !Object.prototype.hasOwnProperty.call(LOG_LEVEL_VALUES, e.level)) {
+    return false;
+  }
+  if (typeof e.msg !== "string") return false;
   if (!e.name || typeof e.name !== "string") return false;
   if (!e.version || typeof e.version !== "string") return false;
+
+  // Optional fields
+  for (const field of OPTIONAL_STRING_FIELDS) {
+    if (e[field] !== undefined && typeof e[field] !== "string") return false;
+  }
+  if (e.ctx !== undefined && (e.ctx === null || typeof e.ctx !== "object" || Array.isArray(e.ctx))) {
+    return false;
+  }
+  if (e.tags !== undefined && !(Array.isArray(e.tags) && e.tags.every((tag) => typeof tag === "string"))) {
+    return false;
+  }
 
   return true;
 }

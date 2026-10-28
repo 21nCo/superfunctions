@@ -6,7 +6,7 @@
     "input.$ref": "An object {\"$ref\": \"dot.path\"} is replaced, after the whole ctx is built, by the object at that path from the ctx root (\"\" is the root), which creates circular or shared references.",
     "input.$bytes": "An object {\"$bytes\": {text, kind}} is built as binary data holding the UTF-8 bytes of text. kind \"bytes\" is a Uint8Array in TypeScript (a Buffer where Node provides one) and bytes in Python; \"mutable\" is an ArrayBuffer and a bytearray; \"view\" is a DataView and a memoryview. Binary data has no JSON form and its bytes cannot be redacted as text, so it becomes \"[unserializable]\".",
     "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
-    "options": "Optional redaction options: keys (extra sensitive key names), allowlist (exempt paths: ctx paths like a.b or a[0], or userId, tenantId) and replacement (a non-empty marker used instead of the default).",
+    "options": "Optional redaction options: keys (extra sensitive key names), allowlist (exempt paths: ctx paths like a.b or a[0] from the ctx root, or top-level field names like userId, tenantId, in one namespace) and replacement (a non-empty marker used instead of the default).",
     "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
     "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId or a fields key) are compared, by deep equality.",
     "input.fields": "Optional extra top-level event fields (request ids, fields outside the LogEvent schema) set by a caller-added stage.",
@@ -956,6 +956,110 @@
         "ada@example.com",
         "bob@example.com",
         "cy@example.com"
+      ]
+    },
+    {
+      "id": "multiline-quoted-values",
+      "description": "A quoted credential value runs across lines (LF or CRLF) to its closing quote, for single and double quotes, escaped quotes, quoted names with spaces, header names and quotes inside bracketed values; an unterminated quoted value runs to the end of the text.",
+      "input": {
+        "msg": "private_key=\"-----BEGIN PRIVATE KEY-----\nPEM_SECRET\n-----END PRIVATE KEY-----\" loaded",
+        "ctx": {
+          "crlf": "password='line1\r\nCRLF_SECRET' user=ada",
+          "escaped": "{\\\"token\\\":\\\"a\nESCAPED_ML_SECRET\\\",\\\"n\\\":1}",
+          "spaced": "{\"api key\": \"a\nSPACED_ML_SECRET\", \"display name\": \"Ada\"}",
+          "header": "Authorization: \"Bearer a\r\nHEADER_ML_SECRET\"\nnext: ok",
+          "nested": "config: {\"password\": \"a\nNESTED_ML_SECRET\", \"region\": \"eu\"}",
+          "bracketQuote": "token={\"note\": \"x\n}BRACKET_ML_SECRET\"} after",
+          "unterminated": "password=\"UNTERMINATED_SECRET\nrest of the log"
+        }
+      },
+      "expected": {
+        "msg": "private_key=\"[redacted]\" loaded",
+        "ctx": {
+          "crlf": "password='[redacted]' user=ada",
+          "escaped": "{\\\"token\\\":\\\"[redacted]\\\",\\\"n\\\":1}",
+          "spaced": "{\"api key\": \"[redacted]\", \"display name\": \"Ada\"}",
+          "header": "Authorization: \"[redacted]\"\nnext: ok",
+          "nested": "config: {\"password\": \"[redacted]\", \"region\": \"eu\"}",
+          "bracketQuote": "token=[redacted] after",
+          "unterminated": "password=\"[redacted]\""
+        }
+      },
+      "absent": [
+        "PEM_SECRET",
+        "CRLF_SECRET",
+        "ESCAPED_ML_SECRET",
+        "SPACED_ML_SECRET",
+        "HEADER_ML_SECRET",
+        "NESTED_ML_SECRET",
+        "BRACKET_ML_SECRET",
+        "UNTERMINATED_SECRET",
+        "rest of the log"
+      ]
+    },
+    {
+      "id": "allowlist-shared-namespace",
+      "description": "Allowlist entries name ctx paths from the ctx root and top-level fields in one namespace: userId exempts the userId field and ctx.userId, but not a nested user.userId or other keys.",
+      "options": {
+        "allowlist": [
+          "userId"
+        ]
+      },
+      "input": {
+        "msg": "m",
+        "ctx": {
+          "userId": "token=abc",
+          "user": {
+            "userId": "token=def"
+          },
+          "note": "token=ghi"
+        },
+        "userId": "token=top"
+      },
+      "expected": {
+        "ctx": {
+          "userId": "token=abc",
+          "user": {
+            "userId": "token=[redacted]"
+          },
+          "note": "token=[redacted]"
+        },
+        "userId": "token=top"
+      },
+      "absent": [
+        "token=def",
+        "token=ghi"
+      ]
+    },
+    {
+      "id": "proto-keys",
+      "description": "A key named __proto__ (as JSON.parse creates it) is an ordinary key: kept, with its contents redacted like any other, in ctx and as a top-level field.",
+      "input": {
+        "msg": "m",
+        "ctx": {
+          "__proto__": {
+            "password": "pw",
+            "note": "token=PROTO_SECRET"
+          },
+          "a": 1
+        },
+        "fields": {
+          "__proto__": "token=TOP_SECRET"
+        }
+      },
+      "expected": {
+        "ctx": {
+          "__proto__": {
+            "password": "[redacted]",
+            "note": "token=[redacted]"
+          },
+          "a": 1
+        },
+        "__proto__": "token=[redacted]"
+      },
+      "absent": [
+        "PROTO_SECRET",
+        "TOP_SECRET"
       ]
     }
   ]

@@ -86,7 +86,13 @@ export function buildContext(ctx: Record<string, Json> | undefined): Record<stri
     }
     const object: Record<string, unknown> = {};
     for (const [childKey, item] of Object.entries(value)) {
-      object[childKey] = build(item, object, childKey);
+      // defineProperty keeps an own `__proto__` key as data, like JSON.parse.
+      Object.defineProperty(object, childKey, {
+        value: build(item, object, childKey),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return object;
   };

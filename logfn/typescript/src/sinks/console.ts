@@ -89,8 +89,9 @@ function formatPretty(
 
   // IDs (if present)
   const ids: string[] = [];
-  if (event.traceId) ids.push(`trace=${event.traceId.slice(0, 8)}`);
-  if (event.requestId) ids.push(`req=${event.requestId.slice(0, 8)}`);
+  // A stage may have set a non-string id; it is printed in the JSON form only.
+  if (typeof event.traceId === "string" && event.traceId) ids.push(`trace=${event.traceId.slice(0, 8)}`);
+  if (typeof event.requestId === "string" && event.requestId) ids.push(`req=${event.requestId.slice(0, 8)}`);
   if (ids.length > 0) {
     line += ` ${dim}(${ids.join(" ")})${reset}`;
   }

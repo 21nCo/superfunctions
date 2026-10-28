@@ -21,6 +21,14 @@ const event = (overrides: Partial<LogEvent> = {}): LogEvent => ({
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 describe("sanitizeValue", () => {
+  it("keeps an own __proto__ key as data without changing prototypes", () => {
+    const json = '{"__proto__":{"marker":"keep"},"a":1,"nested":{"__proto__":2}}';
+    const out = sanitizeValue(JSON.parse(json)) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(out.nested)).toBe(Object.prototype);
+    expect(JSON.stringify(out)).toBe(json);
+  });
+
   it("replaces unserializable values and normalizes dates, errors and non-finite numbers", () => {
     const cause = new Error("inner");
     const error = new Error("outer", { cause });
@@ -139,7 +147,30 @@ describe("validateAndSerialize", () => {
 describe("isValidLogEvent", () => {
   it("requires the v0 fields", () => {
     expect(isValidLogEvent(event())).toBe(true);
-    expect(isValidLogEvent({ ...event(), msg: "" })).toBe(false);
+    // sanitizeEvent writes an empty msg for an event without one.
+    expect(isValidLogEvent({ ...event(), msg: "" })).toBe(true);
+    const ids = { traceId: "t", spanId: "s", requestId: "r", userId: "u", tenantId: "x" };
+    expect(isValidLogEvent(event({ ctx: { a: 1 }, tags: ["t"], ...ids }))).toBe(true);
     expect(isValidLogEvent("event")).toBe(false);
+  });
+
+  it.each([
+    ["an unknown level", { level: "verbose" }],
+    ["an inherited level name", { level: "toString" }],
+    ["a missing msg", { msg: undefined }],
+    ["a non-string msg", { msg: 1 }],
+    ["an empty name", { name: "" }],
+    ["a numeric traceId", { traceId: 123 }],
+    ["a numeric spanId", { spanId: 1 }],
+    ["an object requestId", { requestId: {} }],
+    ["a numeric userId", { userId: 7 }],
+    ["a boolean tenantId", { tenantId: true }],
+    ["an array ctx", { ctx: [] }],
+    ["a null ctx", { ctx: null }],
+    ["a string ctx", { ctx: "x" }],
+    ["a non-string tag", { tags: ["a", 1] }],
+    ["string tags", { tags: "a" }],
+  ])("rejects %s", (_name, overrides) => {
+    expect(isValidLogEvent({ ...event(), ...overrides })).toBe(false);
   });
 });

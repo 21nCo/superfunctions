@@ -303,12 +303,16 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   // re-entered and one event cannot start a recursion.
   let reportingError = false;
   let reportingDrop = false;
-  // Events accepted while onError or onDrop ran (the callback's own
-  // diagnostics). A batch made only of them that fails or is dropped later
-  // is counted, and its error goes to console.error, but neither callback is
-  // called for it: otherwise a collector that always fails would turn one
-  // event into an endless chain of requests and callbacks.
+  // Events accepted while onError, onDrop or the sink's own fetch call ran
+  // (their diagnostics). A batch made only of them that fails or is dropped
+  // later is counted, and its error goes to console.error, but neither
+  // callback is called for it: otherwise a collector that always fails would
+  // turn one event into an endless chain of requests and callbacks.
   const feedback = new WeakSet<LogEvent>();
+  // Sending what fetch logged makes fetch log again, so a queue made only of
+  // those events waits for the interval timer instead of draining at once.
+  const fetchLogged = new WeakSet<LogEvent>();
+  let callingFetch = false;
 
   function onlyFeedback(events: LogEvent[]): boolean {
     return events.length > 0 && events.every((event) => feedback.has(event));
@@ -364,15 +368,21 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     // Every response is released, also one that arrives after the timeout (a
     // fetch that ignores the abort signal). The async wrapper turns a fetch
     // that throws synchronously into a rejection.
-    const request = (async () =>
-      fetchImpl(url, {
-        method: "POST",
-        headers: requestHeaders,
-        body,
-        signal: controller?.signal,
-        redirect: "manual",
-        ...(keepalive ? { keepalive } : {}),
-      }))();
+    callingFetch = true;
+    let request: Promise<HttpSinkResponse>;
+    try {
+      request = (async () =>
+        fetchImpl(url, {
+          method: "POST",
+          headers: requestHeaders,
+          body,
+          signal: controller?.signal,
+          redirect: "manual",
+          ...(keepalive ? { keepalive } : {}),
+        }))();
+    } finally {
+      callingFetch = false;
+    }
     request.then(release, () => {});
 
     try {
@@ -470,7 +480,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       } finally {
         draining = null;
         settle();
-        if (queue.length >= batchSize) {
+        if (queue.length >= batchSize && !queue.every((event) => fetchLogged.has(event))) {
           void drain();
         } else if (queue.length > 0 && !closed) {
           scheduleFlush();
@@ -507,7 +517,8 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
         if (closed) {
           drop(1, "closed");
         } else if (redacted) {
-          if (reportingError || reportingDrop) feedback.add(redacted);
+          if (reportingError || reportingDrop || callingFetch) feedback.add(redacted);
+          if (callingFetch) fetchLogged.add(redacted);
           queue.push(redacted);
           accepted += 1;
         }
