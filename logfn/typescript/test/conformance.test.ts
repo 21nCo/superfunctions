@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createLogger,
   enrichContext,
+  isValidLogEvent,
   redactEvent,
   redactSecFn,
   REDACTED,
@@ -470,6 +472,88 @@ describe("shared redaction vectors", () => {
       await sink.flush();
       expectClean(spy.requests.map((request) => request.body).join("\n"));
       expect(spy.events().map((event) => event.tags)).toEqual([undefined, undefined, undefined, undefined, ["kept", "also"]]);
+    });
+  });
+
+  describe("values from another realm (a vm context, an iframe) keep their kind", () => {
+    const foreign = <T>(code: string): T => runInNewContext(code) as T;
+    const error = () => foreign<Error>('const e = new TypeError("boom token=REALM_SECRET", { cause: new RangeError("inner") }); e');
+    const date = () => foreign<Date>("new Date(0)");
+    const iso = "1970-01-01T00:00:00.000Z";
+    const expectError = (value: unknown) => {
+      const shape = value as Record<string, unknown>;
+      expect(shape).toMatchObject({ name: "TypeError", message: "boom token=[redacted]", cause: { name: "RangeError", message: "inner" } });
+      expect(String(shape.stack)).toContain("TypeError: boom");
+    };
+
+    it("the values are foreign, so instanceof cannot see their kind", () => {
+      expect(error()).not.toBeInstanceOf(Error);
+      expect(date()).not.toBeInstanceOf(Date);
+    });
+
+    it("sanitizeValue and redactEvent keep error fields and write dates as ISO text", () => {
+      const sanitized = sanitizeValue({ err: error(), at: date() }) as Record<string, Record<string, unknown>>;
+      expect(sanitized.err).toMatchObject({ name: "TypeError", message: "boom token=REALM_SECRET", cause: { message: "inner" } });
+      expect(sanitized.at).toBe(iso);
+      expect(sanitizeValue(date())).toBe(iso);
+      const event: LogEvent = { ts: iso, level: "error", msg: "m", name: "n", version: "1", ctx: { err: error(), at: date() } };
+      const redacted = redactEvent(event).ctx as Record<string, unknown>;
+      expectError(redacted.err);
+      expect(redacted.at).toBe(iso);
+      expect(JSON.stringify(redacted)).not.toContain("REALM_SECRET");
+    });
+
+    it("binary data from another realm is never written byte by byte", () => {
+      expect(sanitizeValue({ a: foreign("new ArrayBuffer(4)"), s: foreign("new SharedArrayBuffer(4)"), v: foreign("new Uint8Array([112, 97, 115])") }))
+        .toEqual({ a: "[unserializable]", s: "[unserializable]", v: "[unserializable]" });
+    });
+
+    it("an object that only claims a kind by tag or prototype stays a record and never throws", () => {
+      const claims = { [Symbol.toStringTag]: "Date", token: "x" };
+      expect(sanitizeValue(claims)).toEqual({ token: "x" });
+      expect(sanitizeValue({ [Symbol.toStringTag]: "ArrayBuffer", n: 1 })).toEqual({ n: 1 });
+      expect(sanitizeValue(Object.create(Date.prototype))).toEqual({});
+      expect(isValidLogEvent({ ts: iso, level: "info", msg: "m", name: "n", version: "1", ctx: claims })).toBe(true);
+    });
+
+    it("sinkHttp body and serverLogger console JSON keep a direct or nested error and date", async () => {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      const lines: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
+      for (const logger of [createLogger({ name: "realm", sinks: [sink], pipeline: [redactSecFn()] }), serverLogger({ name: "svc" })]) {
+        logger.error("direct error", error() as unknown as Record<string, unknown>);
+        logger.error("direct date", date() as unknown as Record<string, unknown>);
+        logger.error("nested", { err: error(), at: date() });
+      }
+      await sink.flush();
+      const events = [...spy.events(), ...lines.map((line) => JSON.parse(line) as LogEvent)];
+      expect(events).toHaveLength(6);
+      for (const [index, event] of events.entries()) {
+        const ctx = event.ctx as Record<string, unknown>;
+        if (index % 3 === 0) expectError(ctx.error);
+        if (index % 3 === 1) expect(ctx).toEqual({ value: iso });
+        if (index % 3 === 2) {
+          expectError(ctx.err);
+          expect(ctx.at).toBe(iso);
+        }
+      }
+      expect([...spy.requests.map((request) => request.body), ...lines].join("\n")).not.toContain("REALM_SECRET");
+    });
+
+    it("isValidLogEvent rejects a foreign Error or Date ctx and accepts a foreign plain object", () => {
+      const event = (ctx: unknown) => ({ ts: iso, level: "info", msg: "m", name: "n", version: "1", ctx });
+      expect(isValidLogEvent(event(error()))).toBe(false);
+      expect(isValidLogEvent(event(date()))).toBe(false);
+      expect(isValidLogEvent(event(foreign("({ a: 1 })")))).toBe(true);
+    });
+
+    it("a foreign error thrown by a sink reaches onError as is", () => {
+      const thrown = error();
+      const onError = vi.fn();
+      createLogger({ name: "realm", onError, sinks: [() => { throw thrown; }] }).info("m");
+      expect(onError.mock.calls[0]?.[0]).toBe(thrown);
     });
   });
 });

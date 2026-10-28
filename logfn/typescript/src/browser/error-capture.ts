@@ -3,6 +3,7 @@
  */
 
 import type { Logger } from "../core/logger.js";
+import { isErrorValue } from "../pipeline/redact.js";
 
 /**
  * Capture browser window errors and unhandled promise rejections
@@ -22,7 +23,7 @@ export function captureBrowserErrors(logger: Logger): () => void {
         filename: event.filename,
         lineno: event.lineno,
         colno: event.colno,
-        error: event.error instanceof Error ? event.error : undefined,
+        error: isErrorValue(event.error) ? event.error : undefined,
       },
       ["browser-error", "uncaught"]
     );

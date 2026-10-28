@@ -4,17 +4,7 @@
 
 import type { LogEvent, SerializationResult } from "./types.js";
 import { LOG_LEVEL_VALUES, MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
-import {
-  CIRCULAR,
-  MAX_DEPTH,
-  MAX_REDACTION_DEPTH,
-  UNSERIALIZABLE,
-  dateText,
-  isBinary,
-  isRecord,
-  setOwn,
-  unboxPrimitive,
-} from "./pipeline/redact.js";
+import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, dateText, isBinary, isDateValue, isErrorValue, isRecord, setOwn, unboxPrimitive } from "./pipeline/redact.js";
 
 const TRUNCATED_SUFFIX = "...[truncated]";
 const encoder = new TextEncoder();
@@ -43,7 +33,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     return value;
   }
 
-  if (value instanceof Date) {
+  if (isDateValue(value)) {
     return dateText(value);
   }
   const object = value as object;
@@ -74,7 +64,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
       return items;
     }
 
-    if (object instanceof Error) {
+    if (isErrorValue(object)) {
       const error: Record<string, unknown> = {
         name: String(object.name),
         message: String(object.message),

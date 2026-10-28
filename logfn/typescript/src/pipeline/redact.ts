@@ -22,14 +22,26 @@ export const MAX_DEPTH = "[max-depth]";
  */
 export const UNSERIALIZABLE = "[unserializable]";
 
-/** ArrayBuffer, SharedArrayBuffer and every view on one (typed arrays, DataView, Buffer) */
-export function isBinary(value: object): boolean {
-  return (
-    ArrayBuffer.isView(value) ||
-    value instanceof ArrayBuffer ||
-    (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer)
-  );
+// Kind checks work across realms (vm contexts, iframes), unlike instanceof: a tag preselects, a built-in that throws without the internal slot confirms.
+function attempt<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
 }
+const tagOf = (value: unknown): string => attempt(() => Object.prototype.toString.call(value), "");
+const hasBrand = (check: ((this: unknown) => unknown) | undefined, value: unknown) => check !== undefined && attempt(() => (check.call(value), true), false);
+const byteLength = (type?: { prototype: object }) => type && Object.getOwnPropertyDescriptor(type.prototype, "byteLength")?.get;
+const BUFFER_BRANDS = new Map([["[object ArrayBuffer]", byteLength(ArrayBuffer)], ["[object SharedArrayBuffer]", byteLength(globalThis.SharedArrayBuffer)]]);
+
+/** ArrayBuffer, SharedArrayBuffer and every view on one (typed arrays, DataView, Buffer) */
+export const isBinary = (value: object): boolean => ArrayBuffer.isView(value) || hasBrand(BUFFER_BRANDS.get(tagOf(value)), value);
+export const isDateValue = (value: unknown): value is Date =>
+  typeof value === "object" && value !== null && (value instanceof Date || tagOf(value) === "[object Date]") && hasBrand(Date.prototype.getTime, value);
+const isError = (Error as { isError?: (value: unknown) => boolean }).isError;
+export const isErrorValue = (value: unknown): value is Error =>
+  isError ? isError(value) : value instanceof Error || (typeof value === "object" && value !== null && tagOf(value) === "[object Error]");
 
 /** Nesting depth after which values are replaced by MAX_DEPTH */
 export const MAX_REDACTION_DEPTH = 32;
@@ -408,7 +420,6 @@ export function dateText(value: Date): string {
   return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
 }
 
-// Brand checks: each throws for an object without the matching internal slot.
 const BOXED_VALUE_OF = new Map<string, () => unknown>([
   ["[object String]", String.prototype.valueOf],
   ["[object Number]", Number.prototype.valueOf],
@@ -420,28 +431,15 @@ const BOXED_VALUE_OF = new Map<string, () => unknown>([
 // The primitive in a wrapper such as `new String(x)`, by built-in valueOf.
 export function unboxPrimitive(value: object): unknown {
   if (Array.isArray(value)) return value;
-  // Every String wrapper has an own length, whatever its tag; the tag only
-  // picks which other check to try, since a failed one is slow.
-  const checks: Array<() => unknown> = Object.prototype.hasOwnProperty.call(value, "length") ? [String.prototype.valueOf] : [];
-  try {
-    const byTag = BOXED_VALUE_OF.get(Object.prototype.toString.call(value));
-    if (byTag !== undefined) checks.push(byTag);
-  } catch {
-    // A throwing Symbol.toStringTag getter
-  }
-  for (const valueOf of checks) {
-    try {
-      return valueOf.call(value);
-    } catch {
-      // Not this kind of wrapper
-    }
-  }
+  // Every String wrapper has an own length, whatever its tag; a failed check is slow.
+  const checks = [Object.prototype.hasOwnProperty.call(value, "length") ? String.prototype.valueOf : undefined, BOXED_VALUE_OF.get(tagOf(value))];
+  for (const valueOf of checks) if (hasBrand(valueOf, value)) return valueOf!.call(value);
   return value;
 }
 
 /** A record read by own keys: not an Error, Date, array, boxed primitive or binary data */
 export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null &&
-  !(value instanceof Error || value instanceof Date || Array.isArray(value) || isBinary(value)) && unboxPrimitive(value) === value;
+  !(isErrorValue(value) || isDateValue(value) || Array.isArray(value) || isBinary(value)) && unboxPrimitive(value) === value;
 
 /** Sets an own data property, also `__proto__`, which assignment would drop */
 export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
@@ -479,7 +477,7 @@ function redactNode(
     return redactor.allowlist.has(path) ? value : redactText(value, redactor);
   }
   // Redacted as the text sanitization writes, so the output is final text.
-  if (value instanceof Date) {
+  if (isDateValue(value)) {
     return redactNode(dateText(value), redactor, path, ancestors, depth);
   }
   // Plain data only: serialization would run a function (an own toJSON).
@@ -517,7 +515,7 @@ function redactNode(
       return items;
     }
 
-    if (value instanceof Error) {
+    if (isErrorValue(value)) {
       const error: Record<string, unknown> = {
         // The name is caller-controlled text (`error.name = ...`), like the message.
         name: redactNode(String(value.name), redactor, childPath(path, "name"), ancestors, depth + 1),

@@ -14,7 +14,7 @@ import type {
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
 import { sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
-import { isRecord } from "../pipeline/redact.js";
+import { isErrorValue, isRecord } from "../pipeline/redact.js";
 
 // The error handlers whose work is running: those on the stack, plus, while
 // an async sink failure is reported, those that were running when that sink
@@ -37,13 +37,13 @@ function callableName(fn: unknown): string {
 }
 
 function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
+  return isErrorValue(error) ? error : new Error(String(error));
 }
 
 // A call, base or child context that is not a record is kept under a key, never spread.
 function normalizeContext(ctx: unknown): Record<string, unknown> | undefined {
   if (ctx === undefined || ctx === null) return undefined;
-  if (ctx instanceof Error) return { error: ctx };
+  if (isErrorValue(ctx)) return { error: ctx };
   return isRecord(ctx) ? ctx : { value: ctx };
 }
 

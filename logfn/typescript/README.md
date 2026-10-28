@@ -141,7 +141,7 @@ their primitive, read with the built-in `valueOf` (never an own `toString` or
 character; boxed bigints and symbols, like bigints, symbols, functions and
 binary data, become `"[unserializable]"`. Any other object (class instances,
 `Map`, `Set`, `URL`, proxies) becomes a plain object of its own enumerable
-string keys and `toJSON` is never called, so a `URL` becomes `{}`.
+string keys and `toJSON` is never called, so a `URL` becomes `{}`. Kinds are found by brand, not `instanceof`, so an error, date or buffer from another realm (a `vm` context, an iframe) is handled like a local one.
 
 Text rules are heuristics with known limits (the same in both runtimes):
 unquoted names with spaces (`pass word=x`), escaped whitespace before the

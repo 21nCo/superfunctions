@@ -3,7 +3,7 @@
  */
 
 import type { LogEvent, PipelineStage, Sink } from "../types.js";
-import { redactSecFn, type RedactionOptions } from "../pipeline/redact.js";
+import { isErrorValue, redactSecFn, type RedactionOptions } from "../pipeline/redact.js";
 import { sanitizeEvent, validateAndSerialize } from "../validation.js";
 
 /** Request passed to the fetch implementation */
@@ -180,7 +180,7 @@ const encoder = new TextEncoder();
 const KEEPALIVE_MAX_BYTES = 60_000;
 
 function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
+  return isErrorValue(error) ? error : new Error(String(error));
 }
 
 function isRetryableStatus(status: number): boolean {
