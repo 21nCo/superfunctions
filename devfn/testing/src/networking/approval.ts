@@ -39,8 +39,8 @@ type Fields = Record<string, unknown>;
 function object(value: unknown, field: string, keys: readonly string[], optional: readonly string[] = []): Fields {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApprovalError(`${field} must be an object.`);
   const unknown = Object.keys(value).filter((key) => !keys.includes(key) && !optional.includes(key));
-  // A field the harness does not understand may be a credential value or a scope it would ignore.
-  if (unknown.length) throw new ApprovalError(`${field} has unsupported fields: ${unknown.sort(byCodeUnit).join(", ")}.`);
+  // A field the harness does not understand may be a credential value or a scope it would ignore. Its name is never echoed: it is the file's content.
+  if (unknown.length) throw new ApprovalError(`${field} has unsupported fields; it allows only ${[...keys, ...optional].sort(byCodeUnit).join(", ")}.`);
   const missing = keys.filter((key) => (value as Fields)[key] === undefined);
   if (missing.length) throw new ApprovalError(`${field} is missing ${missing.join(", ")}.`);
   return value as Fields;

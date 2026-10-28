@@ -145,7 +145,7 @@ describe("operator approval", () => {
   it.each([
     ["production", { ...approval, nonproduction: false }, /nonproduction must be true/],
     ["expired", { ...approval, expiresAt: new Date(Date.now() - 1000).toISOString() }, /expired/],
-    ["a credential value", { ...approval, cloudflare: { ...approval.cloudflare, apiToken: "cf-secret-value" } }, /unsupported fields: apiToken/],
+    ["a credential value", { ...approval, cloudflare: { ...approval.cloudflare, apiToken: "cf-secret-value" } }, /^approval\.cloudflare has unsupported fields; it allows only accountId, apiTokenEnv, credentialsFile, domain, tunnelId, zoneId\.$/],
     ["a lowercase variable name", { ...approval, cloudflare: { ...approval.cloudflare, apiTokenEnv: "token value" } }, /apiTokenEnv is invalid/],
     ["a redirect off the relay host", { ...approval, oauth: { ...approval.oauth, redirectUri: "https://app.dev.example.test:8443/oauth/callback" } }, /relay host/],
     ["a redirect off the fixture callback path", { ...approval, oauth: { ...approval.oauth, redirectUri: "https://auth.dev.example.test:8443/callback" } }, /\/oauth\/callback/],
@@ -155,6 +155,46 @@ describe("operator approval", () => {
   ])("refuses %s", (_name, value, error) => {
     expect(() => parseApproval(JSON.parse(JSON.stringify(value)))).toThrow(error);
   });
+
+  it("is read only as a regular file under a plain name in the harness-owned directory, and a refusal never quotes the file", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-approval-")));
+    const root = path.join(dir, "harness");
+    const outside = path.join(dir, "approval.json");
+    const plan = async (name: string): Promise<{ status: string; detail: string }> => {
+      let output = "";
+      const written = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { output += String(chunk); return true; });
+      try { expect(await main(["plan", "--scenario", "host.registered-domain", "--approval", name], root)).toBe(0); } finally { written.mockRestore(); }
+      expect(output).not.toMatch(/SECRET|supersecret/);
+      return (JSON.parse(output) as { prerequisites: PrerequisiteResult[] }).prerequisites.find((item) => item.id === "approval")!;
+    };
+    try {
+      await writeFile(outside, JSON.stringify(approval));
+      // plan creates nothing, so a missing directory is refused rather than made.
+      expect(await plan("approval.json")).toEqual({ id: "approval", status: "missing", detail: expect.stringMatching(/approval refused: .* is missing or not a harness-owned directory/) });
+      await expect(access(root)).rejects.toThrow();
+      await mkdir(root, { mode: 0o700 });
+      for (const name of [outside, "../approval.json", "sub/approval.json", "approval.txt"]) {
+        expect((await plan(name)).detail, name).toMatch(/approval refused: --approval .* is not a file name such as approval\.json/);
+      }
+      const named = path.join(root, "approval.json");
+      await symlink(outside, named);
+      expect((await plan("approval.json")).detail).toMatch(/approval refused: approval\.json cannot be read as a regular file .*symlinks are not followed/);
+      await rm(named);
+      await mkdir(named);
+      expect((await plan("approval.json")).detail).toMatch(/approval refused: approval\.json is not a regular file/);
+      await rm(named, { recursive: true });
+      // Content is never echoed: not V8's excerpt of invalid JSON, nor an unsupported key.
+      await writeFile(named, "SECRET_TOKEN=supersecretvalue123\n");
+      expect((await plan("approval.json")).detail).toBe("approval refused: approval.json is not valid JSON.");
+      await writeFile(named, JSON.stringify({ ...approval, SECRET_TOKEN_supersecretvalue123: true }));
+      expect((await plan("approval.json")).detail).toMatch(/^approval refused: approval has unsupported fields; it allows only /);
+      await writeFile(named, JSON.stringify(approval));
+      await chmod(root, 0o770);
+      expect((await plan("approval.json")).detail).toMatch(/approval refused: .* is missing or not a harness-owned directory/);
+      await chmod(root, 0o700);
+      expect(await plan("approval.json")).toEqual({ id: "approval", status: "satisfied", detail: `approved by owner until ${future}` });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  }, 60_000);
 });
 
 describe("prerequisite probes", () => {
@@ -741,20 +781,20 @@ describe("run execution", () => {
   });
 
   it("decides every withdrawal and write on the entry it took, so an entry swapped in after a check survives, and one run never invalidates another", async () => {
-    const fsp = createRequire(import.meta.url)("node:fs/promises") as typeof import("node:fs/promises");
-    const real = { rename: fsp.rename, link: fsp.link };
-    // Deterministic interleavings: a one-shot hook runs just before the next rename or link of the slot's name.
-    let hook: { rename?: () => Promise<void>; link?: () => Promise<void> } = {};
-    const once = (kind: "rename" | "link") => async () => { const action = hook[kind]; if (action) { hook = {}; await action(); } };
-    fsp.rename = (async (from: string, to: string) => { if (String(from) === context.run.slot.file) await once("rename")(); return await real.rename(from, to); }) as typeof fsp.rename;
-    fsp.link = (async (from: string, to: string) => { if (String(to) === context.run.slot.file) await once("link")(); return await real.link(from, to); }) as typeof fsp.link;
-    syncBuiltinESMExports();
     const context = await setup();
     dirs.push(context.dir);
+    const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
+    const real = { renameSync: fs.renameSync, linkSync: fs.linkSync };
+    // Deterministic interleavings: a one-shot hook runs just before the next rename or link of the slot's name.
+    let hook: { rename?: () => void; link?: () => void } = {};
+    const once = (kind: "rename" | "link") => { const action = hook[kind]; if (action) { hook = {}; action(); } };
+    fs.renameSync = ((from: string, to: string) => { if (String(from) === context.run.slot.file) once("rename"); real.renameSync(from, to); }) as typeof fs.renameSync;
+    fs.linkSync = ((from: string, to: string) => { if (String(to) === context.run.slot.file) once("link"); real.linkSync(from, to); }) as typeof fs.linkSync;
+    syncBuiltinESMExports();
     try {
       const file = context.run.slot.file;
       const receipt = context.run.receipt([], []);
-      const swapIn = (text: string) => async () => { await rm(file, { force: true }); await writeFile(file, text); };
+      const swapIn = (text: string) => () => { fs.rmSync(file, { force: true }); fs.writeFileSync(file, text); };
       // A stale receipt is swapped for unrelated notes after it was looked at and before it is taken.
       await writeFile(file, JSON.stringify(receipt));
       hook = { rename: swapIn("operator notes\n") };
@@ -797,7 +837,7 @@ describe("run execution", () => {
       await expect(access(file)).rejects.toThrow();
       expect(readdirSync(context.receipts)).toEqual([]);
     } finally {
-      Object.assign(fsp, real);
+      Object.assign(fs, real);
       syncBuiltinESMExports();
     }
   }, 60_000);
@@ -817,6 +857,51 @@ describe("run execution", () => {
       expect(context.calls).toEqual(["remove root"]);
     }
   });
+
+  it("withdraws its own published receipt, then releases its claim, when a repeated signal forces the exit", async () => {
+    const command = [process.execPath, "--import", createRequire(import.meta.url).resolve("tsx"), fileURLToPath(new URL("./forced-exit-child.ts", import.meta.url))];
+    const unrelated = { "notes.txt": "operator notes\n", "other.json": `${JSON.stringify({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", runId: "0123456789ab" })}\n`, "other.json.lock": "{}\n" };
+    for (const phase of ["publication", "root removal", "reconciliation", "unwithdrawable"] as const) {
+      const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-forced-exit-")));
+      dirs.push(dir);
+      const root = path.join(dir, "receipts");
+      await mkdir(root, { mode: 0o700 });
+      for (const [name, text] of Object.entries(unrelated)) await writeFile(path.join(root, name), text);
+      const [node, ...args] = command;
+      const child = spawn(node, [...args, root, phase], { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        const holding = !stdout.includes("holding") && `${stdout}${chunk}`.includes("holding");
+        stdout += chunk;
+        // Real signals from outside while a step is held: an interrupt, then the repeated signal that forces the exit.
+        if (holding) { child.kill("SIGINT"); setTimeout(() => child.kill("SIGTERM"), 300); }
+      });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
+      const bound = setTimeout(() => child.kill("SIGKILL"), 45_000);
+      const [code, killedBy] = await once(child, "exit") as [number | null, NodeJS.Signals | null];
+      clearTimeout(bound);
+      const log = stdout.trim().split("\n");
+      expect({ phase, code, killedBy }, stderr).toEqual({ phase, code: 130, killedBy: null });
+      expect(log, phase).toContain("published");
+      expect(log, phase).not.toContain("returned");
+      expect(stderr, phase).toMatch(/SIGTERM: exiting without cleanup/);
+      if (phase === "unwithdrawable") {
+        // A receipt the exit cannot withdraw is reported, never passed over in silence.
+        expect(stderr).toMatch(/the receipt .*receipt\.json could not be withdrawn and is not evidence: EACCES/);
+        await chmod(root, 0o700);
+        expect(readdirSync(root).sort()).toEqual(["notes.txt", "other.json", "other.json.lock", "receipt.json", "receipt.json.lock"]);
+      } else {
+        // The receipt was taken and removed before the lock: the claim is held until the withdrawal finished.
+        const taken = log.findIndex((line) => /^renameSync receipt\.json receipt\.json\.[a-f0-9]{12}\.withdrawn$/.test(line));
+        const removed = log.findIndex((line) => line === `rmSync ${log[taken]?.split(" ")[2]}`);
+        const released = log.indexOf("rmSync receipt.json.lock");
+        expect({ phase, ordered: log.indexOf("published") < taken && taken < removed && removed < released }, stdout).toEqual({ phase, ordered: true });
+        expect(readdirSync(root).sort(), phase).toEqual(["notes.txt", "other.json", "other.json.lock"]);
+      }
+      for (const [name, text] of Object.entries(unrelated)) expect(await readFile(path.join(root, name), "utf8"), `${phase} ${name}`).toBe(text);
+    }
+  }, 240_000);
 });
 
 describe("live host cleanup handlers", () => {
