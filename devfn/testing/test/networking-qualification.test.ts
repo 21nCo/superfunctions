@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readdirSync, statSync } from "node:fs";
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -652,8 +652,10 @@ describe("run execution", () => {
     const seed = async () => await writeReceipt(context.run.out, context.run.receipt([], []));
     const foreign = path.join(context.dir, "cli.js");
     await writeFile(foreign, "");
+    // An existing file inside this checkout, so the head mismatch is reached whether or not the DevFn CLI was built.
+    const inCheckout = fileURLToPath(new URL("../package.json", import.meta.url));
     // Scenario selection, provenance after the host prerequisite probes, and a DevFn CLI outside the harness checkout: real preflight failures of the CLI.
-    for (const [args, failure] of [[["--scenario", "no.such-scenario"], /Unknown qualification scenarios/], [["--scenario", "host.native-prestart"], /is not the checkout HEAD/],
+    for (const [args, failure] of [[["--scenario", "no.such-scenario"], /Unknown qualification scenarios/], [["--scenario", "host.native-prestart", "--devfn", inCheckout], /is not the checkout HEAD/],
       [["--scenario", "host.native-prestart", "--devfn", foreign], /is not inside the harness checkout/]] as const) {
       await seed();
       await expect(main(["run", ...args, "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(failure);
@@ -669,6 +671,33 @@ describe("run execution", () => {
     await rm(context.run.out);
     await mkdir(context.run.out);
     await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(/cannot be withdrawn, so the run does not start/);
+  }, 60_000);
+
+  it("never removes or replaces anything at --out but a receipt: run refuses to start and leaves it untouched", async () => {
+    const context = await setup(async () => { throw new Error("never runs"); });
+    dirs.push(context.dir);
+    const target = path.join(context.dir, "notes.txt");
+    await writeFile(target, "operator notes\n");
+    const entries: Record<string, () => Promise<void>> = {
+      "plain text": async () => await writeFile(context.run.out, "operator notes\n"),
+      "another tool's JSON": async () => await writeFile(context.run.out, JSON.stringify({ contract: "other", check: "networking-qualification-contract" })),
+      "a directory": async () => await mkdir(context.run.out),
+      "a symlink to a non-receipt": async () => await symlink(target, context.run.out)
+    };
+    const snapshot = async () => { const entry = await lstat(context.run.out); return { type: entry.isSymbolicLink() ? "link" : entry.isDirectory() ? "dir" : "file", text: entry.isFile() ? await readFile(context.run.out, "utf8") : "" }; };
+    for (const [label, seed] of Object.entries(entries)) {
+      await rm(context.run.out, { recursive: true, force: true });
+      await seed();
+      const before = await snapshot();
+      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", context.run.out]), label).rejects.toThrow(/cannot be withdrawn, so the run does not start: .* is not a networking qualification receipt/);
+      await expect(executeRun(context.run), label).rejects.toThrow(/is not a networking qualification receipt; it is left untouched/);
+      await expect(writeReceipt(context.run.out, context.run.receipt([], [])), label).rejects.toThrow(/is not a networking qualification receipt/);
+      expect(await snapshot(), label).toEqual(before);
+    }
+    expect(await readFile(target, "utf8")).toBe("operator notes\n");
+    // Nothing started, and a failed replacement leaves no temporary sibling behind.
+    expect(context.inventory.list()).toHaveLength(2);
+    expect(readdirSync(context.dir).sort()).toEqual(["notes.txt", "receipt.json", "root"]);
   }, 60_000);
 
   it("withdraws the receipt when the interrupt arrives while it is written or finalized", async () => {

@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { access, chmod, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,17 +106,31 @@ async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
 }
 
-/** Remove the receipt at file, if there is one. Every receipt withdrawal goes through here. */
-async function withdrawReceipt(file: string): Promise<void> {
-  await rm(file, { force: true });
+/**
+ * Whether file holds this harness's receipt (true) or nothing (false). Any
+ * other entry, such as another file, a directory or a symlink, throws: the
+ * harness never removes or replaces what it did not write.
+ */
+async function holdsReceipt(file: string): Promise<boolean> {
+  const entry = await lstat(file).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (!entry) return false;
+  const receipt = entry.isFile() ? await readFile(file, "utf8").then((text) => JSON.parse(text) as Partial<NetworkingQualificationReceipt> | null).catch(() => undefined) : undefined;
+  if (receipt?.contract !== NETWORKING_QUALIFICATION_CONTRACT || receipt.check !== RECEIPT_CHECK) throw new Error(`${file} is not a networking qualification receipt; it is left untouched.`);
+  return true;
 }
 
-/** Write a receipt atomically with mode 0600: a flushed sibling is renamed over the file, so a reader sees the previous or the new receipt, never a partial one. */
+/** Remove the receipt at file, if there is one; any other entry there is refused and kept. Every receipt withdrawal goes through here. */
+async function withdrawReceipt(file: string): Promise<void> {
+  if (await holdsReceipt(file)) await rm(file);
+}
+
+/** Write a receipt atomically with mode 0600: a flushed sibling is renamed over the file, so a reader sees the previous or the new receipt, never a partial one. Only an earlier receipt is replaced. */
 export async function writeReceipt(file: string, receipt: NetworkingQualificationReceipt): Promise<void> {
   const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx", flush: true });
     await chmod(temporary, 0o600);
+    await holdsReceipt(file);
     await rename(temporary, file);
   } catch (error) { await rm(temporary, { force: true }).catch(() => undefined); throw error; }
 }
@@ -151,7 +165,8 @@ const RECEIPT_REWRITES = 5;
  * writes no receipt: an interrupt that arrives while the receipt is written
  * or finalized withdraws it. A receipt already at the output path is removed
  * before anything runs, so no failed or interrupted rerun leaves it in place;
- * a run that cannot remove it does not start. The CLI withdraws it earlier
+ * a run that cannot remove it, or finds anything other than a receipt there,
+ * does not start and leaves that entry untouched. The CLI withdraws it earlier
  * still, before its preflight, so this covers direct callers.
  */
 export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
