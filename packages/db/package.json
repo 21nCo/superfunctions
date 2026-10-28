@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/db",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Shared database adapter system for building useful backend libraries",
   "type": "module",
   "main": "./dist/index.js",
@@ -48,6 +48,10 @@
     },
     "./types": {
       "types": "./dist/adapter/types.d.ts"
+    },
+    "./schema": {
+      "types": "./dist/adapter/schema-codecs.d.ts",
+      "default": "./dist/adapter/schema-codecs.js"
     }
   },
   "files": [
@@ -59,13 +63,14 @@
     "test:watch": "vitest --watch",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test:schema-entry": "node scripts/verify-schema-entry.cjs"
   },
   "peerDependencies": {
     "@prisma/client": ">=6.0.0",
     "drizzle-orm": ">=0.35.0",
     "kysely": ">=0.28.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4 || ^4.0.0"
   },
   "peerDependenciesMeta": {
     "kysely": {
@@ -90,7 +95,7 @@
     "drizzle-orm": "^0.35.0",
     "kysely": "^0.28.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11"
   },
   "keywords": [
     "database",

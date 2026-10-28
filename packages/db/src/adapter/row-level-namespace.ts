@@ -11,6 +11,7 @@ import type {
   TransactionAdapter,
   WhereClause,
 } from './types.js';
+import { inheritAdapterCodecs } from './schema-codecs.js';
 
 // ---------------------------------------------------------------------------
 // Error
@@ -312,11 +313,11 @@ function wrapTransactionAdapter(
 ): TransactionAdapter {
   const wrapped = createNamespaceWrappedBase(trx, config);
 
-  return {
+  return inheritAdapterCodecs(trx, {
     ...wrapped,
     commit: () => trx.commit(),
     rollback: () => trx.rollback(),
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -354,5 +355,5 @@ export function wrapWithRowLevelNamespace(
     close: () => adapter.close(),
   };
 
-  return wrapped;
+  return inheritAdapterCodecs(adapter, wrapped);
 }

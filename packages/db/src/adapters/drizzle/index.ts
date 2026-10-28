@@ -28,7 +28,7 @@ import type {
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createDrizzleInternalCrud, createDrizzleRawSql } from './internal.js';
-import { normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
+import { inheritAdapterCodecs, normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
 import { normalizeInternalResultCount } from '../internal-utils.js';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
@@ -383,7 +383,7 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
             commit: async () => { },
             rollback: async () => { },
           };
-          return await fn(txAdapter);
+          return await fn(inheritAdapterCodecs(child, txAdapter));
         }, options ? { isolationLevel: options.isolationLevel.replaceAll("_", " ") } : undefined);
       },
 
