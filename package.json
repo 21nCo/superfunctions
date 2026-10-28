@@ -42,6 +42,7 @@
     "plugfn/*",
     "sendfn/*",
     "langfn/typescript",
+    "logfn/typescript",
     "langfn/docs",
     "memoryfn/typescript",
     "memoryfn/docs",
