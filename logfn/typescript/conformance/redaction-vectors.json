@@ -1061,6 +1061,36 @@
         "PROTO_SECRET",
         "TOP_SECRET"
       ]
+    },
+    {
+      "id": "quoted-spaced-names-with-equals",
+      "description": "A quoted name with spaces takes `=` as well as `:`, with or without surrounding spaces, and its value is scanned exactly as after `:` (quoted across lines, bracketed, bare, escaped quotes); configured keys with spaces match too.",
+      "options": {
+        "keys": [
+          "my_custom field"
+        ]
+      },
+      "input": {
+        "msg": "\"session id\" = EQ_SECRET_0",
+        "ctx": {
+          "quoted": "\"private key\" = \"EQ_SECRET_1\", 'api key'='EQ_SECRET_2' \"my_custom field\" = \"EQ_SECRET_7\"",
+          "bare": "{\"api key\" = EQ_SECRET_3, \"display name\" = \"Ada\"} 'access token' = [\"EQ_SECRET_5\", \"x\"] tail",
+          "multiline": "\"private key\" = \"a\nEQ_SECRET_4\" tail",
+          "escaped": "{\\\"api key\\\" = \\\"EQ_SECRET_6\\\", \\\"n\\\" = 1}"
+        }
+      },
+      "expected": {
+        "msg": "\"session id\" = [redacted]",
+        "ctx": {
+          "quoted": "\"private key\" = \"[redacted]\", 'api key'='[redacted]' \"my_custom field\" = \"[redacted]\"",
+          "bare": "{\"api key\" = [redacted], \"display name\" = \"Ada\"} 'access token' = [redacted] tail",
+          "multiline": "\"private key\" = \"[redacted]\" tail",
+          "escaped": "{\\\"api key\\\" = \\\"[redacted]\\\", \\\"n\\\" = 1}"
+        }
+      },
+      "absent": [
+        "EQ_SECRET"
+      ]
     }
   ]
 }

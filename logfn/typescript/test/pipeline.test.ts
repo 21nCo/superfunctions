@@ -127,6 +127,11 @@ describe("redaction", () => {
       "token={" + '"a\n'.repeat(60_000),
       '{"api key": "' + "a\n".repeat(100_000),
       Array.from({ length: 600 }, (_, n) => "token=" + "\\".repeat(n) + '"a\n').join(""),
+      // Quoted names with spaces followed by `=` and no value, or a late one.
+      '"api key" ='.repeat(20_000),
+      "'private key'=".repeat(20_000),
+      '"a b c"= "'.repeat(20_000),
+      '"api key" = "' + "a\n".repeat(100_000),
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));

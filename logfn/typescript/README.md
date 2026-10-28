@@ -104,7 +104,8 @@ every other event field, object keys and top-level field names included:
   redirect target are found too), `name=value` or `Name: value` pairs inside
   strings (any JSON whitespace, newlines and CRLF included, may surround the
   separator, and escaped `\n`/`\r`/`\t` may follow it in once-escaped JSON;
-  quoted names may contain spaces; quoted values are consumed whole, escaped
+  quoted names may contain spaces and take either separator, as in
+  `"api key" = x` or `'api key': x`; quoted values are consumed whole, escaped
   quotes and once-escaped JSON included, across lines to the closing quote
   (a multi-line PEM key included) or to the end of the text when
   unterminated, with any text glued to the closing quote; an object or
@@ -130,6 +131,15 @@ become `"[unserializable]"`, so serializing it runs no caller code. Own `__proto
 sanitization. Distinct keys that redact
 to the same text (two email keys) keep every value: later ones are stored
 under `"<key>#2"`, `"#3"` and so on, in key order.
+
+Every value kind is handled alike by redaction and sanitization: `NaN` and
+`Infinity` become text; `new String`, `new Number` and `new Boolean` (JS only) become
+their primitive, read with the built-in `valueOf` (never an own `toString` or
+`valueOf`), so a boxed string is redacted as text, not split into one key per
+character; boxed bigints and symbols, like bigints, symbols, functions and
+binary data, become `"[unserializable]"`. Any other object (class instances,
+`Map`, `Set`, `URL`, proxies) becomes a plain object of its own enumerable
+string keys and `toJSON` is never called, so a `URL` becomes `{}`.
 
 Text rules are heuristics with known limits (the same in both runtimes):
 unquoted names with spaces (`pass word=x`), escaped whitespace before the

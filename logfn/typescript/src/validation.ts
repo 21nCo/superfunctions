@@ -12,6 +12,7 @@ import {
   dateText,
   isBinary,
   setOwn,
+  unboxPrimitive,
 } from "./pipeline/redact.js";
 
 const TRUNCATED_SUFFIX = "...[truncated]";
@@ -45,6 +46,10 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     return dateText(value);
   }
   const object = value as object;
+  const unboxed = unboxPrimitive(object);
+  if (unboxed !== object) {
+    return sanitizeNode(unboxed, ancestors, depth);
+  }
   // Each byte would become a number that no text rule can redact.
   if (isBinary(object)) {
     return UNSERIALIZABLE;
@@ -99,7 +104,8 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
 
 /**
  * Replaces non-serializable values with JSON-safe equivalents: functions,
- * symbols and bigints become "[unserializable]", dates become ISO strings,
+ * symbols and bigints become "[unserializable]", wrapped primitives
+ * (`new String("x")`) their primitive, dates become ISO strings,
  * errors become {name, message, stack, cause} and cycles become "[circular]".
  */
 export function sanitizeValue(value: unknown): unknown {
@@ -126,7 +132,8 @@ function byteLength(event: LogEvent): number {
 }
 
 function tagText(tag: unknown): string {
-  return typeof tag === "string" ? tag : JSON.stringify(sanitizeValue(tag) ?? null);
+  const value = tag !== null && typeof tag === "object" ? unboxPrimitive(tag) : tag;
+  return typeof value === "string" ? value : JSON.stringify(sanitizeValue(value) ?? null);
 }
 
 /**

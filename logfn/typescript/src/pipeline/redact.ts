@@ -128,9 +128,9 @@ const KEY_SEPARATOR = new RegExp(
   String.raw`(\\{0,7}["']?)(?<![A-Za-z0-9_.%-])([A-Za-z0-9_.%-]+)\1(${SPACE_BEFORE_SEPARATOR}[:=]${SPACE_AFTER_SEPARATOR})`,
   "g"
 );
-// A quoted name made of several words, such as `"api key":`.
+// A quoted name made of several words, such as `"api key":` or `'api key' =`.
 const SPACED_KEY_SEPARATOR = new RegExp(
-  String.raw`(\\{0,7}["'])([A-Za-z0-9_.%-]+(?: [A-Za-z0-9_.%-]+)+)\1(${SPACE_BEFORE_SEPARATOR}:${SPACE_AFTER_SEPARATOR})`,
+  String.raw`(\\{0,7}["'])([A-Za-z0-9_.%-]+(?: [A-Za-z0-9_.%-]+)+)\1(${SPACE_BEFORE_SEPARATOR}[:=]${SPACE_AFTER_SEPARATOR})`,
   "g"
 );
 const AUTH_SCHEME = /(?:bearer|basic|digest|negotiate)[ \t]+/iy;
@@ -408,6 +408,38 @@ export function dateText(value: Date): string {
   return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
 }
 
+// Brand checks: each throws for an object without the matching internal slot.
+const BOXED_VALUE_OF = new Map<string, () => unknown>([
+  ["[object String]", String.prototype.valueOf],
+  ["[object Number]", Number.prototype.valueOf],
+  ["[object Boolean]", Boolean.prototype.valueOf],
+  ["[object BigInt]", BigInt.prototype.valueOf],
+  ["[object Symbol]", Symbol.prototype.valueOf],
+]);
+
+// The primitive in a wrapper such as `new String(x)` (by its keys, one
+// character per key), read with the built-in valueOf; other objects as is.
+export function unboxPrimitive(value: object): unknown {
+  if (Array.isArray(value)) return value;
+  // Every String wrapper has an own length, whatever its tag; the tag only
+  // picks which other check to try, since a failed one is slow.
+  const checks: Array<() => unknown> = Object.prototype.hasOwnProperty.call(value, "length") ? [String.prototype.valueOf] : [];
+  try {
+    const byTag = BOXED_VALUE_OF.get(Object.prototype.toString.call(value));
+    if (byTag !== undefined) checks.push(byTag);
+  } catch {
+    // A throwing Symbol.toStringTag getter
+  }
+  for (const valueOf of checks) {
+    try {
+      return valueOf.call(value);
+    } catch {
+      // Not this kind of wrapper
+    }
+  }
+  return value;
+}
+
 /**
  * Sets an own data property, also for the key `__proto__`, which plain
  * assignment would turn into a prototype change and drop from the output.
@@ -456,8 +488,15 @@ function redactNode(
   if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
     return UNSERIALIZABLE;
   }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : String(value);
+  }
   if (value === null || typeof value !== "object") {
     return value;
+  }
+  const unboxed = unboxPrimitive(value);
+  if (unboxed !== value) {
+    return redactNode(unboxed, redactor, path, ancestors, depth);
   }
   if (isBinary(value)) {
     return UNSERIALIZABLE;

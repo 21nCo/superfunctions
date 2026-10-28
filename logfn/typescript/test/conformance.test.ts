@@ -325,4 +325,80 @@ describe("shared redaction vectors", () => {
       expect(lines[0]).toContain('"items":["safe"]');
     });
   });
+
+  describe("wrapped primitives are written as their primitive, never split into characters", () => {
+    // Walking `new String(text)` by its keys gives one character per key,
+    // which no text rule can match. A hostile toString must not run either.
+    const hostileString = () =>
+      Object.assign(new String("token=BOXED_SECRET_1"), {
+        toString: () => "token=TOSTRING_SECRET",
+        valueOf: () => "token=VALUEOF_SECRET",
+      });
+    const kinds: Array<[string, () => unknown, unknown]> = [
+      ["String", () => new String("token=BOXED_SECRET_1"), "token=[redacted]"],
+      ["String with own toString and valueOf", hostileString, "token=[redacted]"],
+      ["String with a spoofed tag", () => Object.assign(new String("token=BOXED_SECRET_1"), { [Symbol.toStringTag]: "Plain" }), "token=[redacted]"],
+      ["Number", () => new Number(42), 42],
+      ["non-finite Number", () => new Number(Infinity), "Infinity"],
+      ["Boolean", () => new Boolean(false), false],
+      ["BigInt", () => Object(10n), "[unserializable]"],
+      ["Symbol", () => Object(Symbol("BOXED_SECRET_1")), "[unserializable]"],
+    ];
+    const SECRETS = ["BOXED_SECRET", "TOSTRING_SECRET", "VALUEOF_SECRET"];
+    const expectNoSecret = (text: string) => {
+      for (const secret of SECRETS) expect(text).not.toContain(secret);
+    };
+    const boxedTag = () => new String("token=BOXED_SECRET_2") as unknown as string;
+    const input = (make: () => unknown): LogEvent => ({
+      ...vectorEvent(vectors[0]),
+      ctx: { value: make(), nested: { list: [make()] } },
+      tags: [boxedTag()],
+    });
+
+    describe.each(kinds)("%s", (_kind, make, expected) => {
+      it("redactEvent, redactSecFn and sanitizeValue", () => {
+        for (const out of [redactEvent(input(make)), redactSecFn()(input(make)) as LogEvent]) {
+          const text = JSON.stringify(out);
+          expectNoSecret(text);
+          expect(JSON.parse(text).ctx).toEqual({ value: expected, nested: { list: [expected] } });
+          expect(out.tags).toEqual(["token=[redacted]"]);
+        }
+        const sanitized = sanitizeValue({ value: make() }) as Record<string, unknown>;
+        expect(typeof sanitized.value).not.toBe("object");
+        expect(JSON.stringify(sanitized)).not.toContain('"0":');
+      });
+
+      it("sinkHttp through a logger and a direct call, ctx and tags", async () => {
+        const spy = fetchSpy();
+        const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+        createLogger({ name: "boxed", sinks: [sink] }).info("m", { value: make() }, [boxedTag()]);
+        sink([input(make)]);
+        await sink.flush();
+        expectNoSecret(spy.requests.map((request) => request.body).join("\n"));
+        const [logged, direct] = spy.events();
+        expect(logged.ctx).toEqual({ value: expected });
+        expect(logged.tags).toEqual(["token=[redacted]"]);
+        expect(direct.ctx).toEqual({ value: expected, nested: { list: [expected] } });
+        expect(direct.tags).toEqual(["token=[redacted]"]);
+      });
+
+      it("serverLogger console JSON", () => {
+        const lines: string[] = [];
+        for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+          vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+            lines.push(String(args[0]));
+          });
+        }
+        serverLogger({ name: "svc" }).error("boxed", { value: make() }, [boxedTag()]);
+        expect(lines).toHaveLength(1);
+        expectNoSecret(lines[0]);
+        expect(JSON.parse(lines[0]).ctx).toEqual({ value: expected });
+      });
+    });
+
+    it("a proxy is read as an object, as JSON.stringify reads it", () => {
+      const proxy = new Proxy(new String("ab"), {});
+      expect(sanitizeValue(proxy)).toEqual(JSON.parse(JSON.stringify(proxy)));
+    });
+  });
 });
