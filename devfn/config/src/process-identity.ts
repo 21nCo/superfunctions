@@ -43,6 +43,20 @@ export async function processBirthSignature(pid: number): Promise<string | undef
   return undefined;
 }
 
+/**
+ * The birth signature of a process just started, read up to ten times 20 ms
+ * apart: a single ps or /proc read may miss it transiently. Undefined only
+ * when every read failed.
+ */
+export async function startedProcessBirthSignature(pid: number): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    const signature = await processBirthSignature(pid);
+    if (signature) return signature;
+  }
+  return undefined;
+}
+
 /** The /proc/<pid>/stat fields after the command name: state, ppid, pgrp, ... */
 function linuxStatFields(stat: string): string[] {
   return stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
@@ -206,8 +220,9 @@ export async function processGroupStatus(pid: number, signature?: string, record
   }
   // Signal 0 also reaches zombies. The group is gone only when members are
   // listed and every one has exited; one that cannot be listed may be live.
+  // Members reaped after the signal leave none to list, and so are gone too.
   const states = await processGroupMemberStates(pid);
-  return states && states.length > 0 && states.every((state) => EXITED_STATE.test(state)) ? "exited" : "unverified";
+  return states && states.every((state) => EXITED_STATE.test(state)) ? "exited" : "unverified";
 }
 
 /** Whether the PID is verifiably the recorded process, as required before signalling it. */

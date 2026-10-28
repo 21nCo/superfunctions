@@ -119,6 +119,19 @@ export async function readRegisteredDomains(stateDir: string): Promise<Registere
   }
 }
 
+/** Public domains of the machine tunnel bindings; an unreadable registry refuses registration. */
+async function publicTunnelDomains(stateDir: string): Promise<string[]> {
+  let raw: string;
+  try { raw = await readFile(path.join(stateDir, "tunnels.json"), "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new DomainError("DEVFN_DOMAIN_INVALID", "The machine tunnel binding registry is unreadable.");
+  }
+  const bindings = (() => { try { return (JSON.parse(raw) as { bindings?: unknown }).bindings; } catch { return undefined; } })();
+  if (!Array.isArray(bindings) || !bindings.every((item: { domain?: unknown }) => typeof item?.domain === "string")) throw new DomainError("DEVFN_DOMAIN_INVALID", "The machine tunnel binding registry is invalid.");
+  return bindings.map((item: { domain: string }) => item.domain);
+}
+
 async function writeDomains(stateDir: string, domains: RegisteredDomain[]): Promise<void> {
   const destination = path.join(stateDir, "domains.json");
   const temp = `${destination}.${process.pid}.tmp`;
@@ -163,6 +176,10 @@ export async function registerDomain(stateDir: string, entry: RegisteredDomain, 
     }
     if (domains.some((item) => domainContains(item.domain, domain) || domainContains(domain, item.domain))) {
       throw new DomainError("DEVFN_DOMAIN_IN_USE", `Domain ${domain} overlaps an existing registration.`);
+    }
+    // Tunnel bindings register under this lock too; loopback and public domains never overlap.
+    if ((await publicTunnelDomains(stateDir)).some((item) => domainContains(item, domain) || domainContains(domain, item))) {
+      throw new DomainError("DEVFN_DOMAIN_IN_USE", `Domain ${domain} overlaps a public tunnel binding.`);
     }
     await writeDomains(stateDir, [...domains, canonical]);
     return canonical;

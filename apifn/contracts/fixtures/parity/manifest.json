@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 1,
+  "api": { "id": "example.projects", "version": "2026-10-01" },
+  "operations": [
+    { "id": "projects.create", "operationId": "createProject" },
+    { "id": "projects.delete", "method": "delete", "path": "/workspaces/{workspaceId}/projects/{projectId}", "deprecation": { "since": "2026-09-01" } },
+    { "id": "projects.get", "operationId": "getProject" },
+    { "id": "projects.list", "operationId": "listProjects" }
+  ]
+}

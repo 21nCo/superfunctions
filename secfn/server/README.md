@@ -21,22 +21,51 @@ of database integration readiness.
 ## Example
 
 ```ts
-import { createSecFnServer } from "@secfn/server";
+import type { Adapter } from "@superfunctions/db";
+import { createSecFnServer, type SecFnAdminAction, type SecFnRequestContext } from "@secfn/server";
 
-export const secfn = createSecFnServer({
-  db,
-  basePath: "/secfn",
-  encryption: {
-    masterKey: process.env.SECFN_MASTER_KEY!,
-    keyId: "env:main",
-  },
-  authorize: async (ctx, action) => {
-    return ctx.actorId === "admin" || action === "audit-events:list";
-  },
-  namespaceProvider: (ctx) => ctx.namespace,
-  logger,
-});
+interface Principal extends SecFnRequestContext {
+  actorId: string;
+  tenantId: string;
+  allowedActions: SecFnAdminAction[];
+}
+interface Context extends SecFnRequestContext {
+  allowedActions: SecFnAdminAction[];
+}
+
+export function createSecretsServer(
+  db: Adapter,
+  authenticate: (request: Request) => Promise<Principal | null>,
+) {
+  return createSecFnServer<Context>({
+    db,
+    basePath: "/secfn",
+    encryption: { masterKey: process.env.SECFN_MASTER_KEY!, keyId: "env:main" },
+    context: async (request) => {
+      const principal = await authenticate(request);
+      if (principal) {
+        return { actorId: principal.actorId, tenantId: principal.tenantId,
+          namespace: principal.namespace, allowedActions: principal.allowedActions };
+      }
+      // Runtime callers have no session. These headers are client-controlled: runtime
+      // routes check them against the bearer token's tenant and namespace bindings.
+      const tenantId = request.headers.get("x-secfn-tenant") ?? undefined;
+      return {
+        tenantId,
+        // Namespace-scoped access requires a tenant.
+        namespace: tenantId ? request.headers.get("x-secfn-namespace") ?? undefined : undefined,
+        allowedActions: [],
+      };
+    },
+    authorize: (ctx, action) => Boolean(
+      ctx.actorId && ctx.tenantId && ctx.allowedActions.includes(action),
+    ),
+    namespaceProvider: (ctx) => ctx.namespace,
+  });
+}
 ```
+
+The host supplies a durable database and an `authenticate` callback that verifies the request’s session and returns server-owned action grants. Unauthenticated callers get no admin grants; listing audits requires the explicit `audit-events:list` grant. This tenant-scoped example never enables global operator access. Runtime requests from `@secfn/runtime` carry only a bearer token plus `x-secfn-tenant` and `x-secfn-namespace` headers. The router reads runtime scope from the context and query, not from those headers, so the context factory must map them as shown; the token's tenant and namespace bindings are still verified against that scope, and the resulting context has no actor or admin grants. These headers are client-controlled and untrusted, so issue service tokens bound to both a tenant and a namespace; a token without those bindings accepts whatever tenant or namespace the headers name. Namespace-only runtime calls are unsupported: the server rejects a namespace without a tenant, so the example maps the namespace header only when a tenant is present. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
 
 The return value contains:
 
@@ -60,7 +89,7 @@ Schema version 2 adds nullable `tenant_id` to `secfn_scan_runs`. Apply the gener
 migration before using tenant-scoped scan history. Existing unowned rows remain
 hidden from tenant lists; backfill only from a trusted ownership mapping. Persist
 new runs with `vault.recordScanRun({ tenantId, startedAt, target, status, findingCount })`;
-the scanner itself remains a pure producer of findings.
+the scanner does not persist run history, although file, directory, and Git-history methods perform host I/O.
 
 Secret rotation requires an adapter advertising transaction support. The encrypted
 version insert and version-pointer advance commit together; a failed

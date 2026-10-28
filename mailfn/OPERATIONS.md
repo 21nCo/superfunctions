@@ -2,7 +2,7 @@
 
 ## Cloudflare deployment inputs
 
-Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, an Email Routing Worker binding, and a scheduled retention trigger. Configure these secrets/variables:
+Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, and the scheduled retention trigger. Then configure a Cloudflare Email Routing rule (or catch-all) for `MAILFN_DOMAIN` that sends mail to this Worker; Email Routing is configured on the zone, not as a Wrangler binding. Configure these secrets/variables:
 
 - `MAILFN_DOMAIN`, `MAILFN_SECRET_KEY` (32 random bytes, hex or base64)
 - `MAILFN_STORAGE_REGION`, matching the provisioned D1 location and R2 jurisdiction; a deployment accepts only this region
@@ -10,7 +10,7 @@ Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 dat
 - `MAILFN_PROJECT_ID` after bootstrap
 - optional `MAILFN_CORS_ORIGINS`
 - optional Cloudflare API token, zone ID, and Worker name for custom domains
-- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the authorized zone ID
+- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the custom domain being enabled, which must be the apex of the zone identified by `CLOUDFLARE_ZONE_ID`
 - keep `MAILFN_PUBLIC_PLATFORM_ENABLED`, production approval, billing, and support false until separately approved
 - keep `MAILFN_PROTOCOL_SERVICES_ENABLED=false`; HTTP/MCP availability never authorizes public IMAP/SMTP/JMAP services
 
@@ -40,7 +40,7 @@ Internal rollout succeeds only after a seven-day observation window meets all of
 - Custom-domain activation: if D1 cannot persist the active rule ID, MailFn deletes the newly created provider rule. Rule creation first reuses a matching owned rule to make retry safe.
 - Outbound failure: a newly created daily quota reservation is released when SendFn rejects before accepting the send; queued/sent provider acceptance keeps one deterministic per-draft usage record.
 
-Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route and D1 export together; never roll schema state backward while leaving a newer Worker active.
+Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route; keep the current D1 data when the schema is still compatible, because the pre-release export predates any mail and credentials written since. Restore the D1 export only for an incompatible schema change, after stopping writes and preserving or replaying every post-export write. Never roll schema state backward while leaving a newer Worker active.
 
 ## Verification and release
 

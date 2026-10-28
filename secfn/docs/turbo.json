@@ -1,0 +1,26 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": [
+    "//"
+  ],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**",
+        "$TURBO_ROOT$/secfn/core/README.md",
+        "$TURBO_ROOT$/secfn/server/README.md",
+        "$TURBO_ROOT$/secfn/runtime/README.md"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**",
+        "$TURBO_ROOT$/secfn/core/README.md",
+        "$TURBO_ROOT$/secfn/server/README.md",
+        "$TURBO_ROOT$/secfn/runtime/README.md"
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -8,11 +8,14 @@ import { ComposeController, composeProjectName, createComposeEnvironment, create
 import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
-import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
+import { CaddyProxyController, PUBLIC_ORIGIN_PORT, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
+import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
+import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
 import { createPlan } from "./planner.js";
+import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -43,6 +46,13 @@ function assertReceiptStateDir(receipt: LifecycleReceipt, stateDir: string): voi
   }
 }
 
+// The one lifecycle environment a process sees: generated endpoint values plus the
+// lifecycle's state directory, so in-process DevFn clients read the same machine
+// state as this command. Start, readiness and status all build it here.
+function lifecycleGeneratedEnvironment(receipt: Pick<LifecycleReceipt, "stateDir">, generated: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...generated, ...(receipt.stateDir ? { [STATE_DIR_ENV]: receipt.stateDir } : {}) };
+}
+
 function resolvedHealth(health: HealthCheck | undefined, command: string[] | undefined, url?: string): HealthCheck | undefined {
   if (health?.type === "command" && command) return { ...health, command };
   if (health?.type === "http" && url) return { type: "http", url, ...(health.expectedStatus ? { expectedStatus: health.expectedStatus } : {}), ...(health.timeoutMs ? { timeoutMs: health.timeoutMs } : {}) };
@@ -54,34 +64,63 @@ function provisionalComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, ow
     [node.name, [`${composeProjectName(config.services![node.name].projectName ?? "devfn", ownerId)}_default`]]));
 }
 
-async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity,
-  ports: Record<string, number>, hostnameSuffix?: string): Promise<boolean> {
-  // A selected sibling URL reference must fail before creating lifecycle state.
-  // Without one, pure template validation is enough here; the locked pass
-  // below still reads effective Compose networks before startup or publication.
-  if (JSON.stringify(config).includes("{{env.DEVFN_URL_")) return true;
-  const provisional = resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks: provisionalComposeNetworks(config, plan, identity.instanceId) });
-  const deadline = Date.now() + 20_000;
+/** Public tunnel URL inputs of the endpoint resolver (publicTemplateInputs). */
+type PublicTemplate = Awaited<ReturnType<typeof publicTemplateInputs>>;
+
+/**
+ * The Compose interpolation references of each selected service, read from
+ * its Compose source without Docker; post-start public URL references among
+ * them fail here, before anything else is read or started.
+ */
+async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix: string | undefined,
+  publicTemplate: PublicTemplate, composeNetworks: Record<string, string[]>, provisional: ReturnType<typeof resolveEndpointTemplates>, deadline: number): Promise<Set<string>> {
+  const all = new Set<string>();
+  const publicReferences: Record<string, Set<string>> = {};
   for (const node of plan.nodes) {
     if (node.kind !== "service") continue;
     const spec = config.services![node.name];
     const selected = provisional.nodes[node.name].environment;
     const environment = createComposeEnvironment({ ...spec, env: selected }, selected);
-    if ((await selectedComposeEndpointReferences({ ...spec, env: selected }, root, environment, deadline)).size) return true;
+    const references = await selectedComposeEndpointReferences({ ...spec, env: selected }, root, environment, deadline);
+    publicReferences[node.name] = new Set([...references].filter((name) => name.startsWith("DEVFN_PUBLIC_URL_")));
+    for (const name of references) all.add(name);
   }
-  return false;
+  resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
+    composeNetworks, composeReferences: publicReferences, ...publicTemplate });
+  return all;
 }
 
-async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix?: string): Promise<ReturnType<typeof resolveEndpointTemplates>> {
+async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity,
+  ports: Record<string, number>, hostnameSuffix: string | undefined, publicTemplate: PublicTemplate): Promise<boolean> {
+  // A selected sibling URL reference must fail before creating lifecycle state.
+  // Without one, pure template validation is enough here; the locked pass
+  // below still reads effective Compose networks before startup or publication.
+  // Compose interpolation of a post-start public URL is rejected first, without Docker.
+  const siblingTemplates = JSON.stringify(config).includes("{{env.DEVFN_URL_");
+  if (siblingTemplates && !publicTemplate.postStartPublicRoutes?.length) return true;
+  const composeNetworks = provisionalComposeNetworks(config, plan, identity.instanceId);
+  const provisional = resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
+    composeNetworks, ...publicTemplate });
+  const references = await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, composeNetworks, provisional, Date.now() + 20_000);
+  return siblingTemplates || [...references].some((name) => name.startsWith("DEVFN_URL_"));
+}
+
+/**
+ * Every caller passes the profile's public template inputs: without them a
+ * deterministic DEVFN_PUBLIC_URL_<ROUTE> reference is missing and a post-start
+ * one is not rejected.
+ */
+async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix: string | undefined,
+  publicTemplate: PublicTemplate): Promise<ReturnType<typeof resolveEndpointTemplates>> {
   // Validate literals before calling Docker. Provisional defaults are used only
   // for that read-only validation; the result is never published or started.
   const ownerId = identity.instanceId;
   const provisionalNetworks = provisionalComposeNetworks(config, plan, ownerId);
-  const provisional = resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks });
+  const provisional = resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate });
+  const deadline = Date.now() + 20_000;
+  if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline);
   const composeNetworks: Record<string, string[]> = {};
   const composeReferences: Record<string, Set<string>> = {};
-  const deadline = Date.now() + 20_000;
   for (const node of plan.nodes) {
     if (node.kind !== "service") continue;
     const spec = config.services![node.name];
@@ -90,7 +129,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
     composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
     composeReferences[node.name] = references;
   }
-  return resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences });
+  return resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate });
 }
 
 function compareCodepoint(left: string, right: string): number {
@@ -168,7 +207,8 @@ export function resolveAllocationUrls(allocations: readonly PortAllocation[], ro
   for (const allocation of allocations) {
     // A service can have several aliases and paths. Prefer a root URL, then
     // choose by stable route ID instead of the persisted route order.
-    const route = allocation.protocol === "tcp" ? routes.filter((item) => item.targetPort === allocation.port)
+    // Public tunnel origin routes are reached only through their public URLs.
+    const route = allocation.protocol === "tcp" ? routes.filter((item) => item.targetPort === allocation.port && item.exposure !== "public")
       .sort((a, b) => {
         const rootA = (a.path ?? "/") === "/" ? 0 : 1;
         const rootB = (b.path ?? "/") === "/" ? 0 : 1;
@@ -211,6 +251,8 @@ async function selectedProxyRoutes(config: DevFnConfig, plan: LifecyclePlan, ide
         ...(registration.certificateFile ? { certificateFile: registration.certificateFile, keyFile: registration.keyFile } : {}) });
     }
   }
+  // Public origin routes are validated against their tunnel binding, never by local loopback DNS.
+  routes.push(...(await selectedPublicRoutes(config, plan, identity, ports, stateDir))?.routes ?? []);
   renderCaddyfile(routes.map((route) => ({ ...route, updatedAt: "preflight" })));
   return routes;
 }
@@ -282,7 +324,12 @@ async function waitForOwnedLoopbackListeners(processName: string, expected: Arra
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Process ${processName} ${missing!.protocol.toUpperCase()} port ${missing!.port} has no verified loopback listener owned by its process tree after ${timeoutMs} ms.`);
 }
 
-async function receiptIsReady(config: DevFnConfig, root: string, receipt: LifecycleReceipt, processStates: readonly string[], serviceStates: readonly string[]): Promise<boolean> {
+const sameUrls = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>> | undefined): boolean =>
+  Object.keys(a).length === Object.keys(b ?? {}).length && Object.entries(a).every(([name, url]) => b?.[name] === url);
+
+/** Whether a receipt's lifecycle still serves what it recorded; live receives its current public URLs. */
+async function receiptIsReady(config: DevFnConfig, root: string, receipt: LifecycleReceipt, processStates: readonly string[], serviceStates: readonly string[],
+  live: { publicUrls?: Record<string, string> } = {}): Promise<boolean> {
   const ports = Object.fromEntries(receipt.allocations.map((allocation) => [allocation.service, allocation.port]));
   let resolved: ReturnType<typeof resolveEndpointTemplates>;
   try {
@@ -300,13 +347,21 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
       allocation.host !== (config.ports?.[allocation.service]?.exposure === "public" ? "0.0.0.0" : "127.0.0.1"))) return false;
     const loadedPolicy = await loadDevFnPolicy(root, config.policy);
     const identity = await resolveInstanceIdentity(config.project.id, root);
-    resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix);
+    resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix,
+      await publicTemplateInputs(config, plan, identity, receipt.stateDir ?? defaultStateDir()));
     if (!receiptRoutesMatch(receipt, await selectedProxyRoutes(config, plan, identity, ports,
       loadedPolicy?.policy.hostnameSuffix ?? ".localhost", receipt.stateDir ?? defaultStateDir(), false))) return false;
     // The receipt is only as live as the proxy: a dead Caddy owner, a missing
     // listener or routes switched by an interrupted replacement all mean the
     // recorded URLs no longer reach this lifecycle.
     if (!await new CaddyProxyController(receipt.stateDir ?? defaultStateDir()).instanceRoutesLive(receipt.instanceId, receipt.routes)) return false;
+    // Public URLs are live only while the binding's connector runs and still publishes them.
+    if (receipt.tunnel) {
+      const publicUrls = await livePublicUrls(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, receipt.tunnel, config,
+        await selectedPublicRoutes(config, plan, identity, ports, receipt.stateDir ?? defaultStateDir()));
+      if (!publicUrls) return false;
+      live.publicUrls = publicUrls;
+    }
     const currentUrls = resolveAllocationUrls(receipt.allocations, receipt.routes, selectedHttpPorts(config, plan), resolved.directUrls);
     if (Object.keys(currentUrls).length !== Object.keys(receipt.urls).length ||
       Object.entries(currentUrls).some(([name, url]) => receipt.urls[name] !== url)) return false;
@@ -327,7 +382,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     if (!spec || processStates[index] !== "running") return false;
     try {
       const ready = await checkReadinessNow({
-        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, resolved.generated),
+        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, lifecycleGeneratedEnvironment(receipt, resolved.generated)),
         previouslyReady: Boolean(managed.readyAt || receipt.state === "ready"), isAlive: async () => await supervisor.status(managed) === "running",
       });
       if (!ready || spec.exposure === "public") return ready;
@@ -354,7 +409,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
  * lifecycles recorded must then be verified dead. Live or ambiguous
  * instances keep their routes.
  */
-export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Promise<string[]> {
+export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunnelOverrides: TunnelOverrides = {}): Promise<string[]> {
   let stateDir: string;
   try { stateDir = await realpath(requestedStateDir); }
   catch (error) {
@@ -364,16 +419,39 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const proxy = new CaddyProxyController(stateDir);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
-  for (const instanceId of await proxy.routedInstanceIds()) {
+  const failures: string[] = [];
+  // An owner whose proxy routes are gone may still have published tunnel hostnames.
+  const published = await tunnelOwners(stateDir).catch((error: unknown) => { failures.push(error instanceof Error ? error.message : String(error)); return []; });
+  const routed = [...new Set([...await proxy.routedInstanceIds(), ...published])].sort(compareNames);
+  // The OAuth relay has no lifecycle lock; its recorded identities show
+  // whether it may still run. Recovery also ends a dead relay's claim and
+  // record after a route transition already dropped its route. A relay
+  // command holding its lock owns the relay, as a lifecycle command does.
+  if (routed.includes(OAUTH_RELAY_OWNER_ID) || await lstat(relayPaths(stateDir).dir).then(() => true, () => false)) {
+    let entered = false;
+    try {
+      if (await recoverOAuthRelayRoute(stateDir, proxy, { lockTimeoutMs: 1_000, onLocked: () => { entered = true; } })) recovered.push(OAUTH_RELAY_OWNER_ID);
+    } catch (error) {
+      // Only a relay command holding the service lock is skipped; a lock timeout inside it fails recovery.
+      if (entered || !(error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT")) throw error;
+    }
+  }
+  for (const instanceId of routed) {
+    if (instanceId === OAUTH_RELAY_OWNER_ID) continue;
     let entered = false;
     try {
       await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => {
         entered = true;
-        await withRoutingLock(stateDir, async () => {
-          if (await registry.instanceMayRun(instanceId)) return;
-          await proxy.removeInstance(instanceId);
-          recovered.push(instanceId);
-        });
+        if (await withRoutingLock(stateDir, async () => await registry.instanceMayRun(instanceId))) return;
+        // The held lifecycle lock keeps this instance from starting, so its
+        // public routes are withdrawn, and only then its proxy routes removed,
+        // without holding the shared routing lock across provider calls.
+        // A failed withdrawal keeps this owner's routes and fails only its
+        // recovery; an outstanding part stays journaled and is reported.
+        try { failures.push(...(await withdrawLifecycleTunnel(stateDir, instanceId, tunnelOverrides)).outstanding.map((item) => `${instanceId}: ${item}`)); }
+        catch (error) { failures.push(`${instanceId}: ${error instanceof Error ? error.message : String(error)}`); return; }
+        await withRoutingLock(stateDir, async () => await proxy.removeInstance(instanceId));
+        recovered.push(instanceId);
       }, { timeoutMs: 1_000 });
     } catch (error) {
       // A lifecycle command of this instance is running; it owns its routes.
@@ -381,6 +459,7 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
       throw error;
     }
   }
+  if (failures.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of some orphaned owners are not fully withdrawn; owners whose exposure may continue keep their routes: ${failures.join(" ")}`, { recovered, failures });
   return recovered;
 }
 
@@ -452,13 +531,18 @@ async function stopJournaledOwners(receipt: LifecycleReceipt, registry: FilePort
 }
 
 export class DevFnOrchestrator {
+  public constructor(private readonly tunnelOverrides: TunnelOverrides = {}) {}
+
   public async up(options: UpOptions): Promise<LifecycleReceipt> {
     validateDevFnConfig(options.config);
     const plan = createPlan(options.config, options.profile);
     const publicNodes = plan.nodes.filter((node) => node.kind === "process" && options.config.processes?.[node.name]?.exposure === "public").map((node) => node.name);
     const publicPorts = plan.portNames.filter((name) => options.config.ports?.[name]?.exposure === "public");
-    if ((publicNodes.length || publicPorts.length) && !options.allowPublic) {
-      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts });
+    // A selected tunnel binding is an external resource, not consent: public
+    // routes need the same explicit confirmation before any state is read.
+    const tunnel = profileTunnel(options.config, plan);
+    if ((publicNodes.length || publicPorts.length || tunnel) && !options.allowPublic) {
+      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts, ...(tunnel ? { tunnel } : {}) });
     }
     const requestedStateDir = options.stateDir ?? defaultStateDir();
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
@@ -468,11 +552,13 @@ export class DevFnOrchestrator {
     // are reserved because the Compose source can change between these steps.
     const preflightPorts = Object.fromEntries(plan.portNames.map((name) => [name, 1]));
     await selectedProxyRoutes(options.config, plan, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix ?? ".localhost", requestedStateDir);
-    if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix)) {
-      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix);
+    // A reference to a public URL that exists only after start fails here, before any lease, process or connector.
+    const publicTemplate = await publicTemplateInputs(options.config, plan, identity, requestedStateDir);
+    if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)) {
+      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate);
     } else {
       resolveEndpointTemplates({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
-        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId) });
+        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate });
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
@@ -482,6 +568,12 @@ export class DevFnOrchestrator {
       // shared routing lock below.
       const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
       const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
+      // Unless a ready lifecycle is kept for replacement, public exposure this
+      // owner still has, also without a receipt, ends before any lease or
+      // node start; a public profile republishes once it is ready.
+      if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
+        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
+      });
       const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, oldReady);
       return await start();
     }, { timeoutMs: 30_000 });
@@ -491,14 +583,17 @@ export class DevFnOrchestrator {
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
     const plan = createPlan(options.config, options.profile);
     const profileHostnames = Object.entries(options.config.hostnames ?? {}).filter(([, spec]) => !spec.profiles || spec.profiles.includes(plan.profile));
-    const listenerPorts = plan.proxy && profileHostnames.length ? Object.values(proxyListenerPorts()) : [];
+    const listenerPorts = plan.proxy && profileHostnames.length ? [...Object.values(proxyListenerPorts()), ...(profileTunnel(options.config, plan) ? [PUBLIC_ORIGIN_PORT] : [])] : [];
     const preflightPorts = Object.fromEntries(plan.portNames.map((name) => [name, 1]));
     const routes = await selectedProxyRoutes(options.config, plan, identity, preflightPorts,
       loadedPolicy?.policy.hostnameSuffix ?? ".localhost", stateDir);
     const publicNodes = plan.nodes.filter((node) => node.kind === "process" && options.config.processes?.[node.name]?.exposure === "public").map((node) => node.name);
     const publicPorts = plan.portNames.filter((name) => options.config.ports?.[name]?.exposure === "public");
-    if ((publicNodes.length || publicPorts.length) && !options.allowPublic) {
-      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts });
+    // A selected tunnel binding is an external resource, not consent: public
+    // routes need the same explicit confirmation before any state is read.
+    const tunnel = profileTunnel(options.config, plan);
+    if ((publicNodes.length || publicPorts.length || tunnel) && !options.allowPublic) {
+      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts, ...(tunnel ? { tunnel } : {}) });
     }
     const invocationId = randomUUID();
     const runtimeDir = await secureRuntimeDirectory(options.config, options.root, identity.instanceId);
@@ -532,8 +627,12 @@ export class DevFnOrchestrator {
     });
     const ports = Object.fromEntries(allocations.map((item) => [item.service, item.port]));
     let resolved: ReturnType<typeof resolveEndpointTemplates>;
-    try { resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix); }
-    catch (error) {
+    // The binding is read once per start: consumers resolve their public URLs from the same selection that is published.
+    let publicSelection: PublicSelection | undefined;
+    try {
+      publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
+      resolved = await resolveWithComposeNetworks(options.config, plan, options.root, identity, ports, suffix, selectionTemplateInputs(publicSelection));
+    } catch (error) {
       await registry.release({ invocationId, errorCode: "DEVFN_ENDPOINT_RESOLUTION_FAILED" });
       throw error;
     }
@@ -650,6 +749,15 @@ export class DevFnOrchestrator {
           receipt.routes = await proxy.upsert(routes, identity.instanceId);
         } else if (activatedRoutes) receipt.routes = activatedRoutes;
         receipt.urls = resolveAllocationUrls(allocations, receipt.routes, selectedHttpPorts(options.config, plan), resolved.directUrls);
+        // Public exposure starts last, once every node is ready and the
+        // public origin routes are active; a profile without a tunnel
+        // withdraws any this owner still publishes.
+        if (publicSelection) {
+          await writeReceipt(receipt);
+          const { hostnames, urls, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, options.config, this.tunnelOverrides);
+          receipt.tunnel = { binding: publicSelection.binding.name, hostnames, urlTiming: publicSelection.timing, ...(outstanding.length ? { outstanding } : {}) };
+          receipt.publicUrls = urls;
+        } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);
         clearInterval(heartbeat);
         await registry.markActive(invocationId, startupOwners(options.config, receipt));
@@ -691,15 +799,25 @@ export class DevFnOrchestrator {
       const serviceStates = await Promise.all(existing.services.map((item) => new ComposeController().status(item)));
       const managedCount = processStates.length + serviceStates.length;
       const allRunning = managedCount > 0 && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
+      const live: { publicUrls?: Record<string, string> } = {};
       const allReady = allRunning && existing.profile === (options.profile ?? options.config.defaultProfile ?? "default") &&
-        await receiptIsReady(options.config, options.root, existing, processStates, serviceStates);
-      if (existing.state === "ready" && allReady && !options.replace) throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+        await receiptIsReady(options.config, options.root, existing, processStates, serviceStates, live);
+      if (existing.state === "ready" && allReady && !options.replace) {
+        // Public URLs a shared connector restart reassigned are recorded; the lifecycle and every connector are kept.
+        if (live.publicUrls && !sameUrls(live.publicUrls, existing.publicUrls)) {
+          existing.publicUrls = live.publicUrls;
+          existing.updatedAt = new Date().toISOString();
+          await writeReceipt(existing);
+        }
+        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+      }
       // Validate the replacement while the old lifecycle still owns its ports
       // and containers. A malformed source must never turn a ready service off.
       const replacementPlan = createPlan(options.config, options.profile);
       const existingPorts = Object.fromEntries(existing.allocations.map((allocation) => [allocation.service, allocation.port]));
       const replacementPorts = Object.fromEntries(replacementPlan.portNames.map((name) => [name, existingPorts[name] ?? 1]));
-      const replacement = await resolveWithComposeNetworks(options.config, replacementPlan, options.root, identity, replacementPorts, loadedPolicy?.policy.hostnameSuffix);
+      const replacement = await resolveWithComposeNetworks(options.config, replacementPlan, options.root, identity, replacementPorts, loadedPolicy?.policy.hostnameSuffix,
+        await publicTemplateInputs(options.config, replacementPlan, identity, stateDir));
       await startupFingerprints(options.config, options.root, replacement);
       if (existing.state === "ready" && allRunning && deferReadyCleanup && registered === "ready") return existing;
       await this.stopExisting(existing, stateDir, registry);
@@ -718,7 +836,7 @@ export class DevFnOrchestrator {
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unable to stop prior invocation ${existing.invocationId}; it was not replaced: ${recovered.errors.join(" ")}`, { cleanup: recovered, priorStopped: false });
     }
     existing.cleanup = recovered;
-    existing.state = "stopped";
+    existing.state = recovered.publicOutstanding?.length ? "degraded" : "stopped";
     existing.updatedAt = new Date().toISOString();
     await writeReceipt(existing);
   }
@@ -762,7 +880,8 @@ export class DevFnOrchestrator {
     }
     const spec = options.config.processes![node.name];
     const managed = await supervisor.start({
-      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports, environment: resolved.generated,
+      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports,
+      environment: lifecycleGeneratedEnvironment(receipt, resolved.generated),
       onStarted: async (started) => {
         receipt.processes.push(started);
         receipt.startedNodes?.push({ name: node.name, kind: node.kind });
@@ -779,6 +898,15 @@ export class DevFnOrchestrator {
 
   private async cleanup(receipt: LifecycleReceipt, registry: FilePortRegistry, supervisor: ProcessSupervisor, compose: ComposeController, proxy: CaddyProxyController, failed: boolean, preserveRoutes = false, preserveLeases = false): Promise<CleanupResult> {
     const result: CleanupResult = { stoppedProcesses: [], stoppedServices: [], removedProxy: false, releasedPorts: false, errors: [] };
+    // Public exposure ends on every binding before any process stops, also
+    // for a replacement, which republishes once it is ready. While it cannot
+    // end, nothing stops and no port is freed for another process to take;
+    // a part still journaled after it ended is reported, not hidden.
+    try {
+      const { withdrawn, outstanding } = await withdrawLifecycleTunnel(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, this.tunnelOverrides);
+      result.withdrawnPublicHostnames = withdrawn;
+      if (outstanding.length) result.publicOutstanding = outstanding;
+    } catch (error) { result.errors.push(error instanceof Error ? error.message : String(error)); return result; }
     const historical = [
       ...receipt.processes.map((value) => ({ kind: "process" as const, value })),
       ...receipt.services.map((value) => ({ kind: "service" as const, value })),
@@ -843,7 +971,7 @@ export class DevFnOrchestrator {
     // this worktree belongs to an interrupted command.
     if (cleanup.errors.length === 0) await registry.recoverInterrupted(identity.instanceId);
     receipt.cleanup = cleanup;
-    receipt.state = cleanup.errors.length ? "degraded" : "stopped";
+    receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
     receipt.updatedAt = new Date().toISOString();
     await writeReceipt(receipt);
     return receipt;
@@ -857,10 +985,13 @@ export class DevFnOrchestrator {
     const processes = await Promise.all(receipt.processes.map(async (managed) => ({ name: managed.name, pid: managed.pid, state: await supervisor.status(managed), logPath: managed.logPath })));
     const compose = new ComposeController();
     const services = await Promise.all(receipt.services.map(async (managed) => ({ ...managed, state: await compose.status(managed) })));
-    const runtimeReady = receipt.state === "ready" && await receiptIsReady(options.config, options.root, receipt, processes.map((item) => item.state), services.map((item) => item.state));
+    const live: { publicUrls?: Record<string, string> } = {};
+    const runtimeReady = receipt.state === "ready" && await receiptIsReady(options.config, options.root, receipt, processes.map((item) => item.state), services.map((item) => item.state), live);
     const degraded = receipt.state === "ready" && !runtimeReady;
     const state = degraded ? "degraded" : receipt.state;
-    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {} };
+    // Public URLs are the ones served now; publicUrlsChanged marks those reassigned since the receipt recorded them.
+    const publicUrls = state === "ready" && live.publicUrls ? { publicUrls: live.publicUrls, ...(sameUrls(live.publicUrls, receipt.publicUrls) ? {} : { publicUrlsChanged: true }) } : {};
+    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
   }
 
   public async doctor(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string }): Promise<{ ok: boolean; diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> }> {

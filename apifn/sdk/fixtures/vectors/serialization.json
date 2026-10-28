@@ -1,0 +1,79 @@
+{
+  "description": "Request serialization for the fixture catalog. Parameters are keyed by location and wire name; each target maps them to its own parameter names. A client built with baseUrl http://<host>/v1 and no credentials must send exactly `expect`: `query` is the raw query string (\"\" for none) and `headers` lists headers that must be present (lowercase names); `absentHeaders` must not be sent; `body` is the parsed JSON body, `bodyText` the raw text and `bodyBytes` the raw bytes.",
+  "cases": [
+    {
+      "name": "path encoding, form and deepObject query, reserved expansion and a header",
+      "operation": "tasks.list",
+      "parameters": {
+        "path": { "projectId": "p 1/2" },
+        "query": { "limit": 10, "tags": ["a", "b c"], "status": ["open", "closed"], "filter": { "owner": "me", "due": "2026-10-01" }, "q": "a/b:c,d" },
+        "header": { "X-Request-Id": "req-1" }
+      },
+      "expect": {
+        "method": "GET",
+        "path": "/v1/projects/p%201%2F2/tasks",
+        "query": "filter[owner]=me&filter[due]=2026-10-01&limit=10&q=a/b:c,d&status=open,closed&tags=a&tags=b%20c",
+        "headers": { "x-request-id": "req-1", "accept": "application/json, application/problem+json" }
+      }
+    },
+    {
+      "name": "optional parameters are omitted",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "p1" } },
+      "expect": { "method": "GET", "path": "/v1/projects/p1/tasks", "query": "", "headers": {}, "absentHeaders": ["x-request-id", "content-type"] }
+    },
+    {
+      "name": "an empty array query parameter is omitted",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "p1" }, "query": { "tags": [] } },
+      "expect": { "method": "GET", "path": "/v1/projects/p1/tasks", "query": "", "headers": {} }
+    },
+    {
+      "name": "non-ASCII and sub-delimiters in path and query values are percent-encoded",
+      "operation": "tasks.list",
+      "parameters": { "path": { "projectId": "é+!'()*" }, "query": { "tags": ["x&y=z", "ü"] } },
+      "expect": { "method": "GET", "path": "/v1/projects/%C3%A9%2B%21%27%28%29%2A/tasks", "query": "tags=x%26y%3Dz&tags=%C3%BC", "headers": {} }
+    },
+    {
+      "name": "JSON body and an optional header",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "key-1" } },
+      "body": { "title": "Write docs", "status": "open" },
+      "expect": {
+        "method": "POST",
+        "path": "/v1/projects/p1/tasks",
+        "query": "",
+        "headers": { "content-type": "application/json", "idempotency-key": "key-1" },
+        "body": { "title": "Write docs", "status": "open" }
+      }
+    },
+    {
+      "name": "an omitted optional body sends no body or content type",
+      "operation": "tasks.search",
+      "parameters": { "path": { "projectId": "p1" } },
+      "expect": { "method": "POST", "path": "/v1/projects/p1/tasks/search", "query": "", "headers": {}, "absentHeaders": ["content-type"], "bodyText": "" }
+    },
+    {
+      "name": "a present optional body is sent as JSON",
+      "operation": "tasks.search",
+      "parameters": { "path": { "projectId": "p1" } },
+      "body": { "text": "docs" },
+      "expect": { "method": "POST", "path": "/v1/projects/p1/tasks/search", "query": "", "headers": { "content-type": "application/json" }, "body": { "text": "docs" } }
+    },
+    {
+      "name": "binary body",
+      "operation": "tasks.attachment.upload",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "bodyBytes": [0, 1, 2, 255],
+      "expect": { "method": "PUT", "path": "/v1/projects/p1/tasks/t1/attachment", "query": "", "headers": { "content-type": "application/octet-stream" }, "bodyBytes": [0, 1, 2, 255] }
+    }
+  ],
+  "rejected": [
+    { "name": "a missing required path parameter", "operation": "tasks.get", "parameters": { "path": { "projectId": "p1" } }, "kind": "validation" },
+    { "name": "a dot-segment path parameter", "operation": "tasks.get", "parameters": { "path": { "projectId": "..", "taskId": "t1" } }, "kind": "validation" },
+    { "name": "an empty path parameter", "operation": "tasks.get", "parameters": { "path": { "projectId": "", "taskId": "t1" } }, "kind": "validation" },
+    { "name": "a header value with a line break", "operation": "tasks.list", "parameters": { "path": { "projectId": "p1" }, "header": { "X-Request-Id": "a\r\nX-Injected: 1" } }, "kind": "validation" },
+    { "name": "a nested object in a deepObject parameter", "operation": "tasks.list", "parameters": { "path": { "projectId": "p1" }, "query": { "filter": { "owner": { "id": "me" } } } }, "kind": "validation" },
+    { "name": "a missing required body", "operation": "tasks.create", "parameters": { "path": { "projectId": "p1" } }, "kind": "validation" }
+  ]
+}

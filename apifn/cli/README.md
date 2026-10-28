@@ -24,6 +24,7 @@ npx @apifn/cli --help
 | `serve [specPath]` | Serve an interactive API explorer |
 | `mock <specPath>` | Start a mock server from a spec |
 | `snippet <specPath> [apiPath]` | Generate a code snippet for an endpoint |
+| `sdk generate` | Generate an SDK package from an operation catalog |
 
 ### Global options
 
@@ -165,6 +166,24 @@ apifn snippet .apifn/openapi.yml --all --target python-requests
 - `--method <method>` — HTTP method (default `get`)
 - `--base-url <url>` — base URL override
 - `--all` — generate snippets for every endpoint
+
+## sdk generate
+
+Generate an installable SDK package from an operation catalog (via [`@apifn/sdk`](../sdk)).
+
+```bash
+apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk
+apifn sdk generate --sdk-config sdk.config.json --spec openapi.json --manifest apifn.manifest.json --out packages/projects-sdk
+apifn sdk generate --sdk-config sdk.config.json --catalog catalog.json --out packages/projects-sdk --check
+```
+
+- `--sdk-config <path>` — `{ "target": "typescript" | "python", "unsupported": "fail" | "exclude", "options": { … } }` (see `@apifn/sdk`)
+- `--catalog <path>` — catalog built by `@apifn/contracts`; or `--spec <path>` with `--manifest <path>` to build it
+- `--out <dir>` — package directory; only files the generator owns are written, and the custom-code area (`src/custom/` for TypeScript, `src/<module>/custom/` for Python) is never touched
+- `--check` — write nothing (a read-only directory works); exit `1` if the directory is out of date, or if another run holds its lock or keeps writing it while it is checked
+- `--format <type>` — `text` (default) or `json`
+
+Writes the package and `apifn.sdk-manifest.json` (catalog, config, generator and target provenance, generated and excluded operations, owned file digests, warnings). Exit codes: `0` written or up to date · `1` generation errors, output conflicts (including another run holding the output directory's `.apifn-sdk.lock`), filesystem errors reading or writing it (`SDK_OUTPUT_FAILED`) or `--check` drift (nothing written; with `--format json`, each of these prints one JSON result) · `2` missing or unreadable inputs (a usage message on stderr, with no JSON result in either format).
 
 ---
 

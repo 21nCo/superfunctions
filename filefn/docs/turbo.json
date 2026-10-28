@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": [
+    "//"
+  ],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**",
+        "$TURBO_ROOT$/filefn/server/contracts/filefn-client-v1.openapi.json"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**",
+        "$TURBO_ROOT$/filefn/server/contracts/filefn-client-v1.openapi.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:apifn:schema:operation-catalog:v1",
+  "title": "ApiFn operation catalog v1",
+  "description": "Normalized, runtime-neutral operation catalog. Serialize with canonical JSON (keys sorted by UTF-16 code unit, no whitespace); the catalog digest is sha256 over those bytes. Contains no examples, extensions or credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "catalogVersion": {"const": "apifn.operation-catalog/v1"},
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+        },
+        "title": {"type": "string"}
+      },
+      "required": ["id", "version", "title"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "specDigest": {"type": "string", "minLength": 1, "pattern": "^sha256:[0-9a-f]{64}$"},
+        "manifestDigest": {"type": "string", "minLength": 1, "pattern": "^sha256:[0-9a-f]{64}$"},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "revision": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "exporter": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+          },
+          "required": ["source", "revision", "exporter"]
+        }
+      },
+      "required": ["specDigest", "manifestDigest", "provenance"]
+    },
+    "serialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mediaTypes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      },
+      "required": ["mediaTypes"]
+    },
+    "servers": {"type": "array", "items": {"$ref": "#/$defs/server"}},
+    "securitySchemes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {"type": "string", "enum": ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"]},
+          "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+          "scheme": {"type": "string"},
+          "bearerFormat": {"type": "string"},
+          "in": {"type": "string", "enum": ["query", "header", "cookie"]},
+          "name": {"type": "string"},
+          "openIdConnectUrl": {"type": "string"},
+          "flows": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "implicit": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["authorizationUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
+              "password": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
+              "clientCredentials": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
+              "authorizationCode": {
+                "allOf": [
+                  {"$ref": "#/$defs/oauthFlow"},
+                  {"type": "object", "required": ["authorizationUrl", "tokenUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}, "tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
+                ]
+              }
+            }
+          }
+        },
+        "required": ["type", "description"],
+        "description": "Each type carries only the members OpenAPI defines for it: apiKey in and name, http scheme and bearerFormat, openIdConnect openIdConnectUrl, oauth2 flows, mutualTLS none.",
+        "allOf": [
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "apiKey"}}},
+            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"anyOf": [{"required": ["in"]}, {"required": ["name"]}]}}
+          },
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "http"}}},
+            "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"anyOf": [{"required": ["scheme"]}, {"required": ["bearerFormat"]}]}}
+          },
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "openIdConnect"}}},
+            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"required": ["openIdConnectUrl"]}}
+          },
+          {"if": {"type": "object", "properties": {"type": {"const": "oauth2"}}}, "then": {"type": "object", "required": ["flows"]}, "else": {"not": {"required": ["flows"]}}}
+        ]
+      }
+    },
+    "operations": {
+      "description": "Sorted by id. Each id is unique; JSON Schema cannot express uniqueness of one member across items (uniqueItems compares whole items), so buildOperationCatalog reports DUPLICATE_OPERATION_ID and createReleaseDescriptor rejects a repeated id with INVALID_RELEASE.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/operation"}
+    },
+    "schemas": {
+      "type": "object",
+      "additionalProperties": {
+        "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+        "anyOf": [{"type": "object"}, {"type": "boolean"}]
+      }
+    }
+  },
+  "required": [
+    "catalogVersion",
+    "api",
+    "source",
+    "serialization",
+    "servers",
+    "securitySchemes",
+    "operations",
+    "schemas"
+  ],
+  "$defs": {
+    "oauthFlow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authorizationUrl": {"type": "string"},
+        "tokenUrl": {"type": "string"},
+        "refreshUrl": {"type": "string"},
+        "scopes": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["scopes"]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+        "openapiOperationId": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "method": {"enum": ["get", "put", "post", "delete", "options", "head", "patch", "trace"]},
+        "path": {"type": "string", "minLength": 1, "pattern": "^/"},
+        "summary": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "in": {"enum": ["path", "query", "header", "cookie"]},
+              "required": {"type": "boolean"},
+              "deprecated": {"type": "boolean"},
+              "style": {"enum": ["simple", "form", "deepObject"]},
+              "explode": {"type": "boolean"},
+              "allowReserved": {"type": "boolean"},
+              "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+              "schema": {
+                "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+                "anyOf": [{"type": "object"}, {"type": "boolean"}, {"type": "null"}]
+              }
+            },
+            "required": ["name", "in", "required", "deprecated", "style", "explode", "allowReserved", "description", "schema"]
+          }
+        },
+        "requestBody": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "required": {"type": "boolean"},
+                "contents": {"type": "array", "items": {"$ref": "#/$defs/content"}}
+              },
+              "required": ["required", "contents"]
+            },
+            {"type": "null"}
+          ]
+        },
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": {"type": "string", "minLength": 1, "pattern": "^(?:[1-5](?:[0-9]{2}|XX)|default)$"},
+              "kind": {"enum": ["success", "error", "default"]},
+              "description": {"type": "string"},
+              "contents": {"type": "array", "items": {"$ref": "#/$defs/content"}}
+            },
+            "required": ["status", "kind", "description", "contents"],
+            "$comment": "kind follows status: default for default, error for 4xx and 5xx, success otherwise.",
+            "anyOf": [
+              {"type": "object", "properties": {"status": {"const": "default"}, "kind": {"const": "default"}}},
+              {"type": "object", "properties": {"status": {"type": "string", "pattern": "^[45]"}, "kind": {"const": "error"}}},
+              {"type": "object", "properties": {"status": {"type": "string", "pattern": "^[123]"}, "kind": {"const": "success"}}}
+            ]
+          }
+        },
+        "servers": {
+          "description": "Path- or operation-level server override; null uses the catalog servers.",
+          "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/server"}}, {"type": "null"}]
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "alternatives": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "array", "items": {"$ref": "#/$defs/securityTerm"}}
+            }
+          },
+          "required": ["alternatives"],
+          "description": "Accepted credential combinations: any alternative (OR) whose terms all hold (AND). An empty alternative allows anonymous calls. Describes what the API accepts; grants nothing."
+        },
+        "sdk": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {"type": "boolean"},
+            "excludedTargets": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]*$"}
+            }
+          },
+          "required": ["include", "excludedTargets"]
+        },
+        "agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"expose": {"type": "boolean"}},
+          "required": ["expose"]
+        },
+        "deprecation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deprecated": {"type": "boolean"},
+            "replacement": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                },
+                {"type": "null"}
+              ]
+            },
+            "since": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "message": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+          },
+          "required": ["deprecated", "replacement", "since", "message"]
+        },
+        "executionPolicyRef": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+            },
+            {"type": "null"}
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "openapiOperationId",
+        "method",
+        "path",
+        "summary",
+        "description",
+        "tags",
+        "parameters",
+        "requestBody",
+        "responses",
+        "servers",
+        "security",
+        "sdk",
+        "agent",
+        "deprecation",
+        "executionPolicyRef"
+      ],
+      "if": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"expose": {"const": true}}}}},
+      "then": {"type": "object", "properties": {"executionPolicyRef": {"type": "string"}}},
+      "$comment": "An operation exposed to agents always names an execution policy (AGENT_POLICY_REQUIRED); HTTP method and schema never imply authorization or idempotency."
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mediaType": {"description": "Bare media type: no parameters.", "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^;\\s]+$"},
+        "schema": {
+          "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+          "anyOf": [{"type": "object"}, {"type": "boolean"}, {"type": "null"}]
+        },
+        "encoding": {
+          "description": "Per-property serialization of application/x-www-form-urlencoded and multipart/form-data bodies, keyed by property name; empty for other media types.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contentType": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+              "style": {"enum": ["form", "deepObject"]},
+              "explode": {"type": "boolean"},
+              "allowReserved": {"type": "boolean"}
+            },
+            "required": ["contentType", "style", "explode", "allowReserved"]
+          }
+        }
+      },
+      "required": ["mediaType", "schema", "encoding"]
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "URL template without user info, query or fragment.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/?#@]*(?:/[^?#]*)?|(?:[Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]|[Ff][Ii][Ll][Ee]):[/\\\\]*(?![/\\\\])[^/\\\\?#@]*(?:[/\\\\][^?#]*)?|(?![A-Za-z][A-Za-z0-9+.-]*://|//|(?:[Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]|[Ff][Ii][Ll][Ee]):)[^?#]*)$"
+        },
+        "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "variables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "default": {"type": "string"},
+              "enum": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+              "description": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            },
+            "required": ["default", "enum", "description"]
+          }
+        }
+      },
+      "required": ["url", "description", "variables"]
+    },
+    "securityTerm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scheme": {"type": "string", "minLength": 1},
+        "scopes": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["scheme", "scopes"]
+    }
+  }
+}

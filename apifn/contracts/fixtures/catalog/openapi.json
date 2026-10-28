@@ -1,0 +1,139 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Projects API", "version": "2026-10-01" },
+  "servers": [{ "url": "https://api.example.test/v1", "description": "Production" }],
+  "security": [{ "bearerAuth": [] }, { "apiKeyAuth": [] }],
+  "paths": {
+    "/workspaces/{workspaceId}/projects": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }],
+      "get": {
+        "operationId": "listProjects",
+        "summary": "List projects",
+        "tags": ["projects"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "filter", "in": "query", "style": "deepObject", "explode": true, "schema": { "type": "object", "additionalProperties": { "type": "string" } } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of projects",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectPage" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "post": {
+        "operationId": "createProject",
+        "summary": "Create a project",
+        "tags": ["projects"],
+        "security": [{ "oauth": ["projects:write"] }, { "bearerAuth": [], "apiKeyAuth": [] }],
+        "parameters": [{ "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "maxLength": 64 } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectInput" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } }
+          },
+          "409": { "description": "A project with this slug exists", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/projects/{projectId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/WorkspaceId" },
+        { "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "get": {
+        "operationId": "getProject",
+        "summary": "Get a project",
+        "tags": ["projects"],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "description": "Project slug or ID", "schema": { "type": "string", "pattern": "^[a-z0-9-]+$" } }],
+        "responses": {
+          "200": { "description": "The project", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "removeProject",
+        "summary": "Delete a project (deprecated)",
+        "deprecated": true,
+        "tags": ["projects"],
+        "responses": { "204": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/workspaces/{workspaceId}/projects/{projectId}/archive": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "archiveProject",
+        "summary": "Archive a project",
+        "tags": ["projects"],
+        "responses": {
+          "200": { "description": "Archived", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "security": [],
+        "responses": { "200": { "description": "Healthy", "content": { "text/plain": { "schema": { "type": "string" } } } } }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "WorkspaceId": { "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+    },
+    "responses": {
+      "NotFound": { "description": "Not found", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "Problem": { "description": "Unexpected error", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } }
+    },
+    "schemas": {
+      "Project": {
+        "type": "object",
+        "required": ["id", "name", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/ProjectStatus" },
+          "owner": { "type": ["string", "null"] }
+        },
+        "example": { "id": "proj_1", "name": "Docs", "status": "active", "owner": null }
+      },
+      "ProjectStatus": { "type": "string", "enum": ["active", "archived"] },
+      "ProjectInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 }, "slug": { "type": "string" } },
+        "additionalProperties": false
+      },
+      "ProjectPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Project" } }, "nextCursor": { "type": ["string", "null"] } }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["type", "title", "status"],
+        "properties": { "type": { "type": "string" }, "title": { "type": "string" }, "status": { "type": "integer" }, "detail": { "type": "string" } }
+      },
+      "Unused": { "type": "object" }
+    },
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" },
+      "apiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-Api-Key" },
+      "oauth": {
+        "type": "oauth2",
+        "flows": {
+          "clientCredentials": { "tokenUrl": "https://auth.example.test/oauth/token", "scopes": { "projects:write": "Write projects", "projects:read": "Read projects" } }
+        }
+      }
+    }
+  }
+}

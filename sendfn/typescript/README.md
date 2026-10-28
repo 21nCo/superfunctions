@@ -14,7 +14,7 @@ The `sendfn` SDK is a unified communications platform that provides email, SMS, 
 ## Installation
 
 ```bash
-npm install sendfn @superfunctions/db @superfunctions/http
+npm install sendfn @superfunctions/db @superfunctions/http@0.1.2 @superfunctions/http-express@0.1.2 express
 ```
 
 ## Verify From Repo Root
@@ -93,12 +93,18 @@ const client = sendfn({
 If `enableApi` is true, the `client.router` instance is available to be mounted on any supported framework via Superfunctions HTTP adapters.
 
 ```typescript
-import { createExpressApp } from '@superfunctions/http-express';
+import express from 'express';
+import { toExpress } from '@superfunctions/http-express';
 
-const app = createExpressApp(client.router);
+const app = express();
+// Adapter 0.1.2 serializes req.body: parse JSON, including SNS text/plain.
+app.use(express.json({ type: ['application/json', 'text/plain'], limit: '2mb' }));
+if (!client.router) throw new Error('Set enableApi: true before mounting');
+app.use(toExpress(client.router));
 app.listen(3000);
 
-// Endpoints (Requires 'Authorization: Bearer <adminKey>'):
+// Admin endpoints require 'Authorization: Bearer <adminKey>'.
+// The SNS webhook is an exception: it verifies the SNS signature and topic ARN.
 // POST /email - Send an email
 // POST /sms   - Send an SMS
 // POST /whatsapp - Send a WhatsApp message
@@ -121,6 +127,10 @@ interface SendfnConfig {
   whatsappProvider?: WhatsAppProvider; // e.g., metaWhatsAppAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
   pushProviders?: Partial<Record<Platform, PushProvider>>; // APNS/FCM/custom adapters
+  awsSns?: {
+    topicArns: string[];       // SNS topics allowed to deliver SES lifecycle events
+    maxAgeMs?: number;         // Optional replay window
+  };
   push?: PushConfig;           // Legacy credentials for FCM/APNS
   options?: {
     suppressionEnabled?: boolean; // default: true
@@ -197,18 +207,20 @@ const client = sendfn({
 });
 ```
 
-Then mount the webhook handler. Preserve the raw SNS envelope JSON exactly as AWS sends it; production deployments must keep the full SNS signature fields intact so the webhook handler can perform signature verification before any delivery, bounce, or complaint event mutates state.
+For an HTTP host, include this `awsSns` option in the client configured with
+`enableApi: true` above and mount `client.router` using the API-router example.
+The JSON middleware above accepts both API `application/json` and SNS
+`text/plain` JSON notifications. Malformed JSON and bodies over 2 MB are rejected
+by Express before reaching SendFn. Keep it before `toExpress`: the pinned adapter
+0.1.2 serializes `req.body`, so `express.raw()` would serialize a Buffer wrapper
+instead of the notification. The built-in `POST /webhooks/aws-ses` route verifies
+the complete SNS envelope before mutating delivery, bounce, or complaint state.
+Do not register a second handler that passes a Buffer directly to
+`handleSnsNotification`, which expects an SNS message object.
 
-```typescript
-app.post('/webhooks/aws-ses', async (req, res) => {
-  const handler = client.getWebhookHandlers().awsSes;
-  // req.body should be the SNS notification JSON
-  await handler.handleSnsNotification(req.body);
-  res.sendStatus(200);
-});
-```
-
-Do not proxy, partially parse, or reshape the SNS payload before passing it to `handleSnsNotification`.
+For a custom host calling `handleSnsNotification` directly, JSON-decode the bytes
+and preserve every SNS envelope field, including `Signature`, `SigningCertURL`,
+`Timestamp`, and `Message`; do not pass only the inner SES message.
 
 ## Examples
 

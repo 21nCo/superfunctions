@@ -10,6 +10,7 @@ import { runDiffCommand } from "./commands/diff.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
+import { runSdkGenerateCommand } from "./commands/sdk.js";
 import { createOutput } from "./utils/output.js";
 
 export { defineConfig, loadConfig };
@@ -374,6 +375,49 @@ export async function runCli(
       });
       if (result !== 0) exitCode = result;
     });
+
+  cli
+    .command("sdk <action>", "Generate an SDK package from an operation catalog (action: generate)")
+    .option("--sdk-config <path>", "SDK config JSON: { target, unsupported?, options }")
+    .option("--catalog <path>", "Operation catalog JSON built by @apifn/contracts")
+    .option("--spec <path>", "OpenAPI document to build the catalog from (with --manifest)")
+    .option("--manifest <path>", "Companion manifest for --spec")
+    .option("--out <dir>", "Package directory to write")
+    .option("--check", "Write nothing; exit 1 if the package directory is out of date")
+    .option("--format <type>", "Output format: text | json (default: text)")
+    .action(
+      async (
+        action: string,
+        options: { sdkConfig?: string; catalog?: string; spec?: string; manifest?: string; out?: string; check?: boolean; format?: string }
+      ) => {
+        const globals = getGlobals();
+        const output = createOutput({
+          quiet: globals.quiet,
+          verbose: globals.verbose,
+          color: globals.color !== false,
+          writeStdout: runOptions.stdout,
+          writeStderr: runOptions.stderr,
+        });
+        if (action !== "generate") {
+          output.error(`Unknown sdk action '${action}'. Supported: generate.`);
+          exitCode = 2;
+          return;
+        }
+        const result = await runSdkGenerateCommand({
+          configPath: options.sdkConfig,
+          catalogPath: options.catalog,
+          specPath: options.spec,
+          manifestPath: options.manifest,
+          outDir: options.out,
+          check: options.check ?? false,
+          format: options.format === "json" ? "json" : "text",
+          cwd: runOptions.cwd,
+          output,
+          writeStdout: runOptions.stdout,
+        });
+        if (result !== 0) exitCode = result;
+      }
+    );
 
   cli
     .command("validate <specPath>", "Validate OpenAPI document")

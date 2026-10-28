@@ -179,8 +179,9 @@ function createNamespaceWrappedBase(
     version: adapter.version,
     capabilities: adapter.capabilities,
 
-    // --- Pass-through internal (NOT wrapped) ---
+    // --- Pass-through internal and raw SQL (NOT wrapped) ---
     internal: adapter.internal,
+    rawSql: adapter.rawSql,
 
     // --- CRUD ---
     async create(params) {

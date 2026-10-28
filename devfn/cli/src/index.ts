@@ -13,7 +13,10 @@ import {
   resolveDevFnManifestPath,
   trustProject,
 } from "@devfn/config";
-import { DevFnError, DevFnOrchestrator, readRegisteredDomains, recoverOrphanedProxyRoutes, registerDomain, resolveInstanceIdentity, unregisterDomain } from "@devfn/core";
+import {
+  DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
+  ephemeralOriginDomain, resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding, type TunnelBindingInput,
+} from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
 import { defaultStateDir } from "@devfn/config";
 
@@ -32,6 +35,10 @@ interface ParsedArgs {
   tls?: string;
   certificateFile?: string;
   keyFile?: string;
+  host?: string;
+  tunnel: Partial<Record<"provider" | "domain" | "accountId" | "zoneId" | "tunnelId" | "credentialsFile" | "apiTokenEnv" | "authtokenEnv" | "apiKeyEnv", string>>;
+  nonproduction: boolean;
+  ephemeral: boolean;
 }
 
 export interface CliOptions { cwd?: string; env?: NodeJS.ProcessEnv; stdout?: (text: string) => void; stderr?: (text: string) => void }
@@ -51,13 +58,16 @@ Commands:
   ports [gc|report]    Inspect, reconcile, collect (incl. orphaned routes), or report port state
   url [name]           Print resolved local URLs
   domains [list|register|unregister]  Manage machine-owned development domains
+  oauth-relay [status|start <domain>|stop]  Manage the machine's OAuth callback relay
+  tunnel [list|register <name>|unregister <name>|urls|status <name>|recover <name>]
+                       Manage machine public tunnel bindings and preview public URLs
 
 Options:
   --profile <name>     Select a named profile
   --config <path>      Use an explicit manifest
   --json               Emit one machine-readable JSON value
   --trust              Trust the current manifest digest before loading it
-  --allow-public       Confirm processes or ports declared as public exposure
+  --allow-public       Confirm processes, ports or tunnel routes declared as public exposure
   --yes                Confirm devfn init writes
   --state-dir <path>   Override machine state (primarily for testing)
   --output <path>      Write a ports report
@@ -65,12 +75,23 @@ Options:
   --tls <mode>         Domain TLS: internal or certificate
   --cert <path>        Certificate PEM for certificate TLS
   --key <path>         Private key PEM for certificate TLS
+  --host <label>       OAuth relay host label under its domain (default auth)
+  --provider <name>    Tunnel binding provider: cloudflare (default) or ngrok
+  --domain, --account-id, --zone-id, --tunnel-id, --credentials-file, --api-token-env
+                       Cloudflare binding fields; the token is read from the named variable, never stored
+  --authtoken-env, --api-key-env
+                       ngrok binding credential variable names; values are never stored
+  --ephemeral          Register an ngrok binding whose URLs are assigned only after start
+  --nonproduction      Confirm a tunnel binding uses a nonproduction account and domain
 `;
+
+const TUNNEL_OPTIONS = { "--provider": "provider", "--domain": "domain", "--account-id": "accountId", "--zone-id": "zoneId", "--tunnel-id": "tunnelId", "--credentials-file": "credentialsFile",
+  "--api-token-env": "apiTokenEnv", "--authtoken-env": "authtokenEnv", "--api-key-env": "apiKeyEnv" } as const;
 
 function parse(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values: Record<string, string | boolean> = {};
-  const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key"]);
+  const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key", "--host", ...Object.keys(TUNNEL_OPTIONS)]);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith("--")) { positionals.push(token); continue; }
@@ -78,7 +99,7 @@ function parse(argv: readonly string[]): ParsedArgs {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${token} requires a value.`);
       values[token] = value; index += 1;
-    } else if (["--json", "--yes", "--trust", "--allow-public", "--help"].includes(token)) values[token] = true;
+    } else if (["--json", "--yes", "--trust", "--allow-public", "--nonproduction", "--ephemeral", "--help"].includes(token)) values[token] = true;
     else throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown option ${token}.`);
   }
   const tailValue = values["--tail"];
@@ -99,6 +120,10 @@ function parse(argv: readonly string[]): ParsedArgs {
     ...(typeof values["--tls"] === "string" ? { tls: values["--tls"] } : {}),
     ...(typeof values["--cert"] === "string" ? { certificateFile: values["--cert"] } : {}),
     ...(typeof values["--key"] === "string" ? { keyFile: values["--key"] } : {}),
+    ...(typeof values["--host"] === "string" ? { host: values["--host"] } : {}),
+    tunnel: Object.fromEntries(Object.entries(TUNNEL_OPTIONS).flatMap(([flag, key]) => typeof values[flag] === "string" ? [[key, values[flag]]] : [])),
+    nonproduction: values["--nonproduction"] === true,
+    ephemeral: values["--ephemeral"] === true,
   };
 }
 
@@ -153,9 +178,16 @@ async function portsCommand(args: ParsedArgs, cwd: string, stateDir: string, loa
   if (action === "gc") {
     // Orphaned routes go first so their target ports and listener claims can
     // be collected in the same run.
-    const recoveredRoutes = await recoverOrphanedProxyRoutes(stateDir);
+    // An owner whose public withdrawal fails keeps its routes, which hold its
+    // ports; every other lease is still collected before that is reported.
+    const recovery: { recovered: string[]; error?: DevFnError } = await recoverOrphanedProxyRoutes(stateDir).then((recovered) => ({ recovered }), (error: unknown) => {
+      if (!(error instanceof DevFnError) || !Array.isArray(error.details?.recovered)) throw error;
+      return { recovered: error.details.recovered as string[], error };
+    });
     await registry.reconcile();
-    return { ok: true, removed: await registry.gc(), recoveredRoutes };
+    const removed = await registry.gc();
+    if (recovery.error) throw new DevFnError(recovery.error.code, recovery.error.message, { ...recovery.error.details, removed });
+    return { ok: true, removed, recoveredRoutes: recovery.recovered };
   }
   if (action !== undefined && action !== "report") throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown ports action ${action}. Expected gc or report.`);
   const state = await registry.reconcile();
@@ -197,8 +229,67 @@ async function domainsCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown domains action ${action}.`);
 }
 
+/** The relay is machine state: only start reads the trusted project, for its identity. */
+async function oauthRelayCommand(args: ParsedArgs, stateDir: string, load: () => Promise<LoadedConfig>): Promise<unknown> {
+  const [action = "status", domain, ...extra] = args.positionals;
+  if (action === "start") {
+    if (!domain || extra.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", "oauth-relay start requires exactly one registered domain.");
+    const loaded = await load();
+    const identity = await resolveInstanceIdentity(loaded.config.project.id, loaded.root);
+    return { ok: true, relay: await startOAuthRelay({ stateDir, domain, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, ...(args.host ? { host: args.host } : {}) }) };
+  }
+  if (domain !== undefined || args.host !== undefined) throw new DevFnError("DEVFN_RUNTIME_INVALID", `oauth-relay ${action} takes no domain or --host.`);
+  if (action === "stop") return { ok: true, ...await stopOAuthRelay(stateDir) };
+  if (action === "status") return { ok: true, relay: await oauthRelayStatus(stateDir) };
+  throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown oauth-relay action ${action}. Expected status, start or stop.`);
+}
+
+/** The binding a tunnel register command describes; the options of one provider only. */
+function tunnelBindingInput(args: ParsedArgs, cwd: string, name: string, identity: { projectId: string; repositoryIdentity: string }): TunnelBindingInput {
+  const { provider = "cloudflare", domain, accountId, zoneId, tunnelId, credentialsFile, apiTokenEnv, authtokenEnv, apiKeyEnv } = args.tunnel;
+  if (!args.nonproduction) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register requires --nonproduction; DevFn binds only nonproduction tunnels and domains.");
+  const base = { name, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, nonproduction: true as const };
+  if (provider === "cloudflare") {
+    if (!domain || !accountId || !zoneId || !tunnelId || !credentialsFile || !apiTokenEnv || authtokenEnv || apiKeyEnv || args.ephemeral) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for cloudflare requires --domain, --account-id, --zone-id, --tunnel-id, --credentials-file and --api-token-env, and no ngrok options.");
+    }
+    return { ...base, provider, domain, cloudflare: { accountId, zoneId, tunnelId, credentialsFile: path.resolve(cwd, credentialsFile), apiTokenEnv } };
+  }
+  if (provider !== "ngrok") throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown tunnel provider ${provider}. Expected cloudflare or ngrok.`);
+  if (!authtokenEnv || accountId || zoneId || tunnelId || credentialsFile || apiTokenEnv) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for ngrok requires --authtoken-env and takes no Cloudflare options.");
+  }
+  if (args.ephemeral) {
+    if (domain) throw new DevFnError("DEVFN_RUNTIME_INVALID", "An ephemeral ngrok binding takes no --domain; the provider assigns its URLs after start.");
+    return { ...base, provider, domain: ephemeralOriginDomain(name), ngrok: { endpoints: "ephemeral", authtokenEnv, ...(apiKeyEnv ? { apiKeyEnv } : {}) } };
+  }
+  if (!domain || !apiKeyEnv) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register for ngrok reserved endpoints requires --domain, whose wildcard *.<domain> the account reserves, and --api-key-env; use --ephemeral for assigned URLs.");
+  return { ...base, provider, domain, ngrok: { endpoints: "reserved", authtokenEnv, apiKeyEnv } };
+}
+
+/** Machine tunnel bindings of the current repository and project, and its public URLs and their timing. */
+async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
+  const [action = "list", name, ...extra] = args.positionals;
+  const identity = await resolveInstanceIdentity(loaded.config.project.id, loaded.root);
+  if (extra.length || (["list", "urls"].includes(action) ? name !== undefined : !name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} ${["list", "urls"].includes(action) ? "takes no binding name" : "requires exactly one binding name"}.`);
+  if (action !== "register" && (Object.keys(args.tunnel).length || args.nonproduction || args.ephemeral)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} takes no binding fields.`);
+  if (action === "list") return { ok: true, bindings: (await readTunnelBindings(stateDir)).filter((item) => item.projectId === identity.projectId && item.repositoryIdentity === identity.repositoryIdentity) };
+  if (action === "urls") return { ok: true, ...await planPublicUrls({ config: loaded.config, root: loaded.root, profile: args.profile, stateDir }) };
+  if (action === "register") return { ok: true, binding: await registerTunnelBinding(stateDir, tunnelBindingInput(args, cwd, name!, identity)) };
+  if (action === "unregister") { await unregisterTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity); return { ok: true, binding: name, removed: true }; }
+  const binding = await resolveTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity);
+  if (action === "status") return { ok: true, tunnel: await tunnelStatus({ stateDir, binding }) };
+  if (action === "recover") {
+    // Recovery may restart the connector for the published routes of owners that may still run.
+    if (!args.allowPublic) throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "tunnel recover restarts public exposure. Review it and rerun with --allow-public.");
+    return { ok: true, tunnel: await recoverTunnel({ stateDir, binding, ownerMayRun: lifecycleOwnerMayRun(stateDir) }) };
+  }
+  throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown tunnel action ${action}. Expected list, register, unregister, urls, status or recover.`);
+}
+
 async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
   if (args.command === "domains") return await domainsCommand(args, cwd, stateDir, loaded);
+  if (args.command === "tunnel") return await tunnelCommand(args, cwd, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
   const handlers: Record<string, () => Promise<unknown>> = {
@@ -216,8 +307,33 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   return await handler();
 }
 
+/** Tunnel binding fields that name the environment variable holding a credential, never the credential. */
+const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv"]);
+
+/** Result maps keyed by route names or hostnames, which carry worktree labels, not field names. */
+const URL_MAPS = new Set(["urls", "publicUrls"]);
+
+/**
+ * JSON output under the shared redaction, with two exceptions. The keys of a
+ * `urls` or `publicUrls` map are data: only their values go through the
+ * redaction, so a route named like a secret field still shows its URL. In
+ * tunnel output a credential reference holding a variable name is shown: it
+ * tells the operator which variable a binding reads, and the shared key
+ * pattern would hide it.
+ */
+function redactResult(value: unknown, credentialReferences: boolean): unknown {
+  if (Array.isArray(value)) return value.map((item) => redactResult(item, credentialReferences));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key,
+    credentialReferences && CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
+      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] !== null ? "[REDACTED]"
+        : URL_MAPS.has(key) && nested && typeof nested === "object" && !Array.isArray(nested)
+          ? Object.fromEntries(Object.entries(nested).map(([name, url]) => [name, redactResult(url, credentialReferences)]))
+          : redactResult(nested, credentialReferences)]));
+}
+
 function renderResult(args: ParsedArgs, result: unknown, output: ReturnType<typeof createOutput>): void {
-  if (args.json) { output.json(redactValue(result)); return; }
+  if (args.json) { output.json(redactResult(result, args.command === "tunnel")); return; }
   if (args.command === "logs" && result && typeof result === "object") {
     for (const [name, log] of Object.entries(result)) output.info(`${name}\n${log}`);
     return;
@@ -248,8 +364,8 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     if (args.command === "init") {
       const result = await initCommand(args, cwd); if (args.json) output.json(result); else { if (!result.written) output.info(String(result.preview)); output.success(result.written ? `Created ${result.manifest}` : String(result.confirmationRequired)); } return 0;
     }
-    const loaded = await trustedConfig(args, cwd, stateDir);
-    const result = await executeCommand(args, cwd, stateDir, loaded);
+    const load = () => trustedConfig(args, cwd, stateDir);
+    const result = args.command === "oauth-relay" ? await oauthRelayCommand(args, stateDir, load) : await executeCommand(args, cwd, stateDir, await load());
     renderResult(args, result, output);
     return args.command === "doctor" && !(result as { ok?: boolean }).ok ? 1 : 0;
   } catch (error) {

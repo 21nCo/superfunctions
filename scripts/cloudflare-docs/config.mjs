@@ -11,6 +11,136 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
+  reviewfn: {
+    packageName: "@reviewfn/docs",
+    docsDir: "reviewfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "reviewfn.com",
+    hosts: {
+      dev: "reviewfn.21n.site",
+      live: "reviewfn.com",
+    },
+  },
+  mailfn: {
+    packageName: "@mailfn/docs",
+    docsDir: "mailfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mailfn.com",
+    hosts: {
+      dev: "mailfn.21n.site",
+      live: "mailfn.com",
+    },
+  },
+  memoryfn: {
+    packageName: "@memoryfn/docs",
+    docsDir: "memoryfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "memoryfn.com",
+    hosts: {
+      dev: "memoryfn.21n.site",
+      live: "memoryfn.com",
+    },
+  },
+  mcpfn: {
+    packageName: "@mcpfn/docs",
+    docsDir: "mcpfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mcpfn.com",
+    hosts: {
+      dev: "mcpfn.21n.site",
+      live: "mcpfn.com",
+    },
+  },
+  mdfn: {
+    packageName: "@mdfn/docs",
+    docsDir: "mdfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mdfn.com",
+    hosts: {
+      dev: "mdfn.21n.site",
+      live: "mdfn.com",
+    },
+  },
+  plugfn: {
+    packageName: "@plugfn/docs",
+    docsDir: "plugfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "plugfn.com",
+    hosts: {
+      dev: "plugfn.21n.site",
+      live: "plugfn.com",
+    },
+  },
+  clifn: {
+    packageName: "@clifn/docs",
+    docsDir: "clifn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "clifn.com",
+    hosts: {
+      dev: "clifn.21n.site",
+      live: "clifn.com",
+    },
+  },
+  botfn: {
+    packageName: "@superfunctions/botfn-docs",
+    docsDir: "botfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "botfn.com",
+    hosts: {
+      dev: "botfn.21n.site",
+      live: "botfn.com",
+    },
+  },
+  secfn: {
+    packageName: "@secfn/docs",
+    docsDir: "secfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "secfn.com",
+    hosts: {
+      dev: "secfn.21n.site",
+      live: "secfn.com",
+    },
+  },
+  langfn: {
+    packageName: "@langfn/docs",
+    docsDir: "langfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "langfn.com",
+    hosts: {
+      dev: "langfn.21n.site",
+      live: "langfn.com",
+    },
+  },
+  sendfn: {
+    packageName: "@sendfn/docs",
+    docsDir: "sendfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "sendfn.com",
+    hosts: {
+      dev: "sendfn.21n.site",
+      live: "sendfn.com",
+    },
+  },
+  devfn: {
+    packageName: "@devfn/docs",
+    docsDir: "devfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "devfn.com",
+    hosts: {
+      dev: "devfn.21n.site",
+      live: "devfn.com",
+    },
+  },
+  extfn: {
+    packageName: "@extfn/docs",
+    docsDir: "extfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "extfn.com",
+    hosts: {
+      dev: "extfn.21n.site",
+      live: "extfn.com",
+    },
+  },
   datafn: {
     packageName: "@datafn/docs",
     docsDir: "datafn/docs",
