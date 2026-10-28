@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { defaultStateDir } from "@devfn/config";
+import { defaultStateDir, matchesProcessIdentity, processBirthSignature } from "@devfn/config";
+import { resolveInstanceIdentity } from "@devfn/core";
 import { parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus } from "@devfn/ports";
 import { proxyListenerPorts, readRegisteredDomains } from "@devfn/proxy";
 import { readRelayService } from "@devfn/proxy/oauth-relay";
@@ -18,6 +19,45 @@ import { cloudflareConnectors, loopbackListening } from "./prerequisites.js";
 import type { DisposableInventory, ProtectedSnapshot, ResourceHandlers } from "./inventory.js";
 
 export interface CliResult { code: number; json: Record<string, any> }
+
+/** The project ID of every generic fixture manifest. */
+export const QUALIFICATION_PROJECT_ID = "qualification";
+
+const LIFECYCLE_STATES: ReadonlySet<unknown> = new Set(["planning", "starting", "ready", "degraded", "failed", "stopped"]);
+
+/** A devfn status that answered for the owner it was asked about. */
+export type OwnedStatus = Record<string, any> & { state: "planning" | "starting" | "ready" | "degraded" | "failed" | "stopped"; instanceId: string };
+
+/**
+ * The status result when it is a readable answer for owner: exit 0 with a
+ * lifecycle state and that owner's instance ID. DevFn answers every state so,
+ * degraded and failed ones with ok false too. An unparseable, timed-out or
+ * killed command, or another owner's answer, reads nothing: no negative or
+ * not-ready claim rests on it.
+ */
+export function ownedStatus(result: CliResult, owner: string): OwnedStatus | undefined {
+  return result.code === 0 && LIFECYCLE_STATES.has(result.json.state) && result.json.instanceId === owner ? result.json as OwnedStatus : undefined;
+}
+
+/**
+ * The error codes shipped DevFn answers for a failure a driver provokes. An
+ * error is evidence only when DevFn reported it: exit 1, ok false and one of
+ * these codes, never UNPARSEABLE or a command the run timed out or killed.
+ */
+export const SHIPPED_ERRORS = {
+  /** A start whose node exits before it is healthy. */
+  startupFailure: ["DEVFN_START_FAILED"],
+  /** The losing one of two concurrent starts: it found the winner's ready lifecycle, or timed out waiting for its lock. */
+  concurrentStart: ["DEVFN_ALREADY_RUNNING", "DEVFN_REGISTRY_LOCK_TIMEOUT"],
+} as const satisfies Record<string, readonly string[]>;
+
+/** Whether result is DevFn's own report of one of codes. */
+export function failedWith(result: CliResult | undefined, codes: readonly string[]): boolean {
+  return result?.code === 1 && result.json.ok === false && codes.includes(result.json.error?.code);
+}
+
+/** A process the run observed as its own, with the birth identity read while it was known to be that process. */
+export interface RecordedProcess { pid: number; birthSignature: string; startedAt: string }
 export interface Answer { status: number; body: string; headers: http.IncomingHttpHeaders; json?: Record<string, any> }
 
 /**
@@ -236,7 +276,7 @@ export class LiveHost {
 
   public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string;
     connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>; connectorIdentity?: (metricsPort: number) => Promise<string | undefined>;
-    connectorReads?: { reads: number; intervalMs: number }; trustLocations?: readonly string[] }) {
+    connectorReads?: { reads: number; intervalMs: number }; trustLocations?: readonly string[]; owner?: (cwd: string) => Promise<string> }) {
     this.stateDir = path.join(options.root, "state");
     const { DOCKER_CONTEXT: _context, ...env } = options.env;
     this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
@@ -319,6 +359,35 @@ export class LiveHost {
       { cwd, env: { ...this.env, ...options.env }, ...(signal ? { signal } : {}), ...(args[0] === "up" || args[0] === "restart" ? { timeoutMs: LIFECYCLE_COMMAND_TIMEOUT_MS } : {}) });
     try { return { code: result.code, json: JSON.parse(result.stdout) as Record<string, any> }; }
     catch { return { code: result.code === 0 ? -1 : result.code, json: { ok: false, error: { code: "UNPARSEABLE", message: result.stderr.slice(-2000) } } }; }
+  }
+
+  /** The instance ID DevFn derives for a fixture checkout. */
+  public async owner(cwd: string): Promise<string> {
+    return await (this.options.owner ?? (async (root: string) => (await resolveInstanceIdentity(QUALIFICATION_PROJECT_ID, root)).instanceId))(cwd);
+  }
+
+  /** devfn status (with args) for cwd when it answers for cwd's owner; undefined otherwise (see ownedStatus). */
+  public async status(cwd: string, args: readonly string[] = []): Promise<OwnedStatus | undefined> {
+    return ownedStatus(await this.devfn(cwd, ["status", ...args]), await this.owner(cwd));
+  }
+
+  /** Record pid with its current birth identity; undefined when that identity cannot be read. */
+  public async recordProcess(pid: number): Promise<RecordedProcess | undefined> {
+    const birthSignature = await processBirthSignature(pid);
+    return birthSignature ? { pid, birthSignature, startedAt: new Date().toISOString() } : undefined;
+  }
+
+  /**
+   * SIGKILL a recorded run-owned process, or its process group, only once
+   * its current identity verifiably matches the record: an exited, reused or
+   * unverifiable PID is never signalled. True when the signal was sent.
+   */
+  public async killRecorded(recorded: RecordedProcess | undefined, group: boolean): Promise<boolean> {
+    if (!recorded || !await matchesProcessIdentity(recorded.pid, recorded.birthSignature, recorded.startedAt)) return false;
+    for (const target of group ? [-recorded.pid, recorded.pid] : [recorded.pid]) {
+      try { process.kill(target, "SIGKILL"); return true; } catch { /* the group is gone; try the leader */ }
+    }
+    return false;
   }
 
   /** devfn command that must succeed; its JSON result. */
@@ -515,8 +584,8 @@ export class LiveHost {
         if (entry.kind === "runtime") {
           // Every check runs, so a Compose read-back lists what remains even when the lifecycle did not stop. DevFn answers a
           // degraded or failed state with ok false; that state is a reason here, and only a status naming no owner is unreadable.
-          const { json: status } = await this.devfn(entry.id, ["status"]);
-          if (typeof status.state !== "string" || typeof status.instanceId !== "string") throw new Error(`devfn status failed: ${JSON.stringify(status.error ?? status).slice(0, 2000)}`);
+          const status = await this.status(entry.id);
+          if (!status) throw new Error("devfn status gave no readable answer for the runtime's owner");
           const leases = ((await this.must(entry.id, ["ports"])).allocations as Array<{ instanceId: string; port: number }>).filter((item) => item.instanceId === status.instanceId).map((item) => item.port);
           return reasons([status.state === "stopped" ? undefined : `state ${String(status.state)}`, describe("processes", await this.processesIn(entry.id, await this.sharedLeaders())),
             describe("fixture processes", await this.survivingFixtures(entry.id)), describe("leases", leases), describe("routes", await this.routesOf(String(status.instanceId))),

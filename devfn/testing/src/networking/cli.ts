@@ -120,7 +120,8 @@ const RECEIPT_REWRITES = 5;
  * the reap, the root removal and one macrotask turn, the receipt is
  * rewritten whenever a run error arrived since it was written; one that
  * cannot be brought up to date is removed. An interrupted run (code 130)
- * writes no receipt.
+ * writes no receipt: an interrupt that arrives while the receipt is written
+ * or finalized withdraws it.
  */
 export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
   const { inventory, resources, signal } = run.options;
@@ -166,6 +167,10 @@ export async function executeRun(run: QualificationRun): Promise<QualificationOu
       }
     }
     const errors = runErrors();
+    if (signal?.aborted) {
+      await rm(run.out, { force: true });
+      return { code: 130, clean, runErrors: errors };
+    }
     return { code: runExitCode(receipt, receiptProblems(receipt), clean, errors.length), clean, receipt, runErrors: errors };
   } finally {
     if (!finished && !inventory.allAbsent()) await finish();

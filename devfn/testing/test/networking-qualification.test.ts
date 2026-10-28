@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { validateDevFnConfig } from "@devfn/config";
+import { isCredentialKey, processBirthSignature, validateDevFnConfig } from "@devfn/config";
 import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@devfn/core";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { relayPaths } from "@devfn/proxy/oauth-relay";
@@ -19,7 +19,7 @@ import { executeRun, staleBuildOutputs, writeReceipt, type QualificationRun } fr
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runExitCode, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
+  failedWith, ownedStatus, SHIPPED_ERRORS, localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runExitCode, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
   protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
@@ -99,6 +99,35 @@ describe("networking qualification matrix", () => {
       tunnelFixture("qabcdef12-nge", true), oauthFixture("dev.example.test", parseApproval(approval).oauth!)]) {
       expect(() => validateDevFnConfig(config)).not.toThrow();
     }
+  });
+
+  it("starts the OAuth fixture with an approved client ID variable whose name DevFn classifies as a credential", () => {
+    const clientIdEnv = "QUAL_GOOGLE_AUTH_CLIENT_ID";
+    expect(isCredentialKey(clientIdEnv)).toBe(true);
+    const oauth = parseApproval({ ...approval, oauth: { ...approval.oauth, clientIdEnv } }).oauth!;
+    expect(() => validateDevFnConfig(oauthFixture("dev.example.test", oauth))).not.toThrow();
+  });
+});
+
+describe("owned status and shipped errors", () => {
+  const answer = (code: number, json: Record<string, unknown>) => ({ code, json });
+  it("reads a status only as exit 0 with a lifecycle state and the asked owner's instance ID", () => {
+    expect(ownedStatus(answer(0, { ok: false, state: "degraded", instanceId: "i1" }), "i1")).toMatchObject({ state: "degraded" });
+    expect(ownedStatus(answer(0, { ok: true, state: "stopped", instanceId: "i1" }), "i1")).toMatchObject({ state: "stopped" });
+    for (const unreadable of [answer(-1, { ok: false, error: { code: "UNPARSEABLE" } }), answer(1, { ok: false, error: { code: "DEVFN_CONFIG_INVALID" } }),
+      answer(0, { ok: true, state: "ready", instanceId: "other" }), answer(0, { ok: true, state: "paused", instanceId: "i1" }), answer(0, { ok: true, instanceId: "i1" }), answer(1, { ok: false, state: "failed", instanceId: "i1" })]) {
+      expect(ownedStatus(unreadable, "i1")).toBeUndefined();
+    }
+  });
+
+  it("takes a provoked failure only from DevFn's own report of an allowed code", () => {
+    expect(failedWith(answer(1, { ok: false, error: { code: "DEVFN_START_FAILED" } }), SHIPPED_ERRORS.startupFailure)).toBe(true);
+    expect(failedWith(answer(1, { ok: false, error: { code: "DEVFN_ALREADY_RUNNING" } }), SHIPPED_ERRORS.concurrentStart)).toBe(true);
+    for (const other of [answer(1, { ok: false, error: { code: "UNPARSEABLE" } }), answer(-1, { ok: false, error: { code: "DEVFN_START_FAILED" } }),
+      answer(0, { ok: false, error: { code: "DEVFN_START_FAILED" } }), answer(1, { ok: false, error: { code: "DEVFN_ALREADY_RUNNING" } })]) {
+      expect(failedWith(other, SHIPPED_ERRORS.startupFailure)).toBe(false);
+    }
+    expect(failedWith(undefined, SHIPPED_ERRORS.concurrentStart)).toBe(false);
   });
 });
 
@@ -575,6 +604,22 @@ describe("run execution", () => {
     await expect(access(context.run.out)).rejects.toThrow();
     expect(context.calls).toEqual(["remove root"]);
   });
+
+  it("withdraws the receipt when the interrupt arrives while it is written or finalized", async () => {
+    for (const late of ["write", "root removal"] as const) {
+      const interrupt = new AbortController();
+      const context = await setup();
+      dirs.push(context.dir);
+      context.run.options = { ...context.run.options, signal: interrupt.signal };
+      if (late === "write") context.run.write = async (file, receipt) => { await writeReceipt(file, receipt); interrupt.abort("SIGTERM"); };
+      else context.run.removeRoot = async () => { context.calls.push("remove root"); interrupt.abort("SIGINT"); };
+      const outcome = await executeRun(context.run);
+      expect(outcome).toMatchObject({ code: 130, clean: true, runErrors: [] });
+      expect(outcome.receipt).toBeUndefined();
+      await expect(access(context.run.out)).rejects.toThrow();
+      expect(context.calls).toEqual(["remove root"]);
+    }
+  });
 });
 
 describe("live host cleanup handlers", () => {
@@ -602,7 +647,8 @@ describe("live host cleanup handlers", () => {
       return { code: 0, stdout: command === "lsof" ? answers.lsof?.(dir) ?? "p1\nn/\n" : command === "ps" ? answers.ps ?? "" : "", stderr: "" };
     };
     const inventory = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: ["dev.example.test"] });
-    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock", ...extra });
+    const host = new LiveHost({ root: dir, devfnCli: "/devfn/cli.js", env, inventory, run, providers: providers ?? (async () => { throw new Error("no provider in this fixture"); }), docker: "unix:///var/run/docker.sock",
+      owner: async () => "i1", ...extra });
     await mkdir(host.stateDir, { recursive: true });
     return { host, inventory, calls, options };
   }
@@ -670,12 +716,15 @@ describe("live host cleanup handlers", () => {
     expect(removed).toEqual(["rm -f qualification-echo-1", `network rm devfn-p-0123456789ab-${owner}_default`]);
   });
 
-  it("treats a runtime status that names no owner as unreadable, never absent", async () => {
-    const { host, inventory } = await fixtureHost({ devfn: { ...stopped, status: { ok: false, error: { code: "DEVFN_CONFIG_INVALID" } } } });
-    const runtime = path.join(dir, "qabcdef12-app");
-    inventory.record("runtime", runtime, "s");
-    await inventory.cleanup(host.handlers(), "s");
-    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: 'read-back failed: devfn status failed: {"code":"DEVFN_CONFIG_INVALID"}' });
+  it("treats a runtime status that names no owner, or another owner, as unreadable, never absent", async () => {
+    for (const status of [{ ok: false, error: { code: "DEVFN_CONFIG_INVALID" } }, { ok: true, state: "stopped", instanceId: "other" }]) {
+      const { host, inventory } = await fixtureHost({ devfn: { ...stopped, status } });
+      const runtime = path.join(dir, "qabcdef12-app");
+      inventory.record("runtime", runtime, "s");
+      await inventory.cleanup(host.handlers(), "s");
+      expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "read-back failed: devfn status gave no readable answer for the runtime's owner" });
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("runs every DevFn command in the run environment and, once aborted, kills in-flight commands and refuses creation but not cleanup", async () => {
@@ -867,8 +916,11 @@ describe("live host cleanup handlers", () => {
   });
 
   /** Record connector as the binding's running connector, and retired ones, in the run's tunnel state, as DevFn does. */
-  async function recordConnectors(stateDir: string, name: string, connector: { pid: number; metricsPort: number } | undefined, retired: Array<{ pid: number; metricsPort: number }> = []) {
-    const record = (item: { pid: number; metricsPort: number }) => ({ ...item, birthSignature: "fixture", startedAt: new Date().toISOString(), configDigest: "0".repeat(64), hostnames: [] });
+  /** A well-formed birth signature, in own's format, of a process that started at the epoch: never a live test process. */
+  const foreignSignature = (own: string) => own.startsWith("linux:") ? "linux:1" : "darwin-utc:Thu Jan  1 00:00:00 1970";
+  type FixtureConnector = { pid: number; metricsPort: number; birthSignature?: string };
+  async function recordConnectors(stateDir: string, name: string, connector: FixtureConnector | undefined, retired: FixtureConnector[] = []) {
+    const record = (item: FixtureConnector) => ({ birthSignature: "fixture", ...item, startedAt: new Date().toISOString(), configDigest: "0".repeat(64), hostnames: [] });
     const state = tunnelPaths(stateDir, name).state;
     await mkdir(path.dirname(state), { recursive: true });
     await writeFile(state, JSON.stringify({ version: 1, binding: name, hostnames: [], retired: retired.map(record), residue: [], ...(connector ? { connector: record(connector) } : {}) }));
@@ -941,21 +993,40 @@ describe("live host cleanup handlers", () => {
   });
 
   it("counts a tunnel recover as a restart only when the killed connector went down and a different one runs and serves", async () => {
-    const [killed, successor] = [await survivor(), await survivor()];
+    const [killed, successor, reused] = [await survivor(), await survivor(), await survivor()];
     let recovered: number | undefined;
-    const { host } = await fixtureHost({ devfn: {
-      "tunnel status": async () => ({ code: 0, stdout: JSON.stringify({ ok: true, tunnel: recovered === undefined ? { connector: "stopped" } : { connector: "running", pid: recovered } }), stderr: "" }),
+    let stoppedAs: string | undefined = "stopped";
+    const { host, calls } = await fixtureHost({ devfn: {
+      "tunnel status": async () => ({ code: 0, stdout: JSON.stringify({ ok: true, tunnel: recovered === undefined ? { connector: stoppedAs } : { connector: "running", pid: recovered } }), stderr: "" }),
       "tunnel recover": async () => { recovered = successor.pid; return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" }; },
     } }, undefined, {}, { connectors: async () => [], connectorReads: { reads: 1, intervalMs: 1 } });
     const cwd = path.join(dir, "qabcdef12-reload-b");
+    const signature = async (pid: number) => (await processBirthSignature(pid))!;
     try {
       const bound = await cloudflareBinding(host.stateDir);
-      await recordConnectors(host.stateDir, bound.name, { pid: killed.pid, metricsPort: 4101 });
       // The remaining route answers with the worktree's marker only once a connector serves it.
       host.request = async () => recovered === undefined ? { status: 530, body: "error code: 1033", headers: {} } : { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload-b" } };
+      // A live PID whose birth identity differs from the record is another process reusing it: nothing is signalled or recovered.
+      const own = await signature(reused.pid);
+      await recordConnectors(host.stateDir, bound.name, { pid: reused.pid, metricsPort: 4101, birthSignature: foreignSignature(own) });
+      const refused = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      expect(refused).toEqual({ killed: reused.pid, signalled: false, downAfterKill: false, servedWhileDown: false, running: false, served: false });
+      expect(RECOVERED.connectorRestarted(refused)).toBe(false);
+      expect(process.kill(reused.pid, 0)).toBe(true);
+      expect(calls).toEqual([]);
+      // DevFn's unverified connector is not a stopped one.
+      stoppedAs = "unverified";
+      await recordConnectors(host.stateDir, bound.name, { pid: reused.pid, metricsPort: 4101, birthSignature: own });
+      const unverified = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      expect(unverified).toMatchObject({ killed: reused.pid, signalled: true, downAfterKill: false });
+      expect(RECOVERED.connectorRestarted(unverified)).toBe(false);
+      recovered = undefined;
+      stoppedAs = "stopped";
+      await recordConnectors(host.stateDir, bound.name, { pid: killed.pid, metricsPort: 4101, birthSignature: await signature(killed.pid) });
       const recovery = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
-      expect(recovery).toEqual({ killed: killed.pid, downAfterKill: true, servedWhileDown: false, after: successor.pid, running: true, served: true });
+      expect(recovery).toEqual({ killed: killed.pid, signalled: true, downAfterKill: true, servedWhileDown: false, after: successor.pid, running: true, served: true });
       expect(RECOVERED.connectorRestarted(recovery)).toBe(true);
+      expect(RECOVERED.connectorRestarted({ ...recovery, signalled: false })).toBe(false);
       // A recover that left the same (or no) connector, a kill that did not take the connector down, or a route served throughout is no restart.
       expect(RECOVERED.connectorRestarted({ ...recovery, after: killed.pid })).toBe(false);
       expect(RECOVERED.connectorRestarted({ ...recovery, after: undefined, running: false })).toBe(false);
@@ -964,17 +1035,17 @@ describe("live host cleanup handlers", () => {
       expect(RECOVERED.connectorRestarted({ ...recovery, served: false })).toBe(false);
       // A recover that reports the connector it was given: that pid is dead after the kill, so it is not running, though the route answers.
       recovered = undefined;
-      await recordConnectors(host.stateDir, bound.name, { pid: successor.pid, metricsPort: 4102 });
+      await recordConnectors(host.stateDir, bound.name, { pid: successor.pid, metricsPort: 4102, birthSignature: await signature(successor.pid) });
       const noop = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
       expect(noop).toMatchObject({ killed: successor.pid, downAfterKill: true, after: successor.pid, running: false, served: true });
       expect(RECOVERED.connectorRestarted(noop)).toBe(false);
-    } finally { await killed.stop().catch(() => undefined); await successor.stop().catch(() => undefined); }
+    } finally { for (const item of [killed, successor, reused]) await item.stop().catch(() => undefined); }
   });
 
   it("counts a killed start as crash evidence only when it was killed before it ended and reported no ready lifecycle", async () => {
     const seen = async (cwd: string | undefined) => await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: 2 ** 22 + 7, env: {} }));
     const held: string[] = [];
-    const fast = await fixtureHost({ devfn: { status: { ok: true, state: "ready" },
+    const fast = await fixtureHost({ devfn: { status: { ok: true, state: "ready", instanceId: "i1" },
       // The start becomes ready before the run sees its process: there is nothing to kill.
       up: async (_signal, cwd) => { await seen(cwd); return { code: 0, stdout: JSON.stringify({ ok: true, state: "ready" }), stderr: "" }; } } });
     const scenario = NETWORKING_MATRIX.find((item) => item.id === "recovery.crash")!;
@@ -983,12 +1054,13 @@ describe("live host cleanup handlers", () => {
     expect(quick.result.json.state).toBe("ready");
     expect(INTERRUPTED.killedBeforeReady(quick)).toBe(false);
     await rm(dir, { recursive: true, force: true });
-    const slow = await fixtureHost({ devfn: { status: { ok: true, state: "starting" },
+    let status: unknown = { ok: true, state: "starting", instanceId: "i1" };
+    const slow = await fixtureHost({ devfn: { status: async () => ({ code: 0, stdout: typeof status === "string" ? status : JSON.stringify(status), stderr: "" }),
       // The held node recorded itself and does not listen, so the start runs until it is killed.
       up: async (signal, cwd) => {
         held.push(...readdirSync(cwd!).filter((file) => file.startsWith("hold-")));
         await seen(cwd);
-        await new Promise((resolve) => signal!.addEventListener("abort", resolve));
+        await new Promise((resolve) => { if (signal!.aborted) resolve(undefined); else signal!.addEventListener("abort", resolve); });
         return { code: -1, stdout: "", stderr: "" };
       } } });
     const cwd = await slow.host.repository(scenario.id, "interrupted", hostFixture());
@@ -998,13 +1070,151 @@ describe("live host cleanup handlers", () => {
     expect(INTERRUPTED.killedBeforeReady(killed)).toBe(true);
     // The hold is lifted after the kill, so the orphan listens as a process killed mid-start would.
     await expect(access(path.join(cwd, "hold-web"))).rejects.toThrow();
-    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { ok: false, error: { code: "DEVFN_REGISTRY_LOCK_TIMEOUT" } } })).toBe(false);
-    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { state: "ready" } })).toBe(false);
+    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: undefined })).toBe(false);
+    expect(INTERRUPTED.killedBeforeReady({ ...killed, status: { state: "ready", instanceId: "i1" } })).toBe(false);
+    // A status that is unparseable, an error or another owner's answer reads no lifecycle, so it is no crash evidence.
+    for (const unreadable of ["not json", { ok: false, error: { code: "DEVFN_REGISTRY_LOCK_TIMEOUT" } }, { ok: true, state: "starting", instanceId: "other" }]) {
+      status = unreadable;
+      const again = await interruptStart(context(slow.inventory), slow.host, cwd);
+      expect(again).toMatchObject({ killed: true, result: { code: -1 } });
+      expect(again.status).toBeUndefined();
+      expect(INTERRUPTED.killedBeforeReady(again)).toBe(false);
+    }
     expect(INTERRUPTED.killedBeforeReady({ ...killed, result: { code: 0, json: { state: "ready" } } })).toBe(false);
     // Any orphan of the killed start that still runs fails, even when a later lifecycle lists its pid.
     expect(INTERRUPTED.orphanGone(killed, () => true)).toBe(false);
     expect(INTERRUPTED.orphanGone(killed, () => false)).toBe(true);
     expect(INTERRUPTED.orphanGone({ ...killed, orphan: undefined }, () => false)).toBe(false);
+  });
+
+  const devfnOk = (json: Record<string, unknown>) => ({ code: 0, stdout: JSON.stringify({ ok: true, ...json }), stderr: "" });
+  const devfnError = (code: string) => ({ code: 1, stdout: JSON.stringify({ ok: false, error: { code } }), stderr: "" });
+  /** What host.devfn turns into UNPARSEABLE: a garbled answer with exit 1, or a command the run killed or timed out. */
+  const garbled = { code: 1, stdout: "Error: something", stderr: "" };
+  const killedCommand = { code: -1, stdout: "", stderr: "" };
+  /** A PID above every platform's maximum, so never a live process. */
+  const DEAD = 2 ** 22 + 7;
+  type Reply = { code: number; stdout: string; stderr: string };
+
+  /**
+   * A live host whose fixture checkouts answer like DevFn: each start
+   * records the web process (pid) and is ready; url, status and the run's
+   * probes answer per checkout. Answers per checkout name override that.
+   */
+  async function scenarioHost(answers: { up?: (name: string, cwd: string) => Promise<Reply | undefined>; status?: (name: string) => Reply | undefined; pid?: number } = {}) {
+    const name = (cwd?: string) => path.basename(cwd!).replace(/^qabcdef12-/, "");
+    const fixture = await fixtureHost({ devfn: {
+      "status --trust": { ok: true, state: "stopped", instanceId: "i1" },
+      status: async (_signal?: AbortSignal, cwd?: string) => answers.status?.(name(cwd)) ?? devfnOk({ state: "ready", instanceId: "i1", processes: [{}, {}] }),
+      up: async (_signal?: AbortSignal, cwd?: string) => {
+        const answer = await answers.up?.(name(cwd), cwd!);
+        if (answer) return answer;
+        await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: answers.pid ?? process.pid, env: {} }));
+        return devfnOk({ state: "ready", instanceId: "i1" });
+      },
+      restart: { ok: true, state: "ready", instanceId: "i1" },
+      url: async (_signal?: AbortSignal, cwd?: string) => devfnOk({ urls: { web: `https://${path.basename(cwd!)}.localhost:8443/` } }),
+      ports: { ok: true, allocations: [] }, "ports gc": { ok: true },
+    } });
+    fixture.host.ca = async () => "fixture-ca";
+    fixture.host.request = async (url: string) => ({ status: 200, body: "", headers: {}, json: { marker: new URL(url).hostname.split(".")[0] } });
+    return fixture;
+  }
+
+  /** Run one live driver; the observations it made and whether a failed expectation ended it. */
+  async function drive(id: string, fixture: { host: LiveHost; inventory: DisposableInventory }) {
+    const scenario = NETWORKING_MATRIX.find((item) => item.id === id)!;
+    const observed: Record<string, { ok: boolean; detail: string }> = {};
+    const observe = (assertion: string, ok: boolean, detail: string) => { observed[assertion] = { ok, detail }; };
+    const context: ScenarioContext = { scenario, inventory: fixture.inventory, observe, expect: (assertion, ok, detail) => { observe(assertion, ok, detail); if (!ok) throw new Error(`${assertion}: ${detail}`); } };
+    const error = await liveDrivers(fixture.host, undefined)[id](context).then(() => undefined, (failure: unknown) => failure);
+    return { observed, error };
+  }
+
+  it("counts a provoked startup failure only from DevFn's own DEVFN_START_FAILED and a readable status of the checkout's owner", async () => {
+    const { failing, sibling } = failureInjection(hostFixture());
+    const run = async (failed: Reply, status: Reply) => {
+      const fixture = await scenarioHost({
+        up: async (name, cwd) => {
+          if (name !== "failing" || !readdirSync(cwd).includes(`fail-${failing}`)) return undefined;
+          // The failing node reached its sibling, and neither process survived the rollback.
+          await writeFile(path.join(cwd, `seen-${failing}.json`), JSON.stringify({ pid: DEAD, env: {}, sibling: { name: sibling, marker: path.basename(cwd) } }));
+          await writeFile(path.join(cwd, `seen-${sibling}.json`), JSON.stringify({ pid: DEAD, env: {} }));
+          return failed;
+        },
+        status: (name) => name === "failing" ? status : undefined,
+      });
+      const { observed } = await drive("recovery.startup-failure", fixture);
+      await rm(dir, { recursive: true, force: true });
+      return observed["failure-cleaned"];
+    };
+    const failedStatus = { code: 0, stdout: JSON.stringify({ ok: false, state: "failed", instanceId: "i1" }), stderr: "" };
+    expect(await run(devfnError("DEVFN_START_FAILED"), failedStatus)).toMatchObject({ ok: true });
+    for (const failed of [garbled, killedCommand, devfnError("DEVFN_RUNTIME_INVALID")]) expect((await run(failed, failedStatus)).ok).toBe(false);
+    for (const status of [{ code: 0, stdout: "not json", stderr: "" }, killedCommand, devfnOk({ state: "stopped", instanceId: "other" })]) {
+      expect(await run(devfnError("DEVFN_START_FAILED"), status)).toMatchObject({ ok: false, detail: expect.stringContaining("state unreadable") });
+    }
+  });
+
+  it("counts a concurrent start as single-owner only when the loser is DevFn's own lock or already-running refusal", async () => {
+    const run = async (loser: Reply, status?: Reply) => {
+      let starts = 0;
+      const fixture = await scenarioHost({ up: async (name) => name === "concurrent" && ++starts === 2 ? loser : undefined, status: (name) => name === "concurrent" ? status : undefined });
+      const { observed } = await drive("recovery.concurrent-change", fixture);
+      await rm(dir, { recursive: true, force: true });
+      return observed["single-owner"].ok;
+    };
+    expect(await run(devfnError("DEVFN_ALREADY_RUNNING"))).toBe(true);
+    expect(await run(devfnError("DEVFN_REGISTRY_LOCK_TIMEOUT"))).toBe(true);
+    for (const loser of [garbled, killedCommand, devfnError("DEVFN_START_FAILED")]) expect(await run(loser)).toBe(false);
+    expect(await run(devfnError("DEVFN_ALREADY_RUNNING"), devfnOk({ state: "ready", instanceId: "other", processes: [{}, {}] }))).toBe(false);
+  });
+
+  it("detects a crash only from a readable degraded status after signalling the web process it recorded, never a reused PID", async () => {
+    const run = async (status: Reply, forge = false) => {
+      const target = await survivor();
+      const fixture = await scenarioHost({ pid: target.pid,
+        up: async (name, cwd) => {
+          if (name !== "interrupted" || !readdirSync(cwd).some((file) => file.startsWith("hold-"))) return undefined;
+          await writeFile(path.join(cwd, `seen-${failureInjection(hostFixture()).failing}.json`), JSON.stringify({ pid: DEAD, env: {} }));
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          return killedCommand;
+        },
+        status: (name) => name === "crash" ? status : name === "interrupted" ? { code: 0, stdout: JSON.stringify({ ok: false, state: "failed", instanceId: "i1" }), stderr: "" } : undefined });
+      const recordProcess = fixture.host.recordProcess.bind(fixture.host);
+      // A record whose birth identity is not the live process's stands for a PID another process reuses.
+      if (forge) fixture.host.recordProcess = async (pid) => { const own = await recordProcess(pid); return own && { ...own, birthSignature: foreignSignature(own.birthSignature) }; };
+      try {
+        const { observed } = await drive("recovery.crash", fixture);
+        return { observed, alive: (() => { try { process.kill(target.pid, 0); return true; } catch { return false; } })() };
+      } finally { await target.stop().catch(() => undefined); await rm(dir, { recursive: true, force: true }); }
+    };
+    const degraded = { code: 0, stdout: JSON.stringify({ ok: false, state: "degraded", instanceId: "i1" }), stderr: "" };
+    const passed = await run(degraded);
+    expect(passed.alive).toBe(false);
+    expect(passed.observed["crash-detected"]).toMatchObject({ ok: true, detail: expect.stringContaining("status after kill: degraded") });
+    expect(passed.observed["restart-recovers"]?.ok).toBe(true);
+    for (const unreadable of [{ code: 0, stdout: "not json", stderr: "" }, killedCommand, devfnOk({ state: "degraded", instanceId: "other" }), devfnOk({ state: "stopped", instanceId: "i1" })]) {
+      expect((await run(unreadable)).observed["crash-detected"].ok).toBe(false);
+    }
+    const reused = await run(degraded, true);
+    expect(reused.alive).toBe(true);
+    expect(reused.observed["crash-detected"]).toMatchObject({ ok: false, detail: expect.stringContaining("not signalled") });
+  }, 60_000);
+
+  it("signals a recorded process only while it matches its recorded birth identity", async () => {
+    const { host } = await fixtureHost({ devfn: {} });
+    const target = await survivor();
+    try {
+      const recorded = (await host.recordProcess(target.pid))!;
+      expect(recorded).toMatchObject({ pid: target.pid, birthSignature: expect.stringMatching(/^(linux|darwin-utc):/) });
+      expect(await host.killRecorded({ ...recorded, birthSignature: foreignSignature(recorded.birthSignature) }, false)).toBe(false);
+      expect(await host.killRecorded(undefined, false)).toBe(false);
+      expect(process.kill(target.pid, 0)).toBe(true);
+      expect(await host.killRecorded(recorded, false)).toBe(true);
+      await target.stop();
+      expect(await host.killRecorded(recorded, false)).toBe(false);
+    } finally { await target.stop().catch(() => undefined); }
   });
 
   it("lets proxy reload settle when interrupted during a pending down, then cleans up, with no unhandled rejection", async () => {

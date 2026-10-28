@@ -10,7 +10,7 @@ import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@d
 import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, readTunnelState, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
-import type { Answer, LiveHost, ProviderReadBack } from "./live.js";
+import { failedWith, QUALIFICATION_PROJECT_ID, SHIPPED_ERRORS, type Answer, type LiveHost, type OwnedStatus, type ProviderReadBack } from "./live.js";
 import { ownerLabel } from "./matrix.js";
 import type { ScenarioContext, ScenarioDriver } from "./runner.js";
 
@@ -18,7 +18,7 @@ type LiveDriver = (context: ScenarioContext, host: LiveHost) => Promise<void>;
 
 /* Generic fixture manifests. Every one is schema-checked by the contract tests. */
 
-const PROJECT_ID = "qualification";
+const PROJECT_ID = QUALIFICATION_PROJECT_ID;
 
 const serverProcess = (name: string) => ({ adapter: "command" as const, command: [process.execPath, "server.mjs", name, `DEVFN_PORT_${name.toUpperCase()}`], ports: [name],
   health: { type: "http" as const, port: name, timeoutMs: 30_000 } });
@@ -127,7 +127,8 @@ createServer(async (request, response) => {
 export function oauthFixture(domain: string, approval: NonNullable<QualificationApproval["oauth"]>): Record<string, unknown> {
   return { version: 1, project: { id: PROJECT_ID }, ports: { app: {} },
     processes: { app: { adapter: "command", command: [process.execPath, "oauth.mjs", "DEVFN_PORT_APP", approval.clientIdEnv, approval.clientSecretEnv, OAUTH_CALLBACK_PATH], ports: ["app"],
-      envAllowlist: [approval.clientIdEnv, approval.clientSecretEnv], secretEnv: [approval.clientSecretEnv], health: { type: "tcp", port: "app", timeoutMs: 30_000 } } },
+      // Both are redacted: DevFn requires a credential-shaped variable name in secretEnv, and the receipt redacts the client ID too.
+      envAllowlist: [approval.clientIdEnv, approval.clientSecretEnv], secretEnv: [approval.clientIdEnv, approval.clientSecretEnv], health: { type: "tcp", port: "app", timeoutMs: 30_000 } } },
     profiles: { default: { processes: ["app"], proxy: true } }, hostnames: { app: { target: "app", domain } } };
 }
 
@@ -501,17 +502,17 @@ const tunnelReload = (approval: QualificationApproval | undefined): LiveDriver =
   context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves`);
   const recovery = await restartConnector(host, bound, linked, `${b.url}/x`);
   context.expect("recover-preserves", RECOVERED.connectorRestarted(recovery),
-    `connector ${recovery.killed} killed: ${recovery.downAfterKill ? "down" : "still up"}, served meanwhile: ${recovery.servedWhileDown}; after tunnel recover connector ${String(recovery.after ?? "none")} ${recovery.running ? "runs" : "is not running"}; ${b.hostname} serves: ${recovery.served}`);
+    `connector ${recovery.killed} ${recovery.signalled ? "killed" : "not signalled: its recorded identity was not verified"}: ${recovery.downAfterKill ? "down" : "still up"}, served meanwhile: ${recovery.servedWhileDown}; after tunnel recover connector ${String(recovery.after ?? "none")} ${recovery.running ? "runs" : "is not running"}; ${b.hostname} serves: ${recovery.served}`);
   await host.must(linked, ["down"]);
   context.expect("withdrawn-absent", !await present(a.hostname) && !await present(b.hostname), "neither hostname is routed, journaled, recorded at the provider or served");
 };
 
 /** What a connector restart showed: the connector the run killed went down, and tunnel recover started a new one that serves the remaining route. */
-export interface ConnectorRecovery { killed: number; downAfterKill: boolean; servedWhileDown: boolean; after?: number; running: boolean; served: boolean }
+export interface ConnectorRecovery { killed: number; signalled: boolean; downAfterKill: boolean; servedWhileDown: boolean; after?: number; running: boolean; served: boolean }
 
 export const RECOVERED = {
-  /** The killed connector's process was gone and DevFn reported no running connector, nothing served the route meanwhile, and recover left a different connector running that serves it. */
-  connectorRestarted: (recovery: ConnectorRecovery) => recovery.downAfterKill && !recovery.servedWhileDown && recovery.after !== undefined && recovery.after !== recovery.killed && recovery.running && recovery.served,
+  /** The run signalled the recorded connector, its process was gone and DevFn reported it stopped, nothing served the route meanwhile, and recover left a different connector running that serves it. */
+  connectorRestarted: (recovery: ConnectorRecovery) => recovery.signalled && recovery.downAfterKill && !recovery.servedWhileDown && recovery.after !== undefined && recovery.after !== recovery.killed && recovery.running && recovery.served,
 };
 
 /**
@@ -519,19 +520,22 @@ export const RECOVERED = {
  * that it is down and the remaining route is not served, then run devfn
  * tunnel recover from cwd and read the connector and route back. A recover
  * on a healthy connector would be a no-op, so it never stands for a restart.
+ * The connector is signalled only while its process matches the birth
+ * identity DevFn recorded for it; otherwise nothing is signalled or recovered.
  */
 export async function restartConnector(host: LiveHost, bound: TunnelBinding, cwd: string, url: string): Promise<ConnectorRecovery> {
   const connector = (await readTunnelState(host.stateDir, bound.name)).connector;
   if (!connector) throw new Error(`binding ${bound.name} records no connector to restart`);
-  try { process.kill(-connector.pid, "SIGKILL"); } catch { try { process.kill(connector.pid, "SIGKILL"); } catch { /* already gone */ } }
+  if (!await host.killRecorded(connector, true)) return { killed: connector.pid, signalled: false, downAfterKill: false, servedWhileDown: false, running: false, served: false };
   for (let wait = 0; wait < 50 && alive(connector.pid); wait += 1) await host.wait(200);
   const stopped = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string };
-  const downAfterKill = !alive(connector.pid) && stopped.connector !== "running";
+  // DevFn reports stopped only on death evidence; unverified or a missing answer is not down.
+  const downAfterKill = !alive(connector.pid) && stopped.connector === "stopped";
   const meanwhile = await host.request(url, { publicDns: true }).catch(() => undefined);
   await host.soleTunnelUser(bound, async () => await host.must(cwd, ["tunnel", "recover", bound.name, "--allow-public"]));
   const recovered = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string; pid?: number };
   const after = typeof recovered.pid === "number" ? recovered.pid : undefined;
-  return { killed: connector.pid, downAfterKill, servedWhileDown: meanwhile?.json?.marker === marker(cwd), ...(after !== undefined ? { after } : {}),
+  return { killed: connector.pid, signalled: true, downAfterKill, servedWhileDown: meanwhile?.json?.marker === marker(cwd), ...(after !== undefined ? { after } : {}),
     running: recovered.connector === "running" && after !== undefined && alive(after), served: (await publicAnswer(host, url))?.marker === marker(cwd) };
 }
 
@@ -558,15 +562,18 @@ const startupFailure: LiveDriver = async (context, host) => {
   const failed = await host.up(context.scenario.id, cwd);
   const [failedSeen, siblingSeen] = await Promise.all([failing, sibling].map(async (name) => await host.seen(cwd, name).catch(() => undefined)));
   const rolledBack = rolledBackReadySibling(failedSeen, siblingSeen, sibling, cwd);
-  const status = (await host.devfn(cwd, ["status"])).json;
-  const leases = ((await host.must(cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === status.instanceId);
+  // Leases and routes are those of the checkout's own owner, never of whatever an unreadable status named.
+  const owner = await host.owner(cwd);
+  const status = await host.status(cwd);
+  const leases = ((await host.must(cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === owner);
   // The processes the failed start launched recorded their pids; none may survive, and no route of the owner may stay.
   const survivors = await host.survivingFixtures(cwd);
-  const routes = await host.routesOf(String(status.instanceId));
+  const routes = await host.routesOf(owner);
   await rm(path.join(cwd, `fail-${failing}`));
   const retried = await host.up(context.scenario.id, cwd);
-  context.expect("failure-cleaned", failed.code !== 0 && typeof failed.json.error?.code === "string" && rolledBack && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && retried.json.state === "ready",
-    `${failing} failed while ${sibling} answered: ${failedSeen?.sibling ? "yes" : "no"}; ${sibling} process ${String(siblingSeen?.pid)} ${rolledBack ? "stopped" : "not shown stopped"}; failure ${String(failed.json.error?.code)}; state ${String(status.state)}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
+  context.expect("failure-cleaned", failedWith(failed, SHIPPED_ERRORS.startupFailure) && rolledBack && status !== undefined && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0
+    && retried.code === 0 && retried.json.state === "ready",
+    `${failing} failed while ${sibling} answered: ${failedSeen?.sibling ? "yes" : "no"}; ${sibling} process ${String(siblingSeen?.pid)} ${rolledBack ? "stopped" : "not shown stopped"}; failure ${String(failed.json.error?.code)} (exit ${failed.code}); state ${status ? status.state : "unreadable"}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
   await check();
 };
 
@@ -575,21 +582,21 @@ const concurrentChange: LiveDriver = async (context, host) => {
   const cwd = await host.repository(context.scenario.id, "concurrent", hostFixture());
   const results = await Promise.all([host.up(context.scenario.id, cwd), host.up(context.scenario.id, cwd)]);
   const winners = results.filter((item) => item.code === 0 && item.json.state === "ready");
-  const status = await host.must(cwd, ["status"]);
+  const status = await host.status(cwd);
   const loser = results.find((item) => item !== winners[0]);
-  context.expect("single-owner", winners.length === 1 && status.state === "ready" && (status.processes as unknown[]).length === 2 && loser?.code !== 0 && typeof loser?.json.error?.code === "string",
-    `${winners.length} of 2 concurrent starts succeeded; the other: ${JSON.stringify(loser?.json.error?.code)}`);
+  context.expect("single-owner", winners.length === 1 && status?.state === "ready" && Array.isArray(status.processes) && status.processes.length === 2 && failedWith(loser, SHIPPED_ERRORS.concurrentStart),
+    `${winners.length} of 2 concurrent starts succeeded; the other: ${JSON.stringify(loser?.json.error?.code)} (exit ${String(loser?.code)}); status ${status ? status.state : "unreadable"}`);
   const before = await host.seen(cwd, "web");
   await writeFile(path.join(cwd, "devfn.config.json"), `${JSON.stringify(hostFixture({ QUAL_REVISION: "2" }), null, 2)}\n`);
-  const degraded = await host.devfn(cwd, ["status", "--trust"]);
+  const degraded = await host.status(cwd, ["--trust"]);
   const restarted = await host.must(cwd, ["restart"]);
   const seen = await host.seen(cwd, "web");
-  context.expect("change-detected", before.env.QUAL_REVISION === undefined && degraded.json.state === "degraded" && restarted.state === "ready" && seen.pid !== before.pid && seen.env.QUAL_REVISION === "2" && seen.env.DEVFN_INSTANCE_ID === restarted.instanceId,
-    `status after change: ${String(degraded.json.state)}; restart: ${String(restarted.state)}; process ${before.pid} -> ${seen.pid} saw QUAL_REVISION=${String(seen.env.QUAL_REVISION)}`);
+  context.expect("change-detected", before.env.QUAL_REVISION === undefined && degraded?.state === "degraded" && restarted.state === "ready" && seen.pid !== before.pid && seen.env.QUAL_REVISION === "2" && seen.env.DEVFN_INSTANCE_ID === restarted.instanceId,
+    `status after change: ${degraded ? degraded.state : "unreadable"}; restart: ${String(restarted.state)}; process ${before.pid} -> ${seen.pid} saw QUAL_REVISION=${String(seen.env.QUAL_REVISION)}`);
   await check();
 };
 
-export interface InterruptedStart { killed: boolean; orphan?: number; result: { code: number; json: Record<string, any> }; status: Record<string, any> }
+export interface InterruptedStart { killed: boolean; orphan?: number; result: { code: number; json: Record<string, any> }; status?: OwnedStatus }
 
 /**
  * Start cwd's lifecycle with its last node held before listening (hold-<name>),
@@ -616,15 +623,15 @@ export async function interruptStart(context: ScenarioContext, host: LiveHost, c
     await rm(path.join(cwd, `hold-${held}`), { force: true });
   }
   const result = await join();
-  // A failed or degraded lifecycle exits non-zero but still reports its state; a failed read reports none.
-  const status = (await host.devfn(cwd, ["status"])).json;
-  return { killed, ...(orphan !== undefined ? { orphan } : {}), result, status };
+  // A failed or degraded lifecycle still reports its state for its owner; a failed read reports none.
+  const status = await host.status(cwd);
+  return { killed, ...(orphan !== undefined ? { orphan } : {}), result, ...(status ? { status } : {}) };
 }
 
 export const INTERRUPTED = {
-  /** The start was killed while its held node had recorded itself and before it ended, it reported no ready lifecycle, and status then read a lifecycle that is not ready. */
+  /** The start was killed while its held node had recorded itself and before it ended, it reported no ready lifecycle, and its owner's status then read a lifecycle that is not ready. */
   killedBeforeReady: (start: InterruptedStart) => start.killed && start.orphan !== undefined && start.result.code !== 0 && start.result.json.state !== "ready"
-    && typeof start.status.state === "string" && start.status.state !== "ready",
+    && start.status !== undefined && start.status.state !== "ready",
   /** No process of the killed start still runs, whatever a later lifecycle lists: a live orphan fails, and an unknown orphan proves nothing. */
   orphanGone: (start: InterruptedStart, running: (pid: number) => boolean = alive) => start.orphan !== undefined && !running(start.orphan),
 };
@@ -633,25 +640,28 @@ const crash: LiveDriver = async (context, host) => {
   const { check } = await sentinel(context, host);
   const cwd = await host.repository(context.scenario.id, "crash", hostFixture());
   await start(context, host, cwd);
-  process.kill((await host.seen(cwd, "web")).pid, "SIGKILL");
+  // The web process is recorded while DevFn reports its lifecycle ready, and signalled only while it still matches that record.
+  const target = await host.recordProcess((await host.seen(cwd, "web")).pid);
+  if (!await host.killRecorded(target, false)) context.expect("crash-detected", false, `web process ${String(target?.pid ?? "unrecorded")} not signalled: its identity was not verified`);
   await host.wait(500);
-  const status = await host.devfn(cwd, ["status"]);
+  // DevFn's detected crash: the ready lifecycle's process died, so its owner's status reads degraded (or failed).
+  const status = await host.status(cwd);
   const interrupted = await host.repository(context.scenario.id, "interrupted", hostFixture());
   const killed = await interruptStart(context, host, interrupted);
   const orphan = killed.orphan;
   const collected = await host.devfn(interrupted, ["ports", "gc"]);
-  context.expect("crash-detected", status.json.state !== "ready" && INTERRUPTED.killedBeforeReady(killed) && collected.code === 0,
-    `status after kill: ${String(status.json.state)}; interrupted up ${killed.killed ? "killed" : "not killed"} before it ended: code ${killed.result.code}, state ${String(killed.result.json.state ?? killed.result.json.error?.code)}; its status then ${String(killed.status.state ?? killed.status.error?.code)}; ports gc after it: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
+  context.expect("crash-detected", (status?.state === "degraded" || status?.state === "failed") && INTERRUPTED.killedBeforeReady(killed) && collected.code === 0,
+    `status after kill: ${status ? status.state : "unreadable"}; interrupted up ${killed.killed ? "killed" : "not killed"} before it ended: code ${killed.result.code}, state ${String(killed.result.json.state ?? killed.result.json.error?.code)}; its status then ${killed.status ? killed.status.state : "unreadable"}; ports gc after it: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
   const restarted = await host.must(cwd, ["restart"]);
   // The killed start's lifecycle lock is recoverable only once stale (five minutes); a retry before then fails closed.
   let retried = await host.up(context.scenario.id, interrupted);
-  for (const deadline = Date.now() + 420_000; retried.json.state !== "ready" && Date.now() < deadline; retried = await host.up(context.scenario.id, interrupted)) {
+  for (const deadline = Date.now() + 420_000; !(retried.code === 0 && retried.json.state === "ready") && Date.now() < deadline; retried = await host.up(context.scenario.id, interrupted)) {
     await host.wait(15_000);
     await host.devfn(interrupted, ["ports", "gc"]);
   }
   const gone = INTERRUPTED.orphanGone(killed);
   const ca = await host.ca();
-  context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.json.state === "ready" && gone && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
+  context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.code === 0 && retried.json.state === "ready" && gone && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
     `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; process ${String(orphan)} from the killed start ${gone ? "is gone" : "still runs"}`);
   await check();
 };
@@ -661,14 +671,14 @@ const oneWorktreeStop: LiveDriver = async (context, host) => {
   const ca = await host.ca();
   const before = await host.seen(b.cwd, "web");
   await host.must(a.cwd, ["down"]);
-  const status = await host.must(a.cwd, ["status"]);
+  const status = await host.status(a.cwd);
   const leases = ((await host.must(a.cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === a.receipt.instanceId);
   const survivors = await host.survivingFixtures(a.cwd);
   const routes = await host.routesOf(String(a.receipt.instanceId));
   // Withdrawal is observed as the proxy's own 404 for the name on plain HTTP, never as a failed request.
   const answer = await host.request(plainOf(a.urls.web)).catch(() => undefined);
-  context.expect("stopped-withdrawn", status.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && ANSWERS.proxyNotFound(answer),
-    `state ${String(status.state)}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
+  context.expect("stopped-withdrawn", status?.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && ANSWERS.proxyNotFound(answer),
+    `state ${status ? status.state : "unreadable"}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
   const after = await host.seen(b.cwd, "web");
   context.expect("sentinel-preserved", after.pid === before.pid && await serves(host, b.urls.web, b.cwd, ca), `other worktree pid ${before.pid} -> ${after.pid}`);
 };
