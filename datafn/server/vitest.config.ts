@@ -1,6 +1,14 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // @datafn/cli's own test task rebuilds (and cleans) its dist, so the codegen
+      // tests here import its source rather than race that rebuild.
+      "@datafn/cli": fileURLToPath(new URL("../cli/src/index.ts", import.meta.url)),
+    },
+  },
   test: {
     globals: true,
     environment: "node",
