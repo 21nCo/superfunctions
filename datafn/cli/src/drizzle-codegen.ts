@@ -490,10 +490,16 @@ export function generateDrizzleSchema(
   lines.push(`export const schema = { ${tableExports.join(", ")} };`);
   lines.push("");
 
+  if (usedImports.has("customType")) {
+    // After the "// Database" header and its blank line, ahead of the tables.
+    lines.splice(4, 0, ...SQLITE_BOOLEAN_TYPE);
+  }
+
+  const needsSql = usedImports.delete("sql");
   const sortedImports = [...usedImports].sort();
   const importLine = `import { ${sortedImports.join(", ")} } from "${importPath}";`;
 
-  lines.splice(2, 0, importLine);
+  lines.splice(2, 0, importLine, ...(needsSql ? ['import { sql } from "drizzle-orm";'] : []));
 
   return lines.join("\n");
 }
@@ -560,11 +566,44 @@ function buildColumnDefinition(
   }
 
   if (field.default !== undefined) {
-    def += `.default(${JSON.stringify(field.default)})`;
+    if (dialect === "sqlite" && isJsonFieldType(field.type) && field.default !== null) {
+      usedImports.add("sql");
+      def += `.default(${sqliteJsonDefault(field.default)})`;
+    } else {
+      def += `.default(${JSON.stringify(field.default)})`;
+    }
   }
 
   return def;
 }
+
+function isJsonFieldType(fieldType: string): boolean {
+  return fieldType === "object" || fieldType === "array" || fieldType === "json";
+}
+
+/**
+ * A SQLite JSON-mode column parses its stored text, so its default must be the
+ * JSON text as an SQL string literal. A plain `.default("hello")` would make
+ * drizzle-kit emit `DEFAULT 'hello'`, which is not valid JSON.
+ */
+function sqliteJsonDefault(value: unknown): string {
+  const literal = `'${JSON.stringify(value).replaceAll("'", "''")}'`;
+  return `sql.raw(${JSON.stringify(literal)})`;
+}
+
+/**
+ * Emitted once per SQLite schema that has boolean columns. Booleans are stored
+ * as 0/1; any other value, such as an E2EE envelope, is stored as JSON text so
+ * it reads back unchanged.
+ */
+const SQLITE_BOOLEAN_TYPE = [
+  "const datafnBoolean = customType<{ data: boolean; driverData: number | string }>({",
+  '  dataType: () => "integer",',
+  "  toDriver: (value) => (typeof value === \"boolean\" ? Number(value) : JSON.stringify(value)),",
+  "  fromDriver: (value) => (typeof value === \"string\" ? JSON.parse(value) : Number(value) !== 0),",
+  "});",
+  "",
+];
 
 function renderTsObjectKey(name: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
@@ -778,7 +817,9 @@ function getColumnType(
   }
 
   // SQLite drivers bind only numbers, strings, bigints, buffers and null, so
-  // booleans and JSON values need Drizzle column modes to round-trip.
+  // booleans and JSON values need column mappings to round-trip. Booleans use
+  // the generated datafnBoolean type (SQLITE_BOOLEAN_TYPE) rather than Drizzle's
+  // boolean mode, which would coerce an E2EE envelope to 1.
   switch (fieldType) {
     case "string":
     case "file":
@@ -788,7 +829,7 @@ function getColumnType(
     case "json":
       return { call: `text("${sqlName}", { mode: "json" })`, importName: "text" };
     case "boolean":
-      return { call: `integer("${sqlName}", { mode: "boolean" })`, importName: "integer" };
+      return { call: `datafnBoolean("${sqlName}")`, importName: "customType" };
     case "number":
     case "date":
       return { call: `integer("${sqlName}")`, importName: "integer" };

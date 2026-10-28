@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { generateDrizzleSchema } from "@datafn/cli";
-import { conformanceSchema } from "./fixture.js";
+import { conformanceSchema, legacyJsonUpgradeSql } from "./fixture.js";
 
 describe("Drizzle SQLite conformance fixture", () => {
   it("matches the current @datafn/cli sqlite codegen output", () => {
@@ -13,5 +13,10 @@ describe("Drizzle SQLite conformance fixture", () => {
     const generated = generateDrizzleSchema(conformanceSchema, "sqlite");
     const body = generated.slice(generated.indexOf("\n", generated.indexOf("// Database: sqlite")) + 1);
     expect(checkedIn.trim()).toBe(body.trim());
+  });
+
+  it("runs the JSON column upgrade the codegen docs give", () => {
+    const docs = readFileSync(new URL("../../../docs/content/docs/cli/drizzle-codegen.mdx", import.meta.url), "utf8");
+    expect(docs).toContain(legacyJsonUpgradeSql);
   });
 });

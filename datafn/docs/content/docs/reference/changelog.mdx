@@ -19,7 +19,7 @@ DataFn follows [semver](https://semver.org/): until 1.0 minor versions may inclu
 **Bug fixes**
 
 - `@datafn/server`: an atomic `transact` with mutation steps on an adapter without transactions (Drizzle on SQLite or Cloudflare D1) now returns `DFQL_UNSUPPORTED` before writing anything. It previously ran the steps one by one, so a failed step left earlier steps applied. See [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
-- `@datafn/cli`: SQLite codegen emits `integer({ mode: "boolean" })` for `boolean` fields and `text({ mode: "json" })` for `object`, `array` and `json` fields. See [SQLite column modes](/docs/cli/drizzle-codegen#sqlite-column-modes) for upgrading an existing schema.
+- `@datafn/cli`: SQLite codegen emits a generated `datafnBoolean` type (an `integer` column that also keeps E2EE envelopes) for `boolean` fields and `text({ mode: "json" })` for `object`, `array` and `json` fields, with JSON defaults written as JSON text. Existing JSON columns need a data upgrade; see [SQLite column modes](/docs/cli/drizzle-codegen#sqlite-column-modes).
 - `@superfunctions/db` 0.3.2: the Drizzle adapter reads Cloudflare D1 affected-row counts, so concurrent writers on D1 no longer receive duplicate `server_seq` values. `@datafn/server` 0.2.1 requires it.
 
 ## 0.3.0

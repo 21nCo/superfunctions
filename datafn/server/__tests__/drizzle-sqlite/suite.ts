@@ -10,7 +10,14 @@ import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
 import { toHono } from "@superfunctions/http-hono";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { createDatafnServer } from "../../src/index.js";
-import { allTables, conformanceSchema, createTableStatements, resourceTables } from "./fixture.js";
+import { isDatafnE2eeEnvelope } from "@datafn/core";
+import {
+  allTables,
+  conformanceSchema,
+  createTableStatements,
+  legacyJsonUpgradeSql,
+  resourceTables,
+} from "./fixture.js";
 
 export interface SqliteHarness {
   /** Drizzle database created with `{ schema: drizzleSchema }`. */
@@ -42,7 +49,8 @@ export function describeDrizzleSqliteConformance(
     });
 
     afterEach(async () => {
-      for (const app of started) app.server.close();
+      // Let each server drain before its database goes away.
+      await Promise.all(started.map((app) => app.server.close()));
       started = [];
       await harness.close();
     });
@@ -408,6 +416,102 @@ export function describeDrizzleSqliteConformance(
         expect(await harness.all(`SELECT done, meta, labels FROM task WHERE id = 'task:r'`)).toEqual([
           { done: 1, meta: JSON.stringify(meta), labels: JSON.stringify(labels) },
         ]);
+      });
+    });
+
+    describe("column storage", () => {
+      const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+      const fromBase64 = (text: string) => Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+
+      it("keeps E2EE envelopes in boolean and object fields as ciphertext that decrypts", async () => {
+        const app = await start();
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+        // Same envelope and plaintext encoding as @datafn/client E2EE.
+        async function encrypt(value: unknown) {
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const plaintext = new TextEncoder().encode(JSON.stringify({ value }));
+          const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
+          return { __datafnE2ee: 1, alg: "AES-GCM", keyRef: "key-1", iv: toBase64(iv), data: toBase64(data) };
+        }
+        async function decrypt(envelope: Json) {
+          expect(isDatafnE2eeEnvelope(envelope)).toBe(true);
+          const iv = fromBase64(envelope.iv);
+          const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, fromBase64(envelope.data));
+          return JSON.parse(new TextDecoder().decode(plaintext)).value;
+        }
+
+        const done = await encrypt(false);
+        const meta = await encrypt({ secret: "plan" });
+        const pushed = await app.call("POST", "/datafn/push", {
+          clientId: "seed",
+          mutations: [insertTask("task:s", "Secret", 1, { done, meta })],
+        });
+        expect(pushed.body.result.ok).toBe(true);
+
+        // Storage keeps the ciphertext instead of coercing the envelope to 1.
+        expect(await harness.all(`SELECT done, meta FROM task WHERE id = 'task:s'`)).toEqual([
+          { done: JSON.stringify(done), meta: JSON.stringify(meta) },
+        ]);
+        const read = await app.call("POST", "/datafn/query", {
+          resource: "task",
+          version: 1,
+          select: ["id", "done", "meta"],
+          filters: { id: "task:s" },
+        });
+        const [record] = read.body.result.data;
+        expect(record).toEqual({ id: "task:s", done, meta });
+        expect(await decrypt(record.done)).toBe(false);
+        expect(await decrypt(record.meta)).toEqual({ secret: "plan" });
+      });
+
+      it("fills the JSON default for rows that predate the column and for inserts that omit it", async () => {
+        const app = await start();
+        await app.call("POST", "/datafn/mutation", insertTask("task:a", "Alpha", 1));
+        const [{ __ns }] = await harness.all(`SELECT __ns FROM task`);
+        // Leaving the column out applies its DEFAULT, as ALTER TABLE ADD COLUMN does for existing rows.
+        await harness.exec([
+          `INSERT INTO task (__ns, id, title, priority, done) VALUES ('${String(__ns)}', 'task:old', 'Old', 2, 0)`,
+        ]);
+
+        const read = await app.call("POST", "/datafn/query", {
+          resource: "task",
+          version: 1,
+          select: ["id", "status"],
+          sort: ["id:asc"],
+        });
+        expect(read.status).toBe(200);
+        expect(read.body.result.data).toEqual([
+          { id: "task:a", status: "open" },
+          { id: "task:old", status: "open" },
+        ]);
+        expect(await harness.all(`SELECT status FROM task ORDER BY id`)).toEqual([
+          { status: '"open"' },
+          { status: '"open"' },
+        ]);
+      });
+
+      it("reads legacy plain-text JSON values back as the same strings after the documented upgrade", async () => {
+        const app = await start();
+        await app.call("POST", "/datafn/mutation", insertTask("task:a", "Alpha", 1));
+        const [{ __ns }] = await harness.all(`SELECT __ns FROM task`);
+        // Values a 0.1.1 schema stored as plain text; several are also valid JSON.
+        const legacy = ["123", "true", "null", '"quoted"', "hello", '{"a":1}', "it's"];
+        await harness.exec(
+          legacy.map(
+            (value, n) =>
+              `INSERT INTO kv (__ns, id, value) VALUES ('${String(__ns)}', 'kv:${n}', '${value.replaceAll("'", "''")}')`,
+          ),
+        );
+        await harness.exec([legacyJsonUpgradeSql]);
+
+        const read = await app.call("POST", "/datafn/query", {
+          resource: "kv",
+          version: 1,
+          select: ["id", "value"],
+          sort: ["id:asc"],
+        });
+        expect(read.status).toBe(200);
+        expect(read.body.result.data).toEqual(legacy.map((value, n) => ({ id: `kv:${n}`, value })));
       });
     });
 

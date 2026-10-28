@@ -6,8 +6,9 @@
  * Workers deploy guide migrates into D1.
  */
 
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import { getTableConfig, type SQLiteTable } from "drizzle-orm/sqlite-core";
+import { customType, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { getTableConfig, SQLiteSyncDialect, type SQLiteTable } from "drizzle-orm/sqlite-core";
+import { is, SQL, sql } from "drizzle-orm";
 import type { DatafnSchema } from "@datafn/core";
 
 export const conformanceSchema: DatafnSchema = {
@@ -27,6 +28,7 @@ export const conformanceSchema: DatafnSchema = {
         { name: "projectId", type: "string", required: false, nullable: true },
         { name: "meta", type: "object", required: false, nullable: true },
         { name: "labels", type: "array", required: false, nullable: true },
+        { name: "status", type: "json", required: false, nullable: true, default: "open" },
       ],
     },
     {
@@ -42,6 +44,12 @@ export const conformanceSchema: DatafnSchema = {
 };
 
 // BEGIN GENERATED: @datafn/cli generateDrizzleSchema(conformanceSchema, "sqlite")
+
+const datafnBoolean = customType<{ data: boolean; driverData: number | string }>({
+  dataType: () => "integer",
+  toDriver: (value) => (typeof value === "boolean" ? Number(value) : JSON.stringify(value)),
+  fromDriver: (value) => (typeof value === "string" ? JSON.parse(value) : Number(value) !== 0),
+});
 
 export const datafnTimezoneChange = sqliteTable("datafnTimezoneChange", {
   __ns: text("__ns").notNull(),
@@ -84,12 +92,13 @@ export const tag = sqliteTable("tag", {
 
 export const task = sqliteTable("task", {
   __ns: text("__ns").notNull(),
-  done: integer("done", { mode: "boolean" }).notNull(),
+  done: datafnBoolean("done").notNull(),
   id: text("id").notNull(),
   labels: text("labels", { mode: "json" }),
   meta: text("meta", { mode: "json" }),
   priority: integer("priority").notNull(),
   projectId: text("project_id"),
+  status: text("status", { mode: "json" }).default(sql.raw("'\"open\"'")),
   title: text("title").notNull(),
 }, (table) => [
   primaryKey({ columns: [table.__ns, table.id] }),
@@ -156,6 +165,12 @@ export const schema = { __datafn_changes, __datafn_idempotency, __datafn_join_ta
 
 export const drizzleSchema = schema;
 
+/**
+ * The upgrade the codegen docs give for JSON columns written by `@datafn/cli`
+ * 0.1.1 and earlier, which stored plain text. fixture.test.ts keeps the docs in sync.
+ */
+export const legacyJsonUpgradeSql = `UPDATE "kv" SET "value" = json_quote("value") WHERE "value" IS NOT NULL;`;
+
 /** Tables owned by application resources; internal `__datafn_*` tables are excluded. */
 export const resourceTables: SQLiteTable[] = [datafnTimezoneChange, kv, project, tag, task, __datafn_join_task_tags];
 
@@ -163,6 +178,7 @@ export const resourceTables: SQLiteTable[] = [datafnTimezoneChange, kv, project,
 export const allTables: SQLiteTable[] = Object.values(drizzleSchema);
 
 const quote = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`;
+const dialect = new SQLiteSyncDialect();
 
 /**
  * Derives the CREATE statements drizzle-kit would emit for these tables, one
@@ -173,7 +189,9 @@ export function createTableStatements(tables: SQLiteTable[]): string[] {
     const config = getTableConfig(table);
     const columns = config.columns.map((column) => {
       const constraints = column.primary ? " PRIMARY KEY" : column.notNull ? " NOT NULL" : "";
-      return `${quote(column.name)} ${column.getSQLType()}${constraints}`;
+      // drizzle-kit writes an SQL default verbatim; codegen emits only SQL defaults for JSON columns.
+      const defaultClause = is(column.default, SQL) ? ` DEFAULT ${dialect.sqlToQuery(column.default).sql}` : "";
+      return `${quote(column.name)} ${column.getSQLType()}${constraints}${defaultClause}`;
     });
     for (const key of config.primaryKeys) {
       columns.push(`PRIMARY KEY (${key.columns.map((column) => quote(column.name)).join(", ")})`);

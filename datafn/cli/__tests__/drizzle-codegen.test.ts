@@ -136,10 +136,11 @@ describe("Drizzle Schema Codegen", () => {
       const result = generateDrizzleSchema(schema, "sqlite");
 
       expect(result).toContain('// Database: sqlite');
-      expect(result).toContain('import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
+      expect(result).toContain('import { customType, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
       expect(result).toContain('export const item = sqliteTable("item", {');
-      // SQLite drivers cannot bind booleans or objects, so those columns use Drizzle modes.
-      expect(result).toContain('  active: integer("active", { mode: "boolean" }).notNull(),');
+      // SQLite drivers cannot bind booleans or objects, so those columns map values.
+      expect(result).toContain('const datafnBoolean = customType<');
+      expect(result).toContain('  active: datafnBoolean("active").notNull(),');
       expect(result).toContain('  count: integer("count").notNull(),');
       expect(result).toContain('  data: text("data", { mode: "json" }),');
       expect(result).toContain('  id: text("id").primaryKey(),');
@@ -794,6 +795,73 @@ describe("Drizzle Schema Codegen", () => {
       expect(result).toContain('  value: json("value"),');
       expect(result).toContain('import { index, int, json, mysqlTable, text } from "drizzle-orm/mysql-core";');
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
+    });
+
+    it("stores sqlite boolean values as 0/1 and keeps E2EE envelopes as JSON text", () => {
+      const schema = {
+        namespaced: false,
+        resources: [
+          {
+            name: "item",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "active", type: "boolean", required: false, default: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('  active: datafnBoolean("active").default(true),');
+      expect(result.indexOf("const datafnBoolean")).toBeLessThan(result.indexOf("export const item"));
+
+      const helper = result.slice(result.indexOf("const datafnBoolean"), result.indexOf("});") + 3);
+      // Evaluate the emitted mappings with a stub customType to check both directions.
+      const typeScriptOnly = /customType<[^>]*>>?\(/;
+      const config = new Function("customType", `return ${helper.replace(/^const datafnBoolean = /, "").replace(typeScriptOnly, "customType(")}`)(
+        (definition: unknown) => definition,
+      ) as {
+        dataType(): string;
+        toDriver(value: unknown): unknown;
+        fromDriver(value: unknown): unknown;
+      };
+      const envelope = { __datafnE2ee: 1, alg: "AES-GCM", keyRef: "k1", iv: "aXY=", data: "Y2lwaGVy" };
+      expect(config.dataType()).toBe("integer");
+      expect([config.toDriver(true), config.toDriver(false)]).toEqual([1, 0]);
+      expect([config.fromDriver(1), config.fromDriver(0), config.fromDriver(0n)]).toEqual([true, false, false]);
+      expect(config.fromDriver(config.toDriver(envelope))).toEqual(envelope);
+    });
+
+    it("emits sqlite JSON defaults as JSON text SQL literals", () => {
+      const schema = {
+        namespaced: false,
+        resources: [
+          {
+            name: "item",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "label", type: "json", required: false, default: "it's" },
+              { name: "flag", type: "json", required: false, default: true },
+              { name: "size", type: "json", required: false, default: 5 },
+              { name: "tags", type: "array", required: false, default: ["a"] },
+              { name: "extra", type: "object", required: false, default: null },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('import { sql } from "drizzle-orm";');
+      expect(result).toContain(`  label: text("label", { mode: "json" }).default(sql.raw("'\\"it''s\\"'")),`);
+      expect(result).toContain(`  flag: text("flag", { mode: "json" }).default(sql.raw("'true'")),`);
+      expect(result).toContain(`  size: text("size", { mode: "json" }).default(sql.raw("'5'")),`);
+      expect(result).toContain(`  tags: text("tags", { mode: "json" }).default(sql.raw("'[\\"a\\"]'")),`);
+      expect(result).toContain('  extra: text("extra", { mode: "json" }).default(null),');
+      expect(generateDrizzleSchema(schema, "postgres")).not.toContain("drizzle-orm\";");
     });
 
     it("should include the built-in kv table for sqlite with a JSON text value column", () => {
