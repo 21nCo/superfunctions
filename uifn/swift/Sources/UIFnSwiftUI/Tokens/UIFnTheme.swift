@@ -44,8 +44,8 @@ public struct UIFnColors: Equatable, Sendable {
     public let danger: UIFnToneColors
     public let warning: UIFnToneColors
     public let success: UIFnToneColors
-    /// The optional custom tone, present when the theme defines `color.custom`.
-    public let custom: UIFnToneColors?
+    /// The optional custom tone, present when the theme defines any `color.custom` token.
+    public let custom: UIFnCustomColors?
 
     public init(
         surface: UIFnSurfaceColors,
@@ -55,7 +55,7 @@ public struct UIFnColors: Equatable, Sendable {
         danger: UIFnToneColors,
         warning: UIFnToneColors,
         success: UIFnToneColors,
-        custom: UIFnToneColors? = nil
+        custom: UIFnCustomColors? = nil
     ) {
         self.surface = surface
         self.text = text
@@ -69,12 +69,12 @@ public struct UIFnColors: Equatable, Sendable {
 
     /// Every color with its public token name, such as `surface.canvas`.
     public var all: [(name: String, token: UIFnColorToken)] {
-        var tones = [("accent", accent), ("danger", danger), ("warning", warning), ("success", success)]
-        if let custom { tones.append(("custom", custom)) }
+        let tones = [("accent", accent.all), ("danger", danger.all), ("warning", warning.all), ("success", success.all)]
+            + [("custom", custom?.all ?? [])]
         return surface.all.map { ("surface.\($0.name)", $0.token) }
             + text.all.map { ("text.\($0.name)", $0.token) }
             + border.all.map { ("border.\($0.name)", $0.token) }
-            + tones.flatMap { tone in tone.1.all.map { ("\(tone.0).\($0.name)", $0.token) } }
+            + tones.flatMap { tone in tone.1.map { ("\(tone.0).\($0.name)", $0.token) } }
     }
 }
 
@@ -153,8 +153,8 @@ public struct UIFnBorderColors: Equatable, Sendable {
     }
 }
 
-/// The accent, status and custom tones: a solid fill, a subtle fill and the
-/// content color that contrasts with the solid fill.
+/// The accent and status tones: a solid fill, a subtle fill and the content
+/// color that contrasts with the solid fill.
 public struct UIFnToneColors: Equatable, Sendable {
     public let solid: UIFnColorToken
     public let subtle: UIFnColorToken
@@ -168,6 +168,25 @@ public struct UIFnToneColors: Equatable, Sendable {
 
     var all: [(name: String, token: UIFnColorToken)] {
         [("solid", solid), ("subtle", subtle), ("contrast", contrast)]
+    }
+}
+
+/// The custom tone. A theme may define any of its colors, so each is optional.
+public struct UIFnCustomColors: Equatable, Sendable {
+    public let solid: UIFnColorToken?
+    public let subtle: UIFnColorToken?
+    public let contrast: UIFnColorToken?
+
+    public init(solid: UIFnColorToken? = nil, subtle: UIFnColorToken? = nil, contrast: UIFnColorToken? = nil) {
+        self.solid = solid
+        self.subtle = subtle
+        self.contrast = contrast
+    }
+
+    var all: [(name: String, token: UIFnColorToken)] {
+        [("solid", solid), ("subtle", subtle), ("contrast", contrast)].compactMap { name, token in
+            token.map { (name, $0) }
+        }
     }
 }
 
@@ -351,15 +370,15 @@ public struct UIFnLineHeights: Equatable, Sendable {
 
 /// A numeric font weight from the theme (CSS scale, 1...1000).
 public struct UIFnFontWeight: Equatable, Sendable {
-    public let value: Int
+    public let value: Double
 
-    public init(_ value: Int) {
+    public init(_ value: Double) {
         self.value = value
     }
 
     /// The nearest system weight; a value halfway between two weights takes the lighter one.
     public var weight: Font.Weight {
-        let weights: [(Int, Font.Weight)] = [
+        let weights: [(Double, Font.Weight)] = [
             (100, .ultraLight), (200, .thin), (300, .light), (400, .regular), (500, .medium),
             (600, .semibold), (700, .bold), (800, .heavy), (900, .black),
         ]

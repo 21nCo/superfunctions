@@ -89,13 +89,8 @@ const COLOR_GROUPS = [
 
 // A lone `_` is the wildcard pattern, not an identifier.
 const SWIFT_IDENTIFIER = /^(?:[A-Za-z]\w*|_\w+)$/;
-const SWIFT_RESERVED = new Set([
-  'associatedtype', 'class', 'deinit', 'enum', 'extension', 'fileprivate', 'func', 'import', 'init', 'inout',
-  'internal', 'let', 'open', 'operator', 'private', 'protocol', 'public', 'rethrows', 'static', 'struct',
-  'subscript', 'typealias', 'var', 'break', 'case', 'continue', 'default', 'defer', 'do', 'else', 'fallthrough',
-  'for', 'guard', 'if', 'in', 'repeat', 'return', 'switch', 'where', 'while', 'as', 'Any', 'catch', 'false', 'is',
-  'nil', 'super', 'self', 'Self', 'throw', 'throws', 'true', 'try', 'Type',
-]);
+// Even backticked, `UIFnTheme.Type` and `UIFnTheme.Protocol` name metatypes.
+const UNREFERENCEABLE_MEMBERS = new Set(['Type', 'Protocol']);
 
 function invalid(message: string, details: Record<string, unknown>): UIFnTokenError {
   return new UIFnTokenError('UIFN_SWIFT_THEME_INVALID', message, details);
@@ -189,18 +184,6 @@ export function parseCubicBezier(value: string | number, path: string): [number,
   return numbers as [number, number, number, number];
 }
 
-// The tokens Swift emits besides colors. Only these must agree across appearances.
-const EMITTED_NON_COLOR_PATHS: readonly string[] = [
-  ...PUBLIC_TOKEN_GROUPS.space.value.map((name) => `space.${name}`),
-  ...PUBLIC_TOKEN_GROUPS.radius.value.map((name) => `radius.${name}`),
-  ...(['size', 'lineHeight', 'weight'] as const).flatMap((group) =>
-    PUBLIC_TOKEN_GROUPS.typography[group].map((name) => `typography.${group}.${name}`)
-  ),
-  ...(['duration', 'easing'] as const).flatMap((group) =>
-    PUBLIC_TOKEN_GROUPS.motion[group].map((name) => `motion.${group}.${name}`)
-  ),
-];
-
 const FOUNDATION_TOKENS = new Map(
   flattenTokens(createFoundationalTokens()).map(({ path, token }) => [path.join('.'), token])
 );
@@ -226,11 +209,77 @@ function requireToken(tokens: Map<string, DesignToken>, path: string): DesignTok
   return token;
 }
 
-function outputKey(token: DesignToken): string {
-  return JSON.stringify([token.$type, token.$value, token.$extensions?.uifn?.reducedMotionValue ?? null]);
+function points(token: DesignToken, path: string): string {
+  return swiftNumber(dimensionToPoints(token.$value, path), path);
 }
 
-function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<string, DesignToken>> {
+function typeSize(token: DesignToken, path: string): string {
+  const points = dimensionToPoints(token.$value, path);
+  return `UIFnTypeSize(points: ${swiftNumber(points, path)}, textStyle: .${swiftTextStyleForPoints(points)})`;
+}
+
+function lineHeight(token: DesignToken, path: string): string {
+  const value = Number(token.$value);
+  if (!Number.isFinite(value) || value < 0) {
+    throw unsupported('Swift line heights must be finite non-negative numbers.', { path, value: String(value) });
+  }
+  return swiftNumber(value, path);
+}
+
+function fontWeight(token: DesignToken, path: string): string {
+  const value = Number(token.$value);
+  if (!(value >= 1 && value <= 1000)) {
+    throw unsupported('Swift font weights must be numbers in 1...1000.', { path, value: String(value) });
+  }
+  return `UIFnFontWeight(${swiftNumber(value, path)})`;
+}
+
+function duration(token: DesignToken, path: string): string {
+  const seconds = durationToSeconds(token.$value, path);
+  const reducedPath = `${path}.reducedMotionValue`;
+  const reduced = durationToSeconds(token.$extensions!.uifn!.reducedMotionValue!, reducedPath);
+  return `UIFnDuration(seconds: ${swiftNumber(seconds, path)}, reducedMotionSeconds: ${swiftNumber(reduced, reducedPath)})`;
+}
+
+function easing(token: DesignToken, path: string): string {
+  const points = parseCubicBezier(token.$value, path).map((value) => swiftNumber(value, path));
+  return `UIFnEasing(${points.join(', ')})`;
+}
+
+// Every token Swift emits besides colors, with the Swift expression it
+// becomes. These expressions are the normalized values, so `6px` and
+// `0.375rem` or `120ms` and `0.12s` are the same token in Swift.
+const EMITTED_NON_COLOR_TOKENS: ReadonlyArray<readonly [string, (token: DesignToken, path: string) => string]> = [
+  ...PUBLIC_TOKEN_GROUPS.space.value.map((name) => [`space.${name}`, points] as const),
+  ...PUBLIC_TOKEN_GROUPS.radius.value.map((name) => [`radius.${name}`, points] as const),
+  ...PUBLIC_TOKEN_GROUPS.typography.size.map((name) => [`typography.size.${name}`, typeSize] as const),
+  ...PUBLIC_TOKEN_GROUPS.typography.lineHeight.map((name) => [`typography.lineHeight.${name}`, lineHeight] as const),
+  ...PUBLIC_TOKEN_GROUPS.typography.weight.map((name) => [`typography.weight.${name}`, fontWeight] as const),
+  ...PUBLIC_TOKEN_GROUPS.motion.duration.map((name) => [`motion.duration.${name}`, duration] as const),
+  ...PUBLIC_TOKEN_GROUPS.motion.easing.map((name) => [`motion.easing.${name}`, easing] as const),
+];
+
+function emittedValues(tokens: Map<string, DesignToken>, appearance: SwiftAppearance): Map<string, string> {
+  return new Map(
+    EMITTED_NON_COLOR_TOKENS.map(([path, emit]) => {
+      try {
+        return [path, emit(requireToken(tokens, path), path)];
+      } catch (error) {
+        if (error instanceof UIFnTokenError) {
+          throw new UIFnTokenError(error.code, error.message, { ...error.details, appearance });
+        }
+        throw error;
+      }
+    })
+  );
+}
+
+interface ResolvedAppearances {
+  colors: Record<SwiftAppearance, Map<string, DesignToken>>;
+  values: Map<string, string>;
+}
+
+function resolveAppearances(themes: SwiftThemeSet): ResolvedAppearances {
   const provided = new Map<SwiftAppearance, Map<string, DesignToken>>();
   for (const appearance of APPEARANCES) {
     const theme = themes[appearance];
@@ -251,13 +300,14 @@ function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<
   const dark = provided.get('dark') ?? light;
   const highContrastLight = provided.get('highContrastLight') ?? light;
   const highContrastDark = provided.get('highContrastDark') ?? (provided.has('dark') ? dark : highContrastLight);
-  const resolved = { light, dark, highContrastLight, highContrastDark };
+  const colors = { light, dark, highContrastLight, highContrastDark };
 
   // Every variant must define exactly the light theme's colors so none is
   // dropped or guessed. The emitted non-color tokens are appearance-independent
-  // in Swift; tokens Swift does not emit (font families, shadows, control,
-  // icon, border and density) may differ freely.
+  // in Swift, so their normalized values must match; tokens Swift does not
+  // emit (font families, shadows, control, icon, border and density) may differ.
   const lightColors = colorPaths(light);
+  const values = emittedValues(light, 'light');
   for (const [appearance, tokens] of provided) {
     if (appearance === 'light') continue;
     for (const path of lightColors) {
@@ -270,10 +320,8 @@ function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<
         throw invalid('Variant theme defines a color the light theme does not.', { appearance, path });
       }
     }
-    for (const path of EMITTED_NON_COLOR_PATHS) {
-      const token = tokens.get(path);
-      const base = light.get(path);
-      if (token && base && outputKey(token) !== outputKey(base)) {
+    for (const [path, value] of emittedValues(tokens, appearance)) {
+      if (value !== values.get(path)) {
         throw invalid('Spacing, radius, type scale and motion tokens must match the light theme in every appearance.', {
           appearance,
           path,
@@ -282,16 +330,16 @@ function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<
     }
   }
 
-  return resolved;
+  return { colors, values };
 }
 
+// The color paths Swift emits: every required color, and the custom tone
+// members the light theme defines.
 function colorPaths(light: Map<string, DesignToken>): string[] {
-  const groups: string[] = COLOR_GROUPS.map(([group]) => group);
-  if ([...light.keys()].some((path) => path.startsWith('color.custom.'))) groups.push('custom');
-  return groups.flatMap((group) =>
-    (PUBLIC_TOKEN_GROUPS.color[group as keyof typeof PUBLIC_TOKEN_GROUPS.color] as readonly string[]).map(
-      (name) => `color.${group}.${name}`
-    )
+  return [...COLOR_GROUPS.map(([group]) => group), 'custom'].flatMap((group) =>
+    (PUBLIC_TOKEN_GROUPS.color[group as keyof typeof PUBLIC_TOKEN_GROUPS.color] as readonly string[])
+      .map((name) => `color.${group}.${name}`)
+      .filter((path) => group !== 'custom' || light.has(path))
   );
 }
 
@@ -350,12 +398,15 @@ function writeColor(
 
 function writeColors(writer: SwiftWriter, appearances: Record<SwiftAppearance, Map<string, DesignToken>>): void {
   const paths = colorPaths(appearances.light);
-  const hasCustom = paths.some((path) => path.startsWith('color.custom.'));
-  const groups: Array<readonly [string, string]> = [...COLOR_GROUPS, ...(hasCustom ? [['custom', 'UIFnToneColors'] as const] : [])];
+  // The custom tone is optional and so is each of its members.
+  const customNames = PUBLIC_TOKEN_GROUPS.color.custom.filter((name) => paths.includes(`color.custom.${name}`));
+  const groups: Array<readonly [string, string, readonly string[]]> = [
+    ...COLOR_GROUPS.map(([group, type]) => [group, type, PUBLIC_TOKEN_GROUPS.color[group]] as const),
+    ...(customNames.length > 0 ? [['custom', 'UIFnCustomColors', customNames] as const] : []),
+  ];
 
   writer.open('colors: UIFnColors(');
-  groups.forEach(([group, type], groupIndex) => {
-    const names = PUBLIC_TOKEN_GROUPS.color[group as keyof typeof PUBLIC_TOKEN_GROUPS.color] as readonly string[];
+  groups.forEach(([group, type, names], groupIndex) => {
     writer.open(`${group}: ${type}(`);
     names.forEach((name, index) => {
       writeColor(writer, swiftMember(name), `color.${group}.${name}`, appearances, index === names.length - 1);
@@ -365,79 +416,48 @@ function writeColors(writer: SwiftWriter, appearances: Record<SwiftAppearance, M
   writer.close('),');
 }
 
-function writeDimensions(
+function writeGroup(
   writer: SwiftWriter,
   label: string,
   type: string,
-  entries: Array<[string, string]>,
-  tokens: Map<string, DesignToken>,
+  entries: ReadonlyArray<readonly [string, string]>,
+  values: Map<string, string>,
   isLast = false
 ): void {
   writer.open(`${label}: ${type}(`);
   entries.forEach(([member, path], index) => {
-    const comma = index === entries.length - 1 ? '' : ',';
-    writer.line(`${member}: ${swiftNumber(dimensionToPoints(requireToken(tokens, path).$value, path), path)}${comma}`);
+    writer.line(`${member}: ${values.get(path)!}${index === entries.length - 1 ? '' : ','}`);
   });
   writer.close(`)${isLast ? '' : ','}`);
 }
 
-function writeTypography(writer: SwiftWriter, tokens: Map<string, DesignToken>): void {
+function members(group: readonly string[], prefix: string): Array<[string, string]> {
+  return group.map((name) => [name, `${prefix}.${name}`]);
+}
+
+function writeTypography(writer: SwiftWriter, values: Map<string, string>): void {
   const { size, lineHeight, weight } = PUBLIC_TOKEN_GROUPS.typography;
   writer.open('typography: UIFnTypography(');
-  writer.open('size: UIFnTypeScale(');
-  size.forEach((name, index) => {
-    const path = `typography.size.${name}`;
-    const points = dimensionToPoints(requireToken(tokens, path).$value, path);
-    const comma = index === size.length - 1 ? '' : ',';
-    writer.line(`${name}: UIFnTypeSize(points: ${swiftNumber(points, path)}, textStyle: .${swiftTextStyleForPoints(points)})${comma}`);
-  });
-  writer.close('),');
-  writer.open('lineHeight: UIFnLineHeights(');
-  lineHeight.forEach((name, index) => {
-    const path = `typography.lineHeight.${name}`;
-    const value = Number(requireToken(tokens, path).$value);
-    if (!Number.isFinite(value) || value <= 0) {
-      throw unsupported('Swift line heights must be finite positive numbers.', { path, value: String(value) });
-    }
-    writer.line(`${name}: ${swiftNumber(value, path)}${index === lineHeight.length - 1 ? '' : ','}`);
-  });
-  writer.close('),');
-  writer.open('weight: UIFnFontWeights(');
-  weight.forEach((name, index) => {
-    const path = `typography.weight.${name}`;
-    const value = Number(requireToken(tokens, path).$value);
-    if (!Number.isInteger(value) || value < 1 || value > 1000) {
-      throw unsupported('Swift font weights must be integers in 1...1000.', { path, value });
-    }
-    writer.line(`${name}: UIFnFontWeight(${value})${index === weight.length - 1 ? '' : ','}`);
-  });
-  writer.close(')');
+  writeGroup(writer, 'size', 'UIFnTypeScale', members(size, 'typography.size'), values);
+  writeGroup(writer, 'lineHeight', 'UIFnLineHeights', members(lineHeight, 'typography.lineHeight'), values);
+  writeGroup(writer, 'weight', 'UIFnFontWeights', members(weight, 'typography.weight'), values, true);
   writer.close('),');
 }
 
-function writeMotion(writer: SwiftWriter, tokens: Map<string, DesignToken>): void {
+function writeMotion(writer: SwiftWriter, values: Map<string, string>): void {
   const { duration, easing } = PUBLIC_TOKEN_GROUPS.motion;
   writer.open('motion: UIFnMotion(');
-  writer.open('duration: UIFnMotionDurations(');
-  duration.forEach((name, index) => {
-    const path = `motion.duration.${name}`;
-    const token = requireToken(tokens, path);
-    const seconds = durationToSeconds(token.$value, path);
-    const reduced = durationToSeconds(token.$extensions!.uifn!.reducedMotionValue!, `${path}.reducedMotionValue`);
-    const comma = index === duration.length - 1 ? '' : ',';
-    writer.line(`${name}: UIFnDuration(seconds: ${swiftNumber(seconds, path)}, reducedMotionSeconds: ${swiftNumber(reduced, path)})${comma}`);
-  });
-  writer.close('),');
-  writer.open('easing: UIFnMotionEasings(');
-  easing.forEach((name, index) => {
-    const path = `motion.easing.${name}`;
-    const points = parseCubicBezier(requireToken(tokens, path).$value, path)
-      .map((value) => swiftNumber(value, path))
-      .join(', ');
-    writer.line(`${name}: UIFnEasing(${points})${index === easing.length - 1 ? '' : ','}`);
-  });
+  writeGroup(writer, 'duration', 'UIFnMotionDurations', members(duration, 'motion.duration'), values);
+  writeGroup(writer, 'easing', 'UIFnMotionEasings', members(easing, 'motion.easing'), values, true);
   writer.close(')');
-  writer.close(')');
+}
+
+// Keywords are lowercase words or underscores, plus these capitalized ones;
+// backticks make any of them a valid module name.
+const CAPITALIZED_KEYWORDS = new Set(['Any', 'Protocol', 'Self', 'Type']);
+
+function swiftModule(name: string): string {
+  return /^[a-z_]+$/.test(name) || CAPITALIZED_KEYWORDS.has(name) ? `\`${name}\`` : name;
 }
 
 /**
@@ -446,8 +466,8 @@ function writeMotion(writer: SwiftWriter, tokens: Map<string, DesignToken>): voi
  * references are resolved first.
  */
 export function generateSwiftTokens(themes: SwiftThemeSet, options: SwiftTokenOptions): string {
-  if (!SWIFT_IDENTIFIER.test(options.name) || SWIFT_RESERVED.has(options.name)) {
-    throw invalid('Swift theme name must be a Swift identifier that is not a keyword.', { name: options.name });
+  if (!SWIFT_IDENTIFIER.test(options.name) || UNREFERENCEABLE_MEMBERS.has(options.name)) {
+    throw invalid('Swift theme name must be a Swift identifier other than Type or Protocol.', { name: options.name });
   }
   const imports = options.imports ?? [];
   const invalidImport = imports.find((module) => !SWIFT_IDENTIFIER.test(module));
@@ -455,8 +475,7 @@ export function generateSwiftTokens(themes: SwiftThemeSet, options: SwiftTokenOp
     throw invalid('Swift imports must be module identifiers.', { module: invalidImport });
   }
 
-  const appearances = resolveAppearances(themes);
-  const tokens = appearances.light;
+  const { colors, values } = resolveAppearances(themes);
   const sources = APPEARANCES.filter((appearance) => themes[appearance]).map(
     (appearance) => `${appearance}: ${commentText(themes[appearance]!.name)}`
   );
@@ -469,30 +488,25 @@ export function generateSwiftTokens(themes: SwiftThemeSet, options: SwiftTokenOp
   writer.line('// Colors are Display P3 and sRGB, each gamut-mapped from OKLCH (CSS Color 4).');
   writer.line();
   for (const module of ['SwiftUI', ...imports.filter((module) => module !== 'SwiftUI')].sort((a, b) => (a < b ? -1 : Number(a > b)))) {
-    writer.line(`import ${module}`);
+    writer.line(`import ${swiftModule(module)}`);
   }
   writer.line();
   writer.open(`${access === 'public' ? 'public ' : ''}extension UIFnTheme {`);
   writer.line(`/// The ${options.name} theme.`);
-  writer.open(`static let ${options.name} = UIFnTheme(`);
+  // Backticks keep keyword names, such as `default`, valid declarations.
+  writer.open(`static let \`${options.name}\` = UIFnTheme(`);
   writer.line(`name: ${swiftString(options.name)},`);
-  writeColors(writer, appearances);
-  writeDimensions(
+  writeColors(writer, colors);
+  writeGroup(
     writer,
     'spacing',
     'UIFnSpacing',
     PUBLIC_TOKEN_GROUPS.space.value.map((name) => [`space${name}`, `space.${name}`]),
-    tokens
+    values
   );
-  writeDimensions(
-    writer,
-    'radius',
-    'UIFnRadius',
-    PUBLIC_TOKEN_GROUPS.radius.value.map((name) => [name, `radius.${name}`]),
-    tokens
-  );
-  writeTypography(writer, tokens);
-  writeMotion(writer, tokens);
+  writeGroup(writer, 'radius', 'UIFnRadius', members(PUBLIC_TOKEN_GROUPS.radius.value, 'radius'), values);
+  writeTypography(writer, values);
+  writeMotion(writer, values);
   writer.close(')');
   writer.close('}');
 

@@ -7,6 +7,7 @@ import { parseOklch } from '../oklch';
 import { UIFnTokenError, type DesignTokenTheme, type TokenTree } from '../schema';
 import { runSwiftTokensCli, type SwiftCliIo } from '../swift-cli';
 import { generateSwiftTokens, swiftTextStyleForPoints, themeColorToSwiftValue } from '../swift';
+import { validateTokenTheme } from '../validate';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(readFileSync(join(here, 'fixtures/swift-color-vectors.json'), 'utf8')) as {
@@ -130,6 +131,14 @@ function theme(mode: 'light' | 'dark', overrides: Record<string, string> = {}): 
   return { name: `fixture-${mode}`, mode, tokens };
 }
 
+function setTokens(target: DesignTokenTheme, values: Record<string, string | number>): void {
+  for (const [path, value] of Object.entries(values)) {
+    const segments = path.split('.');
+    const parent = segments.slice(0, -1).reduce((node, key) => node[key] as TokenTree, target.tokens);
+    parent[segments.at(-1)!] = { ...(parent[segments.at(-1)!] as object), $value: value } as TokenTree[string];
+  }
+}
+
 function errorOf(run: () => unknown): UIFnTokenError {
   try {
     run();
@@ -190,7 +199,7 @@ describe('generateSwiftTokens', () => {
 
     expect(swift).toContain('// Regenerate with: npm run generate');
     expect(swift).toContain('public extension UIFnTheme {');
-    expect(swift).toContain('    static let fixture = UIFnTheme(');
+    expect(swift).toContain('    static let `fixture` = UIFnTheme(');
     const primary = colorBlock(swift, 'primary');
     expect(primary).toContain('// light: oklch(20% 0.02 250)');
     expect(primary).toContain('// dark: oklch(95% 0.01 250)');
@@ -238,7 +247,7 @@ describe('generateSwiftTokens', () => {
     const swift = generateSwiftTokens({ light }, { name: 'fixture', access: 'internal', imports: ['UIFnSwiftUI'] });
     expect(swift).toContain('import SwiftUI\nimport UIFnSwiftUI\n');
     expect(swift).toContain('\nextension UIFnTheme {');
-    expect(swift).toContain('custom: UIFnToneColors(');
+    expect(swift).toContain('custom: UIFnCustomColors(');
     const accent = swift.slice(swift.indexOf('accent: UIFnToneColors('));
     expect(colorBlock(accent, 'subtle')).toContain('// light: oklch(94% 0.03 300)');
   });
@@ -246,7 +255,7 @@ describe('generateSwiftTokens', () => {
   it('rejects theme sets the Swift API cannot represent', () => {
     const cases: Array<[string, () => unknown, string]> = [
       ['dark mode in the light slot', () => generateSwiftTokens({ light: theme('dark') }, { name: 'fixture' }), 'UIFN_SWIFT_THEME_INVALID'],
-      ['keyword name', () => generateSwiftTokens({ light: theme('light') }, { name: 'default' }), 'UIFN_SWIFT_THEME_INVALID'],
+      ['metatype name', () => generateSwiftTokens({ light: theme('light') }, { name: 'Type' }), 'UIFN_SWIFT_THEME_INVALID'],
       ['wildcard name', () => generateSwiftTokens({ light: theme('light') }, { name: '_' }), 'UIFN_SWIFT_THEME_INVALID'],
       ['bad import', () => generateSwiftTokens({ light: theme('light') }, { name: 'fixture', imports: ['UIFn SwiftUI'] }), 'UIFN_SWIFT_THEME_INVALID'],
       [
@@ -309,11 +318,110 @@ describe('generateSwiftTokens', () => {
     });
   });
 
+  it('generates every custom tone subset the validator accepts, with matching members in each appearance', () => {
+    const lightCustom = { solid: 'oklch(45% 0.12 300)', subtle: 'oklch(94% 0.03 300)', contrast: 'oklch(100% 0 0)' };
+    const darkCustom = { solid: 'oklch(70% 0.12 300)', subtle: 'oklch(30% 0.03 300)', contrast: 'oklch(12% 0.01 250)' };
+    const subsets = [['solid'], ['subtle'], ['contrast'], ['solid', 'subtle'], ['solid', 'contrast'], ['subtle', 'contrast']] as const;
+    const custom = (values: Record<string, string>, members: readonly string[]) =>
+      Object.fromEntries(members.map((member) => [`color.custom.${member}`, values[member]]));
+    for (const members of subsets) {
+      const light = theme('light', custom(lightCustom, members));
+      const dark = theme('dark', custom(darkCustom, members));
+      validateTokenTheme(light);
+      validateTokenTheme(dark);
+      const swift = generateSwiftTokens({ light, dark }, { name: 'fixture' });
+      const block = swift.slice(swift.indexOf('custom: UIFnCustomColors('));
+      expect(block.match(/^ {16}\w+: UIFnColorToken\(/gm)?.map((line) => line.trim().split(':')[0]), members.join()).toEqual([...members]);
+      for (const member of members) {
+        expect(colorBlock(block, member)).toContain(`// dark: ${darkCustom[member]}`);
+      }
+    }
+
+    const mismatched = errorOf(() =>
+      generateSwiftTokens(
+        { light: theme('light', custom(lightCustom, ['solid'])), dark: theme('dark', custom(darkCustom, ['solid', 'contrast'])) },
+        { name: 'fixture' }
+      )
+    );
+    expect(mismatched.details).toEqual({ appearance: 'dark', path: 'color.custom.contrast' });
+  });
+
+  it('compares emitted tokens across appearances after converting them to Swift values', () => {
+    type Edit = (tokens: TokenTree) => void;
+    const at = (tokens: TokenTree, path: string) => path.split('.').reduce((node, key) => node[key] as TokenTree, tokens);
+    const setValue = (path: string, value: string | number): Edit => (tokens) => {
+      const segments = path.split('.');
+      const parent = at(tokens, segments.slice(0, -1).join('.'));
+      parent[segments.at(-1)!] = { ...(parent[segments.at(-1)!] as object), $value: value } as TokenTree[string];
+    };
+    const setReduced = (path: string, value: string): Edit => (tokens) => {
+      at(tokens, path).$extensions = { uifn: { reducedMotionValue: value } } as never;
+    };
+    const equivalents: Array<[string, Edit]> = [
+      ['seconds for milliseconds', setValue('motion.duration.fast', '0.12s')],
+      ['milliseconds for seconds', setValue('motion.duration.normal', '180ms')],
+      ['reduced motion in seconds', setReduced('motion.duration.fast', '0s')],
+      ['reduced motion with a trailing zero', setReduced('motion.duration.slow', '0.040s')],
+      ['rem for px radius', setValue('radius.md', '0.375rem')],
+      ['px for rem spacing', setValue('space.4', '16px')],
+      ['px for rem type size', setValue('typography.size.md', '14px')],
+      ['padded bezier numbers', setValue('motion.easing.standard', 'cubic-bezier(0.20, 0.0, .0, 1.000)')],
+      ['spacing inside a cubic-bezier', setValue('motion.easing.exit', ' cubic-bezier( 0.4 ,0,1 , 1 ) ')],
+      ['uppercase units', setValue('radius.lg', '8PX')],
+    ];
+    const baseline = generateSwiftTokens({ light: theme('light'), dark: theme('dark') }, { name: 'fixture' });
+    for (const [label, edit] of equivalents) {
+      const dark = theme('dark');
+      edit(dark.tokens);
+      validateTokenTheme(dark);
+      expect(generateSwiftTokens({ light: theme('light'), dark }, { name: 'fixture' }), label).toBe(baseline);
+    }
+
+    const different: Array<[string, Edit, string]> = [
+      ['different duration', setValue('motion.duration.fast', '0.13s'), 'motion.duration.fast'],
+      ['different reduced motion', setReduced('motion.duration.fast', '10ms'), 'motion.duration.fast'],
+      ['different radius', setValue('radius.md', '0.5rem'), 'radius.md'],
+      ['different easing', setValue('motion.easing.standard', 'cubic-bezier(0.25, 0, 0, 1)'), 'motion.easing.standard'],
+      ['different line height', setValue('typography.lineHeight.normal', 1.5), 'typography.lineHeight.normal'],
+      ['different weight', setValue('typography.weight.bold', 800), 'typography.weight.bold'],
+    ];
+    for (const [label, edit, path] of different) {
+      const dark = theme('dark');
+      edit(dark.tokens);
+      const error = errorOf(() => generateSwiftTokens({ light: theme('light'), dark }, { name: 'fixture' }));
+      expect(error.code, label).toBe('UIFN_SWIFT_THEME_INVALID');
+      expect(error.details, label).toEqual({ appearance: 'dark', path });
+    }
+
+    const darkUnsupported = theme('dark');
+    setValue('radius.md', '0.5em')(darkUnsupported.tokens);
+    expect(errorOf(() => generateSwiftTokens({ light: theme('light'), dark: darkUnsupported }, { name: 'fixture' })).details).toMatchObject({
+      appearance: 'dark',
+      path: 'radius.md',
+    });
+  });
+
+  it('accepts fractional CSS font weights and zero line height', () => {
+    const light = theme('light');
+    setTokens(light, { 'typography.weight.medium': 450.5, 'typography.lineHeight.tight': 0 });
+    validateTokenTheme(light);
+    const swift = generateSwiftTokens({ light }, { name: 'fixture' });
+    expect(swift).toContain('medium: UIFnFontWeight(450.5),');
+    expect(swift).toContain('tight: 0,');
+  });
+
+  it('backticks the theme name and keyword module names', () => {
+    for (const name of ['default', 'precedencegroup', 'self', 'init', 'Any']) {
+      expect(generateSwiftTokens({ light: theme('light') }, { name })).toContain(`    static let \`${name}\` = UIFnTheme(\n        name: "${name}",`);
+    }
+    const swift = generateSwiftTokens({ light: theme('light') }, { name: 'fixture', imports: ['os', 'UIFnSwiftUI', 'Self'] });
+    expect(swift).toContain('import `Self`\nimport SwiftUI\nimport UIFnSwiftUI\nimport `os`\n');
+  });
+
   it('rejects numeric tokens that do not fit a finite Swift literal', () => {
     const huge = '9'.repeat(400);
     const cases: Array<[string, string, string | number]> = [
       ['typography.lineHeight', 'normal', Number.POSITIVE_INFINITY],
-      ['typography.lineHeight', 'tight', 0],
       ['typography.size', 'md', `${huge}px`],
       ['space', '4', `${huge}rem`],
       ['motion.duration', 'slow', `${huge}ms`],
@@ -335,7 +443,8 @@ describe('generateSwiftTokens', () => {
       ['radius', 'lg', '-8px'],
       ['motion.easing', 'standard', 'ease-in-out'],
       ['motion.easing', 'exit', 'cubic-bezier(1.4, 0, 1, 1)'],
-      ['typography.weight', 'bold', 700.5],
+      ['typography.weight', 'bold', 1001],
+      ['typography.lineHeight', 'tight', -1],
     ];
     for (const [group, name, value] of cases) {
       const invalid = theme('light');

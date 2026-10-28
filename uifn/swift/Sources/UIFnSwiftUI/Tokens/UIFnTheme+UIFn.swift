@@ -7,7 +7,7 @@ import SwiftUI
 
 public extension UIFnTheme {
     /// The uifn theme.
-    static let uifn = UIFnTheme(
+    static let `uifn` = UIFnTheme(
         name: "uifn",
         colors: UIFnColors(
             surface: UIFnSurfaceColors(

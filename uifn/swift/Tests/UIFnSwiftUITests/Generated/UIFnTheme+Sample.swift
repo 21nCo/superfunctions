@@ -7,7 +7,7 @@ import UIFnSwiftUI
 
 extension UIFnTheme {
     /// The sample theme.
-    static let sample = UIFnTheme(
+    static let `sample` = UIFnTheme(
         name: "sample",
         colors: UIFnColors(
             surface: UIFnSurfaceColors(
@@ -304,7 +304,7 @@ extension UIFnTheme {
                     highContrastDark: UIFnColorValue(displayP3: UIFnRGB(0.016358, 0.023155, 0.033895), sRGB: UIFnRGB(0.01483, 0.023441, 0.035084))
                 )
             ),
-            custom: UIFnToneColors(
+            custom: UIFnCustomColors(
                 solid: UIFnColorToken(
                     // light: oklch(45% 0.15 300)
                     light: UIFnColorValue(displayP3: UIFnRGB(0.368041, 0.238474, 0.5849), sRGB: UIFnRGB(0.390375, 0.231119, 0.60547)),
@@ -314,16 +314,6 @@ extension UIFnTheme {
                     highContrastLight: UIFnColorValue(displayP3: UIFnRGB(0.368041, 0.238474, 0.5849), sRGB: UIFnRGB(0.390375, 0.231119, 0.60547)),
                     // highContrastDark: oklch(72% 0.14 300)
                     highContrastDark: UIFnColorValue(displayP3: UIFnRGB(0.677566, 0.565459, 0.912124), sRGB: UIFnRGB(0.69967, 0.560102, 0.936317))
-                ),
-                subtle: UIFnColorToken(
-                    // light: oklch(94% 0.04 300)
-                    light: UIFnColorValue(displayP3: UIFnRGB(0.930506, 0.902075, 1), sRGB: UIFnRGB(0.936745, 0.900854, 1)),
-                    // dark: oklch(26% 0.05 300)
-                    dark: UIFnColorValue(displayP3: UIFnRGB(0.149954, 0.119002, 0.214928), sRGB: UIFnRGB(0.156067, 0.117525, 0.22164)),
-                    // highContrastLight: oklch(94% 0.04 300)
-                    highContrastLight: UIFnColorValue(displayP3: UIFnRGB(0.930506, 0.902075, 1), sRGB: UIFnRGB(0.936745, 0.900854, 1)),
-                    // highContrastDark: oklch(26% 0.05 300)
-                    highContrastDark: UIFnColorValue(displayP3: UIFnRGB(0.149954, 0.119002, 0.214928), sRGB: UIFnRGB(0.156067, 0.117525, 0.22164))
                 ),
                 contrast: UIFnColorToken(
                     // light: oklch(100% 0 0)

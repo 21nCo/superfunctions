@@ -118,7 +118,18 @@ struct UIFnThemeColorTests {
             #expect(isClose(try resolve(token, in: .highContrastDark), token.dark.displayP3), "\(name)")
         }
         #expect(distinct >= colors.all.count - 3)
-        #expect(custom.solid.light != custom.solid.dark)
+        #expect(try #require(custom.solid).light != custom.solid?.dark)
+    }
+
+    @Test
+    func partialCustomToneKeepsOnlyTheColorsTheThemeDefines() throws {
+        // The sample theme defines custom.solid and custom.contrast but not custom.subtle.
+        let custom = try #require(UIFnTheme.sample.colors.custom)
+        #expect(custom.subtle == nil)
+        let contrast = try #require(custom.contrast)
+        #expect(custom.solid != nil)
+        #expect(UIFnTheme.sample.colors.all.filter { $0.name.hasPrefix("custom.") }.map(\.name) == ["custom.solid", "custom.contrast"])
+        #expect(!isClose(try resolve(contrast, in: .light), try resolve(contrast, in: .dark)))
     }
 
     @Test

@@ -34,6 +34,9 @@ public struct UIFnColorValue: Equatable, Sendable {
 }
 
 /// A theme color that adapts to light, dark and increased-contrast appearances.
+///
+/// On UIKit platforms, sRGB displays get each value's gamut-mapped `sRGB`
+/// color; on macOS, colors always use `displayP3` (see `nsColor`).
 public struct UIFnColorToken: Equatable, Sendable {
     public let light: UIFnColorValue
     public let dark: UIFnColorValue
@@ -97,8 +100,10 @@ public struct UIFnColorToken: Equatable, Sendable {
     }
     #elseif os(macOS)
     /// A dynamic color resolved from the drawing appearance, including the
-    /// increased-contrast appearances. AppKit color-matches Display P3 to the
-    /// screen it draws on.
+    /// increased-contrast appearances. It always uses the Display P3 value:
+    /// AppKit color-matches it to the screen it draws on, so on an sRGB screen
+    /// ColorSync maps an out-of-gamut color instead of the theme's
+    /// gamut-mapped `sRGB` value.
     public var nsColor: NSColor {
         let token = self
         return NSColor(name: nil) { appearance in

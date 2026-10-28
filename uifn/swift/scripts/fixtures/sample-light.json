@@ -358,10 +358,6 @@
           "$type": "color",
           "$value": "oklch(45% 0.15 300)"
         },
-        "subtle": {
-          "$type": "color",
-          "$value": "oklch(94% 0.04 300)"
-        },
         "contrast": {
           "$type": "color",
           "$value": "oklch(100% 0 0)"
