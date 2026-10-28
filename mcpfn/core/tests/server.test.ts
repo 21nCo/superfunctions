@@ -488,7 +488,7 @@ describe("McpFnServer", () => {
     await server.connect(right); await client.connect(left);
     closeables.push(client, server);
 
-    await expect(client.listTools()).rejects.toThrow(/identity rejected/);
+    await expect(client.listTools()).rejects.toMatchObject({ code: ErrorCode.InternalError, message: expect.stringMatching(/Internal error$/) });
     expect(order).toEqual(["identity"]);
   });
 

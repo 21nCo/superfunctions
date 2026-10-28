@@ -187,8 +187,13 @@ CI routes a change set made entirely of the McpFn runtime, its DataFn adapter, R
 When publishing manually, release the required `@superfunctions/oauth-*`
 versions, then `@mcpfn/core`, `@mcpfn/client`, and `@mcpfn/auth`, followed by
 `@mcpfn/testing`, `@mcpfn/inspector`, `@mcpfn/datafn`, and `@mcpfn/cli`. The
-repository's package release workflow publishes one selected package at a time;
-it does not infer dependency order.
+repository's package release workflow publishes one selected package at a time.
+Its read-only registry preflight rejects an already-published target version and
+requires matching versions of internal runtime, optional, and peer dependencies
+to exist before building and again immediately before publication. Missing
+dependencies fail with the required package/version list. This enforces order;
+it does not publish dependencies automatically or establish that a locally built
+dependency is identical to a registry artifact with the same version.
 
 After publishing `@mcpfn/testing` or `@mcpfn/cli`, the package workflow installs
 the exact published version into a clean temporary consumer using the configured

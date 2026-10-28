@@ -93,6 +93,10 @@ export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
 export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   typeof WebStandardStreamableHTTPServerTransport
 >[0] & {
+  /** Maximum retained sessions plus pending initialization attempts (default 1024). */
+  maxSessions?: number;
+  /** Idle milliseconds after all HTTP responses finish (default 30 minutes). */
+  idleTimeoutMs?: number;
   /**
    * Configure the live isolated server before its transport connects. This
    * runs once per stateless request, or once per session initialization
@@ -100,10 +104,6 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
    * therefore invoke it without retaining a session. This is the correct
    * place to attach protocol instrumentation.
    */
-  /** Maximum retained sessions plus pending initialization attempts (default 1024). */
-  maxSessions?: number;
-  /** Idle milliseconds after all HTTP responses finish (default 30 minutes). */
-  idleTimeoutMs?: number;
   configureRequestServer?: (
     server: McpFnServer<TContext>,
   ) => void | Promise<void>;
@@ -216,6 +216,35 @@ async function releaseAfterResponse(
   });
 }
 
+// Unlike Promise.race against a long-lived close promise, settled requests remove
+// their listener immediately instead of accumulating callbacks for the session lifetime.
+function responseUntilClosed(
+  response: Promise<Response>,
+  listeners: Set<() => void>,
+  isClosed: () => boolean,
+  fallback: () => Response,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const onClose = () => { listeners.delete(onClose); resolve(fallback()); };
+    if (isClosed()) onClose();
+    else listeners.add(onClose);
+    response.then(
+      value => { listeners.delete(onClose); resolve(value); },
+      error => { listeners.delete(onClose); reject(error); },
+    );
+  });
+}
+
+function protocolError(error: unknown): Error {
+  if (error instanceof Error && error.name === "McpError" && "code" in error && Number.isSafeInteger(error.code)) return error;
+  // Intentional McpFn errors retain their existing public message, but no backend data.
+  const message = error instanceof McpFnError ? error.message : "Internal error";
+  const normalized = new McpError(ErrorCode.InternalError, message);
+  // McpError prefixes its local Error.message; the wire message stays public text.
+  normalized.message = message;
+  return normalized;
+}
+
 export class McpFnServer<TContext = undefined> {
   readonly registry: McpFnRegistry<TContext>;
   readonly info: McpFnServerInfo;
@@ -284,9 +313,16 @@ export class McpFnServer<TContext = undefined> {
     this.installHandlers();
   }
 
+  private readonly setRequestHandler: Server["setRequestHandler"] = (schema, handler) => {
+    this.protocol.setRequestHandler(schema, async (request, extra) => {
+      try { return await handler(request, extra); }
+      catch (error) { throw protocolError(error); }
+    });
+  };
+
   private installHandlers(): void {
     if (this.capabilities.tools) {
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -316,7 +352,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -510,7 +546,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -525,7 +561,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -539,7 +575,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -547,7 +583,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        this.protocol.setRequestHandler(
+        this.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const context = await this.contextFactory(extra);
@@ -560,7 +596,7 @@ export class McpFnServer<TContext = undefined> {
             return {};
           },
         );
-        this.protocol.setRequestHandler(
+        this.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             const context = await this.contextFactory(extra);
@@ -577,7 +613,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -591,7 +627,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -606,7 +642,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      this.protocol.setRequestHandler(
+      this.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -775,6 +811,9 @@ export class McpFnServer<TContext = undefined> {
     if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs <= 0 || idleTimeoutMs > 2_147_483_647) {
       throw new RangeError("idleTimeoutMs must be a positive integer no greater than 2147483647");
     }
+    const failure = (status: number, message: string) => new Response(JSON.stringify({
+      jsonrpc: "2.0", error: { code: status === 404 ? -32001 : -32000, message }, id: null,
+    }), { status, headers: { "content-type": "application/json" } });
     if (!transportOptions.sessionIdGenerator) {
       if (this.serverOptions.taskStore) {
         throw new Error("HTTP task storage requires sessionIdGenerator; stateless requests cannot isolate tasks between callers");
@@ -782,7 +821,15 @@ export class McpFnServer<TContext = undefined> {
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
       }
+      let closed = false;
+      const releases = new Set<() => Promise<void>>();
+      this.handlerClosers.add(async () => {
+        closed = true;
+        await Promise.all([...releases].map(release => release()));
+      });
       return async (request: Request, handleOptions?: HandleRequestOptions) => {
+        if (closed) return failure(503, "Server closed");
+        const pendingResponses = new Set<() => void>();
         const requestServer = new McpFnServer(this.serverOptions);
         const transport = new WebStandardStreamableHTTPServerTransport(
           transportOptions,
@@ -792,16 +839,21 @@ export class McpFnServer<TContext = undefined> {
         const release = async () => {
           if (released) return;
           released = true;
+          for (const settle of pendingResponses) settle();
+          releases.delete(release);
           this.requestServers.delete(requestServer);
           await requestServer.close();
         };
 
+        releases.add(release);
         try {
           await configureRequestServer?.(requestServer);
+          if (released) return failure(503, "Server closed");
           await requestServer.connect(transport);
-          const response = await transport.handleRequest(
-            request,
-            handleOptions,
+          if (released) return failure(503, "Server closed");
+          const response = await responseUntilClosed(
+            transport.handleRequest(request, handleOptions), pendingResponses,
+            () => released, () => failure(503, "Server closed"),
           );
           return releaseAfterResponse(response, release);
         } catch (error) {
@@ -814,6 +866,7 @@ export class McpFnServer<TContext = undefined> {
     type Session = {
       transport: WebStandardStreamableHTTPServerTransport;
       authenticatedOwner?: string;
+      pendingResponses: Set<() => void>;
       active: number;
       timer?: ReturnType<typeof setTimeout>;
       released: boolean;
@@ -828,9 +881,6 @@ export class McpFnServer<TContext = undefined> {
       await Promise.all([...reservations].map((session) => session.release()));
     };
     this.handlerClosers.add(closeHandler);
-    const failure = (status: number, message: string) => new Response(JSON.stringify({
-      jsonrpc: "2.0", error: { code: status === 404 ? -32001 : -32000, message }, id: null,
-    }), { status, headers: { "content-type": "application/json" } });
     const cancelIdle = (session: Session) => {
       if (session.timer !== undefined) clearTimeout(session.timer);
       session.timer = undefined;
@@ -861,7 +911,12 @@ export class McpFnServer<TContext = undefined> {
         session.active++;
         const finish = finishRequest(session);
         try {
-          const response = await session.transport.handleRequest(request, handleOptions);
+          const pending = session.transport.handleRequest(request, handleOptions);
+          // DELETE closes its own session before producing its successful 200 response.
+          const response = await (request.method === "DELETE" ? pending : responseUntilClosed(
+            pending, session.pendingResponses, () => session.released,
+            () => failure(closed ? 503 : 404, closed ? "Server closed" : "Session not found"),
+          ));
           return await releaseAfterResponse(response, finish);
         } catch (error) {
           await finish();
@@ -876,6 +931,7 @@ export class McpFnServer<TContext = undefined> {
       if (reservations.size >= maxSessions) return failure(503, "Session capacity reached");
       const requestServer = new McpFnServer(this.serverOptions);
       let initializedSessionId: string | undefined;
+      let initializationFailed = false;
       const transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
         onsessioninitialized: async (id) => {
@@ -887,6 +943,7 @@ export class McpFnServer<TContext = undefined> {
             await transportOptions.onsessioninitialized?.(id);
             if (closed || session.released) throw new Error("Server closed");
           } catch (error) {
+            initializationFailed = true;
             await session.release();
             throw error;
           }
@@ -903,11 +960,13 @@ export class McpFnServer<TContext = undefined> {
       const session: Session = {
         transport,
         authenticatedOwner,
+        pendingResponses: new Set(),
         active: 1,
         released: false,
         release: async () => {
           if (session.released) return;
           session.released = true;
+          for (const settle of session.pendingResponses) settle();
           cancelIdle(session);
           if (initializedSessionId && sessions.get(initializedSessionId) === session) {
             sessions.delete(initializedSessionId);
@@ -925,7 +984,13 @@ export class McpFnServer<TContext = undefined> {
         if (closed || session.released) return failure(503, "Server closed");
         await requestServer.connect(transport);
         if (closed || session.released) return failure(503, "Server closed");
-        const response = await transport.handleRequest(request, handleOptions);
+        const response = await responseUntilClosed(
+          transport.handleRequest(request, handleOptions), session.pendingResponses,
+          () => session.released,
+          () => closed ? failure(503, "Server closed")
+            : initializationFailed ? failure(500, "Session initialization failed")
+            : failure(404, "Session not found"),
+        );
         // SDK initialization can convert callback errors into an HTTP error response.
         if (!initializedSessionId || session.released || response.status >= 400) {
           return await releaseAfterResponse(response, session.release);
@@ -1046,7 +1111,7 @@ function authenticatedSessionOwner(options?: HandleRequestOptions): string | und
   if (!auth) return undefined;
   // OAuth clientId identifies the application, not the human using it.
   // Missing subject cannot safely fall back to that shared application ID.
-  if (typeof auth.clientId !== "string" || !auth.clientId ||
+  if (typeof auth.clientId !== "string" || !auth.clientId.trim() ||
       typeof auth.extra?.subject !== "string" || !auth.extra.subject.trim()) return null;
   for (const claim of [auth.extra.tenantId, auth.extra.regionId]) {
     if (claim !== undefined && typeof claim !== "string") return null;

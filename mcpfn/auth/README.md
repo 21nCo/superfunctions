@@ -18,6 +18,8 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
+AuthFn resource IDs can identify projects or organizations rather than URLs. Configure `providerResourceId: "proj_123"` alongside `resource: "https://mcp.example.com/mcp"` to associate that trusted local project with this MCP endpoint. The adapter accepts that exact ID or the normalized MCP URL and passes the configured ID to `provider.authorize`. This requires both an exact resource claim and provider approval; construction rejects `providerResourceId` without a callable `provider.authorize`; hierarchical authorization alone does not replace the claim. Project binding is an explicit local trust policy, not proof of an OAuth URL audience. Tools should scope to reserved `authInfo.extra.boundResourceId`; `resourceIds` lists all asserted entitlements. Other opaque IDs remain rejected; do not derive this mapping from the incoming request. Authorization and required-scope hooks receive isolated principal copies and cannot rewrite accepted identity claims; enrich claims in `map`. Mapped `extra` must contain structured-cloneable data (class prototypes are not preserved); non-cloneable values produce a non-retryable 500 `invalid_provider_configuration` response. Direct adapter callers receive exported `McpFnPrincipalConfigurationError` with code `MCPFN_INVALID_PROVIDER_CONFIGURATION`. The stock AuthFn server provider currently implements `authorize` as unconditional denial. McpFn honors that denial even with `providerResourceId`; integration requires a provider implementation that actually authorizes the configured project. Do not remove its authorization hook to bypass denial.
+
 Provider adapters require a matching normalized resource claim by default. `authorize` hooks do not implicitly permit resource-agnostic credentials. Set `unboundSessions: "allow"` only when the deployment intentionally accepts them; the resulting `authInfo.extra.resourceBinding` is `"unbound"`. Nonempty conflicting raw or mapped resource claims are rejected even with this option. Adapter authorization hooks receive the configured `resource` and `resourceBound` status. Malformed expiry values fail with 401; provider sessions use `Date` and mapped principals/verifiers use epoch seconds. Stateful HTTP also requires a stable verified `authInfo.extra.subject`, with tenant/region claims where applicable; OAuth client ID alone cannot distinguish users sharing an application.
 
 ## Client provider
@@ -92,6 +94,6 @@ required. A bearer-specific provider can implement
 `authenticateBearer(token, request)` directly; a standard AuthFn
 `authenticate(request)` provider is invoked with a credential-isolated request
 containing only that exact Bearer token. An AuthProvider's `authorize()` hook
-receives the normalized MCP resource URL before trusted context is created. `auth-diagnose` and
+receives `providerResourceId` when configured, otherwise the normalized MCP resource URL, before trusted context is created. `auth-diagnose` and
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.

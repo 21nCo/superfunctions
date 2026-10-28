@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { McpFnRegistry, createMcpFnServer } from "../src/index.js";
+import { McpFnRegistry, createMcpFnServer, structuredResult } from "../src/index.js";
 
 const servers: ReturnType<typeof createMcpFnServer>[] = [];
 afterEach(async () => {
@@ -60,6 +60,20 @@ describe("stateful HTTP ownership and resource limits", () => {
     resume.resolve();
     expect((await consume(await first)).status).toBe(200);
     expect((await consume(await handler(request("same")))).status).toBe(200);
+  });
+
+  it.each([true, false])("returns generic 500 and releases capacity when an initialization callback fails (JSON=%s)", async enableJsonResponse => {
+    let attempts = 0;
+    const handler = await server().createWebStandardHandler({
+      maxSessions: 1, enableJsonResponse, sessionIdGenerator: () => `initial-${attempts}`,
+      onsessioninitialized: async () => { if (++attempts === 1) throw new Error("private database credentials"); },
+    });
+    const failed = await handler(request());
+    expect(failed.status).toBe(500);
+    expect(failed.headers.has("mcp-session-id")).toBe(false);
+    expect(await failed.json()).toEqual({ jsonrpc: "2.0", error: { code: -32000, message: "Session initialization failed" }, id: null });
+    expect((await consume(await handler(request("initial-0")))).status).toBe(404);
+    expect((await consume(await handler(request()))).status).toBe(200);
   });
 
   it("counts pending initialization and frees its reservation after failed configuration", async () => {
@@ -137,6 +151,27 @@ describe("stateful HTTP ownership and resource limits", () => {
     expect((await consume(await pending)).status).toBeGreaterThanOrEqual(400);
     expect((await consume(await handler(request("late-hook")))).status).toBe(503);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["stateful-parent", "stateless-parent", "stateful-delete"])("settles pending JSON responses on %s close", async mode => {
+    const started = deferred(), finish = deferred();
+    let signal!: AbortSignal;
+    const instance = createMcpFnServer({ info: { name: "slow", version: "1" }, registry: new McpFnRegistry().register({
+      name: "slow", description: "Slow", inputSchema: { type: "object" },
+      handler: async (_args, _context, extra) => { signal = extra.signal; started.resolve(); await finish.promise; return structuredResult({ ok: true }); },
+    }) });
+    servers.push(instance);
+    const stateful = mode !== "stateless-parent";
+    const handler = await instance.createWebStandardHandler({ enableJsonResponse: true, ...(stateful ? { sessionIdGenerator: () => "slow-session" } : {}) });
+    if (stateful) await consume(await handler(request()));
+    const call = new Request("https://example.com/mcp", { method: "POST", headers: { accept: "application/json, text/event-stream", "content-type": "application/json", ...(stateful ? { "mcp-session-id": "slow-session" } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "slow", arguments: {} } }) });
+    const pending = handler(call); await started.promise;
+    try {
+      if (mode === "stateful-delete") expect((await consume(await handler(request("slow-session", "DELETE")))).status).toBe(200);
+      else await instance.close();
+      expect(signal.aborted).toBe(true);
+      expect((await consume(await pending)).status).toBe(mode === "stateful-delete" ? 404 : 503);
+    } finally { finish.resolve(); }
   });
 
   it.each([0, -1, 1.1, NaN, Infinity])("rejects invalid capacity and idle timeout %s", async value => {

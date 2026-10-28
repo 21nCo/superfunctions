@@ -1,5 +1,6 @@
+import type { AuthProvider } from "../../../packages/auth/src/types.js";
 import { describe, expect, it, vi } from "vitest";
-import { createAuthProviderMcpHandler, type McpFnAuthSessionLike } from "../src/provider-adapter.js";
+import { createMcpFnAuthProviderAdapter, McpFnPrincipalConfigurationError, createAuthProviderMcpHandler, type McpFnAuthSessionLike } from "../src/provider-adapter.js";
 
 const resource = "https://mcp.example.com/mcp";
 const request = () => new Request(resource, { headers: { authorization: "Bearer token" } });
@@ -138,4 +139,127 @@ it("does not promote free-form extras into absent trusted tenant or region claim
   expect(response.status).toBe(200);
   const info = await response.json();
   expect(info.extra).not.toHaveProperty('tenantId'); expect(info.extra).not.toHaveProperty('regionId');
+});
+
+it("maps only an explicitly configured provider project ID", async () => {
+  const authorize = vi.fn(async (_session, id: string) => id === "proj_123");
+  const provider: AuthProvider = { authenticate: async () => ({ id: "client", type: "api-key", subject: { actorId: "user", actorType: "user" }, resourceIds: ["proj_123"] }), authorize };
+  const downstream = async (_request: Request, options: any) => Response.json(options.authInfo);
+  expect((await createAuthProviderMcpHandler(downstream, { resource, provider })(request())).status).toBe(401);
+  const response = await createAuthProviderMcpHandler(downstream, { resource, provider, providerResourceId: "proj_123" })(request());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ resource, extra: { resourceBinding: "bound", resourceIds: ["proj_123"] } });
+  expect(authorize).toHaveBeenCalledWith(expect.anything(), "proj_123");
+  for (const resourceIds of [["proj_other"], ["00000000-0000-0000-0000-000000000000"]]) {
+    const handler = createAuthProviderMcpHandler(downstream, { resource, providerResourceId: "proj_123", unboundSessions: "allow",
+      provider: { authenticate: async () => session({ resourceIds }), authorize: async () => true }, authorize: () => true });
+    expect((await handler(request())).status).toBe(401);
+  }
+});
+
+it.each([null, resource, {}, [123], [resource, null]])("rejects malformed raw and mapped resourceIds %j with401", async resourceIds => {
+  for (const mapped of [false, true]) {
+    const handler = createAuthProviderMcpHandler(async () => Response.json({ ok: true }), { resource,
+      provider: { authenticate: async () => session(mapped ? {} : { resourceIds: resourceIds as any }) },
+      ...(mapped ? { map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: resourceIds as any }) } : {}),
+    });
+    expect((await handler(request())).status).toBe(401);
+  }
+});
+
+it("isolates accepted claims from authorization and scope policy mutations", async () => {
+  const expiresAt = Math.floor(Date.now() / 1000) + 600;
+  const principal = { subject: "user", clientId: "client", scopes: ["read"], resourceIds: [resource], expiresAt,
+    tenantId: "tenant", extra: { authMethods: ["forged"], nested: { trusted: true } } };
+  const handler = createAuthProviderMcpHandler(async (_request, options) => Response.json(options?.authInfo), { resource,
+    provider: { authenticate: async () => session(), authorize: async () => { principal.scopes.push("provider-injected"); return true; } },
+    map: () => principal,
+    authorize: ({ principal: copy }) => { copy.subject = "attacker"; copy.clientId = "other"; copy.tenantId = "other";
+      copy.scopes.push("admin"); copy.resourceIds.length = 0; copy.expiresAt = Infinity; (copy.extra!.nested as any).trusted = false; return true; },
+    requiredScopes: ({ principal: copy }) => { copy.scopes.push("scope-injected"); return ["read"]; },
+  });
+  const response = await handler(request());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ token: "token", resource, clientId: "client", scopes: ["read"], expiresAt,
+    extra: { subject: "user", tenantId: "tenant", resourceIds: [resource], resourceBinding: "bound", boundResourceId: resource, nested: { trusted: true } } });
+});
+
+it("checks mapped project bindings and rejects invalid local mapping configuration", async () => {
+  for (const providerResourceId of ["", " ", " proj_123", null, 123]) {
+    expect(() => createAuthProviderMcpHandler(async () => new Response(), { resource, providerResourceId: providerResourceId as any,
+      provider: { authenticate: async () => session() } })).toThrow("providerResourceId must be a nonempty string");
+  }
+  for (const mappedId of ["proj_123", "proj_other"]) {
+    const handler = createAuthProviderMcpHandler(async () => new Response(), { resource, providerResourceId: "proj_123",
+      provider: { authenticate: async () => session({ resourceIds: ["proj_123"] }), authorize: async () => true },
+      map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: [mappedId] }),
+    });
+    expect((await handler(request())).status).toBe(mappedId === "proj_123" ? 200 : 401);
+  }
+});
+
+it("honors project authorizer denial and rejects conflicting mapped claims even with unbound allow", async () => {
+  for (const deny of [true, false]) {
+    const handler = createAuthProviderMcpHandler(async () => new Response(), { resource, providerResourceId: "proj_123", unboundSessions: "allow",
+      provider: { authenticate: async () => session({ resourceIds: ["proj_123"] }), authorize: async () => !deny },
+      map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: [deny ? "proj_123" : "proj_other"] }),
+    });
+    expect((await handler(request())).status).toBe(401);
+  }
+});
+
+it("classifies noncloneable mapped extras as configuration errors", async () => {
+  const handler = createAuthProviderMcpHandler(async () => new Response(), { resource,
+    provider: { authenticate: async () => session() },
+    map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: [resource], extra: { can: () => true } }),
+  });
+  const response = await handler(request());
+  expect(response.status).toBe(500);
+  expect(await response.json()).toMatchObject({ error: "invalid_provider_configuration" });
+});
+
+it("reads expiry once before validation and does not promote all project entitlements to the endpoint binding", async () => {
+  let reads = 0;
+  const handler = createAuthProviderMcpHandler(async (_request, options) => Response.json(options?.authInfo), { resource, providerResourceId: "proj_123",
+    provider: { authenticate: async () => session({ resourceIds: ["proj_456", "proj_123"] }), authorize: async () => true },
+    map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: ["proj_456", "proj_123"],
+      get expiresAt() { reads++; return reads === 1 ? Math.floor(Date.now() / 1000) + 600 : Infinity; } }),
+  });
+  const response = await handler(request());
+  expect(response.status).toBe(200);
+  expect(reads).toBe(1);
+  expect(await response.json()).toMatchObject({ extra: { boundResourceId: "proj_123", resourceIds: ["proj_456", "proj_123"] } });
+});
+
+it.each([{ scopes: "read" }, { authMethods: "password" }, { subject: 3 }, { clientId: null }, { tenantId: {} }, { regionId: [] }])("rejects malformed mapped identity claims %j", async invalid => {
+  const handler = createAuthProviderMcpHandler(async () => new Response(), { resource,
+    provider: { authenticate: async () => session() },
+    map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: [resource], ...invalid } as any),
+  });
+  expect((await handler(request())).status).toBe(401);
+});
+
+
+it("requires an authorizer for explicit provider resource mapping", () => {
+  expect(() => createMcpFnAuthProviderAdapter({ resource, providerResourceId: "proj_123",
+    provider: { authenticate: async () => session({ resourceIds: ["proj_123"] }) },
+  })).toThrow("providerResourceId requires provider.authorize");
+});
+
+it("exposes a stable configuration error to direct adapter callers", async () => {
+  const adapter = createMcpFnAuthProviderAdapter({ resource, provider: { authenticate: async () => session() },
+    map: () => ({ subject: "user", clientId: "client", scopes: [], resourceIds: [resource], extra: { can: () => true } }),
+  });
+  await expect(adapter.authenticate(request())).rejects.toBeInstanceOf(McpFnPrincipalConfigurationError);
+  await expect(adapter.authenticate(request())).rejects.toMatchObject({ name: "McpFnPrincipalConfigurationError",
+    code: "MCPFN_INVALID_PROVIDER_CONFIGURATION", message: "Mapped extra claims must be structured-cloneable data" });
+});
+
+
+it("fails closed if the configured project authorizer is removed after construction", async () => {
+  const provider: AuthProvider = { authenticate: async () => ({ id: "client", type: "api-key", subject: { actorId: "user", actorType: "user" }, resourceIds: ["proj_123"] }), authorize: async () => true };
+  const adapter = createMcpFnAuthProviderAdapter({ resource, providerResourceId: "proj_123", provider });
+  expect(await adapter.authenticate(request())).not.toBeNull();
+  delete provider.authorize;
+  expect(await adapter.authenticate(request())).toBeNull();
 });

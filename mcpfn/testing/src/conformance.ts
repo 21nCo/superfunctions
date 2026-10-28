@@ -355,7 +355,7 @@ async function runConformance(
     const onSigint = () => onProcessSignal("SIGINT");
     const onSigterm = () => onProcessSignal("SIGTERM");
     const onError = (error: Error) => {
-      if (!stopping) stop(String(redactOAuthValue(error.message)));
+      if (!stopping) void stop(String(redactOAuthValue(error.message)));
     };
     const onClose = (code: number | null) => {
       if (stopping || settled) return;
@@ -368,7 +368,7 @@ async function runConformance(
       capturedBytes += Buffer.byteLength(chunk, "utf8");
       if (capturedBytes > 262_144) {
         stdout = ""; stderr = "";
-        stop("Conformance output exceeded its capture limit");
+        void stop("Conformance output exceeded its capture limit");
         return;
       }
       if (stream === "stdout") stdout += chunk;

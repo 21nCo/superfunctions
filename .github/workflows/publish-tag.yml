@@ -53,6 +53,10 @@ jobs:
         id: resolve
         run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"
 
+      - name: Verify MCP version and dependency publication order
+        if: '!inputs.channel_only'
+        run: node ./scripts/assert-mcpfn-release-ready.mjs "$RELEASE_TAG"
+
       - name: Require prerelease for channel-only dispatch
         if: inputs.channel_only && steps.resolve.outputs.dist_tag == 'latest'
         run: |
@@ -85,6 +89,10 @@ jobs:
 
       - name: Recheck immutable release tag
         run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+
+      - name: Recheck MCP registry prerequisites before publication
+        if: '!inputs.channel_only'
+        run: node ./scripts/assert-mcpfn-release-ready.mjs "$RELEASE_TAG"
 
       - name: Publish package
         if: '!inputs.channel_only'

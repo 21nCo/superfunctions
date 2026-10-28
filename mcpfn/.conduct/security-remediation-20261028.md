@@ -118,3 +118,17 @@ on other request paths and JSON-response shutdown still require bounded triage.
 
 This is a tested draft checkpoint, not a statement that all review follow-ups or
 production/release gates are closed. No package was published.
+
+## Qualified follow-up checkpoint
+
+The combined follow-up gate passed **104/104 steps** in `/tmp/mcp-followup-gate-v2-20261028.log`; full command evidence is in `/tmp/mcp-followup-gate-v2-artifacts-20261028/step-results/`. All 20 frozen changed/new files matched their pre-run SHA256 values afterward; the durable receipt is `security-followup-source-hashes-20261028.json`. Core passed 317 tests, Auth 117, Testing 305, and DataFn server 1,152 with one skip. Fresh-package Node 18.18/20.0/22.13 HTTP lifecycle checks, the existing minimum-runtime ecosystem checks, conformance, browser/worker acceptance and production dependency audit all passed.
+
+This batch closes the confirmed all-handler error-disclosure and pending-HTTP shutdown defects, including a generic 500 for failed initialization. Provider resource-ID mapping now requires provider authorization, snapshots/validates claims before policy callbacks, and fails closed if its authorizer disappears. Noncloneable provider configuration produces an explicit nonretryable configuration error. The stock AuthFn provider still denies authorization and has a separate unresolved functional implementation gap; no bypass was added.
+
+The release preflight rejects an existing target version and unavailable internal dependency versions, both before building and before publication. Live read-only checks accepted unpublished core 0.0.6 and correctly rejected testing 0.0.6 until its dependency versions exist. The bundle verifier rejects escaping symlinks and unsupported identities/options. Exact fresh core archive extraction with `/usr/bin/tar` and inventory verification passed separately; temporary files were removed. The first follow-up gate stopped at an outdated synthetic bundler fixture missing its package name; correcting the fixture preserved the new identity boundary, and the complete rerun passed.
+
+Sequential critical Opus 5.5 reviews accepted the core, provider and release fixes. The tiny generic-initialization-status and final request-time authorizer/test-assertion deltas were qualified after their reviews and are not misrepresented as part of the earlier frozen review snapshots. The earlier core review that inspected SDK 1.25.2 was superseded by the corrected review of actual SDK 1.32.1; its two invalid SDK findings remain retracted.
+
+SonarCloud on the prior pushed head reported two promise-marking findings and two release-script security findings. This batch adds explicit ignored-promise markers, package-root containment and a fixed archive executable. A new remote analysis is still required; this is not a claim that its gate is already green.
+
+Registry availability does not prove source identity. Existing consumer-tree evidence confirms that Auth tests use registry OAuth Core 0.1.1 and MCP DataFn tests use registry DataFn Core 0.1.0/Server 0.1.1/DB 0.2.0, even when newer workspace packages are also installed. The newer DataFn server features are tested separately. Fresh-package MCP DataFn CRUD coverage, next-branch dependency/build qualification, publication-source convergence, post-publication core/auth readback and conformance-runner dependency/environment policy remain open. No publication, deployment or merge occurred.

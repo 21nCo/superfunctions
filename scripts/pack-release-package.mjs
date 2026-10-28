@@ -42,7 +42,8 @@ const tarball = path.join(destination, packed[0].filename);
 if (["@mcpfn/core", "@mcpfn/auth"].includes(target.name)) {
   const extracted = await mkdtemp(path.join(tmpdir(), 'mcp-release-inventory-'));
   try {
-    execFileSync('tar', ['-xzf', tarball, '-C', extracted], { stdio: 'pipe' });
+    // The release workflow runs on Ubuntu; do not resolve archive tools through PATH.
+    execFileSync('/usr/bin/tar', ['-xzf', tarball, '-C', extracted], { stdio: 'pipe' });
     execFileSync(process.execPath, [path.join(root, 'mcpfn/core/scripts/verify-bundled-inputs.mjs'), path.join(extracted, 'package')], { stdio: 'inherit' });
   } finally {
     await rm(extracted, { recursive: true, force: true });

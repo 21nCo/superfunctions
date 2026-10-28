@@ -427,6 +427,8 @@ process.stdout.write(JSON.stringify({ ok: true, transports: ["stdio", "streamabl
 
 try {
   verifyMcpSdkSecurityPolicy();
+  run("release:bundle-input-boundary", process.execPath, ["--test", "mcpfn/core/scripts/verify-bundled-inputs.test.mjs"]);
+  run("release:registry-preflight-contract", process.execPath, ["--test", "scripts/assert-mcpfn-release-ready.test.mjs"]);
   run("process-ownership:regression", process.execPath, ["--test", "scripts/run-owned-step.test.mjs"]);
   run("bundled-inputs:negative-controls", process.execPath, ["--test", "mcpfn/core/scripts/bundled-inputs.test.mjs"]);
   for (const workspace of [
@@ -448,6 +450,7 @@ try {
   npmStep("admin:test", ["run", "test", "--workspace", "@superfunctions/admin"]);
   npmStep("admin:build", ["run", "build", "--workspace", "@superfunctions/admin"]);
   run("core:packed-runtime", process.execPath, ["mcpfn/core/scripts/packed-runtime-acceptance.mjs"]);
+  run("core:packed-http-lifecycle", process.execPath, ["mcpfn/core/scripts/packed-http-lifecycle.mjs"]);
   for (const entry of ["esm", "cjs"]) {
     run(`core:built-schema-${entry}`, process.execPath, [
       "--disallow-code-generation-from-strings",

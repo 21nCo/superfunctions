@@ -14,7 +14,7 @@ for (const version of ['1.29.0', '1.32.1']) {
     const root = mkdtempSync(join(tmpdir(), 'mcpfn-build-inputs-'));
     const write = (path, content) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
     try {
-      write(join(root, 'package.json'), JSON.stringify({ dependencies: {'@modelcontextprotocol/sdk': '1.32.1'}, devDependencies: {zod:'4.6.6'} }));
+      write(join(root, 'package.json'), JSON.stringify({ name:'@mcpfn/core', dependencies: {'@modelcontextprotocol/sdk': '1.32.1'}, devDependencies: {zod:'4.6.6'} }));
       write(join(root, 'node_modules/@modelcontextprotocol/sdk/package.json'), JSON.stringify({name:'@modelcontextprotocol/sdk', version}));
       const sdkSource = 'export const sdk = "fixture";';
       write(join(root, 'node_modules/@modelcontextprotocol/sdk/types.js'), sdkSource);
