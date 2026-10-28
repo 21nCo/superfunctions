@@ -1,0 +1,82 @@
+{
+  "name": "@searchfn/adapter-sqlite",
+  "version": "0.1.0",
+  "description": "SQLite FTS5 adapter for SearchFn on better-sqlite3, libSQL/Turso and Cloudflare D1.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
+    "test:node": "vitest run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts",
+    "test:watch": "vitest watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "search",
+    "searchfn",
+    "sqlite",
+    "fts5",
+    "d1",
+    "libsql",
+    "turso",
+    "cloudflare-workers"
+  ],
+  "author": "21n",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "searchfn/adapter-sqlite"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "@searchfn/adapter-contracts": "^0.4.0",
+    "@superfunctions/observability": "0.0.1"
+  },
+  "peerDependencies": {
+    "@libsql/client": ">=0.14.0",
+    "better-sqlite3": ">=11.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@libsql/client": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.4",
+    "@datafn/core": "*",
+    "@datafn/server": "0.2.0",
+    "@libsql/client": "^0.15.15",
+    "@searchfn/client": "^0.3.0",
+    "@searchfn/datafn-provider": "^0.4.0",
+    "@superfunctions/db": "0.3.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.9.1",
+    "better-sqlite3": "^12.5.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

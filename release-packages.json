@@ -115,6 +115,7 @@
   { "slug": "searchfn-adapter-meilisearch", "path": "searchfn/adapter-meilisearch", "name": "@searchfn/adapter-meilisearch" },
   { "slug": "searchfn-adapter-opensearch", "path": "searchfn/adapter-opensearch", "name": "@searchfn/adapter-opensearch" },
   { "slug": "searchfn-adapter-postgres", "path": "searchfn/adapter-postgres", "name": "@searchfn/adapter-postgres" },
+  { "slug": "searchfn-adapter-sqlite", "path": "searchfn/adapter-sqlite", "name": "@searchfn/adapter-sqlite" },
   { "slug": "searchfn-core-wasm", "path": "searchfn/core-wasm", "name": "@searchfn/core-wasm" },
   { "slug": "searchfn-server", "path": "searchfn/server", "name": "@searchfn/server" },
   { "slug": "mailfn-core", "path": "mailfn/core", "name": "@mailfn/core" },
