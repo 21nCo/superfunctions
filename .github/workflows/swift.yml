@@ -84,6 +84,10 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Build @uifn/tokens and @uifn/theme
         run: ./node_modules/.bin/turbo run build --filter=@uifn/theme
+      # These tests read the default theme JSON and the committed Swift theme,
+      # which turbo does not track as @uifn/tokens inputs.
+      - name: "@uifn/tokens tests (conversion vectors and the committed default theme)"
+        run: npm test --workspace=@uifn/tokens
       - name: Regenerating the committed Swift tokens produces no diff
         run: |
           node uifn/swift/scripts/generate-tokens.mjs

@@ -15,6 +15,7 @@ const vectors = JSON.parse(readFileSync(join(here, 'fixtures/swift-color-vectors
 const DEFAULT_THEME_FILES = ['uifn-light', 'uifn-dark', 'uifn-high-contrast-light', 'uifn-high-contrast-dark'].map(
   (name) => join(here, '../../../theme/src/themes', `${name}.json`)
 );
+const DEFAULT_SWIFT_FILE = join(here, '../../../swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift');
 const EXTRA_VECTORS = [
   'oklch(0% 0 0)',
   'oklch(100% 0 0)',
@@ -246,6 +247,7 @@ describe('generateSwiftTokens', () => {
     const cases: Array<[string, () => unknown, string]> = [
       ['dark mode in the light slot', () => generateSwiftTokens({ light: theme('dark') }, { name: 'fixture' }), 'UIFN_SWIFT_THEME_INVALID'],
       ['keyword name', () => generateSwiftTokens({ light: theme('light') }, { name: 'default' }), 'UIFN_SWIFT_THEME_INVALID'],
+      ['wildcard name', () => generateSwiftTokens({ light: theme('light') }, { name: '_' }), 'UIFN_SWIFT_THEME_INVALID'],
       ['bad import', () => generateSwiftTokens({ light: theme('light') }, { name: 'fixture', imports: ['UIFn SwiftUI'] }), 'UIFN_SWIFT_THEME_INVALID'],
       [
         'dark-only custom tone',
@@ -272,11 +274,62 @@ describe('generateSwiftTokens', () => {
     expect(darkMissingCustom.details).toMatchObject({ appearance: 'dark', path: 'color.custom.solid' });
   });
 
-  it('names the token when a value or group is missing or unsupported', () => {
-    const withoutSpace = theme('light');
-    delete withoutSpace.tokens.space;
-    expect(errorOf(() => generateSwiftTokens({ light: withoutSpace }, { name: 'fixture' })).details).toEqual({ path: 'space.1' });
+  it('fills omitted spacing and typography from the foundations and keeps supplied values', () => {
+    const light = theme('light');
+    delete light.tokens.space;
+    light.tokens.typography = { size: { md: { $type: 'dimension', $value: '15px' } } };
+    const dark = theme('dark');
+    delete dark.tokens.space;
+    dark.tokens.typography = { size: { md: { $type: 'dimension', $value: '15px' } } };
 
+    const swift = generateSwiftTokens({ light, dark }, { name: 'fixture' });
+    expect(swift).toContain('space1: 4,');
+    expect(swift).toContain('space12: 48');
+    expect(swift).toContain('md: UIFnTypeSize(points: 15, textStyle: .subheadline),');
+    expect(swift).toContain('xl: UIFnTypeSize(points: 18, textStyle: .body)');
+    expect(swift).toContain('semibold: UIFnFontWeight(650),');
+    expect(swift).toContain('relaxed: 1.65');
+  });
+
+  it('allows appearances to differ in tokens Swift does not emit', () => {
+    const dark = theme('dark');
+    ((dark.tokens.typography as TokenTree).family as TokenTree).sans = { $type: 'fontFamily', $value: 'serif' };
+    dark.tokens.elevation = { shadow: { md: { $type: 'shadow', $value: '0 8px 24px rgb(0 0 0 / 40%)' } } };
+    dark.tokens.density = { ...(dark.tokens.density as TokenTree), compact: { $type: 'number', $value: 0.8 } };
+    dark.tokens.border = { width: { strong: { $type: 'dimension', $value: '3px' } } };
+    expect(generateSwiftTokens({ light: theme('light'), dark }, { name: 'fixture' })).toBe(
+      generateSwiftTokens({ light: theme('light'), dark: theme('dark') }, { name: 'fixture' })
+    );
+
+    const darkTypeSize = theme('dark');
+    ((darkTypeSize.tokens.typography as TokenTree).size as TokenTree).md = { $type: 'dimension', $value: '15px' };
+    expect(errorOf(() => generateSwiftTokens({ light: theme('light'), dark: darkTypeSize }, { name: 'fixture' })).details).toEqual({
+      appearance: 'dark',
+      path: 'typography.size.md',
+    });
+  });
+
+  it('rejects numeric tokens that do not fit a finite Swift literal', () => {
+    const huge = '9'.repeat(400);
+    const cases: Array<[string, string, string | number]> = [
+      ['typography.lineHeight', 'normal', Number.POSITIVE_INFINITY],
+      ['typography.lineHeight', 'tight', 0],
+      ['typography.size', 'md', `${huge}px`],
+      ['space', '4', `${huge}rem`],
+      ['motion.duration', 'slow', `${huge}ms`],
+      ['motion.easing', 'standard', `cubic-bezier(0.2, ${huge}, 0, 1)`],
+    ];
+    for (const [group, name, value] of cases) {
+      const invalid = theme('light');
+      const parent = group.split('.').reduce((node, key) => node[key] as TokenTree, invalid.tokens);
+      parent[name] = { ...(parent[name] as object), $value: value } as TokenTree[string];
+      const error = errorOf(() => generateSwiftTokens({ light: invalid }, { name: 'fixture' }));
+      expect(error.code, `${group}.${name}`).toBe('UIFN_SWIFT_TOKEN_UNSUPPORTED');
+      expect(error.details).toMatchObject({ path: `${group}.${name}` });
+    }
+  });
+
+  it('names the token when a value is unsupported', () => {
     const cases: Array<[string, string, string | number]> = [
       ['radius', 'md', '0.5em'],
       ['radius', 'lg', '-8px'],
@@ -345,6 +398,30 @@ describe('uifn-swift-tokens CLI', () => {
     expect(runSwiftTokensCli([...args, '--check'], memory.io)).toBe(1);
     expect(memory.err.at(-1)).toContain('Theme.swift is out of date');
     expect(memory.files['Theme.swift']).toContain('// edited');
+  });
+
+  it('generates the committed default Swift theme from the raw theme JSON files', () => {
+    const [light, dark, highContrastLight, highContrastDark] = DEFAULT_THEME_FILES;
+    const memory = memoryIo(Object.fromEntries(DEFAULT_THEME_FILES.map((file) => [file, readFileSync(file, 'utf8')])));
+    const args = ['--name', 'uifn', '--light', light, '--dark', dark, '--high-contrast-light', highContrastLight];
+    expect(runSwiftTokensCli([...args, '--high-contrast-dark', highContrastDark, '--out', 'Theme.swift'], memory.io)).toBe(0);
+
+    const raw = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as DesignTokenTheme;
+    const committed = generateSwiftTokens(
+      { light: raw(light), dark: raw(dark), highContrastLight: raw(highContrastLight), highContrastDark: raw(highContrastDark) },
+      { name: 'uifn', regenerateCommand: 'node uifn/swift/scripts/generate-tokens.mjs' }
+    );
+    expect(committed).toBe(readFileSync(DEFAULT_SWIFT_FILE, 'utf8'));
+    expect(memory.files['Theme.swift']).toBe(committed.replace(/^\/\/ Regenerate with: .*\n/m, ''));
+  });
+
+  it('exits nonzero without writing when a theme value cannot be emitted', () => {
+    const json = JSON.stringify(theme('light')).replace('"$value":1.45', '"$value":1e400');
+    const memory = memoryIo({ 'light.json': json });
+    expect(runSwiftTokensCli(['--name', 'x', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(1);
+    expect(memory.err.at(-1)).toContain('"path":"typography.lineHeight.normal"');
+    expect(runSwiftTokensCli(['--name', '_', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(1);
+    expect(memory.files['T.swift']).toBeUndefined();
   });
 
   it('reports usage and generator errors with distinct exit codes', () => {

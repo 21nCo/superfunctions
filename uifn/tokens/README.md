@@ -20,9 +20,11 @@ npx uifn-swift-tokens --name brand \
 ```
 
 - Only the light theme is required. Missing appearances fall back: dark and high-contrast light use the light theme, and high-contrast dark uses the dark theme if there is one, otherwise high-contrast light. Each theme's `mode`, when set, must match its slot.
-- Each theme is checked with `validateTokenTheme`, and token references are resolved. Swift also needs every `space`, `typography.size`, `typography.lineHeight` and `typography.weight` token. Non-color tokens must be the same in every appearance, and every appearance must define the same colors.
+- Each theme is checked with `validateTokenTheme`, and token references are resolved. Any spacing, typography or other foundation token a theme omits takes its value from `createFoundationalTokens()`, the defaults the web theme provider uses; tokens the theme supplies are kept.
+- Spacing, radius, type size, line height, font weight and motion tokens must be the same in every appearance, and every appearance must define the same colors. Tokens Swift does not emit, such as font families and shadows, may differ.
+- Numeric tokens must be finite; a value that overflows, such as `1e400`, is rejected with its token path.
 - Colors are converted from OKLCH (or hex) to both Display P3 and sRGB. Each is gamut-mapped into its own gamut with the CSS Color 4 algorithm, which lowers chroma instead of clipping channels. In Swift, each color is a dynamic platform color that switches on light or dark, increased contrast and, on UIKit, display gamut.
-- Dimensions in `px` or `rem` become points (1rem = 16pt). Each type size also maps to the Dynamic Type text style with the nearest default size (ties go to the larger style), so it scales with the user's text size.
+- Dimensions in `px` or `rem` become points (1rem = 16pt). Each type size also maps to the Dynamic Type text style with the nearest default size (ties go to the larger style), so it scales with the user's text size. In Swift, `UIFnTypeSize.font(weight:dynamicTypeSize:)` and the `uifnFont(_:weight:)` view modifier render the theme's points at the default text size and scale them like that text style; macOS has no Dynamic Type, so there fonts keep the theme's points.
 - `--check` exits 1 without writing when the file is out of date. Use it in CI to catch generated files that no longer match their themes.
 
 Inside this repository, `node uifn/swift/scripts/generate-tokens.mjs` regenerates the default theme's committed `UIFnTheme.uifn` file and the consumer test fixture. CI fails if that leaves a diff.

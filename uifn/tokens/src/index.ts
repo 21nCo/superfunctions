@@ -1,5 +1,6 @@
 export * from './schema';
 export * from './validate';
+export * from './foundations';
 export * from './oklch';
 export * from './gamut';
 export * from './swift';

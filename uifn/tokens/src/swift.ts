@@ -1,3 +1,4 @@
+import { createFoundationalTokens } from './foundations';
 import { oklchToGamutMappedRgb, type RgbTriple } from './gamut';
 import { parseColorToOklch } from './oklch';
 import {
@@ -86,7 +87,8 @@ const COLOR_GROUPS = [
   ['success', 'UIFnToneColors'],
 ] as const;
 
-const SWIFT_IDENTIFIER = /^[A-Za-z_]\w*$/;
+// A lone `_` is the wildcard pattern, not an identifier.
+const SWIFT_IDENTIFIER = /^(?:[A-Za-z]\w*|_\w+)$/;
 const SWIFT_RESERVED = new Set([
   'associatedtype', 'class', 'deinit', 'enum', 'extension', 'fileprivate', 'func', 'import', 'init', 'inout',
   'internal', 'let', 'open', 'operator', 'private', 'protocol', 'public', 'rethrows', 'static', 'struct',
@@ -116,7 +118,10 @@ function swiftString(value: string): string {
   return JSON.stringify(value);
 }
 
-function swiftNumber(value: number): string {
+function swiftNumber(value: number, path: string): string {
+  if (!Number.isFinite(value)) {
+    throw unsupported('Swift numeric tokens must be finite.', { path, value: String(value) });
+  }
   const rounded = Number(value.toFixed(6));
   return Object.is(rounded, -0) ? '0' : String(rounded);
 }
@@ -139,6 +144,13 @@ export function swiftTextStyleForPoints(points: number): SwiftTextStyle {
   return best[0];
 }
 
+function finite(amount: number, path: string, value: unknown): number {
+  if (!Number.isFinite(amount)) {
+    throw unsupported('Swift numeric tokens must be finite.', { path, value });
+  }
+  return amount;
+}
+
 /** Converts a non-negative `px` or `rem` dimension (1rem = 16pt) to points. */
 export function dimensionToPoints(value: string | number, path: string): number {
   const match = /^\s*((?:\d+(?:\.\d*)?|\.\d+))(px|rem)\s*$/i.exec(String(value));
@@ -146,7 +158,7 @@ export function dimensionToPoints(value: string | number, path: string): number 
     throw unsupported('Swift dimensions must be non-negative px or rem values.', { path, value });
   }
   const amount = Number(match[1]);
-  return match[2].toLowerCase() === 'rem' ? amount * 16 : amount;
+  return finite(match[2].toLowerCase() === 'rem' ? amount * 16 : amount, path, value);
 }
 
 /** Converts an `ms` or `s` duration to seconds. */
@@ -156,7 +168,7 @@ export function durationToSeconds(value: string | number, path: string): number 
     throw unsupported('Swift durations must use ms or s units.', { path, value });
   }
   const amount = Number(match[1]);
-  return match[2].toLowerCase() === 'ms' ? amount / 1000 : amount;
+  return finite(match[2].toLowerCase() === 'ms' ? amount / 1000 : amount, path, value);
 }
 
 /** Parses `cubic-bezier(x1, y1, x2, y2)` with control point x values in 0...1. */
@@ -177,10 +189,33 @@ export function parseCubicBezier(value: string | number, path: string): [number,
   return numbers as [number, number, number, number];
 }
 
+// The tokens Swift emits besides colors. Only these must agree across appearances.
+const EMITTED_NON_COLOR_PATHS: readonly string[] = [
+  ...PUBLIC_TOKEN_GROUPS.space.value.map((name) => `space.${name}`),
+  ...PUBLIC_TOKEN_GROUPS.radius.value.map((name) => `radius.${name}`),
+  ...(['size', 'lineHeight', 'weight'] as const).flatMap((group) =>
+    PUBLIC_TOKEN_GROUPS.typography[group].map((name) => `typography.${group}.${name}`)
+  ),
+  ...(['duration', 'easing'] as const).flatMap((group) =>
+    PUBLIC_TOKEN_GROUPS.motion[group].map((name) => `motion.${group}.${name}`)
+  ),
+];
+
+const FOUNDATION_TOKENS = new Map(
+  flattenTokens(createFoundationalTokens()).map(({ path, token }) => [path.join('.'), token])
+);
+
+// Themes may omit the foundations (spacing, typography and other non-color
+// groups), which the web theme provider fills from createFoundationalTokens.
+// Each token the theme omits takes its foundation value; supplied tokens win.
 function resolvedTokens(theme: DesignTokenTheme): Map<string, DesignToken> {
   validateTokenTheme(theme);
   const { theme: resolved } = resolveTokenReferences(theme);
-  return new Map(flattenTokens(resolved.tokens).map(({ path, token }) => [path.join('.'), token]));
+  const tokens = new Map(flattenTokens(resolved.tokens).map(({ path, token }) => [path.join('.'), token]));
+  for (const [path, token] of FOUNDATION_TOKENS) {
+    if (!tokens.has(path)) tokens.set(path, token);
+  }
+  return tokens;
 }
 
 function requireToken(tokens: Map<string, DesignToken>, path: string): DesignToken {
@@ -218,8 +253,10 @@ function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<
   const highContrastDark = provided.get('highContrastDark') ?? (provided.has('dark') ? dark : highContrastLight);
   const resolved = { light, dark, highContrastLight, highContrastDark };
 
-  // Non-color tokens are appearance-independent in Swift, and every variant
-  // must define exactly the light theme's colors so none is dropped or guessed.
+  // Every variant must define exactly the light theme's colors so none is
+  // dropped or guessed. The emitted non-color tokens are appearance-independent
+  // in Swift; tokens Swift does not emit (font families, shadows, control,
+  // icon, border and density) may differ freely.
   const lightColors = colorPaths(light);
   for (const [appearance, tokens] of provided) {
     if (appearance === 'light') continue;
@@ -228,13 +265,19 @@ function resolveAppearances(themes: SwiftThemeSet): Record<SwiftAppearance, Map<
         throw invalid('Variant theme is missing a color the light theme defines.', { appearance, path });
       }
     }
-    for (const [path, token] of tokens) {
-      const base = light.get(path);
-      if (!base || (token.$type === 'color' && !lightColors.includes(path))) {
-        throw invalid('Variant theme defines a token the light theme does not.', { appearance, path });
+    for (const path of tokens.keys()) {
+      if (path.startsWith('color.') && !lightColors.includes(path)) {
+        throw invalid('Variant theme defines a color the light theme does not.', { appearance, path });
       }
-      if (token.$type !== 'color' && outputKey(token) !== outputKey(base)) {
-        throw invalid('Non-color tokens must match the light theme in every appearance.', { appearance, path });
+    }
+    for (const path of EMITTED_NON_COLOR_PATHS) {
+      const token = tokens.get(path);
+      const base = light.get(path);
+      if (token && base && outputKey(token) !== outputKey(base)) {
+        throw invalid('Spacing, radius, type scale and motion tokens must match the light theme in every appearance.', {
+          appearance,
+          path,
+        });
       }
     }
   }
@@ -283,8 +326,8 @@ class SwiftWriter {
   }
 }
 
-function rgb([red, green, blue]: RgbTriple): string {
-  return `UIFnRGB(${swiftNumber(red)}, ${swiftNumber(green)}, ${swiftNumber(blue)})`;
+function rgb([red, green, blue]: RgbTriple, path: string): string {
+  return `UIFnRGB(${swiftNumber(red, path)}, ${swiftNumber(green, path)}, ${swiftNumber(blue, path)})`;
 }
 
 function writeColor(
@@ -300,7 +343,7 @@ function writeColor(
     const value = colorValue(token, path);
     writer.line(`// ${appearance}: ${commentText(token.$value)}`);
     const comma = index === APPEARANCES.length - 1 ? '' : ',';
-    writer.line(`${appearance}: UIFnColorValue(displayP3: ${rgb(value.displayP3)}, sRGB: ${rgb(value.srgb)})${comma}`);
+    writer.line(`${appearance}: UIFnColorValue(displayP3: ${rgb(value.displayP3, path)}, sRGB: ${rgb(value.srgb, path)})${comma}`);
   });
   writer.close(`)${isLast ? '' : ','}`);
 }
@@ -333,7 +376,7 @@ function writeDimensions(
   writer.open(`${label}: ${type}(`);
   entries.forEach(([member, path], index) => {
     const comma = index === entries.length - 1 ? '' : ',';
-    writer.line(`${member}: ${swiftNumber(dimensionToPoints(requireToken(tokens, path).$value, path))}${comma}`);
+    writer.line(`${member}: ${swiftNumber(dimensionToPoints(requireToken(tokens, path).$value, path), path)}${comma}`);
   });
   writer.close(`)${isLast ? '' : ','}`);
 }
@@ -346,13 +389,17 @@ function writeTypography(writer: SwiftWriter, tokens: Map<string, DesignToken>):
     const path = `typography.size.${name}`;
     const points = dimensionToPoints(requireToken(tokens, path).$value, path);
     const comma = index === size.length - 1 ? '' : ',';
-    writer.line(`${name}: UIFnTypeSize(points: ${swiftNumber(points)}, textStyle: .${swiftTextStyleForPoints(points)})${comma}`);
+    writer.line(`${name}: UIFnTypeSize(points: ${swiftNumber(points, path)}, textStyle: .${swiftTextStyleForPoints(points)})${comma}`);
   });
   writer.close('),');
   writer.open('lineHeight: UIFnLineHeights(');
   lineHeight.forEach((name, index) => {
-    const value = Number(requireToken(tokens, `typography.lineHeight.${name}`).$value);
-    writer.line(`${name}: ${swiftNumber(value)}${index === lineHeight.length - 1 ? '' : ','}`);
+    const path = `typography.lineHeight.${name}`;
+    const value = Number(requireToken(tokens, path).$value);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw unsupported('Swift line heights must be finite positive numbers.', { path, value: String(value) });
+    }
+    writer.line(`${name}: ${swiftNumber(value, path)}${index === lineHeight.length - 1 ? '' : ','}`);
   });
   writer.close('),');
   writer.open('weight: UIFnFontWeights(');
@@ -378,13 +425,15 @@ function writeMotion(writer: SwiftWriter, tokens: Map<string, DesignToken>): voi
     const seconds = durationToSeconds(token.$value, path);
     const reduced = durationToSeconds(token.$extensions!.uifn!.reducedMotionValue!, `${path}.reducedMotionValue`);
     const comma = index === duration.length - 1 ? '' : ',';
-    writer.line(`${name}: UIFnDuration(seconds: ${swiftNumber(seconds)}, reducedMotionSeconds: ${swiftNumber(reduced)})${comma}`);
+    writer.line(`${name}: UIFnDuration(seconds: ${swiftNumber(seconds, path)}, reducedMotionSeconds: ${swiftNumber(reduced, path)})${comma}`);
   });
   writer.close('),');
   writer.open('easing: UIFnMotionEasings(');
   easing.forEach((name, index) => {
     const path = `motion.easing.${name}`;
-    const points = parseCubicBezier(requireToken(tokens, path).$value, path).map(swiftNumber).join(', ');
+    const points = parseCubicBezier(requireToken(tokens, path).$value, path)
+      .map((value) => swiftNumber(value, path))
+      .join(', ');
     writer.line(`${name}: UIFnEasing(${points})${index === easing.length - 1 ? '' : ','}`);
   });
   writer.close(')');

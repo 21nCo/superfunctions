@@ -264,7 +264,8 @@ public enum UIFnTextStyle: String, Equatable, Sendable, CaseIterable {
 /// One step of the theme's type scale.
 ///
 /// `points` is the theme size at the default content size; `textStyle` is the
-/// Dynamic Type style with the nearest default size, which the size scales with.
+/// Dynamic Type style with the nearest default size, which the size scales
+/// with. Fonts keep the theme's points rather than the text style's size.
 public struct UIFnTypeSize: Equatable, Sendable {
     public let points: CGFloat
     public let textStyle: UIFnTextStyle
@@ -274,9 +275,23 @@ public struct UIFnTypeSize: Equatable, Sendable {
         self.textStyle = textStyle
     }
 
-    /// The system font for this step's text style, which follows Dynamic Type.
-    public func font(weight: UIFnFontWeight? = nil) -> Font {
-        .system(textStyle.font, weight: weight?.weight)
+    /// The system font at `points`, scaled for `dynamicTypeSize` like `textStyle`.
+    ///
+    /// At the default size (`.large`) the font is exactly `points`. In views,
+    /// prefer ``SwiftUI/View/uifnFont(_:weight:)``, which reads the
+    /// environment's Dynamic Type size.
+    public func font(weight: UIFnFontWeight? = nil, dynamicTypeSize: DynamicTypeSize = .large) -> Font {
+        .system(size: scaledPoints(for: dynamicTypeSize), weight: weight?.weight)
+    }
+
+    /// `points` scaled for a Dynamic Type size like `textStyle`. macOS has no
+    /// Dynamic Type, so there it is always `points`.
+    public func scaledPoints(for dynamicTypeSize: DynamicTypeSize) -> CGFloat {
+        #if os(iOS) || os(tvOS) || os(visionOS)
+        scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize)))
+        #else
+        points
+        #endif
     }
 
     #if os(iOS) || os(tvOS) || os(visionOS)
@@ -285,6 +300,24 @@ public struct UIFnTypeSize: Equatable, Sendable {
         UIFontMetrics(forTextStyle: textStyle.uiKit).scaledValue(for: points, compatibleWith: traits)
     }
     #endif
+}
+
+public extension View {
+    /// Sets the font to a theme type size, scaled for the environment's
+    /// Dynamic Type size like the size's text style.
+    func uifnFont(_ size: UIFnTypeSize, weight: UIFnFontWeight? = nil) -> some View {
+        modifier(UIFnFontModifier(size: size, weight: weight))
+    }
+}
+
+private struct UIFnFontModifier: ViewModifier {
+    let size: UIFnTypeSize
+    let weight: UIFnFontWeight?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        content.font(size.font(weight: weight, dynamicTypeSize: dynamicTypeSize))
+    }
 }
 
 public struct UIFnTypeScale: Equatable, Sendable {

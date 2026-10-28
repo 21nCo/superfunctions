@@ -150,17 +150,43 @@ struct UIFnThemeFoundationTests {
         let size = UIFnTheme.uifn.typography.size
         #expect([size.xs, size.sm, size.md, size.lg, size.xl].map(\.points) == [12, 13, 14, 16, 18])
         #expect([size.xs, size.sm, size.md, size.lg, size.xl].map(\.textStyle) == [.caption, .footnote, .subheadline, .callout, .body])
-        #expect(size.md.font(weight: UIFnTheme.uifn.typography.weight.semibold) == .system(.subheadline, weight: .semibold))
+    }
+
+    @Test
+    func fontsUseTheThemePointsAtTheDefaultContentSize() {
+        let size = UIFnTheme.uifn.typography.size
+        let steps = [size.xs, size.sm, size.md, size.lg, size.xl]
+        let semibold = UIFnTheme.uifn.typography.weight.semibold
+        #expect(steps.map { $0.scaledPoints(for: .large) } == [12, 13, 14, 16, 18])
+        #expect(size.md.font(weight: semibold) == .system(size: 14, weight: .semibold))
+        #expect(size.xl.font() == .system(size: 18))
+        #expect(size.md.font() != .system(.subheadline))
     }
 
     #if os(iOS) || os(tvOS) || os(visionOS)
     @Test
-    func typeSizesScaleWithDynamicType() {
+    func typeSizesScaleWithTheirTextStyle() {
         let md = UIFnTheme.uifn.typography.size.md
         let large = md.scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: .large))
         let accessibility = md.scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
         #expect(abs(large - md.points) < 0.5)
         #expect(accessibility > large * 1.5)
+
+        let expected = UIFontMetrics(forTextStyle: .subheadline)
+            .scaledValue(for: 14, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
+        #expect(md.scaledPoints(for: .accessibility3) == expected)
+        #expect(md.font(dynamicTypeSize: .accessibility3) == .system(size: expected))
+        let steps = UIFnTheme.uifn.typography.size
+        let scaled = [steps.xs, steps.sm, steps.md, steps.lg, steps.xl].map { $0.scaledPoints(for: .xxxLarge) }
+        #expect(scaled == scaled.sorted() && Set(scaled).count == scaled.count)
+    }
+    #else
+    @Test
+    func typeSizesKeepTheThemePointsWithoutDynamicType() {
+        let size = UIFnTheme.uifn.typography.size
+        let steps = [size.xs, size.sm, size.md, size.lg, size.xl]
+        #expect(steps.map { $0.scaledPoints(for: .accessibility5) } == [12, 13, 14, 16, 18])
+        #expect(size.xl.font(dynamicTypeSize: .xSmall) == .system(size: 18))
     }
     #endif
 
