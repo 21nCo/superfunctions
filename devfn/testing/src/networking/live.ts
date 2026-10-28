@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import os from "node:os";
@@ -120,6 +120,54 @@ export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch =
   };
 }
 
+/**
+ * A DevFn up or restart waits on each node's health budget in plan order, and
+ * Compose may pull an image first. It is killed only past that budget plus
+ * slack, so a slow but healthy start never dies holding its lifecycle lock.
+ */
+export const LIFECYCLE_COMMAND_TIMEOUT_MS = 900_000;
+
+/** The Linux locations whose certificates the operating system trust tooling reads. */
+export const LINUX_TRUST_LOCATIONS: readonly string[] = ["/etc/ssl/certs", "/usr/local/share/ca-certificates", "/etc/pki/ca-trust/source/anchors", "/etc/pki/tls/certs"];
+
+/**
+ * Every entry under the trust locations, recursively: a file by its content
+ * digest, a symbolic link by its target and the digest of the file it names,
+ * a directory (also one reached through a link, once by real path) by its
+ * entries. An absent location is empty; any other failed read throws, so an
+ * unreadable certificate is never read as unchanged.
+ */
+export async function trustDirectoryAnchors(locations: readonly string[]): Promise<string[]> {
+  const anchors: string[] = [];
+  const walked = new Set<string>();
+  const digest = async (file: string): Promise<string> => `${file}:${createHash("sha256").update(await readFile(file)).digest("hex")}`;
+  const walk = async (dir: string): Promise<void> => {
+    const real = await realpath(dir);
+    if (walked.has(real)) return;
+    walked.add(real);
+    for (const name of (await readdir(dir)).sort()) {
+      const entry = path.join(dir, name);
+      const info = await lstat(entry);
+      if (info.isSymbolicLink()) {
+        // A link whose target is gone or loops trusts nothing; the link itself is still recorded.
+        const target = await stat(entry).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT" || error.code === "ELOOP") return undefined; throw error; });
+        anchors.push(`${entry} -> ${await readlink(entry)}${target ? "" : " (unresolved)"}`);
+        if (target?.isDirectory()) await walk(entry);
+        else if (target?.isFile()) anchors.push(await digest(entry));
+      } else if (info.isDirectory()) await walk(entry);
+      else if (info.isFile()) anchors.push(await digest(entry));
+      else anchors.push(`${entry}: not a file`);
+    }
+  };
+  for (const location of locations) {
+    const info = await stat(location).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+    if (!info) continue;
+    if (!info.isDirectory()) throw new Error(`trust location ${location} is not a directory`);
+    await walk(location);
+  }
+  return anchors.sort();
+}
+
 /** devfn commands that only read state or remove what a run created; they still run after an abort. */
 const READ_OR_CLEANUP = /^(down|status|ports|url|tunnel (status|urls|unregister)|domains unregister|oauth-relay (status|stop))( |$)/;
 
@@ -188,7 +236,7 @@ export class LiveHost {
 
   public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string;
     connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>; connectorIdentity?: (metricsPort: number) => Promise<string | undefined>;
-    connectorReads?: { reads: number; intervalMs: number } }) {
+    connectorReads?: { reads: number; intervalMs: number }; trustLocations?: readonly string[] }) {
     this.stateDir = path.join(options.root, "state");
     const { DOCKER_CONTEXT: _context, ...env } = options.env;
     this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
@@ -267,7 +315,8 @@ export class LiveHost {
   public async devfn(cwd: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<CliResult> {
     if (!READ_OR_CLEANUP.test(args.slice(0, 2).join(" "))) this.refuseIfAborted(`devfn ${args.join(" ")}`);
     const signal = READ_OR_CLEANUP.test(args.slice(0, 2).join(" ")) ? options.signal : AbortSignal.any([this.stop.signal, ...(options.signal ? [options.signal] : [])]);
-    const result = await this.exec(process.execPath, [this.options.devfnCli, ...args, "--json", "--state-dir", this.stateDir], { cwd, env: { ...this.env, ...options.env }, ...(signal ? { signal } : {}) });
+    const result = await this.exec(process.execPath, [this.options.devfnCli, ...args, "--json", "--state-dir", this.stateDir],
+      { cwd, env: { ...this.env, ...options.env }, ...(signal ? { signal } : {}), ...(args[0] === "up" || args[0] === "restart" ? { timeoutMs: LIFECYCLE_COMMAND_TIMEOUT_MS } : {}) });
     try { return { code: result.code, json: JSON.parse(result.stdout) as Record<string, any> }; }
     catch { return { code: result.code === 0 ? -1 : result.code, json: { ok: false, error: { code: "UNPARSEABLE", message: result.stderr.slice(-2000) } } }; }
   }
@@ -569,7 +618,9 @@ export class LiveHost {
   /**
    * Certificates in the operating system trust stores, by fingerprint, and on
    * macOS a digest of the user and admin trust settings, so a trust decision
-   * about a certificate already in a keychain is a change too. A failed read throws.
+   * about a certificate already in a keychain is a change too. On Linux,
+   * every entry under the trust locations (trustDirectoryAnchors). A failed
+   * read throws.
    */
   public async trustAnchors(): Promise<string[]> {
     if (process.platform === "darwin") {
@@ -583,12 +634,7 @@ export class LiveHost {
       }
       return [...result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()), ...settings].sort();
     }
-    const anchors: string[] = [];
-    for (const location of ["/etc/ssl/certs", "/usr/local/share/ca-certificates", "/etc/pki/ca-trust/source/anchors", "/etc/pki/tls/certs"]) {
-      const names = await readdir(location).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; });
-      for (const name of names) anchors.push(`${location}/${name}:${createHash("sha256").update(await readFile(path.join(location, name)).catch(() => Buffer.from("unreadable"))).digest("hex")}`);
-    }
-    return anchors.sort();
+    return await trustDirectoryAnchors(this.options.trustLocations ?? LINUX_TRUST_LOCATIONS);
   }
 
   /**

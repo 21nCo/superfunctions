@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readdirSync, statSync } from "node:fs";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -18,8 +18,8 @@ import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelB
 import { staleBuildOutputs } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
-  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runScenarios, selectScenarios, summarize, tunnelFixture,
+  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
+  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
   protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
@@ -534,6 +534,24 @@ describe("live host cleanup handlers", () => {
     expect(calls.filter((call) => call.startsWith("devfn"))).toEqual(["devfn up", "devfn up", "devfn down"]);
   });
 
+  it("gives up and restart a timeout above every fixture's summed health budget plus an image pull, and other commands the default", async () => {
+    const { host, options } = await fixtureHost({ devfn: { ...stopped, up: { ok: true }, restart: { ok: true } } });
+    const runtime = path.join(dir, "qabcdef12-compose");
+    await host.up("s", runtime);
+    await host.must(runtime, ["restart"]);
+    await host.devfn(runtime, ["status"]);
+    expect(options.map((given) => given?.timeoutMs)).toEqual([LIFECYCLE_COMMAND_TIMEOUT_MS, LIFECYCLE_COMMAND_TIMEOUT_MS, undefined]);
+    // DevFn starts nodes in plan order, so the worst case waits on every health budget in turn.
+    const budget = (config: Record<string, any>) => Object.values({ ...config.services, ...config.processes } as Record<string, { health?: { timeoutMs?: number } }>)
+      .reduce((sum, node) => sum + (node.health?.timeoutMs ?? 0), 0);
+    const imagePull = 300_000;
+    for (const config of [hostFixture(), composeFixture(), domainFixture("dev.example.test"), tunnelFixture("qabcdef12-cf", false), oauthFixture("dev.example.test", parseApproval(approval).oauth!)]) {
+      expect(budget(config) + imagePull).toBeLessThan(LIFECYCLE_COMMAND_TIMEOUT_MS);
+    }
+    // The Compose fixture alone outlasts the 180 s every other command gets.
+    expect(budget(composeFixture())).toBeGreaterThan(180_000);
+  });
+
   it("reports surviving fixture processes and routes the owner still holds in the run proxy state", async () => {
     const { host, inventory } = await fixtureHost({ devfn: stopped });
     const runtime = path.join(dir, "qabcdef12-app");
@@ -903,6 +921,59 @@ describe("live host cleanup handlers", () => {
     expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual([]);
     await expect(providerReadBack(env, pages([], [], 503))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/HTTP 503/);
     await expect(providerReadBack({}, pages([]))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/no readable API key/);
+  });
+});
+
+describe("trust store inventory", () => {
+  let dir = "";
+  afterEach(async () => { if (dir) { await chmod(path.join(dir, "certs", "nested"), 0o755).catch(() => undefined); await rm(dir, { recursive: true, force: true }); } dir = ""; });
+
+  it("walks nested directories and symbolic links, so a change anywhere under a location changes the inventory", async () => {
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-trust-")));
+    const certs = path.join(dir, "certs");
+    const shared = path.join(dir, "share");
+    await mkdir(path.join(certs, "nested", "deeper"), { recursive: true });
+    await mkdir(shared, { recursive: true });
+    await writeFile(path.join(certs, "top.pem"), "top");
+    await writeFile(path.join(certs, "nested", "deeper", "inner.pem"), "inner");
+    await writeFile(path.join(shared, "a.crt"), "a");
+    await writeFile(path.join(shared, "b.crt"), "b");
+    await symlink(path.join(shared, "a.crt"), path.join(certs, "linked.pem"));
+    await symlink(path.join(dir, "gone.crt"), path.join(certs, "dangling.pem"));
+    // A link back to its own location is walked once, never forever.
+    await symlink(certs, path.join(certs, "nested", "loop"));
+    const locations = [certs, path.join(dir, "absent")];
+    const before = await trustDirectoryAnchors(locations);
+    expect(before.some((item) => item.startsWith(`${path.join(certs, "nested", "deeper", "inner.pem")}:`))).toBe(true);
+    expect(before).toContain(`${path.join(certs, "dangling.pem")} -> ${path.join(dir, "gone.crt")} (unresolved)`);
+    const changed = async (change: () => Promise<void>) => { await change(); return JSON.stringify(await trustDirectoryAnchors(locations)) !== JSON.stringify(before); };
+    expect(await trustDirectoryAnchors(locations)).toEqual(before);
+    expect(await changed(async () => await writeFile(path.join(certs, "nested", "deeper", "inner.pem"), "replaced"))).toBe(true);
+    await writeFile(path.join(certs, "nested", "deeper", "inner.pem"), "inner");
+    expect(await changed(async () => await writeFile(path.join(certs, "nested", "deeper", "added.pem"), "added"))).toBe(true);
+    await rm(path.join(certs, "nested", "deeper", "added.pem"));
+    // The certificate a link names is read: changing it, or retargeting the link, is a change.
+    expect(await changed(async () => await writeFile(path.join(shared, "a.crt"), "a2"))).toBe(true);
+    await writeFile(path.join(shared, "a.crt"), "a");
+    expect(await changed(async () => { await rm(path.join(certs, "linked.pem")); await symlink(path.join(shared, "b.crt"), path.join(certs, "linked.pem")); })).toBe(true);
+    // A location that does not exist holds nothing.
+    expect(await trustDirectoryAnchors([path.join(dir, "absent")])).toEqual([]);
+  });
+
+  it("throws on an unreadable certificate or directory rather than reading it as unchanged", async (test) => {
+    if (process.getuid?.() === 0) test.skip();
+    dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-trust-")));
+    const nested = path.join(dir, "certs", "nested");
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, "inner.pem"), "inner");
+    await chmod(path.join(nested, "inner.pem"), 0o000);
+    await expect(trustDirectoryAnchors([path.join(dir, "certs")])).rejects.toThrow(/EACCES/);
+    await chmod(path.join(nested, "inner.pem"), 0o644);
+    await chmod(nested, 0o000);
+    await expect(trustDirectoryAnchors([path.join(dir, "certs")])).rejects.toThrow(/EACCES/);
+    await chmod(nested, 0o755);
+    await writeFile(path.join(dir, "file-location"), "x");
+    await expect(trustDirectoryAnchors([path.join(dir, "file-location")])).rejects.toThrow(/not a directory/);
   });
 });
 
