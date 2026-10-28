@@ -146,9 +146,17 @@ function finite(amount: number, path: string, value: unknown): number {
   return amount;
 }
 
+// A CSS <number> amount: optional sign, digits with an optional fraction, and an
+// optional exponent, so `+4px`, `4e0px` and `1.2e2ms` parse like `4px` and `120ms`.
+const CSS_NUMBER = String.raw`(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?`;
+// Dimensions and durations allow only `+`, so negative amounts stay unsupported.
+const DIMENSION_PATTERN = new RegExp(String.raw`^\s*(\+?${CSS_NUMBER})(px|rem)\s*$`, 'i');
+const DURATION_PATTERN = new RegExp(String.raw`^\s*(\+?${CSS_NUMBER})(ms|s)\s*$`, 'i');
+const BEZIER_NUMBER_PATTERN = new RegExp(String.raw`^[+-]?${CSS_NUMBER}$`);
+
 /** Converts a non-negative `px` or `rem` dimension (1rem = 16pt) to points. */
 export function dimensionToPoints(value: string | number, path: string): number {
-  const match = /^\s*((?:\d+(?:\.\d*)?|\.\d+))(px|rem)\s*$/i.exec(String(value));
+  const match = DIMENSION_PATTERN.exec(String(value));
   if (!match) {
     throw unsupported('Swift dimensions must be non-negative px or rem values.', { path, value });
   }
@@ -158,7 +166,7 @@ export function dimensionToPoints(value: string | number, path: string): number 
 
 /** Converts an `ms` or `s` duration to seconds. */
 export function durationToSeconds(value: string | number, path: string): number {
-  const match = /^\s*((?:\d+(?:\.\d*)?|\.\d+))(ms|s)\s*$/i.exec(String(value));
+  const match = DURATION_PATTERN.exec(String(value));
   if (!match) {
     throw unsupported('Swift durations must use ms or s units.', { path, value });
   }
@@ -170,7 +178,7 @@ export function durationToSeconds(value: string | number, path: string): number 
 export function parseCubicBezier(value: string | number, path: string): [number, number, number, number] {
   const match = /^\s*cubic-bezier\(([^)]*)\)\s*$/i.exec(String(value));
   const points = match?.[1].split(',').map((part) => part.trim()) ?? [];
-  const numbers = points.map((part) => (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(part) ? Number(part) : Number.NaN));
+  const numbers = points.map((part) => (BEZIER_NUMBER_PATTERN.test(part) ? Number(part) : Number.NaN));
   if (
     numbers.length !== 4 ||
     !numbers.every(Number.isFinite) ||
@@ -189,8 +197,11 @@ const FOUNDATION_TOKENS = new Map(
 );
 
 // Themes may omit the foundations (spacing, typography and other non-color
-// groups), which the web theme provider fills from createFoundationalTokens.
-// Each token the theme omits takes its foundation value; supplied tokens win.
+// groups). Swift fills each omitted token individually from
+// createFoundationalTokens, so a partial typography group keeps its supplied
+// tokens and takes the rest from the foundations. The web theme provider
+// instead spreads the foundations under the theme's top-level groups, so a
+// group the theme supplies replaces the whole foundation group there.
 function resolvedTokens(theme: DesignTokenTheme): Map<string, DesignToken> {
   validateTokenTheme(theme);
   const { theme: resolved } = resolveTokenReferences(theme);

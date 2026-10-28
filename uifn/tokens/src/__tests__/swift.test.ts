@@ -368,6 +368,11 @@ describe('generateSwiftTokens', () => {
       ['padded bezier numbers', setValue('motion.easing.standard', 'cubic-bezier(0.20, 0.0, .0, 1.000)')],
       ['spacing inside a cubic-bezier', setValue('motion.easing.exit', ' cubic-bezier( 0.4 ,0,1 , 1 ) ')],
       ['uppercase units', setValue('radius.lg', '8PX')],
+      ['explicit plus sign', setValue('radius.sm', '+4px')],
+      ['exponent dimension', setValue('radius.sm', '4e0px')],
+      ['exponent duration', setValue('motion.duration.fast', '1.2e2ms')],
+      ['exponent reduced motion', setReduced('motion.duration.slow', '+4E-2s')],
+      ['exponent bezier numbers', setValue('motion.easing.standard', 'cubic-bezier(2e-1, +0, 0e0, 1)')],
     ];
     const baseline = generateSwiftTokens({ light: theme('light'), dark: theme('dark') }, { name: 'fixture' });
     for (const [label, edit] of equivalents) {
@@ -441,6 +446,9 @@ describe('generateSwiftTokens', () => {
     const cases: Array<[string, string, string | number]> = [
       ['radius', 'md', '0.5em'],
       ['radius', 'lg', '-8px'],
+      ['radius', 'sm', '-4e0px'],
+      ['motion.duration', 'fast', '-1.2e2ms'],
+      ['radius', 'xl', '1e400px'],
       ['motion.easing', 'standard', 'ease-in-out'],
       ['motion.easing', 'exit', 'cubic-bezier(1.4, 0, 1, 1)'],
       ['typography.weight', 'bold', 1001],
