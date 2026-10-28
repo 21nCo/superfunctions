@@ -13,6 +13,13 @@ export const receiptRoot = (): string => path.join(os.homedir(), ".devfn-network
 /** A plain file name for a receipt or an approval in the harness directory, never a path. */
 export const HARNESS_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.json$/;
 
+/** The path of name in root, or undefined unless name is a plain harness file name that stays inside root. */
+export function harnessFile(root: string, name: string): string | undefined {
+  if (!HARNESS_FILE_NAME.test(name)) return undefined;
+  const file = path.resolve(root, name);
+  return file.startsWith(`${path.resolve(root)}${path.sep}`) ? file : undefined;
+}
+
 const errorCode = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | undefined)?.code;
 
 /**
@@ -42,10 +49,9 @@ export class ReceiptSlot {
 
   /** Claim name in root; throws when the name or root is not the harness's own, or another run holds the name. */
   static async claim(name: string, root = receiptRoot()): Promise<ReceiptSlot> {
-    if (!HARNESS_FILE_NAME.test(name)) throw new Error(`--out ${name} is not a receipt file name such as macos.json; receipts are kept in ${root}.`);
+    const file = harnessFile(root, name);
+    if (!file) throw new Error(`--out ${name} is not a receipt file name such as macos.json; receipts are kept in ${root}.`);
     await ownedDirectory(root, true);
-    const file = path.resolve(root, name);
-    if (!file.startsWith(`${path.resolve(root)}${path.sep}`)) throw new Error(`--out ${name} does not stay inside ${root}.`);
     const lock = `${file}.lock`;
     await writeFile(lock, `${JSON.stringify({ pid: process.pid, claimedAt: new Date().toISOString() })}\n`, { mode: 0o600, flag: "wx" }).catch((error: unknown) => {
       if (errorCode(error) === "EEXIST") throw new Error(`Another qualification run holds ${file} (${lock}); remove that lock only once no run uses it.`);
@@ -102,12 +108,15 @@ export class ReceiptSlot {
     throw new Error(`${this.file} is not ${what}; it is left untouched.`);
   }
 
-  /** Put a taken entry back under the name, failing rather than replacing anything that is there now. */
+  /**
+   * Put a taken entry back under the name, failing rather than replacing
+   * anything that is there now. A file, FIFO, socket or device is linked
+   * back without being opened, so none of them is read or waited on.
+   */
   private restore(taken: string, entry: Stats): void {
-    if (entry.isFile()) linkSync(taken, this.file);
-    else if (entry.isSymbolicLink()) symlinkSync(readlinkSync(taken), this.file);
+    if (entry.isSymbolicLink()) symlinkSync(readlinkSync(taken), this.file);
     else if (entry.isDirectory()) { mkdirSync(this.file); renameSync(taken, this.file); return; }
-    else throw new Error(`cannot restore ${taken}`);
+    else linkSync(taken, this.file);
     rmSync(taken);
   }
 }

@@ -1,6 +1,7 @@
 // A run in a child process for the forced-exit fixture: it publishes its receipt in the slot "receipt.json" of a
 // given root and gets repeated signals while publishing (sent to itself), or while its root removal or its
-// reconciliation rewrite is held (sent by the parent once it prints "holding"). Run through tsx.
+// reconciliation rewrite is held (sent by the parent once it prints "holding"). Its run root is the parent's
+// private directory holding that receipt root. Run through tsx.
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 
@@ -33,7 +34,7 @@ const signal = interruptOnSignals(slot, runId, path.join(root, "inventory.json")
 const strays: string[] = [];
 let writes = 0;
 await executeRun({ slot, strays,
-  options: { scenarios: [], platform: process.platform, prerequisites: [], drivers: {}, inventory: new DisposableInventory({ runId, root: "/tmp/devfn-forced-exit", domains: [] }),
+  options: { scenarios: [], platform: process.platform, prerequisites: [], drivers: {}, inventory: new DisposableInventory({ runId, root: path.dirname(root), domains: [] }),
     resources: { remove: async () => undefined, present: async () => false }, snapshot: async () => ({}), signal },
   receipt: (_results, runErrors) => ({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, runId, runErrors }) as unknown as Receipt,
   write: async (receipt) => {

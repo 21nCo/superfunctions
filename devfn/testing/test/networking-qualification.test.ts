@@ -195,6 +195,30 @@ describe("operator approval", () => {
       expect(await plan("approval.json")).toEqual({ id: "approval", status: "satisfied", detail: `approved by owner until ${future}` });
     } finally { await rm(dir, { recursive: true, force: true }); }
   }, 60_000);
+
+  it("refuses a FIFO named as the approval at once instead of waiting for a writer", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-approval-fifo-")));
+    try {
+      const root = path.join(dir, "harness");
+      await mkdir(root, { mode: 0o700 });
+      // No writer ever opens it, so a blocking open would wait forever: plan runs in a child bounded by a kill.
+      execFileSync("mkfifo", [path.join(root, "approval.json")]);
+      const script = `const { main } = await import(${JSON.stringify(new URL("../src/networking/cli.ts", import.meta.url).href)});
+        process.exitCode = await main(["plan", "--scenario", "host.registered-domain", "--approval", "approval.json"], ${JSON.stringify(root)});`;
+      const child = spawn(process.execPath, ["--import", createRequire(import.meta.url).resolve("tsx"), "--input-type=module", "--eval", script], { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
+      const bound = setTimeout(() => child.kill("SIGKILL"), 45_000);
+      const [code, killedBy] = await once(child, "close") as [number | null, NodeJS.Signals | null];
+      clearTimeout(bound);
+      expect({ code, killedBy }, stderr).toEqual({ code: 0, killedBy: null });
+      expect((JSON.parse(stdout) as { prerequisites: PrerequisiteResult[] }).prerequisites.find((item) => item.id === "approval"))
+        .toEqual({ id: "approval", status: "missing", detail: `approval refused: approval.json is not a regular file in ${root}.` });
+      expect((await lstat(path.join(root, "approval.json"))).isFIFO()).toBe(true);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  }, 90_000);
 });
 
 describe("prerequisite probes", () => {
@@ -730,9 +754,11 @@ describe("run execution", () => {
       "plain text": async () => await writeFile(file, "operator notes\n"),
       "another tool's JSON": async () => await writeFile(file, JSON.stringify({ contract: "other", check: "networking-qualification-contract" })),
       "a directory": async () => { await mkdir(file); await writeFile(path.join(file, "kept"), "x"); },
-      "a symlink to a non-receipt": async () => await symlink(target, file)
+      "a symlink to a non-receipt": async () => await symlink(target, file),
+      // Never opened: a FIFO without a writer would block a read.
+      "a FIFO": async () => { execFileSync("mkfifo", [file]); }
     };
-    const snapshot = async () => { const entry = await lstat(file); return { type: entry.isSymbolicLink() ? `link ${await readlink(file)}` : entry.isDirectory() ? `dir ${readdirSync(file).join()}` : "file", text: entry.isFile() ? await readFile(file, "utf8") : "" }; };
+    const snapshot = async () => { const entry = await lstat(file); return { type: entry.isSymbolicLink() ? `link ${await readlink(file)}` : entry.isDirectory() ? `dir ${readdirSync(file).join()}` : entry.isFIFO() ? "fifo" : "file", text: entry.isFile() ? await readFile(file, "utf8") : "" }; };
     for (const [label, seed] of Object.entries(entries)) {
       await rm(file, { recursive: true, force: true });
       await seed();
@@ -879,7 +905,8 @@ describe("run execution", () => {
       });
       child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
       const bound = setTimeout(() => child.kill("SIGKILL"), 45_000);
-      const [code, killedBy] = await once(child, "exit") as [number | null, NodeJS.Signals | null];
+      // "close" comes only once stdout and stderr are drained; "exit" can come before their last lines.
+      const [code, killedBy] = await once(child, "close") as [number | null, NodeJS.Signals | null];
       clearTimeout(bound);
       const log = stdout.trim().split("\n");
       expect({ phase, code, killedBy }, stderr).toEqual({ phase, code: 130, killedBy: null });

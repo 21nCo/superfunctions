@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, writeSync } from "node:fs";
 import { access, mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,7 @@ import { DisposableInventory } from "./inventory.js";
 import { LiveHost } from "./live.js";
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
 import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
-import { HARNESS_FILE_NAME, ownedDirectory, ReceiptSlot, receiptRoot } from "./receipt-store.js";
+import { harnessFile, ownedDirectory, ReceiptSlot, receiptRoot } from "./receipt-store.js";
 import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, runExitCode, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
 import { runScenarios, selectScenarios, type PrerequisiteResult, type RunOptions, type ScenarioResult } from "./runner.js";
 
@@ -39,16 +39,19 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
 /**
  * An approval authorizes destructive provider operations, so it is read only
  * as a regular file under a plain name in the harness-owned directory, never
- * through a symlink. A refusal states a fixed reason and never quotes the file.
+ * through a symlink. It is opened without blocking, so a FIFO or device is
+ * refused rather than waited on. A refusal states a fixed reason and never
+ * quotes the file.
  */
 async function loadApproval(name: string | undefined, root: string): Promise<{ approval?: QualificationApproval; approvalError?: string }> {
   if (!name) return {};
   const refused = (reason: string) => ({ approvalError: `approval refused: ${reason}` });
-  if (!HARNESS_FILE_NAME.test(name)) return refused(`--approval ${name} is not a file name such as approval.json; approvals are read from ${root}.`);
+  const file = harnessFile(root, name);
+  if (!file) return refused(`--approval ${name} is not a file name such as approval.json; approvals are read from ${root}.`);
   try { await ownedDirectory(root, false); } catch { return refused(`${root} is missing or not a harness-owned directory (a directory, not a symlink, of this user with mode 0700).`); }
   let text: string;
   try {
-    const handle = await open(path.join(root, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       if (!(await handle.stat()).isFile()) return refused(`${name} is not a regular file in ${root}.`);
       text = await handle.readFile("utf8");
@@ -254,8 +257,9 @@ export function interruptOnSignals(slot: ReceiptSlot, runId: string, ledger: str
   const interrupt = new AbortController();
   const onSignal = (signal: NodeJS.Signals): void => {
     if (interrupt.signal.aborted) {
-      process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`);
-      for (const problem of slot.abandonSync(runId)) process.stderr.write(`${problem}\n`);
+      // Written synchronously: process.exit drops whatever an asynchronous stderr write still holds.
+      writeSync(2, `${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`);
+      for (const problem of slot.abandonSync(runId)) writeSync(2, `${problem}\n`);
       process.exit(130);
     }
     process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
