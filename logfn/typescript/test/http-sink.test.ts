@@ -116,6 +116,28 @@ describe("sinkHttp", () => {
       expect(requests[0].headers.Authorization).toBeUndefined();
     });
 
+    // fetch joins two spellings of one header with ", ", which collectors
+    // reject as a malformed media type or credential and which still sends
+    // the stale credential.
+    it.each([
+      ["a lowercase content-type", { headers: { "content-type": "application/json; charset=utf-8" } }, { "content-type": "application/json; charset=utf-8" }],
+      ["an authorization header with auth.token", { headers: { authorization: "Bearer OLD" }, auth: { token: "NEW" } }, { authorization: "Bearer NEW" }],
+      ["a secret header with secretHeader", { headers: { "x-api-key": "OLD" }, auth: { token: "NEW", secretHeader: "X-API-Key" } }, { "x-api-key": "NEW" }],
+      ["two spellings of one caller header", { headers: { "X-Custom": "OLD", "x-custom": "NEW" } }, { "x-custom": "NEW" }],
+    ])("sends one value per header name for %s", async (_name, options, expected) => {
+      const { fetch, requests } = scriptedFetch(ok);
+      const sink = sinkHttp({ url: URL, fetch, batch: 1, ...options });
+      sink([event("m")]);
+      await sink.flush();
+      const sent = requests[0].headers;
+      const names = Object.keys(sent).map((name) => name.toLowerCase());
+      expect(new Set(names).size).toBe(names.length);
+      const wire = new Headers(sent);
+      for (const [name, value] of Object.entries(expected)) expect(wire.get(name)).toBe(value);
+      if (!("content-type" in expected)) expect(wire.get("content-type")).toBe("application/json");
+      expect(JSON.stringify(sent)).not.toContain("OLD");
+    });
+
     it("splits a large flush into batch-sized requests", async () => {
       const { sentMessages, fetch } = scriptedFetch(ok);
       const sink = sinkHttp({ url: URL, fetch, batch: 2, flushIntervalMs: 60_000 });

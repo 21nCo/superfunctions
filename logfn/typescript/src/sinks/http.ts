@@ -3,7 +3,7 @@
  */
 
 import type { LogEvent, PipelineStage, Sink } from "../types.js";
-import { redactSecFn, toError, type RedactionOptions } from "../pipeline/redact.js";
+import { redactSecFn, setOwn, toError, type RedactionOptions } from "../pipeline/redact.js";
 import { sanitizeEvent, validateAndSerialize } from "../validation.js";
 
 /** Request passed to the fetch implementation */
@@ -226,14 +226,12 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       console.error("[logfn http-sink error]", error);
     });
 
-  const requestHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...headers,
-  };
-  if (auth?.token) {
-    requestHeaders[auth.secretHeader || "Authorization"] = auth.secretHeader
-      ? auth.token
-      : `Bearer ${auth.token}`;
+  // Header names are case-insensitive: a later spelling replaces an earlier one, so fetch gets one value per name.
+  const requestHeaders: Record<string, string> = {};
+  const credential = auth?.token ? { [auth.secretHeader || "Authorization"]: auth.secretHeader ? auth.token : `Bearer ${auth.token}` } : {};
+  for (const [name, value] of Object.entries({ "Content-Type": "application/json", ...headers, ...credential })) {
+    for (const key of Object.keys(requestHeaders)) if (key.toLowerCase() === name.toLowerCase()) delete requestHeaders[key];
+    setOwn(requestHeaders, name, value);
   }
 
   const queue: LogEvent[] = [];
