@@ -75,7 +75,7 @@ function verifyMcpSdkSecurityPolicy() {
     "mcpfn/cli": "1.29.0",
   };
   const expectedOverrides = {
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     nanoid: "3.3.18",
   };
   const packagePaths = Object.keys(expectedVersions);

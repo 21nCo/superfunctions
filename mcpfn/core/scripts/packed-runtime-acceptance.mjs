@@ -27,10 +27,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 const require = createRequire(import.meta.url);
 for (const compiler of [createSchemaCompiler, require('@mcpfn/core').createSchemaCompiler]) {
+ for (const engine of ['ajv', 'cfworker']) {
   for (const [ref, key] of [['#%2F$defs%2Fnode','node'], ['#/$defs/%252F','%2F'], ['#/$defs/a~1b','a/b'], ['#/$defs/%E2%9C%93','✓']]) {
-    const check = compiler('ajv').compile({ type:'object', $defs:{[key]:{type:'string'}}, properties:{ value:{$ref:ref} } });
+    const check = compiler(engine).compile({ type:'object', $defs:{[key]:{type:'string'}}, properties:{ value:{$ref:ref} } });
     assert.equal(check({value:'ok'}), true); assert.equal(check({value:42}), false);
   }
+ }
 }
 const registry = new McpFnRegistry().register({name:'echo',description:'Echo',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},handler:async value=>structuredResult(value)});
 const server = createMcpFnServer({info:{name:'packed',version:'1'},registry});
