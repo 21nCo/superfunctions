@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { access, chmod, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import { DisposableInventory } from "./inventory.js";
 import { LiveHost } from "./live.js";
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
 import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
+import { ReceiptSlot, receiptRoot } from "./receipt-store.js";
 import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, runExitCode, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
 import { runScenarios, selectScenarios, type PrerequisiteResult, type RunOptions, type ScenarioResult } from "./runner.js";
 
@@ -30,7 +31,7 @@ Options:
   --browser-operator     A person or browser agent will complete provider sign-ins during the run
   --devfn <file>         Built DevFn CLI entry (default: this checkout's devfn/cli/dist/index.js)
   --head <sha>           Exact commit under test: run needs it to be this clean, built checkout's HEAD (run, gate)
-  --out <file>           Receipt path (run)
+  --out <name>           Receipt file name, such as macos.json, in the harness receipt directory ~/.devfn-networking-qualification (run)
 `;
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -106,38 +107,10 @@ async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
 }
 
-/**
- * Whether file holds this harness's receipt (true) or nothing (false). Any
- * other entry, such as another file, a directory or a symlink, throws: the
- * harness never removes or replaces what it did not write.
- */
-async function holdsReceipt(file: string): Promise<boolean> {
-  const entry = await lstat(file).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
-  if (!entry) return false;
-  const receipt = entry.isFile() ? await readFile(file, "utf8").then((text) => JSON.parse(text) as Partial<NetworkingQualificationReceipt> | null).catch(() => undefined) : undefined;
-  if (receipt?.contract !== NETWORKING_QUALIFICATION_CONTRACT || receipt.check !== RECEIPT_CHECK) throw new Error(`${file} is not a networking qualification receipt; it is left untouched.`);
-  return true;
-}
-
-/** Remove the receipt at file, if there is one; any other entry there is refused and kept. Every receipt withdrawal goes through here. */
-async function withdrawReceipt(file: string): Promise<void> {
-  if (await holdsReceipt(file)) await rm(file);
-}
-
-/** Write a receipt atomically with mode 0600: a flushed sibling is renamed over the file, so a reader sees the previous or the new receipt, never a partial one. Only an earlier receipt is replaced. */
-export async function writeReceipt(file: string, receipt: NetworkingQualificationReceipt): Promise<void> {
-  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx", flush: true });
-    await chmod(temporary, 0o600);
-    await holdsReceipt(file);
-    await rename(temporary, file);
-  } catch (error) { await rm(temporary, { force: true }).catch(() => undefined); throw error; }
-}
-
 export interface QualificationRun {
   options: RunOptions;
-  out: string;
+  /** Where the receipt goes; the caller claims it before the run and releases it afterwards. */
+  slot: ReceiptSlot;
   /** Unhandled rejections the process reported so far; read again after every step, since one may arrive at any await. */
   strays: readonly string[];
   /** The receipt for these results and run errors; built again whenever a run error arrives after it was written. */
@@ -146,7 +119,7 @@ export interface QualificationRun {
   reap(): Promise<void>;
   /** Remove the run root; called only once every resource was read back absent. */
   removeRoot(): Promise<void>;
-  write?: (file: string, receipt: NetworkingQualificationReceipt) => Promise<void>;
+  write?: (receipt: NetworkingQualificationReceipt) => Promise<void>;
 }
 
 export interface QualificationOutcome { code: number; clean: boolean; receipt?: NetworkingQualificationReceipt; runErrors: string[] }
@@ -163,15 +136,17 @@ const RECEIPT_REWRITES = 5;
  * rewritten whenever a run error arrived since it was written; one that
  * cannot be brought up to date is removed. An interrupted run (code 130)
  * writes no receipt: an interrupt that arrives while the receipt is written
- * or finalized withdraws it. A receipt already at the output path is removed
- * before anything runs, so no failed or interrupted rerun leaves it in place;
- * a run that cannot remove it, or finds anything other than a receipt there,
- * does not start and leaves that entry untouched. The CLI withdraws it earlier
- * still, before its preflight, so this covers direct callers.
+ * or finalized withdraws it. A receipt of an earlier run already in the slot
+ * is removed before anything runs, so no failed or interrupted rerun leaves
+ * it in place; a run that cannot remove it, or finds anything other than a
+ * receipt there, does not start and leaves that entry untouched. Later
+ * withdrawals and rewrites touch only this run's own receipt. The CLI
+ * withdraws it earlier still, before its preflight, so this covers direct
+ * callers.
  */
 export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
   const { inventory, resources, signal } = run.options;
-  await withdrawReceipt(run.out);
+  await run.slot.withdraw();
   const failures: string[] = [];
   const runErrors = (): string[] => [...failures, ...inventory.ledgerFailures.map((item) => `inventory ledger: ${item}`), ...run.strays.map((item) => `unhandled rejection during the run: ${item}`)];
   const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {
@@ -194,9 +169,9 @@ export async function executeRun(run: QualificationRun): Promise<QualificationOu
       if (inventory.allAbsent()) await step("run root removal", run.removeRoot);
       return { code: 130, clean: inventory.allAbsent(), runErrors: runErrors() };
     }
-    const write = run.write ?? writeReceipt;
+    const write = run.write ?? (async (item: NetworkingQualificationReceipt) => await run.slot.write(item));
     let receipt = run.receipt(results, runErrors());
-    await write(run.out, receipt);
+    await write(receipt);
     // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
     if (!clean) await finish();
     else await step("run root removal", run.removeRoot);
@@ -207,15 +182,15 @@ export async function executeRun(run: QualificationRun): Promise<QualificationOu
       try {
         if (rewrites === RECEIPT_REWRITES) throw new Error(`run errors kept arriving after ${RECEIPT_REWRITES} rewrites`);
         receipt = run.receipt(results, runErrors());
-        await write(run.out, receipt);
+        await write(receipt);
       } catch (error) {
-        await withdrawReceipt(run.out);
-        throw new Error(`The receipt ${run.out} was withdrawn: it could not record every run error (${message(error)}).`);
+        await run.slot.withdraw(receipt.runId);
+        throw new Error(`The receipt ${run.slot.file} was withdrawn: it could not record every run error (${message(error)}).`);
       }
     }
     const errors = runErrors();
     if (signal?.aborted) {
-      await withdrawReceipt(run.out);
+      await run.slot.withdraw(receipt.runId);
       return { code: 130, clean, runErrors: errors };
     }
     return { code: runExitCode(receipt, receiptProblems(receipt), clean, errors.length), clean, receipt, runErrors: errors };
@@ -224,10 +199,13 @@ export async function executeRun(run: QualificationRun): Promise<QualificationOu
   }
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
-  const { values, positionals } = parseArgs({ args: [...argv], allowPositionals: true, options: {
-    scenario: { type: "string", multiple: true }, row: { type: "string", multiple: true }, approval: { type: "string" }, "browser-operator": { type: "boolean" },
-    devfn: { type: "string" }, head: { type: "string" }, out: { type: "string" }, help: { type: "boolean" } } });
+const parse = (argv: readonly string[]) => parseArgs({ args: [...argv], allowPositionals: true, options: {
+  scenario: { type: "string", multiple: true }, row: { type: "string", multiple: true }, approval: { type: "string" }, "browser-operator": { type: "boolean" },
+  devfn: { type: "string" }, head: { type: "string" }, out: { type: "string" }, help: { type: "boolean" } } });
+
+/** receiptDirectory is where run keeps receipts; it is not an operator option. */
+export async function main(argv: readonly string[], receiptDirectory = receiptRoot()): Promise<number> {
+  const { values, positionals } = parse(argv);
   const [command, ...files] = positionals;
   if (values.help || !command) { process.stdout.write(USAGE); return command ? 0 : 2; }
   if (command === "gate") {
@@ -238,11 +216,17 @@ export async function main(argv: readonly string[]): Promise<number> {
     return gate.ready ? 0 : 1;
   }
   if (command !== "plan" && command !== "run") throw new Error(`Unknown command ${command}.\n${USAGE}`);
-  if (command === "run") {
-    if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file>.");
-    // A run attempt withdraws the receipt at --out before anything that can fail or be interrupted, so no failed rerun leaves an earlier receipt there.
-    await withdrawReceipt(values.out).catch((error: unknown) => { throw new Error(`The receipt at ${values.out} cannot be withdrawn, so the run does not start: ${message(error)}`); });
-  }
+  if (command === "plan") return await attempt("plan", values);
+  if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file name>.");
+  const slot = await ReceiptSlot.claim(values.out, receiptDirectory).catch((error: unknown) => { throw new Error(`The receipt ${values.out} cannot be claimed, so the run does not start: ${message(error)}`); });
+  try {
+    // A run attempt withdraws the earlier receipt before anything that can fail or be interrupted, so no failed rerun leaves it there.
+    await slot.withdraw().catch((error: unknown) => { throw new Error(`The receipt at ${slot.file} cannot be withdrawn, so the run does not start: ${message(error)}`); });
+    return await attempt("run", values, slot);
+  } finally { await slot.release(); }
+}
+
+async function attempt(command: "plan" | "run", values: ReturnType<typeof parse>["values"], slot?: ReceiptSlot): Promise<number> {
   const scenarios = selectScenarios({ scenarios: values.scenario, rows: values.row?.map(Number) });
   const devfnCli = path.resolve(values.devfn ?? fileURLToPath(new URL("../../../cli/dist/index.js", import.meta.url)));
   const { approval, approvalError } = await loadApproval(values.approval);
@@ -255,7 +239,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         unmet: unmet(scenario.prerequisites), assertions: scenario.assertions.map((item) => item.id), fixtureEvidence: scenario.fixtureEvidence })) }, null, 2)}\n`);
     return 0;
   }
-  const [head, out] = [values.head!, values.out!];
+  const head = values.head!;
+  if (!slot) throw new Error("run needs a claimed receipt slot.");
   const source = await provenance(head, devfnCli);
   // Compose runs only against the local engine the prerequisite resolved, pinned for every DevFn and docker command of the run.
   const docker = prerequisites.find((item) => item.id === "docker-compose")?.status === "satisfied" ? await localDockerEndpoint(process.env, execute) : undefined;
@@ -273,7 +258,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   // runs only after the running driver returned, so its read-back sees whatever that driver still created.
   const interrupt = new AbortController();
   const onSignal = (signal: NodeJS.Signals): void => {
-    if (interrupt.signal.aborted) { process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`); process.exit(130); }
+    if (interrupt.signal.aborted) { process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`); slot.releaseSync(); process.exit(130); }
     process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
     interrupt.abort(signal);
     host.abort();
@@ -285,7 +270,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const startedAt = new Date().toISOString();
   const secrets = approval ? [approval.oauth?.clientSecretEnv, approval.oauth?.clientIdEnv, approval.cloudflare?.apiTokenEnv, approval.ngrokReserved?.authtokenEnv, approval.ngrokReserved?.apiKeyEnv,
     approval.ngrokEphemeral?.authtokenEnv, approval.ngrokEphemeral?.apiKeyEnv].flatMap((name) => name && process.env[name] ? [process.env[name]!] : []) : [];
-  const outcome = await executeRun({ out, strays,
+  const outcome = await executeRun({ slot, strays,
     options: { scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal },
     receipt: (results, runErrors) => redactSecrets<NetworkingQualificationReceipt>({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head, runId, provenance: source,
       host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
@@ -299,7 +284,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`${JSON.stringify({ interrupted: interrupt.signal.reason, cleanup, ledger, runErrors: outcome.runErrors, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
     return 130;
   }
-  process.stdout.write(`${JSON.stringify({ receipt: out, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ receipt: slot.file, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
   // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was final fails it too.
   return outcome.code === 0 && strays.length ? 1 : outcome.code;
 }

@@ -1,8 +1,9 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readdirSync, statSync } from "node:fs";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +16,8 @@ import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@dev
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { relayPaths } from "@devfn/proxy/oauth-relay";
 import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
-import { executeRun, main, staleBuildOutputs, writeReceipt, type QualificationRun } from "../src/networking/cli.js";
+import { executeRun, main, staleBuildOutputs, type QualificationRun } from "../src/networking/cli.js";
+import { ReceiptSlot } from "../src/networking/receipt-store.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, dnsAbsent, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
@@ -533,14 +535,15 @@ describe("run execution", () => {
     inventory.record("proxy", `${path.dirname(ledger)}/state`, "run");
     const strays: string[] = [];
     const calls: string[] = [];
-    const run: QualificationRun = { out: path.join(dir, "receipt.json"), strays,
+    const receipts = path.join(dir, "receipts");
+    const run: QualificationRun = { slot: await ReceiptSlot.claim("receipt.json", receipts), strays,
       options: { scenarios: [scenario], platform: "darwin", prerequisites: allPrerequisites, drivers: { [scenario.id]: driver }, inventory, resources, snapshot: async () => ({}) },
       receipt: (results, runErrors) => ({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", target: "DEV-17", head: HEAD, runId: "abcdef123456",
         provenance: { head: HEAD, checkout: "/src", clean: true, builtAfterSources: true, devfnCli: "/src/devfn/cli/dist/index.js" }, host: { platform: "darwin", arch: "arm64", release: "1", node: "v22.12.0" },
         startedAt: "t", finishedAt: "t", prerequisites: allPrerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [], runErrors, summary: summarize(results) }),
       reap: async () => { calls.push("reap"); }, removeRoot: async () => { calls.push("remove root"); } };
-    const read = async () => JSON.parse(await readFile(run.out, "utf8")) as NetworkingQualificationReceipt;
-    return { dir, ledger, inventory, strays, calls, run, read };
+    const read = async () => JSON.parse(await readFile(run.slot.file, "utf8")) as NetworkingQualificationReceipt;
+    return { dir, receipts, ledger, inventory, strays, calls, run, read };
   }
   const recordTwo = (root: string): ScenarioDriver => async (context) => {
     context.inventory.record("fixture-repository", `${root}/qabcdef12-a`, context.scenario.id);
@@ -556,14 +559,14 @@ describe("run execution", () => {
     const outcome = await executeRun(context.run);
     expect(outcome.code).toBe(0);
     expect(receiptProblems(await context.read())).toEqual([]);
-    expect(statSync(context.run.out).mode & 0o777).toBe(0o600);
+    expect(statSync(context.run.slot.file).mode & 0o777).toBe(0o600);
     expect(context.calls).toEqual(["remove root"]);
   });
 
   it("rewrites the persisted receipt with run errors that arrive during its write or the root removal", async () => {
     const context = await setup();
     dirs.push(context.dir);
-    context.run.write = async (file, receipt) => { if (!context.strays.length) context.strays.push("during write"); await writeReceipt(file, receipt); };
+    context.run.write = async (receipt) => { if (!context.strays.length) context.strays.push("during write"); await context.run.slot.write(receipt); };
     context.run.removeRoot = async () => { setImmediate(() => context.strays.push("after root removal")); throw new Error("EBUSY"); };
     const outcome = await executeRun(context.run);
     const persisted = await context.read();
@@ -577,9 +580,9 @@ describe("run execution", () => {
     const context = await setup();
     dirs.push(context.dir);
     let writes = 0;
-    context.run.write = async (file, receipt) => { writes += 1; if (writes > 1) throw new Error("ENOSPC"); context.strays.push("late"); await writeReceipt(file, receipt); };
+    context.run.write = async (receipt) => { writes += 1; if (writes > 1) throw new Error("ENOSPC"); context.strays.push("late"); await context.run.slot.write(receipt); };
     await expect(executeRun(context.run)).rejects.toThrow(/withdrawn.*ENOSPC/);
-    await expect(access(context.run.out)).rejects.toThrow();
+    await expect(access(context.run.slot.file)).rejects.toThrow();
   });
 
   it("removes and reads back every resource, attempts run-level cleanup and fails when the ledger cannot be written", async () => {
@@ -621,7 +624,7 @@ describe("run execution", () => {
     context.run.options = { ...context.run.options, signal: interrupt.signal };
     const outcome = await executeRun(context.run);
     expect(outcome).toEqual({ code: 130, clean: true, runErrors: [] });
-    await expect(access(context.run.out)).rejects.toThrow();
+    await expect(access(context.run.slot.file)).rejects.toThrow();
     expect(context.calls).toEqual(["remove root"]);
   });
 
@@ -631,17 +634,17 @@ describe("run execution", () => {
       const context = await setup(async (inner) => { await recordTwo(path.dirname(context.ledger))(inner); if (failure === "interrupt") interrupt.abort("SIGINT"); });
       dirs.push(context.dir);
       context.run.options = { ...context.run.options, signal: interrupt.signal };
-      await writeReceipt(context.run.out, context.run.receipt([], []));
+      await context.run.slot.write(context.run.receipt([], []));
       if (failure === "write") {
         context.run.write = async () => { throw new Error("EACCES"); };
         await expect(executeRun(context.run)).rejects.toThrow("EACCES");
       } else expect((await executeRun(context.run)).code).toBe(130);
-      await expect(access(context.run.out)).rejects.toThrow();
+      await expect(access(context.run.slot.file)).rejects.toThrow();
     }
     // A receipt path that cannot be cleared starts nothing.
     const context = await setup(async () => { throw new Error("never runs"); });
     dirs.push(context.dir);
-    await mkdir(context.run.out);
+    await mkdir(context.run.slot.file);
     await expect(executeRun(context.run)).rejects.toThrow();
     expect(context.inventory.list()).toHaveLength(2);
   });
@@ -649,7 +652,9 @@ describe("run execution", () => {
   it("withdraws a receipt at --out once run validates its arguments, before any preflight can fail, and gate never touches it", async () => {
     const context = await setup();
     dirs.push(context.dir);
-    const seed = async () => await writeReceipt(context.run.out, context.run.receipt([], []));
+    await context.run.slot.release();
+    const file = context.run.slot.file;
+    const seed = async () => await writeFile(file, JSON.stringify(context.run.receipt([], [])));
     const foreign = path.join(context.dir, "cli.js");
     await writeFile(foreign, "");
     // An existing file inside this checkout, so the head mismatch is reached whether or not the DevFn CLI was built.
@@ -658,46 +663,143 @@ describe("run execution", () => {
     for (const [args, failure] of [[["--scenario", "no.such-scenario"], /Unknown qualification scenarios/], [["--scenario", "host.native-prestart", "--devfn", inCheckout], /is not the checkout HEAD/],
       [["--scenario", "host.native-prestart", "--devfn", foreign], /is not inside the harness checkout/]] as const) {
       await seed();
-      await expect(main(["run", ...args, "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(failure);
-      await expect(access(context.run.out)).rejects.toThrow();
+      await expect(main(["run", ...args, "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts)).rejects.toThrow(failure);
+      await expect(access(file)).rejects.toThrow();
     }
     // Invalid arguments start no run attempt, so the receipt stays.
     await seed();
-    for (const args of [["--head", "abc", "--out", context.run.out], ["--head", "0".repeat(40)]]) await expect(main(["run", ...args])).rejects.toThrow(/run needs --head/);
+    for (const args of [["--head", "abc", "--out", "receipt.json"], ["--head", "0".repeat(40)]]) await expect(main(["run", ...args], context.receipts)).rejects.toThrow(/run needs --head/);
     const written = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    try { expect(await main(["gate", "--head", HEAD, context.run.out])).toBe(1); } finally { written.mockRestore(); }
+    try { expect(await main(["gate", "--head", HEAD, file], context.receipts)).toBe(1); } finally { written.mockRestore(); }
     expect((await context.read()).head).toBe(HEAD);
-    // A receipt path that cannot be cleared starts nothing.
-    await rm(context.run.out);
-    await mkdir(context.run.out);
-    await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(/cannot be withdrawn, so the run does not start/);
+    // A receipt that cannot be cleared starts nothing, and every attempt released its claim.
+    await rm(file);
+    await mkdir(file);
+    await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts)).rejects.toThrow(/cannot be withdrawn, so the run does not start/);
+    expect(readdirSync(context.receipts)).toEqual(["receipt.json"]);
   }, 60_000);
 
-  it("never removes or replaces anything at --out but a receipt: run refuses to start and leaves it untouched", async () => {
+  it("never removes or replaces anything in its slot but a receipt: run refuses to start and leaves it untouched", async () => {
     const context = await setup(async () => { throw new Error("never runs"); });
     dirs.push(context.dir);
+    await context.run.slot.release();
+    const file = context.run.slot.file;
     const target = path.join(context.dir, "notes.txt");
     await writeFile(target, "operator notes\n");
     const entries: Record<string, () => Promise<void>> = {
-      "plain text": async () => await writeFile(context.run.out, "operator notes\n"),
-      "another tool's JSON": async () => await writeFile(context.run.out, JSON.stringify({ contract: "other", check: "networking-qualification-contract" })),
-      "a directory": async () => await mkdir(context.run.out),
-      "a symlink to a non-receipt": async () => await symlink(target, context.run.out)
+      "plain text": async () => await writeFile(file, "operator notes\n"),
+      "another tool's JSON": async () => await writeFile(file, JSON.stringify({ contract: "other", check: "networking-qualification-contract" })),
+      "a directory": async () => { await mkdir(file); await writeFile(path.join(file, "kept"), "x"); },
+      "a symlink to a non-receipt": async () => await symlink(target, file)
     };
-    const snapshot = async () => { const entry = await lstat(context.run.out); return { type: entry.isSymbolicLink() ? "link" : entry.isDirectory() ? "dir" : "file", text: entry.isFile() ? await readFile(context.run.out, "utf8") : "" }; };
+    const snapshot = async () => { const entry = await lstat(file); return { type: entry.isSymbolicLink() ? `link ${await readlink(file)}` : entry.isDirectory() ? `dir ${readdirSync(file).join()}` : "file", text: entry.isFile() ? await readFile(file, "utf8") : "" }; };
     for (const [label, seed] of Object.entries(entries)) {
-      await rm(context.run.out, { recursive: true, force: true });
+      await rm(file, { recursive: true, force: true });
       await seed();
       const before = await snapshot();
-      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", context.run.out]), label).rejects.toThrow(/cannot be withdrawn, so the run does not start: .* is not a networking qualification receipt/);
+      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts), label).rejects.toThrow(/cannot be withdrawn, so the run does not start: .* is not a networking qualification receipt; it is left untouched/);
+      context.run.slot = await ReceiptSlot.claim("receipt.json", context.receipts);
       await expect(executeRun(context.run), label).rejects.toThrow(/is not a networking qualification receipt; it is left untouched/);
-      await expect(writeReceipt(context.run.out, context.run.receipt([], [])), label).rejects.toThrow(/is not a networking qualification receipt/);
+      await expect(context.run.slot.write(context.run.receipt([], [])), label).rejects.toThrow(/is not the receipt of run abcdef123456; it is left untouched/);
+      await context.run.slot.release();
       expect(await snapshot(), label).toEqual(before);
     }
     expect(await readFile(target, "utf8")).toBe("operator notes\n");
-    // Nothing started, and a failed replacement leaves no temporary sibling behind.
+    // Nothing started, and no lock, taken entry or temporary file is left behind.
     expect(context.inventory.list()).toHaveLength(2);
-    expect(readdirSync(context.dir).sort()).toEqual(["notes.txt", "receipt.json", "root"]);
+    expect(readdirSync(context.receipts)).toEqual(["receipt.json"]);
+  }, 60_000);
+
+  it("keeps receipts only under a plain name in a harness-owned directory", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-receipts-")));
+    dirs.push(dir);
+    const receipts = path.join(dir, "receipts");
+    for (const name of ["../escape.json", path.join(dir, "escape.json"), "sub/escape.json", "notes.txt", ".hidden.json"]) {
+      await expect(ReceiptSlot.claim(name, receipts), name).rejects.toThrow(/is not a receipt file name/);
+      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", name], receipts), name).rejects.toThrow(/cannot be claimed, so the run does not start/);
+    }
+    expect(readdirSync(dir)).toEqual([]);
+    const elsewhere = path.join(dir, "elsewhere");
+    await mkdir(elsewhere, { mode: 0o700 });
+    const roots: Record<string, () => Promise<void>> = {
+      "a symlink": async () => await symlink(elsewhere, receipts),
+      "a directory others can write": async () => { await mkdir(receipts); await chmod(receipts, 0o770); },
+      "a file": async () => await writeFile(receipts, "")
+    };
+    for (const [label, seed] of Object.entries(roots)) {
+      await rm(receipts, { recursive: true, force: true });
+      await seed();
+      await expect(ReceiptSlot.claim("macos.json", receipts), label).rejects.toThrow(/is not a harness-owned receipt directory/);
+    }
+    expect(readdirSync(elsewhere)).toEqual([]);
+    await rm(receipts);
+    const slot = await ReceiptSlot.claim("macos.json", receipts);
+    expect(statSync(receipts).mode & 0o777).toBe(0o700);
+    expect(slot.file).toBe(path.join(receipts, "macos.json"));
+    await slot.release();
+    expect(readdirSync(receipts)).toEqual([]);
+  });
+
+  it("decides every withdrawal and write on the entry it took, so an entry swapped in after a check survives, and one run never invalidates another", async () => {
+    const fsp = createRequire(import.meta.url)("node:fs/promises") as typeof import("node:fs/promises");
+    const real = { rename: fsp.rename, link: fsp.link };
+    // Deterministic interleavings: a one-shot hook runs just before the next rename or link of the slot's name.
+    let hook: { rename?: () => Promise<void>; link?: () => Promise<void> } = {};
+    const once = (kind: "rename" | "link") => async () => { const action = hook[kind]; if (action) { hook = {}; await action(); } };
+    fsp.rename = (async (from: string, to: string) => { if (String(from) === context.run.slot.file) await once("rename")(); return await real.rename(from, to); }) as typeof fsp.rename;
+    fsp.link = (async (from: string, to: string) => { if (String(to) === context.run.slot.file) await once("link")(); return await real.link(from, to); }) as typeof fsp.link;
+    syncBuiltinESMExports();
+    const context = await setup();
+    dirs.push(context.dir);
+    try {
+      const file = context.run.slot.file;
+      const receipt = context.run.receipt([], []);
+      const swapIn = (text: string) => async () => { await rm(file, { force: true }); await writeFile(file, text); };
+      // A stale receipt is swapped for unrelated notes after it was looked at and before it is taken.
+      await writeFile(file, JSON.stringify(receipt));
+      hook = { rename: swapIn("operator notes\n") };
+      await expect(context.run.slot.withdraw()).rejects.toThrow(/is not a networking qualification receipt; it is left untouched/);
+      expect(await readFile(file, "utf8")).toBe("operator notes\n");
+      // The same through the CLI, whose early withdrawal still releases its claim.
+      await context.run.slot.release();
+      await writeFile(file, JSON.stringify(receipt));
+      hook = { rename: swapIn("operator notes\n") };
+      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts)).rejects.toThrow(/cannot be withdrawn, so the run does not start/);
+      expect(await readFile(file, "utf8")).toBe("operator notes\n");
+      context.run.slot = await ReceiptSlot.claim("receipt.json", context.receipts);
+      // Unrelated notes appear while the receipt is written: the write fails and never overwrites them.
+      await rm(file);
+      hook = { link: swapIn("operator notes\n") };
+      await expect(context.run.slot.write(receipt)).rejects.toThrow(/was taken while the receipt was written; it is left untouched/);
+      expect(await readFile(file, "utf8")).toBe("operator notes\n");
+      // A rewrite replaces only this run's receipt, never another run's swapped in.
+      await rm(file);
+      await context.run.slot.write(receipt);
+      const other = JSON.stringify({ ...receipt, runId: "0123456789ab" });
+      hook = { rename: swapIn(other) };
+      await expect(context.run.slot.write(receipt)).rejects.toThrow(/is not the receipt of run abcdef123456; it is left untouched/);
+      expect(await readFile(file, "utf8")).toBe(other);
+      await rm(file);
+      // Of two simultaneous claims of one name, exactly one wins.
+      const claims = await Promise.allSettled([ReceiptSlot.claim("macos.json", context.receipts), ReceiptSlot.claim("macos.json", context.receipts)]);
+      expect(claims.map((item) => item.status).sort()).toEqual(["fulfilled", "rejected"]);
+      await Promise.all(claims.map(async (item) => item.status === "fulfilled" ? await item.value.release() : undefined));
+      // A second run on the same name while run A finalizes cannot start, so A's receipt stays.
+      context.run.removeRoot = async () => {
+        await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts)).rejects.toThrow(/cannot be claimed, so the run does not start: Another qualification run holds/);
+      };
+      const outcome = await executeRun(context.run);
+      expect(outcome.code).toBe(0);
+      expect(await context.read()).toEqual(outcome.receipt);
+      // Once A released it, a rerun withdraws A's now stale receipt before any preflight.
+      await context.run.slot.release();
+      await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", "receipt.json"], context.receipts)).rejects.toThrow(/Unknown qualification scenarios/);
+      await expect(access(file)).rejects.toThrow();
+      expect(readdirSync(context.receipts)).toEqual([]);
+    } finally {
+      Object.assign(fsp, real);
+      syncBuiltinESMExports();
+    }
   }, 60_000);
 
   it("withdraws the receipt when the interrupt arrives while it is written or finalized", async () => {
@@ -706,12 +808,12 @@ describe("run execution", () => {
       const context = await setup();
       dirs.push(context.dir);
       context.run.options = { ...context.run.options, signal: interrupt.signal };
-      if (late === "write") context.run.write = async (file, receipt) => { await writeReceipt(file, receipt); interrupt.abort("SIGTERM"); };
+      if (late === "write") context.run.write = async (receipt) => { await context.run.slot.write(receipt); interrupt.abort("SIGTERM"); };
       else context.run.removeRoot = async () => { context.calls.push("remove root"); interrupt.abort("SIGINT"); };
       const outcome = await executeRun(context.run);
       expect(outcome).toMatchObject({ code: 130, clean: true, runErrors: [] });
       expect(outcome.receipt).toBeUndefined();
-      await expect(access(context.run.out)).rejects.toThrow();
+      await expect(access(context.run.slot.file)).rejects.toThrow();
       expect(context.calls).toEqual(["remove root"]);
     }
   });
