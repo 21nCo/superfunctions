@@ -132,11 +132,14 @@ const run: CommandRunner = async (command, args, options = {}) => await new Prom
 
 /**
  * The public names the provider holds for a run's name or binding: the name
- * when Cloudflare holds a DNS record DevFn owns for it, or the host of every
- * ngrok endpoint or tunnel for the name or carrying the registration's
- * marker. Without a hostname, every name carrying the binding's marker: its
- * Cloudflare DNS records or its ngrok endpoints and tunnels. Empty is
- * absence; a failed read throws, it is never absence.
+ * when Cloudflare holds a DNS record DevFn owns for it, or the hosts of every
+ * ngrok endpoint or tunnel at the name or its URL, and of one carrying the
+ * registration's marker without a readable URL, which cannot be told apart
+ * from it. A sibling route of the same binding is not the name's. Without a
+ * hostname or URL (for an ngrok ephemeral route, without its assigned URL),
+ * every name carrying the binding's marker: its Cloudflare DNS records or its
+ * ngrok endpoints and tunnels. Empty is absence; a failed read throws, it is
+ * never absence.
  */
 export type ProviderReadBack = (binding: TunnelBinding, hostname: string | undefined, url: string | undefined) => Promise<string[]>;
 
@@ -169,6 +172,8 @@ export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch =
     const key = binding.ngrok.apiKeyEnv ? env[binding.ngrok.apiKeyEnv] : undefined;
     if (!key) throw new Error(`ngrok binding ${binding.name} has no readable API key, so its endpoints cannot be read back`);
     const names = new Set([...(hostname ? [hostname] : []), ...(url ? [new URL(url).hostname] : [])]);
+    // An ephemeral route's name is DevFn's origin name, which ngrok never holds: without its assigned URL nothing tells its endpoints apart, so all the binding's count.
+    const scoped = binding.ngrok.endpoints === "ephemeral" ? url !== undefined : names.size > 0;
     const held = new Set<string>();
     for (const [route, list] of [["/endpoints", "endpoints"], ["/tunnels", "tunnels"]] as const) {
       let next: string | undefined = `${NGROK_API}${route}?limit=100`;
@@ -179,7 +184,10 @@ export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch =
         if (!response.ok || !Array.isArray(payload?.[list])) throw new Error(`ngrok GET ${route} answered HTTP ${response.status}`);
         for (const item of payload![list] as Array<Record<string, unknown>>) {
           const hosts = [item.url, item.public_url].flatMap((value) => { try { return typeof value === "string" ? [new URL(value).hostname] : []; } catch { return []; } });
-          if (item.metadata === ngrokMarker(binding) || hosts.some((name) => names.has(name))) for (const name of hosts.length ? hosts : ["an endpoint without a URL"]) held.add(name);
+          const owned = item.metadata === ngrokMarker(binding);
+          // Asked for a name, only its own endpoints count; binding-wide, everything carrying the marker.
+          const counts = scoped ? hosts.some((name) => names.has(name)) || (owned && !hosts.length) : owned;
+          if (counts) for (const name of hosts.length ? hosts : ["an endpoint without a URL"]) held.add(name);
         }
         next = typeof payload!.next_page_uri === "string" && payload!.next_page_uri ? payload!.next_page_uri : undefined;
       }

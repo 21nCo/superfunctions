@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, chmod, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,9 +45,28 @@ const HOST_LIMITATIONS = ["Windows is not qualified; no Windows support is claim
   "Linux proxy listeners use ports 80 and 443; the operator must permit Caddy to bind them before the run.",
   "Internal TLS is verified against the DevFn Caddy root by the harness only; browsers need an explicit, operator-chosen trust decision."];
 
-const git = async (cwd: string, args: readonly string[]): Promise<string> => await new Promise((resolve, reject) => {
-  execFile("git", [...args], { cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => { if (error) reject(new Error(`git ${args.join(" ")} failed in ${cwd}`)); else resolve(String(stdout)); });
-});
+/**
+ * git as found in an absolute PATH directory. Relative entries such as "."
+ * are never searched, so the working directory cannot supply the binary.
+ */
+async function gitCommand(): Promise<string> {
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!path.isAbsolute(directory)) continue;
+    const candidate = path.join(directory, process.platform === "win32" ? "git.exe" : "git");
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch { /* not in this directory */ }
+  }
+  throw new Error("git was not found in an absolute PATH directory.");
+}
+
+const git = async (cwd: string, args: readonly string[]): Promise<string> => {
+  const command = await gitCommand();
+  return await new Promise((resolve, reject) => {
+    execFile(command, [...args], { cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => { if (error) reject(new Error(`git ${args.join(" ")} failed in ${cwd}`)); else resolve(String(stdout)); });
+  });
+};
 
 /**
  * Build outputs of a checkout older than their source: for every tracked
@@ -74,13 +94,21 @@ export async function staleBuildOutputs(checkout: string): Promise<string[]> {
 async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   const harness = fileURLToPath(import.meta.url);
   const checkout = (await git(path.dirname(harness), ["rev-parse", "--show-toplevel"])).trim();
-  if ((await git(path.dirname(devfnCli), ["rev-parse", "--show-toplevel"])).trim() !== checkout) throw new Error(`${devfnCli} is not built from the harness checkout ${checkout}.`);
+  // The DevFn CLI must lie inside the harness checkout before its directory is used for anything, and that checkout must be its own repository.
+  const cli = await realpath(devfnCli).catch(() => { throw new Error(`${devfnCli} does not exist; build the DevFn CLI first.`); });
+  if (!cli.startsWith(`${await realpath(checkout)}${path.sep}`)) throw new Error(`${devfnCli} is not inside the harness checkout ${checkout}.`);
+  if ((await git(path.dirname(cli), ["rev-parse", "--show-toplevel"])).trim() !== checkout) throw new Error(`${devfnCli} is not built from the harness checkout ${checkout}.`);
   const actual = (await git(checkout, ["rev-parse", "HEAD"])).trim();
   if (actual !== head) throw new Error(`--head ${head} is not the checkout HEAD ${actual}.`);
   if ((await git(checkout, ["status", "--porcelain"])).trim()) throw new Error(`${checkout} has uncommitted or untracked changes; qualify a clean checkout.`);
   const stale = await staleBuildOutputs(checkout);
   if (stale.length) throw new Error(`Build output is missing or older than its source (${stale.slice(0, 5).join(", ")}${stale.length > 5 ? `, ${stale.length - 5} more` : ""}); rebuild before the run.`);
   return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
+}
+
+/** Remove the receipt at file, if there is one. Every receipt withdrawal goes through here. */
+async function withdrawReceipt(file: string): Promise<void> {
+  await rm(file, { force: true });
 }
 
 /** Write a receipt atomically with mode 0600: a flushed sibling is renamed over the file, so a reader sees the previous or the new receipt, never a partial one. */
@@ -123,11 +151,12 @@ const RECEIPT_REWRITES = 5;
  * writes no receipt: an interrupt that arrives while the receipt is written
  * or finalized withdraws it. A receipt already at the output path is removed
  * before anything runs, so no failed or interrupted rerun leaves it in place;
- * a run that cannot remove it does not start.
+ * a run that cannot remove it does not start. The CLI withdraws it earlier
+ * still, before its preflight, so this covers direct callers.
  */
 export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
   const { inventory, resources, signal } = run.options;
-  await rm(run.out, { force: true });
+  await withdrawReceipt(run.out);
   const failures: string[] = [];
   const runErrors = (): string[] => [...failures, ...inventory.ledgerFailures.map((item) => `inventory ledger: ${item}`), ...run.strays.map((item) => `unhandled rejection during the run: ${item}`)];
   const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {
@@ -165,13 +194,13 @@ export async function executeRun(run: QualificationRun): Promise<QualificationOu
         receipt = run.receipt(results, runErrors());
         await write(run.out, receipt);
       } catch (error) {
-        await rm(run.out, { force: true });
+        await withdrawReceipt(run.out);
         throw new Error(`The receipt ${run.out} was withdrawn: it could not record every run error (${message(error)}).`);
       }
     }
     const errors = runErrors();
     if (signal?.aborted) {
-      await rm(run.out, { force: true });
+      await withdrawReceipt(run.out);
       return { code: 130, clean, runErrors: errors };
     }
     return { code: runExitCode(receipt, receiptProblems(receipt), clean, errors.length), clean, receipt, runErrors: errors };
@@ -194,6 +223,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     return gate.ready ? 0 : 1;
   }
   if (command !== "plan" && command !== "run") throw new Error(`Unknown command ${command}.\n${USAGE}`);
+  if (command === "run") {
+    if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file>.");
+    // A run attempt withdraws the receipt at --out before anything that can fail or be interrupted, so no failed rerun leaves an earlier receipt there.
+    await withdrawReceipt(values.out).catch((error: unknown) => { throw new Error(`The receipt at ${values.out} cannot be withdrawn, so the run does not start: ${message(error)}`); });
+  }
   const scenarios = selectScenarios({ scenarios: values.scenario, rows: values.row?.map(Number) });
   const devfnCli = path.resolve(values.devfn ?? fileURLToPath(new URL("../../../cli/dist/index.js", import.meta.url)));
   const { approval, approvalError } = await loadApproval(values.approval);
@@ -206,8 +240,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         unmet: unmet(scenario.prerequisites), assertions: scenario.assertions.map((item) => item.id), fixtureEvidence: scenario.fixtureEvidence })) }, null, 2)}\n`);
     return 0;
   }
-  if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file>.");
-  const source = await provenance(values.head, devfnCli);
+  const [head, out] = [values.head!, values.out!];
+  const source = await provenance(head, devfnCli);
   // Compose runs only against the local engine the prerequisite resolved, pinned for every DevFn and docker command of the run.
   const docker = prerequisites.find((item) => item.id === "docker-compose")?.status === "satisfied" ? await localDockerEndpoint(process.env, execute) : undefined;
   const runId = randomBytes(6).toString("hex");
@@ -236,8 +270,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const startedAt = new Date().toISOString();
   const secrets = approval ? [approval.oauth?.clientSecretEnv, approval.oauth?.clientIdEnv, approval.cloudflare?.apiTokenEnv, approval.ngrokReserved?.authtokenEnv, approval.ngrokReserved?.apiKeyEnv,
     approval.ngrokEphemeral?.authtokenEnv, approval.ngrokEphemeral?.apiKeyEnv].flatMap((name) => name && process.env[name] ? [process.env[name]!] : []) : [];
-  const head = values.head;
-  const outcome = await executeRun({ out: values.out, strays,
+  const outcome = await executeRun({ out, strays,
     options: { scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal },
     receipt: (results, runErrors) => redactSecrets<NetworkingQualificationReceipt>({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head, runId, provenance: source,
       host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
@@ -251,7 +284,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`${JSON.stringify({ interrupted: interrupt.signal.reason, cleanup, ledger, runErrors: outcome.runErrors, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
     return 130;
   }
-  process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ receipt: out, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
   // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was final fails it too.
   return outcome.code === 0 && strays.length ? 1 : outcome.code;
 }

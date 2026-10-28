@@ -319,7 +319,10 @@ const compose: LiveDriver = async (context, host) => {
   const allocation = (name: string) => (receipt.allocations as Array<{ service: string; port: number; host: string }>).find((item) => item.service === name);
   const direct = async (name: string) => { const leased = allocation(name); return leased ? await host.request(`http://127.0.0.1:${leased.port}/`).catch(() => undefined) : undefined; };
   const answer = await direct("client");
-  context.expect("sibling-url", answer?.json?.upstream === "http://echo:8080" && answer.json.answer === "echo", `client saw ${String(answer?.json?.upstream)} and reached it: ${answer?.json?.answer === "echo"}`);
+  // The client must see echo by its Compose service name and container port, as the fixture declares them.
+  const echoService = (composeFixture().services as Record<string, { service: string; ports: Record<string, number> }>).echo;
+  const sibling = `http://${echoService.service}:${echoService.ports.echo}`;
+  context.expect("sibling-url", answer?.json?.upstream === sibling && answer.json.answer === "echo", `client saw ${String(answer?.json?.upstream)} and reached it: ${answer?.json?.answer === "echo"}`);
   const echo = await direct("echo");
   const published = await Promise.all(["echo", "client"].map(async (name) => (await host.docker(["ps", "--filter", `publish=${allocation(name)?.port ?? 0}`, "--format", "{{.Ports}}"])).stdout.trim()));
   // Each leased port is published on loopback only and answers at its own direct URL with its own service.

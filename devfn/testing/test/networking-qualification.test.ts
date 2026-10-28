@@ -8,14 +8,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isCredentialKey, processBirthSignature, validateDevFnConfig } from "@devfn/config";
 import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@devfn/core";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { relayPaths } from "@devfn/proxy/oauth-relay";
 import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
-import { executeRun, staleBuildOutputs, writeReceipt, type QualificationRun } from "../src/networking/cli.js";
+import { executeRun, main, staleBuildOutputs, writeReceipt, type QualificationRun } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, dnsAbsent, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
@@ -645,6 +645,31 @@ describe("run execution", () => {
     await expect(executeRun(context.run)).rejects.toThrow();
     expect(context.inventory.list()).toHaveLength(2);
   });
+
+  it("withdraws a receipt at --out once run validates its arguments, before any preflight can fail, and gate never touches it", async () => {
+    const context = await setup();
+    dirs.push(context.dir);
+    const seed = async () => await writeReceipt(context.run.out, context.run.receipt([], []));
+    const foreign = path.join(context.dir, "cli.js");
+    await writeFile(foreign, "");
+    // Scenario selection, provenance after the host prerequisite probes, and a DevFn CLI outside the harness checkout: real preflight failures of the CLI.
+    for (const [args, failure] of [[["--scenario", "no.such-scenario"], /Unknown qualification scenarios/], [["--scenario", "host.native-prestart"], /is not the checkout HEAD/],
+      [["--scenario", "host.native-prestart", "--devfn", foreign], /is not inside the harness checkout/]] as const) {
+      await seed();
+      await expect(main(["run", ...args, "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(failure);
+      await expect(access(context.run.out)).rejects.toThrow();
+    }
+    // Invalid arguments start no run attempt, so the receipt stays.
+    await seed();
+    for (const args of [["--head", "abc", "--out", context.run.out], ["--head", "0".repeat(40)]]) await expect(main(["run", ...args])).rejects.toThrow(/run needs --head/);
+    const written = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try { expect(await main(["gate", "--head", HEAD, context.run.out])).toBe(1); } finally { written.mockRestore(); }
+    expect((await context.read()).head).toBe(HEAD);
+    // A receipt path that cannot be cleared starts nothing.
+    await rm(context.run.out);
+    await mkdir(context.run.out);
+    await expect(main(["run", "--scenario", "no.such-scenario", "--head", "0".repeat(40), "--out", context.run.out])).rejects.toThrow(/cannot be withdrawn, so the run does not start/);
+  }, 60_000);
 
   it("withdraws the receipt when the interrupt arrives while it is written or finalized", async () => {
     for (const late of ["write", "root removal"] as const) {
@@ -1622,6 +1647,39 @@ describe("live host cleanup handlers", () => {
     expect(await handlers.present(entry)).toBe(false);
   });
 
+  it("reads a withdrawn ngrok name back by its own endpoints in both endpoint modes, while the binding read-back still holds every marked endpoint", async () => {
+    let endpoints: unknown[] = [];
+    const fetcher = (async (url: string | URL | Request) => new Response(JSON.stringify({ ...(String(url).includes("/endpoints") ? { endpoints } : { tunnels: [] }), next_page_uri: null }))) as typeof fetch;
+    const env = { QUAL_NGROK_API_KEY: "key" };
+    const status = { tunnel: { hostnames: [] as string[], outstanding: [] } };
+    const { host, inventory } = await fixtureHost({ devfn: { "tunnel status": status } }, providerReadBack(env, fetcher), env);
+    // ngrok's own offline answer: the withdrawn name is refused at the edge.
+    host.request = async () => ({ status: 404, body: "", headers: { "ngrok-error-code": "ERR_NGROK_3200" } });
+    const handlers = host.handlers();
+    for (const mode of ["reserved", "ephemeral"] as const) {
+      const name = `qabcdef12-ng${mode[0]}`;
+      const binding = await registerTunnelBinding(host.stateDir, { name, provider: "ngrok", domain: mode === "reserved" ? "dev.example.test" : ephemeralOriginDomain(name), projectId: "qualification",
+        repositoryIdentity: dir, nonproduction: true, ngrok: { endpoints: mode, authtokenEnv: "QUAL_NGROK_AUTHTOKEN", apiKeyEnv: "QUAL_NGROK_API_KEY" } });
+      const [a, b] = mode === "reserved"
+        ? [{ id: "web-qabcdef12-a.dev.example.test", url: "https://web-qabcdef12-a.dev.example.test/" }, { id: "web-qabcdef12-b.dev.example.test", url: "https://web-qabcdef12-b.dev.example.test/" }]
+        : [{ id: `web-qabcdef12-a-0123.${binding.domain}`, url: "https://a1b2.ngrok-free.app/" }, { id: `web-qabcdef12-b-4567.${binding.domain}`, url: "https://c3d4.ngrok-free.app/" }];
+      const entry = inventory.record("public-hostname", a.id, mode, { cwd: dir, binding: name, url: a.url });
+      // After A's down, DevFn routes only B and the provider holds only B's endpoint, carrying the shared marker: A is withdrawn, so withdraw-one can pass and recovery runs.
+      status.tunnel.hostnames = [b.id];
+      const sibling = { url: b.url, metadata: ngrokMarker(binding) };
+      endpoints = [sibling];
+      expect(await handlers.present(entry), mode).toBe(false);
+      // A leftover endpoint at A's own URL, marked or not, still holds A.
+      for (const metadata of [ngrokMarker(binding), "foreign"]) {
+        endpoints = [sibling, { url: a.url, metadata }];
+        expect(await handlers.present(entry), mode).toBe(`held by ngrok: ${new URL(a.url).hostname}`);
+      }
+      // The binding's cleanup read-back still rejects every endpoint carrying its marker, the surviving sibling's included.
+      endpoints = [sibling];
+      expect(await handlers.present(inventory.record("tunnel-binding", name, mode)), mode).toContain(`held by ngrok: ${new URL(b.url).hostname}`);
+    }
+  });
+
   it("finds a run's ngrok endpoints by marker or name and fails closed on unreadable pages or a missing API key", async () => {
     const binding = { name: "qabcdef12-ngr", provider: "ngrok", domain: "ngrok.example.test", projectId: "qualification", repositoryIdentity: "/r", nonproduction: true,
       ngrok: { endpoints: "reserved", authtokenEnv: "QUAL_NGROK_AUTHTOKEN", apiKeyEnv: "QUAL_NGROK_API_KEY", registrationId: "c".repeat(32) } } as TunnelBinding;
@@ -1630,7 +1688,16 @@ describe("live host cleanup handlers", () => {
       return new Response(JSON.stringify({ ...list, next_page_uri: null }), { status });
     }) as typeof fetch;
     const env = { QUAL_NGROK_API_KEY: "key" };
-    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual(["other.ngrok.example.test"]);
+    // A name asks about that name only: a sibling endpoint carrying the binding's marker is not its residue, while the binding-wide read-back holds it.
+    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual([]);
+    expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, undefined, undefined)).toEqual(["other.ngrok.example.test"]);
+    expect(await providerReadBack(env, pages([], [{ public_url: "https://other.ngrok.example.test", metadata: ngrokMarker(binding) }]))(binding, undefined, "https://web-q.ngrok.example.test/")).toEqual([]);
+    // A marked endpoint without a readable URL cannot be told apart from the name.
+    expect(await providerReadBack(env, pages([{ metadata: ngrokMarker(binding) }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual(["an endpoint without a URL"]);
+    // An ephemeral route is known to ngrok only by its assigned URL; without one, every marked endpoint counts for its origin name.
+    const ephemeral = { ...binding, ngrok: { ...binding.ngrok, endpoints: "ephemeral" } } as TunnelBinding;
+    expect(await providerReadBack(env, pages([{ url: "https://a1b2.ngrok-free.app", metadata: ngrokMarker(ephemeral) }]))(ephemeral, "web-q-0123.q.ngrok.devfn.internal", undefined)).toEqual(["a1b2.ngrok-free.app"]);
+    expect(await providerReadBack(env, pages([{ url: "https://a1b2.ngrok-free.app", metadata: ngrokMarker(ephemeral) }]))(ephemeral, "web-q-0123.q.ngrok.devfn.internal", "https://c3d4.ngrok-free.app/")).toEqual([]);
     expect(await providerReadBack(env, pages([], [{ public_url: "https://web-q.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual(["web-q.ngrok.example.test"]);
     expect(await providerReadBack(env, pages([{ url: "https://other.ngrok.example.test", metadata: "foreign" }]))(binding, "web-q.ngrok.example.test", undefined)).toEqual([]);
     await expect(providerReadBack(env, pages([], [], 503))(binding, "web-q.ngrok.example.test", undefined)).rejects.toThrow(/HTTP 503/);
