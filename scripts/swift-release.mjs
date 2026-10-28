@@ -17,6 +17,7 @@ const products = [
   'FileFnClient', 'FileFnSwiftUI', 'FileFnWebViewBridgeHost',
   'SearchFnCore', 'SearchFnAdapterContracts', 'SearchFnMemoryAdapter',
   'SearchFnSQLiteAdapter', 'SearchFnClient', 'SearchFnConvenience',
+  'UIFnSwiftUI',
 ];
 const run = (file, args, stdio = 'inherit') => execFileSync(file, args, { cwd: root, stdio, encoding: 'utf8' });
 // SwiftPM's version is the root git tag, not an npm/pyproject version. A stable
@@ -35,7 +36,7 @@ if (!prerelease) {
 if (command === 'validate') {
   const manifest = JSON.parse(run('swift', ['package', 'dump-package'], 'pipe'));
   const actual = manifest.products.filter(product => product.type.library).map(product => product.name).sort();
-  if (JSON.stringify(actual) !== JSON.stringify([...products].sort())) throw new Error('Root Swift package must expose the 12 supported library products');
+  if (JSON.stringify(actual) !== JSON.stringify([...products].sort())) throw new Error('Root Swift package must expose the 13 supported library products');
   run('swift', ['package', 'resolve']);
   // The root's automatic library products are all built by the default build.
   run('swift', ['build', '--configuration', 'release']);

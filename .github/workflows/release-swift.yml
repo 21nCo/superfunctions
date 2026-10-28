@@ -37,7 +37,7 @@ jobs:
       - name: Resolve root Swift release version
         id: resolve
         run: node scripts/swift-release.mjs resolve "${RELEASE_TAG}"
-      - name: Resolve, build all 12 library products and test on macOS
+      - name: Resolve, build all 13 library products (AuthFn, FileFn, SearchFn, UIFnSwiftUI) and test on macOS
         run: node scripts/swift-release.mjs validate "${RELEASE_TAG}"
       - name: Archive the immutable source tag
         id: archive

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -24,4 +25,15 @@ test('npm, Python, noncanonical and unsafe root tags fail', () => {
   for (const tag of ['authfn-core-v1.0.0', 'python-authfn-v1.0.0', 'v01.0.0', 'v1.0.0-rc.01', 'v1.0.0-rc..1', 'v1.0.0+build.1', 'refs/heads/main', 'v1.0']) {
     assert.notEqual(run(tag).status, 0, tag);
   }
+});
+
+test('release validation lists every root Package.swift library product', () => {
+  const manifest = readFileSync(path.join(root, 'Package.swift'), 'utf8');
+  const declared = [...manifest.matchAll(/\.library\(\s*name:\s*"([^"]+)"/g)].map(match => match[1]).sort();
+  const resolved = run('v0.0.0-manifest.0');
+  assert.equal(resolved.status, 0, resolved.stderr);
+  const { products } = JSON.parse(resolved.stdout);
+  assert.deepEqual([...products].sort(), declared);
+  assert.ok(products.includes('UIFnSwiftUI'));
+  assert.equal(products.length, 13);
 });
