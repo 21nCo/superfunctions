@@ -20,7 +20,8 @@ function upconvertNode(value: unknown): unknown {
       continue;
     }
 
-    output[key] = upconvertNode(nodeValue);
+    // Plain assignment would treat a "__proto__" key as the prototype and lose it; keep it as data.
+    Object.defineProperty(output, key, { value: upconvertNode(nodeValue), enumerable: true, writable: true, configurable: true });
   }
 
   if (value.nullable === true) {

@@ -24,7 +24,7 @@ import type {
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
-import { createKyselyInternalCrud } from './internal.js';
+import { createKyselyInternalCrud, createKyselyRawSql } from './internal.js';
 import { normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
@@ -426,5 +426,6 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
     schema: normalizeAdapterSchema(config.adapterSchema),
   });
   const internalCrud = createKyselyInternalCrud(config.db, config.dialect);
-  return Object.assign(adapter, { internal: internalCrud });
+  const rawSql = createKyselyRawSql(config.db, config.dialect);
+  return Object.assign(adapter, { internal: internalCrud, rawSql });
 }

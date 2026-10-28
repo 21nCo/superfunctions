@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:apifn:schema:client-failure-event:v1",
+  "title": "ApiFn client-failure event v1",
+  "description": "Bounded, secret-free client failure report correlated to an operation and release. maxLength values are characters; validateClientFailureEvent additionally enforces them as UTF-8 bytes, rejects credential-like values (credential key/value text, bearer tokens, provider keys, URL user info) and credential-like attribute keys, reads the input once and caps the serialized event at 8192 bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {"const": "apifn.client-failure/v1"},
+    "eventId": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]{8,64}$"},
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 35,
+      "description": "RFC 3339 UTC timestamp. Validators must also reject impossible calendar dates such as February 30, and second 60 other than at 23:59:60 on 30 June or 31 December.",
+      "pattern": "^(\\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):([0-5]\\d):([0-5]\\d|60)(?:\\.\\d{1,9})?Z$"
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+        }
+      },
+      "required": ["id", "version"]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+        "method": {"enum": ["get", "put", "post", "delete", "options", "head", "patch", "trace"]},
+        "pathTemplate": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^/[^?#\\s]*$"}
+      },
+      "required": ["id"]
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "releaseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$"
+        },
+        "catalogDigest": {"type": "string", "minLength": 1, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
+        "sdk": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "target": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]*$"},
+            "package": {"type": "string", "minLength": 1, "maxLength": 214, "pattern": "^[\\x21-\\x7e]+$"},
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+            }
+          },
+          "required": ["target", "package", "version"]
+        }
+      },
+      "required": ["releaseId"]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["network", "timeout", "http", "decode", "validation", "aborted", "unknown"]},
+        "httpStatus": {"type": "integer", "minimum": 100, "maximum": 599},
+        "errorCode": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "retryable": {"type": "boolean"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 100}
+      },
+      "required": ["kind"]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[\\x21-\\x7e]+$"},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[\\x21-\\x7e]+$"}
+      },
+      "required": ["name"]
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x7e]+$"},
+        "traceId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x7e]+$"}
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+        "not": {
+          "pattern": "a[_.-]*u[_.-]*t[_.-]*h[_.-]*o[_.-]*r[_.-]*i[_.-]*z[_.-]*a[_.-]*t[_.-]*i[_.-]*o[_.-]*n|c[_.-]*o[_.-]*o[_.-]*k[_.-]*i[_.-]*e|p[_.-]*a[_.-]*s[_.-]*s[_.-]*w[_.-]*o[_.-]*r[_.-]*d|p[_.-]*a[_.-]*s[_.-]*s[_.-]*w[_.-]*d|p[_.-]*w[_.-]*d|p[_.-]*a[_.-]*s[_.-]*s[_.-]*p[_.-]*h[_.-]*r[_.-]*a[_.-]*s[_.-]*e|s[_.-]*e[_.-]*c[_.-]*r[_.-]*e[_.-]*t|a[_.-]*p[_.-]*i[_.-]*k[_.-]*e[_.-]*y|a[_.-]*c[_.-]*c[_.-]*o[_.-]*u[_.-]*n[_.-]*t[_.-]*k[_.-]*e[_.-]*y|t[_.-]*o[_.-]*k[_.-]*e[_.-]*n|p[_.-]*r[_.-]*i[_.-]*v[_.-]*a[_.-]*t[_.-]*e[_.-]*k[_.-]*e[_.-]*y|c[_.-]*r[_.-]*e[_.-]*d[_.-]*e[_.-]*n[_.-]*t[_.-]*i[_.-]*a[_.-]*l|s[_.-]*e[_.-]*s[_.-]*s[_.-]*i[_.-]*o[_.-]*n[_.-]*i[_.-]*d"
+        }
+      },
+      "additionalProperties": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "number"}, {"type": "boolean"}]}
+    }
+  },
+  "required": ["schemaVersion", "eventId", "occurredAt", "api", "operation", "release", "failure"]
+}

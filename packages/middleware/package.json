@@ -34,7 +34,7 @@
   },
   "publishConfig": { "access": "public" },
   "peerDependencies": {
-    "@superfunctions/db": "^0.2.0 || ^0.3.0"
+    "@superfunctions/db": "^0.2.0 || ^0.3.0 || ^0.4.0"
   },
   "peerDependenciesMeta": {
     "@superfunctions/db": { "optional": true }
@@ -43,7 +43,7 @@
     "@superfunctions/observability": "0.0.1"
   },
   "devDependencies": {
-    "@superfunctions/db": "0.3.0",
+    "@superfunctions/db": "0.4.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

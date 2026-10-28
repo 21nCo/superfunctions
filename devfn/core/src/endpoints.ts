@@ -21,6 +21,10 @@ export interface EndpointResolutionInput {
   composeNetworks?: Readonly<Record<string, readonly string[]>>;
   /** Selected raw Compose interpolation references, before Compose substitutes missing values. */
   composeReferences?: Readonly<Record<string, ReadonlySet<string>>>;
+  /** Public tunnel URLs by route that are known before start; each is generated as DEVFN_PUBLIC_URL_<ROUTE>. */
+  publicUrls?: Readonly<Record<string, string>>;
+  /** Public tunnel routes whose URLs the provider assigns only after start; any reference to theirs is rejected. */
+  postStartPublicRoutes?: readonly string[];
 }
 
 export interface ResolvedNodeStartup {
@@ -809,6 +813,45 @@ function normalized(name: string): string {
   return name.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
+const publicUrlKey = (route: string): string => `DEVFN_PUBLIC_URL_${normalized(route)}`;
+
+function generatedPublicUrls(input: EndpointResolutionInput, generated: Record<string, string>): void {
+  for (const [route, url] of Object.entries(input.publicUrls ?? {})) {
+    if (Object.hasOwn(generated, publicUrlKey(route))) invalid(`hostnames.${route}`, `public URL key ${publicUrlKey(route)} collides with another generated key.`);
+    generated[publicUrlKey(route)] = url;
+  }
+}
+
+/**
+ * A public URL the provider assigns only after start cannot configure
+ * anything before it: a reference to one, in any selected template source,
+ * fails before any lease, process or connector starts instead of starting a
+ * consumer without its URL.
+ */
+function rejectPostStartPublicReferences(input: EndpointResolutionInput, config: DevFnConfig): void {
+  const deferred = new Map((input.postStartPublicRoutes ?? []).map((route) => [publicUrlKey(route), route]));
+  if (!deferred.size) return;
+  const check = (name: string, field: string) => {
+    const route = deferred.get(name);
+    if (route) invalid(field, `${name} is the public URL of ephemeral tunnel route ${route}, which the provider assigns only after startup; it cannot be referenced before start. Use a reserved-domain tunnel binding for a pre-start public URL, or read it from the receipt's publicUrls once started.`);
+  };
+  const values = (source: Record<string, string> | readonly string[] | undefined, field: string) => {
+    for (const value of Object.values(source ?? {})) for (const match of value.matchAll(REFERENCE)) check(match[1], field);
+  };
+  values(config.profiles[input.plan.profile]?.environment, `profiles.${input.plan.profile}.environment`);
+  for (const node of input.plan.nodes) {
+    const field = `${node.kind === "process" ? "processes" : "services"}.${node.name}`;
+    const spec = node.kind === "process" ? config.processes?.[node.name] : config.services?.[node.name];
+    values(spec?.env, `${field}.env`);
+    if (node.kind === "process") {
+      values(config.processes?.[node.name]?.command, `${field}.command`);
+      values(config.processes?.[node.name]?.script === undefined ? undefined : [config.processes[node.name].script!], `${field}.script`);
+    }
+    if (spec?.health?.type === "command") values(spec.health.command, `${field}.health.command`);
+    for (const name of input.composeReferences?.[node.name] ?? []) check(name, `${field}.compose`);
+  }
+}
+
 export function resolveLocalHostname(configured: string | undefined, key: string, projectId: string, ownerId: string, suffix = ".localhost"): string {
   const template = (configured ?? `${key}-{instance}${suffix}`).replaceAll("{project}", projectId);
   const ownerLabel = template.split(".").find((label) => label.includes("{instance}"));
@@ -1059,6 +1102,7 @@ export function resolveEndpointTemplates(input: EndpointResolutionInput): Endpoi
   if (!ownerId || ownerId.includes("\0")) invalid("ownerId", "must be a non-empty opaque value without NUL.");
   const profile = config.profiles[plan.profile];
   if (!profile) invalid("profile", `unknown profile ${plan.profile}.`);
+  rejectPostStartPublicReferences(input, config);
   const generated: Record<string, string> = {
     DEVFN_PROJECT_ID: config.project.id,
     DEVFN_INSTANCE_ID: ownerId,
@@ -1073,6 +1117,7 @@ export function resolveEndpointTemplates(input: EndpointResolutionInput): Endpoi
     if (url) healthUrls.set(node.name, url);
   }
   const { directUrls, composeUrls } = generatedPortValues(input, config, generated, httpPorts, httpSchemes);
+  generatedPublicUrls(input, generated);
   const checkedGenerated: CheckedValues = { values: generated, checked: { ...generated, DEVFN_INSTANCE_ID: "devfnopaqueowner" } };
   const environment = resolveValues(profile.environment ?? {}, checkedGenerated, checkedGenerated, `profiles.${plan.profile}.environment`, budget);
   const nodes: Record<string, ResolvedNodeStartup> = Object.create(null);

@@ -45,7 +45,15 @@ function unhandledJsonSchema(adapter: object, schema: TableSchemaMap): TableSche
 function combinedCodecSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
   const existing = registeredSchema(adapter) ?? {};
   const combined = { ...existing };
-  for (const [model, table] of Object.entries(schema)) combined[model] = { ...table, fields: { ...existing[model]?.fields, ...table.fields } };
+  for (const [model, table] of Object.entries(schema)) {
+    const fields = { ...existing[model]?.fields, ...table.fields };
+    for (const [name, field] of Object.entries(existing[model]?.fields ?? {})) {
+      // This registry describes codecs already active below this wrapper.
+      // A native declaration cannot disable a delegating adapter's text codec.
+      if (field.type === "json" && field.jsonStorageType === "json-text") fields[name] = field;
+    }
+    combined[model] = { ...table, fields };
+  }
   return combined;
 }
 
@@ -104,6 +112,9 @@ export function transformWhereForStorage(
   return where.map((clause) => {
     const field = table.fields[clause.field];
     const jsonText = field?.type === "json" && field.jsonStorageType === "json-text";
+    if (jsonText && !["eq", "ne", "in", "not_in"].includes(clause.operator)) {
+      throw new TypeError(`${model}.${clause.field} does not support ${clause.operator} for JSON text`);
+    }
     if (!isDateField(field) && !jsonText) {
       return clause;
     }

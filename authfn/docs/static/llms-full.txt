@@ -226,7 +226,7 @@ export default {
     const db = drizzle(env.DB, { schema });
     const authApp = authfn({ plugins: authFnPlugins(/* your plugins */) });
     const auth = authApp.createServer({ database: drizzleAdapter({ db, dialect: 'sqlite' }) });
-    return auth.router.fetch(request);
+    return auth.router.handle(request);
   },
 };
 ```
@@ -1021,6 +1021,8 @@ Provider descriptors (the URLs, default scopes, profile-resolution code) live in
 
 `@authfn/admin` is a small package that mounts admin-only HTTP routes alongside your kernel. It uses the same database, the same namespace, and the same observability sink. You bring the **authorization** — a callback that decides whether a given request is allowed to perform a given admin action.
 
+The package also exports a separate [Super Console integration](/docs/admin/super-console) for scoped user and session operations and operator authentication. The routes below describe the direct admin API; a Super Console host uses the capability adapter and its own dispatcher.
+
 ```bash
 npm install @authfn/admin
 ```
@@ -1130,7 +1132,7 @@ createAuthFnAdmin({
 - every session for that user
 - every password credential, OAuth identity, OTP challenge, API key, 2FA enrollment / recovery code, region profile
 
-…in a single transaction. The response carries per-table counts:
+…one table at a time; the steps are not a single transaction, so a failure part-way can leave partial cleanup. Rows owned by custom plugins are not covered unless an `afterAccountDelete` hook removes them. The response carries per-table counts:
 
 ```jsonc
 {
@@ -1139,7 +1141,7 @@ createAuthFnAdmin({
     "deleted": true,
     "userId": "user_123",
     "primaryEmail": "ada@example.com",
-    "counts": { "sessions": 4, "password_credentials": 1, "oauth_accounts": 2, "api_keys": 3, "two_factor_enrollments": 1 }
+    "counts": { "users": 1, "sessions": 4, "passwordCredentials": 1, "oauthAccounts": 2, "apiKeys": 3, "twoFactorEnrollments": 1 }
   },
   "requestId": "..."
 }
@@ -1169,52 +1171,60 @@ Two reasons:
 
 ---
 
+<!-- page:docs:admin/super-console.md path:/docs/admin/super-console -->
+# Super Console integration
+
+> Bind scoped AuthFn user and session operations to an authorized operator.
+
+
+# Super Console integration
+
+`@authfn/admin` exports two distinct surfaces. The [direct admin routes](/docs/admin) accept an application `authorize` callback. The Super Console capability exposes users and sessions through the shared admin dispatcher, and `createAuthFnOperatorAuth` supplies operator sign-in, two-factor completion, sign-out, scope authorization, and mutation checks.
+
+## Scoped capability
+
+The capability lists and gets users in the configured namespace, restricted to a region only when `AdminScope.region` is supplied, deletes an in-scope user, lists that user's active sessions, and revokes a session. The host binds `createAuthFnAdminService(authFnConfig)` to `createAuthFnAdminAdapter(service)` and mounts the adapter in its authenticated Super Console dispatcher. `createAuthFnAdminClient(adminClient)` supplies typed calls for the same operations.
+
+| Operation | Permission | Safety |
+| --- | --- | --- |
+| List or get users | `authfn.users.read` | Read, audited |
+| Delete user | `authfn.users.delete` | Destructive, MFA confirmation, audited |
+| List user sessions | `authfn.sessions.read` | Read, audited |
+| Revoke session | `authfn.sessions.revoke` | Destructive, recent-auth confirmation, audited |
+
+User deletion runs AuthFn's account-deletion cascade, which removes the user, the user's sessions, and the built-in AuthFn plugin records (credentials, OAuth identities, OTP challenges, API keys, two-factor and native-handoff state, region profiles). Rows owned by custom plugins remain unless an `afterAccountDelete` hook removes them. It does not remove application data outside AuthFn, and the steps are not a single transaction, so a failure part-way can leave partial cleanup. Do not expose the capability without scope, permission, confirmation, and audit enforcement. The capability checks the namespace only when `scope.namespace` is supplied, and the region only when `scope.region` is supplied; hosts should pass both. Omitting the region allows operations across regions within the configured namespace. Hosts requiring region isolation must supply and authorize `scope.region` for every operation; these checks are additional to operator authorization.
+
+## Operator authentication
+
+`createAuthFnOperatorAuth` takes an AuthFn config plus two host callbacks: `resolveOperator` maps an authenticated AuthFn session to an allowed console operator, and `authorizeScope` checks a requested admin scope. The integration uses the configured AuthFn plugins, hooks, rate limits, two-factor flow, CSRF policy, and cookie names. An ordinary signed-in AuthFn user does not become a console operator unless `resolveOperator` approves that session.
+
+The [capability source](https://github.com/21nCo/super-functions/blob/dev/authfn/admin/src/index.ts) defines the operation schemas. The [operator integration source](https://github.com/21nCo/super-functions/blob/dev/authfn/admin/src/superconsole.ts) defines authentication and scope callbacks. Use the [direct route guide](/docs/admin) when a custom internal tool needs only user list and delete routes.
+
+---
+
 <!-- page:docs:ai-resources/claude.md path:/docs/ai-resources/claude -->
 # Claude
 
-> One-click Claude Desktop / Claude Code setup for authfn.
+> Use AuthFn's generated context with Claude Desktop and Claude Code.
 
 
 # Claude
 
-## Claude Desktop
+## One-off conversations
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%AppData%\Claude\claude_desktop_config.json` (Windows):
+Paste the context URL at the start of a prompt:
 
-```jsonc
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
+```text
+Reference docs: https://authfn.com/docs/llms-full.txt
+
+Now help me…
 ```
 
-Restart Claude Desktop. Type `/` and you'll see the authfn tools.
-
-Claude will pick up the MCP server automatically and answer questions about authfn with up-to-date docs and OpenAPI awareness.
+Claude can fetch the file when web access is available; otherwise download it and attach it.
 
 ## Claude Code
 
-Claude Code reads MCP from a project-local file. From your project root:
-
-```jsonc
-// .claude/mcp.json
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-## Adding context
-
-If you want Claude to *always* know what stack you're on, add a project-level CLAUDE.md:
+Claude Code reads a project-level `CLAUDE.md`. Describe your stack and point at the context file:
 
 ```markdown
 # Project
@@ -1222,29 +1232,15 @@ If you want Claude to *always* know what stack you're on, add a project-level CL
 This is a SvelteKit app using:
 - `authfn` for the auth kernel (mounted at /auth)
 - `@authfn/password` and `@authfn/email-otp` for sign-in methods
-- @authfn/client + @authfn/svelte for the browser
+- `@authfn/client` + `@authfn/svelte` for the browser
 - Postgres + Drizzle for the database
 
-When you need to know how something in @authfn/* works, use the `authfn.*` MCP tools.
-For migration questions, invoke the appropriate `authfn.skills.*` skill.
+For how `@authfn/*` works, read https://authfn.com/docs/llms.txt and fetch the linked pages you need.
 ```
-
-## llms.txt fallback
-
-For one-off conversations, paste this into a Claude prompt:
-
-```text
-Reference docs: https://authfn.superfunctions.dev/llms-full.txt
-
-Now help me…
-```
-
-Claude will fetch and use the file as context.
 
 ## Related
 
-- [MCP](./mcp)
-- [Skills](./skills)
+- [llms.txt](./llms-txt)
 
 ---
 
@@ -1272,98 +1268,36 @@ When working with `@authfn/*`:
 - Database is Postgres via Drizzle.
 - The schema is generated by `npx @superfunctions/cli generate-schema --config ./superfunctions.config.mjs --adapter drizzle --dialect postgres --output ./apps/api/src/db/generated --force` and lives in `apps/api/src/db/generated/authfn-schema.ts`.
 
-Authoritative docs: https://authfn.superfunctions.dev
-For a full-text RAG file: https://authfn.superfunctions.dev/llms-full.txt
-
-If you have access to MCP tools (`authfn.docs.search`, `authfn.openapi.operation`, `authfn.skills.invoke`), prefer those.
+Authoritative docs: https://authfn.com/docs
+For a full-text RAG file: https://authfn.com/docs/llms-full.txt
 ```
 
-## Factory Droid MCP setup
-
-```bash
-droid mcp add authfn npx -- -y @authfn/mcp
-```
-
-Then in any droid session:
-
-```text
-@authfn how do I add a Microsoft Entra OAuth provider?
-```
-
-The droid will route the question through the authfn MCP tools.
-
-## Codex CLI setup
-
-```bash
-codex mcp add authfn npx -- -y @authfn/mcp
-```
-
-(Same pattern as Droid.)
-
-## Skill packs in CI
-
-If you run agents in CI to generate stub PRs, point them at specific skills:
-
-```bash
-droid run --skill authfn:add-2fa "Add a /settings/security page that lets users enroll in 2FA."
-```
-
-The MCP server returns the `add-2fa` playbook + relevant docs as context, so the generated PR follows the supported pattern.
 
 ## Related
 
-- [MCP](./mcp)
-- [Skills](./skills)
+- [llms.txt](./llms-txt)
 
 ---
 
 <!-- page:docs:ai-resources/cursor.md path:/docs/ai-resources/cursor -->
 # Cursor
 
-> One-click Cursor setup for authfn — MCP, llms.txt, and rules.
+> Point Cursor at AuthFn's generated context with a project rule.
 
 
 # Cursor
 
-## Quickest path
+## Project rule
 
-Add this to `.cursor/mcp.json` in your project:
-
-```jsonc
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-Then add a rule at `.cursor/rules/authfn.mdc` that points Cursor at the docs:
+Add a rule at `.cursor/rules/authfn.mdc` that points Cursor at the generated context:
 
 ```text
 ---
 description: authfn — self-hosted authentication
 ---
 
-When working with `@authfn/*`, prefer the MCP tools `authfn.docs.search`, `authfn.openapi.operation`, and `authfn.skills.invoke`. For migration questions, use `authfn.skills.invoke`. For schema/code generation, use `authfn.openapi.operation`.
-
-Reference docs: https://authfn.superfunctions.dev
-```
-
-That's it. Cursor will use the MCP server for retrieval.
-
-## llms.txt fallback
-
-If you'd rather not run an MCP server, point Cursor at the static file:
-
-```text
----
-description: authfn
----
-
-When working with @authfn/*, fetch context from https://authfn.superfunctions.dev/llms-full.txt as needed.
+When working with @authfn/*, fetch context from https://authfn.com/docs/llms-full.txt as needed.
+Reference docs: https://authfn.com/docs
 ```
 
 ## Project-specific tweaks
@@ -1386,69 +1320,40 @@ When generating sign-in / sign-up code, use the `client.*` helpers from `package
 
 ## Related
 
-- [MCP](./mcp)
 - [llms.txt](./llms-txt)
-- [Skills](./skills)
 
 ---
 
 <!-- page:docs:ai-resources/index.md path:/docs/ai-resources -->
 # AI Resources
 
-> First-class integrations for LLM-based coding assistants — llms.txt, an MCP server, and per-tool skill packs.
+> Give LLM-based coding assistants current AuthFn context through the generated llms.txt files.
 
 
 # AI Resources
 
-authfn ships with **first-class AI assistant support** so the LLM in your editor can answer questions, generate idiomatic code, and apply correct patterns.
-
-These integrations are powered by [docsfn](https://github.com/21nCo/super-functions/tree/dev/docsfn) — the same engine that builds this documentation site — so every doc page is automatically available to your assistant.
+This site publishes generated, LLM-friendly context so an assistant can answer questions about AuthFn from the current documentation instead of guessing.
 
 ## What's available
 
 | Resource | Use it when… |
 | --- | --- |
-| [llms.txt](./llms-txt) | You want a single-file context dump for Cursor / Claude / Codex / GPTs / etc. |
-| [MCP server](./mcp) | You're using an MCP-aware assistant (Claude Desktop, Cursor with MCP, custom hosts) and want live retrieval. |
-| [Skills](./skills) | You want to teach an assistant a specific authfn pattern (sign-in flow, social OAuth, multi-region, …). |
-| [Cursor](./cursor) | You're on Cursor and want one-click setup. |
-| [Claude](./claude) | You're on Claude Desktop / Claude Code and want one-click setup. |
-| [Codex / Droid](./codex) | You're on Factory Codex / Droid (or any AGENTS.md-aware tool). |
+| [llms.txt](./llms-txt) | You want a page index or a single full-text context file for any assistant that accepts a URL or pasted context. |
+| [Cursor](./cursor) | You're on Cursor and want a project rule that points at the context file. |
+| [Claude](./claude) | You're on Claude Desktop or Claude Code. |
+| [Codex / Droid](./codex) | You use an AGENTS.md-aware tool. |
 
-## How they fit together
-
-```mermaid
-flowchart TD
-    Docs["Docs source\n(content/docs/**)"]
-    OpenAPI["OpenAPI spec\n(content/api/authfn.json)"]
-    Examples["Example apps\n(authfn/examples)"]
-
-    Docs --> LlmsTxt["llms.txt + llms-full.txt"]
-    OpenAPI --> LlmsTxt
-    Examples --> LlmsTxt
-
-    Docs --> MCP["MCP server"]
-    OpenAPI --> MCP
-    Examples --> MCP
-
-    Docs --> Skills["Skill packs"]
-
-    LlmsTxt --> Editor["Editor / Assistant"]
-    MCP --> Editor
-    Skills --> Editor
-```
-
-The same content powers all three surfaces; each is the right shape for a different consumer.
+Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. This docs site does not host an MCP server or skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
 
 ## Quick start
 
-The fastest way to get going is to point your assistant at the canonical URL:
+Point your assistant at the full-text file:
 
 ```
-https://authfn.superfunctions.dev/llms-full.txt
+https://authfn.com/docs/llms-full.txt
 ```
 
-Most assistants will accept that as a context source. If your tool is MCP-aware, see [MCP](./mcp) for a richer experience that surfaces type definitions, route metadata, and example apps on demand.
+Use the [short index](https://authfn.com/docs/llms.txt) when the context budget is small, then fetch only the linked pages you need.
 
 ---
 
@@ -1460,305 +1365,51 @@ Most assistants will accept that as a context source. If your tool is MCP-aware,
 
 # llms.txt
 
-[`llms.txt`](https://llmstxt.org/) is a community convention for static, LLM-friendly summaries of a project. authfn ships **two** files at the docs origin:
+[`llms.txt`](https://llmstxt.org/) is a convention for LLM-friendly project context. This docs site serves two generated files under its existing `/docs` mount:
 
-- `https://authfn.superfunctions.dev/llms.txt` — short index. Lists every doc page with a one-line description and a link.
-- `https://authfn.superfunctions.dev/llms-full.txt` — full text. Concatenated markdown of every doc page plus the OpenAPI spec.
+- `https://authfn.com/docs/llms.txt` — short page index.
+- `https://authfn.com/docs/llms-full.txt` — full documentation context, including the configured API material.
 
-Use whichever fits your assistant's context budget.
+These are the configured publication URLs; a local build does not prove live hosting or credentials.
 
-## How they're generated
+## Generation
 
-Both files are emitted by docsfn at build time:
+The normal repository build prepares AuthFn's physical dependencies before regenerating OpenAPI and LLM content:
 
-```bash
-npm run docs:llms     # writes static/llms.txt and static/llms-full.txt
+```sh
+npm exec -- turbo run build --filter=@authfn/docs
 ```
 
-The pipeline:
+After those prerequisites are built, run from `authfn/docs`:
 
-1. Walks every page in `content/docs/**`.
-2. For each page, extracts the H1 + frontmatter description for `llms.txt`.
-3. For each page, includes the full markdown body for `llms-full.txt`.
-4. Appends the OpenAPI spec from `content/api/authfn.json` (operations + schemas).
-5. Writes both files into `static/` so they ship with the deployed site.
+```sh
+npm run generate:openapi
+npm run generate:llms
+npm run check:llms
+```
+
+`generate:llms` loads `docsfn.config.ts` through the consumer's published DocsFn package and filesystem provider, builds the manifest, and writes `static/llms.txt` and `static/llms-full.txt`. Native prerendered routes publish those files at `/docs/llms.txt` and `/docs/llms-full.txt`; the app-root static copies are not the advertised docs-owner URLs. `check:llms` compares generated content without writing it.
 
 ## Use it
 
-In Cursor, Claude Desktop, ChatGPT custom GPTs, or anything that accepts a URL as context:
-
-```
-https://authfn.superfunctions.dev/llms-full.txt
-```
-
-For local development against your own fork, you can also point at:
-
-```
-http://localhost:5173/llms.txt
-http://localhost:5173/llms-full.txt
-```
-
-## What's in `llms-full.txt`
-
-Roughly:
+Supply the full-context URL to an assistant that accepts URLs:
 
 ```text
-# authfn — Self-hosted authentication for any stack
-
-> Sessions, OTP, passwords, social OAuth, 2FA, API keys, multi-region...
-
-## Welcome
-[full body of index.md]
-
-## Getting Started
-[full body of getting-started.md]
-
-## Core Concepts › Architecture
-[full body of architecture.md]
-
-...
-
-## OpenAPI
-- POST /sign-up/password — Create a new account with email and password.
-- POST /sign-in/password — Sign in with email and password.
-[...all 31 operations...]
+https://authfn.com/docs/llms-full.txt
 ```
 
-## Customizing
-
-The `docs:llms` task is configurable via `docsfn.config.ts`:
-
-```ts
-{
-  // ...
-  llmsTxt: {
-    enabled: true,
-    includeOpenApi: true,
-    includePages: ['docs/**'],
-    excludePages: ['docs/blog/**'],
-  },
-}
-```
-
-## Token budget
-
-| File | Approximate size |
-| --- | --- |
-| `llms.txt` | ~8 KB (~2,000 tokens) |
-| `llms-full.txt` | ~250 KB (~65,000 tokens) |
-
-For models with smaller context windows, prefer `llms.txt` and use the [MCP server](./mcp) for on-demand retrieval.
-
----
-
-<!-- page:docs:ai-resources/mcp.md path:/docs/ai-resources/mcp -->
-# MCP server
-
-> A Model Context Protocol server that exposes authfn docs, OpenAPI, and example apps as live tools for your assistant.
-
-
-# MCP server
-
-The authfn **MCP server** is a small Node process that wraps the docs as a set of tools. MCP-aware assistants (Claude Desktop, Cursor, custom hosts) connect to it once, then have on-demand access to:
-
-- All doc pages, by slug or full-text search.
-- The OpenAPI spec — operation lookup by id, route, or tag.
-- Example apps — file listings, content reads.
-- Skill packs — see [Skills](./skills).
-
-## Install
-
-The server is published as `@authfn/mcp`:
-
-```bash
-npm install -g @authfn/mcp
-```
-
-Or use `npx` (no install required):
-
-```bash
-npx @authfn/mcp --help
-```
-
-## Tools exposed
-
-| Tool | Description |
-| --- | --- |
-| `authfn.docs.search` | Full-text search over the docs. Returns matched pages with snippets. |
-| `authfn.docs.get` | Read a doc page by slug. |
-| `authfn.docs.list` | List all doc pages. |
-| `authfn.openapi.operation` | Look up an operation by id, route, or tag. |
-| `authfn.openapi.schema` | Look up a schema definition. |
-| `authfn.examples.list` | List example apps. |
-| `authfn.examples.read` | Read a file from an example app. |
-| `authfn.skills.list` | List available skill packs. |
-| `authfn.skills.invoke` | Run a skill pack against the user's question. |
-
-## Configure your assistant
-
-### Claude Desktop
-
-```jsonc
-// ~/Library/Application Support/Claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-### Cursor
-
-```jsonc
-// .cursor/mcp.json (in your project)
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-### Custom host
-
-The server speaks stdio MCP. Any MCP host can launch it as a child process:
-
-```bash
-npx -y @authfn/mcp
-```
-
-## Example session
+The default local docs port is 6005:
 
 ```text
-User: How do I add 2FA to a SvelteKit app?
-Assistant (under the hood): authfn.docs.search("two factor sveltekit")
-   → returns plugins/two-factor.md, recipes/adding-2fa.md, sdk/svelte.md
-Assistant: First, install authfn, @authfn/two-factor, @authfn/svelte and add the plugin:
-  ...
+http://localhost:6005/docs/llms.txt
+http://localhost:6005/docs/llms-full.txt
 ```
 
-## Why MCP and not just llms.txt?
+## Configuration and size
 
-`llms-full.txt` is great for quick context, but it's static. MCP is **on-demand** — the assistant only fetches what it needs. That means:
+The manifest follows the configured content directories and `site.canonicalUrl` in `docsfn.config.ts`. The shared `scripts/docs-site/llms.mjs` builder passes the canonical URL and excludes Blog posts with the published `includeBlog:false` option. There is no consumer `docs:llms` script or invented `llmsTxt` configuration object.
 
-- Lower token usage on every turn.
-- Always fresh — new releases / docs updates appear immediately if the server is running locally with `--watch`.
-- Tools can return structured data (the OpenAPI operation object, the actual file content of an example) instead of just text.
-
-## Watching local docs
-
-If you're contributing to authfn:
-
-```bash
-cd authfn/docs
-npx @authfn/mcp --watch
-```
-
-The server reloads its index when you save a doc page.
-
-## Authentication
-
-The server is read-only and exposes only public docs. No authentication is required. If you fork and want to gate it, the project at `authfn/mcp/` accepts an optional `--auth-token` flag that requires a `Bearer` token on every tool call.
-
-## Related
-
-- [llms.txt](./llms-txt) — static fallback.
-- [Skills](./skills) — packaged patterns that run via the MCP server.
-
----
-
-<!-- page:docs:ai-resources/skills.md path:/docs/ai-resources/skills -->
-# Skills
-
-> Packaged authfn patterns your assistant can apply on request — sign-in flows, OAuth, multi-region, and more.
-
-
-# Skills
-
-A **skill** is a small, self-contained context pack: prompt, sample code, and links to the relevant doc pages. Your assistant can call `authfn.skills.invoke` with a skill name and the user's request; the response is a focused playbook, not a full RAG dump.
-
-Skills are how you prevent your assistant from synthesizing an outdated or wrong-shaped solution.
-
-## Bundled skills
-
-| Skill | When the assistant should pick it |
-| --- | --- |
-| `add-password-auth` | "Add email/password sign-in to my app." |
-| `add-otp-sign-in` | "Add magic-link or OTP sign-in." |
-| `add-social-oauth` | "Let users sign in with Google / Apple / GitHub." |
-| `add-2fa` | "Enable two-factor auth." |
-| `add-api-keys` | "Issue API keys for our CLI." |
-| `add-multi-region` | "Set up authfn in EU + US." |
-| `add-native-handoff` | "Hand off web sign-in to my iOS app." |
-| `migrate-from-better-auth` | "Move from Better Auth." |
-| `migrate-from-clerk` | "Move from Clerk." |
-| `migrate-from-authjs` | "Move from Auth.js / NextAuth." |
-
-## Anatomy of a skill
-
-```jsonc
-{
-  "id": "add-2fa",
-  "title": "Add 2FA to an existing authfn app",
-  "applicability": ["authfn", "two-factor"],
-  "context": [
-    "docs/plugins/two-factor.md",
-    "docs/recipes/adding-2fa.md"
-  ],
-  "playbook": [
-    "1. Install: `npm install authfn @authfn/two-factor @authfn/client`",
-    "2. Add `authFnTwoFactorPlugin()` to `authfn({ plugins: authFnPlugins(...) })`.",
-    "3. Generate schema: `npx @superfunctions/cli generate-schema --config ./superfunctions.config.mjs --adapter drizzle --dialect postgres --output ./db/generated --force`.",
-    "4. Pass `encryptionKeyResolver` under `createServer({ pluginRuntime: { twoFactor } })`.",
-    "5. UI: enroll → confirm → challenge. See recipes/adding-2fa.md."
-  ]
-}
-```
-
-When invoked, the assistant gets:
-
-- The full text of every `context` page.
-- The structured `playbook`.
-- The user's question.
-
-…and is told to produce code that follows the playbook precisely.
-
-## Authoring skills
-
-In `authfn/docs/content/skills/`:
-
-```jsonc
-// authfn/docs/content/skills/my-skill.json
-{
-  "id": "my-skill",
-  "title": "My custom skill",
-  "applicability": ["..."],
-  "context": ["docs/plugins/...", "docs/recipes/..."],
-  "playbook": ["1. ...", "2. ..."]
-}
-```
-
-Build:
-
-```bash
-npm run build    # validates docs content and emits generated assistant artifacts
-```
-
-Once the MCP server picks it up, every assistant connected to it can invoke the new skill.
-
-## Why not just RAG?
-
-RAG retrieves *similar* text. A skill encodes the *correct* approach. For framework auth, "similar text" frequently surfaces the wrong pattern — e.g., the assistant decides to roll its own session table because the docs mention `users` and `sessions`. Skills short-circuit that by giving the assistant a vetted playbook and a curated context window.
-
-## Related
-
-- [MCP](./mcp) — how skills are invoked.
-- [llms.txt](./llms-txt) — static alternative.
+Generated sizes vary with the corpus and API schema. Prefer the short index for smaller context budgets; retrieve individual linked pages when appropriate. Static context files do not authenticate an assistant or give it live access to a deployment.
 
 ---
 
@@ -4603,18 +4254,13 @@ Bun.serve({
     }
 
     if (url.pathname.startsWith('/auth')) {
-      return auth.router.fetch(stripPrefix(request, '/auth'));
+      return auth.router.handle(request);
     }
 
     return new Response('not found', { status: 404 });
   },
 });
 
-function stripPrefix(request: Request, prefix: string): Request {
-  const url = new URL(request.url);
-  url.pathname = url.pathname.slice(prefix.length) || '/';
-  return new Request(url, request);
-}
 ```
 
 ## Hot reload
@@ -4687,7 +4333,7 @@ createServer(async (req, res) => {
       });
 
   const request = new Request(url, { method: req.method ?? 'GET', headers, body });
-  const response = await auth.router.fetch(request);
+  const response = await auth.router.handle(request);
 
   res.statusCode = response.status;
   response.headers.forEach((v, k) => res.setHeader(k, v));
@@ -4705,7 +4351,7 @@ createServer(async (req, res) => {
 ```ts
 import { auth } from './auth.ts';
 
-Deno.serve({ port: 3000 }, (request) => auth.router.fetch(request));
+Deno.serve({ port: 3000 }, (request) => auth.router.handle(request));
 ```
 
 ## AWS Lambda (function URLs)
@@ -4718,7 +4364,7 @@ export const handler = async (event: any) => {
   const headers = new Headers(event.headers);
   const body = event.body ? Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8') : null;
   const request = new Request(url, { method: event.requestContext.http.method, headers, body });
-  const response = await auth.router.fetch(request);
+  const response = await auth.router.handle(request);
   const buf = await response.arrayBuffer();
   return {
     statusCode: response.status,
@@ -4736,7 +4382,7 @@ import { auth } from './auth.js';
 
 export default {
   fetch(request) {
-    return auth.router.fetch(request);
+    return auth.router.handle(request);
   },
 };
 ```
@@ -4746,7 +4392,7 @@ export default {
 Whatever your framework looks like, the integration always reduces to:
 
 1. Build a `Request` from the framework's incoming representation.
-2. Call `auth.router.fetch(request)`.
+2. Call `auth.router.handle(request)`.
 3. Translate the resulting `Response` to your framework's outgoing representation.
 
 If you find yourself wishing for a bundled adapter for your framework, the [authoring guide](https://github.com/21nCo/super-functions/tree/dev/packages/http) is short — most adapters are < 100 lines.
@@ -5050,14 +4696,10 @@ npm install @superfunctions/http-next
 
 ```ts
 // app/auth/[...path]/route.ts
-import { toNext } from '@superfunctions/http-next';
+import { toNextHandlers } from '@superfunctions/http-next';
 import { auth } from '../_runtime';
 
-const handler = toNext(auth.router);
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## Reading the session in Server Components
@@ -5077,12 +4719,7 @@ export default async function Dashboard() {
 }
 ```
 
-`@superfunctions/http-next` exposes a helper for the fake-request pattern:
-
-```ts
-import { toNextSession } from '@superfunctions/http-next';
-const session = await toNextSession(auth, await headers());
-```
+Use `auth.provider.authenticate(request)` with the incoming headers, as above. The HTTP adapter only creates route handlers; session lookup belongs to the auth provider.
 
 ## Server Actions
 
@@ -5097,7 +4734,7 @@ export async function deleteMyAccount() {
     method: 'DELETE',
     headers: reqHeaders,
   });
-  const response = await auth.router.fetch(request);
+  const response = await auth.router.handle(request);
   if (!response.ok) throw new Error('delete failed');
 }
 ```
@@ -5106,7 +4743,8 @@ export async function deleteMyAccount() {
 
 ```ts
 // middleware.ts
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import { auth } from './app/auth/_runtime';
 
 export async function middleware(request: NextRequest) {
   const url = request.nextUrl;
@@ -5176,13 +4814,13 @@ npm install @superfunctions/http-sveltekit
 
 ```ts
 // src/routes/auth/[...path]/+server.ts
-import { toSvelteKit } from '@superfunctions/http-sveltekit';
+import { toSvelteKitHandler } from '@superfunctions/http-sveltekit';
 import { auth } from '$lib/server/auth';
 
-export const GET = toSvelteKit(auth.router);
-export const POST = toSvelteKit(auth.router);
-export const PUT = toSvelteKit(auth.router);
-export const DELETE = toSvelteKit(auth.router);
+export const GET = toSvelteKitHandler(auth.router);
+export const POST = toSvelteKitHandler(auth.router);
+export const PUT = toSvelteKitHandler(auth.router);
+export const DELETE = toSvelteKitHandler(auth.router);
 ```
 
 ## Reading sessions in `+page.server.ts`
@@ -5226,7 +4864,7 @@ export {};
 SvelteKit's form actions submit via POST — and the authfn router enforces CSRF on POST. The cleanest pattern is:
 
 1. Use the `@authfn/client` browser SDK from `+page.svelte` for sign-in / sign-up / OTP / OAuth — these flows need the CSRF cookie anyway.
-2. Use server-side `auth.router.fetch` from `+page.server.ts` only for actions that don't have a CSRF context (e.g. an admin tool calling on behalf of a user).
+2. Use server-side `auth.router.handle` from `+page.server.ts` only for actions that don't have a CSRF context (e.g. an admin tool calling on behalf of a user).
 
 For a form action that *does* run on cookie-authenticated users, redirect them through a normal POST to `/auth/...` rather than rebuilding the request server-side.
 
@@ -5435,7 +5073,7 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 | Two-factor (TOTP) | RFC 6238 TOTP with recovery codes, time-window tolerance, and pluggable encryption | `@authfn/two-factor` |
 | Multi-region | Region-aware lookup and request-specific runtime environment resolution | `@authfn/multi-region` |
 | Native handoff | Web ↔ native session handoff for iOS/Android wrappers | `@authfn/native-handoff` |
-| Admin API | List/delete users with custom authorization | `@authfn/admin` |
+| Admin API and Super Console | Direct user routes plus scoped user/session capability and operator authentication | `@authfn/admin` |
 | OpenAPI | Auto-generated spec from your enabled plugins, served from the kernel | bundled in `authfn` |
 
 ## SDK matrix
@@ -5467,7 +5105,7 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 - [Frameworks](./frameworks) — Hono, Express, Bun, SvelteKit, Next.js, FastAPI, Flask, Starlette.
 - [Recipes](./recipes) — copy-pasteable solutions for common flows.
 - [API Reference](./api) — OpenAPI-backed endpoint documentation, generated from a server with every plugin enabled.
-- [AI resources](./ai-resources) — `llms.txt`, MCP, and Skills for coding assistants.
+- [AI resources](./ai-resources) — generated `llms.txt` context for coding assistants.
 
 ---
 
@@ -5994,7 +5632,7 @@ Plugins can be unit-tested by:
 
 1. Declaring an app with `authfn({ plugins: authFnPlugins(yourPlugin()) })`.
 2. Creating a server with `memoryAdapter` from `@superfunctions/db/testing`.
-3. Calling `auth.router.fetch(<Request>)` directly.
+3. Calling `auth.router.handle(<Request>)` directly.
 4. Asserting on the response envelope.
 
 The bundled plugins follow this pattern; see `authfn/core/src/__tests__/*.test.ts` for examples.
@@ -7552,7 +7190,7 @@ The enrollment row does not store `encryptionKeyRef`. Changing the configured ke
 
 # Bun quickstart
 
-authfn's router is built on the WHATWG `Request`/`Response` standard, so Bun is a first-class runtime. You don't need a framework adapter at all — `auth.router.fetch` _is_ a `(Request) => Promise<Response>` handler.
+authfn's router is built on the WHATWG `Request`/`Response` standard, so Bun is a first-class runtime. You don't need a framework adapter at all — `auth.router.handle` _is_ a `(Request) => Promise<Response>` handler.
 
 ## 1. Install
 
@@ -7611,7 +7249,7 @@ Bun.serve({
 
     if (url.pathname.startsWith("/auth")) {
       // The authfn router already includes its /auth basePath.
-      return auth.router.fetch(request);
+      return auth.router.handle(request);
     }
 
     return new Response("not found", { status: 404 });
@@ -7732,14 +7370,9 @@ export const auth = authApp.createServer({
 ```ts
 // app/auth/[...path]/route.ts
 import { auth } from "../_runtime";
-import { toNext } from "@superfunctions/http-next";
+import { toNextHandlers } from "@superfunctions/http-next";
 
-const handler = toNext(auth.router);
-
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## 4. Read the session in Server Components
@@ -7763,7 +7396,7 @@ export default async function Dashboard() {
 }
 ```
 
-> The fake-request pattern is the canonical way to authenticate a Next.js Server Component with the cookie-based authfn session. The `@superfunctions/http-next` package exposes a helper for this — see [Frameworks → Next.js](../frameworks/nextjs).
+> The fake-request pattern is the canonical way to authenticate a Next.js Server Component with the cookie-based authfn session. Use `auth.provider.authenticate(request)` to read the session directly, as shown above and in [Frameworks → Next.js](../frameworks/nextjs). The HTTP adapter supplies route handlers; it does not provide a session helper.
 
 ## 5. Use Server Actions
 
@@ -7781,7 +7414,7 @@ export async function deleteMyAccount() {
     headers: reqHeaders,
   });
 
-  const response = await auth.router.fetch(fakeRequest);
+  const response = await auth.router.handle(fakeRequest);
   if (!response.ok) throw new Error("delete failed");
 
   revalidatePath("/");
@@ -8129,12 +7762,12 @@ export const auth = authApp.createServer({
 ```ts
 // src/routes/auth/[...path]/+server.ts
 import { auth } from "$lib/server/auth";
-import { toSvelteKit } from "@superfunctions/http-sveltekit";
+import { toSvelteKitHandler } from "@superfunctions/http-sveltekit";
 
-export const GET = toSvelteKit(auth.router);
-export const POST = toSvelteKit(auth.router);
-export const PUT = toSvelteKit(auth.router);
-export const DELETE = toSvelteKit(auth.router);
+export const GET = toSvelteKitHandler(auth.router);
+export const POST = toSvelteKitHandler(auth.router);
+export const PUT = toSvelteKitHandler(auth.router);
+export const DELETE = toSvelteKitHandler(auth.router);
 ```
 
 ## 4. Wire the client and Svelte store

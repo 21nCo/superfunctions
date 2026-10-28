@@ -49,6 +49,12 @@ export interface Adapter {
 
   /** Raw CRUD for internal tables, bypasses ORM schema resolution */
   readonly internal: InternalCrud;
+
+  /**
+   * Parameterized SQL on the adapter's own connection, for statements the CRUD
+   * API cannot express. Present on SQL adapters (Drizzle, Kysely) only.
+   */
+  readonly rawSql?: RawSqlExecutor;
 }
 
 export interface TransactionAdapter extends Omit<Adapter, 'transaction' | 'close'> {
@@ -483,6 +489,25 @@ export interface InternalCrud {
     table: string,
     data: Record<string, unknown>[],
   ): Promise<Record<string, unknown>[]>;
+}
+
+// ============================================================================
+// Raw SQL (bypasses ORM schema resolution and namespaces)
+// ============================================================================
+
+export type RawSqlValue = string | number | null;
+
+/**
+ * Runs one statement as written. Each `?` marks a positional parameter and is
+ * rendered for the dialect (`$n` on Postgres), so the text must contain no
+ * other `?`. Identifiers are not mapped and namespaces are not applied.
+ */
+export interface RawSqlExecutor {
+  readonly dialect: 'postgres' | 'mysql' | 'sqlite';
+  /** Runs a statement that returns rows (`SELECT`, `… RETURNING`). */
+  query(sql: string, params?: readonly RawSqlValue[]): Promise<Record<string, unknown>[]>;
+  /** Runs a statement without a result set, such as DDL. */
+  execute(sql: string, params?: readonly RawSqlValue[]): Promise<void>;
 }
 
 // ============================================================================

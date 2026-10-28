@@ -1,48 +1,25 @@
 ---
 title: Claude
-description: One-click Claude Desktop / Claude Code setup for authfn.
+description: Use AuthFn's generated context with Claude Desktop and Claude Code.
 ---
 
 # Claude
 
-## Claude Desktop
+## One-off conversations
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%AppData%\Claude\claude_desktop_config.json` (Windows):
+Paste the context URL at the start of a prompt:
 
-```jsonc
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
+```text
+Reference docs: https://authfn.com/docs/llms-full.txt
+
+Now help me…
 ```
 
-Restart Claude Desktop. Type `/` and you'll see the authfn tools.
-
-Claude will pick up the MCP server automatically and answer questions about authfn with up-to-date docs and OpenAPI awareness.
+Claude can fetch the file when web access is available; otherwise download it and attach it.
 
 ## Claude Code
 
-Claude Code reads MCP from a project-local file. From your project root:
-
-```jsonc
-// .claude/mcp.json
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-## Adding context
-
-If you want Claude to *always* know what stack you're on, add a project-level CLAUDE.md:
+Claude Code reads a project-level `CLAUDE.md`. Describe your stack and point at the context file:
 
 ```markdown
 # Project
@@ -50,26 +27,12 @@ If you want Claude to *always* know what stack you're on, add a project-level CL
 This is a SvelteKit app using:
 - `authfn` for the auth kernel (mounted at /auth)
 - `@authfn/password` and `@authfn/email-otp` for sign-in methods
-- @authfn/client + @authfn/svelte for the browser
+- `@authfn/client` + `@authfn/svelte` for the browser
 - Postgres + Drizzle for the database
 
-When you need to know how something in @authfn/* works, use the `authfn.*` MCP tools.
-For migration questions, invoke the appropriate `authfn.skills.*` skill.
+For how `@authfn/*` works, read https://authfn.com/docs/llms.txt and fetch the linked pages you need.
 ```
-
-## llms.txt fallback
-
-For one-off conversations, paste this into a Claude prompt:
-
-```text
-Reference docs: https://authfn.superfunctions.dev/llms-full.txt
-
-Now help me…
-```
-
-Claude will fetch and use the file as context.
 
 ## Related
 
-- [MCP](./mcp)
-- [Skills](./skills)
+- [llms.txt](./llms-txt)

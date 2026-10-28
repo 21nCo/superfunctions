@@ -8,11 +8,9 @@ import { resolveContainedPath } from "@devfn/config";
 
 import { createProcessEnvironment, resolveAdapterCommand } from "./adapters.js";
 import { stopProcessGroup } from "./group.js";
-import { processBirthSignature, processExists, processGroupStatus } from "./identity.js";
+import { processExists, processGroupStatus, startedProcessBirthSignature } from "./identity.js";
 import { waitForReadiness } from "./readiness.js";
 import { ProcessError, type ManagedProcess, type StartProcessInput } from "./types.js";
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Let the wrapper run its command and wait until it detached from the channel. */
 async function openLaunchGate(child: ChildProcess): Promise<void> {
@@ -81,11 +79,7 @@ export class ProcessSupervisor {
     }).catch((error) => { throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Unable to start ${input.name}.`, { cause: error instanceof Error ? error.message : String(error) }); });
     if (!child.pid) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process ${input.name} did not receive a PID.`);
     child.unref();
-    let birthSignature: string | undefined;
-    for (let attempt = 0; attempt < 10 && !birthSignature; attempt += 1) {
-      birthSignature = await processBirthSignature(child.pid);
-      if (!birthSignature) await delay(20);
-    }
+    const birthSignature = await startedProcessBirthSignature(child.pid);
     if (!birthSignature) {
       if (child.connected) child.disconnect();
       try { if (process.platform !== "win32") process.kill(-child.pid, "SIGTERM"); else child.kill(); } catch { /* process may already have exited */ }

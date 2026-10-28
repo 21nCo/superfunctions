@@ -2,6 +2,8 @@ import type {
   InternalCrud,
   InternalColumnDef,
   InternalWhereClause,
+  RawSqlExecutor,
+  RawSqlValue,
 } from '../../adapter/types.js';
 import {
   assertInternalColumnDefs,
@@ -13,6 +15,7 @@ import {
   normalizeInternalResultCount,
   parseInternalOrderBy,
   quoteInternalIdentifier,
+  splitRawSqlPlaceholders,
 } from '../internal-utils.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
@@ -256,6 +259,31 @@ export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): Inter
 
       const result = await query.execute(db);
       return normalizeInternalResultCount(result.numAffectedRows ?? 0);
+    },
+  };
+}
+
+export function createKyselyRawSql(db: any, dialect: KyselyDialect): RawSqlExecutor {
+  function build(text: string, params: readonly RawSqlValue[]): any {
+    const sql = getKyselySql();
+    const chunks = splitRawSqlPlaceholders(text, params);
+    let query = sql.raw(chunks[0]);
+    params.forEach((param, index) => {
+      query = sql`${query}${param}${sql.raw(chunks[index + 1])}`;
+    });
+    return query;
+  }
+
+  return {
+    dialect,
+
+    async query(text, params = []) {
+      const result = await build(text, params).execute(db);
+      return result.rows ?? [];
+    },
+
+    async execute(text, params = []) {
+      await build(text, params).execute(db);
     },
   };
 }

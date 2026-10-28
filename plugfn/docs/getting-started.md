@@ -5,7 +5,7 @@ PlugFn is the shared integration runtime for Superfunctions apps. This guide use
 ## Install
 
 ```bash
-npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db @superfunctions/http
+npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db@0.2.0 @superfunctions/http@0.2.0
 ```
 
 Optional CLI:

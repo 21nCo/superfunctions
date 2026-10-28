@@ -22,6 +22,10 @@ const dotenv = await secfn.toDotEnv("nucleus-production");
 
 `toDotEnv` returns text only. It does not write plaintext to disk.
 
+The default cache TTL is zero. A positive `ttlMs` can keep serving a rotated secret until the entry expires; pass `bypassCache: true` per call or call `clearCache()` to force a fresh read.
+
+The client also provides `getSet`, `preload`, and `injectEnv` (which skips variables that are already set unless `override: true` is passed). `get`, `getSet`, `toEnv`, `toDotEnv`, and `injectEnv` accept `RuntimeGetOptions` (`environment`, `bypassCache`).
+
 Release gates (`npm run typecheck`, `npm run build`, and `npm test`) consume
 installed `@secfn/core` exports, not sibling source aliases. Install the declared
 registry prerequisites before running them in a standalone checkout.

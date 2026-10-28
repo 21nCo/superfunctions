@@ -1,7 +1,7 @@
 {
   "name": "@superfunctions/queue",
-  "version": "0.1.0",
-  "description": "Shared queue adapters for Superfunctions",
+  "version": "0.2.0",
+  "description": "Queue adapters for Superfunctions: in-memory and durable SQL (SQLite, D1, Postgres)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,14 +9,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./migrations/*": "./migrations/*"
   },
   "files": [
-    "dist"
+    "dist",
+    "migrations",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "echo 'lint not configured'",
     "typecheck": "tsc --noEmit",
@@ -24,6 +27,10 @@
   },
   "keywords": [
     "queue",
+    "jobs",
+    "sqlite",
+    "postgres",
+    "d1",
     "flowfn",
     "superfunctions"
   ],
@@ -37,8 +44,26 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "@superfunctions/db": "^0.3.1 || ^0.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@superfunctions/db": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0",
+    "@superfunctions/db": "0.4.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.35.0",
+    "esbuild": "^0.21.5",
+    "kysely": "^0.28.0",
+    "miniflare": "4.20251113.0",
+    "pg": "^8.20.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }

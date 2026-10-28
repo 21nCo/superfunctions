@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": [
+    "//"
+  ],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/docs-site/**",
+        "$TURBO_ROOT$/sendfn/typescript/README.md",
+        "$TURBO_ROOT$/sendfn/python/README.md"
+      ]
+    }
+  }
+}

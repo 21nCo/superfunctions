@@ -3,6 +3,8 @@ import type {
   InternalCrud,
   InternalColumnDef,
   InternalWhereClause,
+  RawSqlExecutor,
+  RawSqlValue,
 } from '../../adapter/types.js';
 import {
   assertInternalColumnDefs,
@@ -14,6 +16,7 @@ import {
   normalizeInternalResultCount,
   parseInternalOrderBy,
   quoteInternalIdentifier,
+  splitRawSqlPlaceholders,
 } from '../internal-utils.js';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
@@ -238,6 +241,51 @@ export function createDrizzleInternalCrud(
 
       const result = await executeRaw(query);
       return normalizeInternalResultCount(result);
+    },
+  };
+}
+
+export function createDrizzleRawSql(
+  db: any,
+  dialect: DrizzleDialect,
+  drizzleSqlImpl: ReturnType<typeof loadDrizzleSql> = loadDrizzleSql(),
+): RawSqlExecutor {
+  const sql = drizzleSqlImpl;
+
+  function build(text: string, params: readonly RawSqlValue[]): any {
+    const chunks = splitRawSqlPlaceholders(text, params);
+    let query = sql.raw(chunks[0]);
+    params.forEach((param, index) => {
+      query = sql`${query}${param}${sql.raw(chunks[index + 1])}`;
+    });
+    return query;
+  }
+
+  return {
+    dialect,
+
+    async query(text, params = []) {
+      const query = build(text, params);
+      if (dialect === 'sqlite') {
+        // better-sqlite3, libSQL and D1 all return rows from db.all()
+        return await db.all(query);
+      }
+      const result = await db.execute(query);
+      if (dialect === 'mysql') {
+        // mysql2 returns [rows, fields]
+        return Array.isArray(result) ? result[0] : (result?.rows ?? []);
+      }
+      // postgres-js returns the rows array; node-postgres and PGlite return { rows }
+      return Array.isArray(result) ? result : (result?.rows ?? []);
+    },
+
+    async execute(text, params = []) {
+      const query = build(text, params);
+      if (dialect === 'sqlite') {
+        await db.run(query);
+      } else {
+        await db.execute(query);
+      }
     },
   };
 }

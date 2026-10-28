@@ -562,9 +562,11 @@ it("lets a sibling reserve a port while another worktree waits for readiness", a
     await writeFile(path.join(siblingRoot, "server.mjs"),
       "import { createServer } from 'node:http'; createServer((_request, response) => response.end('sibling')).listen(Number(process.env.DEVFN_PORT_WEB), '127.0.0.1');\n");
     const siblingReady = await orchestrator.up({ config: siblingConfig, root: siblingRoot, stateDir });
-    // The process becomes ready only once the sibling operations finished.
+    // The process becomes ready only once the sibling operations finished. It
+    // holds its leased port from the start, so no other test's listener can
+    // take the port and answer its readiness check while it waits.
     await writeFile(path.join(root, "slow.mjs"),
-      "import { existsSync, writeFileSync } from 'node:fs'; import { createServer } from 'node:http'; writeFileSync(process.argv[2], 'starting'); const wait = setInterval(() => { if (!existsSync(process.argv[3])) return; clearInterval(wait); createServer((_request, response) => response.end('ready')).listen(Number(process.env.DEVFN_PORT_APP), '127.0.0.1'); }, 20);\n");
+      "import { existsSync, writeFileSync } from 'node:fs'; import { createServer } from 'node:http'; createServer((_request, response) => { const ready = existsSync(process.argv[3]); response.statusCode = ready ? 200 : 503; response.end(ready ? 'ready' : 'starting'); }).listen(Number(process.env.DEVFN_PORT_APP), '127.0.0.1', () => writeFileSync(process.argv[2], 'starting'));\n");
     pending = orchestrator.up({ config, root, stateDir });
     await waitForFile(marker);
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));

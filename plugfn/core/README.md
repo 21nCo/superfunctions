@@ -5,7 +5,7 @@ PlugFn for TypeScript is the reference runtime for the shared PlugFn product con
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db @superfunctions/http
+npm install plugfn @superfunctions/db@0.2.0 @superfunctions/http@0.2.0
 ```
 
 ## Quick start
@@ -98,12 +98,13 @@ adapter.mount(createRouter({ routes: createPlugFnRouter(plug) }), '/api/plugfn')
 
 ## Provider scope
 
-The future core provider set for release gating is:
+The core provider set tracked by release gating is:
 
 - `github`
 - `linear`
 - `clickup`
 - `gmail`
+- `notion`
 
 Other exported providers may still be useful, but they should be treated according to the readiness matrix rather than assumed production-ready by default.
 
@@ -119,7 +120,7 @@ there is no legacy delegate or import-time deprecation shim.
 
 ## Browser safety
 
-PlugFn does not currently publish a browser SDK. Any future browser helper will remain limited to provider discovery and connection initiation. See [../docs/client-sdk-boundary.md](../docs/client-sdk-boundary.md).
+PlugFn publishes `@plugfn/client`, a thin browser-safe helper for provider discovery, connection lifecycle, and sync-job routes. Provider credentials, token exchange, webhook verification, and privileged provider actions stay on the server. See [../docs/client-sdk-boundary.md](../docs/client-sdk-boundary.md).
 
 ## Development
 

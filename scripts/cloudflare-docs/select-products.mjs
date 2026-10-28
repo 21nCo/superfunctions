@@ -46,18 +46,28 @@ function productsFromChangedFiles() {
   };
 
   for (const file of changedFiles) {
-    if (/^(package\.json|package-lock\.json|turbo\.json|scripts\/cloudflare-docs\/|\.github\/workflows\/superfunctions-docs-cloudflare-)/.test(file)) {
+    if (/^(package\.json|package-lock\.json|turbo\.json|scripts\/cloudflare-docs\/|scripts\/docs-site\/|\.github\/workflows\/superfunctions-docs-cloudflare-)/.test(file)) {
       return existingProductIds();
     }
     if (/^packages\/docs-theme\//.test(file)) {
       for (const productId of existingProductIds()) selectExisting(productId);
       continue;
     }
-    if (/^docsfn\//.test(file)) {
-      selectExisting("authfn");
-      continue;
-    }
+    if (/^(apifn\/docsfn|docsfn)\//.test(file)) return existingProductIds();
     if (/^datafn\/docs\//.test(file)) selectExisting("datafn");
+    if (/^extfn\/docs\//.test(file)) selectExisting("extfn");
+    if (/^reviewfn\/docs\//.test(file)) selectExisting("reviewfn");
+    if (/^memoryfn\/docs\//.test(file)) selectExisting("memoryfn");
+    if (/^mailfn\/docs\//.test(file)) selectExisting("mailfn");
+    if (/^mdfn\/docs\//.test(file)) selectExisting("mdfn");
+    if (/^mcpfn\/docs\//.test(file)) selectExisting("mcpfn");
+    if (/^clifn\/docs\//.test(file)) selectExisting("clifn");
+    if (/^plugfn\/docs\//.test(file)) selectExisting("plugfn");
+    if (/^botfn\/docs\//.test(file)) selectExisting("botfn");
+    if (/^langfn\/docs\//.test(file)) selectExisting("langfn");
+    if (/^secfn\/docs\//.test(file)) selectExisting("secfn");
+    if (/^devfn\/docs\//.test(file)) selectExisting("devfn");
+    if (/^sendfn\/docs\//.test(file)) selectExisting("sendfn");
     if (/^filefn\/docs\//.test(file)) selectExisting("filefn");
     if (/^searchfn\/docs\//.test(file)) selectExisting("searchfn");
     if (/^authfn\/docs\//.test(file)) selectExisting("authfn");

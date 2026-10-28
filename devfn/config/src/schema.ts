@@ -11,6 +11,7 @@ import type {
   PortSpec,
   ProcessSpec,
   ProfileSpec,
+  ProfileTunnelSpec,
   RuntimePrerequisite,
 } from "./types.js";
 import { DevFnConfigError } from "./errors.js";
@@ -231,12 +232,25 @@ function profileSpec(value: unknown, field: string): ProfileSpec {
   const environment = stringMap(input.environment, `${field}.environment`);
   const proxy = optionalBoolean(input.proxy, `${field}.proxy`);
   for (const key of Object.keys(environment ?? {})) if (isCredentialKey(key)) fail(`${field}.environment.${key} must not contain a secret. Use process envAllowlist and secretEnv.`, `${field}.environment.${key}`);
+  const tunnel = input.tunnel === undefined ? undefined : profileTunnelSpec(input.tunnel, `${field}.tunnel`);
   return {
     ...(stringArray(input.processes, `${field}.processes`) ? { processes: stringArray(input.processes, `${field}.processes`) } : {}),
     ...(stringArray(input.services, `${field}.services`) ? { services: stringArray(input.services, `${field}.services`) } : {}),
     ...(environment ? { environment } : {}),
     ...(proxy === undefined ? {} : { proxy }),
+    ...(tunnel ? { tunnel } : {}),
   };
+}
+
+function profileTunnelSpec(value: unknown, field: string): ProfileTunnelSpec {
+  const input = record(value, field);
+  for (const key of Object.keys(input)) if (!["binding", "routes", "ephemeral"].includes(key)) fail(`${field}.${key} is not a tunnel field; credentials and provider accounts belong to the machine binding.`, `${field}.${key}`);
+  const binding = string(input.binding, `${field}.binding`);
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(binding)) fail(`${field}.binding must be a registered tunnel binding name.`, `${field}.binding`);
+  const routes = stringArray(input.routes, `${field}.routes`) ?? [];
+  if (!routes.length || new Set(routes).size !== routes.length) fail(`${field}.routes must name each public route once.`, `${field}.routes`);
+  const ephemeral = optionalBoolean(input.ephemeral, `${field}.ephemeral`);
+  return { binding, routes, ...(ephemeral ? { ephemeral } : {}) };
 }
 
 function hostnameSpec(value: unknown, field: string): HostnameSpec {
@@ -341,6 +355,16 @@ function validateSelectionReferences(config: DevFnConfig, ports: Set<string>, pr
   for (const [name, profile] of Object.entries(config.profiles)) {
     for (const process of profile.processes ?? []) if (!processes.has(process)) fail(`profiles.${name} references unknown process ${process}.`);
     for (const service of profile.services ?? []) if (!services.has(service)) fail(`profiles.${name} references unknown service ${service}.`);
+    if (!profile.tunnel) continue;
+    if (!profile.proxy) fail(`profiles.${name}.tunnel requires proxy: true; public routes are served through the DevFn proxy.`, `profiles.${name}.tunnel`);
+    for (const route of profile.tunnel.routes) {
+      const hostname = config.hostnames?.[route];
+      if (!hostname || (hostname.profiles && !hostname.profiles.includes(name))) fail(`profiles.${name}.tunnel.routes references ${route}, which is not a hostname route of this profile.`, `profiles.${name}.tunnel.routes`);
+      if (config.ports?.[hostname.target]?.protocol === "udp") fail(`profiles.${name}.tunnel.routes cannot publish UDP port ${hostname.target}.`, `profiles.${name}.tunnel.routes`);
+      // The public hostname is <label>-<worktree>-<suffix>.<binding domain>, one DNS label under it.
+      const label = hostname.host ?? route;
+      if (label.length > 40 || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) fail(`profiles.${name}.tunnel.routes: ${route} needs a lowercase DNS host label of at most 40 characters.`, `profiles.${name}.tunnel.routes`);
+    }
   }
   for (const [name, hostname] of Object.entries(config.hostnames ?? {})) {
     if (!ports.has(hostname.target)) fail(`hostnames.${name} references unknown port ${hostname.target}.`);

@@ -157,6 +157,20 @@ it("checks generated URLs only when their value reaches the selected Compose bra
   });
 });
 
+it("selects public tunnel URL references, set or not, in the service and its resources", async () => {
+  await withDotenv("", async (root) => {
+    const source = path.join(root, "compose.yaml");
+    const spec = { adapter: "compose" as const, service: "api" };
+    await writeFile(source, "services:\n  api:\n    image: busybox\n    environment:\n      CALLBACK: ${DEVFN_PUBLIC_URL_WEB}/callback\n      OTHER: ${UNRELATED:-x}\n");
+    // An ephemeral route's URL is unset before start; a reserved one is generated.
+    expect(await selectedComposeEndpointReferences(spec, root, createComposeEnvironment(spec))).toEqual(new Set(["DEVFN_PUBLIC_URL_WEB"]));
+    expect(await selectedComposeEndpointReferences(spec, root, createComposeEnvironment(spec, { DEVFN_PUBLIC_URL_WEB: "https://web.example.test" })))
+      .toEqual(new Set(["DEVFN_PUBLIC_URL_WEB"]));
+    await writeFile(source, "services:\n  api:\n    image: busybox\n    volumes:\n      - ./${DEVFN_PUBLIC_URL_API}:/data\n");
+    expect(await selectedComposeEndpointReferences(spec, root, createComposeEnvironment(spec))).toEqual(new Set(["DEVFN_PUBLIC_URL_API"]));
+  });
+});
+
 it("selects a generated URL when an escaped quoted dotenv condition is nonempty", async () => {
   await withDotenv('ACTIVATE="\\"\\""\n', async (root) => {
     const spec = { adapter: "compose" as const, service: "api" };

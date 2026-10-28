@@ -237,6 +237,20 @@ const adapter = kyselyAdapter({
 - Upsert (INSERT...ON CONFLICT)
 - Multi-dialect support
 
+### Raw SQL
+
+`drizzleAdapter` and `kyselyAdapter` also expose `adapter.rawSql` for statements the CRUD API cannot express, such as an atomic `UPDATE … RETURNING`. Each `?` is a positional parameter, rendered for the dialect (`$1…` on Postgres); the text must contain no other `?`. `rawSql` uses the adapter's connection but bypasses schema mapping and row-level namespaces. Other adapters leave it undefined.
+
+```typescript
+const rows = await adapter.rawSql!.query(
+  'UPDATE jobs SET state = ? WHERE id = (SELECT id FROM jobs WHERE state = ? LIMIT 1) RETURNING id',
+  ['leased', 'pending']
+);
+await adapter.rawSql!.execute('CREATE INDEX IF NOT EXISTS jobs_state_idx ON jobs (state)');
+```
+
+`@superfunctions/queue` uses it for its durable `DatabaseQueueAdapter`.
+
 
 ## Testing
 
@@ -326,6 +340,8 @@ on a field in their internal `wrapWithSchema` schema when the physical column
 stores JSON as text (for example SQLite `TEXT`). Native JSON storage remains the
 default. The wrapper serializes values on writes and parses them on reads,
 including transactions; repeated wrappers with the same codec do not encode twice.
+An intervening native JSON declaration preserves any text codec already owned
+by an underlying adapter; it does not change the physical storage format.
 Selected-field projections remain selected-field projections.
 
 Runtime `null` is stored as SQL NULL. Both SQL NULL and JSON text `null` read as
@@ -337,6 +353,11 @@ The optional Vitest peer is required only by the `@superfunctions/db/testing`
 contract suites; Vitest 3.2.4+ and 4.x are supported. Production adapters do not
 require Vitest.
 
-JSON-text predicates use the same JSON serialization as writes (including each value in `in`/`not_in`). Equality compares the serialized representation, so object key order remains significant; this is not a database-native JSON structural comparison.
+JSON-text predicates support `eq`, `ne`, `in`, and `not_in`, using the same JSON
+serialization as writes (including each membership value). Equality compares the
+serialized representation, so object key order remains significant; this is not
+a database-native JSON structural comparison. Substring and range operators are
+rejected with a TypeError naming the field and operator, without including the
+predicate value. Native JSON fields retain their backend's predicate behavior.
 
 Import `wrapWithSchema` from `@superfunctions/db/schema` when only schema wrapping is needed. This narrow ESM entry does not initialize database drivers or observability; it also supports synchronous `require()` on Node versions that support requiring synchronous ESM (validated on Node 20.19).
