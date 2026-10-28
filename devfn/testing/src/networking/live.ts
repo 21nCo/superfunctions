@@ -232,28 +232,33 @@ export const REQUEST_DEADLINE_MS = 30_000;
 async function boundedGet(client: typeof http | typeof https, options: https.RequestOptions, bound: { deadlineMs: number; stop?: AbortSignal }, what: string): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return await new Promise((resolve, reject) => {
     let settled = false;
+    let request: http.ClientRequest | undefined;
     const onAbort = () => finish(new Error(`${what} was interrupted`));
-    const deadline = setTimeout(() => finish(new Error(`${what} passed its deadline`)), bound.deadlineMs);
     const finish = (error: Error | undefined, answer?: { status: number; body: string; headers: http.IncomingHttpHeaders }) => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
       bound.stop?.removeEventListener("abort", onAbort);
-      if (error) { request.destroy(); reject(error); } else resolve(answer!);
+      if (error) { request?.destroy(); reject(error); } else resolve(answer!);
     };
-    const request = client.request({ ...options, method: "GET", agent: false }, (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk: string) => { body += chunk; });
-      response.once("end", () => finish(response.complete ? undefined : new Error(`${what} ended before its response was complete`), { status: response.statusCode ?? 0, body, headers: response.headers }));
-      response.once("error", (error) => finish(error));
-      // A response that closes without its end was cut, whatever its socket does next.
-      response.once("close", () => finish(new Error(`${what} closed before its response was complete`)));
-    });
-    request.once("timeout", () => request.destroy(new Error(`${what} timed out`)));
-    request.once("error", (error) => finish(error));
+    const deadline = setTimeout(() => finish(new Error(`${what} passed its deadline`)), bound.deadlineMs);
+    // A request Node.js refuses to build (a bad port or header) throws here; it settles the probe and clears the deadline at once.
+    try {
+      request = client.request({ ...options, method: "GET", agent: false }, (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => { body += chunk; });
+        response.once("end", () => finish(response.complete ? undefined : new Error(`${what} ended before its response was complete`), { status: response.statusCode ?? 0, body, headers: response.headers }));
+        response.once("error", (error) => finish(error));
+        // A response that closes without its end was cut, whatever its socket does next.
+        response.once("close", () => finish(new Error(`${what} closed before its response was complete`)));
+      });
+    } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); return; }
+    const built = request;
+    built.once("timeout", () => built.destroy(new Error(`${what} timed out`)));
+    built.once("error", (error) => finish(error));
     if (bound.stop?.aborted) onAbort(); else bound.stop?.addEventListener("abort", onAbort, { once: true });
-    request.end();
+    built.end();
   });
 }
 
@@ -412,13 +417,18 @@ export class LiveHost {
     return birthSignature ? { pid, birthSignature, startedAt: new Date().toISOString() } : undefined;
   }
 
+  /** Whether a recorded process still runs with its recorded birth identity; an exited, reused or unverifiable PID does not. */
+  public async stillRecorded(recorded: RecordedProcess | undefined): Promise<boolean> {
+    return recorded !== undefined && await matchesProcessIdentity(recorded.pid, recorded.birthSignature, recorded.startedAt);
+  }
+
   /**
    * SIGKILL a recorded run-owned process, or its process group, only once
    * its current identity verifiably matches the record: an exited, reused or
    * unverifiable PID is never signalled. True when the signal was sent.
    */
   public async killRecorded(recorded: RecordedProcess | undefined, group: boolean): Promise<boolean> {
-    if (!recorded || !await matchesProcessIdentity(recorded.pid, recorded.birthSignature, recorded.startedAt)) return false;
+    if (!recorded || !await this.stillRecorded(recorded)) return false;
     for (const target of group ? [-recorded.pid, recorded.pid] : [recorded.pid]) {
       try { process.kill(target, "SIGKILL"); return true; } catch { /* the group is gone; try the leader */ }
     }

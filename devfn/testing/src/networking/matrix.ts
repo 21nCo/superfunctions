@@ -47,6 +47,9 @@ export const DEFERRED_ROWS: Readonly<Record<QualificationScenario["row"] | 6, st
   6: "DEV-2 completes only after every scenario passes live on macOS and Linux at the merged head.",
 };
 
+/** The unaffected lifecycle's claim in every recovery scenario that must preserve one. */
+const SENTINEL_PRESERVED: PlannedAssertion = { id: "sentinel-preserved",
+  claim: "A running sentinel worktree that the scenario leaves alone answers as each of its services (web, and api behind its /api path route) on every probe round taken while the scenario runs and once after it, and keeps the same web and api processes (by birth identity), URLs and routes and a ready status." };
 const HOST: readonly PrerequisiteId[] = ["supported-host", "devfn-cli", "git", "caddy", "process-tools", "proxy-ports"];
 const a = (id: string, claim: string): PlannedAssertion => ({ id, claim });
 const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing: "pre-start" | "post-start", dns: string): QualificationScenario => ({
@@ -121,33 +124,33 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
   { id: "recovery.startup-failure", row: 4, title: "Startup failure preserves unrelated runtimes", prerequisites: HOST,
     assertions: [
       a("failure-cleaned", "A start whose last node fails while the node started before it answers reports a stable error, stops that running sibling, leaves no process, lease or route of its own, and its retry succeeds once fixed."),
-      a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
+      SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/teardown-evidence.test.ts", "devfn/core/test/orchestrator.test.ts"] },
   { id: "recovery.concurrent-change", row: 4, title: "Concurrent starts and configuration change", prerequisites: HOST,
     assertions: [
       a("single-owner", "Concurrent starts of one worktree leave exactly one running lifecycle with both processes, and the other start fails with a stable error code."),
       a("change-detected", "A changed manifest degrades status and a restart applies it to that worktree only."),
-      a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
+      SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/ports/test/lock.test.ts", "devfn/ports/test/lock-takeover.test.ts", "devfn/core/test/replacement-contract.test.ts"] },
   { id: "recovery.crash", row: 4, title: "Crash recovery", prerequisites: HOST,
     assertions: [
       a("crash-detected", "A killed process makes status report the worktree as not ready, and a devfn up killed while its last node is held before listening reports no ready lifecycle, status reads that worktree as not ready, and ports gc succeeds after it."),
       a("restart-recovers", "A restart of the crashed worktree succeeds with its routes restored, and once the killed start's lifecycle lock is stale a new start succeeds and no process of the killed start survives."),
-      a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
+      SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/ports/test/claim-evidence.test.ts", "devfn/core/test/teardown-evidence.test.ts", "devfn/processes/test/supervisor.test.ts"] },
   { id: "recovery.one-worktree-stop", row: 4, title: "Stopping one worktree", prerequisites: HOST,
     assertions: [
       a("stopped-withdrawn", "devfn down removes that worktree's processes, routes and leases."),
-      a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
+      SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/teardown-evidence.test.ts", "devfn/cli/test/cli.test.ts"] },
   { id: "recovery.proxy-reload", row: 4, title: "Proxy reload preserves other routes", prerequisites: HOST,
     assertions: [
-      a("reload-preserves", "Adding and removing another worktree's routes reloads Caddy while the sentinel route answers on every probe."),
-      a("sentinel-preserved", "A running sentinel worktree keeps serving with the same process and URL throughout."),
+      a("reload-preserves", "Adding and removing another worktree's routes reloads Caddy while every sentinel route (web, and api behind its path) answers on every probe round taken during the four route changes."),
+      SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/proxy/test/activation.test.ts", "devfn/core/test/proxy-readiness.test.ts"] },
   { id: "recovery.tunnel-reload", row: 4, title: "Tunnel recovery preserves other owners' public routes", prerequisites: [...HOST, "approval", "cloudflare"],

@@ -169,8 +169,8 @@ export const ANSWERS = {
   forgedHostRefused: (answer?: Answer) => answer?.status === 421 && answer.body === "",
   /** A published host's marked fallback for a path the profile did not select. */
   originFallback: (answer?: Answer) => answer?.status === 404 && originHeader(answer) === "fallback" && answer.json === undefined,
-  /** The local proxy's own 404 for an unknown name or unrouted path: no fixture process answered. */
-  proxyNotFound: (answer?: Answer) => answer?.status === 404 && answer.json === undefined && answer.headers.location === undefined,
+  /** The local proxy's own empty 404 (Caddy respond 404) for an unknown name or unrouted path: no fixture process answered, and no public-origin marker. */
+  proxyNotFound: (answer?: Answer) => answer?.status === 404 && answer.body === "" && originHeader(answer) === undefined && answer.headers.location === undefined,
   /** Caddy's permanent redirect of a TLS route's plain-HTTP name to HTTPS on the same name. */
   httpsRedirect: (answer: Answer | undefined, hostname: string) => {
     try { return answer?.status === 308 && new URL(String(answer.headers.location)).protocol === "https:" && new URL(String(answer.headers.location)).hostname === hostname; } catch { return false; }
@@ -223,23 +223,77 @@ export function detach<T>(promise: Promise<T>): () => Promise<T> {
   return async () => { const outcome = await settled; if ("error" in outcome) throw outcome.error; return outcome.value; };
 }
 
-/** Whether url answers with cwd's marker through the local DevFn proxy. */
-async function serves(host: LiveHost, url: string, cwd: string, ca: string): Promise<boolean> {
+/** Whether url answers with cwd's marker, and with service's own name when given, through the local DevFn proxy. */
+async function serves(host: LiveHost, url: string, cwd: string, ca: string, service?: string): Promise<boolean> {
   const answer = await host.request(url, { ca }).catch(() => undefined);
-  return answer?.status === 200 && answer.json?.marker === marker(cwd);
+  return answer?.status === 200 && answer.json?.marker === marker(cwd) && (service === undefined || answer.json.name === service);
 }
 
-/** A running sentinel lifecycle whose process and URL must never change during the scenario. */
-async function sentinel(context: ScenarioContext, host: LiveHost): Promise<{ cwd: string; web: string; check: () => Promise<void> }> {
+/** Every service of the generic host fixture: web on its own host, api behind its stripped /api path route. */
+export const HOST_FIXTURE_SERVICES = ["web", "api"] as const;
+/** The pause between two probe rounds of a watched lifecycle's routes. */
+export const WATCH_PROBE_INTERVAL_MS = 100;
+
+/** Probe rounds a watch completed so far, and each probe that did not get its service's own answer. */
+export interface WatchedLifecycle { probes: () => { rounds: number; missed: string[] } }
+
+/** A fresh sentinel lifecycle of the host fixture, started. */
+async function sentinel(context: ScenarioContext, host: LiveHost): Promise<string> {
   const cwd = await host.repository(context.scenario.id, "sentinel", hostFixture());
   await start(context, host, cwd);
+  return cwd;
+}
+
+/**
+ * Run body while a running host-fixture lifecycle at cwd, which the scenario
+ * must leave alone, is watched. Before body, every service's process (with
+ * its birth identity), its devfn url URLs and its owner's proxy routes are
+ * recorded. While body runs, every route (web, and api under its path) is
+ * probed each round for that service's own answer. sentinel-preserved then
+ * passes only when every probe answered, a final round answers, the status
+ * reads ready, and every process, URL and route is the one recorded. A
+ * failing body still ends the probes before its error is rethrown.
+ */
+async function watchLifecycle(context: ScenarioContext, host: LiveHost, cwd: string, body: (watched: WatchedLifecycle) => Promise<void>): Promise<void> {
   const ca = await host.ca();
-  const { web } = await urls(host, cwd);
-  const { pid } = await host.seen(cwd, "web");
-  return { cwd, web, check: async () => {
-    const now = await host.seen(cwd, "web");
-    context.expect("sentinel-preserved", now.pid === pid && await serves(host, web, cwd, ca), `sentinel pid ${pid} -> ${now.pid} at ${web}`);
-  } };
+  const owner = await host.owner(cwd);
+  const before = await urls(host, cwd);
+  const routes = await host.routesOf(owner);
+  const processes = await Promise.all(HOST_FIXTURE_SERVICES.map(async (service) => ({ service, recorded: await host.recordProcess((await host.seen(cwd, service)).pid) })));
+  const targets = HOST_FIXTURE_SERVICES.map((service) => {
+    if (!before[service]) throw new Error(`the watched lifecycle ${marker(cwd)} has no URL for ${service}`);
+    return { service, url: service === "web" ? before[service] : `${before[service].replace(/\/$/, "")}/watched` };
+  });
+  const round = async () => (await Promise.all(targets.map(async (target) => await serves(host, target.url, cwd, ca, target.service) ? [] : [target.url]))).flat();
+  let probing = true;
+  let rounds = 0;
+  const missed: string[] = [];
+  const probe = detach((async () => {
+    while (probing) {
+      missed.push(...(await round()).map((url) => `${url} in round ${rounds + 1}`));
+      rounds += 1;
+      if (probing) await host.wait(WATCH_PROBE_INTERVAL_MS);
+    }
+  })());
+  const outcome = await body({ probes: () => ({ rounds, missed: [...missed] }) }).then(() => undefined, (error: unknown) => ({ error }));
+  probing = false;
+  const ended = await probe().then(() => undefined, (error: unknown) => ({ error }));
+  if (outcome) throw outcome.error;
+  if (ended) throw ended.error;
+  const after = await urls(host, cwd);
+  const status = await host.status(cwd);
+  const replaced: string[] = [];
+  for (const { service, recorded } of processes) {
+    const now = await host.seen(cwd, service).catch(() => undefined);
+    if (!recorded || now?.pid !== recorded.pid || !await host.stillRecorded(recorded)) replaced.push(`${service} process ${String(recorded?.pid ?? "unrecorded")} -> ${String(now?.pid ?? "unreadable")}`);
+  }
+  const moved = HOST_FIXTURE_SERVICES.filter((service) => after[service] !== before[service]).map((service) => `${service} URL ${before[service]} -> ${String(after[service])}`);
+  const rerouted = JSON.stringify(await host.routesOf(owner)) === JSON.stringify(routes) ? [] : [`routes ${routes.join(", ") || "none"} changed`];
+  const last = await round();
+  const problems = [...(rounds === 0 ? ["no probe round completed"] : []), ...(missed.length ? [`${missed.length} probes unanswered: ${missed.slice(0, 3).join(", ")}`] : []),
+    ...(last.length ? [`unanswered after the scenario: ${last.join(", ")}`] : []), ...(status?.state === "ready" ? [] : [`state ${status ? status.state : "unreadable"}`]), ...replaced, ...moved, ...rerouted];
+  context.expect("sentinel-preserved", problems.length === 0, problems.length ? `${marker(cwd)}: ${problems.join("; ")}`
+    : `${marker(cwd)} kept processes ${processes.map((item) => `${item.service} ${String(item.recorded?.pid)}`).join(", ")}, its URLs and ${routes.length} routes; all ${rounds} probe rounds of ${targets.map((target) => target.url).join(" and ")} answered`);
 }
 
 /** One fixture repository and a linked worktree, both started. */
@@ -553,8 +607,7 @@ export function rolledBackReadySibling(failing: { sibling?: Record<string, unkno
   return failing?.sibling?.name === name && failing.sibling.marker === marker(cwd) && sibling !== undefined && !running(sibling.pid);
 }
 
-const startupFailure: LiveDriver = async (context, host) => {
-  const { check } = await sentinel(context, host);
+const startupFailure: LiveDriver = async (context, host) => await watchLifecycle(context, host, await sentinel(context, host), async () => {
   const config = hostFixture();
   const cwd = await host.repository(context.scenario.id, "failing", config);
   const { failing, sibling } = failureInjection(config);
@@ -574,11 +627,9 @@ const startupFailure: LiveDriver = async (context, host) => {
   context.expect("failure-cleaned", failedWith(failed, SHIPPED_ERRORS.startupFailure) && rolledBack && status !== undefined && status.state !== "ready" && leases.length === 0 && survivors.length === 0 && routes.length === 0
     && retried.code === 0 && retried.json.state === "ready",
     `${failing} failed while ${sibling} answered: ${failedSeen?.sibling ? "yes" : "no"}; ${sibling} process ${String(siblingSeen?.pid)} ${rolledBack ? "stopped" : "not shown stopped"}; failure ${String(failed.json.error?.code)} (exit ${failed.code}); state ${status ? status.state : "unreadable"}; leases left ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; retry ${String(retried.json.state)}`);
-  await check();
-};
+});
 
-const concurrentChange: LiveDriver = async (context, host) => {
-  const { check } = await sentinel(context, host);
+const concurrentChange: LiveDriver = async (context, host) => await watchLifecycle(context, host, await sentinel(context, host), async () => {
   const cwd = await host.repository(context.scenario.id, "concurrent", hostFixture());
   const results = await Promise.all([host.up(context.scenario.id, cwd), host.up(context.scenario.id, cwd)]);
   const winners = results.filter((item) => item.code === 0 && item.json.state === "ready");
@@ -593,8 +644,7 @@ const concurrentChange: LiveDriver = async (context, host) => {
   const seen = await host.seen(cwd, "web");
   context.expect("change-detected", before.env.QUAL_REVISION === undefined && degraded?.state === "degraded" && restarted.state === "ready" && seen.pid !== before.pid && seen.env.QUAL_REVISION === "2" && seen.env.DEVFN_INSTANCE_ID === restarted.instanceId,
     `status after change: ${degraded ? degraded.state : "unreadable"}; restart: ${String(restarted.state)}; process ${before.pid} -> ${seen.pid} saw QUAL_REVISION=${String(seen.env.QUAL_REVISION)}`);
-  await check();
-};
+});
 
 export interface InterruptedStart { killed: boolean; orphan?: number; result: { code: number; json: Record<string, any> }; status?: OwnedStatus }
 
@@ -636,8 +686,7 @@ export const INTERRUPTED = {
   orphanGone: (start: InterruptedStart, running: (pid: number) => boolean = alive) => start.orphan !== undefined && !running(start.orphan),
 };
 
-const crash: LiveDriver = async (context, host) => {
-  const { check } = await sentinel(context, host);
+const crash: LiveDriver = async (context, host) => await watchLifecycle(context, host, await sentinel(context, host), async () => {
   const cwd = await host.repository(context.scenario.id, "crash", hostFixture());
   await start(context, host, cwd);
   // The web process is recorded while DevFn reports its lifecycle ready, and signalled only while it still matches that record.
@@ -663,38 +712,33 @@ const crash: LiveDriver = async (context, host) => {
   const ca = await host.ca();
   context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.code === 0 && retried.json.state === "ready" && gone && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
     `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; process ${String(orphan)} from the killed start ${gone ? "is gone" : "still runs"}`);
-  await check();
-};
+});
 
 const oneWorktreeStop: LiveDriver = async (context, host) => {
   const [a, b] = await twoWorktrees(context, host);
-  const ca = await host.ca();
-  const before = await host.seen(b.cwd, "web");
-  await host.must(a.cwd, ["down"]);
-  const status = await host.status(a.cwd);
-  const leases = ((await host.must(a.cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === a.receipt.instanceId);
-  const survivors = await host.survivingFixtures(a.cwd);
-  const routes = await host.routesOf(String(a.receipt.instanceId));
-  // Withdrawal is observed as the proxy's own 404 for the name on plain HTTP, never as a failed request.
-  const answer = await host.request(plainOf(a.urls.web)).catch(() => undefined);
-  context.expect("stopped-withdrawn", status?.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && ANSWERS.proxyNotFound(answer),
-    `state ${status ? status.state : "unreadable"}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
-  const after = await host.seen(b.cwd, "web");
-  context.expect("sentinel-preserved", after.pid === before.pid && await serves(host, b.urls.web, b.cwd, ca), `other worktree pid ${before.pid} -> ${after.pid}`);
+  // The other worktree is the sentinel: it is watched while a stops.
+  await watchLifecycle(context, host, b.cwd, async () => {
+    await host.must(a.cwd, ["down"]);
+    const status = await host.status(a.cwd);
+    const leases = ((await host.must(a.cwd, ["ports"])).allocations as Array<{ instanceId: string }>).filter((item) => item.instanceId === a.receipt.instanceId);
+    const survivors = await host.survivingFixtures(a.cwd);
+    const routes = await host.routesOf(String(a.receipt.instanceId));
+    // Withdrawal is observed as the proxy's own 404 for the name on plain HTTP, never as a failed request.
+    const answer = await host.request(plainOf(a.urls.web)).catch(() => undefined);
+    context.expect("stopped-withdrawn", status?.state === "stopped" && leases.length === 0 && survivors.length === 0 && routes.length === 0 && ANSWERS.proxyNotFound(answer),
+      `state ${status ? status.state : "unreadable"}; leases ${leases.length}; processes left ${survivors.join(", ") || "none"}; routes left ${routes.join(", ") || "none"}; ${plainOf(a.urls.web)} -> ${String(answer?.status ?? "unanswered")}`);
+  });
 };
 
-const proxyReload: LiveDriver = async (context, host) => {
-  const { check, cwd: sentinelCwd, web } = await sentinel(context, host);
-  const ca = await host.ca();
+const proxyReload: LiveDriver = async (context, host) => await watchLifecycle(context, host, await sentinel(context, host), async (watched) => {
   const cwd = await host.repository(context.scenario.id, "reload", hostFixture());
-  let probing = true;
-  const answers: boolean[] = [];
-  const probe = detach((async () => { while (probing) { answers.push(await serves(host, web, sentinelCwd, ca)); await host.wait(50); } })());
-  try { await start(context, host, cwd); await host.must(cwd, ["down"]); await start(context, host, cwd); await host.must(cwd, ["down"]); }
-  finally { probing = false; await probe(); }
-  context.expect("reload-preserves", answers.length > 0 && answers.every(Boolean), `${answers.filter(Boolean).length}/${answers.length} sentinel probes answered across four route changes`);
-  await check();
-};
+  const from = watched.probes();
+  await start(context, host, cwd); await host.must(cwd, ["down"]); await start(context, host, cwd); await host.must(cwd, ["down"]);
+  const to = watched.probes();
+  const rounds = to.rounds - from.rounds;
+  const missed = to.missed.slice(from.missed.length);
+  context.expect("reload-preserves", rounds > 0 && missed.length === 0, `${rounds} probe rounds of every sentinel route completed across four route changes; unanswered: ${missed.join(", ") || "none"}`);
+});
 
 /**
  * DEVFN_ values a process sees that DevFn sets at launch outside the endpoint

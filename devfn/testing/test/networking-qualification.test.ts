@@ -735,6 +735,20 @@ describe("live host cleanup handlers", () => {
     } finally { for (const server of [cut, trickle, hold, whole]) await server.close(); }
   });
 
+  it("rejects a probe Node.js refuses to build at once and leaves no deadline armed", async () => {
+    const { host } = await fixtureHost({ devfn: stopped });
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => { uncaught.push(error); };
+    process.on("uncaughtException", onUncaught);
+    try {
+      await expect(host.request("http://app.localhost/", { port: 70_000, deadlineMs: 100 })).rejects.toMatchObject({ code: "ERR_SOCKET_BAD_PORT" });
+      await expect(host.request("http://app.localhost/", { port: 1, host: "bad\nhost", deadlineMs: 100 })).rejects.toMatchObject({ code: "ERR_INVALID_CHAR" });
+      // Past both deadlines nothing fires.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(uncaught).toEqual([]);
+    } finally { process.off("uncaughtException", onUncaught); }
+  });
+
   it("returns from a driver whose probe is cut short and cleans up every resource it recorded", async () => {
     const cut = await probeServer(truncated);
     const gone = await survivor();
@@ -1234,10 +1248,13 @@ describe("live host cleanup handlers", () => {
 
   /**
    * A live host whose fixture checkouts answer like DevFn: each start
-   * records the web process (pid) and is ready; url, status and the run's
-   * probes answer per checkout. Answers per checkout name override that.
+   * records its web and api processes (pid, this process by default) and is
+   * ready; url, status and the run's probes answer per checkout, each route
+   * with the checkout's marker and its service's name. Answers per checkout
+   * name override that.
    */
-  async function scenarioHost(answers: { up?: (name: string, cwd: string) => Promise<Reply | undefined>; status?: (name: string) => Reply | undefined; pid?: number } = {}) {
+  async function scenarioHost(answers: { up?: (name: string, cwd: string) => Promise<Reply | undefined>; status?: (name: string) => Reply | undefined; pid?: (name: string, service: string) => number | undefined;
+    request?: (url: URL) => Answer | undefined } = {}) {
     const name = (cwd?: string) => path.basename(cwd!).replace(/^qabcdef12-/, "");
     const fixture = await fixtureHost({ devfn: {
       "status --trust": { ok: true, state: "stopped", instanceId: "i1" },
@@ -1245,15 +1262,18 @@ describe("live host cleanup handlers", () => {
       up: async (_signal?: AbortSignal, cwd?: string) => {
         const answer = await answers.up?.(name(cwd), cwd!);
         if (answer) return answer;
-        await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: answers.pid ?? process.pid, env: {} }));
+        for (const service of ["web", "api"]) await writeFile(path.join(cwd!, `seen-${service}.json`), JSON.stringify({ pid: answers.pid?.(name(cwd), service) ?? process.pid, env: {} }));
         return devfnOk({ state: "ready", instanceId: "i1" });
       },
       restart: { ok: true, state: "ready", instanceId: "i1" },
-      url: async (_signal?: AbortSignal, cwd?: string) => devfnOk({ urls: { web: `https://${path.basename(cwd!)}.localhost:8443/` } }),
+      url: async (_signal?: AbortSignal, cwd?: string) => devfnOk({ urls: { web: `https://${path.basename(cwd!)}.localhost:8443/`, api: `https://svc-${path.basename(cwd!)}.localhost:8443/api` } }),
       ports: { ok: true, allocations: [] }, "ports gc": { ok: true },
     } });
     fixture.host.ca = async () => "fixture-ca";
-    fixture.host.request = async (url: string) => ({ status: 200, body: "", headers: {}, json: { marker: new URL(url).hostname.split(".")[0] } });
+    fixture.host.request = async (target: string) => {
+      const url = new URL(target);
+      return answers.request?.(url) ?? { status: 200, body: "", headers: {}, json: { marker: url.hostname.split(".")[0].replace(/^svc-/, ""), name: url.pathname.startsWith("/api") ? "api" : "web" } };
+    };
     return fixture;
   }
 
@@ -1292,6 +1312,47 @@ describe("live host cleanup handlers", () => {
     }
   });
 
+  it("keeps sentinel-preserved only while every service of the unaffected lifecycle keeps its process and answers on every probe round", async () => {
+    const { failing, sibling } = failureInjection(hostFixture());
+    const failedStatus = { code: 0, stdout: JSON.stringify({ ok: false, state: "failed", instanceId: "i1" }), stderr: "" };
+    /** Drive the startup failure; transition runs while the failing start runs, with the sentinel checkout. */
+    const run = async (options: { api?: number; transition?: (sentinel: string) => Promise<void>; request?: (url: URL) => Answer | undefined } = {}) => {
+      const fixture = await scenarioHost({
+        pid: (name, service) => name === "sentinel" && service === "api" ? options.api : undefined,
+        up: async (name, cwd) => {
+          if (name !== "failing" || !readdirSync(cwd).includes(`fail-${failing}`)) return undefined;
+          await writeFile(path.join(cwd, `seen-${failing}.json`), JSON.stringify({ pid: DEAD, env: {}, sibling: { name: sibling, marker: path.basename(cwd) } }));
+          await writeFile(path.join(cwd, `seen-${sibling}.json`), JSON.stringify({ pid: DEAD, env: {} }));
+          await options.transition?.(path.join(path.dirname(cwd), "qabcdef12-sentinel"));
+          return devfnError("DEVFN_START_FAILED");
+        },
+        status: (name) => name === "failing" ? failedStatus : undefined,
+        ...(options.request ? { request: options.request } : {}),
+      });
+      const { observed } = await drive("recovery.startup-failure", fixture);
+      await rm(dir, { recursive: true, force: true });
+      expect(observed["failure-cleaned"]?.ok).toBe(true);
+      return observed["sentinel-preserved"];
+    };
+    expect(await run()).toMatchObject({ ok: true, detail: expect.stringMatching(/kept processes web \d+, api \d+, its URLs and 0 routes; all \d+ probe rounds of https:\/\/qabcdef12-sentinel.localhost:8443\/ and https:\/\/svc-qabcdef12-sentinel.localhost:8443\/api\/watched answered/) });
+    // The sentinel's api process stops, or another process takes its place, while web is unchanged.
+    const api = await survivor();
+    const other = await survivor();
+    try {
+      expect(await run({ api: api.pid, transition: async () => await api.stop() })).toMatchObject({ ok: false, detail: expect.stringContaining(`api process ${api.pid} -> ${api.pid}`) });
+      expect(await run({ transition: async (sentinel) => await writeFile(path.join(sentinel, "seen-api.json"), JSON.stringify({ pid: other.pid, env: {} })) }))
+        .toMatchObject({ ok: false, detail: expect.stringContaining(`api process ${process.pid} -> ${other.pid}`) });
+    } finally { await api.stop().catch(() => undefined); await other.stop(); }
+    // The api path route stops answering as api, or is withdrawn and restored before the scenario ends.
+    let withdrawn = false;
+    const request = (url: URL): Answer | undefined => withdrawn && url.hostname.startsWith("svc-qabcdef12-sentinel.") ? { status: 404, body: "", headers: {} } : undefined;
+    expect(await run({ request, transition: async () => { withdrawn = true; } })).toMatchObject({ ok: false, detail: expect.stringContaining("unanswered after the scenario: https://svc-qabcdef12-sentinel.localhost:8443/api/watched") });
+    withdrawn = false;
+    const restored = await run({ request, transition: async () => { withdrawn = true; await new Promise((resolve) => setTimeout(resolve, 500)); withdrawn = false; } });
+    expect(restored).toMatchObject({ ok: false, detail: expect.stringMatching(/\d+ probes unanswered: https:\/\/svc-qabcdef12-sentinel.localhost:8443\/api\/watched in round \d+/) });
+    expect(restored.detail).not.toContain("unanswered after the scenario");
+  }, 30_000);
+
   it("counts a concurrent start as single-owner only when the loser is DevFn's own lock or already-running refusal", async () => {
     const run = async (loser: Reply, status?: Reply) => {
       let starts = 0;
@@ -1309,7 +1370,7 @@ describe("live host cleanup handlers", () => {
   it("detects a crash only from a readable degraded status after signalling the web process it recorded, never a reused PID", async () => {
     const run = async (status: Reply, forge = false) => {
       const target = await survivor();
-      const fixture = await scenarioHost({ pid: target.pid,
+      const fixture = await scenarioHost({ pid: (name) => name === "crash" ? target.pid : undefined,
         up: async (name, cwd) => {
           if (name !== "interrupted" || !readdirSync(cwd).some((file) => file.startsWith("hold-"))) return undefined;
           await writeFile(path.join(cwd, `seen-${failureInjection(hostFixture()).failing}.json`), JSON.stringify({ pid: DEAD, env: {} }));
@@ -1330,6 +1391,7 @@ describe("live host cleanup handlers", () => {
     expect(passed.alive).toBe(false);
     expect(passed.observed["crash-detected"]).toMatchObject({ ok: true, detail: expect.stringContaining("status after kill: degraded") });
     expect(passed.observed["restart-recovers"]?.ok).toBe(true);
+    expect(passed.observed["sentinel-preserved"]).toMatchObject({ ok: true, detail: expect.stringContaining("qabcdef12-sentinel kept processes web") });
     for (const unreadable of [{ code: 0, stdout: "not json", stderr: "" }, killedCommand, devfnOk({ state: "degraded", instanceId: "other" }), devfnOk({ state: "stopped", instanceId: "i1" })]) {
       expect((await run(unreadable)).observed["crash-detected"].ok).toBe(false);
     }
@@ -1360,10 +1422,10 @@ describe("live host cleanup handlers", () => {
     const events: string[] = [];
     const interrupt = new AbortController();
     const ready = async (_signal?: AbortSignal, cwd?: string) => {
-      await writeFile(path.join(cwd!, "seen-web.json"), JSON.stringify({ pid: process.pid, env: {} }));
+      for (const service of ["web", "api"]) await writeFile(path.join(cwd!, `seen-${service}.json`), JSON.stringify({ pid: process.pid, env: {} }));
       return { code: 0, stdout: JSON.stringify({ ok: true, state: "ready" }), stderr: "" };
     };
-    const fixture = await fixtureHost({ devfn: { status: { ok: true, state: "ready" }, url: { urls: { web: "https://app-x.localhost:8443/" } }, up: ready,
+    const fixture = await fixtureHost({ devfn: { status: { ok: true, state: "ready", instanceId: "i1" }, url: { urls: { web: "https://app-x.localhost:8443/", api: "https://svc-x.localhost:8443/api" } }, up: ready,
       // The interrupt arrives while the reload's down runs; down is cleanup, so it finishes, while the sentinel probe's wait rejects.
       down: async () => {
         events.push("down started");
@@ -1555,7 +1617,7 @@ describe("answer predicates", () => {
   const failures: Record<string, Answer | undefined> = {
     "transport error": undefined, "500": answer(500, "DEVFN_OAUTH_RELAY_FAILED\n"), "503": answer(503, "DEVFN_OAUTH_RELAY_UNAVAILABLE\n"), "502": answer(502),
     "fixture 404": answer(404, JSON.stringify({ marker: "qabcdef12-public" })), "fixture 200": fixture, "421": answer(421), "403 deny": answer(403, "", { [header]: "deny" }),
-    "403 unmarked": answer(403), "404 fallback": answer(404, "", { [header]: "fallback" }), "404 proxy": answer(404), "301": answer(301, "", { location: "https://app-x.localhost:8443/" }),
+    "403 unmarked": answer(403), "404 fallback": answer(404, "", { [header]: "fallback" }), "404 proxy": answer(404), "404 text": answer(404, "Not Found\n"), "301": answer(301, "", { location: "https://app-x.localhost:8443/" }),
     "308": answer(308, "", { location: "https://app-x.localhost:8443/" }), "403 replayed": answer(403, "DEVFN_OAUTH_RELAY_REJECTED: replayed\n"), "403 unknown-state": answer(403, "DEVFN_OAUTH_RELAY_REJECTED: unknown-state\n"),
     "421 wrong-origin": answer(421, "DEVFN_OAUTH_RELAY_REJECTED: wrong-origin\n"),
   };
@@ -1566,8 +1628,8 @@ describe("answer predicates", () => {
     expect(accepted(ANSWERS.forgedHostRefused)).toEqual(["421"]);
     expect(accepted(ANSWERS.originFallback)).toEqual(["404 fallback"]);
     expect(accepted(ANSWERS.relayReplayRejected)).toEqual(["403 replayed"]);
-    // The local proxy's empty 404; the marked origin fallback is a public-origin answer, not a local one.
-    expect(accepted(ANSWERS.proxyNotFound)).toEqual(["404 fallback", "404 proxy"]);
+    // Only the local proxy's empty, unmarked 404: the marked origin fallback is a public-origin answer, and a 404 with a body is not Caddy's respond 404.
+    expect(accepted(ANSWERS.proxyNotFound)).toEqual(["404 proxy"]);
     expect(accepted((item) => ANSWERS.httpsRedirect(item, "app-x.localhost"))).toEqual(["308"]);
     expect(ANSWERS.httpsRedirect(failures["308"], "app-y.localhost")).toBe(false);
   });
