@@ -10,6 +10,9 @@ const reactFixtureRoot = path.resolve(__dirname, '../../../react/node_modules');
 
 export default defineConfig({
   root: __dirname,
+  // The 4175 server owns node_modules/.vite. A shared cache would be deleted and rewritten
+  // whenever the two servers' config hashes differ.
+  cacheDir: path.resolve(__dirname, '../../node_modules/.vite-adapters'),
   plugins: [
     svelte(),
     // React fixtures are .tsx too; keep them on Vite's default React JSX transform.

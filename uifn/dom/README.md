@@ -93,6 +93,6 @@ npm --workspace @uifn/dom run test
 npm --workspace @uifn/dom run test:browser -- --project=chromium --project=firefox --project=webkit
 ```
 
-`test:browser` runs the Playwright specs under `browser/`. Without `--project` it also runs the mobile projects. Adapter-level scenarios, which mount Svelte, React, and Solid fixtures, live in [`browser/adapters`](browser/adapters/README.md). The `uifn browser tests` workflow runs the three desktop engines on every pull request that changes `uifn/**`.
+`test:browser` runs the Playwright specs under `browser/`. Without `--project` it also runs the mobile projects. Adapter-level scenarios, which mount Svelte, React, and Solid fixtures, live in [`browser/adapters`](browser/adapters/README.md). Before the tests start, Playwright builds the adapters and their dependencies, `@uifn/dom` included, through turbo. The `uifn browser tests` workflow runs the three desktop engines on every pull request to `dev`, `next`, or `main` that changes `uifn/**`, and on every push to `dev`.
 
 The phase gate builds and packs the public package, imports it in a clean consumer, rejects seeded framework-local behavior forks, and runs all `TV-DOM-001` through `TV-DOM-007` positive/negative vectors in Chromium, Firefox, and WebKit with screenshots and traces.

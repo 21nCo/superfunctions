@@ -19,9 +19,10 @@ on:
 permissions:
   contents: read
 
+# A newer push supersedes a PR's run; every dev push keeps its own run as evidence.
 concurrency:
-  group: uifn-browser-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: uifn-browser-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   adapters:
@@ -87,6 +88,7 @@ jobs:
         run: node scripts/ci-install-rollup-native.mjs
 
       # browser/ vectors import @uifn/dom; browser/adapters fixtures import the built adapters.
+      # playwright.config.ts repeats this build (from turbo's cache) before serving fixtures.
       - name: Build @uifn/dom and the adapters
         run: ./node_modules/.bin/turbo run build --filter=@uifn/dom... --filter=@uifn/react... --filter=@uifn/svelte... --filter=@uifn/solid...
 

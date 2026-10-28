@@ -36,17 +36,20 @@ export default defineConfig({
   ],
   webServer: [
     {
+      // Adapter scenarios (browser/adapters) mount the built React, Svelte, and Solid packages.
+      // Building them here (turbo restores unchanged outputs from cache) lets every caller of the
+      // full suite run on a fresh tree. Playwright starts web servers in order, so the builds,
+      // including @uifn/core and @uifn/dom, finish before the 4175 server resolves them.
+      command: 'npx turbo run build --output-logs=errors-only --filter=@uifn/react... --filter=@uifn/svelte... --filter=@uifn/solid... && npx vite --config browser/adapters/vite.config.mts',
+      cwd: path.resolve(__dirname),
+      url: 'http://127.0.0.1:4176/index.html',
+      reuseExistingServer: false,
+      timeout: 600_000,
+    },
+    {
       command: 'npx vite --host 127.0.0.1 --port 4175 --strictPort',
       cwd: path.resolve(__dirname),
       url: 'http://127.0.0.1:4175/browser/index.html',
-      reuseExistingServer: false,
-      timeout: 30_000,
-    },
-    {
-      // Adapter scenarios (browser/adapters) mount built React, Svelte, and Solid fixtures.
-      command: 'npx vite --config browser/adapters/vite.config.mts',
-      cwd: path.resolve(__dirname),
-      url: 'http://127.0.0.1:4176/index.html',
       reuseExistingServer: false,
       timeout: 30_000,
     },
