@@ -32,6 +32,11 @@ export function registerAdapterCodecs<T extends object>(adapter: T, schema: Tabl
   Object.defineProperty(adapter, codecSchemaKey, { value: schema, configurable: true });
   return adapter;
 }
+/** Preserve codecs already applied by a delegating adapter's underlying methods. */
+export function inheritAdapterCodecs<T extends object>(source: object, target: T): T {
+  const schema = registeredSchema(source);
+  return schema ? registerAdapterCodecs(target, schema) : target;
+}
 function unhandledJsonSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
   const existing = registeredSchema(adapter);
   if (!existing) return schema;
