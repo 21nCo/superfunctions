@@ -54,6 +54,8 @@ function run(name, command, args, options = {}) {
 }
 
 function npmStep(name, args, options) {
+  // Keep the sequential release gate bounded on developer machines as well.
+  if (args[0] === "run" && args[1] === "test") args = [...args, "--", "--maxWorkers=1"];
   return run(name, process.platform === "win32" ? "npm.cmd" : "npm", args, options);
 }
 
@@ -275,7 +277,7 @@ function verifyPackedConsumer() {
       "install",
       "--ignore-scripts",
       "--legacy-peer-deps",
-      "--prefer-offline",
+      "--prefer-online",
       "--no-audit",
       "--no-fund",
       ...tarballs,
@@ -408,6 +410,10 @@ try {
   npmStep("core:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/core"]);
   npmStep("core:test", ["run", "test", "--workspace", "@mcpfn/core"]);
   npmStep("core:build", ["run", "build", "--workspace", "@mcpfn/core"]);
+  npmStep("admin:typecheck", ["run", "typecheck", "--workspace", "@superfunctions/admin"]);
+  npmStep("admin:test", ["run", "test", "--workspace", "@superfunctions/admin"]);
+  npmStep("admin:build", ["run", "build", "--workspace", "@superfunctions/admin"]);
+  run("core:packed-runtime", process.execPath, ["mcpfn/core/scripts/packed-runtime-acceptance.mjs"]);
   for (const entry of ["esm", "cjs"]) {
     run(`core:built-schema-${entry}`, process.execPath, [
       "--disallow-code-generation-from-strings",
