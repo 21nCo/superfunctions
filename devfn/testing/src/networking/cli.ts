@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import { LiveHost } from "./live.js";
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
 import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
 import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, runExitCode, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
-import { runScenarios, selectScenarios, type PrerequisiteResult } from "./runner.js";
+import { runScenarios, selectScenarios, type PrerequisiteResult, type RunOptions, type ScenarioResult } from "./runner.js";
 
 const USAGE = `Usage: devfn-networking-qualification <plan|run|gate> [options]
 
@@ -83,6 +83,95 @@ async function provenance(head: string, devfnCli: string): Promise<Provenance> {
   return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
 }
 
+/** Write a receipt atomically with mode 0600: a flushed sibling is renamed over the file, so a reader sees the previous or the new receipt, never a partial one. */
+export async function writeReceipt(file: string, receipt: NetworkingQualificationReceipt): Promise<void> {
+  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx", flush: true });
+    await chmod(temporary, 0o600);
+    await rename(temporary, file);
+  } catch (error) { await rm(temporary, { force: true }).catch(() => undefined); throw error; }
+}
+
+export interface QualificationRun {
+  options: RunOptions;
+  out: string;
+  /** Unhandled rejections the process reported so far; read again after every step, since one may arrive at any await. */
+  strays: readonly string[];
+  /** The receipt for these results and run errors; built again whenever a run error arrives after it was written. */
+  receipt(results: ScenarioResult[], runErrors: string[]): NetworkingQualificationReceipt;
+  /** Remove leftovers of the run root and its Compose owners; called only after their read-back was recorded. */
+  reap(): Promise<void>;
+  /** Remove the run root; called only once every resource was read back absent. */
+  removeRoot(): Promise<void>;
+  write?: (file: string, receipt: NetworkingQualificationReceipt) => Promise<void>;
+}
+
+export interface QualificationOutcome { code: number; clean: boolean; receipt?: NetworkingQualificationReceipt; runErrors: string[] }
+
+/** How many times a receipt is rewritten for run errors that keep arriving before it is withdrawn instead. */
+const RECEIPT_REWRITES = 5;
+
+/**
+ * Run the scenarios, clean up and write the receipt. A failed step, a failed
+ * ledger write or an unhandled rejection is a run error, and the remaining
+ * cleanup still runs: every recorded resource is removed and read back, and
+ * leftovers are reaped, even when an exception leaves this function. After
+ * the reap, the root removal and one macrotask turn, the receipt is
+ * rewritten whenever a run error arrived since it was written; one that
+ * cannot be brought up to date is removed. An interrupted run (code 130)
+ * writes no receipt.
+ */
+export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
+  const { inventory, resources, signal } = run.options;
+  const failures: string[] = [];
+  const runErrors = (): string[] => [...failures, ...inventory.ledgerFailures.map((item) => `inventory ledger: ${item}`), ...run.strays.map((item) => `unhandled rejection during the run: ${item}`)];
+  const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {
+    try { await action(); } catch (error) { failures.push(`${name} failed: ${message(error)}`); }
+  };
+  let finished = false;
+  /** Leftover processes are reaped only after their read-back was recorded, so a leak stays in the evidence. */
+  const finish = async (): Promise<void> => {
+    finished = true;
+    await step("cleanup", async () => await inventory.cleanup(resources));
+    if (!inventory.allAbsent()) await step("reap", run.reap);
+  };
+  try {
+    let results: ScenarioResult[] = [];
+    await step("scenario run", async () => { results = await runScenarios(run.options); });
+    await step("run-level cleanup", async () => await inventory.cleanup(resources, "run"));
+    const clean = inventory.allAbsent();
+    if (signal?.aborted) {
+      await finish();
+      if (inventory.allAbsent()) await step("run root removal", run.removeRoot);
+      return { code: 130, clean: inventory.allAbsent(), runErrors: runErrors() };
+    }
+    const write = run.write ?? writeReceipt;
+    let receipt = run.receipt(results, runErrors());
+    await write(run.out, receipt);
+    // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
+    if (!clean) await finish();
+    else await step("run root removal", run.removeRoot);
+    for (let rewrites = 0; ; rewrites += 1) {
+      // A rejection left by any step above is reported within one macrotask turn.
+      await new Promise((resolve) => setImmediate(resolve));
+      if (runErrors().length === receipt.runErrors.length) break;
+      try {
+        if (rewrites === RECEIPT_REWRITES) throw new Error(`run errors kept arriving after ${RECEIPT_REWRITES} rewrites`);
+        receipt = run.receipt(results, runErrors());
+        await write(run.out, receipt);
+      } catch (error) {
+        await rm(run.out, { force: true });
+        throw new Error(`The receipt ${run.out} was withdrawn: it could not record every run error (${message(error)}).`);
+      }
+    }
+    const errors = runErrors();
+    return { code: runExitCode(receipt, receiptProblems(receipt), clean, errors.length), clean, receipt, runErrors: errors };
+  } finally {
+    if (!finished && !inventory.allAbsent()) await finish();
+  }
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const { values, positionals } = parseArgs({ args: [...argv], allowPositionals: true, options: {
     scenario: { type: "string", multiple: true }, row: { type: "string", multiple: true }, approval: { type: "string" }, "browser-operator": { type: "boolean" },
@@ -123,13 +212,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Run-level resources outlive each scenario: the DevFn Caddy the first start launches, and any process left in the run root.
   inventory.record("run-processes", root, "run");
   inventory.record("proxy", host.stateDir, "run");
-  /** Leftover processes are reaped only after their read-back was recorded, so a leak stays in the evidence. */
-  const finish = async (): Promise<void> => {
-    await inventory.cleanup(handlers);
-    if (!inventory.allAbsent()) { await host.reap(root, new Set()).catch(() => undefined); await host.reapCompose().catch(() => undefined); }
-  };
   // An interrupt stops creation first: in-flight DevFn commands are killed and later ones refused. The one cleanup
-  // below runs only after the running driver returned, so its read-back sees whatever that driver still created.
+  // runs only after the running driver returned, so its read-back sees whatever that driver still created.
   const interrupt = new AbortController();
   const onSignal = (signal: NodeJS.Signals): void => {
     if (interrupt.signal.aborted) { process.stderr.write(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`); process.exit(130); }
@@ -142,32 +226,26 @@ export async function main(argv: readonly string[]): Promise<number> {
   const strays: string[] = [];
   process.on("unhandledRejection", (error: unknown) => { strays.push(message(error)); process.stderr.write(`unhandled rejection during the run: ${message(error)}\n`); });
   const startedAt = new Date().toISOString();
-  const results = await runScenarios({ scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal });
-  await inventory.cleanup(handlers, "run");
-  if (interrupt.signal.aborted) {
-    await finish();
-    const clean = inventory.allAbsent();
-    process.stderr.write(`${JSON.stringify({ interrupted: interrupt.signal.reason, cleanup: clean ? "confirmed" : `incomplete; inspect ${root}`, ledger, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
-    if (clean) await rm(root, { recursive: true, force: true });
-    return 130;
-  }
   const secrets = approval ? [approval.oauth?.clientSecretEnv, approval.oauth?.clientIdEnv, approval.cloudflare?.apiTokenEnv, approval.ngrokReserved?.authtokenEnv, approval.ngrokReserved?.apiKeyEnv,
     approval.ngrokEphemeral?.authtokenEnv, approval.ngrokEphemeral?.apiKeyEnv].flatMap((name) => name && process.env[name] ? [process.env[name]!] : []) : [];
-  const receipt: NetworkingQualificationReceipt = redactSecrets({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head: values.head, runId, provenance: source,
-    host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
-    ...(approval ? { approval: { approvedBy: approval.approvedBy, expiresAt: approval.expiresAt } } : {}),
-    prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations], runErrors: strays.map((item) => `unhandled rejection during the run: ${item}`),
-    summary: summarize(results) }, secrets);
-  await writeFile(values.out, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(values.out, 0o600);
-  const clean = inventory.allAbsent();
-  if (!clean) await finish();
-  // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
-  if (clean) await rm(root, { recursive: true, force: true });
-  // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was written fails it too.
-  const problems = receiptProblems(receipt);
-  process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: receipt.summary, problems, cleanup: clean ? "confirmed" : `incomplete; inspect ${root}` }, null, 2)}\n`);
-  return runExitCode(receipt, problems, clean, strays.length);
+  const head = values.head;
+  const outcome = await executeRun({ out: values.out, strays,
+    options: { scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt.signal },
+    receipt: (results, runErrors) => redactSecrets<NetworkingQualificationReceipt>({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head, runId, provenance: source,
+      host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
+      ...(approval ? { approval: { approvedBy: approval.approvedBy, expiresAt: approval.expiresAt } } : {}),
+      prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations], runErrors,
+      summary: summarize(results) }, secrets),
+    reap: async () => { await host.reap(root, new Set()).catch(() => undefined); await host.reapCompose().catch(() => undefined); },
+    removeRoot: async () => await rm(root, { recursive: true, force: true }) });
+  const cleanup = outcome.clean ? "confirmed" : `incomplete; inspect ${root}`;
+  if (outcome.code === 130) {
+    process.stderr.write(`${JSON.stringify({ interrupted: interrupt.signal.reason, cleanup, ledger, runErrors: outcome.runErrors, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
+    return 130;
+  }
+  process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
+  // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was final fails it too.
+  return outcome.code === 0 && strays.length ? 1 : outcome.code;
 }
 
 if (process.argv[1] && await realpath(process.argv[1]).then((file) => file === fileURLToPath(import.meta.url), () => false)) {

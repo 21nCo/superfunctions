@@ -15,7 +15,7 @@ import { createPlan, resolveEndpointTemplates, resolveLocalHostname } from "@dev
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER } from "@devfn/proxy";
 import { relayPaths } from "@devfn/proxy/oauth-relay";
 import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
-import { staleBuildOutputs } from "../src/networking/cli.js";
+import { executeRun, staleBuildOutputs, writeReceipt, type QualificationRun } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
@@ -367,6 +367,25 @@ describe("disposable inventory", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it("keeps removing and reading back every resource when a ledger write fails during cleanup", async () => {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-ledger-")));
+    try {
+      const file = path.join(dir, "inventory.json");
+      const ledger = new DisposableInventory({ runId: "abcdef123456", root: dir, domains: [], ledger: file });
+      ledger.record("fixture-repository", `${dir}/qabcdef12-a`, "s");
+      ledger.record("fixture-repository", `${dir}/qabcdef12-b`, "s");
+      await mkdir(`${file}.${process.pid}.tmp`);
+      const resources = fakeResources();
+      await ledger.cleanup(resources);
+      expect(resources.removed).toEqual([`${dir}/qabcdef12-b`, `${dir}/qabcdef12-a`]);
+      expect(ledger.allAbsent()).toBe(true);
+      expect(ledger.ledgerFailures).toHaveLength(2);
+      expect(ledger.ledgerFailures[0]).toContain(`${file} not written`);
+      // The last complete ledger stays readable.
+      expect((JSON.parse(await readFile(file, "utf8")) as { entries: Array<{ cleanup?: unknown }> }).entries.map((entry) => entry.cleanup)).toEqual([undefined, undefined]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("removes newest first and reads every resource back", async () => {
     const ledger = inventory();
     ledger.record("fixture-repository", `${ROOT}/repo`, "s");
@@ -450,6 +469,111 @@ describe("qualification receipts", () => {
   it("redacts credential values anywhere in a receipt", () => {
     expect(redactSecrets({ detail: ["token cf-secret-value seen", { nested: "cf-secret-value" }], short: "abc" }, ["cf-secret-value", "abc"]))
       .toEqual({ detail: ["token [redacted] seen", { nested: "[redacted]" }], short: "abc" });
+  });
+});
+
+describe("run execution", () => {
+  const scenario = twoWorktrees;
+  async function setup(driver?: ScenarioDriver, resources: ResourceHandlers = fakeResources()) {
+    const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-run-")));
+    const ledger = path.join(dir, "root", "inventory.json");
+    driver ??= recordTwo(path.dirname(ledger));
+    await mkdir(path.dirname(ledger));
+    const inventory = new DisposableInventory({ runId: "abcdef123456", root: path.dirname(ledger), domains: [], ledger });
+    inventory.record("run-processes", path.dirname(ledger), "run");
+    inventory.record("proxy", `${path.dirname(ledger)}/state`, "run");
+    const strays: string[] = [];
+    const calls: string[] = [];
+    const run: QualificationRun = { out: path.join(dir, "receipt.json"), strays,
+      options: { scenarios: [scenario], platform: "darwin", prerequisites: allPrerequisites, drivers: { [scenario.id]: driver }, inventory, resources, snapshot: async () => ({}) },
+      receipt: (results, runErrors) => ({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", target: "DEV-17", head: HEAD, runId: "abcdef123456",
+        provenance: { head: HEAD, checkout: "/src", clean: true, builtAfterSources: true, devfnCli: "/src/devfn/cli/dist/index.js" }, host: { platform: "darwin", arch: "arm64", release: "1", node: "v22.12.0" },
+        startedAt: "t", finishedAt: "t", prerequisites: [], scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [], runErrors, summary: summarize(results) }),
+      reap: async () => { calls.push("reap"); }, removeRoot: async () => { calls.push("remove root"); } };
+    const read = async () => JSON.parse(await readFile(run.out, "utf8")) as NetworkingQualificationReceipt;
+    return { dir, ledger, inventory, strays, calls, run, read };
+  }
+  const recordTwo = (root: string): ScenarioDriver => async (context) => {
+    context.inventory.record("fixture-repository", `${root}/qabcdef12-a`, context.scenario.id);
+    context.inventory.record("fixture-repository", `${root}/qabcdef12-b`, context.scenario.id);
+    for (const item of context.scenario.assertions) context.observe(item.id, true, "observed");
+  };
+  let dirs: string[] = [];
+  afterEach(async () => { await Promise.all(dirs.map(async (dir) => await rm(dir, { recursive: true, force: true }))); dirs = []; });
+
+  it("writes a 0600 receipt and exits 0 only for a clean, error-free run", async () => {
+    const context = await setup();
+    dirs.push(context.dir);
+    const outcome = await executeRun(context.run);
+    expect(outcome.code).toBe(0);
+    expect(receiptProblems(await context.read())).toEqual([]);
+    expect(statSync(context.run.out).mode & 0o777).toBe(0o600);
+    expect(context.calls).toEqual(["remove root"]);
+  });
+
+  it("rewrites the persisted receipt with run errors that arrive during its write or the root removal", async () => {
+    const context = await setup();
+    dirs.push(context.dir);
+    context.run.write = async (file, receipt) => { if (!context.strays.length) context.strays.push("during write"); await writeReceipt(file, receipt); };
+    context.run.removeRoot = async () => { setImmediate(() => context.strays.push("after root removal")); throw new Error("EBUSY"); };
+    const outcome = await executeRun(context.run);
+    const persisted = await context.read();
+    expect(persisted.runErrors).toEqual(["run root removal failed: EBUSY", "unhandled rejection during the run: during write", "unhandled rejection during the run: after root removal"]);
+    expect(receiptProblems(persisted)).toEqual(persisted.runErrors.map((item) => `run error: ${item}`));
+    expect(networkingOutcomeGate([{ ...persisted, host: { ...persisted.host, platform: "linux" }, runErrors: [] }, persisted], HEAD).ready).toBe(false);
+    expect(outcome.code).toBe(1);
+  });
+
+  it("withdraws a receipt that cannot record a later run error", async () => {
+    const context = await setup();
+    dirs.push(context.dir);
+    let writes = 0;
+    context.run.write = async (file, receipt) => { writes += 1; if (writes > 1) throw new Error("ENOSPC"); context.strays.push("late"); await writeReceipt(file, receipt); };
+    await expect(executeRun(context.run)).rejects.toThrow(/withdrawn.*ENOSPC/);
+    await expect(access(context.run.out)).rejects.toThrow();
+  });
+
+  it("removes and reads back every resource, attempts run-level cleanup and fails when the ledger cannot be written", async () => {
+    let ledgerPath = "";
+    const resources = fakeResources();
+    const context = await setup(async (inner) => { await recordTwo(path.dirname(ledgerPath))(inner); await mkdir(`${ledgerPath}.${process.pid}.tmp`); }, resources);
+    dirs.push(context.dir);
+    ledgerPath = context.ledger;
+    const outcome = await executeRun(context.run);
+    const root = path.dirname(context.ledger);
+    expect(resources.removed).toEqual([`${root}/qabcdef12-b`, `${root}/qabcdef12-a`, `${root}/state`, root]);
+    expect(context.inventory.allAbsent()).toBe(true);
+    const persisted = await context.read();
+    expect(persisted.runErrors.length).toBe(4);
+    expect(persisted.runErrors.every((item) => item.startsWith("inventory ledger: "))).toBe(true);
+    expect(receiptProblems(persisted).length).toBe(4);
+    expect(outcome.code).toBe(1);
+  });
+
+  it("still cleans up and reaps when the receipt cannot be written", async () => {
+    const resources = fakeResources();
+    const context = await setup(undefined, resources);
+    dirs.push(context.dir);
+    // The run-level Caddy is never read back absent, so after the failed write the run retries its cleanup, then reaps.
+    let reads = 0;
+    resources.present = async (entry) => { if (entry.kind !== "proxy") return false; reads += 1; return "Caddy still runs"; };
+    context.run.write = async () => { throw new Error("EACCES"); };
+    await expect(executeRun(context.run)).rejects.toThrow("EACCES");
+    expect(reads).toBe(2);
+    expect(context.calls).toEqual(["reap"]);
+  });
+
+  it("writes no receipt for an interrupted run and removes its root only after confirmed cleanup", async () => {
+    const interrupt = new AbortController();
+    let root = "";
+    const context = await setup(async (inner) => { await recordTwo(root)(inner); interrupt.abort("SIGINT"); });
+    root = path.dirname(context.ledger);
+    dirs.push(context.dir);
+    context.run.options = { ...context.run.options, signal: interrupt.signal };
+    const outcome = await executeRun(context.run);
+    expect(outcome).toEqual({ code: 130, clean: true, runErrors: [] });
+    await expect(access(context.run.out)).rejects.toThrow();
+    expect(context.calls).toEqual(["remove root"]);
   });
 });
 

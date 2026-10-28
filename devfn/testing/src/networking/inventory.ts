@@ -39,6 +39,7 @@ export class InventoryError extends Error {
  */
 export class DisposableInventory {
   private readonly entries: InventoryEntry[] = [];
+  private readonly writeFailures: string[] = [];
 
   public constructor(private readonly scope: { runId: string; root: string; domains: readonly string[]; ledger?: string }, private readonly now: () => Date = () => new Date()) {
     if (!/^[a-z0-9]{8,16}$/.test(scope.runId)) throw new InventoryError("A run ID is 8 to 16 lowercase letters or digits.");
@@ -49,6 +50,9 @@ export class DisposableInventory {
   public get prefix(): string { return `q${this.scope.runId.slice(0, 8)}`; }
 
   public get ledger(): string | undefined { return this.scope.ledger; }
+
+  /** Every failed ledger write; the ledger on disk then lags the run, so each one is a run error. */
+  public get ledgerFailures(): readonly string[] { return [...this.writeFailures]; }
 
   public record(kind: ResourceKind, id: string, scenario: string, context?: InventoryEntry["context"]): InventoryEntry {
     if (kind === "run-processes" && id !== this.scope.root) throw new InventoryError(`run-processes ${id} is not the run root.`);
@@ -79,8 +83,9 @@ export class DisposableInventory {
 
   /**
    * Remove every recorded resource not yet confirmed absent, newest first,
-   * then read each back. A removal error does not skip the read-back, and a
-   * read-back error leaves the resource unconfirmed.
+   * then read each back. A removal error does not skip the read-back, a
+   * read-back error leaves the resource unconfirmed, and a failed ledger
+   * write is recorded in ledgerFailures without stopping the next removal.
    */
   public async cleanup(handlers: ResourceHandlers, scenario?: string): Promise<InventoryEntry[]> {
     const pending = this.entries.filter((entry) => !entry.cleanup?.absent && (scenario === undefined || entry.scenario === scenario)).reverse();
@@ -95,7 +100,7 @@ export class DisposableInventory {
         cleanup = { absent: false, detail: `${removal}read-back failed: ${message(error)}`, checkedAt: this.now().toISOString() };
       }
       entry.cleanup = cleanup;
-      this.persist();
+      this.persist(false);
     }
     return pending;
   }
@@ -107,16 +112,24 @@ export class DisposableInventory {
 
   public allAbsent(scenario?: string): boolean { return this.list(scenario).every((entry) => entry.cleanup?.absent === true); }
 
-  /** Replace the ledger atomically: a synced 0600 sibling is renamed over it, so a crash leaves the previous or the new ledger, never a partial one. */
-  private persist(): void {
+  /**
+   * Replace the ledger atomically: a synced 0600 sibling is renamed over it, so a crash leaves the previous or the new ledger, never a partial one.
+   * A failure is recorded; it throws only when strict, so a record is refused before its resource exists while cleanup carries on.
+   */
+  private persist(strict = true): void {
     if (!this.scope.ledger) return;
     const temporary = `${this.scope.ledger}.${process.pid}.tmp`;
-    const descriptor = openSync(temporary, "w", 0o600);
     try {
-      writeFileSync(descriptor, `${JSON.stringify({ runId: this.scope.runId, root: this.scope.root, entries: this.entries }, null, 2)}\n`, "utf8");
-      fsyncSync(descriptor);
-    } finally { closeSync(descriptor); }
-    renameSync(temporary, this.scope.ledger);
+      const descriptor = openSync(temporary, "w", 0o600);
+      try {
+        writeFileSync(descriptor, `${JSON.stringify({ runId: this.scope.runId, root: this.scope.root, entries: this.entries }, null, 2)}\n`, "utf8");
+        fsyncSync(descriptor);
+      } finally { closeSync(descriptor); }
+      renameSync(temporary, this.scope.ledger);
+    } catch (error) {
+      this.writeFailures.push(`${this.scope.ledger} not written: ${message(error)}`);
+      if (strict) throw error;
+    }
   }
 }
 

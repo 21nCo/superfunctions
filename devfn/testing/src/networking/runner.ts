@@ -105,7 +105,7 @@ export async function runScenarios(options: RunOptions): Promise<ScenarioResult[
     if (before) {
       try { await options.drivers[scenario.id](context); } catch (error) { failure = `driver: ${message(error)}`; }
     }
-    await options.inventory.cleanup(options.resources, scenario.id);
+    try { await options.inventory.cleanup(options.resources, scenario.id); } catch (error) { failure = [failure, `cleanup: ${message(error)}`].filter(Boolean).join("; "); }
     if (before) changes = await options.snapshot().then((after) => protectedChanges(before!, after), (error: unknown) => [`protected inventory unreadable: ${message(error)}`]);
     const missing = [...planned].filter((id) => !observations.some((item) => item.assertion === id));
     const failed = [...new Set(observations.filter((item) => !item.ok).map((item) => item.assertion))];
