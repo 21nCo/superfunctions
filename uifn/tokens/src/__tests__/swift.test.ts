@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { createFoundationalTokens } from '../foundations';
 import { oklchToGamutMappedRgb } from '../gamut';
 import { parseOklch } from '../oklch';
-import { UIFnTokenError, type DesignTokenTheme, type TokenTree } from '../schema';
+import { UIFnTokenError, type DesignToken, type DesignTokenTheme, type TokenTree } from '../schema';
 import { runSwiftTokensCli, type SwiftCliIo } from '../swift-cli';
 import { generateSwiftTokens, swiftTextStyleForPoints, themeColorToSwiftValue } from '../swift';
 import { validateTokenTheme } from '../validate';
@@ -43,55 +44,30 @@ function tone(solid: string, subtle: string, contrast: string) {
   return { solid: color(solid), subtle: color(subtle), contrast: color(contrast) };
 }
 
+function group($type: DesignToken['$type'], values: Record<string, DesignToken['$value']>): TokenTree {
+  return Object.fromEntries(Object.entries(values).map(([name, $value]) => [name, { $type, $value }]));
+}
+
+function duration(value: string, reducedMotionValue: string): DesignToken {
+  return { $type: 'duration', $value: value, $extensions: { uifn: { reducedMotionValue } } };
+}
+
+// The shared typography and space, with motion written in mixed units so
+// generation must normalize them.
 function foundations(): TokenTree {
+  const { typography, space } = createFoundationalTokens();
   return {
-    typography: {
-      family: { sans: { $type: 'fontFamily', $value: 'system-ui' }, mono: { $type: 'fontFamily', $value: 'monospace' } },
-      size: {
-        xs: { $type: 'dimension', $value: '0.75rem' },
-        sm: { $type: 'dimension', $value: '0.8125rem' },
-        md: { $type: 'dimension', $value: '0.875rem' },
-        lg: { $type: 'dimension', $value: '1rem' },
-        xl: { $type: 'dimension', $value: '1.125rem' },
-      },
-      lineHeight: {
-        tight: { $type: 'number', $value: 1.2 },
-        normal: { $type: 'number', $value: 1.45 },
-        relaxed: { $type: 'number', $value: 1.65 },
-      },
-      weight: {
-        regular: { $type: 'number', $value: 400 },
-        medium: { $type: 'number', $value: 500 },
-        semibold: { $type: 'number', $value: 650 },
-        bold: { $type: 'number', $value: 700 },
-      },
-    },
-    space: Object.fromEntries(
-      [1, 2, 3, 4, 5, 6, 8, 12].map((step) => [String(step), { $type: 'dimension', $value: `${step * 0.25}rem` }])
-    ),
-    radius: {
-      sm: { $type: 'dimension', $value: '4px' },
-      md: { $type: 'dimension', $value: '6px' },
-      lg: { $type: 'dimension', $value: '8px' },
-      xl: { $type: 'dimension', $value: '12px' },
-      full: { $type: 'dimension', $value: '9999px' },
-    },
-    density: {
-      compact: { $type: 'number', $value: 0.875 },
-      comfortable: { $type: 'number', $value: 1 },
-      spacious: { $type: 'number', $value: 1.125 },
-    },
+    typography,
+    space,
+    radius: group('dimension', { sm: '4px', md: '6px', lg: '8px', xl: '12px', full: '9999px' }),
+    density: group('number', { compact: 0.875, comfortable: 1, spacious: 1.125 }),
     motion: {
-      duration: {
-        fast: { $type: 'duration', $value: '120ms', $extensions: { uifn: { reducedMotionValue: '0ms' } } },
-        normal: { $type: 'duration', $value: '0.18s', $extensions: { uifn: { reducedMotionValue: '0ms' } } },
-        slow: { $type: 'duration', $value: '260ms', $extensions: { uifn: { reducedMotionValue: '40ms' } } },
-      },
-      easing: {
-        standard: { $type: 'cubicBezier', $value: 'cubic-bezier(0.2, 0, 0, 1)' },
-        entrance: { $type: 'cubicBezier', $value: 'cubic-bezier(0, 0, 0.2, 1)' },
-        exit: { $type: 'cubicBezier', $value: 'cubic-bezier(0.4, 0, 1, 1)' },
-      },
+      duration: { fast: duration('120ms', '0ms'), normal: duration('0.18s', '0ms'), slow: duration('260ms', '40ms') },
+      easing: group('cubicBezier', {
+        standard: 'cubic-bezier(0.2, 0, 0, 1)',
+        entrance: 'cubic-bezier(0, 0, 0.2, 1)',
+        exit: 'cubic-bezier(0.4, 0, 1, 1)',
+      }),
     },
   };
 }

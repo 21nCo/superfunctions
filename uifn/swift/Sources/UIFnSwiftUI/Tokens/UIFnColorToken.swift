@@ -35,8 +35,8 @@ public struct UIFnColorValue: Equatable, Sendable {
 
 /// A theme color that adapts to light, dark and increased-contrast appearances.
 ///
-/// On UIKit platforms, sRGB displays get each value's gamut-mapped `sRGB`
-/// color; on macOS, colors always use `displayP3` (see `nsColor`).
+/// sRGB displays get each value's gamut-mapped `sRGB` color and other
+/// displays its `displayP3` color (on macOS, see `nsColor`).
 public struct UIFnColorToken: Equatable, Sendable {
     public let light: UIFnColorValue
     public let dark: UIFnColorValue
@@ -100,14 +100,22 @@ public struct UIFnColorToken: Equatable, Sendable {
     }
     #elseif os(macOS)
     /// A dynamic color resolved from the drawing appearance, including the
-    /// increased-contrast appearances. It always uses the Display P3 value:
-    /// AppKit color-matches it to the screen it draws on, so on an sRGB screen
-    /// ColorSync maps an out-of-gamut color instead of the theme's
-    /// gamut-mapped `sRGB` value.
+    /// increased-contrast appearances, and the gamut of the screen with the key
+    /// window. An sRGB screen gets the gamut-mapped `sRGB` value; other screens,
+    /// or no screen, get Display P3. AppKit color-matches the result to the
+    /// screen it draws on, so a P3 value drawn on a second, sRGB screen is
+    /// mapped by ColorSync rather than the theme.
     public var nsColor: NSColor {
+        nsColor { NSScreen.main?.canRepresent(.p3) == false ? .sRGB : .p3 }
+    }
+
+    func nsColor(displayGamut: @escaping @Sendable () -> NSDisplayGamut) -> NSColor {
         let token = self
         return NSColor(name: nil) { appearance in
             let value = token.value(for: appearance)
+            if displayGamut() == .sRGB {
+                return NSColor(srgbRed: value.sRGB.red, green: value.sRGB.green, blue: value.sRGB.blue, alpha: 1)
+            }
             return NSColor(
                 displayP3Red: value.displayP3.red,
                 green: value.displayP3.green,

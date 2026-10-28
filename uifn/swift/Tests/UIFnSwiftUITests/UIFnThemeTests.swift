@@ -38,7 +38,7 @@ private func resolve(_ token: UIFnColorToken, in appearance: Appearance) throws 
         let drawingAppearance = try #require(NSAppearance(named: appearance == .dark ? .darkAqua : .aqua))
         var resolved: NSColor?
         drawingAppearance.performAsCurrentDrawingAppearance {
-            resolved = token.nsColor.usingColorSpace(.displayP3)
+            resolved = token.nsColor { .p3 }.usingColorSpace(.displayP3)
         }
         let color = try #require(resolved)
         return UIFnRGB(Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent))
@@ -152,8 +152,37 @@ struct UIFnThemeColorTests {
         let onSRGB = try components(token.uiColor.resolvedColor(with: traits(.light, gamut: .SRGB)), in: srgb)
         #expect(isClose(onSRGB, token.light.sRGB))
     }
+    #elseif os(macOS)
+    @Test
+    func sRGBScreensGetTheGamutMappedSRGBValue() throws {
+        // oklch(70% 0.3 145), a conversion vector outside both gamuts.
+        let green = UIFnColorValue(displayP3: UIFnRGB(26 / 255, 197 / 255, 0), sRGB: UIFnRGB(0, 195 / 255, 0))
+        let token = UIFnColorToken(light: green, dark: green, highContrastLight: green, highContrastDark: green)
+        func resolved(on gamut: NSDisplayGamut) throws -> UIFnRGB {
+            let aqua = try #require(NSAppearance(named: .aqua))
+            var color: NSColor?
+            aqua.performAsCurrentDrawingAppearance { color = token.nsColor { gamut }.usingColorSpace(.sRGB) }
+            let rgb = try #require(color)
+            return UIFnRGB(Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent))
+        }
+        let onSRGB = try resolved(on: .sRGB)
+        #expect(isClose(onSRGB, token.light.sRGB))
+        // ColorSync's conversion of the out-of-gamut P3 value is not the theme's mapping.
+        #expect(!isClose(try resolved(on: .p3), onSRGB))
+    }
     #endif
 }
+
+#if os(iOS) || os(tvOS) || os(visionOS)
+/// The text style the generator assigns to `points` (swiftTextStyleForPoints).
+private func nearestTextStyle(to points: CGFloat) -> UIFnTextStyle {
+    let defaults: [(UIFnTextStyle, CGFloat)] = [
+        (.caption2, 11), (.caption, 12), (.footnote, 13), (.subheadline, 15), (.callout, 16),
+        (.body, 17), (.title3, 20), (.title2, 22), (.title, 28), (.largeTitle, 34),
+    ]
+    return defaults.last { candidate in defaults.allSatisfy { abs(candidate.1 - points) <= abs($0.1 - points) } }!.0
+}
+#endif
 
 struct UIFnThemeFoundationTests {
     @Test
@@ -177,19 +206,45 @@ struct UIFnThemeFoundationTests {
     #if os(iOS) || os(tvOS) || os(visionOS)
     @Test
     func typeSizesScaleWithTheirTextStyle() {
-        let md = UIFnTheme.uifn.typography.size.md
-        let large = md.scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: .large))
-        let accessibility = md.scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
-        #expect(abs(large - md.points) < 0.5)
+        let size = UIFnTheme.uifn.typography.size
+        let large = size.md.scaledPoints(compatibleWith: UITraitCollection(preferredContentSizeCategory: .large))
+        let accessibility = size.md.scaledPoints(for: .accessibility3)
+        #expect(large == size.md.points)
         #expect(accessibility > large * 1.5)
+        #expect(size.md.font(dynamicTypeSize: .accessibility3) == .system(size: accessibility))
 
-        let expected = UIFontMetrics(forTextStyle: .subheadline)
-            .scaledValue(for: 14, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
-        #expect(md.scaledPoints(for: .accessibility3) == expected)
-        #expect(md.font(dynamicTypeSize: .accessibility3) == .system(size: expected))
-        let steps = UIFnTheme.uifn.typography.size
-        let scaled = [steps.xs, steps.sm, steps.md, steps.lg, steps.xl].map { $0.scaledPoints(for: .xxxLarge) }
-        #expect(scaled == scaled.sorted() && Set(scaled).count == scaled.count)
+        for dynamicTypeSize in DynamicTypeSize.allCases {
+            let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize))
+            func styleSize(_ style: UIFont.TextStyle) -> CGFloat {
+                UIFont.preferredFont(forTextStyle: style, compatibleWith: traits).pointSize
+            }
+            // Sizes equal to a text style's default size scale exactly like it;
+            // md (14) lies between footnote (13) and subheadline (15).
+            #expect(size.xs.scaledPoints(for: dynamicTypeSize) == styleSize(.caption1))
+            #expect(size.lg.scaledPoints(for: dynamicTypeSize) == styleSize(.callout))
+            let md = size.md.scaledPoints(for: dynamicTypeSize)
+            #expect(md >= styleSize(.footnote) && md <= styleSize(.subheadline), "\(dynamicTypeSize)")
+        }
+    }
+
+    @Test
+    func typeScaleKeepsItsOrderAtEveryContentSize() {
+        let size = UIFnTheme.uifn.typography.size
+        let points = stride(from: 6.0, through: 60.0, by: 0.5).map { CGFloat($0) }
+        for dynamicTypeSize in DynamicTypeSize.allCases {
+            let steps = [size.xs, size.sm, size.md, size.lg, size.xl].map { $0.scaledPoints(for: dynamicTypeSize) }
+            #expect(steps == steps.sorted(), "\(dynamicTypeSize): \(steps)")
+            if dynamicTypeSize >= .large {
+                #expect(Set(steps).count == steps.count, "\(dynamicTypeSize): \(steps)")
+            }
+
+            // Any theme: a larger size never renders smaller, whichever text
+            // style its points are nearest to.
+            let scaled = points.map {
+                UIFnTypeSize(points: $0, textStyle: nearestTextStyle(to: $0)).scaledPoints(for: dynamicTypeSize)
+            }
+            #expect(scaled == scaled.sorted(), "\(dynamicTypeSize)")
+        }
     }
     #else
     @Test
