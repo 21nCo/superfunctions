@@ -77,7 +77,10 @@ Run these from the repository root. On a fresh checkout, first install dependenc
 npm ci
 npx turbo run build --filter=@uifn/svelte^...
 npm --workspace @uifn/dom exec -- playwright install chromium firefox webkit
+npx playwright install chromium firefox webkit
 ```
+
+The two installs serve different Playwright versions. `@uifn/dom` pins its own `@playwright/test`, and the first install fetches that version's browsers for `test:browser` and for the browser stage of `verify:uifn-stable`. The second install fetches the browsers for the repository root's `playwright`, which `verify:uifn-phase-12` uses to hydrate the Svelte consumer.
 
 Then run:
 
