@@ -27,8 +27,11 @@ describe('conduct ready package dependency harness', () => {
 
     const adapter = new queue.MemoryQueueAdapter<{ id: string }>();
     await adapter.enqueue('conduct', { id: 'job_1' });
-    expect(adapter.size('conduct')).toBe(1);
-    expect(await adapter.dequeue('conduct')).toEqual({ id: 'job_1' });
+    expect(await adapter.size('conduct')).toBe(1);
+    const job = await adapter.claim('conduct', { leaseMs: 1_000 });
+    expect(job).toMatchObject({ payload: { id: 'job_1' }, attempt: 1 });
+    await adapter.ack(job!.id, { attempt: job!.attempt });
+    expect(await adapter.size('conduct')).toBe(0);
   });
 
   it('exercises @superfunctions/http and @superfunctions/auth exports', () => {

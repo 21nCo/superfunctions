@@ -237,6 +237,20 @@ const adapter = kyselyAdapter({
 - Upsert (INSERT...ON CONFLICT)
 - Multi-dialect support
 
+### Raw SQL
+
+`drizzleAdapter` and `kyselyAdapter` also expose `adapter.rawSql` for statements the CRUD API cannot express, such as an atomic `UPDATE … RETURNING`. Each `?` is a positional parameter, rendered for the dialect (`$1…` on Postgres); the text must contain no other `?`. `rawSql` uses the adapter's connection but bypasses schema mapping and row-level namespaces. Other adapters leave it undefined.
+
+```typescript
+const rows = await adapter.rawSql!.query(
+  'UPDATE jobs SET state = ? WHERE id = (SELECT id FROM jobs WHERE state = ? LIMIT 1) RETURNING id',
+  ['leased', 'pending']
+);
+await adapter.rawSql!.execute('CREATE INDEX IF NOT EXISTS jobs_state_idx ON jobs (state)');
+```
+
+`@superfunctions/queue` uses it for its durable `DatabaseQueueAdapter`.
+
 
 ## Testing
 

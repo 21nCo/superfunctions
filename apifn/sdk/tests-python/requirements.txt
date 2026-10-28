@@ -1,0 +1,5 @@
+# Pinned tools for the generated Python SDK checks (__tests__/python-sdk.test.ts).
+build==1.6.1
+mypy==2.4.0
+pytest==9.1.1
+packaging==26.3
