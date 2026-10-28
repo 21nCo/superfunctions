@@ -19,7 +19,7 @@ import { staleBuildOutputs } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
   ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
-  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
+  localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runExitCode, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
   protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
@@ -393,7 +393,7 @@ describe("qualification receipts", () => {
     provenance: { head: HEAD, checkout: "/src", clean: true, builtAfterSources: true, devfnCli: "/src/devfn/cli/dist/index.js" },
     host: { platform, arch: "x64", release: "1", node: "v22.12.0" }, startedAt: "t", finishedAt: "t", prerequisites: [], scenarios,
     runResources: [{ kind: "run-processes", id: ROOT, scenario: "run", createdAt: "t", cleanup: absent }, { kind: "proxy", id: `${ROOT}/state`, scenario: "run", createdAt: "t", cleanup: absent }],
-    interface: ENDPOINT_INTERFACE, limitations: [], summary: summarize(scenarios),
+    interface: ENDPOINT_INTERFACE, limitations: [], runErrors: [], summary: summarize(scenarios),
   });
 
   it("rejects passed scenarios lacking evidence, cleanup or a qualified platform", () => {
@@ -418,6 +418,23 @@ describe("qualification receipts", () => {
     expect(receiptProblems({ ...valid, runResources: [valid.runResources[0], caddy] })).toEqual([`run-level proxy ${ROOT}/state not read back absent`]);
     expect(receiptProblems({ ...valid, runResources: [] })).toEqual(["run-level cleanup was not recorded"]);
     expect(networkingOutcomeGate([{ ...valid, runResources: [valid.runResources[0], caddy] }, receipt("darwin")], HEAD).ready).toBe(false);
+  });
+
+  it("rejects a receipt recording a run error or none, while informational limitations still pass", () => {
+    const informational = { ...receipt("darwin"), limitations: ["cloudflare: no ephemeral URLs"] };
+    expect(receiptProblems(informational)).toEqual([]);
+    expect(runExitCode(informational, receiptProblems(informational), true, 0)).toBe(0);
+    const failedRun = { ...receipt("darwin"), runErrors: ["unhandled rejection during the run: probe aborted"] };
+    expect(receiptProblems(failedRun)).toEqual(["run error: unhandled rejection during the run: probe aborted"]);
+    expect(networkingOutcomeGate([receipt("linux"), failedRun], HEAD).ready).toBe(false);
+    expect(runExitCode(failedRun, receiptProblems(failedRun), true, 1)).toBe(1);
+    const unrecorded = { ...receipt("darwin"), runErrors: undefined as never };
+    expect(receiptProblems(unrecorded)).toEqual(["run errors were not recorded"]);
+    expect(networkingOutcomeGate([receipt("linux"), unrecorded], HEAD).ready).toBe(false);
+    // The exit code applies the same check, and a run error seen after the receipt was written still fails it.
+    expect(runExitCode(unrecorded, receiptProblems(unrecorded), true, 0)).toBe(1);
+    expect(runExitCode(receipt("darwin"), [], true, 1)).toBe(1);
+    expect(runExitCode(receipt("darwin"), [], false, 0)).toBe(1);
   });
 
   it("opens the DEV-2 outcome only when every scenario passed on macOS and Linux at the head", () => {
@@ -508,6 +525,33 @@ describe("live host cleanup handlers", () => {
     docker = () => ({ code: 1, stdout: "" });
     await inventory.cleanup(host.handlers(), "s");
     expect(inventory.list("s")[0].cleanup?.detail).toBe("read-back failed: docker could not list containers on the pinned engine");
+  });
+
+  it("reads every check of a runtime DevFn reports degraded with ok false, then reaps the Compose resources it listed", async () => {
+    const owner = ownerLabel("i1");
+    const listings: Record<string, string> = { ps: `qualification-echo-1\tdevfn-p-0123456789ab-${owner}\n`, network: `devfn-p-0123456789ab-${owner}_default\tdevfn-p-0123456789ab-${owner}\n` };
+    const removed: string[] = [];
+    const docker = (args: readonly string[]) => { if (args[0] === "rm" || args[1] === "rm") removed.push(args.join(" ")); return { code: 0, stdout: listings[args[0]] ?? "" }; };
+    // devfn down left cleanup errors: status answers degraded with ok false and exit 0, the leases stay, and a fixture process still runs.
+    const { host, inventory } = await fixtureHost({ devfn: { ...stopped, status: { ok: false, state: "degraded", instanceId: "i1" }, ports: { allocations: [{ instanceId: "i1", port: 4799 }, { instanceId: "i2", port: 4800 }] } },
+      docker });
+    const runtime = path.join(dir, "qabcdef12-compose");
+    await mkdir(runtime);
+    await writeFile(path.join(runtime, "devfn.config.json"), JSON.stringify(composeFixture()));
+    await writeFile(path.join(runtime, "seen-api.json"), JSON.stringify({ pid: process.pid, env: {} }));
+    inventory.record("runtime", runtime, "s");
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup?.detail).toBe(`still present on read-back: state degraded; fixture processes: ${process.pid}; leases: 4799; Compose resources: container qualification-echo-1, network devfn-p-0123456789ab-${owner}_default`);
+    await host.reapCompose();
+    expect(removed).toEqual(["rm -f qualification-echo-1", `network rm devfn-p-0123456789ab-${owner}_default`]);
+  });
+
+  it("treats a runtime status that names no owner as unreadable, never absent", async () => {
+    const { host, inventory } = await fixtureHost({ devfn: { ...stopped, status: { ok: false, error: { code: "DEVFN_CONFIG_INVALID" } } } });
+    const runtime = path.join(dir, "qabcdef12-app");
+    inventory.record("runtime", runtime, "s");
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: 'read-back failed: devfn status failed: {"code":"DEVFN_CONFIG_INVALID"}' });
   });
 
   it("runs every DevFn command in the run environment and, once aborted, kills in-flight commands and refuses creation but not cleanup", async () => {

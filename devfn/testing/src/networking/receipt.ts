@@ -24,8 +24,10 @@ export interface NetworkingQualificationReceipt {
   /** Resources the whole run shares, such as its DevFn Caddy and the processes of its root, with their cleanup read-back. */
   runResources: InventoryEntry[];
   interface: typeof ENDPOINT_INTERFACE;
-  /** Host and provider limitations observed or reported during the run. */
+  /** Host and provider limitations observed or reported during the run; informational, never a failure. */
   limitations: string[];
+  /** Errors the run itself hit outside any scenario, such as an unhandled rejection; any one makes the receipt unusable. */
+  runErrors: string[];
   summary: Record<ScenarioStatus, number>;
 }
 
@@ -52,8 +54,8 @@ export function redactSecrets<T>(value: T, secrets: readonly string[]): T {
  * come from a qualified platform and carry a passing observation of every
  * planned assertion, no failed one, resources read back absent and no
  * protected change. The receipt must come from a clean, freshly built
- * checkout at its head, every run-level resource must be read back absent,
- * and the summary must match the scenarios.
+ * checkout at its head, record no run error, read every run-level
+ * resource back absent, and its summary must match the scenarios.
  */
 export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix: readonly QualificationScenario[] = NETWORKING_MATRIX): string[] {
   const problems: string[] = [];
@@ -61,6 +63,8 @@ export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix:
   if (!/^[a-f0-9]{40}$/.test(receipt.head)) problems.push("head is not a full commit SHA");
   const source = receipt.provenance;
   if (source?.head !== receipt.head || source.clean !== true || source.builtAfterSources !== true) problems.push("not run from a clean checkout built at its head");
+  if (!Array.isArray(receipt.runErrors)) problems.push("run errors were not recorded");
+  for (const error of receipt.runErrors ?? []) problems.push(`run error: ${String(error)}`);
   for (const entry of receipt.runResources ?? []) if (entry.cleanup?.absent !== true) problems.push(`run-level ${entry.kind} ${entry.id} not read back absent`);
   if (!receipt.runResources?.some((entry) => entry.kind === "proxy") || !receipt.runResources.some((entry) => entry.kind === "run-processes")) problems.push("run-level cleanup was not recorded");
   const seen = new Set<string>();
@@ -82,6 +86,11 @@ export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix:
   const summary = summarize(receipt.scenarios);
   if ((Object.keys(summary) as ScenarioStatus[]).some((key) => summary[key] !== receipt.summary[key])) problems.push("summary does not match scenarios");
   return problems;
+}
+
+/** A run passes only when its receipt has no problem, every scenario passed, cleanup was confirmed and no run error was seen, including one after the receipt was written. */
+export function runExitCode(receipt: NetworkingQualificationReceipt, problems: readonly string[], clean: boolean, runErrorsSeen: number): number {
+  return problems.length === 0 && receipt.summary.passed === receipt.scenarios.length && clean && runErrorsSeen === 0 ? 0 : 1;
 }
 
 export interface OutcomeGate { ready: boolean; missing: string[] }

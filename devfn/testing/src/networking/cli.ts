@@ -13,7 +13,7 @@ import { DisposableInventory } from "./inventory.js";
 import { LiveHost } from "./live.js";
 import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
 import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
-import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
+import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, runExitCode, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
 import { runScenarios, selectScenarios, type PrerequisiteResult } from "./runner.js";
 
 const USAGE = `Usage: devfn-networking-qualification <plan|run|gate> [options]
@@ -156,7 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const receipt: NetworkingQualificationReceipt = redactSecrets({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head: values.head, runId, provenance: source,
     host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
     ...(approval ? { approval: { approvedBy: approval.approvedBy, expiresAt: approval.expiresAt } } : {}),
-    prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations, ...strays.map((item) => `unhandled rejection during the run: ${item}`)],
+    prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations], runErrors: strays.map((item) => `unhandled rejection during the run: ${item}`),
     summary: summarize(results) }, secrets);
   await writeFile(values.out, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(values.out, 0o600);
@@ -164,8 +164,10 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (!clean) await finish();
   // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
   if (clean) await rm(root, { recursive: true, force: true });
-  process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: receipt.summary, problems: receiptProblems(receipt), cleanup: clean ? "confirmed" : `incomplete; inspect ${root}` }, null, 2)}\n`);
-  return receipt.summary.passed === results.length && clean && !strays.length ? 0 : 1;
+  // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was written fails it too.
+  const problems = receiptProblems(receipt);
+  process.stdout.write(`${JSON.stringify({ receipt: values.out, summary: receipt.summary, problems, cleanup: clean ? "confirmed" : `incomplete; inspect ${root}` }, null, 2)}\n`);
+  return runExitCode(receipt, problems, clean, strays.length);
 }
 
 if (process.argv[1] && await realpath(process.argv[1]).then((file) => file === fileURLToPath(import.meta.url), () => false)) {

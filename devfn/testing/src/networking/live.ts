@@ -513,8 +513,10 @@ export class LiveHost {
         if (entry.kind === "fixture-repository") return reasons([await exists(entry.id) ? "checkout exists" : undefined, describe("processes", await this.processesIn(entry.id, await this.sharedLeaders()))]);
         if (entry.kind === "run-processes") return describe("processes in the run root", await this.processesIn(entry.id, new Set())) ?? false;
         if (entry.kind === "runtime") {
-          // Every check runs, so a Compose read-back lists what remains even when the lifecycle did not stop.
-          const status = await this.must(entry.id, ["status"]);
+          // Every check runs, so a Compose read-back lists what remains even when the lifecycle did not stop. DevFn answers a
+          // degraded or failed state with ok false; that state is a reason here, and only a status naming no owner is unreadable.
+          const { json: status } = await this.devfn(entry.id, ["status"]);
+          if (typeof status.state !== "string" || typeof status.instanceId !== "string") throw new Error(`devfn status failed: ${JSON.stringify(status.error ?? status).slice(0, 2000)}`);
           const leases = ((await this.must(entry.id, ["ports"])).allocations as Array<{ instanceId: string; port: number }>).filter((item) => item.instanceId === status.instanceId).map((item) => item.port);
           return reasons([status.state === "stopped" ? undefined : `state ${String(status.state)}`, describe("processes", await this.processesIn(entry.id, await this.sharedLeaders())),
             describe("fixture processes", await this.survivingFixtures(entry.id)), describe("leases", leases), describe("routes", await this.routesOf(String(status.instanceId))),
