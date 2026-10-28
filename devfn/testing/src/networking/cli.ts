@@ -121,10 +121,13 @@ const RECEIPT_REWRITES = 5;
  * rewritten whenever a run error arrived since it was written; one that
  * cannot be brought up to date is removed. An interrupted run (code 130)
  * writes no receipt: an interrupt that arrives while the receipt is written
- * or finalized withdraws it.
+ * or finalized withdraws it. A receipt already at the output path is removed
+ * before anything runs, so no failed or interrupted rerun leaves it in place;
+ * a run that cannot remove it does not start.
  */
 export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
   const { inventory, resources, signal } = run.options;
+  await rm(run.out, { force: true });
   const failures: string[] = [];
   const runErrors = (): string[] => [...failures, ...inventory.ledgerFailures.map((item) => `inventory ledger: ${item}`), ...run.strays.map((item) => `unhandled rejection during the run: ${item}`)];
   const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {

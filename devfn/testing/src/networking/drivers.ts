@@ -5,13 +5,13 @@ import path from "node:path";
 import tls from "node:tls";
 
 import { createPlan, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity } from "@devfn/core";
-import { validateDevFnConfig } from "@devfn/config";
+import { processIdentityStatus, validateDevFnConfig, type ProcessIdentityStatus } from "@devfn/config";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
 import { CloudflareTunnelProvider, probePublicOrigin, readTunnelBindings, readTunnelState, type TunnelBinding } from "@devfn/proxy/tunnel";
 
 import { OAUTH_CALLBACK_PATH, type QualificationApproval } from "./approval.js";
-import { failedWith, QUALIFICATION_PROJECT_ID, SHIPPED_ERRORS, type Answer, type LiveHost, type OwnedStatus, type ProviderReadBack } from "./live.js";
-import { ownerLabel } from "./matrix.js";
+import { edgeRefused, failedWith, QUALIFICATION_PROJECT_ID, SHIPPED_ERRORS, type Answer, type LiveHost, type OwnedStatus, type ProviderReadBack, type PublicOutcome, type RecordedProcess } from "./live.js";
+import { byCodeUnit, ownerLabel } from "./matrix.js";
 import type { ScenarioContext, ScenarioDriver } from "./runner.js";
 
 type LiveDriver = (context: ScenarioContext, host: LiveHost) => Promise<void>;
@@ -185,14 +185,7 @@ export const ANSWERS = {
    * fixture answer and anything shaped like the DevFn origin (its marker
    * header or its empty 421) mean the edge forwarded the request.
    */
-  edgeUnrouted: (answer: Answer | undefined, provider: TunnelBinding["provider"]) => {
-    if (!answer || answer.json?.marker !== undefined || originHeader(answer) !== undefined) return false;
-    const client = answer.status >= 400 && answer.status < 500;
-    if (provider === "cloudflare") {
-      return answer.headers.server === "cloudflare" && typeof answer.headers["cf-ray"] === "string" && (client || answer.status === 530) && /^error code: 1(?!033)\d{3}\s*$/.test(answer.body);
-    }
-    return client && /^ERR_NGROK_\d+$/.test(String(answer.headers["ngrok-error-code"] ?? ""));
-  },
+  edgeUnrouted: (answer: Answer | undefined, provider: TunnelBinding["provider"]) => answer !== undefined && edgeRefused(answer, provider) && !/^error code: 1033\b/.test(answer.body),
   /** The provider read-back holds no name for the private route, and every name it holds for the binding is the selected public host. */
   providerWithheld: (held: readonly string[], publicHost: string, privateName: string) => !held.includes(privateName) && held.every((name) => name === publicHost),
 };
@@ -466,9 +459,13 @@ function registerArgs(approval: QualificationApproval, kind: "cloudflare" | "ngr
   return ["--provider", "ngrok", "--ephemeral", "--authtoken-env", ephemeral.authtokenEnv, "--api-key-env", ephemeral.apiKeyEnv];
 }
 
+type TunnelKind = "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral";
+const BINDING_SUFFIX: Record<TunnelKind, string> = { cloudflare: "cf", "ngrok-reserved": "ngr", "ngrok-ephemeral": "nge" };
+const bindingName = (host: LiveHost, kind: TunnelKind) => `${host.prefix}-${BINDING_SUFFIX[kind]}`;
+
 /** Register a run-named binding for a fresh fixture repository. */
-async function binding(context: ScenarioContext, host: LiveHost, approval: QualificationApproval, kind: "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral", repository: string): Promise<string> {
-  const name = `${host.prefix}-${kind === "cloudflare" ? "cf" : kind === "ngrok-reserved" ? "ngr" : "nge"}`;
+async function binding(context: ScenarioContext, host: LiveHost, approval: QualificationApproval, kind: TunnelKind, repository: string): Promise<string> {
+  const name = bindingName(host, kind);
   const cwd = await host.repository(context.scenario.id, repository, tunnelFixture(name, kind === "ngrok-ephemeral"));
   context.inventory.record("tunnel-binding", name, context.scenario.id, { cwd });
   await host.must(cwd, ["tunnel", "register", name, ...registerArgs(approval, kind), "--nonproduction"]);
@@ -501,12 +498,12 @@ async function publicStart(context: ScenarioContext, host: LiveHost, cwd: string
 
 /** Every name the provider holds for the private route's name or carrying the binding's marker; providerWithheld allows only the selected public host among them. */
 export async function providerHeld(readBack: ProviderReadBack, binding: TunnelBinding, privateName: string): Promise<string[]> {
-  return [...new Set([...await readBack(binding, privateName, undefined), ...await readBack(binding, undefined, undefined)])].sort();
+  return [...new Set([...await readBack(binding, privateName, undefined), ...await readBack(binding, undefined, undefined)])].sort(byCodeUnit);
 }
 
-const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloudflare" | "ngrok-reserved" | "ngrok-ephemeral"): LiveDriver => async (context, host) => {
+const tunnelJourney = (approval: QualificationApproval | undefined, kind: TunnelKind): LiveDriver => async (context, host) => {
   const cwd = await binding(context, host, approval!, kind, "public");
-  const name = `${host.prefix}-${kind === "cloudflare" ? "cf" : kind === "ngrok-reserved" ? "ngr" : "nge"}`;
+  const name = bindingName(host, kind);
   const planned = (await host.must(cwd, ["tunnel", "urls"])) as { timing?: string; urls: Record<string, string>; assignedAfterStart?: string[] };
   const { hostname, url, receipt } = await publicStart(context, host, cwd, name);
   const timing = kind === "ngrok-ephemeral"
@@ -544,53 +541,60 @@ const tunnelJourney = (approval: QualificationApproval | undefined, kind: "cloud
   context.expect("withdrawn-absent", !await host.handlers().present(entry), `${entry.id} no longer routed, journaled, recorded at the provider or served`);
 };
 
-const tunnelReload = (approval: QualificationApproval | undefined): LiveDriver => async (context, host) => {
-  const primary = await binding(context, host, approval!, "cloudflare", "reload");
-  const name = `${host.prefix}-cf`;
+const tunnelReload = (approval: QualificationApproval | undefined, kind: TunnelKind): LiveDriver => async (context, host) => {
+  const primary = await binding(context, host, approval!, kind, "reload");
+  const name = bindingName(host, kind);
   const linked = await host.worktree(context.scenario.id, primary, "b");
   const [a, b] = [await publicStart(context, host, primary, name), await publicStart(context, host, linked, name)];
   const present = async (hostname: string) => await host.handlers().present(context.inventory.list(context.scenario.id).find((item) => item.kind === "public-hostname" && item.id === hostname)!);
   const bound = (await readTunnelBindings(host.stateDir)).find((item) => item.name === name)!;
+  // Every connector restart reassigns ngrok ephemeral URLs, so the remaining route is probed at the URL its status reports now.
+  const current = async () => `${String((await host.status(linked))?.publicUrls?.web ?? b.url)}/x`;
   // Withdrawing a name can swap the connector for a successor; the run identifies that successor as its own.
   await host.soleTunnelUser(bound, async () => await host.must(primary, ["down"]));
-  context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, `${b.url}/x`))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves`);
-  const recovery = await restartConnector(host, bound, linked, `${b.url}/x`);
+  const remaining = await current();
+  context.expect("withdraw-one", !await present(a.hostname) && (await publicAnswer(host, remaining))?.marker === marker(linked), `${a.hostname} withdrawn; ${b.hostname} still serves at ${remaining}`);
+  const recovery = await restartConnector(host, bound, linked, current);
   context.expect("recover-preserves", RECOVERED.connectorRestarted(recovery),
-    `connector ${recovery.killed} ${recovery.signalled ? "killed" : "not signalled: its recorded identity was not verified"}: ${recovery.downAfterKill ? "down" : "still up"}, served meanwhile: ${recovery.servedWhileDown}; after tunnel recover connector ${String(recovery.after ?? "none")} ${recovery.running ? "runs" : "is not running"}; ${b.hostname} serves: ${recovery.served}`);
+    `connector ${recovery.killed} ${recovery.signalled ? "killed" : "not signalled: its recorded identity was not verified"}: ${recovery.downAfterKill ? "down" : "still up"}, meanwhile ${recovery.meanwhile.outcome} (${recovery.meanwhile.detail}); after tunnel recover connector ${String(recovery.after ?? "none")} ${recovery.running ? "runs" : "is not running"}; ${b.hostname} serves: ${recovery.served}`);
   await host.must(linked, ["down"]);
   context.expect("withdrawn-absent", !await present(a.hostname) && !await present(b.hostname), "neither hostname is routed, journaled, recorded at the provider or served");
 };
 
 /** What a connector restart showed: the connector the run killed went down, and tunnel recover started a new one that serves the remaining route. */
-export interface ConnectorRecovery { killed: number; signalled: boolean; downAfterKill: boolean; servedWhileDown: boolean; after?: number; running: boolean; served: boolean }
+export interface ConnectorRecovery { killed: number; signalled: boolean; downAfterKill: boolean; meanwhile: PublicOutcome; after?: number; running: boolean; served: boolean }
 
 export const RECOVERED = {
-  /** The run signalled the recorded connector, its process was gone and DevFn reported it stopped, nothing served the route meanwhile, and recover left a different connector running that serves it. */
-  connectorRestarted: (recovery: ConnectorRecovery) => recovery.signalled && recovery.downAfterKill && !recovery.servedWhileDown && recovery.after !== undefined && recovery.after !== recovery.killed && recovery.running && recovery.served,
+  /** The run signalled the recorded connector, its process was gone and DevFn reported it stopped, the provider edge itself refused the route meanwhile, and recover left a different connector running that serves it. */
+  connectorRestarted: (recovery: ConnectorRecovery) => recovery.signalled && recovery.downAfterKill && recovery.meanwhile.outcome === "refused" && recovery.after !== undefined && recovery.after !== recovery.killed && recovery.running && recovery.served,
 };
 
 /**
  * Kill the binding's recorded connector (its process group, SIGKILL), observe
- * that it is down and the remaining route is not served, then run devfn
+ * that it is down and the provider edge refuses the remaining route (a
+ * failed or unrecognized probe is retried, and never counts), then run devfn
  * tunnel recover from cwd and read the connector and route back. A recover
  * on a healthy connector would be a no-op, so it never stands for a restart.
  * The connector is signalled only while its process matches the birth
  * identity DevFn recorded for it; otherwise nothing is signalled or recovered.
  */
-export async function restartConnector(host: LiveHost, bound: TunnelBinding, cwd: string, url: string): Promise<ConnectorRecovery> {
+export async function restartConnector(host: LiveHost, bound: TunnelBinding, cwd: string, url: () => Promise<string>): Promise<ConnectorRecovery> {
   const connector = (await readTunnelState(host.stateDir, bound.name)).connector;
   if (!connector) throw new Error(`binding ${bound.name} records no connector to restart`);
-  if (!await host.killRecorded(connector, true)) return { killed: connector.pid, signalled: false, downAfterKill: false, servedWhileDown: false, running: false, served: false };
+  const target = await url();
+  if (!await host.killRecorded(connector, true)) return { killed: connector.pid, signalled: false, downAfterKill: false, meanwhile: { outcome: "indeterminate", detail: "not probed" }, running: false, served: false };
   for (let wait = 0; wait < 50 && alive(connector.pid); wait += 1) await host.wait(200);
   const stopped = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string };
   // DevFn reports stopped only on death evidence; unverified or a missing answer is not down.
   const downAfterKill = !alive(connector.pid) && stopped.connector === "stopped";
-  const meanwhile = await host.request(url, { publicDns: true }).catch(() => undefined);
+  const probe = async () => await host.publicOutcome(target, bound.provider, (answer) => answer.json?.marker === marker(cwd));
+  let meanwhile = await probe();
+  for (let attempt = 1; attempt < 6 && meanwhile.outcome === "indeterminate"; attempt += 1) { await host.wait(5_000); meanwhile = await probe(); }
   await host.soleTunnelUser(bound, async () => await host.must(cwd, ["tunnel", "recover", bound.name, "--allow-public"]));
   const recovered = (await host.must(cwd, ["tunnel", "status", bound.name])).tunnel as { connector?: string; pid?: number };
   const after = typeof recovered.pid === "number" ? recovered.pid : undefined;
-  return { killed: connector.pid, signalled: true, downAfterKill, servedWhileDown: meanwhile?.json?.marker === marker(cwd), ...(after !== undefined ? { after } : {}),
-    running: recovered.connector === "running" && after !== undefined && alive(after), served: (await publicAnswer(host, url))?.marker === marker(cwd) };
+  return { killed: connector.pid, signalled: true, downAfterKill, meanwhile, ...(after !== undefined ? { after } : {}),
+    running: recovered.connector === "running" && after !== undefined && alive(after), served: (await publicAnswer(host, await url()))?.marker === marker(cwd) };
 }
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
@@ -646,13 +650,17 @@ const concurrentChange: LiveDriver = async (context, host) => await watchLifecyc
     `status after change: ${degraded ? degraded.state : "unreadable"}; restart: ${String(restarted.state)}; process ${before.pid} -> ${seen.pid} saw QUAL_REVISION=${String(seen.env.QUAL_REVISION)}`);
 });
 
-export interface InterruptedStart { killed: boolean; orphan?: number; result: { code: number; json: Record<string, any> }; status?: OwnedStatus }
+/** A process of the fixture's plan as the killed start launched it: its seen PID and the birth identity read while that start still ran, when readable. */
+export interface LaunchedProcess { name: string; pid?: number; process?: RecordedProcess }
+export interface InterruptedStart { killed: boolean; orphan?: number; launched: LaunchedProcess[]; result: { code: number; json: Record<string, any> }; status?: OwnedStatus }
 
 /**
  * Start cwd's lifecycle with its last node held before listening (hold-<name>),
  * kill the start with SIGKILL once that node recorded itself, then lift the
  * hold so the orphan listens as a process killed mid-start would. killed is
- * whether the start was still running when it was killed.
+ * whether the start was still running when it was killed. Every plan node's
+ * process is recorded, with its birth identity, before the kill, so a later
+ * retry that rewrites the seen files cannot hide one that survived.
  */
 export async function interruptStart(context: ScenarioContext, host: LiveHost, cwd: string): Promise<InterruptedStart> {
   const { failing: held } = failureInjection(hostFixture());
@@ -663,9 +671,15 @@ export async function interruptStart(context: ScenarioContext, host: LiveHost, c
   const join = detach(host.up(context.scenario.id, cwd, [], kill.signal).finally(() => { ended = true; }));
   let orphan: number | undefined;
   let killed = false;
+  const launched: LaunchedProcess[] = [];
   try {
     for (let wait = 0; wait < 300 && orphan === undefined && !ended; wait += 1) { orphan = (await host.seen(cwd, held).catch(() => undefined))?.pid; if (orphan === undefined) await host.wait(100); }
     killed = !ended && orphan !== undefined;
+    for (const { name } of createPlan(validateDevFnConfig(hostFixture())).nodes) {
+      const pid = (await host.seen(cwd, name).catch(() => undefined))?.pid;
+      const recorded = pid === undefined ? undefined : await host.recordProcess(pid);
+      launched.push({ name, ...(pid !== undefined ? { pid } : {}), ...(recorded ? { process: recorded } : {}) });
+    }
   } finally {
     // An interrupted wait still kills the start and waits for it to end before the driver returns to cleanup.
     kill.abort();
@@ -675,15 +689,22 @@ export async function interruptStart(context: ScenarioContext, host: LiveHost, c
   const result = await join();
   // A failed or degraded lifecycle still reports its state for its owner; a failed read reports none.
   const status = await host.status(cwd);
-  return { killed, ...(orphan !== undefined ? { orphan } : {}), result, ...(status ? { status } : {}) };
+  return { killed, ...(orphan !== undefined ? { orphan } : {}), launched, result, ...(status ? { status } : {}) };
 }
 
 export const INTERRUPTED = {
   /** The start was killed while its held node had recorded itself and before it ended, it reported no ready lifecycle, and its owner's status then read a lifecycle that is not ready. */
   killedBeforeReady: (start: InterruptedStart) => start.killed && start.orphan !== undefined && start.result.code !== 0 && start.result.json.state !== "ready"
     && start.status !== undefined && start.status.state !== "ready",
-  /** No process of the killed start still runs, whatever a later lifecycle lists: a live orphan fails, and an unknown orphan proves nothing. */
-  orphanGone: (start: InterruptedStart, running: (pid: number) => boolean = alive) => start.orphan !== undefined && !running(start.orphan),
+  /**
+   * No process of the killed start still runs, whatever a later lifecycle
+   * lists: every plan node was recorded with its birth identity, and each has
+   * exited or its PID now belongs to another process. An unrecorded node or an
+   * unverifiable identity proves nothing.
+   */
+  orphansGone: async (start: InterruptedStart, identity: (pid: number, signature?: string, recordedAt?: string) => Promise<ProcessIdentityStatus> = processIdentityStatus) =>
+    start.launched.length > 0 && (await Promise.all(start.launched.map(async ({ process: recorded }) => recorded !== undefined
+      && ["exited", "identity-mismatch"].includes(await identity(recorded.pid, recorded.birthSignature, recorded.startedAt))))).every(Boolean),
 };
 
 const crash: LiveDriver = async (context, host) => await watchLifecycle(context, host, await sentinel(context, host), async () => {
@@ -697,7 +718,6 @@ const crash: LiveDriver = async (context, host) => await watchLifecycle(context,
   const status = await host.status(cwd);
   const interrupted = await host.repository(context.scenario.id, "interrupted", hostFixture());
   const killed = await interruptStart(context, host, interrupted);
-  const orphan = killed.orphan;
   const collected = await host.devfn(interrupted, ["ports", "gc"]);
   context.expect("crash-detected", (status?.state === "degraded" || status?.state === "failed") && INTERRUPTED.killedBeforeReady(killed) && collected.code === 0,
     `status after kill: ${status ? status.state : "unreadable"}; interrupted up ${killed.killed ? "killed" : "not killed"} before it ended: code ${killed.result.code}, state ${String(killed.result.json.state ?? killed.result.json.error?.code)}; its status then ${killed.status ? killed.status.state : "unreadable"}; ports gc after it: ${collected.code === 0 ? "ok" : JSON.stringify(collected.json.error)}`);
@@ -708,10 +728,10 @@ const crash: LiveDriver = async (context, host) => await watchLifecycle(context,
     await host.wait(15_000);
     await host.devfn(interrupted, ["ports", "gc"]);
   }
-  const gone = INTERRUPTED.orphanGone(killed);
+  const gone = await INTERRUPTED.orphansGone(killed);
   const ca = await host.ca();
   context.expect("restart-recovers", restarted.state === "ready" && await serves(host, (await urls(host, cwd)).web, cwd, ca) && retried.code === 0 && retried.json.state === "ready" && gone && await serves(host, (await urls(host, interrupted)).web, interrupted, ca),
-    `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; process ${String(orphan)} from the killed start ${gone ? "is gone" : "still runs"}`);
+    `crashed worktree ${String(restarted.state)}; interrupted worktree ${String(retried.json.state ?? JSON.stringify(retried.json.error))}; processes ${killed.launched.map((item) => `${item.name} ${String(item.pid ?? "unrecorded")}`).join(", ")} of the killed start ${gone ? "are gone" : "may still run"}`);
 });
 
 const oneWorktreeStop: LiveDriver = async (context, host) => {
@@ -752,7 +772,7 @@ export const RUNTIME_ONLY_KEYS: ReadonlySet<string> = new Set(["DEVFN_STATE_DIR"
 /** Every DEVFN_ key, in either direction, whose resolver value differs from what the process saw: a key only one side has differs too. */
 export function resolverDifferences(resolved: Record<string, string>, seen: Record<string, string>, runtimeOnly: ReadonlySet<string> = RUNTIME_ONLY_KEYS): string[] {
   const keys = new Set([...Object.keys(resolved), ...Object.keys(seen)].filter((key) => key.startsWith("DEVFN_") && !runtimeOnly.has(key)));
-  return [...keys].sort().flatMap((key) => resolved[key] === seen[key] ? [] : [key in resolved ? (key in seen ? key : `${key} (not seen by the process)`) : `${key} (not produced by the resolver)`]);
+  return [...keys].sort(byCodeUnit).flatMap((key) => resolved[key] === seen[key] ? [] : [key in resolved ? (key in seen ? key : `${key} (not seen by the process)`) : `${key} (not produced by the resolver)`]);
 }
 
 const ownerEndpoint: LiveDriver = async (context, host) => {
@@ -779,7 +799,8 @@ export function liveDrivers(host: LiveHost, approval: QualificationApproval | un
     "host.internal-tls": internalTls, "host.registered-domain": registeredDomain(approval), "oauth.google-two-worktrees": googleOAuth(approval),
     "tunnel.cloudflare": tunnelJourney(approval, "cloudflare"), "tunnel.ngrok-reserved": tunnelJourney(approval, "ngrok-reserved"), "tunnel.ngrok-ephemeral": tunnelJourney(approval, "ngrok-ephemeral"),
     "recovery.startup-failure": startupFailure, "recovery.concurrent-change": concurrentChange, "recovery.crash": crash, "recovery.one-worktree-stop": oneWorktreeStop,
-    "recovery.proxy-reload": proxyReload, "recovery.tunnel-reload": tunnelReload(approval), "interface.owner-endpoint": ownerEndpoint,
+    "recovery.proxy-reload": proxyReload, "recovery.tunnel-reload": tunnelReload(approval, "cloudflare"), "recovery.tunnel-reload-ngrok-reserved": tunnelReload(approval, "ngrok-reserved"),
+    "recovery.tunnel-reload-ngrok-ephemeral": tunnelReload(approval, "ngrok-ephemeral"), "interface.owner-endpoint": ownerEndpoint,
   };
   return Object.fromEntries(Object.entries(drivers).map(([id, driver]) => [id, async (context: ScenarioContext) => await driver(context, host)]));
 }

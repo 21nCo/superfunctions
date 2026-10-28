@@ -7,7 +7,7 @@ import net from "node:net";
 import { PUBLIC_ORIGIN_PORT } from "@devfn/proxy";
 
 import type { QualificationApproval } from "./approval.js";
-import type { PrerequisiteId } from "./matrix.js";
+import { byCodeUnit, type PrerequisiteId } from "./matrix.js";
 import type { PrerequisiteResult } from "./runner.js";
 
 /** What prerequisite probes may read. Every probe is read-only: nothing is installed, registered or started. */
@@ -52,9 +52,12 @@ function envSet(environment: ProbeEnvironment, id: PrerequisiteId, names: Readon
  * The Docker engine Compose would reach from env: DOCKER_HOST, else the
  * endpoint of the current context (DOCKER_CONTEXT or the persisted one).
  * Only a local socket is accepted: remote-target access is a separate
- * capability this harness never exercises. The run pins the result.
+ * capability this harness never exercises. The run pins the result. Both
+ * variables set is refused: the Docker CLI lets DOCKER_HOST override the
+ * named context, so the engine the operator meant is ambiguous.
  */
 export async function localDockerEndpoint(env: NodeJS.ProcessEnv, run: ProbeEnvironment["run"]): Promise<string> {
+  if (env.DOCKER_HOST && env.DOCKER_CONTEXT) throw new Error(`both DOCKER_HOST and DOCKER_CONTEXT (${env.DOCKER_CONTEXT}) select a Docker engine; unset one so the run targets the engine you chose`);
   let endpoint = env.DOCKER_HOST;
   if (!endpoint) {
     const context = await run("docker", ["context", "inspect", ...(env.DOCKER_CONTEXT ? [env.DOCKER_CONTEXT] : []), "--format", "{{.Endpoints.docker.Host}}"]);
@@ -88,7 +91,7 @@ export async function cloudflareConnectors(tunnel: { accountId: string; tunnelId
   if (!Array.isArray(clients) || !clients.every((client) => typeof client?.id === "string" && Array.isArray(client.conns))) throw new Error("Cloudflare GET cfd_tunnel/connections answered without a client list");
   const tunnelState = await read("") as { id?: unknown; status?: unknown } | undefined;
   if (tunnelState?.id !== tunnel.tunnelId || !["inactive", "degraded", "healthy", "down"].includes(String(tunnelState.status))) throw new Error("Cloudflare GET cfd_tunnel answered without the tunnel's status");
-  const connected = [...new Set(clients.filter((client) => (client.conns as unknown[]).length > 0).map((client) => client.id as string))].sort();
+  const connected = [...new Set(clients.filter((client) => (client.conns as unknown[]).length > 0).map((client) => client.id as string))].sort(byCodeUnit);
   if (!connected.length && (tunnelState.status === "healthy" || tunnelState.status === "degraded")) throw new Error(`Cloudflare reports the tunnel ${String(tunnelState.status)} but lists no connected connector`);
   return connected;
 }

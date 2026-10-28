@@ -18,9 +18,9 @@ import { ephemeralOriginDomain, ngrokMarker, readTunnelBindings, registerTunnelB
 import { executeRun, staleBuildOutputs, writeReceipt, type QualificationRun } from "../src/networking/cli.js";
 import { loopbackListening } from "../src/networking/prerequisites.js";
 import {
-  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
+  ANSWERS, approvedDomains, checkPrerequisites, cloudflareConnectors, cloudflaredConnectorId, detach, dnsAbsent, RECOVERED, resolverDifferences, restartConnector, RUNTIME_ONLY_KEYS, composeFixture, DEFERRED_ROWS, DisposableInventory, domainFixture, ENDPOINT_INTERFACE, failureInjection, FIXTURE_SERVER, hostFixture, INTERRUPTED, LIFECYCLE_COMMAND_TIMEOUT_MS, interruptStart, InventoryError, listenerPorts, liveDrivers, LiveHost,
   failedWith, ownedStatus, SHIPPED_ERRORS, localDockerEndpoint, materialDigest, NETWORKING_MATRIX, networkingOutcomeGate, oauthFixture, ownerLabel, parseApproval, providerHeld, providerReadBack, receiptProblems, redactSecrets, rolledBackReadySibling, runExitCode, runScenarios, selectScenarios, summarize, trustDirectoryAnchors, tunnelFixture,
-  protectedChanges, type Answer, type CommandRunner, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
+  protectedChanges, type Answer, type CommandRunner, type PublicOutcome, type NetworkingQualificationReceipt, type PrerequisiteResult, type ProbeEnvironment, type ProtectedSnapshot, type ResourceHandlers, type ScenarioContext, type ScenarioDriver, type ScenarioResult,
 } from "../src/networking/index.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
@@ -217,6 +217,11 @@ describe("prerequisite probes", () => {
     await expect(localDockerEndpoint({ DOCKER_CONTEXT: "remote" }, context("unix:///var/run/docker.sock"))).rejects.toThrow(/ssh:\/\/ci@build.example.test, not a local engine socket/);
     await expect(localDockerEndpoint({ DOCKER_HOST: "tcp://10.0.0.5:2376" }, context("unix:///var/run/docker.sock"))).rejects.toThrow(/tcp:\/\/10.0.0.5:2376/);
     await expect(localDockerEndpoint({}, async () => ({ code: 1, stdout: "" }))).rejects.toThrow(/unreadable/);
+    // Docker lets DOCKER_HOST override an explicitly named context, so both set never pins either one, local or remote.
+    for (const named of ["remote", "default"]) {
+      await expect(localDockerEndpoint({ DOCKER_HOST: "unix:///var/run/docker.sock", DOCKER_CONTEXT: named }, context("unix:///var/run/docker.sock"))).rejects.toThrow(/both DOCKER_HOST and DOCKER_CONTEXT/);
+      expect(await status("docker-compose", { run: context("unix:///var/run/docker.sock"), env: { DOCKER_HOST: "unix:///var/run/docker.sock", DOCKER_CONTEXT: named } })).toMatchObject({ status: "missing", detail: expect.stringContaining("both DOCKER_HOST and DOCKER_CONTEXT") });
+    }
     expect(await status("docker-compose", { run: context("unix:///var/run/docker.sock") })).toMatchObject({ status: "satisfied", detail: expect.stringContaining("local engine") });
     expect(await status("docker-compose", { run: context("tcp://docker.example.test:2376") })).toMatchObject({ status: "missing", detail: expect.stringContaining("remote targets need their own approval") });
   });
@@ -439,7 +444,7 @@ describe("qualification receipts", () => {
   const receipt = (platform: string, scenarios = NETWORKING_MATRIX.map((item) => passed(item.id))): NetworkingQualificationReceipt => ({
     contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", target: "DEV-17", head: HEAD, runId: "abcdef123456",
     provenance: { head: HEAD, checkout: "/src", clean: true, builtAfterSources: true, devfnCli: "/src/devfn/cli/dist/index.js" },
-    host: { platform, arch: "x64", release: "1", node: "v22.12.0" }, startedAt: "t", finishedAt: "t", prerequisites: [], scenarios,
+    host: { platform, arch: "x64", release: "1", node: "v22.12.0" }, startedAt: "t", finishedAt: "t", prerequisites: allPrerequisites, scenarios,
     runResources: [{ kind: "run-processes", id: ROOT, scenario: "run", createdAt: "t", cleanup: absent }, { kind: "proxy", id: `${ROOT}/state`, scenario: "run", createdAt: "t", cleanup: absent }],
     interface: ENDPOINT_INTERFACE, limitations: [], runErrors: [], summary: summarize(scenarios),
   });
@@ -455,6 +460,21 @@ describe("qualification receipts", () => {
     ]);
     expect(receiptProblems(receipt("win32", [passed("host.two-worktrees")]))).toEqual(["host.two-worktrees: passed on unqualified platform win32"]);
     expect(receiptProblems({ ...receipt("linux"), summary: { passed: 0, failed: 0, blocked: 0, unsupported: 0 } })).toEqual(["summary does not match scenarios"]);
+  });
+
+  it("rejects a passed scenario whose matrix prerequisites the receipt does not record as satisfied exactly once", () => {
+    const valid = receipt("linux", [passed("tunnel.cloudflare")]);
+    const without = (id: string) => valid.prerequisites.filter((item) => item.id !== id);
+    const cloudflare = valid.prerequisites.find((item) => item.id === "cloudflare")!;
+    expect(receiptProblems({ ...valid, prerequisites: without("cloudflare") })).toEqual(["tunnel.cloudflare: passed without one satisfied cloudflare prerequisite"]);
+    expect(receiptProblems({ ...valid, prerequisites: [...without("caddy"), { id: "caddy", status: "missing", detail: "caddy is unavailable" }] }))
+      .toEqual(["tunnel.cloudflare: passed without one satisfied caddy prerequisite"]);
+    expect(receiptProblems({ ...valid, prerequisites: [...valid.prerequisites, { ...cloudflare, status: "invalid" }] })).toEqual(["tunnel.cloudflare: passed without one satisfied cloudflare prerequisite"]);
+    expect(receiptProblems({ ...valid, prerequisites: undefined as never })).toHaveLength(NETWORKING_MATRIX.find((item) => item.id === "tunnel.cloudflare")!.prerequisites.length);
+    // A blocked scenario claims nothing, so its unmet prerequisite is not a problem.
+    expect(receiptProblems({ ...receipt("linux", [{ ...passed("tunnel.cloudflare"), status: "blocked", observations: [], resources: [] }]), prerequisites: without("cloudflare") })).toEqual([]);
+    const missing = { ...receipt("darwin"), prerequisites: without("approval") };
+    expect(networkingOutcomeGate([receipt("linux"), missing], HEAD).ready).toBe(false);
   });
 
   it("rejects receipts not bound to a clean built head or whose run-level cleanup is unconfirmed", () => {
@@ -517,7 +537,7 @@ describe("run execution", () => {
       options: { scenarios: [scenario], platform: "darwin", prerequisites: allPrerequisites, drivers: { [scenario.id]: driver }, inventory, resources, snapshot: async () => ({}) },
       receipt: (results, runErrors) => ({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", target: "DEV-17", head: HEAD, runId: "abcdef123456",
         provenance: { head: HEAD, checkout: "/src", clean: true, builtAfterSources: true, devfnCli: "/src/devfn/cli/dist/index.js" }, host: { platform: "darwin", arch: "arm64", release: "1", node: "v22.12.0" },
-        startedAt: "t", finishedAt: "t", prerequisites: [], scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [], runErrors, summary: summarize(results) }),
+        startedAt: "t", finishedAt: "t", prerequisites: allPrerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [], runErrors, summary: summarize(results) }),
       reap: async () => { calls.push("reap"); }, removeRoot: async () => { calls.push("remove root"); } };
     const read = async () => JSON.parse(await readFile(run.out, "utf8")) as NetworkingQualificationReceipt;
     return { dir, ledger, inventory, strays, calls, run, read };
@@ -605,6 +625,27 @@ describe("run execution", () => {
     expect(context.calls).toEqual(["remove root"]);
   });
 
+  it("removes a passing receipt left at the output path before the run, so an interrupted or unwritable rerun cannot leave it", async () => {
+    for (const failure of ["interrupt", "write"] as const) {
+      const interrupt = new AbortController();
+      const context = await setup(async (inner) => { await recordTwo(path.dirname(context.ledger))(inner); if (failure === "interrupt") interrupt.abort("SIGINT"); });
+      dirs.push(context.dir);
+      context.run.options = { ...context.run.options, signal: interrupt.signal };
+      await writeReceipt(context.run.out, context.run.receipt([], []));
+      if (failure === "write") {
+        context.run.write = async () => { throw new Error("EACCES"); };
+        await expect(executeRun(context.run)).rejects.toThrow("EACCES");
+      } else expect((await executeRun(context.run)).code).toBe(130);
+      await expect(access(context.run.out)).rejects.toThrow();
+    }
+    // A receipt path that cannot be cleared starts nothing.
+    const context = await setup(async () => { throw new Error("never runs"); });
+    dirs.push(context.dir);
+    await mkdir(context.run.out);
+    await expect(executeRun(context.run)).rejects.toThrow();
+    expect(context.inventory.list()).toHaveLength(2);
+  });
+
   it("withdraws the receipt when the interrupt arrives while it is written or finalized", async () => {
     for (const late of ["write", "root removal"] as const) {
       const interrupt = new AbortController();
@@ -667,9 +708,9 @@ describe("live host cleanup handlers", () => {
       inventory.record("runtime", runtime, "s");
       await inventory.cleanup(host.handlers(), "s");
       expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "still present on read-back: processes: 4242" });
-      // Removal is devfn down alone; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
+      // Removal is devfn down, plus the owner's leftover Compose networks; the read-back saw the survivor and nothing was reaped (one lsof listing, no second pass).
       // Every check runs: without a readable manifest the Compose resources of the owner are listed too.
-      expect(calls).toEqual(["devfn down", "devfn status", "devfn ports", "lsof", "ps", "docker ps -a", "docker network ls"]);
+      expect(calls).toEqual(["devfn down", "devfn status", "docker ps -a", "docker network ls", "devfn status", "devfn ports", "lsof", "ps", "docker ps -a", "docker network ls"]);
       // A record whose PID no longer carries its birth identity (reused, or without one) is no shared leader, so its group is read back.
       for (const owner of [{ pid: caddy.pid, birthSignature: foreignSignature(birthSignature), startedAt: new Date().toISOString() }, { pid: caddy.pid }]) {
         await writeFile(path.join(host.stateDir, "proxy-owner.json"), JSON.stringify(owner));
@@ -814,6 +855,27 @@ describe("live host cleanup handlers", () => {
     docker = () => ({ code: 1, stdout: "" });
     await inventory.cleanup(host.handlers(), "s");
     expect(inventory.list("s")[0].cleanup?.detail).toBe("read-back failed: docker could not list containers on the pinned engine");
+  });
+
+  it("removes the network devfn down leaves for a Compose owner during cleanup, records the leak and reads it back absent", async () => {
+    const owner = ownerLabel("i1");
+    const ours = `devfn-p-0123456789ab-${owner}_default`;
+    const networks = new Set([`${ours}\tdevfn-p-0123456789ab-${owner}`, "operator_default\tdevfn-p-0123456789ab-o-ffffffffffffffffffff"]);
+    const removed: string[] = [];
+    const docker = (args: readonly string[]) => {
+      if (args[1] === "rm") { removed.push(args.join(" ")); for (const line of networks) if (line.startsWith(`${args[2]}\t`)) networks.delete(line); }
+      return { code: 0, stdout: args[0] === "network" && args[1] === "ls" ? [...networks].join("\n") : "" };
+    };
+    const { host, inventory } = await fixtureHost({ devfn: stopped, docker });
+    const runtime = path.join(dir, "qabcdef12-compose");
+    await mkdir(runtime);
+    await writeFile(path.join(runtime, "devfn.config.json"), JSON.stringify(composeFixture()));
+    inventory.record("runtime", runtime, "s");
+    await inventory.cleanup(host.handlers(), "s");
+    expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: true });
+    expect(removed).toEqual([`network rm ${ours}`]);
+    expect([...networks]).toEqual(["operator_default\tdevfn-p-0123456789ab-o-ffffffffffffffffffff"]);
+    expect([...host.limitations]).toEqual([expect.stringContaining(`devfn down left Compose network ${ours}`)]);
   });
 
   it("reads every check of a runtime DevFn reports degraded with ok false, then reaps the Compose resources it listed", async () => {
@@ -1154,42 +1216,101 @@ describe("live host cleanup handlers", () => {
     const signature = async (pid: number) => (await processBirthSignature(pid))!;
     try {
       const bound = await cloudflareBinding(host.stateDir);
-      // The remaining route answers with the worktree's marker only once a connector serves it.
-      host.request = async () => recovered === undefined ? { status: 530, body: "error code: 1033", headers: {} } : { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload-b" } };
+      // The remaining route answers with the worktree's marker only once a connector serves it; meanwhile Cloudflare's edge answers its own no-connector error.
+      let down: () => Promise<Answer> = async () => ({ status: 530, body: "error code: 1033", headers: { server: "cloudflare", "cf-ray": "8f0c1d2e3f4a5b6c-AMS" } });
+      host.request = async () => recovered === undefined ? await down() : { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload-b" } };
+      host.wait = async () => await new Promise((resolve) => setTimeout(resolve, 20));
       // A live PID whose birth identity differs from the record is another process reusing it: nothing is signalled or recovered.
       const own = await signature(reused.pid);
       await recordConnectors(host.stateDir, bound.name, { pid: reused.pid, metricsPort: 4101, birthSignature: foreignSignature(own) });
-      const refused = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
-      expect(refused).toEqual({ killed: reused.pid, signalled: false, downAfterKill: false, servedWhileDown: false, running: false, served: false });
+      const refused = await restartConnector(host, bound, cwd, async () => "https://web-x.preview.example.test/app/x");
+      expect(refused).toEqual({ killed: reused.pid, signalled: false, downAfterKill: false, meanwhile: { outcome: "indeterminate", detail: "not probed" }, running: false, served: false });
       expect(RECOVERED.connectorRestarted(refused)).toBe(false);
       expect(process.kill(reused.pid, 0)).toBe(true);
       expect(calls).toEqual([]);
       // DevFn's unverified connector is not a stopped one.
       stoppedAs = "unverified";
       await recordConnectors(host.stateDir, bound.name, { pid: reused.pid, metricsPort: 4101, birthSignature: own });
-      const unverified = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      const unverified = await restartConnector(host, bound, cwd, async () => "https://web-x.preview.example.test/app/x");
       expect(unverified).toMatchObject({ killed: reused.pid, signalled: true, downAfterKill: false });
       expect(RECOVERED.connectorRestarted(unverified)).toBe(false);
       recovered = undefined;
       stoppedAs = "stopped";
       await recordConnectors(host.stateDir, bound.name, { pid: killed.pid, metricsPort: 4101, birthSignature: await signature(killed.pid) });
-      const recovery = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
-      expect(recovery).toEqual({ killed: killed.pid, signalled: true, downAfterKill: true, servedWhileDown: false, after: successor.pid, running: true, served: true });
+      const recovery = await restartConnector(host, bound, cwd, async () => "https://web-x.preview.example.test/app/x");
+      expect(recovery).toEqual({ killed: killed.pid, signalled: true, downAfterKill: true, meanwhile: { outcome: "refused", detail: expect.stringContaining("530 error code: 1033") }, after: successor.pid, running: true, served: true });
       expect(RECOVERED.connectorRestarted(recovery)).toBe(true);
       expect(RECOVERED.connectorRestarted({ ...recovery, signalled: false })).toBe(false);
       // A recover that left the same (or no) connector, a kill that did not take the connector down, or a route served throughout is no restart.
       expect(RECOVERED.connectorRestarted({ ...recovery, after: killed.pid })).toBe(false);
       expect(RECOVERED.connectorRestarted({ ...recovery, after: undefined, running: false })).toBe(false);
       expect(RECOVERED.connectorRestarted({ ...recovery, downAfterKill: false })).toBe(false);
-      expect(RECOVERED.connectorRestarted({ ...recovery, servedWhileDown: true })).toBe(false);
+      for (const outcome of ["serving", "indeterminate"] as const) expect(RECOVERED.connectorRestarted({ ...recovery, meanwhile: { outcome, detail: "" } })).toBe(false);
+      // A probe that fails while the connector is down (here DNS) never shows that nothing served the route; it is retried and the restart is not counted.
+      recovered = undefined;
+      const probes: string[] = [];
+      down = async () => { probes.push("probe"); throw Object.assign(new Error("getaddrinfo EAI_AGAIN web-x.preview.example.test"), { code: "EAI_AGAIN", syscall: "getaddrinfo" }); };
+      const third = await survivor();
+      try {
+        await recordConnectors(host.stateDir, bound.name, { pid: third.pid, metricsPort: 4103, birthSignature: await signature(third.pid) });
+        const unprobed = await restartConnector(host, bound, cwd, async () => "https://web-x.preview.example.test/app/x");
+        expect(unprobed).toMatchObject({ signalled: true, downAfterKill: true, meanwhile: { outcome: "indeterminate", detail: expect.stringContaining("EAI_AGAIN") }, running: true, served: true });
+        expect(RECOVERED.connectorRestarted(unprobed)).toBe(false);
+        expect(probes).toHaveLength(6);
+      } finally { await third.stop(); }
       expect(RECOVERED.connectorRestarted({ ...recovery, served: false })).toBe(false);
       // A recover that reports the connector it was given: that pid is dead after the kill, so it is not running, though the route answers.
       recovered = undefined;
       await recordConnectors(host.stateDir, bound.name, { pid: successor.pid, metricsPort: 4102, birthSignature: await signature(successor.pid) });
-      const noop = await restartConnector(host, bound, cwd, "https://web-x.preview.example.test/app/x");
+      const noop = await restartConnector(host, bound, cwd, async () => "https://web-x.preview.example.test/app/x");
       expect(noop).toMatchObject({ killed: successor.pid, downAfterKill: true, after: successor.pid, running: false, served: true });
       expect(RECOVERED.connectorRestarted(noop)).toBe(false);
     } finally { for (const item of [killed, successor, reused]) await item.stop().catch(() => undefined); }
+  });
+
+  it("counts a public route as unserved or withdrawn only on a conclusive refusal, never on a failed or unrecognized probe", async () => {
+    let absentInDns = true;
+    const { host, inventory } = await fixtureHost({ devfn: { "tunnel status": { tunnel: { hostnames: [], outstanding: [] } } } }, async () => [], {}, { dnsAbsent: async () => absentInDns });
+    const url = "https://web-qabcdef12-reload-0123.dev.example.test/";
+    const lookup = (code: string) => Object.assign(new Error(`getaddrinfo ${code} web-qabcdef12-reload-0123.dev.example.test`), { code, syscall: "getaddrinfo" });
+    const edge = { server: "cloudflare", "cf-ray": "8f0c1d2e3f4a5b6c-AMS" };
+    const deny = { status: 403, body: "", headers: { "devfn-public-origin": "deny" } };
+    const cases: Array<[string, Answer | Error, TunnelBinding["provider"], boolean, PublicOutcome["outcome"]]> = [
+      ["resolver failure", lookup("EAI_AGAIN"), "cloudflare", true, "indeterminate"],
+      ["deadline", new Error(`${url} passed its deadline`), "cloudflare", true, "indeterminate"],
+      ["incomplete response", new Error(`${url} closed before its response was complete`), "ngrok", true, "indeterminate"],
+      ["unshaped 502", { status: 502, body: "error code: 502", headers: edge }, "cloudflare", true, "indeterminate"],
+      ["1033 without Cloudflare's headers", { status: 530, body: "error code: 1033", headers: {} }, "cloudflare", false, "indeterminate"],
+      ["Cloudflare edge without a connector", { status: 530, body: "error code: 1033", headers: edge }, "cloudflare", false, "refused"],
+      ["ngrok endpoint offline", { status: 404, body: "", headers: { "ngrok-error-code": "ERR_NGROK_3200" } }, "ngrok", false, "refused"],
+      ["origin deny while the connector should be down", deny, "cloudflare", false, "indeterminate"],
+      ["origin deny for a withdrawn name", deny, "cloudflare", true, "refused"],
+      ["DNS has no such name, for a withdrawn name", lookup("ENOTFOUND"), "cloudflare", true, "refused"],
+      ["DNS has no such name, while the connector should be down", lookup("ENOTFOUND"), "cloudflare", false, "indeterminate"],
+      ["the run's own route", { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload" } }, "cloudflare", true, "serving"],
+    ];
+    for (const [label, answer, provider, withdrawn, outcome] of cases) {
+      host.request = async () => { if (answer instanceof Error) throw answer; return answer; };
+      expect((await host.publicOutcome(url, provider, (item) => item.json?.marker === "qabcdef12-reload", { withdrawn })).outcome, label).toBe(outcome);
+    }
+    // A lookup failure whose own DNS query gets no not-found answer is not absence.
+    absentInDns = false;
+    host.request = async () => { throw lookup("ENOTFOUND"); };
+    expect((await host.publicOutcome(url, "cloudflare", () => false, { withdrawn: true })).outcome).toBe("indeterminate");
+    const resolver = (four: string | undefined, six: string | undefined) => ({ resolve4: async () => { if (four) throw Object.assign(new Error(four), { code: four }); return ["192.0.2.1"]; },
+      resolve6: async () => { if (six) throw Object.assign(new Error(six), { code: six }); return ["2001:db8::1"]; } }) as never;
+    expect(await dnsAbsent("x.example.test", resolver("ENOTFOUND", "ENODATA"))).toBe(true);
+    expect(await dnsAbsent("x.example.test", resolver("ENOTFOUND", "ETIMEOUT"))).toBe(false);
+    expect(await dnsAbsent("x.example.test", resolver(undefined, "ENOTFOUND"))).toBe(false);
+    // The withdrawn-name read-back throws on an indeterminate probe, so cleanup stays unconfirmed; only a conclusive refusal reads absent.
+    const bound = await cloudflareBinding(host.stateDir);
+    const entry = inventory.record("public-hostname", "web-qabcdef12-reload-0123.dev.example.test", "s", { cwd: path.join(dir, "qabcdef12-reload"), binding: bound.name, url });
+    host.request = async () => { throw new Error(`${url} passed its deadline`); };
+    await expect(host.handlers().present(entry)).rejects.toThrow(/still serves is unknown: .*passed its deadline/);
+    host.request = async () => ({ status: 530, body: "error code: 1016", headers: edge });
+    expect(await host.handlers().present(entry)).toBe(false);
+    host.request = async () => ({ status: 200, body: "", headers: {}, json: { marker: "qabcdef12-reload-b" } });
+    expect(await host.handlers().present(entry)).toBe("still serves the run");
   });
 
   it("counts a killed start as crash evidence only when it was killed before it ended and reported no ready lifecycle", async () => {
@@ -1231,10 +1352,21 @@ describe("live host cleanup handlers", () => {
       expect(INTERRUPTED.killedBeforeReady(again)).toBe(false);
     }
     expect(INTERRUPTED.killedBeforeReady({ ...killed, result: { code: 0, json: { state: "ready" } } })).toBe(false);
-    // Any orphan of the killed start that still runs fails, even when a later lifecycle lists its pid.
-    expect(INTERRUPTED.orphanGone(killed, () => true)).toBe(false);
-    expect(INTERRUPTED.orphanGone(killed, () => false)).toBe(true);
-    expect(INTERRUPTED.orphanGone({ ...killed, orphan: undefined }, () => false)).toBe(false);
+    // Every plan node is recorded before the kill; here api never recorded itself and web's PID has no readable identity, so neither proves anything later.
+    expect(killed.launched).toEqual([{ name: "api" }, { name: "web", pid: 2 ** 22 + 7 }]);
+    expect(await INTERRUPTED.orphansGone(killed)).toBe(false);
+    // web is gone but the api the killed start launched before it survives: that fails, even when a later lifecycle lists its pid.
+    const [web, api] = [await survivor(), await survivor()];
+    try {
+      const launched = await Promise.all(([["api", api.pid], ["web", web.pid]] as const).map(async ([name, pid]) => ({ name, pid, process: await slow.host.recordProcess(pid) })));
+      const start = { ...killed, launched };
+      await web.stop();
+      expect(await INTERRUPTED.orphansGone(start)).toBe(false);
+      await api.stop();
+      expect(await INTERRUPTED.orphansGone(start)).toBe(true);
+      expect(await INTERRUPTED.orphansGone(start, async () => "unverified")).toBe(false);
+      expect(await INTERRUPTED.orphansGone({ ...start, launched: [] })).toBe(false);
+    } finally { await web.stop(); await api.stop(); }
   });
 
   const devfnOk = (json: Record<string, unknown>) => ({ code: 0, stdout: JSON.stringify({ ok: true, ...json }), stderr: "" });
@@ -1373,8 +1505,11 @@ describe("live host cleanup handlers", () => {
       const fixture = await scenarioHost({ pid: (name) => name === "crash" ? target.pid : undefined,
         up: async (name, cwd) => {
           if (name !== "interrupted" || !readdirSync(cwd).some((file) => file.startsWith("hold-"))) return undefined;
-          await writeFile(path.join(cwd, `seen-${failureInjection(hostFixture()).failing}.json`), JSON.stringify({ pid: DEAD, env: {} }));
+          // Every process of the killed start records itself, then dies with it.
+          const launched = [await survivor(), await survivor()];
+          for (const [index, service] of ["api", "web"].entries()) await writeFile(path.join(cwd, `seen-${service}.json`), JSON.stringify({ pid: launched[index].pid, env: {} }));
           await new Promise((resolve) => setTimeout(resolve, 2_000));
+          for (const item of launched) await item.stop();
           return killedCommand;
         },
         status: (name) => name === "crash" ? status : name === "interrupted" ? { code: 0, stdout: JSON.stringify({ ok: false, state: "failed", instanceId: "i1" }), stderr: "" } : undefined });
@@ -1481,6 +1616,9 @@ describe("live host cleanup handlers", () => {
     expect(inventory.list("s")[0].cleanup).toMatchObject({ absent: false, detail: "read-back failed: ngrok GET /endpoints answered HTTP 503" });
     held.clear();
     provider = async () => held.has("held") ? ["web-qabcdef12-public.ngrok-free.app"] : [];
+    await expect(handlers.present(entry)).rejects.toThrow(/still serves is unknown: .*ECONNREFUSED/);
+    // ngrok's own offline answer for the name is a conclusive refusal.
+    host.request = async () => ({ status: 404, body: "", headers: { "ngrok-error-code": "ERR_NGROK_3200" } });
     expect(await handlers.present(entry)).toBe(false);
   });
 

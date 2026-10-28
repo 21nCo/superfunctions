@@ -1,7 +1,7 @@
 import { closeSync, fsyncSync, openSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { ResourceKind } from "./matrix.js";
+import { byCodeUnit, type ResourceKind } from "./matrix.js";
 
 /**
  * A disposable resource this run created. Only recorded resources are ever
@@ -142,12 +142,12 @@ export type ProtectedSnapshot = Readonly<Record<string, readonly string[]>>;
 
 export function protectedChanges(before: ProtectedSnapshot, after: ProtectedSnapshot): string[] {
   const changes: string[] = [];
-  for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
+  for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort(byCodeUnit)) {
     const was = new Set(before[key] ?? []);
     const now = new Set(after[key] ?? []);
     if (!(key in before) || !(key in after)) { changes.push(`${key}: ${key in before ? "no longer readable" : "newly readable"}`); continue; }
-    for (const item of [...was].filter((value) => !now.has(value)).sort()) changes.push(`${key}: removed ${item}`);
-    for (const item of [...now].filter((value) => !was.has(value)).sort()) changes.push(`${key}: added ${item}`);
+    for (const item of [...was].filter((value) => !now.has(value)).sort(byCodeUnit)) changes.push(`${key}: removed ${item}`);
+    for (const item of [...now].filter((value) => !was.has(value)).sort(byCodeUnit)) changes.push(`${key}: added ${item}`);
   }
   return changes;
 }

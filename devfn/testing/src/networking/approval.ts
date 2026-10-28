@@ -5,6 +5,8 @@
  * or domain must fall inside it.
  */
 
+import { byCodeUnit } from "./matrix.js";
+
 export interface QualificationApproval {
   version: 1;
   nonproduction: true;
@@ -38,7 +40,7 @@ function object(value: unknown, field: string, keys: readonly string[], optional
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApprovalError(`${field} must be an object.`);
   const unknown = Object.keys(value).filter((key) => !keys.includes(key) && !optional.includes(key));
   // A field the harness does not understand may be a credential value or a scope it would ignore.
-  if (unknown.length) throw new ApprovalError(`${field} has unsupported fields: ${unknown.sort().join(", ")}.`);
+  if (unknown.length) throw new ApprovalError(`${field} has unsupported fields: ${unknown.sort(byCodeUnit).join(", ")}.`);
   const missing = keys.filter((key) => (value as Fields)[key] === undefined);
   if (missing.length) throw new ApprovalError(`${field} is missing ${missing.join(", ")}.`);
   return value as Fields;

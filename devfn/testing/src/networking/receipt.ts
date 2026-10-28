@@ -55,7 +55,9 @@ export function redactSecrets<T>(value: T, secrets: readonly string[]): T {
  * planned assertion, no failed one, resources read back absent and no
  * protected change. The receipt must come from a clean, freshly built
  * checkout at its head, record no run error, read every run-level
- * resource back absent, and its summary must match the scenarios.
+ * resource back absent, and its summary must match the scenarios. A passed
+ * scenario needs exactly one satisfied result for each prerequisite its
+ * matrix definition names.
  */
 export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix: readonly QualificationScenario[] = NETWORKING_MATRIX): string[] {
   const problems: string[] = [];
@@ -75,6 +77,10 @@ export function receiptProblems(receipt: NetworkingQualificationReceipt, matrix:
     seen.add(scenario.id);
     if (scenario.status !== "passed") continue;
     if (!(QUALIFIED_PLATFORMS as readonly string[]).includes(receipt.host.platform)) problems.push(`${scenario.id}: passed on unqualified platform ${receipt.host.platform}`);
+    for (const id of definition.prerequisites) {
+      const recorded = (Array.isArray(receipt.prerequisites) ? receipt.prerequisites : []).filter((item) => item.id === id);
+      if (recorded.length !== 1 || recorded[0].status !== "satisfied") problems.push(`${scenario.id}: passed without one satisfied ${id} prerequisite`);
+    }
     for (const assertion of definition.assertions) {
       const observed = scenario.observations.filter((item) => item.assertion === assertion.id);
       if (!observed.length) problems.push(`${scenario.id}: passed without observing ${assertion.id}`);

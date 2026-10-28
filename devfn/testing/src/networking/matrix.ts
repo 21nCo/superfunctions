@@ -52,6 +52,16 @@ const SENTINEL_PRESERVED: PlannedAssertion = { id: "sentinel-preserved",
   claim: "A running sentinel worktree that the scenario leaves alone answers as each of its services (web, and api behind its /api path route) on every probe round taken while the scenario runs and once after it, and keeps the same web and api processes (by birth identity), URLs and routes and a ready status." };
 const HOST: readonly PrerequisiteId[] = ["supported-host", "devfn-cli", "git", "caddy", "process-tools", "proxy-ports"];
 const a = (id: string, claim: string): PlannedAssertion => ({ id, claim });
+/** A withdrawn or unserved public name is shown only by a conclusive refusal, never by a failed probe. */
+const REFUSAL = "the provider edge's own refusal (a Cloudflare 1xxx edge error or an ngrok ERR_NGROK error)";
+const tunnelReload = (id: string, title: string, prerequisite: PrerequisiteId): QualificationScenario => ({
+  id, row: 4, title, prerequisites: [...HOST, "approval", prerequisite],
+  assertions: [
+    a("withdraw-one", "Stopping one of two public worktrees withdraws only its hostname; the other keeps serving publicly at the URL its status reports (ngrok reassigns ephemeral URLs on every connector restart)."),
+    a("recover-preserves", `After the run kills the binding's connector and sees it down, with ${REFUSAL} for the remaining route, devfn tunnel recover starts a different connector and that route serves again at its current URL.`),
+    a("withdrawn-absent", `After both stop, tunnel status lists nothing, a provider read-back finds no DevFn-owned record, and each URL gets ${REFUSAL}, the origin's empty deny, or DNS answering that its name does not exist.`),
+  ],
+  resources: ["fixture-repository", "runtime", "tunnel-binding", "public-hostname"], fixtureEvidence: ["devfn/proxy/test/tunnel-service.test.ts", "devfn/core/test/tunnel-lifecycle.test.ts"] });
 const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing: "pre-start" | "post-start", dns: string): QualificationScenario => ({
   id, row: 3, title, prerequisites: [...HOST, "approval", prerequisite],
   assertions: [
@@ -60,7 +70,7 @@ const tunnel = (id: string, title: string, prerequisite: PrerequisiteId, timing:
     a("private-route-denied", "The provider holds no public name for a route the profile did not select; the public origin denies that route's own name (403, deny) and refuses it as a forged Host (421); an unselected path on a public name gets the origin's marked fallback."),
     a("dns-host-sni", `${dns} The edge certificate verifies for the public hostname (SNI), and a mismatched Host header gets the provider edge's own refusal (a Cloudflare 1xxx edge error or an ngrok ERR_NGROK error), never the DevFn origin or a fixture.`),
     a("origin-tls", "The DevFn public origin presents a certificate for each public hostname that verifies against the Caddy internal root, without OS trust changes."),
-    a("withdrawn-absent", "After devfn down the public URL stops serving, tunnel status lists no hostname or outstanding withdrawal, and a provider read-back finds no DevFn-owned record."),
+    a("withdrawn-absent", `After devfn down the public URL gets ${REFUSAL}, the origin's empty deny, or DNS answering that its name does not exist; tunnel status lists no hostname or outstanding withdrawal, and a provider read-back finds no DevFn-owned record.`),
   ],
   resources: ["fixture-repository", "runtime", "tunnel-binding", "public-hostname"],
   fixtureEvidence: ["devfn/proxy/test/tunnel-service.test.ts", "devfn/proxy/test/tunnel-adapter.test.ts", "devfn/core/test/tunnel-real-origin.test.ts",
@@ -153,13 +163,9 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
       SENTINEL_PRESERVED,
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/proxy/test/activation.test.ts", "devfn/core/test/proxy-readiness.test.ts"] },
-  { id: "recovery.tunnel-reload", row: 4, title: "Tunnel recovery preserves other owners' public routes", prerequisites: [...HOST, "approval", "cloudflare"],
-    assertions: [
-      a("withdraw-one", "Stopping one of two public worktrees withdraws only its hostname; the other keeps serving publicly."),
-      a("recover-preserves", "After the run kills the binding's connector and sees it down with the remaining route unserved, devfn tunnel recover starts a different connector and that route serves again."),
-      a("withdrawn-absent", "After both stop, tunnel status lists nothing and a provider read-back finds no DevFn-owned record."),
-    ],
-    resources: ["fixture-repository", "runtime", "tunnel-binding", "public-hostname"], fixtureEvidence: ["devfn/proxy/test/tunnel-service.test.ts", "devfn/core/test/tunnel-lifecycle.test.ts"] },
+  tunnelReload("recovery.tunnel-reload", "Tunnel recovery preserves other owners' public routes", "cloudflare"),
+  tunnelReload("recovery.tunnel-reload-ngrok-reserved", "ngrok reserved-endpoint recovery preserves other owners' public routes", "ngrok-reserved"),
+  tunnelReload("recovery.tunnel-reload-ngrok-ephemeral", "ngrok ephemeral-endpoint recovery preserves other owners' public routes, at reassigned URLs", "ngrok-ephemeral"),
   { id: "interface.owner-endpoint", row: 5, title: "Opaque owner and endpoint interface", prerequisites: HOST,
     assertions: [
       a("owner-opaque", "The process's DEVFN_INSTANCE_ID equals the receipt owner, and its hostname carries only an owner digest, never the owner value or worktree path."),
@@ -167,6 +173,9 @@ export const NETWORKING_MATRIX: readonly QualificationScenario[] = [
     ],
     resources: ["fixture-repository", "runtime"], fixtureEvidence: ["devfn/core/test/endpoints.test.ts", "devfn/compose/test/override.test.ts", "devfn/testing/test/networking-qualification.test.ts"] },
 ];
+
+/** Code-unit order, the order of a bare sort: deterministic ordering for evidence and diagnostics, never locale-dependent presentation. */
+export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : Number(a > b));
 
 /** The opaque label local hostnames carry for an owner: o- and the first 20 hex digits of its SHA-256. */
 export const ownerLabel = (owner: string): string => `o-${createHash("sha256").update(owner).digest("hex").slice(0, 20)}`;

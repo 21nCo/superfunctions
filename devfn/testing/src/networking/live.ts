@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { Resolver } from "node:dns/promises";
 import { access, lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
@@ -10,11 +11,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { defaultStateDir, matchesProcessIdentity, processBirthSignature } from "@devfn/config";
 import { resolveInstanceIdentity } from "@devfn/core";
 import { parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus } from "@devfn/ports";
-import { proxyListenerPorts, readRegisteredDomains } from "@devfn/proxy";
+import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, readRegisteredDomains } from "@devfn/proxy";
 import { readRelayService } from "@devfn/proxy/oauth-relay";
 import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, ownershipMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
 
-import { ownerLabel } from "./matrix.js";
+import { byCodeUnit, ownerLabel } from "./matrix.js";
 import { cloudflareConnectors, loopbackListening } from "./prerequisites.js";
 import type { DisposableInventory, ProtectedSnapshot, ResourceHandlers } from "./inventory.js";
 
@@ -94,6 +95,33 @@ createServer((request, response) => {
 }).listen(Number(process.env[portKey]), "127.0.0.1");
 `;
 
+/**
+ * The provider edge's own refusal to route a public name: a Cloudflare 1xxx
+ * edge error from Cloudflare's server (plain text for a non-browser client,
+ * with a 4xx or Cloudflare's own 530) or an ngrok ERR_NGROK error with a 4xx.
+ * An answer carrying a fixture marker or the DevFn origin's header passed
+ * the edge, so it is never one.
+ */
+export function edgeRefused(answer: Answer, provider: TunnelBinding["provider"]): boolean {
+  if (answer.json?.marker !== undefined || answer.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] !== undefined) return false;
+  const client = answer.status >= 400 && answer.status < 500;
+  if (provider === "cloudflare") return answer.headers.server === "cloudflare" && typeof answer.headers["cf-ray"] === "string" && (client || answer.status === 530) && /^error code: 1\d{3}\s*$/.test(answer.body);
+  return client && /^ERR_NGROK_\d+$/.test(String(answer.headers["ngrok-error-code"] ?? ""));
+}
+
+/** Whether DNS answers that hostname does not exist: its A and AAAA queries both get a not-found or no-data answer. A resolver that times out, fails or refuses answers nothing. */
+export async function dnsAbsent(hostname: string, resolver: Pick<Resolver, "resolve4" | "resolve6"> = new Resolver({ timeout: 5_000, tries: 2 })): Promise<boolean> {
+  const absent = async (query: Promise<unknown>) => await query.then(() => false, (error: NodeJS.ErrnoException) => error.code === "ENOTFOUND" || error.code === "ENODATA");
+  return (await Promise.all([absent(resolver.resolve4(hostname)), absent(resolver.resolve6(hostname))])).every(Boolean);
+}
+
+/**
+ * What one probe of a public URL showed for a negative claim: the run's own
+ * route (serving), a conclusive refusal by the component that owns the
+ * boundary (refused), or nothing conclusive (indeterminate).
+ */
+export interface PublicOutcome { outcome: "serving" | "refused" | "indeterminate"; detail: string }
+
 /** Runs a command to completion; an aborted signal kills it with SIGKILL. */
 export type CommandRunner = (command: string, args: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal }) => Promise<{ code: number; stdout: string; stderr: string }>;
 
@@ -129,7 +157,7 @@ async function cloudflareMarked(binding: TunnelBinding, env: NodeJS.ProcessEnv, 
     for (const record of payload.result) if (record.comment === ownershipMarker(binding)) names.push(String(record.name));
     pages = payload.result_info.total_pages;
   }
-  return names.sort();
+  return names.sort(byCodeUnit);
 }
 
 export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): ProviderReadBack {
@@ -156,7 +184,7 @@ export function providerReadBack(env: NodeJS.ProcessEnv, fetcher: typeof fetch =
         next = typeof payload!.next_page_uri === "string" && payload!.next_page_uri ? payload!.next_page_uri : undefined;
       }
     }
-    return [...held].sort();
+    return [...held].sort(byCodeUnit);
   };
 }
 
@@ -185,7 +213,7 @@ export async function trustDirectoryAnchors(locations: readonly string[]): Promi
     const real = await realpath(dir);
     if (walked.has(real)) return;
     walked.add(real);
-    for (const name of (await readdir(dir)).sort()) {
+    for (const name of (await readdir(dir)).sort(byCodeUnit)) {
       const entry = path.join(dir, name);
       const info = await lstat(entry);
       if (info.isSymbolicLink()) {
@@ -205,7 +233,7 @@ export async function trustDirectoryAnchors(locations: readonly string[]): Promi
     if (!info.isDirectory()) throw new Error(`trust location ${location} is not a directory`);
     await walk(location);
   }
-  return anchors.sort();
+  return anchors.sort(byCodeUnit);
 }
 
 /** devfn commands that only read state or remove what a run created; they still run after an abort. */
@@ -274,7 +302,7 @@ const VOLATILE = new Set(["createdAt", "updatedAt", "releasedAt"]);
 /** A digest of a record's material fields as sorted-key JSON. Protected records hold credential variable names and paths, never values. */
 export function materialDigest(record: unknown): string {
   const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
-    : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).filter((key) => !VOLATILE.has(key)).sort().map((key) => [key, canonical((value as Record<string, unknown>)[key])])) : value;
+    : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).filter((key) => !VOLATILE.has(key)).sort(byCodeUnit).map((key) => [key, canonical((value as Record<string, unknown>)[key])])) : value;
   return createHash("sha256").update(JSON.stringify(canonical(record))).digest("hex").slice(0, 16);
 }
 
@@ -311,7 +339,7 @@ export class LiveHost {
 
   public constructor(public readonly options: { root: string; devfnCli: string; env: NodeJS.ProcessEnv; inventory: DisposableInventory; run?: CommandRunner; providers?: ProviderReadBack; docker?: string;
     connectors?: (binding: Extract<TunnelBinding, { provider: "cloudflare" }>) => Promise<string[]>; connectorIdentity?: (metricsPort: number) => Promise<string | undefined>;
-    connectorReads?: { reads: number; intervalMs: number }; trustLocations?: readonly string[]; owner?: (cwd: string) => Promise<string> }) {
+    connectorReads?: { reads: number; intervalMs: number }; trustLocations?: readonly string[]; owner?: (cwd: string) => Promise<string>; dnsAbsent?: (hostname: string) => Promise<boolean> }) {
     this.stateDir = path.join(options.root, "state");
     const { DOCKER_CONTEXT: _context, ...env } = options.env;
     this.env = { ...env, ...(options.docker ? { DOCKER_HOST: options.docker } : {}),
@@ -512,6 +540,26 @@ export class LiveHost {
     return left;
   }
 
+  /**
+   * DevFn's Compose stop removes an owner's containers but leaves its project
+   * network. Once no container of the owner remains, remove the owner's own
+   * Compose networks and record that DevFn left them, so the receipt keeps the
+   * leak and the read-back that follows still reports anything left. Other
+   * projects' networks are never listed; an unreadable status removes nothing.
+   */
+  private async removeComposeNetworks(cwd: string): Promise<void> {
+    const status = await this.status(cwd);
+    // An unreadable engine removes nothing here; the read-back lists it again and fails closed.
+    const left = status ? await this.composeLeftovers(status.instanceId).catch(() => [] as string[]) : [];
+    if (left.some((item) => item.startsWith("container "))) return;
+    for (const item of left) {
+      const name = item.slice("network ".length);
+      if ((await this.docker(["network", "rm", name])).code !== 0) continue;
+      this.composeLeft.delete(item);
+      this.limitations.add(`devfn down left Compose network ${name}; the run removed it during cleanup and read its owner's networks back absent (a DevFn teardown leak)`);
+    }
+  }
+
   /** Remove the run owners' Compose containers, then networks, that a recorded read-back reported. */
   public async reapCompose(): Promise<void> {
     const left = [...this.composeLeft].sort((a, b) => Number(b.startsWith("container")) - Number(a.startsWith("container")));
@@ -554,6 +602,28 @@ export class LiveHost {
     let json: Record<string, any> | undefined;
     try { json = JSON.parse(answer.body) as Record<string, any>; } catch { json = undefined; }
     return { ...answer, ...(json ? { json } : {}) };
+  }
+
+  /**
+   * Probe a public URL once for a negative claim. serving: the answer
+   * satisfies serving. refused: the provider edge's own refusal (edgeRefused)
+   * and, for a withdrawn name, the DevFn public origin's empty deny or DNS
+   * answering that the name does not exist. A failed request, a failed or
+   * unanswered DNS query, an incomplete response or any other answer is
+   * indeterminate: it never shows that nothing serves.
+   */
+  public async publicOutcome(url: string, provider: TunnelBinding["provider"], serving: (answer: Answer) => boolean, options: { withdrawn?: boolean; afterAbort?: boolean } = {}): Promise<PublicOutcome> {
+    const answer = await this.request(url, { publicDns: true, ...(options.afterAbort ? { afterAbort: true } : {}) }).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    if (answer instanceof Error) {
+      const hostname = new URL(url).hostname;
+      if (options.withdrawn && (answer as NodeJS.ErrnoException).syscall === "getaddrinfo" && (answer as NodeJS.ErrnoException).code === "ENOTFOUND" && await (this.options.dnsAbsent ?? dnsAbsent)(hostname).catch(() => false)) return { outcome: "refused", detail: `DNS answers that ${hostname} does not exist` };
+      return { outcome: "indeterminate", detail: `${url} gave no conclusive answer: ${answer.message}` };
+    }
+    const detail = `${url} -> ${answer.status} ${String(answer.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] ?? answer.headers["ngrok-error-code"] ?? answer.body.trim().slice(0, 40))}`.trim();
+    if (serving(answer)) return { outcome: "serving", detail };
+    const originDeny = answer.headers[PUBLIC_ORIGIN_HEADER.toLowerCase()] === "deny" && answer.body === "" && (answer.status === 403 || answer.status === 404);
+    if (edgeRefused(answer, provider) || (options.withdrawn && originDeny)) return { outcome: "refused", detail };
+    return { outcome: "indeterminate", detail: `${detail}: not a refusal this claim accepts` };
   }
 
   /** Routes of an owner in the run's DevFn proxy state. */
@@ -600,6 +670,7 @@ export class LiveHost {
       remove: async (entry) => {
         const { cwd } = entry.context ?? {};
         if (entry.kind === "runtime" || entry.kind === "public-hostname") await this.down(entry.kind === "runtime" ? entry.id : cwd!);
+        if (entry.kind === "runtime" && await this.usesCompose(entry.id)) await this.removeComposeNetworks(entry.id);
         if (entry.kind === "fixture-repository") {
           // Processes left in the checkout are its read-back's evidence: the checkout is kept, and the run reaps them only afterwards.
           const left = await this.processesIn(entry.id, await this.sharedLeaders());
@@ -658,8 +729,10 @@ export class LiveHost {
         if (JSON.stringify([tunnel.hostnames, tunnel.outstanding, tunnel.residue ?? []]).includes(entry.id)) return "routed or journaled by DevFn";
         const held = await this.readBack(bound, entry.id, url);
         if (held.length) return `held by ${bound.provider}: ${held.join(", ")}`;
-        const served = await this.request(url ?? `https://${entry.id}/`, { publicDns: true, afterAbort: true }).catch(() => undefined);
-        return served?.json?.marker !== undefined && String(served.json.marker).startsWith(this.prefix) ? "still serves the run" : false;
+        // Only a conclusive refusal is absence; an indeterminate probe leaves the name unconfirmed.
+        const seen = await this.publicOutcome(url ?? `https://${entry.id}/`, bound.provider, (answer) => answer.json?.marker !== undefined && String(answer.json.marker).startsWith(this.prefix), { withdrawn: true, afterAbort: true });
+        if (seen.outcome === "indeterminate") throw new Error(`whether ${entry.id} still serves is unknown: ${seen.detail}`);
+        return seen.outcome === "serving" ? "still serves the run" : false;
       },
     };
   }
@@ -763,7 +836,7 @@ export class LiveHost {
         if (dump.code !== 0 && (dump.code < 1 || !dump.stderr.includes("No Trust Settings were found"))) throw new Error(`the macOS ${domain} trust settings are unreadable`);
         settings.push(`trust-settings:${domain}:${dump.code === 0 ? createHash("sha256").update(dump.stdout).digest("hex") : "none"}`);
       }
-      return [...result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()), ...settings].sort();
+      return [...result.stdout.split("\n").filter((line) => line.startsWith("SHA-1 hash:")).map((line) => line.slice("SHA-1 hash:".length).trim()), ...settings].sort(byCodeUnit);
     }
     return await trustDirectoryAnchors(this.options.trustLocations ?? LINUX_TRUST_LOCATIONS);
   }
