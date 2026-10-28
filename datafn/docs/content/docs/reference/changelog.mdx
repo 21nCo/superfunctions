@@ -16,6 +16,12 @@ DataFn follows [semver](https://semver.org/): until 1.0 minor versions may inclu
 - Canonical structural resource-selector extraction: `parseDatafnRequest`, `collectStructuralResourceSelectors`, and `extractStructuralResourceSelectors` in `@datafn/core` (re-exported from `@datafn/server`). Gateways and `authorize` plugins should use this API instead of traversing request JSON. Unsupported `protocolVersion` values return `DATAFN_UNSUPPORTED_PROTOCOL_VERSION`.
 - Versioned namespace storage contract: `DATAFN_NAMESPACE_STORAGE_MANIFEST` in `@datafn/core` and `resolveNamespaceStoragePlan` / `inspectPostgresNamespaceStorage` / `drainNamespaceStorage` in `@datafn/server`. This is the supported integration point for tenant copy, checksum, cleanup, write fencing, outbox drain, backup, and physical-ownership checks.
 
+**Bug fixes**
+
+- `@datafn/server`: an atomic `transact` with mutation steps on an adapter without transactions (Drizzle on SQLite or Cloudflare D1) now returns `DFQL_UNSUPPORTED` before writing anything. It previously ran the steps one by one, so a failed step left earlier steps applied. See [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
+- `@datafn/cli`: SQLite codegen emits `integer({ mode: "boolean" })` for `boolean` fields and `text({ mode: "json" })` for `object`, `array` and `json` fields. See [SQLite column modes](/docs/cli/drizzle-codegen#sqlite-column-modes) for upgrading an existing schema.
+- `@superfunctions/db`: the Drizzle adapter reads Cloudflare D1 affected-row counts, so concurrent writers on D1 no longer receive duplicate `server_seq` values.
+
 ## 0.3.0
 
 **New**

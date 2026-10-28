@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { DatafnSchema } from "../../core-types.js";
+import { executeTransaction } from "../transact.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -299,5 +300,57 @@ describe("TX-001: Atomic Transactions", () => {
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("LIMIT_EXCEEDED");
     expect(body.error.details.max).toBe(5);
+  });
+});
+
+describe("TX-002: Atomic transact on adapters without transactions", () => {
+  // Records every adapter and idempotency call so the test can prove nothing
+  // was read, written or initialized before the refusal.
+  function recorder(calls: string[], prefix: string, fixed: Record<string, unknown> = {}): any {
+    return new Proxy(fixed, {
+      get(target, property) {
+        if (typeof property !== "string" || property === "then") return undefined;
+        if (property in target) return target[property];
+        if (property === "internal") return recorder(calls, `${prefix}internal.`);
+        return (..._args: unknown[]) => {
+          calls.push(`${prefix}${property}`);
+          return Promise.resolve(undefined);
+        };
+      },
+    });
+  }
+
+  it("refuses with DFQL_UNSUPPORTED before touching the database", async () => {
+    const calls: string[] = [];
+    const db = recorder(calls, "db.", {
+      capabilities: { transactions: { supported: false, nested: false } },
+    });
+    const idempotency = recorder(calls, "idempotency.");
+
+    const result = await executeTransaction(
+      {
+        steps: [
+          { query: { resource: "tasks", version: 1, select: ["id"] } },
+          { mutation: { resource: "tasks", version: 1, operation: "insert", id: "task:1", record: { title: "A" } } as any },
+        ],
+      },
+      schema,
+      db,
+      idempotency,
+      undefined,
+      "datafn",
+      undefined,
+      undefined,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "DFQL_UNSUPPORTED",
+        message: expect.stringContaining("atomic: false"),
+        details: { path: "atomic" },
+      },
+    });
+    expect(calls).toEqual([]);
   });
 });

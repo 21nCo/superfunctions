@@ -138,12 +138,13 @@ describe("Drizzle Schema Codegen", () => {
       expect(result).toContain('// Database: sqlite');
       expect(result).toContain('import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
       expect(result).toContain('export const item = sqliteTable("item", {');
-      expect(result).toContain('  active: integer("active").notNull(),');
+      // SQLite drivers cannot bind booleans or objects, so those columns use Drizzle modes.
+      expect(result).toContain('  active: integer("active", { mode: "boolean" }).notNull(),');
       expect(result).toContain('  count: integer("count").notNull(),');
-      expect(result).toContain('  data: text("data"),');
+      expect(result).toContain('  data: text("data", { mode: "json" }),');
       expect(result).toContain('  id: text("id").primaryKey(),');
       expect(result).toContain('  scheduledAt: integer("scheduled_at"),');
-      // kv is always included as a built-in resource (sqlite uses text for object/array types)
+      // kv is always included as a built-in resource (sqlite stores JSON values as text)
       expect(result).toContain('export const kv = sqliteTable("kv", {');
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });
@@ -795,7 +796,7 @@ describe("Drizzle Schema Codegen", () => {
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });
 
-    it("should include the built-in kv table for sqlite with text value column", () => {
+    it("should include the built-in kv table for sqlite with a JSON text value column", () => {
       const schema = {
         namespaced: false,
         resources: [
@@ -814,7 +815,7 @@ describe("Drizzle Schema Codegen", () => {
 
       expect(result).toContain('export const kv = sqliteTable("kv", {');
       expect(result).toContain('  id: text("id").primaryKey(),');
-      expect(result).toContain('  value: text("value"),');
+      expect(result).toContain('  value: text("value", { mode: "json" }),');
       expect(result).toContain('import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });

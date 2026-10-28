@@ -777,15 +777,19 @@ function getColumnType(
     }
   }
 
+  // SQLite drivers bind only numbers, strings, bigints, buffers and null, so
+  // booleans and JSON values need Drizzle column modes to round-trip.
   switch (fieldType) {
     case "string":
     case "file":
+      return { call: `text("${sqlName}")`, importName: "text" };
     case "object":
     case "array":
     case "json":
-      return { call: `text("${sqlName}")`, importName: "text" };
-    case "number":
+      return { call: `text("${sqlName}", { mode: "json" })`, importName: "text" };
     case "boolean":
+      return { call: `integer("${sqlName}", { mode: "boolean" })`, importName: "integer" };
+    case "number":
     case "date":
       return { call: `integer("${sqlName}")`, importName: "integer" };
     default:
