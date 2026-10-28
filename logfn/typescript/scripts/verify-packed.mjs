@@ -18,7 +18,7 @@ const keep = process.argv.includes("--keep");
 
 function run(command, args, cwd) {
   console.log(`$ ${command} ${args.join(" ")}  (cwd: ${cwd})`);
-  return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], shell: process.platform === "win32" && command === "npm" });
+  return ((shell) => execFileSync(command, shell ? args.map((arg) => `"${arg}"`) : args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], shell }))(process.platform === "win32" && command === "npm");
 }
 
 // Runs alone in its own process, so nothing but the sink keeps it alive while

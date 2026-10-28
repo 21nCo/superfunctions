@@ -124,6 +124,12 @@ describe("sinkHttp", () => {
       ["an authorization header with auth.token", { headers: { authorization: "Bearer OLD" }, auth: { token: "NEW" } }, { authorization: "Bearer NEW" }],
       ["a secret header with secretHeader", { headers: { "x-api-key": "OLD" }, auth: { token: "NEW", secretHeader: "X-API-Key" } }, { "x-api-key": "NEW" }],
       ["two spellings of one caller header", { headers: { "X-Custom": "OLD", "x-custom": "NEW" } }, { "x-custom": "NEW" }],
+      ["two content-type spellings, lowercase first", { headers: { "content-type": "text/OLD", "Content-Type": "text/new" } }, { "content-type": "text/new" }],
+      ["two content-type spellings, canonical first", { headers: { "Content-Type": "text/OLD", "content-type": "text/new" } }, { "content-type": "text/new" }],
+      ["two authorization spellings with auth.token", { headers: { Authorization: "Bearer OLD-1", authorization: "Bearer OLD-2" }, auth: { token: "NEW" } }, { authorization: "Bearer NEW" }],
+      ["two authorization spellings, lowercase first, with auth.token", { headers: { authorization: "Bearer OLD-1", Authorization: "Bearer OLD-2" }, auth: { token: "NEW" } }, { authorization: "Bearer NEW" }],
+      ["two secret header spellings with secretHeader", { headers: { "X-API-Key": "OLD-1", "x-api-key": "OLD-2" }, auth: { token: "NEW", secretHeader: "X-API-Key" } }, { "x-api-key": "NEW" }],
+      ["two secret header spellings, lowercase first, with secretHeader", { headers: { "x-api-key": "OLD-1", "X-API-Key": "OLD-2" }, auth: { token: "NEW", secretHeader: "X-API-Key" } }, { "x-api-key": "NEW" }],
     ])("sends one value per header name for %s", async (_name, options, expected) => {
       const { fetch, requests } = scriptedFetch(ok);
       const sink = sinkHttp({ url: URL, fetch, batch: 1, ...options });

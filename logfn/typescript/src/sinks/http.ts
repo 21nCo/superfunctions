@@ -226,10 +226,10 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
       console.error("[logfn http-sink error]", error);
     });
 
-  // Header names are case-insensitive: a later spelling replaces an earlier one, so fetch gets one value per name.
+  // Sources apply in order, never pre-merged; each name drops every earlier spelling (names are case-insensitive).
   const requestHeaders: Record<string, string> = {};
   const credential = auth?.token ? { [auth.secretHeader || "Authorization"]: auth.secretHeader ? auth.token : `Bearer ${auth.token}` } : {};
-  for (const [name, value] of Object.entries({ "Content-Type": "application/json", ...headers, ...credential })) {
+  for (const [name, value] of [{ "Content-Type": "application/json" }, headers, credential].flatMap((source) => Object.entries(source))) {
     for (const key of Object.keys(requestHeaders)) if (key.toLowerCase() === name.toLowerCase()) delete requestHeaders[key];
     setOwn(requestHeaders, name, value);
   }
