@@ -4,7 +4,7 @@
 
 import type { LogEvent, SerializationResult } from "./types.js";
 import { LOG_LEVEL_VALUES, MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
-import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, dateText, isBinary, isDateValue, isErrorValue, isRecord, setOwn, unboxPrimitive } from "./pipeline/redact.js";
+import { CIRCULAR, MAX_DEPTH, MAX_REDACTION_DEPTH, UNSERIALIZABLE, dateText, isBinary, isDateValue, isErrorValue, isRecord, setOwn, tagText, unboxPrimitive } from "./pipeline/redact.js";
 
 const TRUNCATED_SUFFIX = "...[truncated]";
 const encoder = new TextEncoder();
@@ -121,11 +121,6 @@ function byteLength(event: LogEvent): number {
   return encoder.encode(JSON.stringify(event)).length;
 }
 
-function tagText(tag: unknown): string {
-  const value = tag !== null && typeof tag === "object" ? unboxPrimitive(tag) : tag;
-  return typeof value === "string" ? value : JSON.stringify(sanitizeValue(value) ?? null);
-}
-
 /**
  * Returns a JSON-safe copy of every field of an event: msg becomes a string,
  * tags (at most MAX_TAGS) strings, and every other field is sanitized like
@@ -138,10 +133,7 @@ export function sanitizeEvent(event: LogEvent): LogEvent {
     if (key === "msg") {
       sanitized.msg = String(value);
     } else if (key === "tags" && Array.isArray(value)) {
-      const tags: string[] = [];
-      const count = Math.min(value.length, MAX_TAGS);
-      for (let index = 0; index < count; index += 1) tags[index] = tagText(value[index]);
-      sanitized.tags = tags;
+      sanitized.tags = Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => tagText(value[index]));
     } else {
       setOwn(sanitized, key, sanitizeValue(value));
     }

@@ -270,10 +270,7 @@ export class Logger {
       pipeline: this.options.pipeline,
       sinks: this.options.sinks,
       now: this.options.now,
-      baseContext: {
-        ...this.options.baseContext,
-        ...normalizeContext(overrides.ctx),
-      },
+      baseContext: overrides.ctx == null ? this.options.baseContext : { ...this.options.baseContext, ...normalizeContext(overrides.ctx) },
       baseTags: [...(this.options.baseTags ?? []), ...normalizeTags(overrides.tags)],
       onError: this.options.onError,
     });

@@ -135,10 +135,11 @@ describe("validateAndSerialize", () => {
   it("makes every field JSON-safe", () => {
     const { event: out } = validateAndSerialize({
       ...event(),
-      tags: [1, { a: 1 }] as unknown as string[],
+      tags: [1, true, { a: 1 }, ["b"], null, new String("s")] as unknown as string[],
       userId: 10n as unknown as string,
     });
-    expect(out.tags).toEqual(["1", '{"a":1}']);
+    // A tag that is not a string, number or boolean has no text form redaction could read.
+    expect(out.tags).toEqual(["1", "true", "[unserializable]", "[unserializable]", "[unserializable]", "s"]);
     expect(out.userId).toBe("[unserializable]");
     expect(() => JSON.stringify(out)).not.toThrow();
   });

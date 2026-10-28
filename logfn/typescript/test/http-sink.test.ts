@@ -625,7 +625,7 @@ describe("sinkHttp", () => {
         expect(sent.ctx).toEqual(unserializable);
       }
       const [direct] = (JSON.parse(requests[0].body) as { events: LogEvent[] }).events;
-      expect(direct.tags).toEqual(['"[unserializable]"']);
+      expect(direct.tags).toEqual(["[unserializable]"]);
     });
 
     it("bounds the size of each queued event", async () => {

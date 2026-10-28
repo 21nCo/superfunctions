@@ -8,6 +8,7 @@ import {
   redactEvent,
   redactSecFn,
   REDACTED,
+  sanitizeEvent,
   sanitizeValue,
   serverLogger,
   sinkConsole,
@@ -61,7 +62,7 @@ function logVector(vector: RedactionVector, pipeline: PipelineStage[], sink: Sin
   });
   const logger = child ? root.child({ ctx: child }) : root;
   const ctx = vectorEvent({ ...vector, layers: undefined }).ctx;
-  logger.error(vector.input.msg, ctx, vector.input.tags);
+  logger.error(vector.input.msg, ctx, vector.input.tags as string[] | undefined);
 }
 
 describe("shared redaction vectors", () => {
@@ -475,6 +476,39 @@ describe("shared redaction vectors", () => {
     });
   });
 
+  describe("an object-valued tag never reaches a sink as JSON text, where its keys would escape redaction", () => {
+    const tag = () => ({ "api/key": "TAG_SLASH_SECRET", "pass\nword": "TAG_NL_SECRET", deep: { secret: "TAG_DEEP_SECRET" } });
+    const tags = () => ["kept", tag(), [tag()]] as unknown as string[];
+    const expected = ["kept", "[unserializable]", "[unserializable]"];
+    const expectNoSecret = (text: string) => expect(text).not.toMatch(/TAG_(SLASH|NL|DEEP)_SECRET/);
+
+    it("sinkHttp body, called directly and through a logger with call, base and child tags", async () => {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      sink([{ ...vectorEvent(vectors[0]), tags: tags() }]);
+      const logger = createLogger({ name: "svc", sinks: [sink], baseTags: [tag()] as unknown as string[] });
+      logger.info("call", undefined, tags());
+      logger.child({ tags: tags() }).info("child");
+      await sink.flush();
+      expectNoSecret(spy.requests.map((request) => request.body).join("\n"));
+      expect(spy.events().map((event) => event.tags)).toEqual([expected, ["[unserializable]", ...expected], ["[unserializable]", ...expected]]);
+    });
+
+    it("serverLogger console JSON, redactEvent and redactSecFn write the same tags", () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
+      serverLogger({ name: "svc" }).info("m", undefined, tags());
+      expect(lines).toHaveLength(1);
+      expectNoSecret(lines[0]);
+      expect((JSON.parse(lines[0]) as LogEvent).tags).toEqual(expected);
+      const event = { ...vectorEvent(vectors[0]), tags: tags() };
+      for (const out of [redactEvent(event), redactSecFn()(event) as LogEvent, sanitizeEvent(event)]) {
+        expect(out.tags).toEqual(expected);
+        expectNoSecret(JSON.stringify(out));
+      }
+    });
+  });
+
   describe("values from another realm (a vm context, an iframe) keep their kind", () => {
     const foreign = <T>(code: string): T => runInNewContext(code) as T;
     const error = () => foreign<Error>('const e = new TypeError("boom token=REALM_SECRET", { cause: new RangeError("inner") }); e');
@@ -547,6 +581,51 @@ describe("shared redaction vectors", () => {
       expect(isValidLogEvent(event(error()))).toBe(false);
       expect(isValidLogEvent(event(date()))).toBe(false);
       expect(isValidLogEvent(event(foreign("({ a: 1 })")))).toBe(true);
+    });
+
+    describe("Error.isError, when present, decides; without it the fallback agrees on these values", () => {
+      const native = Object.getOwnPropertyDescriptor(Error, "isError");
+      afterEach(() => {
+        if (native) Object.defineProperty(Error, "isError", native);
+        else delete (Error as { isError?: unknown }).isError;
+      });
+      const withoutIsError = () => Object.defineProperty(Error, "isError", { value: undefined, configurable: true, writable: true });
+      const proxied = () => new Proxy(new Error("proxied"), {});
+      // [value, is an error] as Error.isError reads them (by internal slot).
+      const cases = (): Array<[string, unknown, boolean]> => [
+        ["Error", new Error("m"), true],
+        ["foreign Error", error(), true],
+        ["DOMException", new DOMException("m", "AbortError"), true],
+        ["subclass with its own tag", new (class extends Error { get [Symbol.toStringTag]() { return "Mine"; } })("m"), true],
+        ["object claiming the Error tag", { [Symbol.toStringTag]: "Error", message: "m", token: "x" }, false],
+        ["Object.create(Error.prototype)", Object.create(Error.prototype), false],
+        ["proxy of an Error", proxied(), false],
+        ["plain object", { message: "m" }, false],
+      ];
+      const kind = (value: unknown) => {
+        const out = sanitizeValue(value) as Record<string, unknown>;
+        return typeof out === "object" && out !== null && "name" in out && "message" in out && !("token" in out);
+      };
+
+      it.each(cases().map(([name]) => name))("without Error.isError: %s", (name) => {
+        withoutIsError();
+        const [, value, expected] = cases().find(([label]) => label === name)!;
+        expect(kind(value)).toBe(expected);
+        expect(isValidLogEvent({ ts: iso, level: "info", msg: "m", name: "n", version: "1", ctx: value })).toBe(!expected);
+      });
+
+      it("with Error.isError present, its answer is used at each call", () => {
+        const isError = vi.fn((value: unknown) => value === marked);
+        const marked = { message: "decided by Error.isError" };
+        Object.defineProperty(Error, "isError", { value: isError, configurable: true, writable: true });
+        expect(sanitizeValue(marked)).toMatchObject({ message: "decided by Error.isError", name: "undefined" });
+        expect(sanitizeValue(new Error("m"))).toEqual({});
+        expect(isError).toHaveBeenCalled();
+      });
+
+      it.skipIf(!native)("the native Error.isError agrees with the fallback on every case", () => {
+        for (const [, value, expected] of cases()) expect(kind(value)).toBe(expected);
+      });
     });
 
     it("a foreign error thrown by a sink reaches onError as is", () => {

@@ -362,7 +362,7 @@
     },
     {
       "id": "caller-added-context",
-      "description": "Base, child, enrichment and call context, tags, userId and caller-supplied extra sensitive keys are all redacted; emails are redacted as personal data.",
+      "description": "Base, child, enrichment and call context, tags, userId and caller-supplied extra sensitive keys are all redacted; emails are redacted as personal data. An object tag becomes [unserializable]: its JSON text would hide sensitive keys.",
       "options": {
         "keys": [
           "cardNumber"
@@ -394,7 +394,11 @@
         },
         "tags": [
           "billing",
-          "token=tag-secret"
+          "token=tag-secret",
+          {
+            "api/key": "TAG_OBJ_SECRET",
+            "pass\nword": "TAG_OBJ_SECRET"
+          }
         ],
         "userId": "ada@example.com",
         "tenantId": "t-1"
@@ -417,11 +421,15 @@
         },
         "tags": [
           "billing",
-          "token=[redacted]"
+          "token=[redacted]",
+          "[unserializable]"
         ],
         "userId": "[redacted]",
         "tenantId": "t-1"
-      }
+      },
+      "absent": [
+        "TAG_OBJ_SECRET"
+      ]
     },
     {
       "id": "allowlisted-paths",

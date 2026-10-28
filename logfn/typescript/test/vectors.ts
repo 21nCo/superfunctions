@@ -27,7 +27,8 @@ export interface RedactionVector {
   input: {
     msg: string;
     ctx?: Record<string, Json>;
-    tags?: string[];
+    // Tags are strings by type; other JSON values check how a runtime writes them.
+    tags?: Json[];
     userId?: string;
     tenantId?: string;
     fields?: Record<string, Json>;
@@ -126,7 +127,7 @@ export function vectorEvent(vector: RedactionVector): LogEvent {
   };
   const ctx = effectiveContext(vector);
   if (ctx !== undefined) event.ctx = ctx;
-  if (vector.input.tags) event.tags = [...vector.input.tags];
+  if (vector.input.tags) event.tags = [...vector.input.tags] as string[];
   if (vector.input.userId !== undefined) event.userId = vector.input.userId;
   if (vector.input.tenantId !== undefined) event.tenantId = vector.input.tenantId;
   return { ...event, ...structuredClone(vector.input.fields) };

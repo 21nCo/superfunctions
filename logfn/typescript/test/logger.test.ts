@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, Logger, registerProcessHandlers, type LogEvent, type Sink } from "../src/index.js";
 
@@ -60,6 +61,24 @@ describe("Logger", () => {
     logger.child({ ctx: { module: "auth" } }).info("child");
     expect(events).toHaveLength(2);
     for (const logged of events) expect(logged).not.toHaveProperty("tags");
+  });
+
+  it("emits no ctx for a child without ctx, as for its parent", () => {
+    const { events, sink } = capture();
+    const root = createLogger({ name: "svc", sinks: [sink] });
+    root.info("root");
+    root.child({ name: "child" }).info("child");
+    root.child({ ctx: null as never }).child({ tags: ["t"] }).info("grandchild");
+    root.child({ ctx: { module: "auth" } }).child({ name: "inner" }).info("inherited");
+    expect(events.map((logged) => "ctx" in logged)).toEqual([false, false, false, true]);
+    expect(events[3].ctx).toEqual({ module: "auth" });
+  });
+
+  it("names in its package metadata only an init function it exports", async () => {
+    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    const initFunction: unknown = manifest.superfunctions?.initFunction;
+    // The CLI registers a package by this name and looks for calls to it.
+    if (initFunction !== undefined) expect(Object.keys(await import("../src/index.js"))).toContain(initFunction);
   });
 
   it("keeps an Error or a non-object passed as ctx", () => {

@@ -55,7 +55,7 @@ when `url` is given.
 - `child({ name, level, ctx, tags })` inherits sinks, pipeline and context.
 - An `Error` context is logged as `ctx.error`; any other non-record context
   (string, array, `Date`, `String` wrapper, bytes) as `ctx.value`, never
-  spread. Non-array tags (also `baseTags` and child `tags`) are ignored.
+  spread. Non-array tags (also `baseTags` and child `tags`) are ignored; a child without `ctx` adds none.
 - Logging calls and `flush()` never throw. Pipeline and sink failures go to
   `onError` (default `console.error`). `flush()` first waits for pending
   async sink calls (also those made through child loggers), then flushes
@@ -141,7 +141,8 @@ their primitive, read with the built-in `valueOf` (never an own `toString` or
 character; boxed bigints and symbols, like bigints, symbols, functions and
 binary data, become `"[unserializable]"`. Any other object (class instances,
 `Map`, `Set`, `URL`, proxies) becomes a plain object of its own enumerable
-string keys and `toJSON` is never called, so a `URL` becomes `{}`. Kinds are found by brand, not `instanceof`, so an error, date or buffer from another realm (a `vm` context, an iframe) is handled like a local one.
+string keys and `toJSON` is never called, so a `URL` becomes `{}`. Kinds are found by brand, not `instanceof`, so an error, date or buffer from another realm (a `vm` context, an iframe) is handled like a local one (before Node 24, without `Error.isError`, a foreign error whose class sets its own tag, such as a `DOMException`, is read as a record).
+Tags are text: strings (also `String` wrappers) are kept, numbers and booleans written as text, and any other tag value becomes `"[unserializable]"` in sanitization and redaction alike, as its JSON text would hide sensitive keys from redaction.
 
 Text rules are heuristics with known limits (the same in both runtimes):
 unquoted names with spaces (`pass word=x`), escaped whitespace before the
@@ -213,15 +214,9 @@ Posts `{"events": [...]}` to `url` in batches.
   always fails cannot turn one event into an endless chain of requests. A
   batch that also holds an independent event is reported as usual. Events a
   callback logs later (after an `await` or a timer) are not recognized as
-  its diagnostics. Events the sink's own `fetch` logs synchronously are
-  diagnostics too, and a queue holding only them is sent after
-  `flushIntervalMs` rather than at once, so a `fetch` that logs every
-  request synchronously adds at most one request per interval. Events it
-  logs after an `await` (for example when the response arrives) are
-  ordinary events: with a small `batch` (such as 1) each one fills a batch
-  and starts the next request at once, an endless chain of requests. Do not
-  log from a sink's own `fetch` asynchronously, or log through a logger
-  without that sink.
+  its diagnostics. Events the sink's own `fetch` logs synchronously are diagnostics too: a queue holding only them is sent
+  after `flushIntervalMs`, so such a `fetch` adds at most one request per interval. Events it logs after an `await` are ordinary events,
+  so with a small `batch` (such as 1) each starts the next request at once, an endless chain: do not, or log through a logger without that sink.
 - Redaction runs synchronously in the logging call over the whole,
   untruncated event (linear in its size; about 0.5-1.2 s for a 10 MiB
   message), so keep very large payloads out of log calls.

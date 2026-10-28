@@ -39,9 +39,9 @@ const BUFFER_BRANDS = new Map([["[object ArrayBuffer]", byteLength(ArrayBuffer)]
 export const isBinary = (value: object): boolean => ArrayBuffer.isView(value) || hasBrand(BUFFER_BRANDS.get(tagOf(value)), value);
 export const isDateValue = (value: unknown): value is Date =>
   typeof value === "object" && value !== null && (value instanceof Date || tagOf(value) === "[object Date]") && hasBrand(Date.prototype.getTime, value);
-const isError = (Error as { isError?: (value: unknown) => boolean }).isError;
-export const isErrorValue = (value: unknown): value is Error =>
-  isError ? isError(value) : value instanceof Error || (typeof value === "object" && value !== null && tagOf(value) === "[object Error]");
+export const isErrorValue = (value: unknown): value is Error => (Error as { isError?: (value: unknown) => boolean }).isError?.(value) ??
+  (typeof value === "object" && value !== null && (value instanceof Error ? tagOf(value) !== "[object Object]" :
+    tagOf(value) === "[object Error]" && attempt(() => typeof (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag] !== "string", false)));
 
 /** Nesting depth after which values are replaced by MAX_DEPTH */
 export const MAX_REDACTION_DEPTH = 32;
@@ -437,6 +437,11 @@ export function unboxPrimitive(value: object): unknown {
   return value;
 }
 
+export function tagText(tag: unknown): string {
+  const value = tag !== null && typeof tag === "object" ? unboxPrimitive(tag) : tag;
+  return typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : UNSERIALIZABLE;
+}
+
 /** A record read by own keys: not an Error, Date, array, boxed primitive or binary data */
 export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null &&
   !(isErrorValue(value) || isDateValue(value) || Array.isArray(value) || isBinary(value)) && unboxPrimitive(value) === value;
@@ -563,6 +568,8 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
       redacted.msg = redactText(String(value), redactor);
     } else if (key === "ctx") {
       redacted.ctx = redactNode(value, redactor, "", new Set(), 0);
+    } else if (key === "tags" && Array.isArray(value)) {
+      redacted.tags = redactNode(Array.from({ length: value.length }, (_, index) => tagText(value[index])), redactor, key, new Set(), 0);
     } else if (redactor.allowlist.has(key)) {
       setOwn(redacted, key, redactNode(value, redactor, key, new Set(), 0));
     } else {
