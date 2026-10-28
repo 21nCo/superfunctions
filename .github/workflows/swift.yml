@@ -1,0 +1,50 @@
+name: Swift
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "Package.swift"
+      - "*/swift/**"
+      - "scripts/swift-release.mjs"
+      - "scripts/swift-release.test.mjs"
+      - ".github/workflows/swift.yml"
+      - ".github/workflows/release-swift.yml"
+  pull_request:
+    paths:
+      - "Package.swift"
+      - "*/swift/**"
+      - "scripts/swift-release.mjs"
+      - "scripts/swift-release.test.mjs"
+      - ".github/workflows/swift.yml"
+      - ".github/workflows/release-swift.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: swift build and test (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Release product list matches Package.swift
+        run: node --test scripts/swift-release.test.mjs
+      - name: swift build
+        run: swift build --only-use-versions-from-resolved-file
+      - name: swift test
+        run: swift test --only-use-versions-from-resolved-file

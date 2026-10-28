@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "SearchFnSQLiteAdapter", targets: ["SearchFnSQLiteAdapter"]),
         .library(name: "SearchFnClient", targets: ["SearchFnClient"]),
         .library(name: "SearchFnConvenience", targets: ["SearchFnConvenience"]),
+        .library(name: "UIFnSwiftUI", targets: ["UIFnSwiftUI"]),
     ],
     targets: [
         .target(name: "AuthFnClient", path: "authfn/swift/Sources/AuthFnClient"),
@@ -87,6 +88,7 @@ let package = Package(
             ],
             path: "searchfn/swift/Sources/SearchFnConvenience"
         ),
+        .target(name: "UIFnSwiftUI", path: "uifn/swift/Sources/UIFnSwiftUI"),
         .testTarget(
             name: "AuthFnClientTests",
             dependencies: ["AuthFnClient"],
@@ -173,6 +175,11 @@ let package = Package(
                 "SearchFnSQLiteAdapter",
             ],
             path: "searchfn/swift/Tests/SearchFnConformanceTests"
+        ),
+        .testTarget(
+            name: "UIFnSwiftUITests",
+            dependencies: ["UIFnSwiftUI"],
+            path: "uifn/swift/Tests/UIFnSwiftUITests"
         ),
     ]
 )

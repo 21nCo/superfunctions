@@ -201,7 +201,7 @@ enrollment. No Python publication is part of the current workflow repair.
 `.github/workflows/release-swift.yml` owns root `v<strict-semver>` tags. SwiftPM
 gets its version from that immutable git tag, not from an npm or Python
 manifest; these root tags cannot trigger either package-publication workflow.
-It validates the root `Package.swift`'s 12 library products on macOS, resolves
+It validates the root `Package.swift`'s 13 library products on macOS, resolves
 dependencies, release-builds every product, and runs the root test suite:
 Use Swift 6/Xcode 16 or newer for validation. Tests use the toolchain's bundled
 Swift Testing runtime/macros together, not a separately pinned development runtime
