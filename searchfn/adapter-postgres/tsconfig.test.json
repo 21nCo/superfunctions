@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node", "vitest/globals", "@cloudflare/vitest-pool-workers"],
+    "paths": {
+      "@searchfn/adapter-contracts": ["../adapter-contracts/src/index.ts"],
+      "@searchfn/adapter-contracts/testing": ["../adapter-contracts/src/testing.ts"]
+    }
+  },
+  "include": [
+    "src",
+    "__tests__/driver.test.ts",
+    "__tests__/sql-params.test.ts",
+    "__tests__/package-exports.test.ts",
+    "__tests__/bindings.integration.test.ts",
+    "__tests__/conformance/injected-driver.conformance.test.ts",
+    "__tests__/support/**/*.ts",
+    "__tests__/workerd/**/*.ts"
+  ]
+}

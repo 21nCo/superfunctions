@@ -1,0 +1,77 @@
+name: SearchFn Postgres Integration
+
+on:
+  push:
+    branches: [dev, next, main]
+    paths:
+      - "searchfn/adapter-postgres/**"
+      - "searchfn/adapter-contracts/**"
+      - "packages/observability/**"
+      - "package-lock.json"
+      - ".github/workflows/searchfn-postgres.yml"
+  pull_request:
+    branches: [dev, next, main]
+    paths:
+      - "searchfn/adapter-postgres/**"
+      - "searchfn/adapter-contracts/**"
+      - "packages/observability/**"
+      - "package-lock.json"
+      - ".github/workflows/searchfn-postgres.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: searchfn-postgres-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Postgres adapter tests with a Postgres server
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: searchfn
+          POSTGRES_PASSWORD: searchfn_test
+          POSTGRES_DB: searchfn_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U searchfn -d searchfn_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The workerd suite needs the root Vitest 3 and @cloudflare/vitest-pool-workers toolchain.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build trusted esbuild native binding
+        run: npm rebuild esbuild
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Build the adapter and its workspace dependencies
+        run: ./node_modules/.bin/turbo run build --filter=@searchfn/adapter-postgres...
+
+      # SEARCHFN_PG_REQUIRED makes an unreachable server fail the new suites instead of skipping them.
+      - name: Run the Node and workerd suites against Postgres 16
+        env:
+          SEARCHFN_PG_URL: postgres://searchfn:searchfn_test@localhost:5433/searchfn_test
+          SEARCHFN_PG_REQUIRED: "1"
+        run: npm --workspace @searchfn/adapter-postgres test

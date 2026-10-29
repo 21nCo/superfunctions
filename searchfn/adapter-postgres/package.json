@@ -1,7 +1,7 @@
 {
   "name": "@searchfn/adapter-postgres",
-  "version": "0.1.0",
-  "description": "Postgres adapter for SearchFn.",
+  "version": "0.2.0",
+  "description": "Postgres adapter for SearchFn on node-postgres, postgres.js and Cloudflare Workers (Hyperdrive).",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
@@ -15,15 +15,18 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
+    "test:node": "vitest run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts",
     "test:watch": "vitest watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@searchfn/adapter-contracts": "0.4.0",
@@ -31,8 +34,10 @@
     "pg": "^8.17.2"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@types/node": "^24.9.1",
     "@types/pg": "^8.15.4",
+    "postgres": "^3.4.8",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

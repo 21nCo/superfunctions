@@ -97,6 +97,8 @@ const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
 
 Initialize the same adapter instance passed to the server, before accepting requests. Keep the Hono routes and server startup from above. See the [Postgres adapter](/docs/reference/adapters/postgres) for provisioning details.
 
+On Cloudflare Workers, the adapter cannot own a long-lived Pool: inject a per-request postgres.js or `pg` client on Hyperdrive instead. See [Postgres through Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive).
+
 ## Next steps
 
 - [Authorization](/docs/documentation/security/request-authz) — gate `/searchfn/*` per user/role

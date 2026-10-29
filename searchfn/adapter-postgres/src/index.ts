@@ -1,9 +1,22 @@
 export { PostgresAdapter } from "./postgres";
 export type {
   PostgresAdapterOptions,
+  PostgresConnectionStringOptions,
+  PostgresDriverOptions,
   PostgresRetryPolicy,
   PostgresAdapterLogger,
 } from "./postgres";
+export { fromPg, fromPostgresJs } from "./driver";
+export type {
+  PostgresDriver,
+  PostgresQueryable,
+  PostgresQueryResult,
+  PgPoolLike,
+  PgPoolClientLike,
+  PgQueryResultLike,
+  PostgresJsSqlLike,
+  PostgresJsQueryableLike,
+} from "./driver";
 export type {
   SearchAdapter,
   SearchAdapterCapabilities,

@@ -3,8 +3,12 @@
  *
  * Supports: index (upsert), search, searchAll, remove, clear, initialize, dispose.
  * Resilience: configurable timeout, bounded retries with jitter for transient errors.
+ *
+ * Statements run through a PostgresDriver: either one the caller injects (`driver`, for example
+ * `fromPostgresJs(sql)` on Cloudflare Workers with Hyperdrive) or a `pg` Pool the adapter creates
+ * from `connectionString`. `pg` is imported only on that second path.
  */
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import type {
   SearchAdapter,
   SearchAdapterCapabilities,
@@ -24,6 +28,7 @@ import { redactSensitive } from "./internal/redaction";
 import { runWithRetry, type RetryPolicy } from "./internal/retry";
 import { retryBudgetExhaustedError, withRedactedErrorMessage } from "./internal/errors";
 import { normalizeObservability, type ObservabilityInput, type ObservationLogger } from "@superfunctions/observability";
+import { fromPg, type PostgresDriver, type PostgresQueryable } from "./driver";
 
 export type PostgresRetryPolicy = RetryPolicy;
 
@@ -33,11 +38,8 @@ export interface PostgresAdapterLogger {
   error(message: string, context?: Record<string, unknown>): void;
 }
 
-export interface PostgresAdapterOptions {
-  connectionString: string;
+interface PostgresAdapterSharedOptions {
   schema?: string;
-  /** Query timeout in milliseconds. Default: 30000 */
-  queryTimeoutMs?: number;
   /** Retry policy for transient DB errors. */
   retry?: PostgresRetryPolicy;
   /** Maximum documents per index batch. Default: 10000 */
@@ -45,6 +47,32 @@ export interface PostgresAdapterOptions {
   observability?: ObservabilityInput;
   /** Construct-time defaults applied when query params are omitted. */
   defaults?: SearchDefaults;
+}
+
+export interface PostgresConnectionStringOptions extends PostgresAdapterSharedOptions {
+  /** The adapter creates a `pg` Pool for this DSN and ends it on `dispose()`. */
+  connectionString: string;
+  /** Query timeout in milliseconds (`statement_timeout` on the created Pool). Default: 30000 */
+  queryTimeoutMs?: number;
+  driver?: never;
+}
+
+export interface PostgresDriverOptions extends PostgresAdapterSharedOptions {
+  /**
+   * Caller-owned driver, for example `fromPostgresJs(sql)` or `fromPg(pool)`. The adapter never
+   * closes it. Configure timeouts on the client itself.
+   */
+  driver: PostgresDriver;
+  connectionString?: never;
+  queryTimeoutMs?: never;
+}
+
+export type PostgresAdapterOptions = PostgresConnectionStringOptions | PostgresDriverOptions;
+
+/** The adapter-created Pool for `connectionString`, and the driver bound to it. */
+interface OwnedPool {
+  pool: Pool;
+  driver: PostgresDriver;
 }
 
 /** Postgres error codes that are considered transient/retryable. */
@@ -57,6 +85,9 @@ const RETRYABLE_PG_CODES = new Set([
   "57014", // query_canceled (timeout)
   "57P03", // cannot_connect_now
   "53300", // too_many_connections
+  // postgres.js connection error codes; pg never reports these.
+  "CONNECT_TIMEOUT",
+  "CONNECTION_CLOSED",
 ]);
 
 function isRetryable(err: unknown): boolean {
@@ -80,6 +111,11 @@ function coerceId(value: string): string | number {
 
 const MAX_SAFE_POSTGRES_PARAMS = 60_000;
 
+interface SearchRow {
+  doc_id: string;
+  score: string | number;
+}
+
 export class PostgresAdapter implements SearchAdapter {
   readonly name = "postgres";
   readonly capabilities: SearchAdapterCapabilities = {
@@ -90,7 +126,8 @@ export class PostgresAdapter implements SearchAdapter {
     prefix: true,
   };
 
-  private pool: Pool | null = null;
+  private readonly injectedDriver: PostgresDriver | null;
+  private ownedPool: Promise<OwnedPool> | null = null;
   private disposed = false;
   private readonly knownResources = new Map<string, string[]>();
   private readonly queryTimeoutMs: number;
@@ -99,6 +136,22 @@ export class PostgresAdapter implements SearchAdapter {
   private readonly logger?: PostgresAdapterLogger;
 
   constructor(private readonly options: PostgresAdapterOptions) {
+    const driver = options.driver;
+    if (driver !== undefined) {
+      if (driver === null || typeof driver.query !== "function") {
+        throw new SearchAdapterError("DFQL_INVALID", "driver must provide a query(sql, params) function");
+      }
+      if (options.connectionString !== undefined) {
+        throw new SearchAdapterError("DFQL_INVALID", "Pass either connectionString or driver, not both");
+      }
+      if (options.queryTimeoutMs !== undefined) {
+        throw new SearchAdapterError(
+          "DFQL_INVALID",
+          "queryTimeoutMs applies only to connectionString; configure timeouts on the injected driver's client",
+        );
+      }
+    }
+    this.injectedDriver = driver ?? null;
     const observability = normalizeObservability(options.observability)?.child({
       component: "searchfn.postgres",
     });
@@ -117,15 +170,30 @@ export class PostgresAdapter implements SearchAdapter {
     }
   }
 
-  private getPool(): Pool {
-    if (!this.pool) {
-      this.pool = new Pool({
-        connectionString: this.options.connectionString,
-        statement_timeout: this.queryTimeoutMs,
-        max: 10,
-      });
+  private async getDriver(): Promise<PostgresDriver> {
+    if (this.injectedDriver) return this.injectedDriver;
+    // Cache the promise so concurrent first calls share one Pool.
+    this.ownedPool ??= this.createPool();
+    return (await this.ownedPool).driver;
+  }
+
+  private async createPool(): Promise<OwnedPool> {
+    const { Pool } = await import("pg");
+    const pool = new Pool({
+      connectionString: this.options.connectionString,
+      statement_timeout: this.queryTimeoutMs,
+      max: 10,
+    });
+    return { pool, driver: fromPg(pool) };
+  }
+
+  /** Run `fn` in a driver transaction, or statement by statement when the driver has none. */
+  private async inTransaction(driver: PostgresDriver, fn: (tx: PostgresQueryable) => Promise<void>): Promise<void> {
+    if (driver.transaction) {
+      await driver.transaction(fn);
+    } else {
+      await fn(driver);
     }
-    return this.pool;
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -155,16 +223,16 @@ export class PostgresAdapter implements SearchAdapter {
   async initialize({ resources }: InitializeParams): Promise<void> {
     if (this.disposed) {
       this.disposed = false;
-      this.pool = null;
+      this.ownedPool = null;
     }
 
-    const pool = this.getPool();
+    const driver = await this.getDriver();
     const nextKnownResources = new Map<string, string[]>();
 
     await this.withRetry(async () => {
-      await ensureMetaTable(pool, this.options.schema);
+      await ensureMetaTable(driver, this.options.schema);
       for (const { name, searchFields } of resources) {
-        await ensureResourceTable(pool, name, searchFields, this.options.schema);
+        await ensureResourceTable(driver, name, searchFields, this.options.schema);
         nextKnownResources.set(name, searchFields);
       }
     });
@@ -178,7 +246,7 @@ export class PostgresAdapter implements SearchAdapter {
     this.assertNotDisposed();
     if (documents.length === 0) return;
 
-    const pool = this.getPool();
+    const driver = await this.getDriver();
 
     // Process in batches
     for (let offset = 0; offset < documents.length; offset += this.maxBatchSize) {
@@ -201,16 +269,13 @@ export class PostgresAdapter implements SearchAdapter {
       }
 
       await this.withRetry(async () => {
-        const client = await pool.connect();
-        try {
-          await client.query("BEGIN");
-
+        await this.inTransaction(driver, async (tx) => {
           // Delete existing rows for these doc_ids to ensure clean upsert
           const deleteIds = Array.from(docIds);
           for (let i = 0; i < deleteIds.length; i += MAX_SAFE_POSTGRES_PARAMS) {
             const deleteBatch = deleteIds.slice(i, i + MAX_SAFE_POSTGRES_PARAMS);
             const q = buildDeleteQuery(resource, deleteBatch, this.options.schema);
-            await client.query(q.text, q.values);
+            await tx.query(q.text, q.values);
           }
 
           // Insert new rows in sub-batches to avoid parameter limit (65535)
@@ -221,16 +286,9 @@ export class PostgresAdapter implements SearchAdapter {
           for (let i = 0; i < rows.length; i += subBatchSize) {
             const subBatch = rows.slice(i, i + subBatchSize);
             const q = buildUpsertQuery(resource, subBatch, this.options.schema);
-            await client.query(q.text, q.values);
+            await tx.query(q.text, q.values);
           }
-
-          await client.query("COMMIT");
-        } catch (err) {
-          await client.query("ROLLBACK");
-          throw err;
-        } finally {
-          client.release();
-        }
+        });
       });
     }
   }
@@ -238,12 +296,12 @@ export class PostgresAdapter implements SearchAdapter {
   async search(params: SearchParams): Promise<Array<string | number>> {
     this.assertNotDisposed();
 
-    const pool = this.getPool();
     const limit = Math.max(1, params.limit ?? 10);
     const effectivePrefix = params.prefix ?? this.defaults.prefix;
     const effectiveFuzzy = params.fuzzy ?? this.defaults.fuzzy;
 
     // Check if table exists by trying to query - return empty for unknown resource
+    const driver = await this.getDriver();
     const result = await this.withRetry(async () => {
       const q = buildSearchQuery(params.resource, params.query, {
         fields: params.fields,
@@ -253,7 +311,7 @@ export class PostgresAdapter implements SearchAdapter {
         schema: this.options.schema,
       });
       try {
-        return await pool.query(q.text, q.values);
+        return await driver.query<SearchRow>(q.text, q.values);
       } catch (err) {
         // Table doesn't exist - return empty
         if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "42P01") {
@@ -263,13 +321,12 @@ export class PostgresAdapter implements SearchAdapter {
       }
     });
 
-    return result.rows.map((row: { doc_id: string }) => coerceId(row.doc_id));
+    return result.rows.map((row) => coerceId(row.doc_id));
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
     this.assertNotDisposed();
 
-    const pool = this.getPool();
     const limit = params.limit ?? 10;
     const limitPerResource = params.limitPerResource ?? limit;
     const effectivePrefix = params.prefix ?? this.defaults.prefix;
@@ -290,6 +347,8 @@ export class PostgresAdapter implements SearchAdapter {
         throw new SearchAdapterError("DFQL_ABORTED", "SearchAll operation aborted");
       }
 
+      const driver = await this.getDriver();
+
       const result = await this.withRetry(async () => {
         const q = buildSearchQuery(resource, params.query, {
           fields: params.fields,
@@ -299,7 +358,7 @@ export class PostgresAdapter implements SearchAdapter {
           schema: this.options.schema,
         });
         try {
-          return await pool.query(q.text, q.values);
+          return await driver.query<SearchRow>(q.text, q.values);
         } catch (err) {
           if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "42P01") {
             return { rows: [] };
@@ -312,7 +371,7 @@ export class PostgresAdapter implements SearchAdapter {
         allResults.push({
           resource,
           id: coerceId(row.doc_id),
-          score: parseFloat(row.score),
+          score: parseFloat(String(row.score)),
         });
       }
     }
@@ -337,12 +396,14 @@ export class PostgresAdapter implements SearchAdapter {
       throw new SearchAdapterError("DFQL_ABORTED", "Remove operation aborted");
     }
 
-    const pool = this.getPool();
+
+    const driver = await this.getDriver();
+
 
     await this.withRetry(async () => {
       const q = buildDeleteQuery(resource, ids, this.options.schema);
       try {
-        await pool.query(q.text, q.values);
+        await driver.query(q.text, q.values);
       } catch (err) {
         // Table doesn't exist - idempotent, no-op
         if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "42P01") {
@@ -360,12 +421,14 @@ export class PostgresAdapter implements SearchAdapter {
       throw new SearchAdapterError("DFQL_ABORTED", "Clear operation aborted");
     }
 
-    const pool = this.getPool();
+
+    const driver = await this.getDriver();
+
 
     await this.withRetry(async () => {
       const q = buildClearQuery(resource, this.options.schema);
       try {
-        await pool.query(q.text, q.values);
+        await driver.query(q.text, q.values);
       } catch (err) {
         // Table doesn't exist - idempotent, no-op
         if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "42P01") {
@@ -379,9 +442,12 @@ export class PostgresAdapter implements SearchAdapter {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.knownResources.clear();
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
+    const owned = this.ownedPool;
+    this.ownedPool = null;
+    if (owned) {
+      // A Pool that never got created (pg failed to load) has nothing to end.
+      const created = await owned.catch(() => null);
+      await created?.pool.end();
     }
   }
 }

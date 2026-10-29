@@ -4,7 +4,7 @@
  * All queries use parameterized statements to prevent SQL injection.
  * tsvector/tsquery is used for Postgres-native full-text search with ranking.
  */
-import { resourceTableName } from "./postgres-schema";
+import { resourceTableName, textArrayParam } from "./postgres-schema";
 
 export interface UpsertRow {
   docId: string;
@@ -98,7 +98,7 @@ export function buildSearchQuery(
   // Optional field filter
   let fieldFilter = "";
   if (opts.fields && opts.fields.length > 0) {
-    values.push(opts.fields);
+    values.push(textArrayParam(opts.fields));
     fieldFilter = `AND field_name = ANY($${paramIdx})`;
     paramIdx++;
   }
