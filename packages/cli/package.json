@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CLI tool for schema management and migrations for Superfunctions libraries",
   "type": "module",
   "main": "./dist/index.js",
