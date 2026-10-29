@@ -7,6 +7,11 @@ import SwiftUI
 /// looks. Like the system switch, a press flips the binding and a drag across
 /// the track sets it from the half of the track the drag ends over; a drag up
 /// or down sets nothing.
+///
+/// Like the system styles, it draws no label under `labelsHidden()` or
+/// `labelsVisibility(.hidden)`, and accessibility still reads the label. It
+/// can read that only on iOS 18, macOS 15 and later; earlier, it always draws
+/// the label, so leave the label empty there to hide it.
 public struct UIFnSwitchToggleStyle: ToggleStyle {
     public init() {}
 
@@ -21,6 +26,11 @@ public struct UIFnSwitchToggleStyle: ToggleStyle {
 ///
 /// The toggle stays a toggle to accessibility; the style changes only how it
 /// looks and flips the binding when pressed like the system styles do.
+///
+/// Like the system styles, it draws no label under `labelsHidden()` or
+/// `labelsVisibility(.hidden)`, and accessibility still reads the label. It
+/// can read that only on iOS 18, macOS 15 and later; earlier, it always draws
+/// the label, so leave the label empty there to hide it.
 public struct UIFnCheckboxToggleStyle: ToggleStyle {
     public init() {}
 
@@ -200,9 +210,11 @@ struct UIFnToggleAppearance<Label: View>: View {
     }
 
     private var labelText: some View {
-        label
-            .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
-            .foregroundColor(context.color(context.colors.text.primary))
+        UIFnHidableLabel {
+            label
+                .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
+                .foregroundColor(context.color(context.colors.text.primary))
+        }
     }
 
     @ViewBuilder
@@ -285,6 +297,32 @@ struct UIFnToggleAppearance<Label: View>: View {
             }
             .frame(width: side, height: side)
             .uifnFocusRing(state.isFocused && state.isEnabled, cornerRadius: radius, context: context)
+    }
+}
+
+/// A toggle's visible label, which is left out where labels are hidden. Only
+/// iOS 18, macOS 15 and later tell a style that labels are hidden.
+private struct UIFnHidableLabel<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if #available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *) {
+            UIFnVisibleLabel(content: content)
+        } else {
+            content()
+        }
+    }
+}
+
+@available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+private struct UIFnVisibleLabel<Content: View>: View {
+    let content: () -> Content
+    @Environment(\.labelsVisibility) private var visibility
+
+    var body: some View {
+        if visibility != .hidden {
+            content()
+        }
     }
 }
 
