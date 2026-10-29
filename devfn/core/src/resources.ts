@@ -292,10 +292,32 @@ function containerEndpoint(context: TargetContext, host: Endpoint, service: stri
   return { unreachable: `Resource ${context.name} target ${context.targetName} listens on host loopback, which Compose service ${service} cannot reach on this platform without a container host gateway; provide it from a Compose service on a shared network or select a remote target.` };
 }
 
+const HOST_LABEL = /^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/i;
+
+/**
+ * A bare hostname, IPv4 literal or bracketed IPv6 literal: the value becomes
+ * the host of every gateway-reached endpoint, so userinfo, a scheme, a port, a
+ * path or whitespace would corrupt those URLs or put credentials in the plan.
+ */
+function bareHost(host: string): boolean {
+  if (host.startsWith("[")) {
+    if (!/^\[[0-9a-f:.]+\]$/i.test(host)) return false;
+    try { return new URL(`http://${host}/`).hostname !== ""; } catch { return false; }
+  }
+  if (host.length > 253) return false;
+  const labels = host.split(".");
+  if (labels.every((label) => /^\d+$/.test(label))) return labels.length === 4 && labels.every((octet) => Number(octet) <= 255);
+  return labels.every((label) => HOST_LABEL.test(label));
+}
+
 function defaultGateway(input: ResourcePlanInput): { host: string; field: string } | undefined {
   const platform = input.platform ?? process.platform;
   if (input.containerHostGateway === null) return undefined;
   if (input.containerHostGateway !== undefined) {
+    // The rejected value is not echoed: it may carry credentials.
+    if (typeof input.containerHostGateway !== "string" || !bareHost(input.containerHostGateway)) {
+      invalid("containerHostGateway must be a bare hostname, IPv4 address or bracketed IPv6 address without userinfo, scheme, port, path or whitespace.");
+    }
     if (loopbackHost(input.containerHostGateway)) invalid(`containerHostGateway ${input.containerHostGateway} is a loopback name, which a container resolves to itself.`);
     return { host: input.containerHostGateway, field: "option:containerHostGateway" };
   }

@@ -603,6 +603,24 @@ describe("container and host endpoints", () => {
     expect(planResources({ config: legacy, plan: createPlan(legacy), ownerId: "owner-a", ports: { redis: 4107 }, platform: "linux" }).resources).toEqual({});
     expect(() => plan(containerConsumer("process"), undefined, { platform: "linux", containerHostGateway: "127.0.0.1" })).toThrow("containerHostGateway 127.0.0.1 is a loopback name");
   });
+
+  it("accepts only a bare host as the container host gateway and never echoes a rejected one", () => {
+    const gatewayPlan = (containerHostGateway: string) => plan(containerConsumer("process"), undefined, { platform: "linux", containerHostGateway });
+    for (const gateway of ["user:review-sentinel@host.example.test", "", "http://172.17.0.1", "host:99", "a/b", "host .example", " host", "host?x", "host#x", "[::1", "fe80::1", "1.2.3", "256.1.1.1", "-host"]) {
+      let error: unknown;
+      try { gatewayPlan(gateway); } catch (caught) { error = caught; }
+      expect(error, JSON.stringify(gateway)).toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("bare hostname") });
+      expect((error as Error).message).not.toContain("review-sentinel");
+    }
+    for (const gateway of ["host.example.test", "172.17.0.1", "[fd00::1]", "host.docker.internal"]) {
+      const resources = gatewayPlan(gateway);
+      expect(resources.containerHostGateway, gateway).toEqual({ host: gateway, field: "option:containerHostGateway" });
+      expect(resources.resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toEqual({ value: `redis://${gateway}:4107`, source: "host-gateway", field: "option:containerHostGateway" });
+    }
+    for (const gateway of ["localhost", "127.0.0.1", "[::1]", "[::ffff:127.0.0.1]"]) {
+      expect(() => gatewayPlan(gateway), gateway).toThrow("is a loopback name");
+    }
+  });
 });
 
 describe("endpoint resolver handoff", () => {

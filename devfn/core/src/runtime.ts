@@ -71,17 +71,38 @@ export function newRuntimeId(): string {
 /** Record a runtime identity unless the state directory already has one, and return the recorded one. */
 export async function recordRuntimeId(stateDir: string, candidate: string): Promise<string> {
   // Linking a complete file never exposes a partly written identity to a concurrent reader.
+  const target = path.join(stateDir, "runtime-id");
   const temp = path.join(stateDir, `runtime-id.${randomUUID()}.tmp`);
   await writeFile(temp, `${candidate}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  let linked = true;
   try {
-    await link(temp, path.join(stateDir, "runtime-id"));
+    await link(temp, target);
     return candidate;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "EXDEV" && code !== "ENOSYS") throw error;
+    linked = code === "EEXIST";
   } finally { await unlink(temp).catch(() => undefined); }
-  const recorded = await readRuntimeId(stateDir);
-  if (!recorded) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${path.join(stateDir, "runtime-id")} could not be read.`);
-  return recorded;
+  if (!linked) {
+    // Filesystems without hard links (FUSE, network and FAT mounts) get an
+    // exclusive create; a concurrent reader retries until the write lands.
+    try {
+      await writeFile(target, `${candidate}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const recorded = await readRuntimeId(stateDir);
+      if (recorded) return recorded;
+    } catch (error) {
+      if (attempt >= 20) throw error;
+    }
+    if (attempt >= 20) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {
