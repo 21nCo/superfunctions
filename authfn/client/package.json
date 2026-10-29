@@ -29,10 +29,10 @@
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
-    "@authfn/api-keys": "0.1.2",
+    "@authfn/api-keys": "0.1.3",
     "@authfn/email-otp": "0.1.2",
     "@authfn/multi-region": "0.1.2",
-    "@authfn/password": "0.1.2",
+    "@authfn/password": "0.1.3",
     "@authfn/social-oauth": "0.1.2",
     "@authfn/two-factor": "0.1.2",
     "@types/node": "^22.0.0",

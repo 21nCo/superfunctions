@@ -10,6 +10,10 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.4.1 release
+
+Concurrent sign-ups for the same email now return `409 AUTHFN_CONFLICT` to every request except the one that creates the user. Before, a request that passed the existence check but lost the insert to the unique index got a retryable `500 AUTHFN_INTERNAL_ERROR`. Password sign-up gets the fix through `@authfn/password` 0.1.3, which depends on `authfn` 0.4.1; `@authfn/password` and `@authfn/api-keys` 0.1.2 pin `authfn` 0.3.0. A storage conformance suite now runs password sign-in, sessions and API keys on better-sqlite3 and on a local Cloudflare D1 database in workerd; see [Self-hosting authfn on SQLite and D1](https://github.com/21nCo/super-functions/blob/dev/authfn/docs/content/docs/recipes/self-hosting-sqlite-d1.md).
+
 ## 0.4.0 release
 
 The core API key helper accepts `userId: null` to create an unowned key for a trusted service principal. Existing user-owned keys remain supported.

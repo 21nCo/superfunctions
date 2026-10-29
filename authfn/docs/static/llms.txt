@@ -98,6 +98,7 @@
 - [Password reset](https://authfn.com/docs/recipes/password-reset) — Full password-reset flow — start, verify, change. Two routes, three UI screens.
 - [Placement-bound auth context](https://authfn.com/docs/recipes/placement-bound-auth-context) — Trusted in-process and private-service AuthFn context for regional application data planes.
 - [Rotating 2FA encryption keys](https://authfn.com/docs/recipes/rotate-2fa-encryption) — What the shipped two-factor plugin encrypts, and how to change keys without a private crypto API.
+- [Self-hosting authfn on SQLite and D1](https://authfn.com/docs/recipes/self-hosting-sqlite-d1) — Run password sign-in, sessions and API keys on a single SQLite file or on Cloudflare D1 through @superfunctions/db.
 - [Changelog](https://authfn.com/docs/reference/changelog) — Release history of authfn and @authfn/* packages.
 - [Configuration](https://authfn.com/docs/reference/configuration) — Every option you can pass to authfn() and app.createServer().
 - [Envelopes](https://authfn.com/docs/reference/envelopes) — The shape of every authfn HTTP response — success and error.

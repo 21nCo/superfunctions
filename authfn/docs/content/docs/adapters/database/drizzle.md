@@ -228,7 +228,12 @@ Review drop migrations carefully before running them in production.
 
 ## Transactions
 
-`drizzleAdapter` uses Drizzle's `db.transaction()` for the kernel's transactional helpers. Plugins that need transactional writes (sign-up, account deletion) automatically benefit.
+authfn does not open database transactions. Sign-up removes the user it created
+if a later step fails, and unique indexes reject concurrent duplicates.
+`drizzleAdapter` reports transaction support for Postgres and MySQL but not for
+SQLite or D1. See
+[Self-hosting authfn on SQLite and D1](../../recipes/self-hosting-sqlite-d1)
+for the SQLite and D1 setup.
 
 ## Performance notes
 

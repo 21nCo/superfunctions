@@ -8,6 +8,7 @@
     "adding-2fa",
     "adding-password",
     "account-deletion",
+    "self-hosting-sqlite-d1",
     "multi-region-deployment",
     "canonical-gateway-multi-region",
     "placement-bound-auth-context",

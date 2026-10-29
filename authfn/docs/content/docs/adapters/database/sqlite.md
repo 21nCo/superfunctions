@@ -35,6 +35,10 @@ const auth = authApp.createServer({
 `@superfunctions/db` does not expose a direct `sqliteAdapter`; use the supported
 Drizzle path above or implement the [custom adapter](./custom) contract.
 
+For schema generation, migrations, Cloudflare D1 and what the SQLite storage
+conformance suite verifies, see
+[Self-hosting authfn on SQLite and D1](../../recipes/self-hosting-sqlite-d1).
+
 ## Performance
 
 SQLite is plenty fast for authfn workloads. A few tuning tips:

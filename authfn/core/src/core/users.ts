@@ -18,14 +18,8 @@ export async function createUser(
   const now = new Date();
   const primaryEmail = normalizeEmail(input.primaryEmail);
   if (primaryEmail) assertAuthFnDatabaseKeyLength(primaryEmail, 'primaryEmail');
-  if (primaryEmail) {
-    const existingUser = await findUserByPrimaryEmail(config, primaryEmail);
-    if (existingUser) {
-      throw new AuthFnConflictError('A user with this email already exists', {
-        primaryEmail,
-        emailExists: true
-      });
-    }
+  if (primaryEmail && await findUserByPrimaryEmail(config, primaryEmail)) {
+    throw emailConflict(primaryEmail);
   }
 
   const user: AuthFnUserRecord = {
@@ -37,12 +31,29 @@ export async function createUser(
     updatedAt: now
   };
 
-  return createRecord(
-    config.database,
-    namespace(config),
-    'users',
-    user as unknown as Record<string, unknown>
-  ) as unknown as Promise<AuthFnUserRecord>;
+  try {
+    return await createRecord(
+      config.database,
+      namespace(config),
+      'users',
+      user as unknown as Record<string, unknown>
+    ) as unknown as AuthFnUserRecord;
+  } catch (error) {
+    // A concurrent sign-up can claim the email between the check above and
+    // this insert; the unique index rejects the second row with a
+    // driver-specific error. Report it as the same conflict.
+    if (primaryEmail && await findUserByPrimaryEmail(config, primaryEmail)) {
+      throw emailConflict(primaryEmail);
+    }
+    throw error;
+  }
+}
+
+function emailConflict(primaryEmail: string): AuthFnConflictError {
+  return new AuthFnConflictError('A user with this email already exists', {
+    primaryEmail,
+    emailExists: true
+  });
 }
 
 export async function findUserById(

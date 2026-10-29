@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
@@ -52,6 +52,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'src/**/__tests__/**/*.test.ts']
+    include: ['src/**/*.test.ts', 'src/**/__tests__/**/*.test.ts'],
+    // Runs under workerd through vitest.workerd.config.ts.
+    exclude: [...configDefaults.exclude, 'src/__tests__/workerd/**']
   }
 });
