@@ -40,7 +40,18 @@ async function start(): Promise<void> {
   status.state = 'mounted';
 }
 
+// A rejection is not always an Error; keep an object's fields rather than "[object Object]".
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message;
+  if (typeof error !== 'object' || error === null) return String(error);
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
+}
+
 start().catch((error: unknown) => {
   status.state = 'failed';
-  status.errors.push(`mount: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  status.errors.push(`mount: ${describeError(error)}`);
 });

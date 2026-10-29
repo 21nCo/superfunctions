@@ -14,7 +14,11 @@ const adapterByTestCommand = new Map(adapters.map((name) => [adapterTestCommand(
 
 function vitestTestCounts(stdout) {
   const plain = stdout.replace(/\u001b\[[0-9;]*m/g, '');
-  return [...plain.matchAll(/^\s*Tests\s+(\d.*?)\s*$/gm)].map((match) => match[1]);
+  return plain
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^Tests\s+\d/.test(line))
+    .map((line) => line.replace(/^Tests\s+/, ''));
 }
 
 const checks = [
