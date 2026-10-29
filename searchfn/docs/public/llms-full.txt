@@ -7011,7 +7011,7 @@ For a tighter loop, call the server adapter directly from a server action instea
 
 ## Edge runtime
 
-The MemoryAdapter and PostgresAdapter both work on Node.js. For Edge runtimes (Vercel Edge, Cloudflare Workers), use Meilisearch or Elasticsearch via HTTP — direct DB drivers don't run on Edge. See [Deploy: Cloudflare Workers](/docs/documentation/deploy/cloudflare-workers).
+The MemoryAdapter and PostgresAdapter both work on Node.js. On Vercel Edge, use Meilisearch or Elasticsearch via HTTP — direct DB drivers don't run there. On Cloudflare Workers, PostgresAdapter runs through Hyperdrive with an injected postgres.js or `pg` driver; see [Postgres through Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive).
 
 ## Next steps
 

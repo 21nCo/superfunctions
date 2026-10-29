@@ -171,6 +171,8 @@ export class PostgresAdapter implements SearchAdapter {
   }
 
   private async getDriver(): Promise<PostgresDriver> {
+    // An operation that resumes after dispose() must not create a Pool that nothing will end.
+    this.assertNotDisposed();
     if (this.injectedDriver) return this.injectedDriver;
     // Cache the promise so concurrent first calls share one Pool.
     this.ownedPool ??= this.createPool();
@@ -253,6 +255,7 @@ export class PostgresAdapter implements SearchAdapter {
       if (signal?.aborted) {
         throw new SearchAdapterError("DFQL_ABORTED", "Index operation aborted");
       }
+      this.assertNotDisposed();
 
       const chunk = documents.slice(offset, offset + this.maxBatchSize);
 
@@ -341,13 +344,13 @@ export class PostgresAdapter implements SearchAdapter {
     }
 
     const allResults: SearchAllResult[] = [];
+    const driver = await this.getDriver();
 
     for (const resource of resources) {
       if (params.signal?.aborted) {
         throw new SearchAdapterError("DFQL_ABORTED", "SearchAll operation aborted");
       }
-
-      const driver = await this.getDriver();
+      this.assertNotDisposed();
 
       const result = await this.withRetry(async () => {
         const q = buildSearchQuery(resource, params.query, {
@@ -396,9 +399,7 @@ export class PostgresAdapter implements SearchAdapter {
       throw new SearchAdapterError("DFQL_ABORTED", "Remove operation aborted");
     }
 
-
     const driver = await this.getDriver();
-
 
     await this.withRetry(async () => {
       const q = buildDeleteQuery(resource, ids, this.options.schema);
@@ -421,9 +422,7 @@ export class PostgresAdapter implements SearchAdapter {
       throw new SearchAdapterError("DFQL_ABORTED", "Clear operation aborted");
     }
 
-
     const driver = await this.getDriver();
-
 
     await this.withRetry(async () => {
       const q = buildClearQuery(resource, this.options.schema);

@@ -8,6 +8,7 @@
 - `index()` runs each batch in `driver.transaction()`; a driver without it runs the batch's statements one by one.
 - Array parameters (`searchFields` in the metadata table, the `fields` search filter) are sent as Postgres array literals, the same wire value `pg` sends, so drivers without array type information (postgres.js with `fetch_types: false`) work.
 - postgres.js `CONNECT_TIMEOUT` and `CONNECTION_CLOSED` errors are retried like the transient SQLSTATE codes.
+- A `searchAll()` over several resources or a multi-batch `index()` that is still running when `dispose()` is called stops at its next resource or batch with `SEARCH_ADAPTER_DISPOSED`; no operation creates a new Pool after `dispose()` until `initialize()` is called again.
 - `fromPg` transactions keep the statement error when `ROLLBACK` also fails, and discard that client instead of returning it to the pool.
 
 ## 0.1.0
