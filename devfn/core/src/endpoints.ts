@@ -925,7 +925,7 @@ function serviceGeneratedValues(node: LifecyclePlan["nodes"][number], context: N
     if ("unreachable" in located) { delete generated.values[key]; delete generated.checked[key]; unreachable.set(key, located.unreachable); }
     else { generated.values[key] = located.value; generated.checked[key] = located.value; }
   }
-  rejectUnreachableReferences(node, context, field, unreachable);
+  rejectUnreachableReferences(node, context, field, unreachable, generated.values);
   return generated;
 }
 
@@ -948,12 +948,18 @@ function assertReachableReference(name: string, plan: LifecyclePlan, config: Dev
     `reference ${name} has no shared effective Compose network.`));
 }
 
-function rejectUnreachableReferences(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string, unreachable: ReadonlyMap<string, string | undefined>): void {
+function rejectUnreachableReferences(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string,
+  unreachable: ReadonlyMap<string, string | undefined>, available: Readonly<Record<string, string>>): void {
   const { input, config } = context;
   const profile = config.profiles[input.plan.profile];
   const spec = config.services![node.name];
   for (const name of input.composeReferences?.[node.name] ?? []) {
     assertReachableReference(name, input.plan, config, field, unreachable);
+    // Compose interpolates an unset name as empty, so a resource value this
+    // service does not receive (a typo, an unselected resource, or a URL of a
+    // scheme-less target) fails like a missing template reference. Fallback
+    // forms such as ${NAME:-default} are not references while NAME is unset.
+    if (name.startsWith("DEVFN_RESOURCE_") && !Object.hasOwn(available, name)) invalid(`${field}.compose`, `missing reference ${name}.`);
   }
   for (const value of [...Object.values(profile.environment ?? {}), ...Object.values(spec.env ?? {})]) {
     for (const match of value.matchAll(REFERENCE)) assertReachableReference(match[1], input.plan, config, field, unreachable);

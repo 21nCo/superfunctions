@@ -69,10 +69,12 @@ function provisionalComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, ow
  * Resource targets and namespaces are selected first, from the same ports and
  * Compose networks, then handed to the endpoint resolver, whose templates and
  * precedence stay unchanged. Manifests without resources resolve as before.
+ * Preflight passes are provisional: their ports are placeholders, so only
+ * manifest-fixed exact ports identify loopback listeners there.
  */
-function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">): EndpointResolution {
+function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">, provisional = false): EndpointResolution {
   if (!input.config.resources) return resolveEndpointTemplates(input);
-  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports,
+  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports, provisionalPorts: provisional,
     ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), environment: process.env });
   return resolveEndpointTemplates({ ...input, resources });
 }
@@ -86,7 +88,7 @@ type PublicTemplate = Awaited<ReturnType<typeof publicTemplateInputs>>;
  * them fail here, before anything else is read or started.
  */
 async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix: string | undefined,
-  publicTemplate: PublicTemplate, composeNetworks: Record<string, string[]>, provisional: ReturnType<typeof resolveEndpointTemplates>, deadline: number): Promise<Set<string>> {
+  publicTemplate: PublicTemplate, composeNetworks: Record<string, string[]>, provisional: ReturnType<typeof resolveEndpointTemplates>, deadline: number, provisionalPorts: boolean): Promise<Set<string>> {
   const all = new Set<string>();
   // Public and resource references are checked against permissive provisional
   // networks: whatever fails here fails on the effective networks too.
@@ -101,7 +103,7 @@ async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePla
     for (const name of references) all.add(name);
   }
   resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks, composeReferences: checkedReferences, ...publicTemplate });
+    composeNetworks, composeReferences: checkedReferences, ...publicTemplate }, provisionalPorts);
   return all;
 }
 
@@ -115,8 +117,8 @@ async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, r
   if (siblingTemplates && !publicTemplate.postStartPublicRoutes?.length) return true;
   const composeNetworks = provisionalComposeNetworks(config, plan, identity.instanceId);
   const provisional = resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks, ...publicTemplate });
-  const references = await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, composeNetworks, provisional, Date.now() + 20_000);
+    composeNetworks, ...publicTemplate }, true);
+  const references = await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, composeNetworks, provisional, Date.now() + 20_000, true);
   return siblingTemplates || [...references].some((name) => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_RESOURCE_"));
 }
 
@@ -126,14 +128,14 @@ async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, r
  * one is not rejected.
  */
 async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix: string | undefined,
-  publicTemplate: PublicTemplate): Promise<ReturnType<typeof resolveEndpointTemplates>> {
+  publicTemplate: PublicTemplate, provisionalPorts = false): Promise<ReturnType<typeof resolveEndpointTemplates>> {
   // Validate literals before calling Docker. Provisional defaults are used only
   // for that read-only validation; the result is never published or started.
   const ownerId = identity.instanceId;
   const provisionalNetworks = provisionalComposeNetworks(config, plan, ownerId);
-  const provisional = resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate });
+  const provisional = resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate }, provisionalPorts);
   const deadline = Date.now() + 20_000;
-  if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline);
+  if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline, provisionalPorts);
   const composeNetworks: Record<string, string[]> = {};
   const composeReferences: Record<string, Set<string>> = {};
   for (const node of plan.nodes) {
@@ -144,7 +146,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
     composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
     composeReferences[node.name] = references;
   }
-  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate });
+  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate }, provisionalPorts);
 }
 
 function compareCodepoint(left: string, right: string): number {
@@ -576,10 +578,10 @@ export class DevFnOrchestrator {
     // A reference to a public URL that exists only after start fails here, before any lease, process or connector.
     const publicTemplate = await publicTemplateInputs(options.config, plan, identity, requestedStateDir);
     if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)) {
-      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate);
+      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate, true);
     } else {
       resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
-        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate });
+        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, true);
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
@@ -838,8 +840,9 @@ export class DevFnOrchestrator {
       const replacementPlan = createPlan(options.config, options.profile);
       const existingPorts = Object.fromEntries(existing.allocations.map((allocation) => [allocation.service, allocation.port]));
       const replacementPorts = Object.fromEntries(replacementPlan.portNames.map((name) => [name, existingPorts[name] ?? 1]));
+      // Ports the old lifecycle does not lease are placeholders, so this pass is provisional.
       const replacement = await resolveWithComposeNetworks(options.config, replacementPlan, options.root, identity, replacementPorts, loadedPolicy?.policy.hostnameSuffix,
-        await publicTemplateInputs(options.config, replacementPlan, identity, stateDir));
+        await publicTemplateInputs(options.config, replacementPlan, identity, stateDir), true);
       await startupFingerprints(options.config, options.root, replacement);
       if (existing.state === "ready" && allRunning && deferReadyCleanup && registered === "ready") return existing;
       await this.stopExisting(existing, stateDir, registry);

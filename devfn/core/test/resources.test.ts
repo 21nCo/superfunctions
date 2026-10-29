@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { createComposeEnvironment, selectedComposeEndpointReferences } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { describe, expect, it } from "vitest";
 
@@ -71,6 +72,8 @@ function plan(value: DevFnConfig, profile?: string, options: Partial<Parameters<
   return planResources({ config: value, plan: lifecycle, ownerId: "owner-a", ports: PORTS, platform: "linux",
     composeNetworks: Object.fromEntries(lifecycle.nodes.filter((node) => node.kind === "service").map((node) => [node.name, ["shared"]])), ...options });
 }
+
+const PLACEHOLDERS = Object.fromEntries(Object.keys(PORTS).map((name) => [name, 1]));
 
 const nodes = (value: DevFnConfig, profile?: string) => createPlan(value, profile).nodes.map((node) => node.name).sort();
 const value = (resources: ResourcePlan, name: string, key: string) => resources.resources[name].values[`DEVFN_RESOURCE_${key}`];
@@ -191,8 +194,8 @@ describe("resource validation before side effects", () => {
       v.processes["api-server"].resources.push("sessions");
     });
     expect(() => plan(leasedLoopback)).toThrow("share namespace data:");
-    // Preflight placeholders share one number and do not identify a listener.
-    expect(() => plan(leasedLoopback, undefined, { ports: Object.fromEntries(Object.keys(PORTS).map((name) => [name, 1])) })).not.toThrow();
+    // Preflight placeholders do not identify a listener; the locked pass sees the lease.
+    expect(() => plan(leasedLoopback, undefined, { ports: PLACEHOLDERS, provisionalPorts: true })).not.toThrow();
     const schemeAlias = config((v) => {
       v.resources.db.targets.remote.url = "postgres://db.example.test:5432";
       v.resources.ledger = { kind: "database", defaultTarget: "remote", namespace: { base: "db", level: "schema", database: "app" },
@@ -206,6 +209,61 @@ describe("resource validation before side effects", () => {
       v.processes["api-server"].resources.push("ledger");
     });
     expect(() => plan(distinctHosts, "remote-database")).not.toThrow();
+  });
+
+  it("identifies listeners by the endpoint each consumer context resolves", () => {
+    // A second cache written as the URL a Compose consumer resolves for the local provider.
+    const aliased = (url: string, mutate: (v: any) => void = () => undefined) => config((v) => {
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache", "sessions"] };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url } } };
+      v.profiles.default = { services: ["worker"] };
+      mutate(v);
+    });
+    expect(() => plan(aliased("redis://redis:6379"))).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    expect(() => plan(aliased("redis://REDIS.:6379"))).toThrow("share namespace data:");
+    // A provider on a disjoint network is reached through the gateway and its lease.
+    const gateway = { platform: "darwin" as const, composeNetworks: { redis: ["one"], worker: ["two"] } };
+    expect(() => plan(aliased("redis://host.docker.internal:4107"), undefined, gateway)).toThrow("share namespace data:");
+    expect(() => plan(aliased("redis://host.docker.internal:4199"), undefined, gateway)).not.toThrow();
+    // On a disjoint network the worker's redis name is not the provider.
+    expect(() => plan(aliased("redis://redis:6379"), undefined, gateway)).not.toThrow();
+    // The same service name in an unrelated project is another listener.
+    const unrelated = aliased("redis://redis:6379", (v) => {
+      v.services.worker = { adapter: "compose", service: "worker", projectName: "other", resources: ["sessions"] };
+      v.processes["api-server"].resources = ["cache"];
+      v.profiles.default = { processes: ["api-server"], services: ["worker"] };
+    });
+    expect(() => plan(unrelated)).not.toThrow();
+    // One URL resolves to a different redis in each consumer's project.
+    const perProject = (secondProject: string) => config((v) => {
+      v.ports["redis-b"] = {};
+      v.services.redis.projectName = "a";
+      v.services["redis-b"] = { adapter: "compose", service: "redis", projectName: "b", ports: { "redis-b": 6379 } };
+      v.services["worker-a"] = { adapter: "compose", service: "worker-a", projectName: "a", resources: ["sessions"] };
+      v.services["worker-b"] = { adapter: "compose", service: "worker-b", projectName: secondProject, resources: ["jobs"] };
+      for (const name of ["sessions", "jobs"]) v.resources[name] = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://redis:6379" } } };
+      v.profiles.default = { services: ["worker-a", "worker-b", "redis", "redis-b"] };
+    });
+    expect(() => plan(perProject("b"))).not.toThrow();
+    expect(() => plan(perProject("a"))).toThrow("share namespace data:");
+  });
+
+  it("rejects a collision on a manifest-fixed port before reservation", async () => {
+    const exact = config((v) => {
+      v.ports.redis = { preferred: 6417, exact: true };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://127.1:6417" } } };
+      v.processes["api-server"].resources.push("sessions");
+    });
+    expect(() => plan(exact, undefined, { ports: PLACEHOLDERS, provisionalPorts: true })).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-exact-port-"));
+    const stateDir = path.join(root, "state");
+    try {
+      await expect(new DevFnOrchestrator().up({ config: exact, root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
+      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("selects only declared resources and targets, never inherited object properties", () => {
@@ -244,6 +302,50 @@ describe("resource validation before side effects", () => {
 });
 
 describe("resource references only Compose interpolates", () => {
+  // A worker that consumes no resource interpolates resource values only in its Compose file.
+  const composeOnly = (environment: string) => ({
+    file: `services:\n  worker:\n    image: busybox\n    environment:\n${environment}`,
+    config: validateDevFnConfig({ version: 1, project: { id: "resource-compose-missing" }, ports: { redis: {} },
+      processes: { redis: { adapter: "command", command: ["redis-server"], ports: ["redis"] } },
+      services: { worker: { adapter: "compose", service: "worker" } },
+      resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
+      profiles: { default: { processes: ["redis"], services: ["worker"], resources: { cache: "local" } } } }),
+  });
+
+  it("rejects a resource value the service does not receive before creating lifecycle state", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-missing-"));
+    const stateDir = path.join(root, "state");
+    try {
+      // A typo, and the URL of a target that declares no scheme.
+      for (const name of ["DEVFN_RESOURCE_CACHE_TYPO", "DEVFN_RESOURCE_CACHE_URL"]) {
+        const fixture = composeOnly(`      VALUE: \${${name}}\n`);
+        await writeFile(path.join(root, "compose.yaml"), fixture.file);
+        await expect(new DevFnOrchestrator().up({ config: fixture.config, root, stateDir }), name)
+          .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: `services.worker.compose: missing reference ${name}.` });
+      }
+      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("accepts values the service receives and Compose fallbacks for values it does not", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-available-"));
+    try {
+      const fixture = composeOnly("      ENDPOINT: ${DEVFN_RESOURCE_CACHE_ENDPOINT}\n      URL: ${DEVFN_RESOURCE_CACHE_URL:-redis://fallback:6379}\n");
+      await writeFile(path.join(root, "compose.yaml"), fixture.file);
+      const lifecycle = createPlan(fixture.config);
+      const composeNetworks = { worker: ["shared"] };
+      const resolve = (composeReferences: Set<string>) => resolveEndpointTemplates({ config: fixture.config, plan: lifecycle, ownerId: "owner-a", ports: PORTS,
+        composeNetworks, composeReferences: { worker: composeReferences },
+        resources: planResources({ config: fixture.config, plan: lifecycle, ownerId: "owner-a", ports: PORTS, platform: "darwin", composeNetworks }) });
+      const provisional = resolve(new Set());
+      const spec = fixture.config.services!.worker;
+      const environment = createComposeEnvironment({ ...spec, env: provisional.nodes.worker.environment }, provisional.nodes.worker.environment);
+      const references = await selectedComposeEndpointReferences({ ...spec, env: provisional.nodes.worker.environment }, root, environment);
+      expect([...references]).toEqual(["DEVFN_RESOURCE_CACHE_ENDPOINT"]);
+      expect(resolve(references).nodes.worker.environment.DEVFN_RESOURCE_CACHE_ENDPOINT).toBe("host.docker.internal:4107");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("rejects an unreachable resource value before creating lifecycle state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-reference-"));
     const stateDir = path.join(root, "state");
@@ -274,6 +376,14 @@ describe("resource selection independence and redaction", () => {
       expect(containerized.resources[name].target).toEqual(native.resources[name].target);
       expect(containerized.resources[name].namespace).toEqual(native.resources[name].namespace);
     }
+  });
+
+  it("records a remote defaultTarget as the manifest's selection and keeps profile selection independent", () => {
+    const remoteDefault = config((v) => { v.resources.api.defaultTarget = "remote"; });
+    expect(plan(remoteDefault).resources.api).toMatchObject({ remote: { url: "https://api.example.test/v1" },
+      target: { name: "remote", location: "remote", selectedBy: "defaultTarget", field: "resources.api.defaultTarget" } });
+    const local = config((v) => { v.resources.api.defaultTarget = "remote"; v.profiles.default.resources = { api: "local" }; });
+    expect(plan(local).resources.api.target).toEqual({ name: "local", location: "local", selectedBy: "profile", field: "profiles.default.resources.api" });
   });
 
   it("rejects credential-bearing target URLs and never records secret values", () => {

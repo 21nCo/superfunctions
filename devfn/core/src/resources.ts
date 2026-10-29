@@ -41,8 +41,13 @@ export interface ResourcePlanInput {
   plan: LifecyclePlan;
   /** Opaque lifecycle owner, as passed to the endpoint resolver. */
   ownerId: string;
-  /** Leased ports by name; preflight callers may pass placeholders. */
+  /** Leased ports by name; preflight callers pass placeholders and set provisionalPorts. */
   ports: Readonly<Record<string, number>>;
+  /**
+   * The ports are preflight placeholders, not leases: an exact port is its
+   * declared number, and any other port names no loopback listener yet.
+   */
+  provisionalPorts?: boolean;
   /** Effective Compose networks by selected service, as passed to the endpoint resolver. */
   composeNetworks?: Readonly<Record<string, readonly string[]>>;
   /**
@@ -205,11 +210,22 @@ interface TargetContext {
   gateway?: { host: string; field: string };
 }
 
+/** The number a port has before reservation, when the manifest fixes it. */
+function exactPort(input: ResourcePlanInput, port: string): number | undefined {
+  const spec = own(input.config.ports, port);
+  return spec?.exact ? spec.preferred : undefined;
+}
+
+/** A leased port's number, or undefined while it is a preflight placeholder. */
+function knownPort(input: ResourcePlanInput, port: string): number | undefined {
+  return input.provisionalPorts ? exactPort(input, port) : input.ports[port];
+}
+
 function localEndpoint(context: TargetContext, target: Extract<ResourceTargetSpec, { node: string }>): { host: Endpoint; provider: PlannedResource["provider"] } {
   const { input, name } = context;
   const provider = input.plan.nodes.find((node) => node.name === target.node);
   if (!provider) invalid(`Resource ${name} selects local target ${context.targetName}, but profile ${input.plan.profile} does not start ${target.node}.`);
-  const leased = input.ports[target.port];
+  const leased = knownPort(input, target.port) ?? input.ports[target.port];
   if (!Number.isInteger(leased) || leased < 1 || leased > 65535) invalid(`Resource ${name} target ${context.targetName} requires a leased ${target.port} port.`);
   const path = context.database !== undefined ? `/${context.database}` : target.path ?? "";
   return { host: { ...(target.scheme ? { scheme: target.scheme } : {}), host: "127.0.0.1", port: String(leased), path },
@@ -274,7 +290,53 @@ function plannedSecrets(input: ResourcePlanInput, name: string, context: TargetC
   return secrets;
 }
 
-function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> {
+function composeListener(input: ResourcePlanInput, node: string, port: string | number): string {
+  const service = input.config.services![node];
+  return `compose:${composeProjectName(service.projectName ?? "devfn", input.ownerId)}:${service.service}:${port}`;
+}
+
+/**
+ * A canonical name for the listener an endpoint reaches from the host or from
+ * one Compose consumer, so every spelling of one listener compares equal:
+ * host loopback in any spelling, or the container host gateway, is the
+ * loopback port; a Compose service name is the selected service it resolves
+ * to on that consumer's networks, so one name in unrelated projects or
+ * networks stays distinct; any other host is its canonical DNS name.
+ */
+function listenerOf(context: TargetContext, endpoint: Endpoint, consumer?: string): string {
+  const { input, gateway } = context;
+  const host = canonicalHost(endpoint.host);
+  if (consumer === undefined ? loopbackHost(host) : gateway && host === canonicalHost(gateway.host)) return `loopback:${endpoint.port}`;
+  const sibling = consumer === undefined ? undefined : input.plan.nodes.find((node) => node.kind === "service" &&
+    canonicalHost(input.config.services![node.name].service) === host && sharesComposeNetwork(input, node.name, consumer));
+  return sibling ? composeListener(input, sibling.name, endpoint.port) : `dns:${host}:${endpoint.port}`;
+}
+
+/**
+ * The listeners a selected target reaches, from the endpoints its consumers
+ * resolve rather than from how the target is written. A local provider is its
+ * port, its leased loopback port and, for a Compose provider, its service
+ * listener, which is also what any consumer reaches it through. A remote
+ * target is what its host-side consumers and each Compose consumer resolve.
+ */
+function targetListeners(context: TargetContext, host: Endpoint, containers: ReadonlyMap<string, ReturnType<typeof containerEndpoint>>, consumers: readonly string[]): string[] {
+  const { input, target } = context;
+  if ("node" in target) {
+    // Before reservation only a manifest-fixed port names a loopback listener.
+    const listeners = [`port:${target.port}`, ...(knownPort(input, target.port) !== undefined ? [`loopback:${host.port}`] : [])];
+    const provider = input.plan.nodes.find((node) => node.name === target.node);
+    return provider?.kind === "service" ? [...listeners, composeListener(input, target.node, input.config.services![target.node].ports![target.port])] : listeners;
+  }
+  const containerConsumers = consumers.filter((consumer) => containers.has(consumer));
+  // Host-side values also reach readiness and environment outputs.
+  const hostSide = containerConsumers.length < consumers.length || consumers.length === 0;
+  return [...(hostSide ? [listenerOf(context, host)] : []), ...containerConsumers.flatMap((consumer) => {
+    const located = containers.get(consumer)!;
+    return "unreachable" in located ? [] : [listenerOf(context, located.endpoint, consumer)];
+  })];
+}
+
+function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> & { listeners: string[] } {
   const { input, name, targetName, target } = context;
   const selection = selectedResourceTarget(input.config, input.plan.profile, name)!;
   const targetField = `resources.${name}.targets.${targetName}`;
@@ -289,9 +351,11 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
     }
   }
   const services: PlannedResource["services"] = {};
+  const containers = new Map<string, ReturnType<typeof containerEndpoint>>();
   for (const node of input.plan.nodes) {
     if (node.kind !== "service") continue;
     const located = containerEndpoint(context, host, node.name);
+    containers.set(node.name, located);
     if ("unreachable" in located) {
       if (consumers.includes(node.name)) invalid(located.unreachable);
       services[node.name] = Object.fromEntries(["HOST", "PORT", "ENDPOINT", ...(host.scheme ? ["URL"] : [])].map((suffix) => [`${prefix}${suffix}`, located]));
@@ -301,34 +365,8 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
     target: { name: targetName, location: local ? "local" : "remote", selectedBy: selection.selectedBy,
       field: selection.selectedBy === "profile" ? `profiles.${input.plan.profile}.resources.${name}` : `resources.${name}.defaultTarget` },
     ...(local ? { provider: local.provider } : { remote: { url: endpointUrl(host) } }),
-    values, services,
+    values, services, listeners: targetListeners(context, host, containers, consumers),
   };
-}
-
-/**
- * Every endpoint that reaches a resource's listener, independent of URL
- * scheme aliases and port names: a local provider is its port, its distinct
- * leased loopback port and, for a Compose service, its container port; a
- * remote target is its canonical host and port, where any loopback host is
- * the leased port it would reach.
- */
-function physicalTargets(input: ResourcePlanInput, resource: PlannedResource): string[] {
-  // Every browser resource names state in the same local browser profile.
-  if (resource.kind === "browser") return ["browser"];
-  if (resource.provider) {
-    const leased = input.ports[resource.provider.port];
-    // Preflight placeholders share one number; only a distinct lease names a listener.
-    const distinct = Object.values(input.ports).filter((port) => port === leased).length === 1;
-    const identities = [`port:${resource.provider.port}`, ...(distinct ? [`loopback:${leased}`] : [])];
-    const service = resource.provider.kind === "service" ? own(input.config.services, resource.provider.node) : undefined;
-    if (!service) return identities;
-    const project = composeProjectName(service.projectName ?? "devfn", input.ownerId);
-    return [...identities, `compose:${project}:${service.service}:${service.ports![resource.provider.port]}`];
-  }
-  if (!resource.remote) return [];
-  const url = new URL(resource.remote.url);
-  const port = url.port || DEFAULT_PORTS[url.protocol];
-  return [loopbackHost(url.hostname) ? `loopback:${port}` : `remote:${canonicalHost(url.hostname)}:${port}`];
 }
 
 function namespacesOverlap(kind: ResourceKind, left: NamespaceValues, right: NamespaceValues): boolean {
@@ -337,13 +375,16 @@ function namespacesOverlap(kind: ResourceKind, left: NamespaceValues, right: Nam
   return left.prefix.startsWith(right.prefix) || right.prefix.startsWith(left.prefix);
 }
 
-/** Two selected resources must not mix data in one namespace of the same physical target. */
-function rejectNamespaceCollisions(input: ResourcePlanInput, planned: Record<string, PlannedResource>, namespaces: ReadonlyMap<string, NamespaceValues>): void {
+/**
+ * Two selected resources must not mix data in one namespace of the same
+ * listener. Before reservation, a collision that depends on a port DevFn has
+ * not leased yet is unknown; the locked pass detects it and releases the lease.
+ */
+function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, namespaces: ReadonlyMap<string, NamespaceValues>, listeners: ReadonlyMap<string, readonly string[]>): void {
   const names = Object.keys(planned).filter((name) => namespaces.has(name));
-  const targets = new Map(names.map((name) => [name, physicalTargets(input, planned[name])]));
   for (const [index, left] of names.entries()) {
     for (const right of names.slice(index + 1)) {
-      if (planned[left].kind !== planned[right].kind || !targets.get(left)!.some((target) => targets.get(right)!.includes(target))) continue;
+      if (planned[left].kind !== planned[right].kind || !listeners.get(left)!.some((listener) => listeners.get(right)!.includes(listener))) continue;
       if (namespacesOverlap(planned[left].kind, namespaces.get(left)!, namespaces.get(right)!)) {
         invalid(`Resources ${left} and ${right} share namespace ${namespaces.get(left)!.prefix} on the same ${planned[left].kind} target; declare distinct namespace bases.`);
       }
@@ -370,6 +411,7 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
   const gateway = defaultGateway(input);
   const resources: Record<string, PlannedResource> = Object.create(null);
   const namespaces = new Map<string, NamespaceValues>();
+  const listeners = new Map<string, string[]>();
   for (const name of selectedResourceNames(context)) {
     const spec = own(config.resources, name)!;
     const prefix = `DEVFN_RESOURCE_${resourceToken(name)}_`;
@@ -380,7 +422,10 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
     if (spec.kind !== "browser" && !selection) invalid(`Profile ${input.plan.profile} selects no target for resource ${name} and it declares no defaultTarget.`);
     const targetContext: TargetContext | undefined = selection ? { input: context, name, spec, targetName: selection.name, target: own(spec.targets, selection.name)!,
       ...(namespace.database !== undefined ? { database: namespace.database } : {}), ...(gateway ? { gateway } : {}) } : undefined;
-    const target = targetContext ? planTarget(targetContext, prefix, consumers) : { values: {}, services: {} };
+    const { listeners: reached, ...target } = targetContext ? planTarget(targetContext, prefix, consumers) :
+      // Every browser resource names state in the same local browser profile.
+      { values: {}, services: {}, listeners: ["browser"] };
+    listeners.set(name, reached);
     for (const [key, value] of Object.entries(namespace.values)) {
       target.values[key] = { value, source: "namespace", field: key === `${prefix}DATABASE` && spec.namespace?.level === "schema" ? `${namespaceField}.database` : namespaceField };
     }
@@ -395,7 +440,7 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
     };
     if (spec.kind !== "service") namespaces.set(name, namespace);
   }
-  rejectNamespaceCollisions(context, resources, namespaces);
+  rejectNamespaceCollisions(resources, namespaces, listeners);
   return { profile: input.plan.profile, ownerToken, ...(gateway ? { containerHostGateway: gateway } : {}), resources };
 }
 
