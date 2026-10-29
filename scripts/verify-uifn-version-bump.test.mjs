@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, effectiveDeclaration, evaluatePackage, parseInputDeclarations, reportSincePublished, resolveTarget, shippedScriptNames, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, parseInputDeclarations, reportSincePublished, resolveTarget, shippedScriptNames, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -217,10 +217,11 @@ test("build scripts, files-listed assets and undeclared new dirs still need a bu
 
 test("an exclusion that files, a tsconfig include, a shipped file or a lifecycle script uses fails", (t) => {
   const repo = fixtureRepo(t);
-  withExclusions(repo, { "styles.css": "x", "src/internal": "x", data: "x", "scripts/verify-helper.mjs": "x", missing: "x" });
+  withExclusions(repo, { "styles.css": "x", "src/internal": "x", data: "x", "scripts/verify-helper.mjs": "x", missing: "x", tools: "x" });
   repo.write("uifn/core/src/internal/a.ts", "export const a = 1;\n");
   repo.write("uifn/core/src/index.ts", 'import contract from "../data/contract.json";\nexport const core = 1;\n');
-  repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', '"build": "node scripts/verify-helper.mjs && tsup"'));
+  repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', '"build": "node scripts/verify-helper.mjs && tsup"').replace('"files"', '"bin": { "core": "./tools/cli.mjs" },\n  "files"'));
+  repo.write("uifn/core/tools/cli.mjs", "\n");
   repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Build.\n\n## 1.0.0"));
   repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
   repo.commit("use excluded paths");
@@ -231,6 +232,7 @@ test("an exclusion that files, a tsconfig include, a shipped file or a lifecycle
   assert.match(output, /@uifn\/core excludes data, but uifn\/core\/src\/index\.ts refers to uifn\/core\/data\/contract\.json/);
   assert.match(output, /@uifn\/core excludes scripts\/verify-helper\.mjs, but package\.json scripts\.build refers to uifn\/core\/scripts\/verify-helper\.mjs/);
   assert.match(output, /@uifn\/core excludes missing, which does not exist in uifn\/core/);
+  assert.match(output, /@uifn\/core excludes tools, but package\.json bin refers to uifn\/core\/tools\/cli\.mjs/);
 });
 
 // Stable @uifn/theme bundles src/fixtures/data.ts, a path the fixtures rule would exclude, through src/index.ts.
@@ -306,12 +308,105 @@ test("a change cannot loosen its own declarations", (t) => {
   assert.match(output, /@uifn\/core: shipped code changed \(uifn\/catalog\/catalog\.json, data\/contract\.json\) but version is still 1\.0\.0/);
 });
 
-test("effectiveDeclaration unions inputs and keeps only exclusions declared at both ends unless asked", () => {
-  const earlier = { inputs: ["uifn/a"], references: [], excluded: ["data", "scripts/x.mjs"] };
-  const head = { inputs: ["uifn/b"], references: ["uifn/a"], excluded: ["data/sub", "scripts/x.mjs", "fresh"] };
-  assert.deepEqual(effectiveDeclaration(earlier, head), { inputs: ["uifn/a", "uifn/b"], references: ["uifn/a"], excluded: ["scripts/x.mjs", "data/sub"] });
-  assert.deepEqual(effectiveDeclaration(earlier, head, { honorNewExclusions: true }).excluded, head.excluded);
-  assert.deepEqual(effectiveDeclaration(undefined, head).excluded, []);
+test("a new path can be excluded in the same change, and a deleted one with its exclusion needs no bump", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/core/newdata/x.json", "{}\n");
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    document.packages["@uifn/core"].excluded = { newdata: "read only by repository verifiers" };
+    return JSON.stringify(document);
+  });
+  rmSync(path.join(repo.root, "uifn/core/generated/inventory.json"));
+  repo.commit("add excluded data and retire the inventory with its exclusion");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 0, output);
+});
+
+test("a package the change demotes is still judged at its merge-base path, and a removed package is not", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/package-graph.json", JSON.stringify({
+    stable: [{ name: "@uifn/core", path: "uifn/core" }],
+    experimental: [{ name: "@uifn/patterns", path: "uifn/patterns" }, { name: "@uifn/react", path: "uifn/react" }],
+  }));
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    delete document.packages["@uifn/react"];
+    return JSON.stringify(document);
+  });
+  repo.write("uifn/react/src/index.ts", "export const react = 2;\n");
+  repo.write("uifn/shared/src/index.ts", "export const shared = 2;\n");
+  repo.commit("demote react and change it");
+  const demoted = check(repo.root);
+  assert.equal(demoted.status, 1);
+  assert.match(demoted.output, /@uifn\/react: shipped code changed \(src\/index\.ts, uifn\/shared\/src\/index\.ts\) but version is still 1\.0\.0/);
+  repo.git("reset", "--quiet", "--hard", "base");
+  repo.write("uifn/package-graph.json", JSON.stringify({ stable: [{ name: "@uifn/core", path: "uifn/core" }], experimental: [{ name: "@uifn/patterns", path: "uifn/patterns" }] }));
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    delete document.packages["@uifn/react"];
+    return JSON.stringify(document);
+  });
+  rmSync(path.join(repo.root, "uifn/react"), { recursive: true });
+  repo.commit("remove react");
+  const removed = check(repo.root);
+  assert.equal(removed.status, 0, removed.output);
+});
+
+// Core ships fixtures/ through files and exports one fixture file as a runtime entry point.
+test("a file a manifest entry field names, and what it imports, counts as shipped", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) =>
+    text
+      .replace('"files": [', '"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./runtime": { "import": ["./fixtures/runtime.mjs"] } },\n  "files": [\n    "fixtures",')
+      .replace('"1.0.0"', '"1.0.1"'),
+  );
+  repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Runtime entry.\n\n## 1.0.0"));
+  repo.write("uifn/core/fixtures/runtime.mjs", 'export { helper } from "./helper.mjs";\n');
+  repo.write("uifn/core/fixtures/helper.mjs", "export const helper = 1;\n");
+  repo.write("uifn/core/fixtures/sample.json", "{}\n");
+  repo.commit("export a fixtures runtime");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/fixtures/sample.json", '{ "sample": 2 }\n');
+  repo.commit("unexported fixture");
+  const unexported = check(repo.root);
+  assert.equal(unexported.status, 0, unexported.output);
+  repo.write("uifn/core/fixtures/runtime.mjs", 'export { helper } from "./helper.mjs";\nexport const runtime = 2;\n');
+  repo.write("uifn/core/fixtures/helper.mjs", "export const helper = 2;\n");
+  repo.commit("exported runtime");
+  const exported = check(repo.root);
+  assert.equal(exported.status, 1);
+  assert.match(exported.output, /@uifn\/core: shipped code changed \(fixtures\/helper\.mjs, fixtures\/runtime\.mjs\) but version is still 1\.0\.1/);
+});
+
+// Core ships docs/ through files, like @uifn/registry, and src imports one table from it.
+test("a docs asset needs no bump unless shipped code refers to it", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "docs",'));
+  repo.write("uifn/core/docs/diagram.svg", "<svg/>\n");
+  repo.write("uifn/core/docs/table.json", "{}\n");
+  repo.write("uifn/core/src/index.ts", 'import table from "../docs/table.json";\nexport const core = 1;\n');
+  repo.commit("docs assets");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/docs/diagram.svg", "<svg><g/></svg>\n");
+  repo.commit("diagram only");
+  const diagram = check(repo.root);
+  assert.equal(diagram.status, 0, diagram.output);
+  repo.write("uifn/core/docs/table.json", '{ "rows": 2 }\n');
+  repo.commit("imported table");
+  const table = check(repo.root);
+  assert.equal(table.status, 1);
+  assert.match(table.output, /@uifn\/core: shipped code changed \(docs\/table\.json\) but version is still 1\.0\.0/);
+});
+
+test("entryReferences reads every condition, array fallback and pattern of the entry fields", () => {
+  const manifest = {
+    main: "./dist/index.cjs",
+    exports: { ".": { types: "./dist/index.d.ts", import: ["./dist/index.js"] }, "./themes/*": "./themes/*.css" },
+    bin: { cli: "bin/cli.mjs" },
+    browser: { "./dist/node.js": false },
+    files: ["fixtures"],
+  };
+  assert.deepEqual(entryReferences(manifest, "uifn/core").map(({ target }) => target), ["uifn/core/dist/index.d.ts", "uifn/core/dist/index.js", "uifn/core/themes", "uifn/core/dist/index.cjs", "uifn/core/bin/cli.mjs"]);
 });
 
 test("tsconfigRoots resolves the static prefix of include and files entries", () => {
@@ -382,7 +477,7 @@ test("parseInputDeclarations rejects unknown packages, missing reasons and non-n
 test("a version with leading zeros is not valid semver", () => {
   const base = { name: "@uifn/core", version: "1.0.0" };
   for (const version of ["01.0.1", "1.0.01", "1.0.1-01"]) {
-    const result = evaluatePackage({ name: "@uifn/core", packagePath: "uifn/core", baseManifest: base, headManifest: { ...base, version }, changedFiles: [], headChangelog: `## ${version}\n- x\n` });
+    const result = evaluatePackage({ name: "@uifn/core", packagePath: "uifn/core", baseManifest: base, headManifest: { ...base, version }, shippedFiles: [], headChangelog: `## ${version}\n- x\n` });
     assert.match(result.errors.join(""), /is not valid semver/, version);
   }
   assert.throws(() => compareSemver("00.0.2", "0.0.1"), /Invalid semver/);
@@ -453,7 +548,7 @@ test("classifyPath separates tarball inputs from tests, fixtures, stories and do
   for (const file of ["src/index.ts", "lib/Button.svelte", "styles.css", "tsup.config.ts", "tsconfig.json", "migrations/removed.json", "src/fixture.ts", "src/preset/fixtures.ts", ".npmignore"]) {
     assert.equal(classifyPath(file), "shipped", file);
   }
-  for (const file of ["src/__tests__/a.ts", "tests/a.ts", "src/test/setup.ts", "src/a.test.tsx", "lib/a.spec.ts", "src/a.stories.tsx", "fixtures/a.json", "src/__tests__/fixtures/a.ts", "README.md", "docs/hooks.md", "CHANGELOG.md", "vitest.ssr.config.ts", "playwright.config.ts", "browser/main.ts", "type-tests/a.ts", "stories/a.tsx", "workbenches/react/harness.tsx"]) {
+  for (const file of ["src/__tests__/a.ts", "tests/a.ts", "src/test/setup.ts", "src/a.test.tsx", "lib/a.spec.ts", "src/a.stories.tsx", "fixtures/a.json", "src/__tests__/fixtures/a.ts", "README.md", "docs/hooks.md", "docs/diagram.svg", "CHANGELOG.md", "vitest.ssr.config.ts", "playwright.config.ts", "browser/main.ts", "type-tests/a.ts", "stories/a.tsx", "workbenches/react/harness.tsx"]) {
     assert.equal(classifyPath(file), "excluded", file);
   }
   assert.equal(classifyPath("package.json"), "manifest");

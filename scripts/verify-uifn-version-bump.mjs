@@ -13,11 +13,11 @@ const RELEASE_TARGETS_PATH = "release-packages.json";
 
 // Shipped code is everything that feeds the tarball (`dist` is built from the
 // package sources and configs) minus tests, fixtures, stories, harnesses and
-// Markdown docs. Unknown paths count as shipped so new build inputs fail closed;
+// docs (Markdown anywhere, and the root docs/ directory). Unknown paths count as shipped so new build inputs fail closed;
 // data and helpers that never reach the tarball are declared "excluded", and the
 // guard rejects an exclusion that `files`, a tsconfig include or a shipped file uses.
 const NON_SHIPPED_SEGMENTS = new Set(["__tests__", "__mocks__", "__fixtures__", "__snapshots__", "fixtures", "test", "tests"]);
-const NON_SHIPPED_ROOT_DIRS = new Set(["browser", "stories", "type-tests", "workbenches"]);
+const NON_SHIPPED_ROOT_DIRS = new Set(["browser", "docs", "stories", "type-tests", "workbenches"]);
 const NON_SHIPPED_FILE = /(?:\.(?:test|spec|test-d|stories)\.[^/]+|\.mdx?|\.snap)$/i;
 const NON_SHIPPED_ROOT_FILE = /^(?:vitest|playwright)(?:\.[^/]+)?\.config\.[^/]+$/;
 // A root Vite config is a build input only when the package builds with Vite.
@@ -35,6 +35,8 @@ const IMPLICIT_CONFIG = /^(?:(?:tsup|vite|rollup|svelte|babel|postcss|tailwind)(
 const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".json", ".css"];
 const NPM_RUN = /\bnpm\s+(?:run(?:-script)?|rum|urn)\s+(?:-{1,2}[\w-]+(?:=\S+)?\s+)*([^\s&|;<>()'"]+)/g;
 const NPM_SHORTHAND = /\bnpm\s+(test|tst|t|start|stop|restart)\b/g;
+// Manifest fields that name the files consumers load.
+const ENTRY_FIELDS = ["exports", "imports", "main", "module", "types", "typings", "bin", "browser", "svelte"];
 
 // Strict semver, as in scripts/resolve-release-tag.mjs: no leading zeros in numeric parts.
 const NUMBER = "(?:0|[1-9][0-9]*)";
@@ -51,6 +53,12 @@ const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
+
+const staticPrefix = (pattern) => {
+  const segments = pattern.replace(/^\.\//, "").split("/");
+  const glob = segments.findIndex((segment) => /[*?[{]/.test(segment));
+  return (glob < 0 ? segments : segments.slice(0, glob)).join("/");
+};
 
 /** Classifies a path relative to the package root as "manifest", "shipped" or "excluded". */
 export function classifyPath(relative, { buildUsesVite = true } = {}) {
@@ -194,16 +202,17 @@ export function pathKind(file, { packagePath, inputs = [], excluded = [], option
   return file === input || classifyPath(file.slice(input.length + 1)) !== "excluded" ? "shipped" : "excluded";
 }
 
-/** Pure per-package decision shared by the PR gate and the since-published report. */
-export function evaluatePackage({ name, packagePath, baseManifest, headManifest, changedFiles, headChangelog, inputs = [], excluded = [], promoted = new Set() }) {
+/**
+ * Pure per-package decision shared by the PR gate and the since-published report. `shippedFiles` are
+ * the changed paths that ship at either end; `stable` is false for a package the head demoted or removed.
+ */
+export function evaluatePackage({ name, packagePath, baseManifest, headManifest, shippedFiles: shipped, headChangelog, stable = true }) {
   const prefix = `${packagePath}/`;
-  const options = classifyOptions(headManifest ?? baseManifest);
-  // `promoted` holds test, fixture or docs paths that a shipped file or lifecycle script uses.
-  const isShipped = (file) => promoted.has(file) || pathKind(file, { packagePath, inputs, excluded, options }) === "shipped";
-  const shippedFiles = changedFiles.filter(isShipped).sort();
+  const shippedFiles = [...shipped].sort();
   const result = { name, packagePath, shippedFiles, manifestChanged: false, baseVersion: baseManifest?.version, headVersion: headManifest?.version, bumped: false, errors: [] };
   if (!headManifest) {
-    result.errors.push(`${name}: ${packagePath}/package.json is missing`);
+    // A package removed from the graph and the tree has nothing left to publish.
+    if (stable) result.errors.push(`${name}: ${packagePath}/package.json is missing`);
     return result;
   }
   if (!baseManifest) return result;
@@ -225,7 +234,7 @@ export function evaluatePackage({ name, packagePath, baseManifest, headManifest,
   } else if (changed) {
     const reasons = [...shippedFiles.map((file) => (file.startsWith(prefix) ? file.slice(prefix.length) : file)), ...(result.manifestChanged ? ["package.json (published fields)"] : [])];
     const listed = reasons.slice(0, 5).join(", ") + (reasons.length > 5 ? `, and ${reasons.length - 5} more` : "");
-    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md, or, for in-package paths that never reach the tarball, first land an "excluded" declaration in ${INPUTS_PATH} (the gate honors exclusions already on the base branch)`);
+    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md. For an in-package path that never reaches the tarball, declare it under "excluded" in ${INPUTS_PATH}: a new path can be excluded in the same change, but a path that already exists counts until its exclusion is on the base branch`);
   }
   return result;
 }
@@ -259,6 +268,17 @@ export function scriptReferences(scripts, packagePath) {
   return found;
 }
 
+/** Paths that manifest entry fields name, every condition included, resolved from the package root; a `*` pattern names its static directory. */
+export function entryReferences(manifest, packagePath) {
+  const found = [];
+  const visit = (field, value) => {
+    if (typeof value === "string") found.push({ from: `package.json ${field}`, target: path.posix.join(packagePath, staticPrefix(value)).replace(/\/+$/, "") });
+    else if (value !== null && typeof value === "object") for (const nested of Object.values(value)) visit(field, nested);
+  };
+  for (const field of ENTRY_FIELDS) visit(field, manifest?.[field]);
+  return found;
+}
+
 /** Files a reference names: the path itself, with an implied extension or index file, or a `.js` specifier's TypeScript source. */
 export function resolveTarget(target, files) {
   const candidates = [target, ...RESOLVE_EXTENSIONS.flatMap((extension) => [`${target}${extension}`, `${target}/index${extension}`])];
@@ -269,7 +289,8 @@ export function resolveTarget(target, files) {
 
 /**
  * Every package or declared-input file that can reach the tarball: the default-shipped files plus,
- * transitively, test, fixture or docs paths that a shipped file or lifecycle script refers to. A
+ * transitively, test, fixture or docs paths that a shipped file, lifecycle script or manifest entry
+ * field (exports, main, bin and the like) refers to. A
  * directory reference promotes its files only when the directory itself is a test, fixture or docs
  * path, so `path.join(root, "src")` does not pull in src/__tests__. Declared exclusions are not
  * followed; findConsumedExclusions rejects a reference into one instead.
@@ -287,7 +308,7 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
     const input = inputs.find((entry) => isWithin(file, entry));
     return { file, base: file === input ? path.posix.dirname(file) : input, buildFile: !file.startsWith("uifn/") };
   };
-  let targets = scriptReferences(manifest?.scripts, packagePath).filter(({ pathLike }) => pathLike).map(({ target }) => target);
+  let targets = [...scriptReferences(manifest?.scripts, packagePath).filter(({ pathLike }) => pathLike), ...entryReferences(manifest, packagePath)].map(({ target }) => target);
   let wave = files.filter((file) => pathKind(file, scope) === "shipped");
   while (wave.length > 0 || targets.length > 0) {
     const blobs = read(wave.filter((file) => SCANNED_FILE.test(file)));
@@ -311,12 +332,6 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
   return { promoted, scanned };
 }
 
-const staticPrefix = (pattern) => {
-  const segments = pattern.replace(/^\.\//, "").split("/");
-  const glob = segments.findIndex((segment) => /[*?[{]/.test(segment));
-  return (glob < 0 ? segments : segments.slice(0, glob)).join("/");
-};
-
 /** Paths a tsconfig compiles: the static prefix of each `include` and `files` entry, from its directory. */
 export function tsconfigRoots(file, text) {
   const roots = [];
@@ -329,13 +344,14 @@ export function tsconfigRoots(file, text) {
 function collectReferences({ packagePath, manifest, files }) {
   return [
     ...scriptReferences(manifest?.scripts, packagePath),
+    ...entryReferences(manifest, packagePath),
     ...files.flatMap(({ file, text, base, buildFile }) => fileReferences(file, text, { base, buildFile }).map((target) => ({ from: file, target }))),
   ];
 }
 
 /**
  * Fails closed on build inputs outside a stable package: every path its shipped files, declared
- * inputs or shipped scripts refer to outside its root must be a declared input or reference.
+ * inputs, shipped scripts or entry fields refer to outside its root must be a declared input or reference.
  */
 export function findUndeclaredReferences({ name, packagePath, manifest, files, declaration }) {
   const declared = [...declaration.inputs, ...declaration.references];
@@ -352,7 +368,7 @@ export function findUndeclaredReferences({ name, packagePath, manifest, files, d
 /**
  * An "excluded" path must not reach the tarball: it may not overlap the manifest `files` list or a
  * tsconfig include, cover a build config that tools load implicitly, and no shipped file, declared
- * input or shipped script may refer into it.
+ * input, shipped script or manifest entry field may refer into it.
  */
 export function findConsumedExclusions({ name, packagePath, manifest, files, excluded, packageFiles = [] }) {
   const listed = Array.isArray(manifest?.files) ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : [];
@@ -405,39 +421,40 @@ function readJsonAt(cwd, commit, file) {
   return text === null ? null : JSON.parse(text);
 }
 
-function loadPackages(cwd, commit) {
-  const graph = readJsonAt(cwd, commit, GRAPH_PATH);
-  if (!Array.isArray(graph?.stable)) throw new Error(`${GRAPH_PATH} at ${commit} has no stable package list`);
-  const stable = new Map(graph.stable.map(({ name, path: packagePath }) => [name, packagePath]));
-  const { declarations, errors } = parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable);
-  return { stable, packages: [...stable].map(([name, packagePath]) => ({ name, packagePath, ...declarations.get(name) })), errors };
-}
-
-/** Declarations at an older commit, read leniently: a missing or malformed file declares nothing. */
-function loadEarlierDeclarations(cwd, commit, stable) {
-  try {
-    return parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable).declarations;
-  } catch {
-    return new Map();
-  }
-}
-
-/** Paths covered by an entry in both lists. */
-function sharedPaths(left, right) {
-  const covered = (entries, others) => entries.filter((entry) => others.some((other) => isWithin(entry, other)));
-  return [...new Set([...covered(left, right), ...covered(right, left)])];
-}
-
 /**
- * The declarations a range is judged by, so a change cannot loosen its own check: inputs declared at
- * either end count, and in the PR gate only exclusions already declared at the merge base are honored.
- * The since-published report honors the head's exclusions, because published tags predate the file.
+ * Stable packages at `commit` with their declarations, and where every graph package lives. The head
+ * must have a stable list; an earlier commit is read leniently, so a missing or malformed graph or
+ * declarations file there declares nothing.
  */
-export function effectiveDeclaration(earlier, head, { honorNewExclusions = false } = {}) {
+function loadPackages(cwd, commit, { required = true } = {}) {
+  let graph = null;
+  try {
+    graph = readJsonAt(cwd, commit, GRAPH_PATH);
+  } catch (error) {
+    if (required) throw error;
+  }
+  if (!Array.isArray(graph?.stable)) {
+    if (required) throw new Error(`${GRAPH_PATH} at ${commit} has no stable package list`);
+    return { packages: new Map(), locations: new Map(), errors: [] };
+  }
+  const entries = (list) =>
+    (Array.isArray(list) ? list : []).flatMap((entry) => {
+      if (typeof entry?.name === "string" && typeof entry?.path === "string") return [[entry.name, entry.path]];
+      if (required) throw new Error(`${GRAPH_PATH} at ${commit} has an entry without a name and path: ${JSON.stringify(entry)}`);
+      return [];
+    });
+  const stable = new Map(entries(graph.stable));
+  let parsed;
+  try {
+    parsed = parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable);
+  } catch (error) {
+    if (required) throw error;
+    parsed = parseInputDeclarations(null, stable);
+  }
   return {
-    ...head,
-    inputs: [...new Set([...(earlier?.inputs ?? []), ...head.inputs])],
-    excluded: honorNewExclusions ? head.excluded : sharedPaths(earlier?.excluded ?? [], head.excluded),
+    packages: new Map([...stable].map(([name, packagePath]) => [name, { name, packagePath, ...parsed.declarations.get(name) }])),
+    locations: new Map([...entries(graph.experimental), ...stable]),
+    errors: required ? parsed.errors : [],
   };
 }
 
@@ -461,16 +478,28 @@ function readBlobs(cwd, commit, files) {
   return blobs;
 }
 
-/** Reads one package at `commit` and computes the files that can reach its tarball. */
+/** One end of a range: a package as declared at `commit`, and which paths ship from it there. */
 function packageState(cwd, commit, pkg) {
   const manifest = readJsonAt(cwd, commit, `${pkg.packagePath}/package.json`);
   const packageFiles = listFiles(cwd, commit, [pkg.packagePath]);
   const files = [...packageFiles, ...(pkg.inputs.length > 0 ? listFiles(cwd, commit, pkg.inputs) : [])];
-  return { manifest, packageFiles, ...shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths) }) };
+  const { promoted, scanned } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths) });
+  const present = new Set(files);
+  const scope = { packagePath: pkg.packagePath, inputs: pkg.inputs, excluded: pkg.excluded, options: classifyOptions(manifest) };
+  return { manifest, packageFiles, scanned, ships: (file) => present.has(file) && (promoted.has(file) || pathKind(file, scope) === "shipped") };
 }
 
-/** Runs the out-of-root and exclusion guard for every stable package at `commit`, with the head's own declarations. */
-function guardReferences(cwd, commit, packages) {
+function stateCache(cwd) {
+  const cache = new Map();
+  return (commit, pkg) => {
+    const key = `${commit}\0${JSON.stringify(pkg)}`;
+    if (!cache.has(key)) cache.set(key, packageState(cwd, commit, pkg));
+    return cache.get(key);
+  };
+}
+
+/** Runs the out-of-root and exclusion guard for every stable package at `commit`, with that commit's own declarations. */
+function guardReferences(cwd, commit, packages, stateAt) {
   const errors = [];
   for (const pkg of packages) {
     const { name, packagePath, inputs, references, excluded } = pkg;
@@ -480,7 +509,7 @@ function guardReferences(cwd, commit, packages) {
     for (const entry of excluded) {
       if (listFiles(cwd, commit, [`${packagePath}/${entry}`]).length === 0) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, which does not exist in ${packagePath}`);
     }
-    const { manifest, packageFiles, scanned: files } = packageState(cwd, commit, pkg);
+    const { manifest, packageFiles, scanned: files } = stateAt(commit, pkg);
     errors.push(...findUndeclaredReferences({ name, packagePath, manifest, files, declaration: pkg }));
     errors.push(...findConsumedExclusions({ name, packagePath, manifest, files, excluded, packageFiles }));
   }
@@ -491,29 +520,33 @@ function changedFiles(cwd, from, to, pathspecs) {
   return git(cwd, ["diff", "--name-only", "-z", "--no-renames", from, to, "--", ...pathspecs]).split("\0").filter(Boolean);
 }
 
-/** Judges each package by its effective declarations; a path promoted at either end counts. */
-function evaluateRange(cwd, from, to, packages) {
-  const files = changedFiles(cwd, from, to, [...new Set(packages.flatMap(({ packagePath, inputs }) => [packagePath, ...inputs]))]);
-  return packages.map((pkg) => {
-    const { name, packagePath, inputs, excluded } = pkg;
-    const promoted = new Set([...packageState(cwd, from, pkg).promoted, ...packageState(cwd, to, pkg).promoted]);
+/**
+ * Judges each package across `from..to`. `base` and `head` are the package as declared at each end
+ * (null where it is not stable); `basePath` and `headPath` locate its manifest. A changed path counts
+ * when it ships at an end where it exists, by that end's own path, declarations and manifest: a path
+ * present at the base keeps the base's classification, a new path takes the head's (which the guard
+ * checks), and a deleted one is judged only at the base.
+ */
+function evaluateRange(cwd, from, to, entries, stateAt) {
+  const roots = entries.flatMap(({ base, head }) => [base, head].filter(Boolean).flatMap(({ packagePath, inputs }) => [packagePath, ...inputs]));
+  const files = changedFiles(cwd, from, to, [...new Set(roots)]);
+  return entries.map(({ name, base, head, basePath, headPath }) => {
+    const ends = [base && stateAt(from, base), head && stateAt(to, head)].filter(Boolean);
     return evaluatePackage({
       name,
-      packagePath,
-      baseManifest: readJsonAt(cwd, from, `${packagePath}/package.json`),
-      headManifest: readJsonAt(cwd, to, `${packagePath}/package.json`),
-      changedFiles: files,
-      headChangelog: readAt(cwd, to, `${packagePath}/CHANGELOG.md`),
-      inputs,
-      excluded,
-      promoted,
+      packagePath: headPath,
+      baseManifest: readJsonAt(cwd, from, `${basePath}/package.json`),
+      headManifest: readJsonAt(cwd, to, `${headPath}/package.json`),
+      shippedFiles: files.filter((file) => ends.some((state) => state.ships(file))),
+      headChangelog: readAt(cwd, to, `${headPath}/CHANGELOG.md`),
+      stable: Boolean(head),
     });
   });
 }
 
 /**
- * PR gate: every stable package whose shipped code, declared inputs or published manifest changed
- * since the merge base must bump and log it, and no package may use an undeclared out-of-root input.
+ * PR gate: every package stable at the merge base or the head whose shipped code, declared inputs or
+ * published manifest changed must bump and log it, and no package may use an undeclared out-of-root input.
  */
 export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" }) {
   const headCommit = resolveCommit(cwd, head);
@@ -524,10 +557,19 @@ export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" })
   } catch {
     throw new Error(`${base} and ${head} share no history; fetch full history before running this check`);
   }
-  const { stable, packages, errors: declarationErrors } = loadPackages(cwd, headCommit);
-  const earlier = loadEarlierDeclarations(cwd, mergeBase, stable);
-  const results = evaluateRange(cwd, mergeBase, headCommit, packages.map((pkg) => effectiveDeclaration(earlier.get(pkg.name), pkg)));
-  const errors = [...declarationErrors, ...guardReferences(cwd, headCommit, packages), ...results.flatMap((result) => result.errors)];
+  const atHead = loadPackages(cwd, headCommit);
+  const atBase = loadPackages(cwd, mergeBase, { required: false });
+  // A package the head demotes, moves or drops is still judged at its merge-base path.
+  const names = [...new Set([...atBase.packages.keys(), ...atHead.packages.keys()])];
+  const entries = names.map((name) => {
+    const basePackage = atBase.packages.get(name) ?? null;
+    const headPackage = atHead.packages.get(name) ?? null;
+    const basePath = atBase.locations.get(name) ?? headPackage?.packagePath ?? atHead.locations.get(name);
+    return { name, base: basePackage, head: headPackage, basePath, headPath: atHead.locations.get(name) ?? basePath };
+  });
+  const stateAt = stateCache(cwd);
+  const results = evaluateRange(cwd, mergeBase, headCommit, entries, stateAt);
+  const errors = [...atHead.errors, ...guardReferences(cwd, headCommit, [...atHead.packages.values()], stateAt), ...results.flatMap((result) => result.errors)];
   return { mergeBase, head: headCommit, results, errors };
 }
 
@@ -535,8 +577,8 @@ export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" })
 export function reportSincePublished({ cwd = process.cwd(), head = "HEAD" }) {
   const headCommit = resolveCommit(cwd, head);
   const targets = readJsonAt(cwd, headCommit, RELEASE_TARGETS_PATH) ?? [];
-  const { stable, packages } = loadPackages(cwd, headCommit);
-  return packages.map((pkg) => {
+  const stateAt = stateCache(cwd);
+  return [...loadPackages(cwd, headCommit).packages.values()].map((pkg) => {
     const slug = targets.find((target) => target.name === pkg.name)?.slug ?? `uifn-${path.posix.basename(pkg.packagePath)}`;
     const tags = git(cwd, ["tag", "--list", `${slug}-v*`])
       .split("\n")
@@ -545,8 +587,10 @@ export function reportSincePublished({ cwd = process.cwd(), head = "HEAD" }) {
       .sort((a, b) => compareSemver(b.version, a.version));
     if (tags.length === 0) return { name: pkg.name, packagePath: pkg.packagePath, tag: null };
     const tagCommit = resolveCommit(cwd, tags[0].tag);
-    const declaration = effectiveDeclaration(loadEarlierDeclarations(cwd, tagCommit, stable).get(pkg.name), pkg, { honorNewExclusions: true });
-    const [result] = evaluateRange(cwd, tagCommit, headCommit, [declaration]);
+    // Published tags predate the declarations file, so the tag end uses the head's path and declarations, plus any inputs the tag declared.
+    const earlier = loadPackages(cwd, tagCommit, { required: false }).packages.get(pkg.name);
+    const tagPackage = { ...pkg, inputs: [...new Set([...(earlier?.inputs ?? []), ...pkg.inputs])] };
+    const [result] = evaluateRange(cwd, tagCommit, headCommit, [{ name: pkg.name, base: tagPackage, head: pkg, basePath: pkg.packagePath, headPath: pkg.packagePath }], stateAt);
     return { ...result, tag: tags[0].tag };
   });
 }
