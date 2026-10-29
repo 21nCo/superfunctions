@@ -21,6 +21,7 @@ Solutions for the things you'll actually do in a real app. Each page is a small,
 
 ## Operations
 
+- [Self-hosting on SQLite and D1](./self-hosting-sqlite-d1) — password sign-in, sessions and API keys on better-sqlite3 or Cloudflare D1.
 - [Multi-region deployment](./multi-region-deployment) — two regions, lookup store, runtime overlays.
 - [Canonical-gateway multi-region](./canonical-gateway-multi-region) — one public AuthFn authority with signed cell forwarding.
 - [Placement-bound auth context](./placement-bound-auth-context) — trusted downstream routing context for Nucleum/DataFn.
