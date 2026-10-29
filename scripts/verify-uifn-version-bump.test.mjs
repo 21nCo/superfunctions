@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, globToRegExp, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedScriptNames, tsconfigEntries } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedScriptNames, tsconfigEntries } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -601,6 +601,37 @@ test("a script an install hook reaches needs a bump whatever its name, while pre
   const install = check(repo.root);
   assert.equal(install.status, 1);
   assert.match(install.output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
+});
+
+test("a script reached through any runner spelling needs a bump", async (t) => {
+  for (const [hook, command] of [["postinstall", "npm --silent run setup"], ["postinstall", "pnpm run setup"], ["postinstall", "yarn setup"], ["prepack", "npm --silent run setup"]]) {
+    await t.test(`${hook}: ${command}`, (t) => {
+      const repo = fixtureRepo(t);
+      repo.edit("uifn/core/package.json", (text) => text.replace('"test": "vitest run"', `"test": "vitest run",\n    "${hook}": "${command}",\n    "setup": "node setup.mjs"`));
+      repo.commit("runner");
+      repo.git("branch", "-f", "base");
+      repo.edit("uifn/core/package.json", (text) => text.replace("node setup.mjs", "node setup.mjs --strict"));
+      repo.commit("setup only");
+      const result = check(repo.root);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
+    });
+  }
+});
+
+test("invokedScripts follows every command word that names a script, whatever the runner", () => {
+  const scripts = { setup: "x", build: "x", "build:js": "x", "build:css": "x", test: "x", start: "x", stop: "x", lint: "x" };
+  const invoked = (command) => [...invokedScripts(command, scripts)].sort();
+  assert.deepEqual(invoked("npm --silent run setup"), ["setup"]);
+  assert.deepEqual(invoked("npm -s run setup"), ["setup"]);
+  assert.deepEqual(invoked("npm --prefix . run-script setup"), ["setup"]);
+  assert.deepEqual(invoked("pnpm run setup && yarn build"), ["build", "setup"]);
+  assert.deepEqual(invoked("bun run setup; FOO=1 npm run --silent build"), ["build", "setup"]);
+  assert.deepEqual(invoked("npm t || npm --silent restart"), ["start", "stop", "test"]);
+  assert.deepEqual(invoked("run-s 'build:*'"), ["build:css", "build:js"]);
+  assert.deepEqual(invoked('concurrently "npm:build:js" "npm:lint"'), ["build:js", "lint"]);
+  assert.deepEqual(invoked("tsup src/index.ts --format esm"), []);
+  assert.deepEqual(invoked("node t.mjs"), []);
 });
 
 test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scripts, but not validation scripts", () => {

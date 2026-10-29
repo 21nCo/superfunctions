@@ -36,8 +36,8 @@ const VALIDATION_SCRIPT_PART = new Set(["test", "typecheck", "lint", "check", "v
 const IMPLICIT_CONFIG = /^(?:(?:tsup|vite|rollup|svelte|babel|postcss|tailwind)(?:\.[^/]+)?\.config\.[^/]+|tsconfig[^/]*\.json|\.npmignore|\.babelrc(?:\.[^/]+)?)$/;
 // Extensions a bundler or tsc tries for an extensionless specifier or a directory index.
 const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".json", ".css"];
-const NPM_RUN = /\bnpm\s+(?:run(?:-script)?|rum|urn)\s+(?:-{1,2}[\w-]+(?:=\S+)?\s+)*([^\s&|;<>()'"]+)/g;
-const NPM_SHORTHAND = /\bnpm\s+(test|tst|t|start|stop|restart)\b/g;
+// npm's own aliases for scripts it runs without `run`; `npm restart` runs stop and start when no restart script exists.
+const NPM_ALIASES = { t: ["test"], tst: ["test"], restart: ["restart", "stop", "start"] };
 // Manifest fields that name the files consumers load.
 const ENTRY_FIELDS = ["exports", "imports", "main", "module", "types", "typings", "bin", "browser", "svelte"];
 
@@ -87,8 +87,33 @@ export function classifyPath(relative, { buildUsesVite = true } = {}) {
 const isValidationScript = (name) => name.split(":").some((part) => VALIDATION_SCRIPT_PART.has(part));
 
 /**
- * Shipped lifecycle scripts, their pre/post hooks, and the scripts they reach through `npm run`: every
- * script an install script reaches, and the non-validation scripts a pack-time script reaches.
+ * The manifest scripts one script can invoke. The traversal fails closed rather than parsing each runner's
+ * syntax: every word of every command (split on && || ; | & and newlines) that names a script in this
+ * manifest is followed, so `npm --silent run x`, `pnpm run x`, `yarn x`, `bun run x` and `run-s x` all
+ * reach x. Concurrently's `npm:x` prefix is dropped, a `*` word (npm-run-all) matches script names, and
+ * npm's own aliases apply in commands that run npm.
+ */
+export function invokedScripts(command, scripts) {
+  const names = Object.keys(scripts);
+  const found = new Set();
+  for (const part of command.split(/&&|\|\||[;|&\n]/)) {
+    const words = part.split(/[\s()<>]+/).map((word) => word.replace(/^['"]+|['"]+$/g, "").replace(/^(?:npm|pnpm|yarn|bun):/, "")).filter(Boolean);
+    const npm = words.includes("npm");
+    for (const word of words) {
+      if (Object.hasOwn(scripts, word)) found.add(word);
+      if (npm && Object.hasOwn(NPM_ALIASES, word)) for (const alias of NPM_ALIASES[word]) if (Object.hasOwn(scripts, alias)) found.add(alias);
+      if (word.includes("*")) {
+        const pattern = new RegExp(`^${word.split("*").map(escapeRegExp).join(".*")}$`);
+        for (const name of names) if (pattern.test(name)) found.add(name);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Shipped lifecycle scripts, their pre/post hooks, and the scripts they invoke: every script an install
+ * script reaches, and the non-validation scripts a pack-time script reaches.
  */
 export function shippedScriptNames(scripts = {}) {
   const names = new Set();
@@ -101,8 +126,7 @@ export function shippedScriptNames(scripts = {}) {
     visited.add(key);
     names.add(name);
     pending.push([`pre${name}`, install], [`post${name}`, install]);
-    for (const [, target] of scripts[name].matchAll(NPM_RUN)) pending.push([target, install]);
-    for (const [, alias] of scripts[name].matchAll(NPM_SHORTHAND)) pending.push([alias === "t" || alias === "tst" ? "test" : alias, install]);
+    for (const target of invokedScripts(scripts[name], scripts)) pending.push([target, install]);
   }
   return names;
 }
