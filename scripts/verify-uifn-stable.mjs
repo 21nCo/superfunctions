@@ -6,6 +6,21 @@ import { readFileSync } from 'node:fs';
 
 const repoRoot = process.cwd();
 const graph = JSON.parse(readFileSync('uifn/package-graph.json', 'utf8'));
+// Vitest prints one "Tests  <n> passed (<n>)" summary per run; Solid runs two (DOM and SSR).
+const adapterVitestRuns = { '@uifn/react': 1, '@uifn/svelte': 1, '@uifn/solid': 2 };
+const adapters = Object.keys(adapterVitestRuns);
+const adapterTestCommand = (name) => ['npm', '--workspace', name, 'run', 'test'].join(' ');
+const adapterByTestCommand = new Map(adapters.map((name) => [adapterTestCommand(name), name]));
+
+function vitestTestCounts(stdout) {
+  const plain = stdout.replace(/\u001b\[[0-9;]*m/g, '');
+  return plain
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^Tests\s+\d/.test(line))
+    .map((line) => line.replace(/^Tests\s+/, ''));
+}
+
 const checks = [
   [process.execPath, ['scripts/verify-uifn-package-graph.mjs', '--stable-only']],
   [process.execPath, ['scripts/verify-uifn-clean.mjs']],
@@ -19,9 +34,13 @@ const checks = [
   ['npm', ['--workspace', '@uifn/dom', 'run', 'build']],
   [process.execPath, ['--test', 'scripts/verify-uifn-dom-platform.test.mjs']],
   [process.execPath, ['scripts/verify-uifn-dom-platform.mjs']],
-  ['npm', ['--workspace', '@uifn/react', 'run', 'typecheck']],
-  ['npm', ['--workspace', '@uifn/svelte', 'run', 'typecheck']],
-  ['npm', ['--workspace', '@uifn/solid', 'run', 'typecheck']],
+  ['npm', ['--workspace', '@uifn/adapter-kit', 'run', 'build']],
+  ...adapters.flatMap((name) => [
+    ['npm', ['--workspace', name, 'run', 'typecheck']],
+    ['npm', ['--workspace', name, 'run', 'test']],
+    // test:browser mounts the built adapters in browser/adapters scenarios.
+    ['npm', ['--workspace', name, 'run', 'build']],
+  ]),
   ['npm', ['--workspace', '@uifn/dom', 'run', 'test:browser']],
   [process.execPath, ['--test', 'scripts/verify-uifn-runtime-architecture.test.mjs']],
   [process.execPath, ['scripts/verify-uifn-runtime-architecture.mjs', '--require-dist']],
@@ -32,11 +51,18 @@ const checks = [
   [process.execPath, ['scripts/verify-uifn-consumers.mjs']],
   [process.execPath, ['scripts/verify-uifn-pack.mjs']],
 ].map(([command, args]) => {
-  const result = spawnSync(command, args, { cwd: repoRoot, env: process.env, encoding: 'utf8' });
+  const commandLine = [command, ...args].join(' ');
+  const adapter = adapterByTestCommand.get(commandLine);
+  // Plain output keeps the Vitest summaries parseable.
+  const env = adapter ? { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } : process.env;
+  const result = spawnSync(command, args, { cwd: repoRoot, env, encoding: 'utf8' });
+  const testCounts = adapter ? vitestTestCounts(result.stdout) : undefined;
   return {
-    command: [command, ...args].join(' '),
-    ok: result.status === 0,
+    command: commandLine,
+    // An adapter test run without one summary per Vitest run did not prove anything.
+    ok: result.status === 0 && (testCounts === undefined || testCounts.length === adapterVitestRuns[adapter]),
     status: result.status,
+    ...(testCounts === undefined ? {} : { testCounts }),
     stdout: result.stdout.split('\n').slice(-28).join('\n').trim(),
     stderr: result.stderr.split('\n').slice(-28).join('\n').trim(),
   };
@@ -48,6 +74,10 @@ const result = {
   mode: process.env.UIFN_EXPERIMENTAL_ABSENT === '1' ? 'experimental-directories-absent' : 'normal',
   graphSha256: createHash('sha256').update(JSON.stringify(graph)).digest('hex'),
   stablePackages: graph.stable.map((entry) => entry.name),
+  adapterTestCounts: Object.fromEntries(adapters.map((name) => [
+    name,
+    checks.find((check) => check.command === adapterTestCommand(name))?.testCounts ?? [],
+  ])),
   checks,
 };
 console[result.ok ? 'log' : 'error'](JSON.stringify(result, null, 2));
