@@ -65,16 +65,21 @@ function provisionalComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, ow
     [node.name, [`${composeProjectName(config.services![node.name].projectName ?? "devfn", ownerId)}_default`]]));
 }
 
+/** Which inputs of an endpoint pass are preflight placeholders rather than leases or effective networks. */
+interface ProvisionalInputs { ports?: boolean; networks?: boolean }
+
 /**
  * Resource targets and namespaces are selected first, from the same ports and
  * Compose networks, then handed to the endpoint resolver, whose templates and
  * precedence stay unchanged. Manifests without resources resolve as before.
- * Preflight passes are provisional: their ports are placeholders, so only
- * manifest-fixed exact ports identify loopback listeners there.
+ * With placeholder ports only manifest-fixed exact ports identify loopback
+ * listeners; with provisional networks Compose service-name listeners are
+ * unknown, and their collisions wait for a pass with effective networks.
  */
-function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">, provisional = false): EndpointResolution {
+function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">, provisional: ProvisionalInputs = {}): EndpointResolution {
   if (!input.config.resources) return resolveEndpointTemplates(input);
-  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports, provisionalPorts: provisional,
+  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports,
+    provisionalPorts: provisional.ports === true, provisionalNetworks: provisional.networks === true,
     ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), environment: process.env });
   return resolveEndpointTemplates({ ...input, resources });
 }
@@ -103,7 +108,7 @@ async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePla
     for (const name of references) all.add(name);
   }
   resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks, composeReferences: checkedReferences, ...publicTemplate }, provisionalPorts);
+    composeNetworks, composeReferences: checkedReferences, ...publicTemplate }, { ports: provisionalPorts, networks: true });
   return all;
 }
 
@@ -117,7 +122,7 @@ async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, r
   if (siblingTemplates && !publicTemplate.postStartPublicRoutes?.length) return true;
   const composeNetworks = provisionalComposeNetworks(config, plan, identity.instanceId);
   const provisional = resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks, ...publicTemplate }, true);
+    composeNetworks, ...publicTemplate }, { ports: true, networks: true });
   const references = await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, composeNetworks, provisional, Date.now() + 20_000, true);
   return siblingTemplates || [...references].some((name) => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_RESOURCE_"));
 }
@@ -133,7 +138,8 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
   // for that read-only validation; the result is never published or started.
   const ownerId = identity.instanceId;
   const provisionalNetworks = provisionalComposeNetworks(config, plan, ownerId);
-  const provisional = resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate }, provisionalPorts);
+  const provisional = resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate },
+    { ports: provisionalPorts, networks: true });
   const deadline = Date.now() + 20_000;
   if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline, provisionalPorts);
   const composeNetworks: Record<string, string[]> = {};
@@ -146,7 +152,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
     composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
     composeReferences[node.name] = references;
   }
-  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate }, provisionalPorts);
+  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate }, { ports: provisionalPorts });
 }
 
 function compareCodepoint(left: string, right: string): number {
@@ -581,7 +587,7 @@ export class DevFnOrchestrator {
       await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate, true);
     } else {
       resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
-        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, true);
+        hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, { ports: true, networks: true });
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);

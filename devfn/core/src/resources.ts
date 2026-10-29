@@ -23,7 +23,7 @@ export interface PlannedResource {
   secrets: Array<{ name: string; env: string; field: string; present?: boolean }>;
   /** Values for host-side consumers: native processes, readiness commands and environment outputs. */
   values: Record<string, ResourceValue>;
-  /** Container-side overrides by selected Compose service. */
+  /** Container-side values by consuming Compose service; any other selected Compose service records why it receives none. */
   services: Record<string, Record<string, ResourceValue | UnreachableResourceValue>>;
 }
 
@@ -50,6 +50,12 @@ export interface ResourcePlanInput {
   provisionalPorts?: boolean;
   /** Effective Compose networks by selected service, as passed to the endpoint resolver. */
   composeNetworks?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * The Compose networks are provisional placeholders, not effective
+   * networks: which listener a Compose service name reaches is unknown, so
+   * collisions on such listeners are left to a pass with effective networks.
+   */
+  provisionalNetworks?: boolean;
   /**
    * Host name containers use to reach host loopback listeners. Defaults to
    * host.docker.internal on macOS and Windows (Docker Desktop) and to none on
@@ -192,6 +198,12 @@ function namespaceValues(name: string, spec: ResourceSpec, token: string, prefix
   }
 }
 
+/**
+ * Whether a consumer reaches a Compose provider by its service name, under the
+ * endpoint resolver's sibling URL rule: same project and a shared effective
+ * network. Listener identity instead follows Docker DNS, which also resolves
+ * the name across projects on a shared network (containerListeners).
+ */
 function sharesComposeNetwork(input: ResourcePlanInput, producer: string, consumer: string): boolean {
   const { config, ownerId } = input;
   const project = (name: string) => composeProjectName(config.services![name].projectName ?? "devfn", ownerId);
@@ -290,50 +302,55 @@ function plannedSecrets(input: ResourcePlanInput, name: string, context: TargetC
   return secrets;
 }
 
-function composeListener(input: ResourcePlanInput, node: string, port: string | number): string {
-  const service = input.config.services![node];
-  return `compose:${composeProjectName(service.projectName ?? "devfn", input.ownerId)}:${service.service}:${port}`;
+/** From the host, any loopback spelling is the loopback port; another host is its canonical name. */
+function hostListener(endpoint: Endpoint): string {
+  return loopbackHost(endpoint.host) ? `loopback:${endpoint.port}` : `dns:${canonicalHost(endpoint.host)}:${endpoint.port}`;
+}
+
+/** A selected Compose service's name listeners, one per effective network, optionally only those on the given networks. */
+function serviceListeners(input: ResourcePlanInput, node: string, port: string | number, on?: ReadonlySet<string>): string[] {
+  const service = canonicalHost(input.config.services![node].service);
+  return (input.composeNetworks?.[node] ?? []).filter((network) => !on || on.has(network)).map((network) => `net:${network}:${service}:${port}`);
 }
 
 /**
- * A canonical name for the listener an endpoint reaches from the host or from
- * one Compose consumer, so every spelling of one listener compares equal:
- * host loopback in any spelling, or the container host gateway, is the
- * loopback port; a Compose service name is the selected service it resolves
- * to on that consumer's networks, so one name in unrelated projects or
- * networks stays distinct; any other host is its canonical DNS name.
+ * The listeners an endpoint reaches from inside one Compose consumer. The
+ * host gateway is the host's loopback port. Docker DNS resolves a service
+ * name on every network the consumer joins, whichever project owns the
+ * service, so a name is the selected services of that name on the consumer's
+ * networks; a name no selected service has there is its canonical name.
  */
-function listenerOf(context: TargetContext, endpoint: Endpoint, consumer?: string): string {
+function containerListeners(context: TargetContext, endpoint: Endpoint, consumer: string): string[] {
   const { input, gateway } = context;
   const host = canonicalHost(endpoint.host);
-  if (consumer === undefined ? loopbackHost(host) : gateway && host === canonicalHost(gateway.host)) return `loopback:${endpoint.port}`;
-  const sibling = consumer === undefined ? undefined : input.plan.nodes.find((node) => node.kind === "service" &&
-    canonicalHost(input.config.services![node.name].service) === host && sharesComposeNetwork(input, node.name, consumer));
-  return sibling ? composeListener(input, sibling.name, endpoint.port) : `dns:${host}:${endpoint.port}`;
+  if (gateway && host === canonicalHost(gateway.host)) return [`loopback:${endpoint.port}`];
+  const networks = new Set(input.composeNetworks?.[consumer] ?? []);
+  const named = input.plan.nodes.filter((node) => node.kind === "service" && canonicalHost(input.config.services![node.name].service) === host)
+    .flatMap((node) => serviceListeners(input, node.name, endpoint.port, networks));
+  return named.length ? named : [`dns:${host}:${endpoint.port}`];
 }
 
 /**
- * The listeners a selected target reaches, from the endpoints its consumers
- * resolve rather than from how the target is written. A local provider is its
- * port, its leased loopback port and, for a Compose provider, its service
- * listener, which is also what any consumer reaches it through. A remote
- * target is what its host-side consumers and each Compose consumer resolve.
+ * The listeners a selected target reaches in every context that receives its
+ * values: the host side (native processes, readiness and environment
+ * outputs) always, and each Compose service that consumes it, since only
+ * consumers receive container-side values. A local provider is its port, its
+ * leased loopback port and, for a Compose provider, its service name on each
+ * of its effective networks, which is how any consumer reaches it.
  */
-function targetListeners(context: TargetContext, host: Endpoint, containers: ReadonlyMap<string, ReturnType<typeof containerEndpoint>>, consumers: readonly string[]): string[] {
+function targetListeners(context: TargetContext, host: Endpoint, containers: ReadonlyMap<string, Endpoint>): string[] {
   const { input, target } = context;
+  let listeners: string[];
   if ("node" in target) {
     // Before reservation only a manifest-fixed port names a loopback listener.
-    const listeners = [`port:${target.port}`, ...(knownPort(input, target.port) !== undefined ? [`loopback:${host.port}`] : [])];
+    listeners = [`port:${target.port}`, ...(knownPort(input, target.port) !== undefined ? [`loopback:${host.port}`] : [])];
     const provider = input.plan.nodes.find((node) => node.name === target.node);
-    return provider?.kind === "service" ? [...listeners, composeListener(input, target.node, input.config.services![target.node].ports![target.port])] : listeners;
+    if (provider?.kind === "service") listeners.push(...serviceListeners(input, target.node, input.config.services![target.node].ports![target.port]));
+  } else {
+    listeners = [hostListener(host), ...[...containers].flatMap(([consumer, endpoint]) => containerListeners(context, endpoint, consumer))];
   }
-  const containerConsumers = consumers.filter((consumer) => containers.has(consumer));
-  // Host-side values also reach readiness and environment outputs.
-  const hostSide = containerConsumers.length < consumers.length || consumers.length === 0;
-  return [...(hostSide ? [listenerOf(context, host)] : []), ...containerConsumers.flatMap((consumer) => {
-    const located = containers.get(consumer)!;
-    return "unreachable" in located ? [] : [listenerOf(context, located.endpoint, consumer)];
-  })];
+  // Provisional networks do not say which listener a service name reaches.
+  return input.provisionalNetworks ? listeners.filter((listener) => !listener.startsWith("net:")) : listeners;
 }
 
 function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> & { listeners: string[] } {
@@ -350,22 +367,22 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
       values[`${prefix}INTERNAL_ENDPOINT`] = { value: `${producer.service}:${producer.ports![local.provider!.port]}`, source: "compose", field: `services.${local.provider!.node}.ports.${local.provider!.port}` };
     }
   }
+  // Only consumers receive container-side values; planResources withholds
+  // every value of a resource from Compose services that do not consume it.
   const services: PlannedResource["services"] = {};
-  const containers = new Map<string, ReturnType<typeof containerEndpoint>>();
+  const containers = new Map<string, Endpoint>();
   for (const node of input.plan.nodes) {
-    if (node.kind !== "service") continue;
+    if (node.kind !== "service" || !consumers.includes(node.name)) continue;
     const located = containerEndpoint(context, host, node.name);
-    containers.set(node.name, located);
-    if ("unreachable" in located) {
-      if (consumers.includes(node.name)) invalid(located.unreachable);
-      services[node.name] = Object.fromEntries(["HOST", "PORT", "ENDPOINT", ...(host.scheme ? ["URL"] : [])].map((suffix) => [`${prefix}${suffix}`, located]));
-    } else services[node.name] = endpointValues(prefix, located.endpoint, located.source, located.field);
+    if ("unreachable" in located) invalid(located.unreachable);
+    containers.set(node.name, located.endpoint);
+    services[node.name] = endpointValues(prefix, located.endpoint, located.source, located.field);
   }
   return {
     target: { name: targetName, location: local ? "local" : "remote", selectedBy: selection.selectedBy,
       field: selection.selectedBy === "profile" ? `profiles.${input.plan.profile}.resources.${name}` : `resources.${name}.defaultTarget` },
     ...(local ? { provider: local.provider } : { remote: { url: endpointUrl(host) } }),
-    values, services, listeners: targetListeners(context, host, containers, consumers),
+    values, services, listeners: targetListeners(context, host, containers),
   };
 }
 
@@ -431,6 +448,13 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
     }
     const emitted = new Set(resourceEnvironmentKeys(name, spec));
     for (const key of Object.keys(target.values)) if (!emitted.has(key)) invalid(`Resource ${name} produced undeclared key ${key}.`);
+    // A container's view of a target depends on its networks, so only
+    // consumers, whose views are planned and checked, receive any value.
+    for (const node of input.plan.nodes) {
+      if (node.kind !== "service" || consumers.includes(node.name)) continue;
+      const withheld = { unreachable: `Compose service ${node.name} does not consume resource ${name}; add ${name} to services.${node.name}.resources to receive its values.` };
+      target.services[node.name] = Object.fromEntries(Object.keys(target.values).map((key) => [key, withheld]));
+    }
     resources[name] = {
       kind: spec.kind,
       ...target,

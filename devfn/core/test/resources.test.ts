@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 
 import { createComposeEnvironment, selectedComposeEndpointReferences } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
-import { describe, expect, it } from "vitest";
+import { FilePortRegistry } from "@devfn/ports";
+import { describe, expect, it, vi } from "vitest";
 
 import { createPlan, DevFnOrchestrator, planResources, receiptPath, resolveEndpointTemplates, type ResourcePlan } from "../src/index.js";
 
@@ -228,25 +229,46 @@ describe("resource validation before side effects", () => {
     expect(() => plan(aliased("redis://host.docker.internal:4199"), undefined, gateway)).not.toThrow();
     // On a disjoint network the worker's redis name is not the provider.
     expect(() => plan(aliased("redis://redis:6379"), undefined, gateway)).not.toThrow();
-    // The same service name in an unrelated project is another listener.
-    const unrelated = aliased("redis://redis:6379", (v) => {
+    // The same service name on networks the worker does not join is another listener.
+    const otherProject = aliased("redis://redis:6379", (v) => {
       v.services.worker = { adapter: "compose", service: "worker", projectName: "other", resources: ["sessions"] };
       v.processes["api-server"].resources = ["cache"];
       v.profiles.default = { processes: ["api-server"], services: ["worker"] };
     });
-    expect(() => plan(unrelated)).not.toThrow();
-    // One URL resolves to a different redis in each consumer's project.
-    const perProject = (secondProject: string) => config((v) => {
+    expect(() => plan(otherProject, undefined, { composeNetworks: { redis: ["devfn_default"], worker: ["other_default"] } })).not.toThrow();
+    // Docker DNS resolves a service name across projects on a shared network.
+    expect(() => plan(otherProject, undefined, { composeNetworks: { redis: ["devfn_default", "ext"], worker: ["other_default", "ext"] } }))
+      .toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    // Host-side values of both name one host, whichever redis each project's container reaches.
+    const perProject = config((v) => {
       v.ports["redis-b"] = {};
       v.services.redis.projectName = "a";
       v.services["redis-b"] = { adapter: "compose", service: "redis", projectName: "b", ports: { "redis-b": 6379 } };
       v.services["worker-a"] = { adapter: "compose", service: "worker-a", projectName: "a", resources: ["sessions"] };
-      v.services["worker-b"] = { adapter: "compose", service: "worker-b", projectName: secondProject, resources: ["jobs"] };
+      v.services["worker-b"] = { adapter: "compose", service: "worker-b", projectName: "b", resources: ["jobs"] };
       for (const name of ["sessions", "jobs"]) v.resources[name] = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://redis:6379" } } };
       v.profiles.default = { services: ["worker-a", "worker-b", "redis", "redis-b"] };
     });
-    expect(() => plan(perProject("b"))).not.toThrow();
-    expect(() => plan(perProject("a"))).toThrow("share namespace data:");
+    expect(() => plan(perProject, undefined, { composeNetworks: { redis: ["a_default"], "worker-a": ["a_default"], "redis-b": ["b_default"], "worker-b": ["b_default"] } }))
+      .toThrow("share namespace data:");
+  });
+
+  it("withholds container-side values from Compose services that do not consume a resource", () => {
+    // The worker would reach both caches as redis:6379 through templates alone.
+    const templateOnly = config((v) => {
+      v.services.worker = { adapter: "compose", service: "worker", env: { CACHE: "{{env.DEVFN_RESOURCE_CACHE_URL}}", SESSIONS: "{{env.DEVFN_RESOURCE_SESSIONS_URL}}" } };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://redis:6379" } } };
+      v.profiles.default = { services: ["worker"], resources: { cache: "local", sessions: "dev" } };
+    });
+    const resources = plan(templateOnly);
+    expect(resources.resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_PREFIX).toEqual({ unreachable: expect.stringContaining("Compose service worker does not consume resource sessions") });
+    const lifecycle = createPlan(templateOnly);
+    expect(() => resolveEndpointTemplates({ config: templateOnly, plan: lifecycle, ownerId: "owner-a", ports: PORTS, composeNetworks: { redis: ["shared"], worker: ["shared"] }, resources }))
+      .toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("does not consume resource cache") }));
+    // Declaring both makes the worker a context whose view is checked.
+    const declared = validateDevFnConfig({ ...templateOnly, services: { ...templateOnly.services, worker: { ...templateOnly.services!.worker, resources: ["cache", "sessions"] } } });
+    expect(() => plan(declared)).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
   });
 
   it("rejects a collision on a manifest-fixed port before reservation", async () => {
@@ -301,13 +323,46 @@ describe("resource validation before side effects", () => {
   });
 });
 
+describe("resource collisions on effective Compose networks", () => {
+  // A Compose redis provider beside a remote cache written as its service name, used by a worker.
+  const aliased = validateDevFnConfig({ version: 1, project: { id: "resource-effective-networks" }, ports: { redis: {} },
+    services: {
+      redis: { adapter: "compose", service: "redis", ports: { redis: 6379 } },
+      worker: { adapter: "compose", service: "worker", resources: ["sessions"] },
+    },
+    resources: {
+      cache: { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "redis", port: "redis" } } },
+      sessions: { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://redis:6379" } } },
+    },
+    profiles: { default: { services: ["worker"], resources: { cache: "local" } } } });
+  const compose = (networks: boolean) => `services:\n  redis:\n    image: busybox\n${networks ? "    networks: [one]\n" : ""}  worker:\n    image: busybox\n${networks ? "    networks: [two]\nnetworks:\n  one: {}\n  two: {}\n" : ""}`;
+
+  it("rejects the alias on a shared network before creating lifecycle state and accepts it on disjoint networks", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-networks-"));
+    const stateDir = path.join(root, "state");
+    try {
+      await writeFile(path.join(root, "compose.yaml"), compose(false));
+      await expect(new DevFnOrchestrator().up({ config: aliased, root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
+      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+      // Provisional networks put both on one default network; only effective ones decide.
+      await writeFile(path.join(root, "compose.yaml"), compose(true));
+      vi.spyOn(FilePortRegistry.prototype, "reserve").mockRejectedValue(new Error("stopped at port reservation"));
+      await expect(new DevFnOrchestrator().up({ config: aliased, root, stateDir })).rejects.toThrow("stopped at port reservation");
+    } finally {
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resource references only Compose interpolates", () => {
-  // A worker that consumes no resource interpolates resource values only in its Compose file.
+  // A worker that consumes a resource interpolates its values only in its Compose file.
   const composeOnly = (environment: string) => ({
     file: `services:\n  worker:\n    image: busybox\n    environment:\n${environment}`,
     config: validateDevFnConfig({ version: 1, project: { id: "resource-compose-missing" }, ports: { redis: {} },
       processes: { redis: { adapter: "command", command: ["redis-server"], ports: ["redis"] } },
-      services: { worker: { adapter: "compose", service: "worker" } },
+      services: { worker: { adapter: "compose", service: "worker", resources: ["cache"] } },
       resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
       profiles: { default: { processes: ["redis"], services: ["worker"], resources: { cache: "local" } } } }),
   });
@@ -351,12 +406,15 @@ describe("resource references only Compose interpolates", () => {
     const stateDir = path.join(root, "state");
     try {
       await writeFile(path.join(root, "compose.yaml"), "services:\n  worker:\n    image: busybox\n    environment:\n      DEV_URL: ${DEVFN_RESOURCE_DEV_URL}\n");
-      const value_ = validateDevFnConfig({ version: 1, project: { id: "resource-compose-reference" },
-        services: { worker: { adapter: "compose", service: "worker" } },
+      const value_ = (resources?: string[]) => validateDevFnConfig({ version: 1, project: { id: "resource-compose-reference" },
+        services: { worker: { adapter: "compose", service: "worker", ...(resources ? { resources } : {}) } },
         resources: { dev: { kind: "service", defaultTarget: "proxy", targets: { proxy: { url: "http://api.localhost:1355" } } } },
         profiles: { default: { services: ["worker"], resources: { dev: "proxy" } } } });
-      await expect(new DevFnOrchestrator().up({ config: value_, root, stateDir }))
-        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Resource dev target proxy uses loopback name api.localhost") });
+      await expect(new DevFnOrchestrator().up({ config: value_(["dev"]), root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resource dev target proxy uses loopback name api.localhost") });
+      // A service that does not consume the resource receives none of its values.
+      await expect(new DevFnOrchestrator().up({ config: value_(), root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Compose service worker does not consume resource dev") });
       await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
@@ -514,13 +572,17 @@ describe("endpoint resolver handoff", () => {
     expect(() => resolve(config())).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringMatching(/missing reference DEVFN_RESOURCE_(?:ADMIN_)?API_URL/) }));
   });
 
-  it("gives Compose nodes container values and rejects their unreachable references with the resource reason", () => {
+  it("gives Compose consumers container values and rejects references other services make", () => {
     const value_ = config((v) => {
-      v.services.worker = { adapter: "compose", service: "worker", env: { API: "{{env.DEVFN_RESOURCE_API_URL}}", CACHE: "{{env.DEVFN_RESOURCE_CACHE_URL}}" } };
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["api", "cache"], env: { API: "{{env.DEVFN_RESOURCE_API_URL}}", CACHE: "{{env.DEVFN_RESOURCE_CACHE_URL}}" } };
       v.profiles.default = { processes: ["web"], services: ["worker", "redis"] };
     });
-    const linux = plan(value_);
-    expect(() => resolve(value_, linux)).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Resource api target local listens on host loopback") }));
+    expect(() => plan(value_)).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resource api target local listens on host loopback") }));
+    const undeclared = config((v) => {
+      v.services.worker = { adapter: "compose", service: "worker", env: { API: "{{env.DEVFN_RESOURCE_API_URL}}" } };
+      v.profiles.default = { processes: ["web"], services: ["worker"] };
+    });
+    expect(() => resolve(undeclared, plan(undeclared, undefined, { platform: "darwin" }))).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Compose service worker does not consume resource api") }));
     const darwin = plan(value_, undefined, { platform: "darwin" });
     const resolved = resolve(value_, darwin);
     expect(resolved.nodes.worker.environment).toMatchObject({ API: "http://host.docker.internal:4101", CACHE: "redis://redis:6379" });
