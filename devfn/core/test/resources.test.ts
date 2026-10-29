@@ -182,6 +182,30 @@ describe("resource validation before side effects", () => {
     expect(() => plan(database)).toThrow("share namespace");
   });
 
+  it("compares object-store namespaces below each target path by segment", () => {
+    const stores = (left: [string, string], right: [string, string]) => config((v) => {
+      for (const [name, [url, base]] of [["left", left], ["right", right]] as const) {
+        v.resources[name] = { kind: "object-store", defaultTarget: "remote", namespace: { base, sharing: "shared" }, targets: { remote: { url } } };
+      }
+      v.processes["api-server"].resources.push("left", "right");
+    });
+    const store = "https://store.example.test";
+    for (const [left, right] of [
+      [[`${store}/bucket`, "a"], [`${store}/bucket/a`, "b"]],
+      [[`${store}/bucket/`, "a"], [`${store}/bucket/x/../a`, "b"]],
+      [[`${store}/bucket`, "a"], [`${store}:443/bucket//a`, "a"]],
+    ] as const) {
+      expect(() => plan(stores(left, right)), `${left} ${right}`).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace") }));
+    }
+    for (const [left, right] of [
+      [[`${store}/bucket`, "data"], [`${store}/bucket2`, "data"]],
+      [[`${store}/bucket`, "a"], [`${store}/bucket`, "b"]],
+      [[`${store}/bucket`, "a"], [`${store}/bucket/ab`, "b"]],
+    ] as const) {
+      expect(() => plan(stores(left, right)), `${left} ${right}`).not.toThrow();
+    }
+  });
+
   it("identifies one listener behind different port names, scheme aliases and loopback spellings", () => {
     const twoPortNames = config((v) => {
       v.ports.replica = {};

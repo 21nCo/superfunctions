@@ -171,7 +171,22 @@ function endpointValues(prefix: string, endpoint: Endpoint, source: ResourceValu
   };
 }
 
-interface NamespaceValues { prefix: string; values: Record<string, string>; database?: string; schema?: string; members: string[] }
+interface NamespaceValues { prefix: string; values: Record<string, string>; database?: string; schema?: string; members: string[]; scope?: string[] }
+
+/**
+ * The key segments a URL path names, without empty or "." segments and with
+ * ".." applied; target URLs cannot be percent-encoded. Folding spellings an
+ * object store may distinguish can only report an overlap, never hide one.
+ */
+function pathSegments(raw: string): string[] {
+  const segments: string[] = [];
+  for (const segment of raw.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return segments;
+}
 
 function namespaceValues(name: string, spec: ResourceSpec, token: string, prefix: string): NamespaceValues {
   const isolated = spec.namespace?.sharing !== "shared";
@@ -402,7 +417,7 @@ function targetListeners(context: TargetContext, host: Endpoint, containers: Rea
   return [...listeners, ...reached.filter((listener) => leased || !listener.startsWith("loopback:"))];
 }
 
-function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> & { listeners: string[] } {
+function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> & { listeners: string[]; path: string } {
   const { input, name, targetName, target } = context;
   const selection = selectedResourceTarget(input.config, input.plan.profile, name)!;
   const targetField = `resources.${name}.targets.${targetName}`;
@@ -430,7 +445,7 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
     target: { name: targetName, location: local ? "local" : "remote", selectedBy: selection.selectedBy,
       field: selection.selectedBy === "profile" ? `profiles.${input.plan.profile}.resources.${name}` : `resources.${name}.defaultTarget` },
     ...(local ? { provider: local.provider } : { remote: { url: endpointUrl(host) } }),
-    values, services, listeners: targetListeners(context, host, containers),
+    values, services, listeners: targetListeners(context, host, containers), path: host.path,
   };
 }
 
@@ -489,6 +504,12 @@ function serviceValues(input: ResourcePlanInput, name: string, prefix: string, p
 function namespacesOverlap(kind: ResourceKind, left: NamespaceValues, right: NamespaceValues): boolean {
   if (kind === "database") return left.database === right.database && (left.schema === undefined || right.schema === undefined || left.schema === right.schema);
   if (kind === "broker" || kind === "browser") return left.members.some((member) => right.members.includes(member));
+  if (left.scope && right.scope) {
+    // Object keys nest by path segment below the target path, so /bucket/a/
+    // and the prefix b/ of /bucket/a/b/ overlap while /bucket and /bucket2 do not.
+    const [shorter, longer] = left.scope.length <= right.scope.length ? [left.scope, right.scope] : [right.scope, left.scope];
+    return shorter.every((segment, index) => longer[index] === segment);
+  }
   return left.prefix.startsWith(right.prefix) || right.prefix.startsWith(left.prefix);
 }
 
@@ -503,7 +524,9 @@ function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, nam
     for (const right of names.slice(index + 1)) {
       if (planned[left].kind !== planned[right].kind || !listeners.get(left)!.some((listener) => listeners.get(right)!.includes(listener))) continue;
       if (namespacesOverlap(planned[left].kind, namespaces.get(left)!, namespaces.get(right)!)) {
-        invalid(`Resources ${left} and ${right} share namespace ${namespaces.get(left)!.prefix} on the same ${planned[left].kind} target; declare distinct namespace bases.`);
+        const namespace = (name: string) => namespaces.get(name)!.scope ? `/${namespaces.get(name)!.scope!.join("/")}/` : namespaces.get(name)!.prefix;
+        const shared = namespace(left) === namespace(right) ? `share namespace ${namespace(left)}` : `share namespaces ${namespace(left)} and ${namespace(right)}, one inside the other,`;
+        invalid(`Resources ${left} and ${right} ${shared} on the same ${planned[left].kind} target; declare distinct namespace bases.`);
       }
     }
   }
@@ -540,10 +563,12 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
     if (spec.kind !== "browser" && !selection) invalid(`Profile ${input.plan.profile} selects no target for resource ${name} and it declares no defaultTarget.`);
     const targetContext: TargetContext | undefined = selection ? { input: context, name, spec, targetName: selection.name, target: own(spec.targets, selection.name)!,
       ...(namespace.database !== undefined ? { database: namespace.database } : {}), ...(gateway ? { gateway } : {}) } : undefined;
-    const { listeners: reached, ...target } = targetContext ? planTarget(targetContext, prefix, consumers) :
+    const { listeners: reached, path: targetPath, ...target } = targetContext ? planTarget(targetContext, prefix, consumers) :
       // Every browser resource names state in the same local browser profile.
-      { values: {}, services: {}, listeners: ["browser"] };
+      { values: {}, services: {}, listeners: ["browser"], path: "" };
     listeners.set(name, reached);
+    // An object store's keys live below its target path; the prefix names keys there.
+    if (spec.kind === "object-store") namespace.scope = [...pathSegments(targetPath), ...pathSegments(namespace.prefix)];
     for (const [key, value] of Object.entries(namespace.values)) {
       target.values[key] = { value, source: "namespace", field: key === `${prefix}DATABASE` && spec.namespace?.level === "schema" ? `${namespaceField}.database` : namespaceField };
     }

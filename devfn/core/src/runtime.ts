@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, link, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "@devfn/config";
@@ -57,6 +57,10 @@ export async function readRuntimeId(stateDir: string): Promise<string | undefine
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+  // recordRuntimeId links only a complete, flushed identity into place.
+  if (recorded === "") {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `${path.join(stateDir, "runtime-id")} is empty; DevFn never records a partial identity, so it was truncated outside DevFn. Restore it, or remove it to give isolated resource namespaces new names.`);
+  }
   if (!RUNTIME_ID.test(recorded)) {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${path.join(stateDir, "runtime-id")} is malformed; restore it, or remove it to give isolated resource namespaces new names.`);
   }
@@ -68,41 +72,35 @@ export function newRuntimeId(): string {
   return randomBytes(16).toString("hex");
 }
 
-/** Record a runtime identity unless the state directory already has one, and return the recorded one. */
+/**
+ * Record a runtime identity unless the state directory already has one, and
+ * return the recorded one. The identity is written to a private file, flushed
+ * and then linked into place, so every reader sees either no identity or a
+ * complete one, and the first link wins. There is no fallback for a state
+ * directory without hard links: its lifecycle and registry locks link their
+ * owner records too (withFileLock), so DevFn state cannot live there at all.
+ */
 export async function recordRuntimeId(stateDir: string, candidate: string): Promise<string> {
-  // Linking a complete file never exposes a partly written identity to a concurrent reader.
   const target = path.join(stateDir, "runtime-id");
   const temp = path.join(stateDir, `runtime-id.${randomUUID()}.tmp`);
-  await writeFile(temp, `${candidate}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  let linked = true;
   try {
+    const file = await open(temp, "wx", 0o600);
+    try {
+      await file.writeFile(`${candidate}\n`, "utf8");
+      await file.sync();
+    } finally { await file.close(); }
     await link(temp, target);
     return candidate;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "EXDEV" && code !== "ENOSYS") throw error;
-    linked = code === "EEXIST";
+    if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EXDEV" || code === "ENOSYS") {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
+    }
+    if (code !== "EEXIST") throw error;
   } finally { await unlink(temp).catch(() => undefined); }
-  if (!linked) {
-    // Filesystems without hard links (FUSE, network and FAT mounts) get an
-    // exclusive create; a concurrent reader retries until the write lands.
-    try {
-      await writeFile(target, `${candidate}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-      return candidate;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-  }
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const recorded = await readRuntimeId(stateDir);
-      if (recorded) return recorded;
-    } catch (error) {
-      if (attempt >= 20) throw error;
-    }
-    if (attempt >= 20) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+  const recorded = await readRuntimeId(stateDir);
+  if (!recorded) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);
+  return recorded;
 }
 
 export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {
