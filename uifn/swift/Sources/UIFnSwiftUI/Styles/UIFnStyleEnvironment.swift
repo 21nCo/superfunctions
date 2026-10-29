@@ -65,10 +65,16 @@ struct UIFnStyleContext {
     }
 
     /// How much control metrics grow with Dynamic Type: the body type size's
-    /// scaled points over its points. Always 1 on macOS, which has no Dynamic Type.
+    /// scaled points over its points. Always 1 on macOS, which has no Dynamic
+    /// Type, and 1 where a zero body size leaves no positive, finite ratio.
     var metricScale: CGFloat {
+        #if os(macOS)
+        1
+        #else
         let size = typography.size.md
-        return size.scaledPoints(for: dynamicTypeSize) / size.points
+        let scale = size.scaledPoints(for: dynamicTypeSize) / size.points
+        return scale.isFinite && scale > 0 ? scale : 1
+        #endif
     }
 
     /// A control metric in points, scaled with Dynamic Type.

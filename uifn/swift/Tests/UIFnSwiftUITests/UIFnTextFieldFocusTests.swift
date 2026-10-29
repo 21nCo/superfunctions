@@ -170,5 +170,66 @@ struct UIFnTextFieldFocusTests {
         #expect(try await focusesTheField(styled: false))
         #expect(try await focusesTheField(styled: true))
     }
+
+    // MARK: - The app's focus binding follows the field
+
+    /// An app's view of its focus binding around a styled field.
+    @MainActor
+    private final class AppFocus: ObservableObject {
+        /// The binding's value, as the host last saw it change.
+        var isFocused = false
+        /// A value to set the binding to.
+        @Published var request: Bool?
+    }
+
+    private struct BindingHost: View {
+        @ObservedObject var focus: AppFocus
+        @FocusState private var isFocused: Bool
+
+        var body: some View {
+            TextField("Name", text: .constant("Ada"))
+                .textFieldStyle(.uifn)
+                .focused($isFocused)
+                .frame(width: 260)
+                .onChange(of: isFocused) { focus.isFocused = $0 }
+                .onReceive(focus.$request.compactMap { $0 }) { isFocused = $0 }
+        }
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws -> Bool {
+        for _ in 0..<50 {
+            if condition() { return true }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return false
+    }
+
+    @Test
+    func aClickSetsTheAppFocusBindingAndClearingItResignsTheField() async throws {
+        let points = try styledFieldPoints()
+        for point in points.padding + [points.text] {
+            let focus = AppFocus()
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = NSHostingView(rootView: BindingHost(focus: focus))
+            window.makeKeyAndOrderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(!(window.firstResponder is NSTextView))
+
+            click(window, at: point)
+            #expect(try await becomesFocused(window), "\(point)")
+            #expect(try await waitUntil { focus.isFocused }, "\(point)")
+
+            focus.request = false
+            #expect(try await waitUntil { !(window.firstResponder is NSTextView) }, "\(point)")
+            #expect(!focus.isFocused, "\(point)")
+        }
+    }
 }
 #endif

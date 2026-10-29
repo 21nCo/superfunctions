@@ -284,4 +284,61 @@ struct UIFnControlStyleStateTests {
         #expect(scale(.accessibility3) > 1.5)
         #endif
     }
+
+    /// The default theme with a zero body type size, which the token
+    /// generator and ``UIFnTypeSize`` both accept.
+    private static let zeroBodyTheme: UIFnTheme = {
+        let theme = UIFnTheme.uifn
+        let size = theme.typography.size
+        return UIFnTheme(
+            name: "zero-body",
+            colors: theme.colors,
+            spacing: theme.spacing,
+            radius: theme.radius,
+            typography: UIFnTypography(
+                size: UIFnTypeScale(
+                    xs: size.xs,
+                    sm: size.sm,
+                    md: UIFnTypeSize(points: 0, textStyle: size.md.textStyle),
+                    lg: size.lg,
+                    xl: size.xl
+                ),
+                lineHeight: theme.typography.lineHeight,
+                weight: theme.typography.weight
+            ),
+            motion: theme.motion
+        )
+    }()
+
+    @Test(arguments: [DynamicTypeSize.xSmall, .large, .accessibility3])
+    func aZeroBodyTypeSizeLeavesMetricsUnscaled(_ size: DynamicTypeSize) async throws {
+        #if os(macOS)
+        let context = UIFnStyleContext(
+            theme: Self.zeroBodyTheme, colorScheme: .light, colorSchemeContrast: .standard,
+            dynamicTypeSize: size, reduceMotion: false, displayGamut: .p3
+        )
+        #else
+        let context = UIFnStyleContext(
+            theme: Self.zeroBodyTheme, colorScheme: .light, colorSchemeContrast: .standard,
+            dynamicTypeSize: size, reduceMotion: false
+        )
+        #endif
+        #expect(context.metricScale == 1)
+        #expect(context.scaled(context.spacing.space3) == context.spacing.space3.rounded())
+
+        // With no label text, a switch and a checkbox draw only their control,
+        // which keeps the default theme's unscaled size.
+        for kind in [UIFnToggleKind.switch, .checkbox] {
+            let zero = try #require(await UIFnSnapshot.render(dynamicTypeSize: size) {
+                UIFnToggleAppearance(label: EmptyView(), kind: kind, value: .on, state: UIFnControlState())
+                    .uifnTheme(Self.zeroBodyTheme)
+                    .isolated()
+            })
+            let unscaled = try #require(await UIFnSnapshot.render {
+                UIFnToggleAppearance(label: EmptyView(), kind: kind, value: .on, state: UIFnControlState()).isolated()
+            })
+            #expect(zero.width == unscaled.width && zero.height == unscaled.height, "\(kind)")
+            #expect(zero.differingFraction(from: unscaled) == 0, "\(kind)")
+        }
+    }
 }
