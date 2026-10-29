@@ -1,4 +1,5 @@
 import type { DevFnConfig } from "@devfn/config";
+import { profileResourceProviders, resourceProviders } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
 export function createPlan(config: DevFnConfig, requestedProfile?: string): LifecyclePlan {
@@ -11,9 +12,15 @@ export function createPlan(config: DevFnConfig, requestedProfile?: string): Life
   const profileName = requestedProfile ?? config.defaultProfile ?? "default";
   const profile = Object.prototype.hasOwnProperty.call(config.profiles, profileName) ? config.profiles[profileName] : undefined;
   if (!profile) throw new DevFnError("DEVFN_PROFILE_NOT_FOUND", `Profile ${profileName} does not exist.`);
-  const selected = new Set([...(profile.processes ?? []), ...(profile.services ?? [])]);
+  // A selected local resource target starts its provider before consumers;
+  // a remote selection starts nothing.
+  const selected = new Set([...(profile.processes ?? []), ...(profile.services ?? []), ...profileResourceProviders(config, profileName)]);
   const expanded = new Set<string>();
-  const dependencies = (name: string): string[] => hasProcess(name) ? processes[name].dependsOn ?? [] : hasService(name) ? services[name].dependsOn ?? [] : [];
+  const dependencies = (name: string): string[] => {
+    const declared = hasProcess(name) ? processes[name].dependsOn ?? [] : hasService(name) ? services[name].dependsOn ?? [] : [];
+    const providers = resourceProviders(config, profileName, name);
+    return [...declared, ...providers.filter((provider, index) => !declared.includes(provider) && providers.indexOf(provider) === index)];
+  };
   const include = (name: string): void => {
     if (!hasProcess(name) && !hasService(name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown lifecycle node ${name}.`);
     if (expanded.has(name)) return;

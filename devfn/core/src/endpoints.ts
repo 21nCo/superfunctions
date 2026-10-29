@@ -5,6 +5,7 @@ import { createProcessEnvironment, resolveHttpReadinessUrl } from "@devfn/proces
 import { composeProjectName, createComposeEnvironment } from "@devfn/compose";
 
 import { domainAliases } from "./identity.js";
+import { resourceEnvironment, resourceServiceEnvironment, type ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan, type RoutingIdentity } from "./types.js";
 
 export interface EndpointResolutionInput {
@@ -25,6 +26,11 @@ export interface EndpointResolutionInput {
   publicUrls?: Readonly<Record<string, string>>;
   /** Public tunnel routes whose URLs the provider assigns only after start; any reference to theirs is rejected. */
   postStartPublicRoutes?: readonly string[];
+  /**
+   * Selected resource targets and namespaces (planResources), planned with the
+   * same ports and Compose networks. Their values join the generated values.
+   */
+  resources?: ResourcePlan;
 }
 
 export interface ResolvedNodeStartup {
@@ -49,6 +55,8 @@ export interface EndpointResolution {
   /** URLs reachable by sibling services on the same Compose project network. */
   composeUrls: Record<string, string>;
   nodes: Record<string, ResolvedNodeStartup>;
+  /** The redacted resource plan these values came from. */
+  resources?: ResourcePlan;
 }
 
 const REFERENCE = /\{\{env\.([A-Za-z_]\w*)\}\}/g;
@@ -822,6 +830,17 @@ function generatedPublicUrls(input: EndpointResolutionInput, generated: Record<s
   }
 }
 
+function generatedResourceValues(input: EndpointResolutionInput, generated: Record<string, string>): void {
+  if (input.resources && (input.resources.profile !== input.plan.profile ||
+    input.resources.ownerToken !== `o${createHash("sha256").update(input.ownerId).digest("hex").slice(0, 12)}`)) {
+    invalid("resources", "resource plan belongs to another profile or lifecycle owner.");
+  }
+  for (const [key, value] of Object.entries(resourceEnvironment(input.resources))) {
+    if (Object.hasOwn(generated, key)) invalid("resources", `resource key ${key} collides with another generated key.`);
+    generated[key] = value;
+  }
+}
+
 /**
  * A public URL the provider assigns only after start cannot configure
  * anything before it: a reference to one, in any selected template source,
@@ -881,7 +900,7 @@ function serviceGeneratedValues(node: LifecyclePlan["nodes"][number], context: N
   const { input, config, directUrls, composeUrls, checkedGenerated } = context;
   const generated: CheckedValues = { values: { ...context.generated }, checked: { ...checkedGenerated.checked } };
   if (node.kind !== "service") return generated;
-  const unreachable = new Set<string>();
+  const unreachable = new Map<string, string | undefined>();
   for (const producer of input.plan.nodes) {
     const producerPorts = producer.kind === "service" ? config.services![producer.name].ports ?? {} :
       Object.fromEntries((config.processes![producer.name].ports ?? []).map((port) => [port, true]));
@@ -891,8 +910,12 @@ function serviceGeneratedValues(node: LifecyclePlan["nodes"][number], context: N
       if (composeSiblingReachable(producer, node, context)) {
         generated.values[key] = composeUrls[port];
         generated.checked[key] = composeUrls[port];
-      } else { delete generated.values[key]; delete generated.checked[key]; unreachable.add(key); }
+      } else { delete generated.values[key]; delete generated.checked[key]; unreachable.set(key, undefined); }
     }
+  }
+  for (const [key, located] of resourceServiceEnvironment(input.resources, node.name)) {
+    if ("unreachable" in located) { delete generated.values[key]; delete generated.checked[key]; unreachable.set(key, located.unreachable); }
+    else { generated.values[key] = located.value; generated.checked[key] = located.value; }
   }
   rejectUnreachableReferences(node, context, field, unreachable);
   return generated;
@@ -910,14 +933,14 @@ function composeSiblingReachable(producer: LifecyclePlan["nodes"][number], consu
 }
 
 function assertReachableReference(name: string, plan: LifecyclePlan, config: DevFnConfig,
-  field: string, unreachable: ReadonlySet<string>): void {
+  field: string, unreachable: ReadonlyMap<string, string | undefined>): void {
   if (!unreachable.has(name)) return;
-  invalid(field, producerIsNative(plan, config, name) ?
+  invalid(field, unreachable.get(name) ?? (producerIsNative(plan, config, name) ?
     `reference ${name} points to a native loopback process unreachable from Compose.` :
-    `reference ${name} has no shared effective Compose network.`);
+    `reference ${name} has no shared effective Compose network.`));
 }
 
-function rejectUnreachableReferences(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string, unreachable: ReadonlySet<string>): void {
+function rejectUnreachableReferences(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string, unreachable: ReadonlyMap<string, string | undefined>): void {
   const { input, config } = context;
   const profile = config.profiles[input.plan.profile];
   const spec = config.services![node.name];
@@ -1118,12 +1141,13 @@ export function resolveEndpointTemplates(input: EndpointResolutionInput): Endpoi
   }
   const { directUrls, composeUrls } = generatedPortValues(input, config, generated, httpPorts, httpSchemes);
   generatedPublicUrls(input, generated);
+  generatedResourceValues(input, generated);
   const checkedGenerated: CheckedValues = { values: generated, checked: { ...generated, DEVFN_INSTANCE_ID: "devfnopaqueowner" } };
   const environment = resolveValues(profile.environment ?? {}, checkedGenerated, checkedGenerated, `profiles.${plan.profile}.environment`, budget);
   const nodes: Record<string, ResolvedNodeStartup> = Object.create(null);
   const context: NodeResolutionContext = { input, config, generated, checkedGenerated, environment, directUrls, composeUrls, healthUrls, budget };
   for (const node of plan.nodes) nodes[node.name] = resolveNodeStartup(node, context);
-  return { ownerId, generated, environment: environment.values, directUrls, composeUrls, nodes };
+  return { ownerId, generated, environment: environment.values, directUrls, composeUrls, nodes, ...(input.resources ? { resources: input.resources } : {}) };
 }
 
 function producerIsNative(plan: LifecyclePlan, config: DevFnConfig, key: string): boolean {

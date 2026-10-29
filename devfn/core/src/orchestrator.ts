@@ -13,8 +13,9 @@ import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV
 import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
-import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
+import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput } from "./endpoints.js";
 import { createPlan } from "./planner.js";
+import { planResources, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -64,6 +65,18 @@ function provisionalComposeNetworks(config: DevFnConfig, plan: LifecyclePlan, ow
     [node.name, [`${composeProjectName(config.services![node.name].projectName ?? "devfn", ownerId)}_default`]]));
 }
 
+/**
+ * Resource targets and namespaces are selected first, from the same ports and
+ * Compose networks, then handed to the endpoint resolver, whose templates and
+ * precedence stay unchanged. Manifests without resources resolve as before.
+ */
+function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">): EndpointResolution {
+  if (!input.config.resources) return resolveEndpointTemplates(input);
+  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports,
+    ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), environment: process.env });
+  return resolveEndpointTemplates({ ...input, resources });
+}
+
 /** Public tunnel URL inputs of the endpoint resolver (publicTemplateInputs). */
 type PublicTemplate = Awaited<ReturnType<typeof publicTemplateInputs>>;
 
@@ -85,7 +98,7 @@ async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePla
     publicReferences[node.name] = new Set([...references].filter((name) => name.startsWith("DEVFN_PUBLIC_URL_")));
     for (const name of references) all.add(name);
   }
-  resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
+  resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
     composeNetworks, composeReferences: publicReferences, ...publicTemplate });
   return all;
 }
@@ -96,13 +109,13 @@ async function needsNetworkPreflight(config: DevFnConfig, plan: LifecyclePlan, r
   // Without one, pure template validation is enough here; the locked pass
   // below still reads effective Compose networks before startup or publication.
   // Compose interpolation of a post-start public URL is rejected first, without Docker.
-  const siblingTemplates = JSON.stringify(config).includes("{{env.DEVFN_URL_");
+  const siblingTemplates = JSON.stringify(config).includes("{{env.DEVFN_URL_") || resourcesNeedComposeNetworks(config, plan);
   if (siblingTemplates && !publicTemplate.postStartPublicRoutes?.length) return true;
   const composeNetworks = provisionalComposeNetworks(config, plan, identity.instanceId);
-  const provisional = resolveEndpointTemplates({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
+  const provisional = resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
     composeNetworks, ...publicTemplate });
   const references = await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, composeNetworks, provisional, Date.now() + 20_000);
-  return siblingTemplates || [...references].some((name) => name.startsWith("DEVFN_URL_"));
+  return siblingTemplates || [...references].some((name) => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_RESOURCE_"));
 }
 
 /**
@@ -116,7 +129,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
   // for that read-only validation; the result is never published or started.
   const ownerId = identity.instanceId;
   const provisionalNetworks = provisionalComposeNetworks(config, plan, ownerId);
-  const provisional = resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate });
+  const provisional = resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks: provisionalNetworks, ...publicTemplate });
   const deadline = Date.now() + 20_000;
   if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline);
   const composeNetworks: Record<string, string[]> = {};
@@ -129,7 +142,7 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
     composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
     composeReferences[node.name] = references;
   }
-  return resolveEndpointTemplates({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate });
+  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate });
 }
 
 function compareCodepoint(left: string, right: string): number {
@@ -557,7 +570,7 @@ export class DevFnOrchestrator {
     if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)) {
       await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate);
     } else {
-      resolveEndpointTemplates({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
+      resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
         hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate });
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
@@ -694,6 +707,7 @@ export class DevFnOrchestrator {
       allocations, processes: [], services: [], startedNodes: [], routes: activatedRoutes ?? [], urls: {}, environmentOutputs: [],
       startupFingerprints: fingerprints,
       portSpecFingerprints: portSpecFingerprints(options.config, plan.portNames),
+      ...(resolved.resources ? { resources: resolved.resources } : {}),
     };
     try {
       await registry.updateInvocation(invocationId, { state: "starting" });

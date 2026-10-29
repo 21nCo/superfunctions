@@ -22,6 +22,10 @@ Native adapters cover command, npm, Corepack-pinned pnpm, Turbo, Wrangler, Xcode
 
 Registered development domains live in machine state, bound to a repository and project. Manifests may select registered domains but cannot register them. The DevFn Caddy binds to IPv4 loopback and uses IPv6 loopback when available, does not install its internal CA in OS trust stores, and denies unselected hosts and paths. Explicit certificate files are checked for generated hostname coverage. DNS-01 remains unavailable without a validated adapter.
 
+## Resource targets
+
+Profiles select each declared resource target (local lifecycle node and declared port, or credential-free remote URL) independently of execution location and public exposure. Selection, consumption cycles, undeclared provider ports, secret channels and namespace collisions are validated before any mutation. Selected endpoint and namespace values reach the endpoint resolver as generated `DEVFN_RESOURCE_*` values under its existing template precedence. Compose consumers receive Compose-internal or platform host-gateway endpoints, never host loopback. Namespaces are isolated per runtime owner unless sharing is explicit. Receipts record a redacted plan with value provenance and secret names only.
+
 ## Output and compatibility
 
 Commands support deterministic JSON receipts and stable `DEVFN_*` error codes. macOS and Linux are the validated v0.1 hosts. Windows-aware process identity and termination paths are present but require Windows CI before support is declared.
