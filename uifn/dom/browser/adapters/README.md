@@ -4,7 +4,7 @@ Use this directory for scenarios that check how an adapter behaves in a real bro
 
 ## How it runs
 
-- `../../playwright.config.ts` starts a second Vite server on `127.0.0.1:4176` with `vite.config.mts`. That config compiles `.svelte` files and Solid JSX, and leaves the React fixtures to Vite's default JSX transform.
+- `../../playwright.config.ts` starts a second Vite server on `127.0.0.1:4176` with `vite.config.mts`. That config compiles `.svelte` files and Solid JSX, and leaves the React fixtures to Vite's default JSX transform. `.svelte` files compile with the `svelte` and `@sveltejs/vite-plugin-svelte` nested under `uifn/dom/node_modules`, not the repository-wide copies, and the config refuses to start if the plugin's compiler and the fixtures' runtime are different copies.
 - Fixtures import the **built** adapter packages, as an application does. The 4176 server's command first runs `npx turbo run build --filter=@uifn/react... --filter=@uifn/svelte... --filter=@uifn/solid...`, so a run on a fresh checkout builds the adapters, `@uifn/core`, and `@uifn/dom` itself. Turbo restores unchanged outputs from its cache. Playwright starts the 4176 server before the 4175 server, so the builds finish before the primitive vectors load `@uifn/dom`.
 - The server keeps its Vite dependency cache in `node_modules/.vite-adapters`, apart from the 4175 server's `node_modules/.vite`.
 - `index.html?framework=<svelte|react|solid>&scenario=<name>` loads `main.ts`. It imports `<framework>/mount.*` and calls `mountScenario(name, #scenario-root)`. `main.ts` also records every `console.error`, `console.warn`, uncaught error, and unhandled rejection.
