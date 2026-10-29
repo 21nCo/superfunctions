@@ -12,7 +12,7 @@ import type {
   Sink,
 } from "../types.js";
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
-import { sanitizeEvent } from "../validation.js";
+import { mergeContext, sanitizeEvent } from "../validation.js";
 import { sinkConsole } from "../sinks/console.js";
 import { isErrorValue, isRecord, toError } from "../pipeline/redact.js";
 
@@ -159,7 +159,7 @@ export class Logger {
     // Merge context and tags
     const callContext = normalizeContext(ctx);
     if (this.options.baseContext || callContext) {
-      event.ctx = { ...this.options.baseContext, ...callContext };
+      event.ctx = mergeContext(this.options.baseContext, callContext);
     }
 
     // Like the Python logger, an event without tags has no tags field.

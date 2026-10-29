@@ -76,7 +76,7 @@ when `url` is given.
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
   stack, cause }`, cycles become `"[circular]"` and unserializable values
-  become `"[unserializable]"`. One walk copies at most `MAX_TRAVERSAL` (256K) values and string or key characters; past it values become `"[max-size]"` and object entries stop, so objects shared many times cannot expand exponentially. Binary data (`Buffer`, typed arrays,
+  become `"[unserializable]"`. One walk copies at most `MAX_TRAVERSAL` (256K) values and string or key characters; past it values become `"[max-size]"` and object entries stop unread (no later getter runs), so objects shared many times cannot expand exponentially. `ctx` and each schema field (`ts`, `level`, ids) have their own budget; other fields share one. Binary data (`Buffer`, typed arrays,
   `DataView`, `ArrayBuffer`, `SharedArrayBuffer`) becomes `"[unserializable]"`
   too, also in the redaction stage: no text rule could find a secret in its
   bytes.

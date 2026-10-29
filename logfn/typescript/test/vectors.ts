@@ -53,7 +53,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Builds a vector's ctx: `$error` becomes an Error, `$bytes` binary data, `$ref` a shared or circular reference. */
+/** Builds a vector's ctx: `$error` becomes an Error, `$bytes` binary data, `$ref` a shared or circular reference, `$dag` a shared graph. */
 export function buildContext(ctx: Record<string, Json> | undefined): Record<string, unknown> | undefined {
   if (ctx === undefined) return undefined;
   const refs: Array<{ parent: Record<string, unknown> | unknown[]; key: string | number; path: string }> = [];
@@ -76,6 +76,12 @@ export function buildContext(ctx: Record<string, Json> | undefined): Record<stri
       if (kind === "bytes") return bytes;
       const copy = new Uint8Array(bytes).buffer;
       return kind === "mutable" ? copy : new DataView(copy);
+    }
+    if (isObject(value.$dag)) {
+      const { depth, leaf } = value.$dag as { depth: number; leaf: Json };
+      let node = build(leaf, null, "leaf");
+      for (let level = 0; level < depth; level++) node = { a: node, b: node };
+      return node;
     }
     if (isObject(value.$error)) {
       const spec = value.$error as unknown as ErrorSpec;

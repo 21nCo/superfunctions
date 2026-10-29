@@ -5,6 +5,7 @@
     "input.$error": "An object {\"$error\": {name, message, stack?, cause?}} is built as a native error: in TypeScript an Error with that name, message, optional stack (else the native one) and cause; in Python an exception class with that name, raised once so it has a traceback (stack is ignored), with __cause__. cause must be another $error.",
     "input.$ref": "An object {\"$ref\": \"dot.path\"} is replaced, after the whole ctx is built, by the object at that path from the ctx root (\"\" is the root), which creates circular or shared references.",
     "input.$bytes": "An object {\"$bytes\": {text, kind}} is built as binary data holding the UTF-8 bytes of text. kind \"bytes\" is a Uint8Array in TypeScript (a Buffer where Node provides one) and bytes in Python; \"mutable\" is an ArrayBuffer and a bytearray; \"view\" is a DataView and a memoryview. Binary data has no JSON form and its bytes cannot be redacted as text, so it becomes \"[unserializable]\".",
+    "input.$dag": "An object {\"$dag\": {depth, leaf}} is built as depth nested objects {\"a\": next, \"b\": next} that share one next object, ending at leaf: 2^depth paths through depth + 1 objects. Every walk (sanitization, redaction) is bounded by a traversal budget, and ctx and each schema field have their own, so only the fields outside ctx are compared.",
     "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
     "options": "Optional redaction options: keys (extra sensitive key names), allowlist (exempt paths: ctx paths like a.b or a[0] from the ctx root, or top-level field names like userId, tenantId, in one namespace) and replacement (a non-empty marker used instead of the default).",
     "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
@@ -1098,6 +1099,38 @@
       },
       "absent": [
         "EQ_SECRET"
+      ]
+    },
+    {
+      "id": "bounded-shared-context",
+      "description": "A ctx that shares one object on every level is walked within a bounded budget, not expanded to 2^depth copies; credentials reached in it are still redacted, and the ids after ctx keep their values.",
+      "input": {
+        "msg": "shared graph",
+        "ctx": {
+          "graph": {
+            "$dag": {
+              "depth": 24,
+              "leaf": {
+                "password": "DAG_SECRET_1",
+                "note": "token=DAG_SECRET_2"
+              }
+            }
+          }
+        },
+        "userId": "u-dag",
+        "fields": {
+          "traceId": "t-dag",
+          "requestId": "r-dag"
+        }
+      },
+      "expected": {
+        "msg": "shared graph",
+        "userId": "u-dag",
+        "traceId": "t-dag",
+        "requestId": "r-dag"
+      },
+      "absent": [
+        "DAG_SECRET"
       ]
     }
   ]

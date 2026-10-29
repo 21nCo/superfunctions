@@ -3,6 +3,7 @@ import {
   createLogger,
   enrichContext,
   isSensitiveKey,
+  isValidLogEvent,
   MAX_EVENT_SIZE,
   MAX_REDACTION_DEPTH,
   parseW3CTraceContext,
@@ -22,7 +23,7 @@ import {
   type Sink,
 } from "../src/index.js";
 import { MAX_SIZE } from "../src/pipeline/redact.js";
-import { MAX_TRAVERSAL } from "../src/validation.js";
+import { MAX_TRAVERSAL, mergeContext } from "../src/validation.js";
 
 function capture() {
   const events: LogEvent[] = [];
@@ -265,13 +266,85 @@ describe("traversal budget", () => {
   });
 
   it("values past the budget are never written, redacted or not, and values within it are unchanged", () => {
-    // ts, level, name, version, ctx and the key "fill" cost 42; fill costs its length plus 1, "late" 4.
-    const fill = "f".repeat(MAX_TRAVERSAL - 50);
+    // ctx has its own budget: ctx costs 1, the key "fill" 4, fill its length plus 1, "late" 4, its value 18.
+    const fill = "f".repeat(MAX_TRAVERSAL - 20);
     const ctx = redactEvent(event({ ctx: { fill, late: "token=LATE_SECRET", nested: { password: "LATE_PASSWORD" } } })).ctx;
     expect(ctx).toEqual({ fill, late: MAX_SIZE });
     expect(JSON.stringify(ctx)).not.toMatch(/LATE_/);
     const within = { list: [1, "token=x", { password: "p" }], text: "y".repeat(MAX_EVENT_SIZE) };
     expect(redactEvent(event({ ctx: within })).ctx).toEqual({ list: [1, "token=[redacted]", { password: REDACTED }], text: within.text });
+  });
+
+  // A whole budget in the first value, then 1000 counted getters: own fields of a record, or items of a list.
+  const exhausting = () => {
+    let reads = 0;
+    const getter = { enumerable: true, get: () => (reads++, "token=GETTER_SECRET") };
+    const object: Record<string, unknown> = { big: "x".repeat(MAX_TRAVERSAL) };
+    const items: unknown[] = ["x".repeat(MAX_TRAVERSAL)];
+    for (let index = 0; index < 1000; index++) {
+      Object.defineProperty(object, `k${index}`, getter);
+      Object.defineProperty(items, index + 1, getter);
+    }
+    return { cases: [object, { items }], reads: () => reads };
+  };
+
+  it("no value past the budget is read, through every path that walks caller values", async () => {
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+    const captured = capture();
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => void lines.push(String(line)));
+    const runs: Array<(ctx: Record<string, unknown>) => unknown> = [
+      (ctx) => sanitizeValue(ctx),
+      (ctx) => sanitizeEvent(event({ ctx, extra: ctx } as Partial<LogEvent>)),
+      (ctx) => redactEvent(event({ ctx })),
+      (ctx) => createLogger({ name: "w", pipeline: [redactSecFn()], sinks: [captured.sink] }).info("m", ctx),
+      (ctx) => createLogger({ name: "w", baseContext: { big: "x".repeat(MAX_TRAVERSAL) }, sinks: [captured.sink] }).info("m", ctx),
+      (ctx) => serverLogger({ name: "w" }).info("m", ctx),
+      async (ctx) => (sink([event({ ctx })]), await sink.flush()),
+    ];
+    try {
+      for (const run of runs) {
+        for (const index of [0, 1]) {
+          const { cases, reads } = exhausting();
+          await run(cases[index]);
+          expect(reads()).toBe(0);
+        }
+      }
+      expect([...lines, ...spy.requests.map((request) => request.body)].join()).not.toMatch(/GETTER_SECRET/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("ctx and each schema field have their own budget, so no field order turns level or ids into markers", async () => {
+    const graph = shared(24);
+    const ids = { traceId: "t-1", spanId: "s-1", requestId: "r-1", userId: "u-1", tenantId: "n-1" };
+    const inputs: LogEvent[] = [
+      { ctx: { graph }, ...event(), ...ids },
+      { extra: graph, ...ids, ...event({ ctx: { kept: true } }) } as LogEvent,
+      { ...event(), ...ids, ctx: { graph }, extra: graph } as LogEvent,
+    ];
+    for (const input of inputs) {
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      const captured = capture();
+      const reorder = (current: LogEvent) => ({ ...input, ...current, ctx: input.ctx });
+      createLogger({ name: "test", now: () => new Date(input.ts), pipeline: [reorder, redactSecFn()], sinks: [captured.sink] }).info("m");
+      sink([input]);
+      await sink.flush();
+      const sent = (JSON.parse(spy.requests[0].body) as { events: LogEvent[] }).events[0];
+      for (const output of [sanitizeEvent(input), redactEvent(input), captured.events[0], sent]) {
+        expect(output).toMatchObject({ ts: "2026-01-14T12:00:00.000Z", level: "info", name: "test", version: "0", ...ids });
+        expect(isValidLogEvent(output)).toBe(true);
+      }
+      if ((input.ctx as { kept?: boolean }).kept) expect(sanitizeEvent(input).ctx).toEqual({ kept: true });
+    }
+  });
+
+  it("the logger merges context layers like object spread", () => {
+    const merged = mergeContext({ a: 1, b: 2 }, undefined, JSON.parse('{"b": 3, "__proto__": 4, "c": 5}'));
+    expect(Object.entries(merged)).toEqual([["a", 1], ["b", 3], ["__proto__", 4], ["c", 5]]);
   });
 
   it("each walk has its own budget, also one started by a getter inside another, and the outer one resumes", () => {

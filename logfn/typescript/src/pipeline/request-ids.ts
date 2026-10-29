@@ -59,7 +59,7 @@ function randomHex(bytes: number): string {
   } else {
     // Fallback for older environments
     for (let i = 0; i < bytes; i++) {
-      values[i] = Math.floor(Math.random() * 256);
+      values[i] = Math.floor(Math.random() * 256); // NOSONAR S2245: only without Web Crypto (Node 18); ids correlate logs, never secrets
     }
   }
   return Array.from(values, (value) => value.toString(16).padStart(2, "0")).join("");

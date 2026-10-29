@@ -91,9 +91,10 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     }
 
     const sanitized: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(object)) {
+    // Keys, not entries: a value (a getter) is read only after its key is charged, so none is read past the budget.
+    for (const key of Object.keys(object)) {
       if ((budget -= key.length) < 0) break;
-      const cleaned = sanitizeNode(item, ancestors, depth + 1);
+      const cleaned = sanitizeNode((object as Record<string, unknown>)[key], ancestors, depth + 1);
       if (cleaned !== undefined) {
         setOwn(sanitized, key, cleaned);
       }
@@ -115,6 +116,20 @@ export function sanitizeValue(value: unknown): unknown {
   return bounded(() => sanitizeNode(value, new Set(), 0));
 }
 
+/** Layers merged like object spread (later layers win), one key at a time and charged like a walk that does not descend: past the budget no value is read */
+export function mergeContext(...layers: Array<Record<string, unknown> | undefined>): Record<string, unknown> {
+  return bounded(() => {
+    const merged: Record<string, unknown> = {};
+    for (const layer of layers) for (const key of layer ? Object.keys(layer) : []) {
+      if ((budget -= key.length + 1) < 0) return merged;
+      const value = layer![key];
+      setOwn(merged, key, value);
+      if (typeof value === "string") budget -= value.length;
+    }
+    return merged;
+  });
+}
+
 /** Longest kept string for a metadata field once an event is over the size limit */
 export const MAX_METADATA_CHARS = 256;
 
@@ -134,22 +149,29 @@ function byteLength(event: LogEvent): number {
   return encoder.encode(JSON.stringify(event)).length;
 }
 
+// Walked on their own budget, so no other field can turn ctx, level or an id into MAX_SIZE.
+const OWN_BUDGET = new Set<string>(["msg", "tags", "ctx", ...METADATA_FIELDS]);
+
 /**
  * Returns a JSON-safe copy of every field of an event: msg becomes a string,
  * tags (at most MAX_TAGS) strings, and every other field is sanitized like
- * ctx. Undefined fields are removed.
+ * ctx. Undefined fields are removed. Fields outside the schema share one
+ * budget; once it is spent the rest are dropped unread.
  */
 export function sanitizeEvent(event: LogEvent): LogEvent {
   return bounded(() => {
     const sanitized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(event)) {
+    for (const key of Object.keys(event)) {
+      const own = OWN_BUDGET.has(key);
+      if (!own && (budget -= key.length) < 0) continue;
+      const value: unknown = (event as unknown as Record<string, unknown>)[key];
       if (value === undefined) continue;
       if (key === "msg") {
         sanitized.msg = String(value);
       } else if (key === "tags" && Array.isArray(value)) {
         sanitized.tags = Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => tagText(value[index]));
       } else {
-        setOwn(sanitized, key, sanitizeNode(value, new Set(), 0));
+        setOwn(sanitized, key, own ? sanitizeValue(value) : sanitizeNode(value, new Set(), 0));
       }
     }
     if (sanitized.msg === undefined) sanitized.msg = "";
