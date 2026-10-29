@@ -38,11 +38,19 @@ private func resolve(_ token: UIFnColorToken, in appearance: Appearance) throws 
         let drawingAppearance = try #require(NSAppearance(named: appearance == .dark ? .darkAqua : .aqua))
         var resolved: NSColor?
         drawingAppearance.performAsCurrentDrawingAppearance {
-            resolved = token.nsColor { .p3 }.usingColorSpace(.displayP3)
+            resolved = token.nsColor.usingColorSpace(.displayP3)
         }
         let color = try #require(resolved)
         return UIFnRGB(Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent))
     }
+}
+
+private func components(_ color: NSColor, in appearance: NSAppearance.Name, _ colorSpace: NSColorSpace) throws -> UIFnRGB {
+    let drawingAppearance = try #require(NSAppearance(named: appearance))
+    var converted: NSColor?
+    drawingAppearance.performAsCurrentDrawingAppearance { converted = color.usingColorSpace(colorSpace) }
+    let rgb = try #require(converted)
+    return UIFnRGB(Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent))
 }
 #elseif os(iOS) || os(tvOS) || os(visionOS)
 private func traits(_ appearance: Appearance, gamut: UIDisplayGamut = .P3) -> UITraitCollection {
@@ -153,22 +161,80 @@ struct UIFnThemeColorTests {
         #expect(isClose(onSRGB, token.light.sRGB))
     }
     #elseif os(macOS)
+    // Light: oklch(70% 0.3 145), outside both gamuts. Dark: oklch(64% 0.27 29), outside sRGB.
+    private static let outOfGamut = UIFnColorToken(
+        light: UIFnColorValue(displayP3: UIFnRGB(26 / 255, 197 / 255, 0), sRGB: UIFnRGB(0, 195 / 255, 0)),
+        dark: UIFnColorValue(displayP3: UIFnRGB(242 / 255, 46 / 255, 32 / 255), sRGB: UIFnRGB(1, 0, 0)),
+        highContrastLight: UIFnColorValue(displayP3: UIFnRGB(0, 0, 0), sRGB: UIFnRGB(0, 0, 0)),
+        highContrastDark: UIFnColorValue(displayP3: UIFnRGB(1, 1, 1), sRGB: UIFnRGB(1, 1, 1))
+    )
+
     @Test
-    func sRGBScreensGetTheGamutMappedSRGBValue() throws {
-        // oklch(70% 0.3 145), a conversion vector outside both gamuts.
-        let green = UIFnColorValue(displayP3: UIFnRGB(26 / 255, 197 / 255, 0), sRGB: UIFnRGB(0, 195 / 255, 0))
-        let token = UIFnColorToken(light: green, dark: green, highContrastLight: green, highContrastDark: green)
-        func resolved(on gamut: NSDisplayGamut) throws -> UIFnRGB {
-            let aqua = try #require(NSAppearance(named: .aqua))
-            var color: NSColor?
-            aqua.performAsCurrentDrawingAppearance { color = token.nsColor { gamut }.usingColorSpace(.sRGB) }
-            let rgb = try #require(color)
-            return UIFnRGB(Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent))
+    func eachDestinationGetsTheValueForItsOwnGamut() throws {
+        let token = Self.outOfGamut
+        // Both destinations resolve side by side; nothing reads the key window's screen.
+        let onSRGB = token.nsColor(displayGamut: .sRGB)
+        let onP3 = token.nsColor(displayGamut: .p3)
+        for (appearance, value) in [(NSAppearance.Name.aqua, token.light), (.darkAqua, token.dark)] {
+            #expect(isClose(try components(onSRGB, in: appearance, .sRGB), value.sRGB), "\(appearance.rawValue)")
+            #expect(isClose(try components(onP3, in: appearance, .displayP3), value.displayP3), "\(appearance.rawValue)")
+            #expect(isClose(try components(token.nsColor, in: appearance, .displayP3), value.displayP3), "\(appearance.rawValue)")
+            #expect(isClose(try components(token.nsColor(for: nil), in: appearance, .displayP3), value.displayP3), "\(appearance.rawValue)")
         }
-        let onSRGB = try resolved(on: .sRGB)
-        #expect(isClose(onSRGB, token.light.sRGB))
-        // ColorSync's conversion of the out-of-gamut P3 value is not the theme's mapping.
-        #expect(!isClose(try resolved(on: .p3), onSRGB))
+        // ColorSync's conversion of the out-of-gamut P3 value is not the theme's sRGB mapping.
+        #expect(!isClose(try components(onP3, in: .aqua, .sRGB), token.light.sRGB))
+        for screen in NSScreen.screens {
+            #expect(UIFnColorToken.displayGamut(of: screen) == (screen.canRepresent(.p3) ? .p3 : .sRGB))
+        }
+    }
+
+    // Resolving an AppKit-backed SwiftUI color synchronizes with the main thread.
+    @Test @MainActor
+    func swiftUIColorsResolveForTheirDestinationGamut() throws {
+        guard #available(macOS 14, *) else { return }
+        let token = Self.outOfGamut
+        for (scheme, value) in [(ColorScheme.light, token.light), (.dark, token.dark)] {
+            var environment = EnvironmentValues()
+            environment.colorScheme = scheme
+            func rgb(_ color: Color) -> UIFnRGB {
+                let resolved = color.resolve(in: environment)
+                return UIFnRGB(Double(resolved.red), Double(resolved.green), Double(resolved.blue))
+            }
+            let p3 = rgb(Color(.displayP3, red: value.displayP3.red, green: value.displayP3.green, blue: value.displayP3.blue))
+            #expect(isClose(rgb(token.color(displayGamut: .sRGB)), value.sRGB), "\(scheme)")
+            #expect(isClose(rgb(token.color(displayGamut: .p3)), p3), "\(scheme)")
+            #expect(isClose(rgb(token.color), p3), "\(scheme)")
+        }
+        #expect(EnvironmentValues().uifnDisplayGamut == .p3)
+    }
+
+    @Test @MainActor
+    func displayGamutFollowsTheWindowsScreen() {
+        var screenGamut = NSDisplayGamut.p3
+        var reported: [NSDisplayGamut] = []
+        let view = UIFnDisplayGamutView(gamutOfWindow: { _ in screenGamut }) { reported.append($0) }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [.titled], backing: .buffered, defer: true)
+        let otherWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        otherWindow.isReleasedWhenClosed = false
+        window.contentView?.addSubview(view)
+        #expect(reported == [.p3])
+
+        screenGamut = .sRGB
+        NotificationCenter.default.post(name: NSWindow.didChangeScreenNotification, object: otherWindow)
+        #expect(reported == [.p3])
+        NotificationCenter.default.post(name: NSWindow.didChangeScreenNotification, object: window)
+        #expect(reported == [.p3, .sRGB])
+        screenGamut = .p3
+        NotificationCenter.default.post(name: NSWindow.didChangeScreenProfileNotification, object: window)
+        #expect(reported == [.p3, .sRGB, .p3])
+
+        view.removeFromSuperview()
+        screenGamut = .sRGB
+        NotificationCenter.default.post(name: NSWindow.didChangeBackingPropertiesNotification, object: window)
+        #expect(reported == [.p3, .sRGB, .p3])
+        otherWindow.contentView?.addSubview(view)
+        #expect(reported == [.p3, .sRGB, .p3, .sRGB])
     }
     #endif
 }

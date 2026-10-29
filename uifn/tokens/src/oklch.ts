@@ -143,8 +143,8 @@ function relativeLuminance(color: OklchColor): number {
 }
 
 export function contrastRatio(foreground: string, background: string): number {
-  const fg = relativeLuminance(parseOklch(foreground));
-  const bg = relativeLuminance(parseOklch(background));
+  const fg = relativeLuminance(parseColorToOklch(foreground));
+  const bg = relativeLuminance(parseColorToOklch(background));
   const lighter = Math.max(fg, bg);
   const darker = Math.min(fg, bg);
 

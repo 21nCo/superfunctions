@@ -115,6 +115,12 @@ function setTokens(target: DesignTokenTheme, values: Record<string, string | num
   }
 }
 
+function referTo(target: DesignTokenTheme, path: string, targetPath: string): void {
+  const segments = path.split('.');
+  const parent = segments.slice(0, -1).reduce((node, key) => node[key] as TokenTree, target.tokens);
+  parent[segments.at(-1)!] = { $type: 'color', $value: `{${targetPath}}`, $extensions: { uifn: { fallbackValue: '#000' } } };
+}
+
 function errorOf(run: () => unknown): UIFnTokenError {
   try {
     run();
@@ -452,6 +458,33 @@ describe('generateSwiftTokens', () => {
     const lowContrast = theme('light', { 'color.text.primary': 'oklch(97% 0.01 250)' });
     expect(errorOf(() => generateSwiftTokens({ light: lowContrast }, { name: 'fixture' })).code).toBe('UIFN_CONTRAST_BUDGET');
   });
+
+  it('checks contrast for hex colors alone, mixed with OKLCH and through references', () => {
+    const hex = theme('light', {
+      'color.text.primary': '#000000',
+      'color.surface.canvas': '#fafafa',
+      'color.accent.solid': '#1d4ed8',
+      'color.accent.contrast': '#fff',
+      'color.custom.solid': '#222',
+      'color.danger.solid': 'oklch(78% 0.12 25)',
+    });
+    referTo(hex, 'color.danger.contrast', 'color.custom.solid');
+    expect(validateTokenTheme(hex).ok).toBe(true);
+    const swift = generateSwiftTokens({ light: hex }, { name: 'fixture' });
+    expect(colorBlock(swift, 'primary')).toContain('light: UIFnColorValue(displayP3: UIFnRGB(0, 0, 0), sRGB: UIFnRGB(0, 0, 0))');
+    expect(colorBlock(swift, 'canvas')).toContain('// light: #fafafa');
+
+    for (const overrides of <Array<Record<string, string>>>[
+      { 'color.text.primary': '#eeeeee', 'color.surface.canvas': '#fafafa' },
+      { 'color.text.secondary': '#f0f0f0' },
+      { 'color.custom.solid': '#999' },
+    ]) {
+      const lowContrast = theme('light', overrides);
+      if ('color.custom.solid' in overrides) referTo(lowContrast, 'color.danger.contrast', 'color.custom.solid');
+      expect(errorOf(() => validateTokenTheme(lowContrast)).code).toBe('UIFN_CONTRAST_BUDGET');
+      expect(errorOf(() => generateSwiftTokens({ light: lowContrast }, { name: 'fixture' })).code).toBe('UIFN_CONTRAST_BUDGET');
+    }
+  });
 });
 
 describe('swiftTextStyleForPoints', () => {
@@ -506,6 +539,13 @@ describe('uifn-swift-tokens CLI', () => {
     );
     expect(committed).toBe(readFileSync(DEFAULT_SWIFT_FILE, 'utf8'));
     expect(memory.files['Theme.swift']).toBe(committed.replace(/^\/\/ Regenerate with: .*\n/m, ''));
+  });
+
+  it('generates a theme whose contrast-checked colors are hex', () => {
+    const hex = theme('light', { 'color.text.primary': '#000', 'color.surface.canvas': '#ffffff' });
+    const memory = memoryIo({ 'light.json': JSON.stringify(hex) });
+    expect(runSwiftTokensCli(['--name', 'fixture', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(0);
+    expect(memory.files['T.swift']).toBe(generateSwiftTokens({ light: hex }, { name: 'fixture' }));
   });
 
   it('exits nonzero without writing when a theme value cannot be emitted', () => {
