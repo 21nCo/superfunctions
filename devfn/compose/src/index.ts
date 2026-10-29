@@ -983,8 +983,8 @@ async function selectedComposeSourceState(spec: ComposeServiceSpec, root: string
   return { sourceFile, inventory, interpolation, envFileState };
 }
 
-/** Generated sibling (DEVFN_URL_) and public tunnel (DEVFN_PUBLIC_URL_) URL names. */
-const isEndpointReference = (name: string): boolean => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_PUBLIC_URL_");
+/** Generated sibling (DEVFN_URL_), public tunnel (DEVFN_PUBLIC_URL_) and selected resource (DEVFN_RESOURCE_) names. */
+const isEndpointReference = (name: string): boolean => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_PUBLIC_URL_") || name.startsWith("DEVFN_RESOURCE_");
 
 /** Read selected raw references without a Compose config subprocess. */
 export async function selectedComposeEndpointReferences(spec: ComposeServiceSpec, root: string,

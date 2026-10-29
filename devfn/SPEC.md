@@ -24,7 +24,7 @@ Registered development domains live in machine state, bound to a repository and 
 
 ## Resource targets
 
-Profiles select each declared resource target (local lifecycle node and declared port, or credential-free remote URL) independently of execution location and public exposure. Selection, consumption cycles, undeclared provider ports, secret channels and namespace collisions are validated before any mutation. Selected endpoint and namespace values reach the endpoint resolver as generated `DEVFN_RESOURCE_*` values under its existing template precedence. Compose consumers receive Compose-internal or platform host-gateway endpoints, never host loopback. Namespaces are isolated per runtime owner unless sharing is explicit. Receipts record a redacted plan with value provenance and secret names only.
+Profiles select each declared resource target (local lifecycle node and declared port, or credential-free remote URL) independently of execution location and public exposure. Selection, consumption cycles, undeclared provider ports, secret channels and namespace collisions are validated before any mutation. Selected endpoint and namespace values reach the endpoint resolver as generated `DEVFN_RESOURCE_*` values under its existing template precedence. Compose consumers receive Compose-internal or platform host-gateway endpoints, never host loopback in any spelling; `*.localhost` targets are never rewritten. Namespace collisions compare listeners, not port names or URL scheme aliases. A changed selection replaces a running lifecycle instead of reusing it. Namespaces are isolated per runtime owner unless sharing is explicit. Receipts record a redacted plan with value provenance and secret names only.
 
 ## Output and compatibility
 

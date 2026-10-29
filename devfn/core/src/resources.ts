@@ -60,40 +60,75 @@ function invalid(message: string): never {
   throw new DevFnError("DEVFN_RESOURCE_INVALID", message);
 }
 
+/** An own entry of a manifest map: names such as constructor never reach Object.prototype. */
+function own<T>(map: Readonly<Record<string, T>> | undefined, name: string): T | undefined {
+  return map && Object.hasOwn(map, name) ? map[name] : undefined;
+}
+
 /** The target a profile selects for a resource, or undefined when it selects none. */
 export function selectedResourceTarget(config: DevFnConfig, profile: string, resource: string): { name: string; selectedBy: "profile" | "defaultTarget" } | undefined {
-  const selected = config.profiles[profile]?.resources?.[resource];
+  const selected = own(own(config.profiles, profile)?.resources, resource);
   if (selected !== undefined) return { name: selected, selectedBy: "profile" };
-  const fallback = config.resources?.[resource]?.defaultTarget;
+  const fallback = own(config.resources, resource)?.defaultTarget;
   return fallback === undefined ? undefined : { name: fallback, selectedBy: "defaultTarget" };
 }
 
 function localProvider(config: DevFnConfig, profile: string, resource: string, consumer?: string): string | undefined {
-  const spec = config.resources?.[resource];
+  const spec = own(config.resources, resource);
   if (!spec || spec.kind === "browser") return undefined;
   const selection = selectedResourceTarget(config, profile, resource);
   if (!selection) {
     invalid(`${consumer ? `${consumer} consumes resource ${resource}, but profile` : "Profile"} ${profile} selects no target for it and it declares no defaultTarget.`);
   }
-  const target = spec.targets![selection.name];
+  const target = own(spec.targets, selection.name)!;
   return "node" in target ? target.node : undefined;
 }
 
 /** Lifecycle nodes that provide the local targets a node's consumed resources select. */
 export function resourceProviders(config: DevFnConfig, profile: string, node: string): string[] {
-  const consumed = config.processes?.[node]?.resources ?? config.services?.[node]?.resources ?? [];
+  const consumed = own(config.processes, node)?.resources ?? own(config.services, node)?.resources ?? [];
   return consumed.flatMap((resource) => localProvider(config, profile, resource, node) ?? []);
 }
 
 /** Lifecycle nodes that provide the local targets a profile selects explicitly. */
 export function profileResourceProviders(config: DevFnConfig, profile: string): string[] {
-  return Object.keys(config.profiles[profile]?.resources ?? {}).flatMap((resource) => localProvider(config, profile, resource) ?? []);
+  return Object.keys(own(config.profiles, profile)?.resources ?? {}).flatMap((resource) => localProvider(config, profile, resource) ?? []);
 }
 
 interface Endpoint { scheme?: string; host: string; port: string; path: string }
 
-const LOOPBACK = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
 const DEFAULT_PORTS: Record<string, string> = { "http:": "80", "https:": "443", "ws:": "80", "wss:": "443" };
+
+/**
+ * A host as the host resolver sees it, whatever the URL scheme: IPv4
+ * shorthand, IPv6 and case are normalized by WHATWG host parsing, which
+ * non-special schemes (postgres:, redis:) otherwise skip, and a trailing
+ * root dot is dropped.
+ */
+function canonicalHost(host: string): string {
+  let canonical = host.toLowerCase();
+  try { canonical = new URL(`http://${host}/`).hostname; } catch { /* an opaque host is compared as written */ }
+  return canonical.replace(/\.+$/, "");
+}
+
+/**
+ * How a host reaches this machine's loopback: "address" for loopback and
+ * unspecified addresses (127/8, 0/8, [::1], [::] and their IPv4-mapped or
+ * -compatible forms) and plain localhost; "name" for *.localhost names, whose
+ * listeners (such as the DevFn proxy) may route by that name.
+ */
+function loopbackHost(host: string): "address" | "name" | undefined {
+  const canonical = canonicalHost(host);
+  if (canonical === "localhost") return "address";
+  if (canonical.endsWith(".localhost")) return "name";
+  if (/^(?:127|0)\.\d+\.\d+\.\d+$/.test(canonical)) return "address";
+  const ipv6 = /^\[([0-9a-f:.]+)\]$/.exec(canonical)?.[1];
+  if (!ipv6) return undefined;
+  if (ipv6 === "::1" || ipv6 === "::") return "address";
+  const embedded = /^::(?:ffff:(?:0:)?)?([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(ipv6);
+  const firstOctet = embedded ? Number.parseInt(embedded[1], 16) >> 8 : -1;
+  return firstOctet === 127 || firstOctet === 0 ? "address" : undefined;
+}
 
 /** A URL in the form clients and Origin headers use: a scheme's default port is omitted. */
 function endpointUrl(endpoint: Endpoint): string {
@@ -195,7 +230,15 @@ function containerEndpoint(context: TargetContext, host: Endpoint, service: stri
     if (producer && input.plan.nodes.some((node) => node.name === target.node && node.kind === "service") && sharesComposeNetwork(input, target.node, service)) {
       return { endpoint: { ...host, host: producer.service, port: String(producer.ports![target.port]) }, source: "compose", field: `services.${target.node}.ports.${target.port}` };
     }
-  } else if (!LOOPBACK.test(host.host)) return { endpoint: host, source: "manifest", field: `resources.${context.name}.targets.${context.targetName}.url` };
+  } else {
+    const loopback = loopbackHost(host.host);
+    if (!loopback) return { endpoint: host, source: "manifest", field: `resources.${context.name}.targets.${context.targetName}.url` };
+    // Rewriting a *.localhost name to the gateway would drop the name its
+    // listener routes by, so it is never rewritten.
+    if (loopback === "name") {
+      return { unreachable: `Resource ${context.name} target ${context.targetName} uses loopback name ${host.host}, which Compose service ${service} cannot reach and DevFn cannot rewrite to a container host gateway without changing the name its listener routes by; select a target reachable from containers.` };
+    }
+  }
   // Host loopback inside a container is the container itself. Only a
   // platform host gateway reaches the host's loopback listeners.
   if (gateway) return { endpoint: { ...host, host: gateway.host }, source: "host-gateway", field: gateway.field };
@@ -262,13 +305,30 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
   };
 }
 
-function physicalTarget(resource: PlannedResource): string | undefined {
+/**
+ * Every endpoint that reaches a resource's listener, independent of URL
+ * scheme aliases and port names: a local provider is its port, its distinct
+ * leased loopback port and, for a Compose service, its container port; a
+ * remote target is its canonical host and port, where any loopback host is
+ * the leased port it would reach.
+ */
+function physicalTargets(input: ResourcePlanInput, resource: PlannedResource): string[] {
   // Every browser resource names state in the same local browser profile.
-  if (resource.kind === "browser") return "browser";
-  if (resource.provider) return `local:${resource.provider.node}:${resource.provider.port}`;
-  if (!resource.remote) return undefined;
+  if (resource.kind === "browser") return ["browser"];
+  if (resource.provider) {
+    const leased = input.ports[resource.provider.port];
+    // Preflight placeholders share one number; only a distinct lease names a listener.
+    const distinct = Object.values(input.ports).filter((port) => port === leased).length === 1;
+    const identities = [`port:${resource.provider.port}`, ...(distinct ? [`loopback:${leased}`] : [])];
+    const service = resource.provider.kind === "service" ? own(input.config.services, resource.provider.node) : undefined;
+    if (!service) return identities;
+    const project = composeProjectName(service.projectName ?? "devfn", input.ownerId);
+    return [...identities, `compose:${project}:${service.service}:${service.ports![resource.provider.port]}`];
+  }
+  if (!resource.remote) return [];
   const url = new URL(resource.remote.url);
-  return `remote:${url.protocol}//${url.hostname.toLowerCase()}:${url.port || DEFAULT_PORTS[url.protocol]}`;
+  const port = url.port || DEFAULT_PORTS[url.protocol];
+  return [loopbackHost(url.hostname) ? `loopback:${port}` : `remote:${canonicalHost(url.hostname)}:${port}`];
 }
 
 function namespacesOverlap(kind: ResourceKind, left: NamespaceValues, right: NamespaceValues): boolean {
@@ -278,12 +338,12 @@ function namespacesOverlap(kind: ResourceKind, left: NamespaceValues, right: Nam
 }
 
 /** Two selected resources must not mix data in one namespace of the same physical target. */
-function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, namespaces: ReadonlyMap<string, NamespaceValues>): void {
+function rejectNamespaceCollisions(input: ResourcePlanInput, planned: Record<string, PlannedResource>, namespaces: ReadonlyMap<string, NamespaceValues>): void {
   const names = Object.keys(planned).filter((name) => namespaces.has(name));
+  const targets = new Map(names.map((name) => [name, physicalTargets(input, planned[name])]));
   for (const [index, left] of names.entries()) {
     for (const right of names.slice(index + 1)) {
-      const target = physicalTarget(planned[left]);
-      if (!target || target !== physicalTarget(planned[right]) || planned[left].kind !== planned[right].kind) continue;
+      if (planned[left].kind !== planned[right].kind || !targets.get(left)!.some((target) => targets.get(right)!.includes(target))) continue;
       if (namespacesOverlap(planned[left].kind, namespaces.get(left)!, namespaces.get(right)!)) {
         invalid(`Resources ${left} and ${right} share namespace ${namespaces.get(left)!.prefix} on the same ${planned[left].kind} target; declare distinct namespace bases.`);
       }
@@ -294,7 +354,7 @@ function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, nam
 function selectedResourceNames(input: ResourcePlanInput): string[] {
   const { config, plan } = input;
   const consumed = plan.nodes.flatMap((node) => (node.kind === "process" ? config.processes?.[node.name]?.resources : config.services?.[node.name]?.resources) ?? []);
-  return [...new Set([...Object.keys(config.profiles[plan.profile]?.resources ?? {}), ...consumed])].sort();
+  return [...new Set([...Object.keys(own(config.profiles, plan.profile)?.resources ?? {}), ...consumed])].sort();
 }
 
 /**
@@ -311,14 +371,14 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
   const resources: Record<string, PlannedResource> = Object.create(null);
   const namespaces = new Map<string, NamespaceValues>();
   for (const name of selectedResourceNames(context)) {
-    const spec = config.resources![name];
+    const spec = own(config.resources, name)!;
     const prefix = `DEVFN_RESOURCE_${resourceToken(name)}_`;
     const consumers = consumersOf(context, name);
     const namespace = namespaceValues(name, spec, ownerToken, prefix);
     const namespaceField = spec.namespace ? `resources.${name}.namespace` : `resources.${name}`;
     const selection = spec.kind === "browser" ? undefined : selectedResourceTarget(config, input.plan.profile, name);
     if (spec.kind !== "browser" && !selection) invalid(`Profile ${input.plan.profile} selects no target for resource ${name} and it declares no defaultTarget.`);
-    const targetContext: TargetContext | undefined = selection ? { input: context, name, spec, targetName: selection.name, target: spec.targets![selection.name],
+    const targetContext: TargetContext | undefined = selection ? { input: context, name, spec, targetName: selection.name, target: own(spec.targets, selection.name)!,
       ...(namespace.database !== undefined ? { database: namespace.database } : {}), ...(gateway ? { gateway } : {}) } : undefined;
     const target = targetContext ? planTarget(targetContext, prefix, consumers) : { values: {}, services: {} };
     for (const [key, value] of Object.entries(namespace.values)) {
@@ -335,8 +395,18 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
     };
     if (spec.kind !== "service") namespaces.set(name, namespace);
   }
-  rejectNamespaceCollisions(resources, namespaces);
+  rejectNamespaceCollisions(context, resources, namespaces);
   return { profile: input.plan.profile, ownerToken, ...(gateway ? { containerHostGateway: gateway } : {}), resources };
+}
+
+/**
+ * A credential-free digest of the selected targets, namespaces and values a
+ * lifecycle was started with. Secret presence is excluded; secret values are
+ * never part of a plan.
+ */
+export function resourcePlanFingerprint(plan: ResourcePlan | undefined): string | undefined {
+  if (!plan) return undefined;
+  return createHash("sha256").update(JSON.stringify(plan, (key, value: unknown) => key === "present" ? undefined : value)).digest("hex");
 }
 
 /** Host-side generated values of a plan, for the endpoint resolver. */

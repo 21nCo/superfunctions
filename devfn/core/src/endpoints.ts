@@ -837,7 +837,15 @@ function generatedResourceValues(input: EndpointResolutionInput, generated: Reco
   }
   for (const [key, value] of Object.entries(resourceEnvironment(input.resources))) {
     if (Object.hasOwn(generated, key)) invalid("resources", `resource key ${key} collides with another generated key.`);
+    // Generated values skip template expansion, so apply its decoded URL
+    // credential checks whether or not a template references them.
+    rejectUrlCredentials(value, `resources.${key}`);
     generated[key] = value;
+  }
+  for (const node of input.plan.nodes) {
+    for (const [key, located] of resourceServiceEnvironment(input.resources, node.name)) {
+      if ("value" in located) rejectUrlCredentials(located.value, `resources.${key}`);
+    }
   }
 }
 

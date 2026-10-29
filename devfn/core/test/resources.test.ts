@@ -176,6 +176,49 @@ describe("resource validation before side effects", () => {
     expect(() => plan(database)).toThrow("share namespace");
   });
 
+  it("identifies one listener behind different port names, scheme aliases and loopback spellings", () => {
+    const twoPortNames = config((v) => {
+      v.ports.replica = {};
+      v.services.redis.ports = { redis: 6379, replica: 6379 };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "redis", port: "replica" } } };
+      v.processes["api-server"].resources.push("sessions");
+    });
+    expect(() => plan(twoPortNames, undefined, { ports: { ...PORTS, replica: 4109 } })).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    const leasedLoopback = config((v) => {
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://127.1:4107" } } };
+      v.processes["api-server"].resources.push("sessions");
+    });
+    expect(() => plan(leasedLoopback)).toThrow("share namespace data:");
+    // Preflight placeholders share one number and do not identify a listener.
+    expect(() => plan(leasedLoopback, undefined, { ports: Object.fromEntries(Object.keys(PORTS).map((name) => [name, 1])) })).not.toThrow();
+    const schemeAlias = config((v) => {
+      v.resources.db.targets.remote.url = "postgres://db.example.test:5432";
+      v.resources.ledger = { kind: "database", defaultTarget: "remote", namespace: { base: "db", level: "schema", database: "app" },
+        targets: { remote: { url: "postgresql://DB.Example.Test.:5432", secrets: { password: "DB_PASSWORD" } } } };
+      v.processes["api-server"].resources.push("ledger");
+    });
+    expect(() => plan(schemeAlias, "remote-database")).toThrow("share namespace");
+    const distinctHosts = config((v) => {
+      v.resources.ledger = { kind: "database", defaultTarget: "remote", namespace: { base: "db", level: "schema", database: "app" },
+        targets: { remote: { url: "postgres://ledger.example.test:5432", secrets: { password: "DB_PASSWORD" } } } };
+      v.processes["api-server"].resources.push("ledger");
+    });
+    expect(() => plan(distinctHosts, "remote-database")).not.toThrow();
+  });
+
+  it("selects only declared resources and targets, never inherited object properties", () => {
+    const value_ = config((v) => {
+      v.resources.constructor = { kind: "service", defaultTarget: "local", targets: { local: { node: "api-server", port: "api", scheme: "http" } } };
+      v.processes.web.resources.push("constructor");
+      v.profiles.default.resources = { api: "local" };
+    });
+    expect(nodes(value_)).toEqual(["admin", "api-server", "broker", "postgres", "redis", "web"]);
+    expect(value(plan(value_), "constructor", "CONSTRUCTOR_URL")).toEqual({ value: "http://127.0.0.1:4101", source: "lease", field: "ports.api" });
+    expect(() => config((v) => { v.profiles.default.resources = { api: "constructor" }; })).toThrow("unknown target constructor");
+  });
+
   it("requires consumers to receive target secrets through their secret channel", () => {
     const leaky = config((v) => { v.processes["reports-server"].envAllowlist = []; v.processes["reports-server"].secretEnv = []; });
     expect(() => plan(leaky, "split-backends")).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("needs secret DB_PASSWORD") }));
@@ -200,6 +243,23 @@ describe("resource validation before side effects", () => {
   });
 });
 
+describe("resource references only Compose interpolates", () => {
+  it("rejects an unreachable resource value before creating lifecycle state", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-reference-"));
+    const stateDir = path.join(root, "state");
+    try {
+      await writeFile(path.join(root, "compose.yaml"), "services:\n  worker:\n    image: busybox\n    environment:\n      DEV_URL: ${DEVFN_RESOURCE_DEV_URL}\n");
+      const value_ = validateDevFnConfig({ version: 1, project: { id: "resource-compose-reference" },
+        services: { worker: { adapter: "compose", service: "worker" } },
+        resources: { dev: { kind: "service", defaultTarget: "proxy", targets: { proxy: { url: "http://api.localhost:1355" } } } },
+        profiles: { default: { services: ["worker"], resources: { dev: "proxy" } } } });
+      await expect(new DevFnOrchestrator().up({ config: value_, root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Resource dev target proxy uses loopback name api.localhost") });
+      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
 describe("resource selection independence and redaction", () => {
   it("selects the same targets whether a consumer runs natively or in Compose, and whatever its exposure", () => {
     const native = plan(config());
@@ -220,6 +280,9 @@ describe("resource selection independence and redaction", () => {
     expect(() => config((v) => { v.resources.db.targets.remote.url = "postgres://user:pw@db.example.test:5432"; })).toThrow("must not embed credentials");
     expect(() => config((v) => { v.resources.api.targets.remote.url = "https://api.example.test/v1?token=abc"; })).toThrow("must not contain a query");
     expect(() => config((v) => { v.resources.api.targets.remote.url = "https://api.example.test/key=abc"; })).toThrow("must not carry assignments");
+    for (const url of ["https://api.example.test/token%3Dsentinel", "https://api.example.test/%3Ftoken=x", "https://api.example.test/v1/%40other"]) {
+      expect(() => config((v) => { v.resources.api.targets.remote.url = url; })).toThrow(/percent-encoded|embed credentials/);
+    }
     expect(() => config((v) => { v.resources.api.targets.remote.password = "abc"; })).toThrow("not a remote target field");
     const secret = `local-${Date.now()}-secret`;
     const resources = plan(config(), undefined, { environment: { DB_PASSWORD: secret } });
@@ -297,6 +360,20 @@ describe("container and host endpoints", () => {
     expect(() => plan(loopbackRemote)).toThrow("cannot reach");
     expect(plan(loopbackRemote, undefined, { platform: "darwin" }).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://host.docker.internal:6390" });
   });
+
+  it("recognizes loopback hosts whatever their scheme or spelling", () => {
+    const remote = (url: string) => containerConsumer("service", (v) => { v.resources.cache.targets.dev = { url }; v.profiles.default.resources = { cache: "dev" }; });
+    for (const url of ["redis://127.1:6390", "redis://0.0.0.0:6390", "redis://LOCALHOST.:6390", "redis://[::ffff:127.0.0.1]:6390", "redis://[::]:6390", "redis://0x7f.1:6390"]) {
+      expect(() => plan(remote(url)), url).toThrow("cannot reach");
+      expect(plan(remote(url), undefined, { platform: "darwin" }).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL, url)
+        .toEqual({ value: "redis://host.docker.internal:6390", source: "host-gateway", field: "platform:darwin" });
+    }
+    // A *.localhost listener such as the DevFn proxy routes by name, which a gateway rewrite would drop.
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(() => plan(remote("http://api.localhost:1355"), undefined, { platform })).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("loopback name api.localhost") }));
+    }
+    expect(plan(remote("redis://cache.example.test:6390")).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://cache.example.test:6390", source: "manifest" });
+  });
 });
 
 describe("endpoint resolver handoff", () => {
@@ -338,6 +415,14 @@ describe("endpoint resolver handoff", () => {
     const resolved = resolve(value_, darwin);
     expect(resolved.nodes.worker.environment).toMatchObject({ API: "http://host.docker.internal:4101", CACHE: "redis://redis:6379" });
     expect(resolved.nodes.web.environment.DEVFN_RESOURCE_CACHE_URL).toBe("redis://127.0.0.1:4107");
+  });
+
+  it("applies the resolver's decoded URL credential checks to resource values without a template", () => {
+    const value_ = config();
+    const resources = plan(value_, "remote-backend");
+    // No template references DEVFN_RESOURCE_API_ENDPOINT, so template expansion never inspects it.
+    resources.resources.api.values.DEVFN_RESOURCE_API_ENDPOINT = { value: "https://api.example.test/token%3Dsentinel", source: "manifest", field: "resources.api.targets.remote.url" };
+    expect(() => resolve(value_, resources, "remote-backend")).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("credential-bearing URL") }));
   });
 
   it("rejects a plan made for another owner or profile", () => {
@@ -410,6 +495,36 @@ createServer((request, response) => { response.writeHead(200); response.end("ok"
       await rm(root, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe("real local resource reselection", () => {
+  it("replaces a running lifecycle when its selected target changes behind a credential-like name", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-reselect-"));
+    const stateDir = path.join(root, "state");
+    const observed = path.join(root, "observed.txt");
+    await writeFile(path.join(root, "client.mjs"), `import { createServer } from "node:http";
+import { writeFile } from "node:fs/promises";
+await writeFile(process.env.OBSERVED_FILE, process.env.DEVFN_RESOURCE_AUTH_URL);
+createServer((request, response) => { response.writeHead(200); response.end("ok"); }).listen(Number(process.env.DEVFN_PORT_WEB), "127.0.0.1");
+`);
+    const manifest = (url: string) => validateDevFnConfig({ version: 1, project: { id: "resource-reselect" }, ports: { web: {} },
+      processes: { web: { adapter: "command", command: [process.execPath, "client.mjs"], ports: ["web"], resources: ["auth"],
+        health: { type: "http", port: "web", timeoutMs: 10_000 }, env: { OBSERVED_FILE: observed } } },
+      resources: { auth: { kind: "service", defaultTarget: "remote", targets: { remote: { url } } } },
+      profiles: { default: { processes: ["web"] } } });
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      await orchestrator.up({ config: manifest("https://one.example.test"), root, stateDir });
+      expect(await readFile(observed, "utf8")).toBe("https://one.example.test");
+      await expect(orchestrator.up({ config: manifest("https://one.example.test"), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      const replaced = await orchestrator.up({ config: manifest("https://two.example.test"), root, stateDir });
+      expect(await readFile(observed, "utf8")).toBe("https://two.example.test");
+      expect(replaced.resources?.resources.auth.remote).toEqual({ url: "https://two.example.test" });
+    } finally {
+      await orchestrator.down({ config: manifest("https://two.example.test"), root, stateDir }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
 
 describe("real Compose resource endpoints", () => {

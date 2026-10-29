@@ -365,6 +365,10 @@ function remoteResourceUrl(value: unknown, kind: ResourceKind, field: string): s
   let url: URL;
   try { url = new URL(raw); } catch { fail(`${field} must be an absolute URL.`, field); }
   if (url.username || url.password) fail(`${field} must not embed credentials; name them in secrets.`, field);
+  // Clients decode percent escapes, so an encoded assignment, query or
+  // userinfo would reach them as a credential. A target URL is only a host,
+  // port and plain path.
+  if (raw.includes("%")) fail(`${field} must not contain percent-encoded data; name credentials in secrets.`, field);
   if (url.search || url.hash || raw.includes("?") || raw.includes("#")) fail(`${field} must not contain a query or fragment; add options in a template.`, field);
   if (!url.hostname) fail(`${field} requires a host.`, field);
   if (!url.port && !DEFAULT_PORTS[url.protocol]) fail(`${field} requires an explicit port for ${url.protocol} targets.`, field);
@@ -443,10 +447,10 @@ function resourceSpec(value: unknown, field: string): ResourceSpec {
 }
 
 function validateLocalResourceTarget(config: DevFnConfig, target: Extract<ResourceTargetSpec, { node: string }>, field: string): void {
-  const process = config.processes?.[target.node];
-  const service = config.services?.[target.node];
+  const process = config.processes && Object.hasOwn(config.processes, target.node) ? config.processes[target.node] : undefined;
+  const service = config.services && Object.hasOwn(config.services, target.node) ? config.services[target.node] : undefined;
   if (!process && !service) fail(`${field}.node references unknown lifecycle node ${target.node}.`, `${field}.node`);
-  if (!config.ports?.[target.port]) fail(`${field}.port references unknown port ${target.port}.`, `${field}.port`);
+  if (!config.ports || !Object.hasOwn(config.ports, target.port)) fail(`${field}.port references unknown port ${target.port}.`, `${field}.port`);
   const declared = process ? process.ports?.includes(target.port) : service!.ports?.[target.port] !== undefined;
   if (!declared) fail(`${field}.port ${target.port} is not an exposed port declared by ${target.node}.`, `${field}.port`);
 }

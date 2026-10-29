@@ -15,7 +15,7 @@ import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput } from "./endpoints.js";
 import { createPlan } from "./planner.js";
-import { planResources, resourcesNeedComposeNetworks } from "./resources.js";
+import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -88,18 +88,20 @@ type PublicTemplate = Awaited<ReturnType<typeof publicTemplateInputs>>;
 async function composeTemplateReferences(config: DevFnConfig, plan: LifecyclePlan, root: string, identity: RoutingIdentity, ports: Record<string, number>, hostnameSuffix: string | undefined,
   publicTemplate: PublicTemplate, composeNetworks: Record<string, string[]>, provisional: ReturnType<typeof resolveEndpointTemplates>, deadline: number): Promise<Set<string>> {
   const all = new Set<string>();
-  const publicReferences: Record<string, Set<string>> = {};
+  // Public and resource references are checked against permissive provisional
+  // networks: whatever fails here fails on the effective networks too.
+  const checkedReferences: Record<string, Set<string>> = {};
   for (const node of plan.nodes) {
     if (node.kind !== "service") continue;
     const spec = config.services![node.name];
     const selected = provisional.nodes[node.name].environment;
     const environment = createComposeEnvironment({ ...spec, env: selected }, selected);
     const references = await selectedComposeEndpointReferences({ ...spec, env: selected }, root, environment, deadline);
-    publicReferences[node.name] = new Set([...references].filter((name) => name.startsWith("DEVFN_PUBLIC_URL_")));
+    checkedReferences[node.name] = new Set([...references].filter((name) => name.startsWith("DEVFN_PUBLIC_URL_") || name.startsWith("DEVFN_RESOURCE_")));
     for (const name of references) all.add(name);
   }
   resolveEndpoints({ config, plan, ownerId: identity.instanceId, ports, hostnameSuffix, routingIdentity: identity,
-    composeNetworks, composeReferences: publicReferences, ...publicTemplate });
+    composeNetworks, composeReferences: checkedReferences, ...publicTemplate });
   return all;
 }
 
@@ -154,6 +156,10 @@ function compareCodepoint(left: string, right: string): number {
 async function startupFingerprints(config: DevFnConfig, root: string, resolved: ReturnType<typeof resolveEndpointTemplates>): Promise<Record<string, string>> {
   const fingerprints: Record<string, string> = {};
   const deadline = Date.now() + 20_000;
+  // Resource values may sit under credential-like names that the environment
+  // fingerprint masks; the redacted plan still records every selected value.
+  // Without resources it is undefined and earlier fingerprints are unchanged.
+  const resources = resourcePlanFingerprint(resolved.resources);
   for (const [name, node] of Object.entries(resolved.nodes)) {
     const processSpec = config.processes?.[name];
     const serviceSpec = config.services?.[name];
@@ -172,6 +178,7 @@ async function startupFingerprints(config: DevFnConfig, root: string, resolved: 
           .sort(([a], [b]) => compareCodepoint(a, b))
           .map(([key, value]) => [key, secretNames.has(key) || isCredentialKey(key) ? "<secret-channel>" : value]),
         envAllowlist: [...(processSpec.envAllowlist ?? [])].sort(compareCodepoint), secretEnv: [...(processSpec.secretEnv ?? [])].sort(compareCodepoint),
+        resources,
       };
     } else if (serviceSpec) {
       const spec = { ...serviceSpec, env: node.environment };
@@ -182,6 +189,7 @@ async function startupFingerprints(config: DevFnConfig, root: string, resolved: 
         environment: declaredEnvironment,
         envAllowlist: [...(serviceSpec.envAllowlist ?? [])].sort(compareCodepoint), secretEnv: [...(serviceSpec.secretEnv ?? [])].sort(compareCodepoint),
         source: await fingerprintComposeSource(spec, root, resolved.ownerId, environment, deadline),
+        resources,
       };
     } else continue;
     fingerprints[name] = createHash("sha256").update(JSON.stringify(startup)).digest("hex");
