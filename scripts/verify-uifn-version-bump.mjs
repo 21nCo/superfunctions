@@ -13,7 +13,9 @@ const RELEASE_TARGETS_PATH = "release-packages.json";
 
 // Shipped code is everything that feeds the tarball (`dist` is built from the
 // package sources and configs) minus tests, fixtures, stories, harnesses and
-// Markdown docs. Unknown paths count as shipped so new build inputs fail closed.
+// Markdown docs. Unknown paths count as shipped so new build inputs fail closed;
+// data and helpers that never reach the tarball are declared "excluded", and the
+// guard rejects an exclusion that `files`, a tsconfig include or a shipped file uses.
 const NON_SHIPPED_SEGMENTS = new Set(["__tests__", "__mocks__", "__fixtures__", "__snapshots__", "fixtures", "test", "tests"]);
 const NON_SHIPPED_ROOT_DIRS = new Set(["browser", "stories", "type-tests", "workbenches"]);
 const NON_SHIPPED_FILE = /(?:\.(?:test|spec|test-d|stories)\.[^/]+|\.mdx?|\.snap)$/i;
@@ -37,7 +39,8 @@ const SCANNED_FILE = /(?:\.(?:[cm]?[jt]sx?|svelte|css)|(?:^|\/)[tj]sconfig[^/]*\
 const SPECIFIER = /(['"`])(\.\.?(?:\/[^'"`\n]*?)?)(?:\1|\$\{)/g;
 const LITERAL_ARGUMENT = /\s*,\s*(['"`])([^'"`\n]*)\1/y;
 const REPO_PATH = /(['"`])((?:uifn|scripts)\/[^'"`\s]*?)(?:\1|\$\{)/g;
-const PARENT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
+const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
+const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
@@ -203,7 +206,7 @@ export function evaluatePackage({ name, packagePath, baseManifest, headManifest,
   } else if (changed) {
     const reasons = [...shippedFiles.map((file) => (file.startsWith(prefix) ? file.slice(prefix.length) : file)), ...(result.manifestChanged ? ["package.json (published fields)"] : [])];
     const listed = reasons.slice(0, 5).join(", ") + (reasons.length > 5 ? `, and ${reasons.length - 5} more` : "");
-    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md`);
+    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md, or declare in-package paths that never reach the tarball under "excluded" in ${INPUTS_PATH}`);
   }
   return result;
 }
@@ -224,16 +227,38 @@ export function fileReferences(file, text, { base = path.posix.dirname(file), bu
   return [...new Set(found.map((target) => target.replace(/\/+$/, "")))];
 }
 
-/** Repo paths that shipped lifecycle scripts name through `..` segments, resolved from the package root. */
+/** Repo paths that shipped lifecycle scripts name, each token resolved from the package root. */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     for (const token of scripts[name].split(/[\s;&|<>()]+/)) {
       const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
-      if (PARENT_SEGMENT.test(value)) found.push({ from: `package.json scripts.${name}`, target: path.posix.join(packagePath, value).replace(/\/+$/, "") });
+      if (value) found.push({ from: `package.json scripts.${name}`, target: path.posix.join(packagePath, value).replace(/\/+$/, "") });
     }
   }
   return found;
+}
+
+const staticPrefix = (pattern) => {
+  const segments = pattern.replace(/^\.\//, "").split("/");
+  const glob = segments.findIndex((segment) => /[*?[{]/.test(segment));
+  return (glob < 0 ? segments : segments.slice(0, glob)).join("/");
+};
+
+/** Paths a tsconfig compiles: the static prefix of each `include` and `files` entry, from its directory. */
+export function tsconfigRoots(file, text) {
+  const roots = [];
+  for (const [, list] of text.matchAll(TSCONFIG_LIST)) {
+    for (const [, entry] of list.matchAll(/"([^"]*)"/g)) roots.push(path.posix.join(path.posix.dirname(file), staticPrefix(entry)));
+  }
+  return roots.map((target) => target.replace(/\/+$/, ""));
+}
+
+function collectReferences({ packagePath, manifest, files }) {
+  return [
+    ...scriptReferences(manifest?.scripts, packagePath),
+    ...files.flatMap(({ file, text, base, buildFile }) => fileReferences(file, text, { base, buildFile }).map((target) => ({ from: file, target }))),
+  ];
 }
 
 /**
@@ -242,18 +267,36 @@ export function scriptReferences(scripts, packagePath) {
  */
 export function findUndeclaredReferences({ name, packagePath, manifest, files, declaration }) {
   const declared = [...declaration.inputs, ...declaration.references];
-  const references = [
-    ...scriptReferences(manifest?.scripts, packagePath),
-    ...files.flatMap(({ file, text, base, buildFile }) => fileReferences(file, text, { base, buildFile }).map((target) => ({ from: file, target }))),
-  ];
   const errors = [];
-  for (const { from, target } of references) {
+  for (const { from, target } of collectReferences({ packagePath, manifest, files })) {
     if (isWithin(target, packagePath) || declared.some((entry) => isWithin(target, entry))) continue;
     // An ancestor directory such as `path.resolve(here, "..")` is a base path, not a read.
     if ([packagePath, ...declaration.inputs].some((root) => isWithin(root, target))) continue;
     errors.push(`${name}: ${from} refers to ${target}, outside ${packagePath}; declare it in ${INPUTS_PATH} under "inputs" if it feeds the tarball or "references" if it does not, with a reason`);
   }
   return [...new Set(errors)];
+}
+
+/**
+ * An "excluded" path must not reach the tarball: it may not overlap the manifest `files` list or a
+ * tsconfig include, and no shipped file, declared input or shipped script may refer into it.
+ */
+export function findConsumedExclusions({ name, packagePath, manifest, files, excluded }) {
+  const listed = Array.isArray(manifest?.files) ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : [];
+  const roots = [
+    ...listed.map((entry) => ({ from: "package.json files", target: path.posix.join(packagePath, staticPrefix(entry)).replace(/\/+$/, "") })),
+    ...files.filter(({ file }) => TSCONFIG.test(file)).flatMap(({ file, text }) => tsconfigRoots(file, text).map((target) => ({ from: `${file} include`, target }))),
+  ];
+  const references = collectReferences({ packagePath, manifest, files });
+  const errors = [];
+  for (const entry of excluded) {
+    const absolute = `${packagePath}/${entry}`;
+    const root = roots.find(({ target }) => isWithin(absolute, target) || isWithin(target, absolute));
+    const reference = references.find(({ target }) => isWithin(target, absolute));
+    const user = root ? `${root.from} includes ${root.target}` : reference && `${reference.from} refers to ${reference.target}`;
+    if (user) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, but ${user}; it reaches the tarball, so remove the exclusion`);
+  }
+  return errors;
 }
 
 function git(cwd, args) {
@@ -318,6 +361,9 @@ function guardReferences(cwd, commit, packages) {
     for (const target of [...inputs, ...references]) {
       if (listFiles(cwd, commit, [target]).length === 0) errors.push(`${INPUTS_PATH}: ${name} declares ${target}, which does not exist`);
     }
+    for (const entry of excluded) {
+      if (listFiles(cwd, commit, [`${packagePath}/${entry}`]).length === 0) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, which does not exist in ${packagePath}`);
+    }
     const prefix = `${packagePath}/`;
     const manifest = readJsonAt(cwd, commit, `${packagePath}/package.json`);
     const options = classifyOptions(manifest);
@@ -336,6 +382,7 @@ function guardReferences(cwd, commit, packages) {
     const blobs = readBlobs(cwd, commit, scanned.map(({ file }) => file));
     const files = scanned.filter(({ file }) => blobs.has(file)).map((entry) => ({ ...entry, text: blobs.get(entry.file) }));
     errors.push(...findUndeclaredReferences({ name, packagePath, manifest, files, declaration: pkg }));
+    errors.push(...findConsumedExclusions({ name, packagePath, manifest, files, excluded }));
   }
   return errors;
 }

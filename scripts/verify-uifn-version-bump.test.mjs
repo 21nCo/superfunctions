@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, evaluatePackage, parseInputDeclarations, reportSincePublished, shippedScriptNames } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, evaluatePackage, parseInputDeclarations, reportSincePublished, shippedScriptNames, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -175,6 +175,67 @@ test("undeclared out-of-root imports, path segments and build scripts fail close
   assert.match(output, /@uifn\/core: uifn\/core\/tsup\.config\.ts refers to uifn\/theme\/tokens\.css, outside uifn\/core/);
   assert.match(output, /@uifn\/react: package\.json scripts\.build refers to scripts\/build-react\.mjs, outside uifn\/react/);
   assert.match(output, /@uifn\/react: uifn\/react\/src\/index\.ts refers to uifn\/shared\/src\/index, outside uifn\/react/);
+});
+
+// Core ships styles.css through files, compiles src, and keeps a verification helper and a data dir it never ships.
+function withExclusions(repo, excluded) {
+  repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "styles.css",'));
+  repo.write("uifn/core/styles.css", ".a {}\n");
+  repo.write("uifn/core/tsconfig.json", '{ "include": ["src/**/*"] }\n');
+  repo.write("uifn/core/scripts/verify-helper.mjs", "export const helper = 1;\n");
+  repo.write("uifn/core/data/contract.json", "{}\n");
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    Object.assign(document.packages["@uifn/core"].excluded, excluded);
+    return JSON.stringify(document);
+  });
+  repo.commit("declare exclusions");
+  repo.git("branch", "-f", "base");
+}
+
+test("declared verification helpers and data dirs outside files need no bump", (t) => {
+  const repo = fixtureRepo(t);
+  withExclusions(repo, { "scripts/verify-helper.mjs": "used only by repo verifiers", data: "read only by tests" });
+  repo.write("uifn/core/scripts/verify-helper.mjs", "export const helper = 2;\n");
+  repo.write("uifn/core/data/contract.json", '{ "parts": 2 }\n');
+  repo.commit("helper and data only");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 0, output);
+});
+
+test("build scripts, files-listed assets and undeclared new dirs still need a bump", (t) => {
+  const repo = fixtureRepo(t);
+  withExclusions(repo, { "scripts/verify-helper.mjs": "used only by repo verifiers", data: "read only by tests" });
+  repo.write("uifn/core/scripts/build.mjs", 'const catalog = path.resolve(packageRoot, "..", "catalog", "catalog.json");\nconst x = 2;\n');
+  repo.write("uifn/core/styles.css", ".a { color: red }\n");
+  repo.write("uifn/core/assets/icons.json", "{}\n");
+  repo.commit("shipped changes");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: shipped code changed \(assets\/icons\.json, scripts\/build\.mjs, styles\.css\) but version is still 1\.0\.0/);
+});
+
+test("an exclusion that files, a tsconfig include, a shipped file or a lifecycle script uses fails", (t) => {
+  const repo = fixtureRepo(t);
+  withExclusions(repo, { "styles.css": "x", "src/internal": "x", data: "x", "scripts/verify-helper.mjs": "x", missing: "x" });
+  repo.write("uifn/core/src/internal/a.ts", "export const a = 1;\n");
+  repo.write("uifn/core/src/index.ts", 'import contract from "../data/contract.json";\nexport const core = 1;\n');
+  repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', '"build": "node scripts/verify-helper.mjs && tsup"'));
+  repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Build.\n\n## 1.0.0"));
+  repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+  repo.commit("use excluded paths");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core excludes styles\.css, but package\.json files includes uifn\/core\/styles\.css/);
+  assert.match(output, /@uifn\/core excludes src\/internal, but uifn\/core\/tsconfig\.json include includes uifn\/core\/src/);
+  assert.match(output, /@uifn\/core excludes data, but uifn\/core\/src\/index\.ts refers to uifn\/core\/data\/contract\.json/);
+  assert.match(output, /@uifn\/core excludes scripts\/verify-helper\.mjs, but package\.json scripts\.build refers to uifn\/core\/scripts\/verify-helper\.mjs/);
+  assert.match(output, /@uifn\/core excludes missing, which does not exist in uifn\/core/);
+});
+
+test("tsconfigRoots resolves the static prefix of include and files entries", () => {
+  const text = '{ "compilerOptions": { "outDir": "dist" }, "include": ["src/**/*", "vitest.config.ts", "./lib"], "files": ["**/*.d.ts"] }';
+  assert.deepEqual(tsconfigRoots("uifn/core/tsconfig.json", text), ["uifn/core/src", "uifn/core/vitest.config.ts", "uifn/core/lib", "uifn/core"]);
 });
 
 test("a manifest change to a script reached from a lifecycle script needs a bump", (t) => {
