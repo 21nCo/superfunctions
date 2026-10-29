@@ -385,12 +385,44 @@ function containerListeners(context: TargetContext, endpoint: Endpoint, consumer
   const { input, gateway } = context;
   const host = canonicalHost(endpoint.host);
   if (gateway && host === canonicalHost(gateway.host)) return [`loopback:${endpoint.port}`];
+  const reached = reachedServices(input, host, consumer);
+  if (!reached) return [];
+  return reached.length ? reached.map((node) => containerListener(input, node, endpoint.port)) : [`dns:${host}:${endpoint.port}`];
+}
+
+/**
+ * The selected Compose services a host name reaches by Docker DNS from inside
+ * one consumer, or undefined while networks are provisional and a selected
+ * service has that name.
+ */
+function reachedServices(input: ResourcePlanInput, host: string, consumer: string): string[] | undefined {
   const named = input.plan.nodes.filter((node) => node.kind === "service" && canonicalHost(input.config.services![node.name].service) === host);
-  if (!named.length) return [`dns:${host}:${endpoint.port}`];
-  if (input.provisionalNetworks) return [];
+  if (!named.length) return [];
+  if (input.provisionalNetworks) return undefined;
   const networks = new Set(input.composeNetworks?.[consumer] ?? []);
-  const reached = named.filter((node) => (input.composeNetworks?.[node.name] ?? []).some((network) => networks.has(network)));
-  return reached.length ? reached.map((node) => containerListener(input, node.name, endpoint.port)) : [`dns:${host}:${endpoint.port}`];
+  return named.filter((node) => (input.composeNetworks?.[node.name] ?? []).some((network) => networks.has(network))).map((node) => node.name);
+}
+
+/**
+ * A consumer's container-side endpoint must name one listener: the selected
+ * Compose provider of a local target, or at most one selected Compose service
+ * for a remote host. Docker DNS answers a name that several reached services
+ * share with any of them, so the consumer could dial a provider it did not
+ * select. Decided on effective networks, before state or leases.
+ */
+function rejectAmbiguousContainerEndpoint(context: TargetContext, endpoint: Endpoint, source: ResourceValueSource, consumer: string): void {
+  if (source === "host-gateway") return;
+  const { input, name, target } = context;
+  const reached = reachedServices(input, canonicalHost(endpoint.host), consumer);
+  if (!reached) return;
+  const selected = source === "compose" && "node" in target ? containerListener(input, target.node, endpoint.port) : undefined;
+  const listeners = new Set(reached.map((node) => containerListener(input, node, endpoint.port)));
+  const competing = reached.filter((node) => containerListener(input, node, endpoint.port) !== selected);
+  if (selected ? competing.length === 0 : listeners.size <= 1) return;
+  const reach = selected ? `which selects provider ${(target as { node: string }).node}, but its endpoint ${endpoint.host}:${endpoint.port} also names ${competing.join(", ")}` :
+    `whose endpoint ${endpoint.host}:${endpoint.port} names ${competing.join(", ")}`;
+  invalid(`Compose service ${consumer} consumes resource ${name}, ${reach} on the networks ${consumer} joins, and Docker DNS may answer with any of them; ` +
+    "give those services distinct service names or networks.");
 }
 
 /**
@@ -438,6 +470,7 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
     if (node.kind !== "service" || !consumers.includes(node.name)) continue;
     const located = containerEndpoint(context, host, node.name);
     if ("unreachable" in located) invalid(located.unreachable);
+    rejectAmbiguousContainerEndpoint(context, located.endpoint, located.source, node.name);
     containers.set(node.name, located.endpoint);
     services[node.name] = endpointValues(prefix, located.endpoint, located.source, located.field);
   }

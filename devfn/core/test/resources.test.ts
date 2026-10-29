@@ -8,7 +8,7 @@ import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { FilePortRegistry } from "@devfn/ports";
 import { describe, expect, it, vi } from "vitest";
 
-import { createPlan, DevFnOrchestrator, planResources, receiptPath, resolveEndpointTemplates, type ResourcePlan } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, planResources, receiptPath, resolveEndpointTemplates, writeReceipt, type ResourcePlan } from "../src/index.js";
 import { resourceOwner, resourcePlanFingerprint } from "../src/resources.js";
 import { readRuntimeId, recordRuntimeId } from "../src/runtime.js";
 import { sameServiceNames } from "./resource-fixtures.js";
@@ -289,11 +289,28 @@ describe("resource validation before side effects", () => {
       const disjoint = plan(sameName, undefined, { ...shared, composeNetworks: { ra: ["a"], wa: ["a"], rb: ["b"], wb: ["b"] } });
       expect(disjoint.resources.c1.services.wa.DEVFN_RESOURCE_C1_ENDPOINT).toMatchObject({ value: "redis:6379", source: "compose" });
       expect(disjoint.resources.c2.services.wb.DEVFN_RESOURCE_C2_ENDPOINT).toMatchObject({ value: "redis:6379", source: "compose" });
-      // On one network the name reaches both providers.
-      expect(() => plan(sameName, undefined, shared), kind).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resources c1 and c2 share namespace") }));
+      // On one network the name reaches both providers, whether or not another resource selects the second.
+      const ambiguous = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID",
+        message: expect.stringContaining("Compose service wa consumes resource c1, which selects provider ra, but its endpoint redis:6379 also names rb") });
+      expect(() => plan(sameName, undefined, shared), kind).toThrow(ambiguous);
+      const single = sameServiceNames(kind, { single: true });
+      const singleShared = { ports: { ra: 4111, rb: 4112 }, composeNetworks: { ra: ["ext"], rb: ["ext"], wa: ["ext"] } };
+      expect(() => plan(single, undefined, singleShared), kind).toThrow(ambiguous);
+      expect(plan(single, undefined, { ...singleShared, composeNetworks: { ra: ["a"], wa: ["a"], rb: ["b"] } }).resources.c1.services.wa.DEVFN_RESOURCE_C1_ENDPOINT)
+        .toMatchObject({ value: "redis:6379", source: "compose" });
       // Provisional networks leave the name to the effective-network pass.
       expect(() => plan(sameName, undefined, { ...shared, provisionalNetworks: true }), kind).not.toThrow();
+      expect(() => plan(single, undefined, { ...singleShared, provisionalNetworks: true }), kind).not.toThrow();
     }
+    // A remote host naming two reached selected services is as ambiguous; naming one is not.
+    const remote = (networks: Record<string, string[]>) => {
+      const value = sameServiceNames("cache", { single: true });
+      const resources = { c1: { kind: "cache", defaultTarget: "dev", targets: { dev: { url: "redis://redis:6379" } } } };
+      return plan(validateDevFnConfig({ ...value, resources, profiles: { default: { services: ["wa", "ra", "rb"] } } }), undefined,
+        { ports: { ra: 4111, rb: 4112 }, composeNetworks: networks });
+    };
+    expect(() => remote({ ra: ["ext"], rb: ["ext"], wa: ["ext"] })).toThrow("whose endpoint redis:6379 names ra, rb");
+    expect(remote({ ra: ["ext"], rb: ["b"], wa: ["ext"] }).resources.c1.services.wa.DEVFN_RESOURCE_C1_URL).toMatchObject({ value: "redis://redis:6379", source: "manifest" });
     // Through the gateway a consumer reaches a native provider's leased port, which a preflight placeholder does not name.
     const gateway = config((v) => {
       v.processes.cache = { adapter: "command", command: ["node", "cache.mjs"], ports: ["redis"] };
@@ -799,6 +816,48 @@ createServer((request, response) => { response.writeHead(200); response.end("ok"
       expect(replaced.resources?.resources.auth.remote).toEqual({ url: "https://two.example.test" });
     } finally {
       await orchestrator.down({ config: manifest("https://two.example.test"), root, stateDir }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+});
+
+describe("real legacy receipt resource reuse", () => {
+  it("replaces a v0.1 receipt without fingerprints when a resource is added, and reuses one without resources", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-legacy-"));
+    const stateDir = path.join(root, "state");
+    const observed = path.join(root, "observed.txt");
+    await writeFile(path.join(root, "client.mjs"), `import { createServer } from "node:http";
+import { writeFile } from "node:fs/promises";
+await writeFile(process.env.OBSERVED_FILE, process.env.DEVFN_RESOURCE_AUTH_URL ?? "none");
+createServer((request, response) => { response.writeHead(200); response.end("ok"); }).listen(Number(process.env.DEVFN_PORT_WEB), "127.0.0.1");
+`);
+    const manifest = (withResource: boolean) => validateDevFnConfig({ version: 1, project: { id: "resource-legacy" }, ports: { web: {} },
+      processes: { web: { adapter: "command", command: [process.execPath, "client.mjs"], ports: ["web"], ...(withResource ? { resources: ["auth"] } : {}),
+        health: { type: "http", port: "web", timeoutMs: 10_000 }, env: { OBSERVED_FILE: observed } } },
+      ...(withResource ? { resources: { auth: { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://auth.example.test" } } } } } : {}),
+      profiles: { default: { processes: ["web"] } } });
+    /** Rewrites the receipt as DevFn v0.1 wrote it: no startup or port fingerprints. */
+    const asLegacy = async (receipt: Awaited<ReturnType<DevFnOrchestrator["up"]>>) => {
+      const legacy = { ...receipt } as Partial<typeof receipt>;
+      delete legacy.startupFingerprints;
+      delete legacy.portSpecFingerprints;
+      await writeReceipt(legacy as typeof receipt);
+    };
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      const first = await orchestrator.up({ config: manifest(false), root, stateDir });
+      expect(await readFile(observed, "utf8")).toBe("none");
+      await asLegacy(first);
+      await expect(orchestrator.up({ config: manifest(false), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      const replaced = await orchestrator.up({ config: manifest(true), root, stateDir });
+      expect(replaced.invocationId).not.toBe(first.invocationId);
+      expect(await readFile(observed, "utf8")).toBe("https://auth.example.test");
+      expect(replaced.resources?.resources.auth.remote).toEqual({ url: "https://auth.example.test" });
+      // A legacy receipt that records the same plan is still reused.
+      await asLegacy(replaced);
+      await expect(orchestrator.up({ config: manifest(true), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+    } finally {
+      await orchestrator.down({ config: manifest(true), root, stateDir }).catch(() => undefined);
       await rm(root, { recursive: true, force: true });
     }
   }, 90_000);

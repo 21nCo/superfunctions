@@ -397,6 +397,9 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     const currentUrls = resolveAllocationUrls(receipt.allocations, receipt.routes, selectedHttpPorts(config, plan), resolved.directUrls);
     if (Object.keys(currentUrls).length !== Object.keys(receipt.urls).length ||
       Object.entries(currentUrls).some(([name, url]) => receipt.urls[name] !== url)) return false;
+    // Receipts without startup fingerprints (v0.1) still record the resource
+    // plan; a changed selection replaces the lifecycle. Absent equals absent.
+    if (resourcePlanFingerprint(receipt.resources) !== resourcePlanFingerprint(resolved.resources)) return false;
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
       if (Object.keys(current).length !== Object.keys(receipt.startupFingerprints).length ||

@@ -88,9 +88,22 @@ describe("resource collisions on effective Compose networks", () => {
       // Provisional networks are per project; only the effective shared network joins them.
       await onEachPlatform(async (platform) => {
         effective.networks = { "alpha/redis": ["ext"], "beta/redis": ["ext"], "alpha/wa": ["ext"], "beta/wb": ["ext"] };
-        await expectRejectedBeforeState(config, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resources c1 and c2 share namespace") }, platform);
+        await expectRejectedBeforeState(config, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("which selects provider ra, but its endpoint redis:6379 also names rb") }, platform);
       });
       effective.networks = { "alpha/redis": ["a"], "alpha/wa": ["a"], "beta/redis": ["b"], "beta/wb": ["b"] };
+      await expectReservation(config, root);
+    });
+  }, 60_000);
+
+  it("rejects a consumer whose provider name also reaches another selected service before creating lifecycle state", async () => {
+    await withRoot("devfn-resource-ambiguous-name-", async (root) => {
+      await writeFile(path.join(root, "compose.yaml"), "services:\n  redis:\n    image: busybox\n  wa:\n    image: busybox\n");
+      const config = sameServiceNames("database", { single: true });
+      await onEachPlatform(async (platform) => {
+        effective.networks = { "alpha/redis": ["ext"], "beta/redis": ["ext"], "alpha/wa": ["ext"] };
+        await expectRejectedBeforeState(config, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("which selects provider ra, but its endpoint redis:6379 also names rb") }, platform);
+      });
+      effective.networks = { "alpha/redis": ["a"], "alpha/wa": ["a"], "beta/redis": ["b"] };
       await expectReservation(config, root);
     });
   }, 60_000);
