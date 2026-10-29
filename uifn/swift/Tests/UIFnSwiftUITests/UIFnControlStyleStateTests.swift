@@ -34,7 +34,8 @@ enum UIFnStatefulControl: String, CaseIterable, CustomTestStringConvertible {
         case .checkboxOff: AnyView(UIFnToggleAppearance(label: Text("Remember"), kind: .checkbox, value: .off, state: state))
         case .checkboxOn: AnyView(UIFnToggleAppearance(label: Text("Remember"), kind: .checkbox, value: .on, state: state))
         case .checkboxMixed: AnyView(UIFnToggleAppearance(label: Text("Remember"), kind: .checkbox, value: .mixed, state: state))
-        case .textField: AnyView(UIFnTextFieldAppearance(field: Text("Ada"), state: state).frame(width: 200))
+        case .textField:
+            AnyView(UIFnTextFieldAppearance(field: Text("Ada").frame(maxWidth: .infinity, alignment: .leading), state: state).frame(width: 200))
         }
         return AnyView(view.isolated())
     }
@@ -146,23 +147,24 @@ struct UIFnControlStyleStateTests {
 
     @Test
     func textFieldStyleDrawsTheEnabledState() async throws {
-        func render(_ field: @escaping @MainActor () -> some View) async throws -> UIFnBitmap {
-            try #require(await UIFnSnapshot.render { field().frame(width: 200).isolated() })
+        // ImageRenderer draws a placeholder for the platform field, sized from
+        // its font. Under load the platform field is sometimes measured
+        // without a process-registered face (3pt taller), so these renders
+        // keep the system font, which the field always finds.
+        let canvas = Self.magentaTheme.colors.surface.canvas.color
+        func render(_ theme: UIFnTheme = .uifn, _ field: @escaping @MainActor () -> some View) async throws -> UIFnBitmap {
+            try #require(await UIFnSnapshot.render {
+                field().uifnTheme(theme).frame(width: 200).padding(8).background(canvas).uifnFontFamily(nil)
+            })
         }
         let styled = try await render { TextField("Name", text: .constant("Ada")).textFieldStyle(.uifn) }
         let disabled = try await render { TextField("Name", text: .constant("Ada")).textFieldStyle(.uifn).disabled(true) }
-        // A plain field with the style's font and padding takes the same size,
-        // so the comparison counts only what the style draws around it.
-        let theme = UIFnTheme.uifn
-        let plain = try await render {
-            TextField("Name", text: .constant("Ada"))
-                .textFieldStyle(.plain)
-                .uifnFont(theme.typography.size.md, weight: theme.typography.weight.regular)
-                .padding(.horizontal, theme.spacing.space3)
-                .padding(.vertical, theme.spacing.space2)
-        }
-        #expect(styled.width == plain.width && styled.height == plain.height)
-        #expect(styled.differingFraction(from: plain) > UIFnStateChange.minimumDifferingFraction)
+        // The same styled field in a theme whose colors all match the canvas
+        // lays out identically and draws nothing visible around the field,
+        // so the comparison counts only what the style draws.
+        let unpainted = try await render(Self.magentaTheme) { TextField("Name", text: .constant("Ada")).textFieldStyle(.uifn) }
+        #expect(styled.width == unpainted.width && styled.height == unpainted.height)
+        #expect(styled.differingFraction(from: unpainted) > UIFnStateChange.minimumDifferingFraction)
         #expect(disabled.width == styled.width && disabled.height == styled.height)
         #expect(disabled.differingFraction(from: styled) > UIFnStateChange.minimumDifferingFraction)
     }

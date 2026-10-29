@@ -50,8 +50,13 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
                 .toggleStyle(.uifnCheckbox)
         // ImageRenderer draws a placeholder for the platform text field, so
         // the text field snapshots draw the style around the text it shows.
-        case .textFieldEmpty: UIFnTextFieldAppearance(field: Text(" "), state: UIFnControlState()).frame(width: 200)
-        case .textFieldFilled: UIFnTextFieldAppearance(field: Text("Ada"), state: UIFnControlState()).frame(width: 200)
+        // The stand-in fills the field's width, like the platform field.
+        case .textFieldEmpty:
+            UIFnTextFieldAppearance(field: Text(" ").frame(maxWidth: .infinity, alignment: .leading), state: UIFnControlState())
+                .frame(width: 200)
+        case .textFieldFilled:
+            UIFnTextFieldAppearance(field: Text("Ada").frame(maxWidth: .infinity, alignment: .leading), state: UIFnControlState())
+                .frame(width: 200)
         case .groupBox:
             GroupBox("Account") { Text("Signed in") }
                 .groupBoxStyle(.uifn)
