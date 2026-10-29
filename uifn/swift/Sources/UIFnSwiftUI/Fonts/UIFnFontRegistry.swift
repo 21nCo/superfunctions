@@ -33,6 +33,23 @@ public enum UIFnFontRegistrationError: Error, Equatable {
 /// Registers font files from a consumer's bundle by family and weight, and
 /// resolves a family and weight to a registered face.
 ///
+/// Fonts default to the system font; uifn bundles no font files. To use your
+/// own family, register its files from your bundle once at launch, then set
+/// the family on a view:
+///
+/// ```swift
+/// try UIFnFontRegistry.shared.register(family: "Brand Sans", faces: [
+///     UIFnFontFace(weight: UIFnFontWeight(400), resource: "BrandSans-Regular", fileExtension: "otf"),
+///     UIFnFontFace(weight: UIFnFontWeight(700), resource: "BrandSans-Bold", fileExtension: "otf"),
+/// ], from: .main)
+///
+/// ContentView().uifnFontFamily("Brand Sans")
+/// ```
+///
+/// ``SwiftUI/View/uifnFont(_:weight:)`` then uses the face nearest the
+/// requested weight, scaled exactly like the system font. An unregistered
+/// family falls back to the system font and logs once at debug level.
+///
 /// Fonts are registered with Core Text for the current process. Registering
 /// a file again, from any registry, or one the app already registered (for
 /// example through `UIAppFonts`), succeeds without registering it twice.
@@ -175,6 +192,15 @@ public extension UIFnTypeSize {
     /// system font scales. Without a family, or when the family is not
     /// registered, this is the system font (an unregistered family is logged
     /// at debug level once).
+    ///
+    /// The result has a fixed size for the `dynamicTypeSize` you pass (by
+    /// default `.large`, the theme's points) and does not follow a view's
+    /// Dynamic Type size. In views, use ``SwiftUI/View/uifnFont(_:weight:)``,
+    /// which reads the environment's family and Dynamic Type size. This does
+    /// not use `Font.custom(_:size:relativeTo:)`: that scales with the
+    /// `UIFontMetrics` curve, which can render a larger type size smaller, and
+    /// custom and system fonts must scale alike to keep the type scale in
+    /// order.
     func font(
         family: String?,
         weight: UIFnFontWeight? = nil,
