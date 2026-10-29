@@ -34,8 +34,8 @@ public enum UIFnFontRegistrationError: Error, Equatable {
 /// resolves a family and weight to a registered face.
 ///
 /// Fonts are registered with Core Text for the current process. Registering
-/// a file again, or one the app already registered (for example through
-/// `UIAppFonts`), succeeds without registering it twice.
+/// a file again, from any registry, or one the app already registered (for
+/// example through `UIAppFonts`), succeeds without registering it twice.
 public final class UIFnFontRegistry: @unchecked Sendable {
     public static let shared = UIFnFontRegistry()
 
@@ -44,7 +44,6 @@ public final class UIFnFontRegistry: @unchecked Sendable {
     private let registerFont: @Sendable (URL) throws -> Bool
     /// Family name -> weight value -> PostScript name.
     private var families: [String: [Double: String]] = [:]
-    private var registeredURLs: Set<URL> = []
     private var loggedMissingFamilies: Set<String> = []
 
     public convenience init() {
@@ -64,7 +63,8 @@ public final class UIFnFontRegistry: @unchecked Sendable {
     ///
     /// Registering a family again adds its faces; a face for a weight the
     /// family already has replaces it. If any face fails, the files this call
-    /// registered are unregistered and the family is unchanged.
+    /// registered are unregistered and the family is unchanged. A file a
+    /// completed registration in any registry relies on is never unregistered.
     public func register(family: String, faces: [UIFnFontFace], from bundle: Bundle) throws {
         guard !faces.isEmpty else { throw UIFnFontRegistrationError.noFaces(family: family) }
         var weights = Set<Double>()
@@ -83,26 +83,31 @@ public final class UIFnFontRegistry: @unchecked Sendable {
             return (weight: face.weight.value, url: url, postScriptName: try postScriptName(of: url))
         }
 
-        lock.lock()
-        defer { lock.unlock() }
+        let files = UIFnRegisteredFontFiles.process
+        files.lock.lock()
+        defer { files.lock.unlock() }
+        var attempted: Set<URL> = []
         var registeredNow: [URL] = []
         do {
-            for face in resolved where !registeredURLs.contains(face.url) {
+            for face in resolved where !files.urls.contains(face.url) && attempted.insert(face.url).inserted {
                 if try registerFont(face.url) {
                     registeredNow.append(face.url)
                 }
-                registeredURLs.insert(face.url)
             }
         } catch {
+            // No completed registration recorded these files: they were not
+            // registered when this call began, and it holds the process lock.
             for url in registeredNow {
                 CTFontManagerUnregisterFontsForURL(url as CFURL, .process, nil)
-                registeredURLs.remove(url)
             }
             throw error
         }
+        files.urls.formUnion(attempted)
+        lock.lock()
         for face in resolved {
             families[family, default: [:]][face.weight] = face.postScriptName
         }
+        lock.unlock()
     }
 
     /// The PostScript name of `family`'s face nearest to `weight` (regular,
@@ -152,6 +157,16 @@ public final class UIFnFontRegistry: @unchecked Sendable {
         if code == CTFontManagerError.alreadyRegistered.rawValue { return false }
         throw UIFnFontRegistrationError.registrationFailed(url, code: code)
     }
+}
+
+/// The font files uifn's registries have registered, or found registered,
+/// for this process. Core Text registration is process-wide, so one lock
+/// serializes every registry's registration and rollback.
+private final class UIFnRegisteredFontFiles: @unchecked Sendable {
+    static let process = UIFnRegisteredFontFiles()
+
+    let lock = NSLock()
+    var urls: Set<URL> = []
 }
 
 public extension UIFnTypeSize {

@@ -4,11 +4,25 @@ import SwiftUI
 import Testing
 @testable import UIFnSwiftUI
 
+/// The regular (400) and bold (700) faces of a test family in `Fonts`.
+///
+/// Core Text registration is process-wide and tests run in parallel, so a
+/// test that depends on which files are registered uses its own family; the
+/// shared "UIFn Test Sans" is only registered, from this bundle.
+private func testFaces(_ family: String) -> [UIFnFontFace] {
+    let file = family.replacingOccurrences(of: " ", with: "")
+    return [
+        UIFnFontFace(weight: UIFnFontWeight(400), resource: "\(file)-Regular", fileExtension: "ttf", subdirectory: "Fonts"),
+        UIFnFontFace(weight: UIFnFontWeight(700), resource: "\(file)-Bold", fileExtension: "ttf", subdirectory: "Fonts"),
+    ]
+}
+
 private let family = "UIFn Test Sans"
-private let faces = [
-    UIFnFontFace(weight: UIFnFontWeight(400), resource: "UIFnTestSans-Regular", fileExtension: "ttf", subdirectory: "Fonts"),
-    UIFnFontFace(weight: UIFnFontWeight(700), resource: "UIFnTestSans-Bold", fileExtension: "ttf", subdirectory: "Fonts"),
-]
+private let faces = testFaces(family)
+
+private func url(of face: UIFnFontFace) throws -> URL {
+    try #require(Bundle.module.url(forResource: face.resource, withExtension: face.fileExtension, subdirectory: face.subdirectory))
+}
 
 /// Records strings from any thread.
 private final class LogRecorder: @unchecked Sendable {
@@ -37,29 +51,38 @@ private func resolvedPostScriptName(_ name: String) -> String {
 struct UIFnFontRegistryTests {
     @Test
     func registeringAFamilyFromABundleIsIdempotent() async throws {
+        let family = "UIFn Test Repeat"
+        let faces = testFaces(family)
+        // The app registered the regular face itself (for example through UIAppFonts).
+        #expect(CTFontManagerRegisterFontsForURL(try url(of: faces[0]) as CFURL, .process, nil))
+
         let log = LogRecorder()
         let coreTextCalls = LogRecorder()
-        let registry = UIFnFontRegistry(log: { log.record($0) }) { url in
+        let countingRegistry = { UIFnFontRegistry(log: { log.record($0) }) { url in
             coreTextCalls.record(url.lastPathComponent)
             return try UIFnFontRegistry.registerWithCoreText(url)
-        }
+        } }
+        let registry = countingRegistry()
         try registry.register(family: family, faces: faces, from: .module)
-        #expect(resolvedPostScriptName("UIFnTestSans-Regular") == "UIFnTestSans-Regular")
-        #expect(resolvedPostScriptName("UIFnTestSans-Bold") == "UIFnTestSans-Bold")
+        #expect(resolvedPostScriptName("UIFnTestRepeat-Regular") == "UIFnTestRepeat-Regular")
+        #expect(resolvedPostScriptName("UIFnTestRepeat-Bold") == "UIFnTestRepeat-Bold")
 
-        // Again, from another registry (as if the app registered the files
-        // itself), and concurrently: every call succeeds with the same faces.
+        // Again, from another registry, and concurrently: every call succeeds
+        // with the same faces, and Core Text is asked once per file.
         try registry.register(family: family, faces: faces, from: .module)
-        try UIFnFontRegistry(log: { log.record($0) }).register(family: family, faces: faces, from: .module)
+        let other = countingRegistry()
+        try other.register(family: family, faces: faces, from: .module)
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<8 {
                 group.addTask { try registry.register(family: family, faces: faces, from: .module) }
             }
             try await group.waitForAll()
         }
-        #expect(coreTextCalls.messages.sorted() == ["UIFnTestSans-Bold.ttf", "UIFnTestSans-Regular.ttf"])
-        #expect(registry.postScriptName(family: family) == "UIFnTestSans-Regular")
-        #expect(registry.postScriptName(family: family, weight: UIFnFontWeight(700)) == "UIFnTestSans-Bold")
+        #expect(coreTextCalls.messages.sorted() == ["UIFnTestRepeat-Bold.ttf", "UIFnTestRepeat-Regular.ttf"])
+        for registry in [registry, other] {
+            #expect(registry.postScriptName(family: family) == "UIFnTestRepeat-Regular")
+            #expect(registry.postScriptName(family: family, weight: UIFnFontWeight(700)) == "UIFnTestRepeat-Bold")
+        }
         #expect(log.messages.isEmpty)
     }
 
@@ -127,8 +150,7 @@ struct UIFnFontRegistryTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let regular = try #require(Bundle.module.url(forResource: "UIFnTestSans-Regular", withExtension: "ttf", subdirectory: "Fonts"))
-        try FileManager.default.copyItem(at: regular, to: directory.appendingPathComponent("Regular.ttf"))
+        try FileManager.default.copyItem(at: try url(of: faces[0]), to: directory.appendingPathComponent("Regular.ttf"))
         try Data("not a font".utf8).write(to: directory.appendingPathComponent("NotAFont.ttf"))
         let bundle = try #require(Bundle(url: directory))
         let copied = UIFnFontFace(weight: UIFnFontWeight(400), resource: "Regular", fileExtension: "ttf")
@@ -145,28 +167,71 @@ struct UIFnFontRegistryTests {
 
     @Test
     func aFailedFaceUnregistersTheFilesItsCallRegistered() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        for face in faces {
-            let source = try #require(Bundle.module.url(forResource: face.resource, withExtension: "ttf", subdirectory: "Fonts"))
-            try FileManager.default.copyItem(at: source, to: directory.appendingPathComponent("\(face.resource).ttf"))
-        }
-        let bundle = try #require(Bundle(url: directory))
-        let copies = faces.map { UIFnFontFace(weight: $0.weight, resource: $0.resource, fileExtension: "ttf") }
-        let regular = try #require(bundle.url(forResource: copies[0].resource, withExtension: "ttf"))
-        let bold = try #require(bundle.url(forResource: copies[1].resource, withExtension: "ttf"))
-
+        let family = "UIFn Test Rollback"
+        let faces = testFaces(family)
+        let bold = try url(of: faces[1])
         let registry = UIFnFontRegistry(log: { _ in }) { url in
             if url == bold { throw UIFnFontRegistrationError.registrationFailed(url, code: 305) }
-            return CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            return try UIFnFontRegistry.registerWithCoreText(url)
         }
         #expect(throws: UIFnFontRegistrationError.registrationFailed(bold, code: 305)) {
-            try registry.register(family: "Rolled Back", faces: copies, from: bundle)
+            try registry.register(family: family, faces: faces, from: .module)
         }
-        #expect(registry.postScriptName(family: "Rolled Back") == nil)
-        // The regular copy was unregistered, so Core Text registers it anew.
-        #expect(CTFontManagerRegisterFontsForURL(regular as CFURL, .process, nil))
-        CTFontManagerUnregisterFontsForURL(regular as CFURL, .process, nil)
+        #expect(registry.postScriptName(family: family) == nil)
+        #expect(resolvedPostScriptName("UIFnTestRollback-Regular") != "UIFnTestRollback-Regular")
+
+        // Nothing recorded the rolled-back file, so a later call registers it anew.
+        let later = UIFnFontRegistry(log: { _ in })
+        try later.register(family: family, faces: faces, from: .module)
+        #expect(later.postScriptName(family: family) == "UIFnTestRollback-Regular")
+        #expect(resolvedPostScriptName("UIFnTestRollback-Regular") == "UIFnTestRollback-Regular")
+        #expect(resolvedPostScriptName("UIFnTestRollback-Bold") == "UIFnTestRollback-Bold")
+    }
+
+    @Test
+    func aFailedCallNeverUnregistersAFileAnotherRegistryCompletedWith() throws {
+        let family = "UIFn Test Owner"
+        let faces = testFaces(family)
+        let bold = try url(of: faces[1])
+        let other = UIFnFontRegistry(log: { _ in })
+        let otherCall = DispatchGroup()
+        let otherOutcome = LogRecorder()
+        let failing = UIFnFontRegistry(log: { _ in }) { url in
+            guard url == bold else { return try UIFnFontRegistry.registerWithCoreText(url) }
+            // The regular file is registered and this call is about to fail:
+            // another registry registers the regular face meanwhile.
+            otherCall.enter()
+            DispatchQueue.global().async {
+                do {
+                    try other.register(family: family, faces: [faces[0]], from: .module)
+                    otherOutcome.record("registered")
+                } catch {
+                    otherOutcome.record("\(error)")
+                }
+                otherCall.leave()
+            }
+            if otherCall.wait(timeout: .now() + 0.5) == .success {
+                otherOutcome.record("completed during the failing call")
+            }
+            throw UIFnFontRegistrationError.registrationFailed(url, code: 305)
+        }
+        #expect(throws: UIFnFontRegistrationError.registrationFailed(bold, code: 305)) {
+            try failing.register(family: family, faces: faces, from: .module)
+        }
+        otherCall.wait()
+
+        #expect(otherOutcome.messages == ["registered"])
+        #expect(failing.postScriptName(family: family) == nil)
+        #expect(other.postScriptName(family: family) == "UIFnTestOwner-Regular")
+        #expect(resolvedPostScriptName("UIFnTestOwner-Regular") == "UIFnTestOwner-Regular")
+
+        // Registering again stays consistent with Core Text.
+        try other.register(family: family, faces: [faces[0]], from: .module)
+        #expect(other.postScriptName(family: family) == "UIFnTestOwner-Regular")
+        let later = UIFnFontRegistry(log: { _ in })
+        try later.register(family: family, faces: faces, from: .module)
+        #expect(later.postScriptName(family: family, weight: UIFnFontWeight(700)) == "UIFnTestOwner-Bold")
+        #expect(resolvedPostScriptName("UIFnTestOwner-Regular") == "UIFnTestOwner-Regular")
+        #expect(resolvedPostScriptName("UIFnTestOwner-Bold") == "UIFnTestOwner-Bold")
     }
 }
