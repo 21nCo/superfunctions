@@ -1,0 +1,449 @@
+{
+  "$schema": "https://uifn.dev/schemas/tokens.schema.json",
+  "schemaVersion": 1,
+  "name": "sample-light",
+  "mode": "light",
+  "tokens": {
+    "typography": {
+      "family": {
+        "sans": {
+          "$type": "fontFamily",
+          "$value": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
+        },
+        "mono": {
+          "$type": "fontFamily",
+          "$value": "\"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace"
+        }
+      },
+      "size": {
+        "xs": {
+          "$type": "dimension",
+          "$value": "0.75rem"
+        },
+        "sm": {
+          "$type": "dimension",
+          "$value": "0.8125rem"
+        },
+        "md": {
+          "$type": "dimension",
+          "$value": "0.875rem"
+        },
+        "lg": {
+          "$type": "dimension",
+          "$value": "1rem"
+        },
+        "xl": {
+          "$type": "dimension",
+          "$value": "1.125rem"
+        }
+      },
+      "lineHeight": {
+        "tight": {
+          "$type": "number",
+          "$value": 1.2
+        },
+        "normal": {
+          "$type": "number",
+          "$value": 1.45
+        },
+        "relaxed": {
+          "$type": "number",
+          "$value": 1.65
+        }
+      },
+      "weight": {
+        "regular": {
+          "$type": "number",
+          "$value": 400
+        },
+        "medium": {
+          "$type": "number",
+          "$value": 500
+        },
+        "semibold": {
+          "$type": "number",
+          "$value": 650
+        },
+        "bold": {
+          "$type": "number",
+          "$value": 700
+        }
+      }
+    },
+    "space": {
+      "1": {
+        "$type": "dimension",
+        "$value": "0.25rem"
+      },
+      "2": {
+        "$type": "dimension",
+        "$value": "0.5rem"
+      },
+      "3": {
+        "$type": "dimension",
+        "$value": "0.75rem"
+      },
+      "4": {
+        "$type": "dimension",
+        "$value": "1rem"
+      },
+      "5": {
+        "$type": "dimension",
+        "$value": "1.25rem"
+      },
+      "6": {
+        "$type": "dimension",
+        "$value": "1.5rem"
+      },
+      "8": {
+        "$type": "dimension",
+        "$value": "2rem"
+      },
+      "12": {
+        "$type": "dimension",
+        "$value": "3rem"
+      }
+    },
+    "control": {
+      "size": {
+        "sm": {
+          "$type": "dimension",
+          "$value": "2rem"
+        },
+        "md": {
+          "$type": "dimension",
+          "$value": "2.5rem"
+        },
+        "lg": {
+          "$type": "dimension",
+          "$value": "3rem"
+        }
+      },
+      "gap": {
+        "sm": {
+          "$type": "dimension",
+          "$value": "0.375rem"
+        },
+        "md": {
+          "$type": "dimension",
+          "$value": "0.5rem"
+        },
+        "lg": {
+          "$type": "dimension",
+          "$value": "0.75rem"
+        }
+      }
+    },
+    "border": {
+      "width": {
+        "hairline": {
+          "$type": "dimension",
+          "$value": "0.5px"
+        },
+        "default": {
+          "$type": "dimension",
+          "$value": "1px"
+        },
+        "strong": {
+          "$type": "dimension",
+          "$value": "2px"
+        }
+      }
+    },
+    "elevation": {
+      "shadow": {
+        "sm": {
+          "$type": "shadow",
+          "$value": "0 1px 2px rgb(15 23 42 / 8%)"
+        },
+        "md": {
+          "$type": "shadow",
+          "$value": "0 8px 24px rgb(15 23 42 / 10%)"
+        },
+        "lg": {
+          "$type": "shadow",
+          "$value": "0 18px 48px rgb(15 23 42 / 16%)"
+        },
+        "overlay": {
+          "$type": "shadow",
+          "$value": "0 28px 90px rgb(15 23 42 / 24%)"
+        }
+      }
+    },
+    "icon": {
+      "size": {
+        "sm": {
+          "$type": "dimension",
+          "$value": "0.875rem"
+        },
+        "md": {
+          "$type": "dimension",
+          "$value": "1rem"
+        },
+        "lg": {
+          "$type": "dimension",
+          "$value": "1.25rem"
+        }
+      },
+      "stroke": {
+        "regular": {
+          "$type": "number",
+          "$value": 1.75
+        },
+        "strong": {
+          "$type": "number",
+          "$value": 2.25
+        }
+      }
+    },
+    "color": {
+      "surface": {
+        "canvas": {
+          "$type": "color",
+          "$value": "oklch(98% 0.014 285)"
+        },
+        "raised": {
+          "$type": "color",
+          "$value": "oklch(100% 0.008 285)"
+        },
+        "sunken": {
+          "$type": "color",
+          "$value": "oklch(94% 0.015 285)"
+        },
+        "overlay": {
+          "$type": "color",
+          "$value": "oklch(99% 0.01 285)"
+        },
+        "depth-0": {
+          "$type": "color",
+          "$value": "oklch(98% 0.014 285)"
+        },
+        "depth-1": {
+          "$type": "color",
+          "$value": "oklch(96% 0.015 285)"
+        },
+        "depth-2": {
+          "$type": "color",
+          "$value": "oklch(94% 0.015 285)"
+        },
+        "depth-3": {
+          "$type": "color",
+          "$value": "oklch(92% 0.015 285)"
+        },
+        "depth-4": {
+          "$type": "color",
+          "$value": "oklch(90% 0.015 285)"
+        }
+      },
+      "text": {
+        "primary": {
+          "$type": "color",
+          "$value": "oklch(20% 0.015 285)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.surface.canvas"
+            }
+          }
+        },
+        "secondary": {
+          "$type": "color",
+          "$value": "oklch(35% 0.015 285)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.surface.canvas"
+            }
+          }
+        },
+        "muted": {
+          "$type": "color",
+          "$value": "oklch(50% 0.015 285)"
+        },
+        "disabled": {
+          "$type": "color",
+          "$value": "oklch(55% 0.012 285)"
+        }
+      },
+      "border": {
+        "subtle": {
+          "$type": "color",
+          "$value": "#d4d4d8"
+        },
+        "default": {
+          "$type": "color",
+          "$value": "oklch(78% 0.014 285)"
+        },
+        "strong": {
+          "$type": "color",
+          "$value": "oklch(58% 0.015 285)"
+        }
+      },
+      "accent": {
+        "solid": {
+          "$type": "color",
+          "$value": "oklch(56% 0.16 165)"
+        },
+        "subtle": {
+          "$type": "color",
+          "$value": "oklch(93% 0.05 165)"
+        },
+        "contrast": {
+          "$type": "color",
+          "$value": "oklch(12% 0.01 250)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.accent.solid"
+            }
+          }
+        }
+      },
+      "danger": {
+        "solid": {
+          "$type": "color",
+          "$value": "oklch(56% 0.19 25)"
+        },
+        "subtle": {
+          "$type": "color",
+          "$value": "oklch(93% 0.05 25)"
+        },
+        "contrast": {
+          "$type": "color",
+          "$value": "oklch(100% 0 0)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.danger.solid"
+            }
+          }
+        }
+      },
+      "warning": {
+        "solid": {
+          "$type": "color",
+          "$value": "oklch(64% 0.16 80)"
+        },
+        "subtle": {
+          "$type": "color",
+          "$value": "oklch(93% 0.06 80)"
+        },
+        "contrast": {
+          "$type": "color",
+          "$value": "oklch(12% 0.01 250)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.warning.solid"
+            }
+          }
+        }
+      },
+      "success": {
+        "solid": {
+          "$type": "color",
+          "$value": "oklch(54% 0.15 145)"
+        },
+        "subtle": {
+          "$type": "color",
+          "$value": "oklch(93% 0.05 145)"
+        },
+        "contrast": {
+          "$type": "color",
+          "$value": "oklch(100% 0 0)",
+          "$extensions": {
+            "uifn": {
+              "contrastAgainst": "color.success.solid"
+            }
+          }
+        }
+      },
+      "custom": {
+        "solid": {
+          "$type": "color",
+          "$value": "oklch(45% 0.15 300)"
+        },
+        "contrast": {
+          "$type": "color",
+          "$value": "oklch(100% 0 0)"
+        }
+      }
+    },
+    "radius": {
+      "sm": {
+        "$type": "dimension",
+        "$value": "4px"
+      },
+      "md": {
+        "$type": "dimension",
+        "$value": "6px"
+      },
+      "lg": {
+        "$type": "dimension",
+        "$value": "8px"
+      },
+      "xl": {
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "full": {
+        "$type": "dimension",
+        "$value": "9999px"
+      }
+    },
+    "density": {
+      "compact": {
+        "$type": "number",
+        "$value": 0.875
+      },
+      "comfortable": {
+        "$type": "number",
+        "$value": 1
+      },
+      "spacious": {
+        "$type": "number",
+        "$value": 1.125
+      }
+    },
+    "motion": {
+      "duration": {
+        "fast": {
+          "$type": "duration",
+          "$value": "120ms",
+          "$extensions": {
+            "uifn": {
+              "reducedMotionValue": "0ms"
+            }
+          }
+        },
+        "normal": {
+          "$type": "duration",
+          "$value": "180ms",
+          "$extensions": {
+            "uifn": {
+              "reducedMotionValue": "0ms"
+            }
+          }
+        },
+        "slow": {
+          "$type": "duration",
+          "$value": "260ms",
+          "$extensions": {
+            "uifn": {
+              "reducedMotionValue": "0ms"
+            }
+          }
+        }
+      },
+      "easing": {
+        "standard": {
+          "$type": "cubicBezier",
+          "$value": "cubic-bezier(0.2, 0, 0, 1)"
+        },
+        "entrance": {
+          "$type": "cubicBezier",
+          "$value": "cubic-bezier(0, 0, 0.2, 1)"
+        },
+        "exit": {
+          "$type": "cubicBezier",
+          "$value": "cubic-bezier(0.4, 0, 1, 1)"
+        }
+      }
+    }
+  }
+}
