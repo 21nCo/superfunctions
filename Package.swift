@@ -179,7 +179,8 @@ let package = Package(
         .testTarget(
             name: "UIFnSwiftUITests",
             dependencies: ["UIFnSwiftUI"],
-            path: "uifn/swift/Tests/UIFnSwiftUITests"
+            path: "uifn/swift/Tests/UIFnSwiftUITests",
+            resources: [.copy("Fonts")]
         ),
     ]
 )
