@@ -74,6 +74,30 @@ jobs:
         id: plan
         run: node scripts/ci-plan.mjs
 
+  uifn-version-bump:
+    name: UIFn version bump
+    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify version bump checker
+        run: node --test scripts/verify-uifn-version-bump.test.mjs
+
+      - name: Require version bump and changelog entry for shipped uifn changes
+        run: node scripts/verify-uifn-version-bump.mjs --base "${{ github.event.pull_request.base.sha }}"
+
+      - name: Report uifn changes since last published tags
+        run: node scripts/verify-uifn-version-bump.mjs --since-published
+
   javascript:
     name: JavaScript
     needs: plan

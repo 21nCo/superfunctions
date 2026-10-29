@@ -1,0 +1,802 @@
+#!/usr/bin/env node
+
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+import { gitBinary } from "./verify-package-lockfiles.mjs";
+
+const GRAPH_PATH = "uifn/package-graph.json";
+const INPUTS_PATH = "uifn/version-bump-inputs.json";
+const RELEASE_TARGETS_PATH = "release-packages.json";
+
+// Shipped code is everything that feeds the tarball (`dist` is built from the
+// package sources and configs) minus tests, fixtures, stories, harnesses and
+// docs (Markdown anywhere, and the root docs/ directory), unless a build surface names them
+// (see shippedClosure). Unknown paths count as shipped so new build inputs fail closed;
+// data and helpers that never reach the tarball are declared "excluded", and the
+// guard rejects an exclusion that `files` lists or that the shipped closure reaches.
+const NON_SHIPPED_SEGMENTS = new Set(["__tests__", "__mocks__", "__fixtures__", "__snapshots__", "fixtures", "test", "tests"]);
+const NON_SHIPPED_ROOT_DIRS = new Set(["browser", "docs", "stories", "type-tests", "workbenches"]);
+const NON_SHIPPED_FILE = /(?:\.(?:test|spec|test-d|stories)\.[^/]+|\.mdx?|\.snap)$/i;
+const NON_SHIPPED_ROOT_FILE = /^(?:vitest|playwright)(?:\.[^/]+)?\.config\.[^/]+$/;
+// A root Vite config is a build input only when the package builds with Vite.
+const VITE_ROOT_FILE = /^vite(?:\.[^/]+)?\.config\.[^/]+$/;
+// Scripts that run when a package is packed or published, plus `build`, which prepack runs, and the
+// scripts that run on a consumer's machine when it is installed. devDependencies and scripts these never
+// reach do not affect consumers.
+const PACK_SCRIPTS = ["build", "prepare", "prepack", "postpack", "prepublish", "prepublishOnly"];
+const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall"];
+// Validation reached from pack-time scripts (`npm run typecheck && npm run test`, `generate:check`) can
+// stop a pack but produces nothing in it, so a script named test, typecheck, lint, check or verify, alone
+// or as a `:` part, is not followed from them. Everything an install script reaches runs for consumers.
+const VALIDATION_SCRIPT_PART = new Set(["test", "typecheck", "lint", "check", "verify"]);
+// Root build configs that tsup, tsc, svelte-package, vite and npm pack load without being named.
+const IMPLICIT_CONFIG = /^(?:(?:tsup|vite|rollup|svelte|babel|postcss|tailwind)(?:\.[^/]+)?\.config\.[^/]+|tsconfig[^/]*\.json|\.npmignore|\.babelrc(?:\.[^/]+)?)$/;
+// Extensions a bundler or tsc tries for an extensionless specifier or a directory index.
+const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".json", ".css"];
+// npm's own aliases for scripts it runs without `run`; `npm restart` runs stop and start when no restart script exists.
+const NPM_ALIASES = { t: ["test"], tst: ["test"], restart: ["restart", "stop", "start"] };
+// Manifest fields that name the files consumers load.
+const ENTRY_FIELDS = ["exports", "imports", "main", "module", "types", "typings", "bin", "browser", "svelte"];
+
+// Strict semver, as in scripts/resolve-release-tag.mjs: no leading zeros in numeric parts.
+const NUMBER = "(?:0|[1-9][0-9]*)";
+const IDENTIFIER = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
+const SEMVER = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTIFIER}(?:\\.${IDENTIFIER})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
+
+// Files whose references count: relative specifiers and `".."` path segments everywhere; in build files
+// (in-package scripts/ and root *.config.*, and declared inputs outside uifn/) also repo-root paths and bare
+// package-relative strings such as tsup entries; in a tsconfig, its include and files entries. Other JSON is
+// data. Runtime reads through computed paths are not detected.
+const SCANNED_FILE = /(?:\.(?:[cm]?[jt]sx?|svelte|css)|(?:^|\/)[tj]sconfig[^/]*\.json)$/;
+const SPECIFIER = /(['"`])(\.\.?(?:\/[^'"`\n]*?)?)(?:\1|\$\{)/g;
+const LITERAL_ARGUMENT = /\s*,\s*(['"`])([^'"`\n]*)\1/y;
+// A specifier in module position (import, export from, import(), require(), CSS @import or url()), which a bundler inlines.
+const MODULE_CONTEXT = /(?:\bfrom|\bimport|\bimport\s*\(|\brequire\s*\(|@import(?:\s+url\()?|\burl\()\s*$/;
+const REPO_PATH = /(['"`])((?:uifn|scripts)\/[^'"`\s]*?)(?:\1|\$\{)/g;
+const BARE_LITERAL = /(['"`])([^'"`\s$\\:]+)\1/g;
+const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
+const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
+const GLOB = /[*?[{]/;
+// A command that runs tsc without -p or -b compiles ./tsconfig.json.
+const BARE_TSC = /(?:^|\s)tsc(?=\s|$)(?![^&|;]*\s(?:-p|--project|-b|--build)(?:\s|=|$))/;
+
+const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
+
+const staticPrefix = (pattern) => {
+  const segments = pattern.replace(/^\.\//, "").split("/");
+  const glob = segments.findIndex((segment) => /[*?[{]/.test(segment));
+  return (glob < 0 ? segments : segments.slice(0, glob)).join("/");
+};
+
+/** Classifies a path relative to the package root as "manifest", "shipped" or "excluded". */
+export function classifyPath(relative, { buildUsesVite = true } = {}) {
+  if (relative === "package.json") return "manifest";
+  const segments = relative.split("/");
+  const file = segments.at(-1);
+  if (segments.length > 1 && NON_SHIPPED_ROOT_DIRS.has(segments[0])) return "excluded";
+  if (segments.slice(0, -1).some((segment) => NON_SHIPPED_SEGMENTS.has(segment))) return "excluded";
+  if (NON_SHIPPED_FILE.test(file)) return "excluded";
+  if (segments.length === 1 && NON_SHIPPED_ROOT_FILE.test(file)) return "excluded";
+  if (segments.length === 1 && !buildUsesVite && VITE_ROOT_FILE.test(file)) return "excluded";
+  return "shipped";
+}
+
+const isValidationScript = (name) => name.split(":").some((part) => VALIDATION_SCRIPT_PART.has(part));
+
+/**
+ * The manifest scripts one script can invoke. The traversal fails closed rather than parsing each runner's
+ * syntax: every word of every command (split on && || ; | & and newlines) that names a script in this
+ * manifest is followed, so `npm --silent run x`, `pnpm run x`, `yarn x`, `bun run x` and `run-s x` all
+ * reach x. Concurrently's `npm:x` prefix is dropped, a `*` word (npm-run-all) matches script names, and
+ * npm's own aliases apply in commands that run npm.
+ */
+export function invokedScripts(command, scripts) {
+  const names = Object.keys(scripts);
+  const found = new Set();
+  for (const part of command.split(/&&|\|\||[;|&\n]/)) {
+    const words = part.split(/[\s()<>]+/).map((word) => word.replace(/^['"`]+|['"`]+$/g, "").replace(/^(?:npm|pnpm|yarn|bun):/, "")).filter(Boolean);
+    const npm = words.includes("npm");
+    for (const word of words) {
+      if (Object.hasOwn(scripts, word)) found.add(word);
+      if (npm && Object.hasOwn(NPM_ALIASES, word)) for (const alias of NPM_ALIASES[word]) if (Object.hasOwn(scripts, alias)) found.add(alias);
+      if (word.includes("*")) {
+        const pattern = new RegExp(`^${word.split("*").map(escapeRegExp).join(".*")}$`);
+        for (const name of names) if (pattern.test(name)) found.add(name);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Shipped lifecycle scripts, their pre/post hooks, and the scripts they invoke: every script an install
+ * script reaches, and the non-validation scripts a pack-time script reaches.
+ */
+export function shippedScriptNames(scripts = {}) {
+  const names = new Set();
+  const visited = new Set();
+  const pending = [...PACK_SCRIPTS.map((name) => [name, false]), ...INSTALL_SCRIPTS.map((name) => [name, true])];
+  while (pending.length > 0) {
+    const [name, install] = pending.pop();
+    const key = `${install}\0${name}`;
+    if (visited.has(key) || (!install && isValidationScript(name)) || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") continue;
+    visited.add(key);
+    names.add(name);
+    pending.push([`pre${name}`, install], [`post${name}`, install]);
+    for (const target of invokedScripts(scripts[name], scripts)) pending.push([target, install]);
+  }
+  return names;
+}
+
+/** Returns the manifest fields that reach consumers, without the version itself. */
+export function publishedManifest(manifest) {
+  const { version: _version, devDependencies: _devDependencies, scripts, ...published } = manifest;
+  const names = [...shippedScriptNames(scripts ?? {})].sort();
+  if (names.length > 0) published.scripts = Object.fromEntries(names.map((name) => [name, scripts[name]]));
+  return published;
+}
+
+/** Validates the declarations document against the stable packages (name -> path). */
+export function parseInputDeclarations(document, stable) {
+  const declarations = new Map([...stable.keys()].map((name) => [name, { inputs: [], references: [], excluded: [] }]));
+  const errors = [];
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (document === null) return { declarations, errors };
+  if (!isObject(document) || !isObject(document.packages)) return { declarations, errors: [`${INPUTS_PATH} must be an object with a "packages" object`] };
+  for (const [name, entry] of Object.entries(document.packages)) {
+    const packagePath = stable.get(name);
+    if (!packagePath) {
+      errors.push(`${INPUTS_PATH}: ${name} is not a stable package`);
+      continue;
+    }
+    if (!isObject(entry)) {
+      errors.push(`${INPUTS_PATH}: ${name} must be an object`);
+      continue;
+    }
+    const declaration = declarations.get(name);
+    for (const [kind, targets] of Object.entries(entry)) {
+      if (!(kind in declaration) || !isObject(targets)) {
+        errors.push(`${INPUTS_PATH}: ${name}.${kind} must be one of inputs, references or excluded, mapping paths to reasons`);
+        continue;
+      }
+      for (const [target, reason] of Object.entries(targets)) {
+        const where = `${INPUTS_PATH}: ${name}.${kind} ${JSON.stringify(target)}`;
+        if (typeof reason !== "string" || !reason.trim()) errors.push(`${where} needs a reason`);
+        else if (!target || target === "." || target !== path.posix.normalize(target) || target.startsWith("../") || path.posix.isAbsolute(target) || target.endsWith("/")) errors.push(`${where} must be a normalized relative path`);
+        else if (kind !== "excluded" && isWithin(target, packagePath)) errors.push(`${where} is inside ${packagePath}, which already counts`);
+        else declaration[kind].push(target);
+      }
+    }
+  }
+  return { declarations, errors };
+}
+
+function parseSemver(version) {
+  const match = typeof version === "string" ? version.match(SEMVER) : null;
+  if (!match) return null;
+  return { core: match.slice(1, 4).map(Number), prerelease: match[4]?.split(".") ?? [] };
+}
+
+/** Semver precedence: negative when a < b, zero when equal, positive when a > b. */
+export function compareSemver(a, b) {
+  const left = parseSemver(a);
+  const right = parseSemver(b);
+  if (!left || !right) throw new Error(`Invalid semver: ${left ? b : a}`);
+  for (let index = 0; index < 3; index += 1) {
+    if (left.core[index] !== right.core[index]) return left.core[index] - right.core[index];
+  }
+  if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+    return right.prerelease.length - left.prerelease.length;
+  }
+  for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index += 1) {
+    const l = left.prerelease[index];
+    const r = right.prerelease[index];
+    if (l === undefined || r === undefined) return l === undefined ? -1 : 1;
+    if (l === r) continue;
+    const ln = /^\d+$/.test(l);
+    const rn = /^\d+$/.test(r);
+    if (ln && rn) return Number(l) - Number(r);
+    if (ln !== rn) return ln ? -1 : 1;
+    return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
+/** True when the changelog has a heading for `version` followed by at least one content line. */
+export function changelogHasEntry(text, version) {
+  if (typeof text !== "string") return false;
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const heading = new RegExp(`^(#{1,6})\\s+\\[?v?${escaped}\\]?(?:\\s|$)`);
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => heading.test(line));
+  if (start < 0) return false;
+  const level = lines[start].match(/^#+/)[0].length;
+  for (const line of lines.slice(start + 1)) {
+    const nested = line.match(/^(#{1,6})\s/);
+    if (nested && nested[1].length <= level) return false;
+    if (!nested && line.trim()) return true;
+  }
+  return false;
+}
+
+function classifyOptions(manifest) {
+  const buildScripts = Object.values(publishedManifest(manifest ?? {}).scripts ?? {});
+  return { buildUsesVite: buildScripts.some((script) => /\bvite\b/.test(script)) };
+}
+
+/**
+ * Default class of a repo path for one package: "shipped", "excluded" (tests, fixtures, docs),
+ * "declared" (a declared exclusion), "manifest" or "outside". Inside a declared input directory,
+ * tests and docs are "excluded" too.
+ */
+export function pathKind(file, { packagePath, inputs = [], excluded = [], options = {} }) {
+  if (file.startsWith(`${packagePath}/`)) {
+    const relative = file.slice(packagePath.length + 1);
+    if (excluded.some((entry) => isWithin(relative, entry))) return "declared";
+    return classifyPath(relative, options);
+  }
+  const input = inputs.find((entry) => isWithin(file, entry));
+  if (!input) return "outside";
+  return file === input || classifyPath(file.slice(input.length + 1)) !== "excluded" ? "shipped" : "excluded";
+}
+
+/**
+ * Pure per-package decision shared by the PR gate and the since-published report. `shippedFiles` are
+ * the changed paths that ship at either end; `stable` is false for a package the head demoted or removed.
+ */
+export function evaluatePackage({ name, packagePath, baseManifest, headManifest, shippedFiles: shipped, headChangelog, stable = true }) {
+  const prefix = `${packagePath}/`;
+  const shippedFiles = [...shipped].sort();
+  const result = { name, packagePath, shippedFiles, manifestChanged: false, baseVersion: baseManifest?.version, headVersion: headManifest?.version, bumped: false, errors: [] };
+  if (!headManifest) {
+    // A package removed from the graph and the tree has nothing left to publish.
+    if (stable) result.errors.push(`${name}: ${packagePath}/package.json is missing`);
+    return result;
+  }
+  if (!baseManifest) return result;
+  result.manifestChanged = JSON.stringify(publishedManifest(baseManifest)) !== JSON.stringify(publishedManifest(headManifest));
+  const changed = shippedFiles.length > 0 || result.manifestChanged;
+  if (result.baseVersion !== result.headVersion) {
+    if (!parseSemver(result.headVersion)) {
+      result.errors.push(`${name}: version ${JSON.stringify(result.headVersion)} is not valid semver`);
+      return result;
+    }
+    if (parseSemver(result.baseVersion) && compareSemver(result.headVersion, result.baseVersion) <= 0) {
+      result.errors.push(`${name}: version ${result.headVersion} must be greater than ${result.baseVersion}`);
+      return result;
+    }
+    result.bumped = true;
+    if (!changelogHasEntry(headChangelog, result.headVersion)) {
+      result.errors.push(`${name}: version bumped to ${result.headVersion} but ${packagePath}/CHANGELOG.md has no "## ${result.headVersion}" entry with content`);
+    }
+  } else if (changed) {
+    const reasons = [...shippedFiles.map((file) => (file.startsWith(prefix) ? file.slice(prefix.length) : file)), ...(result.manifestChanged ? ["package.json (published fields)"] : [])];
+    const listed = reasons.slice(0, 5).join(", ") + (reasons.length > 5 ? `, and ${reasons.length - 5} more` : "");
+    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md. For an in-package path that never reaches the tarball, declare it under "excluded" in ${INPUTS_PATH}: a new path can be excluded in the same change, but a path that already exists counts until its exclusion is on the base branch`);
+  }
+  return result;
+}
+
+/** Paths a tsconfig compiles: its `include` and `files` entries, relative to its directory, globs kept. */
+export function tsconfigEntries(file, text) {
+  const entries = [];
+  for (const [, list] of text.matchAll(TSCONFIG_LIST)) {
+    for (const [, entry] of list.matchAll(/"([^"]*)"/g)) if (entry) entries.push(path.posix.join(path.posix.dirname(file), entry).replace(/\/+$/, ""));
+  }
+  return entries;
+}
+
+/**
+ * Every path a file names, as `{ target, soft, tsconfig, bundled }` with globs kept: each relative
+ * specifier itself and, outside JSON, also joined with the string literals that follow it, since
+ * `path.join(here, "..", "x")` names x while `["./a", "./b"]` names a and b; in build files, repo-root
+ * paths and bare strings resolved from the package root and the file's directory; in a tsconfig, its
+ * include and files entries, marked with the tsconfig. Soft targets (bare strings) are ambiguous with
+ * package names and options and cannot leave the package without `..`, so the out-of-root guard skips
+ * them. A specifier in module position in a source file is marked bundled.
+ */
+export function fileReferences(file, text, { root = path.posix.dirname(file), base = path.posix.dirname(file), buildFile = false } = {}) {
+  const dir = path.posix.dirname(file);
+  const found = [];
+  const add = (target, extra = {}) => found.push({ target: path.posix.normalize(target).replace(/\/+$/, ""), soft: false, ...extra });
+  const entries = TSCONFIG.test(file) ? tsconfigEntries(file, text) : [];
+  for (const target of entries) add(target, { tsconfig: file });
+  const isEntry = (target) => entries.includes(path.posix.normalize(target).replace(/\/+$/, ""));
+  for (const match of text.matchAll(SPECIFIER)) {
+    const segments = [match[2]];
+    LITERAL_ARGUMENT.lastIndex = match.index + match[0].length;
+    if (!file.endsWith(".json")) for (let argument = LITERAL_ARGUMENT.exec(text); argument; argument = LITERAL_ARGUMENT.exec(text)) segments.push(argument[2]);
+    const bundled = !buildFile && !file.endsWith(".json") && MODULE_CONTEXT.test(text.slice(Math.max(0, match.index - 32), match.index));
+    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : {});
+    if (segments.length === 1) continue;
+    // A joined path is an extra candidate. For `path.resolve(packageRoot, "..", "x")` the base expression is unknown, so also try the package root.
+    for (const from of match[2].startsWith("..") ? [dir, base] : [dir]) if (!isEntry(path.posix.join(from, ...segments))) add(path.posix.join(from, ...segments));
+  }
+  if (buildFile) {
+    for (const match of text.matchAll(REPO_PATH)) add(match[2]);
+    for (const [, , value] of text.matchAll(BARE_LITERAL)) {
+      if (value.startsWith("/") || value === "." || value === ".." || value.startsWith("./") || value.startsWith("../")) continue;
+      for (const from of new Set([root, dir])) add(path.posix.join(from, value), { soft: true });
+    }
+  }
+  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}`, reference]));
+  return [...unique.values()];
+}
+
+/** Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept. */
+export function scriptReferences(scripts, packagePath) {
+  const found = [];
+  for (const name of shippedScriptNames(scripts ?? {})) {
+    const from = `package.json scripts.${name}`;
+    for (const token of scripts[name].split(/[\s;&|<>()]+/)) {
+      const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
+      if (value) found.push({ from, target: path.posix.join(packagePath, value).replace(/\/+$/, ""), soft: false });
+    }
+    if (scripts[name].split(/&&|\|\||[;|]/).some((command) => BARE_TSC.test(command))) found.push({ from, target: `${packagePath}/tsconfig.json`, soft: false });
+  }
+  return found;
+}
+
+/** Paths that manifest entry fields name, every condition included, from the package root; a `*` pattern matches across directories, as in Node. */
+export function entryReferences(manifest, packagePath) {
+  const found = [];
+  const visit = (field, value) => {
+    if (typeof value === "string") found.push({ from: `package.json ${field}`, target: path.posix.join(packagePath, value.replaceAll("*", "**")).replace(/\/+$/, ""), soft: false });
+    else if (value !== null && typeof value === "object") for (const nested of Object.values(value)) visit(field, nested);
+  };
+  for (const field of ENTRY_FIELDS) visit(field, manifest?.[field]);
+  return found;
+}
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function closingBrace(pattern, start) {
+  for (let index = start, depth = 0; index < pattern.length; index += 1) {
+    if (pattern[index] === "{") depth += 1;
+    else if (pattern[index] === "}" && (depth -= 1) === 0) return index;
+  }
+  return -1;
+}
+
+function alternatives(body) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === "{") depth += 1;
+    else if (body[index] === "}") depth -= 1;
+    else if (body[index] === "," && depth === 0) {
+      parts.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  return [...parts, body.slice(start)];
+}
+
+function globSource(pattern) {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "*" && pattern[index + 1] === "*") {
+      const slash = pattern[index + 2] === "/";
+      source += slash ? "(?:[^/]+/)*" : ".*";
+      index += slash ? 2 : 1;
+    } else if (char === "*") source += "[^/]*";
+    else if (char === "?") source += "[^/]";
+    else if (char === "[" && pattern.indexOf("]", index + 2) > 0) {
+      const end = pattern.indexOf("]", index + 2);
+      source += `[${pattern.slice(index + 1, end).replace(/^!/, "^").replace(/\\/g, "\\\\")}]`;
+      index = end;
+    } else if (char === "{" && closingBrace(pattern, index) > 0) {
+      const end = closingBrace(pattern, index);
+      source += `(?:${alternatives(pattern.slice(index + 1, end)).map(globSource).join("|")})`;
+      index = end;
+    } else source += escapeRegExp(char);
+  }
+  return source;
+}
+
+/** A glob (`*`, `**`, `?`, `[...]`, `{a,b}`) as a RegExp over whole repo paths; Node 20 has no path.matchesGlob. */
+export function globToRegExp(pattern) {
+  return new RegExp(`^${globSource(pattern)}$`);
+}
+
+/** The files at one end of a range, indexed for resolveReference. */
+export function fileInventory(files) {
+  const dirs = new Set();
+  for (const file of files) for (let dir = path.posix.dirname(file); dir !== "." && !dirs.has(dir); dir = path.posix.dirname(dir)) dirs.add(dir);
+  return { files: [...files], set: new Set(files), dirs };
+}
+
+/**
+ * Files a reference names in the inventory. `direct` is true when it names a file: the path itself, with
+ * an implied extension or index file, or a `.js` specifier's TypeScript source. Otherwise a glob names
+ * the files it matches and a directory names every file under it.
+ */
+export function resolveReference(target, inventory) {
+  if (GLOB.test(target)) {
+    const pattern = globToRegExp(target);
+    return { files: inventory.files.filter((file) => pattern.test(file)), direct: false };
+  }
+  const candidates = [target, ...RESOLVE_EXTENSIONS.flatMap((extension) => [`${target}${extension}`, `${target}/index${extension}`])];
+  const compiled = target.match(/^(.*)\.([mc]?)js(x?)$/);
+  if (compiled) candidates.push(`${compiled[1]}.${compiled[2]}ts${compiled[3]}`);
+  const named = candidates.filter((candidate) => inventory.set.has(candidate));
+  if (named.length > 0) return { files: named, direct: true };
+  if (inventory.dirs.has(target)) return { files: inventory.files.filter((file) => file.startsWith(`${target}/`)), direct: false };
+  return { files: [], direct: false };
+}
+
+/**
+ * Every package or declared-input file that can reach the tarball, from one reference extractor and one
+ * resolver over the files at that end. Seeds are the default-shipped files, shipped lifecycle scripts and
+ * manifest entry fields; each scanned file adds its references (fileReferences). A resolved file is promoted
+ * (counted as shipped, and scanned in turn) when it is a declared exclusion, which the guard then rejects,
+ * or a test, fixture or docs path that the reference names specifically: as a file, or through a glob or
+ * directory that is itself such a path. So `src/fixtures/*.ts` promotes, while `src/**` and
+ * `path.join(root, "src")` do not pull in src/__tests__. A tsconfig's entries promote test paths only when
+ * a shipped script or build file names that tsconfig, since only then does tsc emit from it. References to
+ * the package root, a declared input root, or their ancestors are base paths, not reads, unless a bundled
+ * import names a file there, such as a directory's index.
+ */
+export function shippedClosure({ packagePath, manifest, files, inputs = [], excluded = [], read }) {
+  const scope = { packagePath, inputs, excluded, options: classifyOptions(manifest) };
+  const inventory = fileInventory(files);
+  const roots = [packagePath, ...inputs];
+  const describe = (file) => {
+    if (file.startsWith(`${packagePath}/`)) {
+      const relative = file.slice(packagePath.length + 1);
+      return { root: packagePath, base: packagePath, buildFile: relative.startsWith("scripts/") || /^[^/]+\.config\.[^/]+$/.test(relative) };
+    }
+    const input = inputs.find((entry) => isWithin(file, entry));
+    return { root: packagePath, base: file === input ? path.posix.dirname(file) : input, buildFile: !file.startsWith("uifn/") };
+  };
+  const references = [...scriptReferences(manifest?.scripts, packagePath), ...entryReferences(manifest, packagePath)];
+  const promoted = new Map();
+  const named = new Set();
+  const scanned = new Set();
+  const resolved = new Map();
+  let wave = files.filter((file) => pathKind(file, scope) === "shipped");
+  for (let changed = true; changed; ) {
+    const unread = wave.filter((file) => SCANNED_FILE.test(file) && !scanned.has(file));
+    for (const [file, text] of read(unread)) references.push(...fileReferences(file, text, describe(file)).map((reference) => ({ from: file, ...reference })));
+    for (const file of unread) scanned.add(file);
+    wave = [];
+    changed = false;
+    for (const reference of references) {
+      const { target } = reference;
+      if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
+      const { files: matches, direct } = resolved.get(target);
+      if (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct)) continue;
+      for (const file of direct && !reference.tsconfig ? matches : []) {
+        if (named.has(file)) continue;
+        named.add(file);
+        changed = true;
+      }
+      const specific = (direct || pathKind(GLOB.test(target) ? target : `${target}/_`, scope) !== "shipped") && (!reference.tsconfig || named.has(reference.tsconfig));
+      for (const file of matches) {
+        const kind = pathKind(file, scope);
+        if (promoted.has(file) || !(kind === "declared" || (kind === "excluded" && specific))) continue;
+        promoted.set(file, reference);
+        wave.push(file);
+        changed = true;
+      }
+    }
+  }
+  return { promoted, references };
+}
+
+/**
+ * Fails closed on build inputs outside a stable package: every path its shipped files, declared inputs,
+ * shipped scripts or entry fields name outside its root must be a declared input or reference, and a
+ * module a shipped source imports, which a bundler inlines, must be a declared input. Each reference is
+ * judged by the files it resolves to in `inventory` (the whole tree at that end), as in shippedClosure:
+ * a bundled import is covered only when every file it resolves to, or its own path if none, lies within a declared input.
+ */
+export function findUndeclaredReferences({ name, packagePath, references, declaration, inventory }) {
+  const declared = [...declaration.inputs, ...declaration.references];
+  const covers = (entries, files) => files.length > 0 && files.every((file) => entries.some((entry) => isWithin(file, entry)));
+  const resolved = new Map();
+  const errors = [];
+  for (const { from, target, soft, bundled } of references) {
+    if (soft || isWithin(target, packagePath)) continue;
+    if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory).files);
+    const files = resolved.get(target);
+    if (bundled) {
+      // A specifier that resolves to nothing cannot be inlined (such as one inside generated code strings), so its own path is judged.
+      const named = files.length > 0 ? files : [target];
+      if (covers(declaration.inputs, named)) continue;
+      if (covers(declared, named)) {
+        errors.push(`${name}: ${from} imports ${target}, which ${INPUTS_PATH} declares only under "references"; the bundler can inline it, so declare it under "inputs"`);
+        continue;
+      }
+    } else {
+      if (declared.some((entry) => isWithin(target, entry)) || covers(declared, files)) continue;
+      // An ancestor directory such as `path.resolve(here, "..")` is a base path, not a read.
+      if ([packagePath, ...declaration.inputs].some((root) => isWithin(root, target))) continue;
+    }
+    errors.push(`${name}: ${from} refers to ${target}, outside ${packagePath}; declare it in ${INPUTS_PATH} under "inputs" if it feeds the tarball or "references" if it does not, with a reason`);
+  }
+  return [...new Set(errors)];
+}
+
+/**
+ * An "excluded" path must not reach the tarball: it may not overlap the manifest `files` list or cover a
+ * build config that tools load implicitly, and the shipped closure may not reach any file in it.
+ */
+export function findConsumedExclusions({ name, packagePath, manifest, excluded, packageFiles = [], promoted }) {
+  const listed = Array.isArray(manifest?.files) ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : [];
+  const roots = listed.map((entry) => path.posix.join(packagePath, staticPrefix(entry)).replace(/\/+$/, ""));
+  const options = classifyOptions(manifest);
+  const errors = [];
+  for (const entry of excluded) {
+    const absolute = `${packagePath}/${entry}`;
+    const config = [entry, ...packageFiles.filter((file) => isWithin(file, absolute)).map((file) => file.slice(packagePath.length + 1))]
+      .find((relative) => !relative.includes("/") && IMPLICIT_CONFIG.test(relative) && classifyPath(relative, options) === "shipped");
+    if (config) {
+      errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, but the build loads ${config} implicitly; it shapes the tarball, so remove the exclusion`);
+      continue;
+    }
+    const root = roots.find((target) => isWithin(absolute, target) || isWithin(target, absolute));
+    const reached = [...promoted].find(([file]) => isWithin(file, absolute));
+    const user = root ? `package.json files includes ${root}` : reached && `${reached[1].from} refers to ${reached[0]}`;
+    if (user) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, but ${user}; it reaches the tarball, so remove the exclusion`);
+  }
+  return errors;
+}
+
+function git(cwd, args) {
+  return execFileSync(gitBinary(), args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+}
+
+function resolveCommit(cwd, ref) {
+  try {
+    return git(cwd, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).trim();
+  } catch {
+    throw new Error(`Cannot resolve ${ref} to a commit; fetch it first (CI needs fetch-depth: 0)`);
+  }
+}
+
+function readAt(cwd, commit, file) {
+  try {
+    git(cwd, ["cat-file", "-e", `${commit}:${file}`]);
+  } catch {
+    return null;
+  }
+  return git(cwd, ["show", `${commit}:${file}`]);
+}
+
+function readJsonAt(cwd, commit, file) {
+  const text = readAt(cwd, commit, file);
+  return text === null ? null : JSON.parse(text);
+}
+
+/**
+ * Stable packages at `commit` with their declarations, and where every graph package lives. The head
+ * must have a stable list; an earlier commit is read leniently, so a missing or malformed graph or
+ * declarations file there declares nothing.
+ */
+function loadPackages(cwd, commit, { required = true } = {}) {
+  let graph = null;
+  try {
+    graph = readJsonAt(cwd, commit, GRAPH_PATH);
+  } catch (error) {
+    if (required) throw error;
+  }
+  if (!Array.isArray(graph?.stable)) {
+    if (required) throw new Error(`${GRAPH_PATH} at ${commit} has no stable package list`);
+    return { packages: new Map(), locations: new Map(), errors: [] };
+  }
+  const entries = (list) =>
+    (Array.isArray(list) ? list : []).flatMap((entry) => {
+      if (typeof entry?.name === "string" && typeof entry?.path === "string") return [[entry.name, entry.path]];
+      if (required) throw new Error(`${GRAPH_PATH} at ${commit} has an entry without a name and path: ${JSON.stringify(entry)}`);
+      return [];
+    });
+  const stable = new Map(entries(graph.stable));
+  let parsed;
+  try {
+    parsed = parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable);
+  } catch (error) {
+    if (required) throw error;
+    parsed = parseInputDeclarations(null, stable);
+  }
+  return {
+    packages: new Map([...stable].map(([name, packagePath]) => [name, { name, packagePath, ...parsed.declarations.get(name) }])),
+    locations: new Map([...entries(graph.experimental), ...stable]),
+    errors: required ? parsed.errors : [],
+  };
+}
+
+function listFiles(cwd, commit, pathspecs) {
+  return git(cwd, ["ls-tree", "-r", "-z", "--name-only", commit, "--", ...pathspecs]).split("\0").filter(Boolean);
+}
+
+function readBlobs(cwd, commit, files) {
+  if (files.length === 0) return new Map();
+  const output = execFileSync(gitBinary(), ["cat-file", "--batch"], { cwd, input: files.map((file) => `${commit}:${file}\n`).join(""), maxBuffer: 512 * 1024 * 1024 });
+  const blobs = new Map();
+  let offset = 0;
+  for (const file of files) {
+    const newline = output.indexOf(10, offset);
+    const [, type, size] = output.toString("utf8", offset, newline).split(" ");
+    offset = newline + 1;
+    if (type === "missing") continue;
+    blobs.set(file, output.toString("utf8", offset, offset + Number(size)));
+    offset += Number(size) + 1;
+  }
+  return blobs;
+}
+
+/** One end of a range: a package as declared at `commit`, and which paths ship from it there. */
+function packageState(cwd, commit, pkg) {
+  const manifest = readJsonAt(cwd, commit, `${pkg.packagePath}/package.json`);
+  const packageFiles = listFiles(cwd, commit, [pkg.packagePath]);
+  const files = [...packageFiles, ...(pkg.inputs.length > 0 ? listFiles(cwd, commit, pkg.inputs) : [])];
+  const { promoted, references } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths) });
+  const present = new Set(files);
+  const scope = { packagePath: pkg.packagePath, inputs: pkg.inputs, excluded: pkg.excluded, options: classifyOptions(manifest) };
+  return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (promoted.has(file) || pathKind(file, scope) === "shipped") };
+}
+
+function stateCache(cwd) {
+  const cache = new Map();
+  return (commit, pkg) => {
+    const key = `${commit}\0${JSON.stringify(pkg)}`;
+    if (!cache.has(key)) cache.set(key, packageState(cwd, commit, pkg));
+    return cache.get(key);
+  };
+}
+
+/** Runs the out-of-root and exclusion guard for every stable package at `commit`, with that commit's own declarations. */
+function guardReferences(cwd, commit, packages, stateAt) {
+  const inventory = fileInventory(listFiles(cwd, commit, ["."]));
+  const errors = [];
+  for (const pkg of packages) {
+    const { name, packagePath, inputs, references, excluded } = pkg;
+    for (const target of [...inputs, ...references]) {
+      if (listFiles(cwd, commit, [target]).length === 0) errors.push(`${INPUTS_PATH}: ${name} declares ${target}, which does not exist`);
+    }
+    for (const entry of excluded) {
+      if (listFiles(cwd, commit, [`${packagePath}/${entry}`]).length === 0) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, which does not exist in ${packagePath}`);
+    }
+    const { manifest, packageFiles, promoted, references: used } = stateAt(commit, pkg);
+    errors.push(...findUndeclaredReferences({ name, packagePath, references: used, declaration: pkg, inventory }));
+    errors.push(...findConsumedExclusions({ name, packagePath, manifest, excluded, packageFiles, promoted }));
+  }
+  return errors;
+}
+
+function changedFiles(cwd, from, to, pathspecs) {
+  return git(cwd, ["diff", "--name-only", "-z", "--no-renames", from, to, "--", ...pathspecs]).split("\0").filter(Boolean);
+}
+
+/**
+ * Judges each package across `from..to`. `base` and `head` are the package as declared at each end
+ * (null where it is not stable); `basePath` and `headPath` locate its manifest. A changed path counts
+ * when it ships at an end where it exists, by that end's own path, declarations and manifest: a path
+ * present at the base keeps the base's classification, a new path takes the head's (which the guard
+ * checks), and a deleted one is judged only at the base.
+ */
+function evaluateRange(cwd, from, to, entries, stateAt) {
+  const roots = entries.flatMap(({ base, head }) => [base, head].filter(Boolean).flatMap(({ packagePath, inputs }) => [packagePath, ...inputs]));
+  const files = changedFiles(cwd, from, to, [...new Set(roots)]);
+  return entries.map(({ name, base, head, basePath, headPath }) => {
+    const ends = [base && stateAt(from, base), head && stateAt(to, head)].filter(Boolean);
+    return evaluatePackage({
+      name,
+      packagePath: headPath,
+      baseManifest: readJsonAt(cwd, from, `${basePath}/package.json`),
+      headManifest: readJsonAt(cwd, to, `${headPath}/package.json`),
+      shippedFiles: files.filter((file) => ends.some((state) => state.ships(file))),
+      headChangelog: readAt(cwd, to, `${headPath}/CHANGELOG.md`),
+      stable: Boolean(head),
+    });
+  });
+}
+
+/**
+ * PR gate: every package stable at the merge base or the head whose shipped code, declared inputs or
+ * published manifest changed must bump and log it, and no package may use an undeclared out-of-root input.
+ */
+export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" }) {
+  const headCommit = resolveCommit(cwd, head);
+  const baseCommit = resolveCommit(cwd, base);
+  let mergeBase;
+  try {
+    mergeBase = git(cwd, ["merge-base", baseCommit, headCommit]).trim();
+  } catch {
+    throw new Error(`${base} and ${head} share no history; fetch full history before running this check`);
+  }
+  const atHead = loadPackages(cwd, headCommit);
+  const atBase = loadPackages(cwd, mergeBase, { required: false });
+  // A package the head demotes, moves or drops is still judged at its merge-base path.
+  const names = [...new Set([...atBase.packages.keys(), ...atHead.packages.keys()])];
+  const entries = names.map((name) => {
+    const basePackage = atBase.packages.get(name) ?? null;
+    const headPackage = atHead.packages.get(name) ?? null;
+    const basePath = atBase.locations.get(name) ?? headPackage?.packagePath ?? atHead.locations.get(name);
+    return { name, base: basePackage, head: headPackage, basePath, headPath: atHead.locations.get(name) ?? basePath };
+  });
+  const stateAt = stateCache(cwd);
+  const results = evaluateRange(cwd, mergeBase, headCommit, entries, stateAt);
+  const errors = [...atHead.errors, ...guardReferences(cwd, headCommit, [...atHead.packages.values()], stateAt), ...results.flatMap((result) => result.errors)];
+  return { mergeBase, head: headCommit, results, errors };
+}
+
+/** Informational: shipped changes on `head` since each stable package's highest published tag. */
+export function reportSincePublished({ cwd = process.cwd(), head = "HEAD" }) {
+  const headCommit = resolveCommit(cwd, head);
+  const targets = readJsonAt(cwd, headCommit, RELEASE_TARGETS_PATH) ?? [];
+  const stateAt = stateCache(cwd);
+  return [...loadPackages(cwd, headCommit).packages.values()].map((pkg) => {
+    const slug = targets.find((target) => target.name === pkg.name)?.slug ?? `uifn-${path.posix.basename(pkg.packagePath)}`;
+    const tags = git(cwd, ["tag", "--list", `${slug}-v*`])
+      .split("\n")
+      .map((tag) => ({ tag, version: tag.slice(slug.length + 2) }))
+      .filter(({ tag, version }) => tag && parseSemver(version))
+      .sort((a, b) => compareSemver(b.version, a.version));
+    if (tags.length === 0) return { name: pkg.name, packagePath: pkg.packagePath, tag: null };
+    const tagCommit = resolveCommit(cwd, tags[0].tag);
+    // Published tags predate the declarations file, so the tag end uses the head's path and declarations, plus any inputs the tag declared.
+    const earlier = loadPackages(cwd, tagCommit, { required: false }).packages.get(pkg.name);
+    const tagPackage = { ...pkg, inputs: [...new Set([...(earlier?.inputs ?? []), ...pkg.inputs])] };
+    const [result] = evaluateRange(cwd, tagCommit, headCommit, [{ name: pkg.name, base: tagPackage, head: pkg, basePath: pkg.packagePath, headPath: pkg.packagePath }], stateAt);
+    return { ...result, tag: tags[0].tag };
+  });
+}
+
+function formatReport(entries) {
+  const lines = ["uifn stable packages: shipped changes since the last published tag (informational)"];
+  let changed = 0;
+  for (const entry of entries) {
+    if (!entry.tag) {
+      lines.push(`  ${entry.name}: no published tag`);
+      continue;
+    }
+    const drift = entry.shippedFiles.length > 0 || entry.manifestChanged;
+    if (drift) changed += 1;
+    const what = drift
+      ? `${entry.shippedFiles.length} shipped file(s) changed${entry.manifestChanged ? " + published manifest fields" : ""}`
+      : "no shipped changes";
+    const version = entry.bumped ? `version ${entry.baseVersion} -> ${entry.headVersion} (unpublished)` : `version ${entry.headVersion}`;
+    lines.push(`  ${entry.name}: ${entry.tag} -> HEAD: ${what}; ${version}`);
+  }
+  lines.push(`${changed} of ${entries.length} stable packages have shipped changes since their last published tag.`);
+  return lines.join("\n");
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const { values } = parseArgs({
+      options: { base: { type: "string" }, head: { type: "string", default: "HEAD" }, "since-published": { type: "boolean", default: false } },
+    });
+    if (values["since-published"]) {
+      // The report is informational, so a failure to build it warns instead of failing CI.
+      try {
+        console.log(formatReport(reportSincePublished({ head: values.head })));
+      } catch (error) {
+        console.warn(`warning: could not report changes since the last published tags: ${error.message}`);
+      }
+    } else {
+      if (!values.base) throw new Error("Usage: verify-uifn-version-bump.mjs --base <ref> [--head <ref>] | --since-published [--head <ref>]");
+      const { mergeBase, head, results, errors } = verifyVersionBumps({ base: values.base, head: values.head });
+      console.log(`uifn version bump check: ${mergeBase.slice(0, 12)}...${head.slice(0, 12)}`);
+      for (const result of results.filter((entry) => entry.errors.length === 0 && entry.bumped)) {
+        console.log(`  ok ${result.name}: ${result.baseVersion} -> ${result.headVersion} with changelog entry`);
+      }
+      if (errors.length > 0) {
+        for (const error of errors) console.error(`  error: ${error}`);
+        process.exitCode = 1;
+      } else {
+        console.log("  ok: no stable package ships changed code under an unchanged version");
+      }
+    }
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exitCode = 1;
+  }
+}
