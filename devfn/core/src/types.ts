@@ -26,6 +26,8 @@ export interface RoutingIdentity extends InstanceIdentity {
    * intact and shortens only the readable name to fit one DNS label.
    */
   readableWorktreeLabel: string;
+  /** Random identity of the DevFn state directory (readRuntimeId), present when the manifest declares resources. */
+  runtimeId?: string;
 }
 
 export interface LifecyclePlan {

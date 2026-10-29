@@ -17,7 +17,7 @@ import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
-import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
+import { newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -78,7 +78,8 @@ interface ProvisionalInputs { ports?: boolean; networks?: boolean }
  */
 function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">, provisional: ProvisionalInputs = {}): EndpointResolution {
   if (!input.config.resources) return resolveEndpointTemplates(input);
-  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports,
+  const runtimeId = input.routingIdentity?.runtimeId;
+  const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports, ...(runtimeId ? { runtimeId } : {}),
     provisionalPorts: provisional.ports === true, provisionalNetworks: provisional.networks === true,
     ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), environment: process.env });
   return resolveEndpointTemplates({ ...input, resources });
@@ -375,7 +376,9 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     if (receipt.allocations.some((allocation) => allocation.protocol !== (config.ports?.[allocation.service]?.protocol ?? "tcp") ||
       allocation.host !== (config.ports?.[allocation.service]?.exposure === "public" ? "0.0.0.0" : "127.0.0.1"))) return false;
     const loadedPolicy = await loadDevFnPolicy(root, config.policy);
-    const identity = await resolveInstanceIdentity(config.project.id, root);
+    // Without the runtime identity it started with, the resource plan differs and the lifecycle is not reused.
+    const runtimeId = config.resources ? await readRuntimeId(receipt.stateDir ?? defaultStateDir()) : undefined;
+    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(config.project.id, root), ...(runtimeId ? { runtimeId } : {}) };
     resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix,
       await publicTemplateInputs(config, plan, identity, receipt.stateDir ?? defaultStateDir()));
     if (!receiptRoutesMatch(receipt, await selectedProxyRoutes(config, plan, identity, ports,
@@ -574,7 +577,11 @@ export class DevFnOrchestrator {
       throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts, ...(tunnel ? { tunnel } : {}) });
     }
     const requestedStateDir = options.stateDir ?? defaultStateDir();
-    const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
+    // Resource namespaces include this runtime's identity. Preflight plans
+    // with the recorded one, or a new one recorded only with the state
+    // directory once preflight passed.
+    const runtimeId = options.config.resources ? await readRuntimeId(requestedStateDir) ?? newRuntimeId() : undefined;
+    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(options.config.project.id, options.root), ...(runtimeId ? { runtimeId } : {}) };
     const loadedPolicy = await loadDevFnPolicy(options.root, options.config.policy);
     // Effective network evidence must reject unreachable sibling references
     // before state creation. Re-read it under the lifecycle lock after ports
@@ -591,6 +598,8 @@ export class DevFnOrchestrator {
     }
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
+    // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
+    if (identity.runtimeId) identity.runtimeId = await recordRuntimeId(stateDir, identity.runtimeId);
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Health and teardown may wait for minutes. The instance lock protects
       // this lifecycle while sibling route/lease transitions use the short

@@ -5,7 +5,7 @@ import { createProcessEnvironment, resolveHttpReadinessUrl } from "@devfn/proces
 import { composeProjectName, createComposeEnvironment } from "@devfn/compose";
 
 import { domainAliases } from "./identity.js";
-import { resourceEnvironment, resourceServiceEnvironment, type ResourcePlan } from "./resources.js";
+import { resourceEnvironment, resourceOwner, resourceServiceEnvironment, type ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan, type RoutingIdentity } from "./types.js";
 
 export interface EndpointResolutionInput {
@@ -832,7 +832,7 @@ function generatedPublicUrls(input: EndpointResolutionInput, generated: Record<s
 
 function generatedResourceValues(input: EndpointResolutionInput, generated: Record<string, string>): void {
   if (input.resources && (input.resources.profile !== input.plan.profile ||
-    input.resources.ownerToken !== `o${createHash("sha256").update(input.ownerId).digest("hex").slice(0, 12)}`)) {
+    input.resources.owner !== resourceOwner(input.ownerId))) {
     invalid("resources", "resource plan belongs to another profile or lifecycle owner.");
   }
   for (const [key, value] of Object.entries(resourceEnvironment(input.resources))) {

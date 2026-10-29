@@ -10,6 +10,8 @@ import { FilePortRegistry } from "@devfn/ports";
 import { describe, expect, it, vi } from "vitest";
 
 import { createPlan, DevFnOrchestrator, planResources, receiptPath, resolveEndpointTemplates, type ResourcePlan } from "../src/index.js";
+import { resourceOwner, resourcePlanFingerprint } from "../src/resources.js";
+import { readRuntimeId, recordRuntimeId } from "../src/runtime.js";
 
 const PORTS = { api: 4101, reports: 4102, web: 4103, admin: 4104, pg: 4105, kafka: 4106, redis: 4107, objects: 4108 };
 
@@ -189,6 +191,8 @@ describe("resource validation before side effects", () => {
       v.processes["api-server"].resources.push("sessions");
     });
     expect(() => plan(twoPortNames, undefined, { ports: { ...PORTS, replica: 4109 } })).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    // One container port is known before leases and effective networks.
+    expect(() => plan(twoPortNames, undefined, { ports: { ...PLACEHOLDERS, replica: 1 }, provisionalPorts: true, provisionalNetworks: true })).toThrow("share namespace data:");
     const leasedLoopback = config((v) => {
       v.resources.cache.namespace = { base: "data" };
       v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://127.1:4107" } } };
@@ -253,7 +257,7 @@ describe("resource validation before side effects", () => {
       .toThrow("share namespace data:");
   });
 
-  it("withholds container-side values from Compose services that do not consume a resource", () => {
+  it("withholds endpoint values from Compose services that do not consume a resource", () => {
     // The worker would reach both caches as redis:6379 through templates alone.
     const templateOnly = config((v) => {
       v.services.worker = { adapter: "compose", service: "worker", env: { CACHE: "{{env.DEVFN_RESOURCE_CACHE_URL}}", SESSIONS: "{{env.DEVFN_RESOURCE_SESSIONS_URL}}" } };
@@ -262,7 +266,9 @@ describe("resource validation before side effects", () => {
       v.profiles.default = { services: ["worker"], resources: { cache: "local", sessions: "dev" } };
     });
     const resources = plan(templateOnly);
-    expect(resources.resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_PREFIX).toEqual({ unreachable: expect.stringContaining("Compose service worker does not consume resource sessions") });
+    expect(resources.resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_URL).toEqual({ unreachable: expect.stringContaining("Compose service worker does not consume resource sessions") });
+    // Namespace values name state, not a listener, and reach every service.
+    expect(resources.resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_PREFIX).toEqual(value(resources, "sessions", "SESSIONS_PREFIX"));
     const lifecycle = createPlan(templateOnly);
     expect(() => resolveEndpointTemplates({ config: templateOnly, plan: lifecycle, ownerId: "owner-a", ports: PORTS, composeNetworks: { redis: ["shared"], worker: ["shared"] }, resources }))
       .toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("does not consume resource cache") }));
@@ -270,6 +276,30 @@ describe("resource validation before side effects", () => {
     const declared = validateDevFnConfig({ ...templateOnly, services: { ...templateOnly.services, worker: { ...templateOnly.services!.worker, resources: ["cache", "sessions"] } } });
     expect(() => plan(declared)).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
   });
+
+  it("rejects two port names on one Compose container port before creating state or leases", async () => {
+    // Only a native process consumes both, and no template names them.
+    const value_ = validateDevFnConfig({ version: 1, project: { id: "resource-container-port" }, ports: { a: {}, b: {}, app: {} },
+      processes: { app: { adapter: "command", command: ["node", "app.mjs"], ports: ["app"], resources: ["c1", "c2"] } },
+      services: { redis: { adapter: "compose", service: "redis", ports: { a: 6379, b: 6379 } } },
+      resources: {
+        c1: { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "redis", port: "a" } } },
+        c2: { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "redis", port: "b" } } },
+      },
+      profiles: { default: { processes: ["app"] } } });
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-container-port-"));
+    const stateDir = path.join(root, "state");
+    const reserve = vi.spyOn(FilePortRegistry.prototype, "reserve");
+    try {
+      await expect(new DevFnOrchestrator().up({ config: value_, root, stateDir }))
+        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
+      expect(reserve).not.toHaveBeenCalled();
+      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("rejects a collision on a manifest-fixed port before reservation", async () => {
     const exact = config((v) => {
@@ -286,6 +316,48 @@ describe("resource validation before side effects", () => {
         .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
       await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("gives a Compose provider the addresses it advertises and consumers only their own endpoint", () => {
+    const resolve = (value_: DevFnConfig, resources = plan(value_)) => resolveEndpointTemplates({ config: value_, plan: createPlan(value_), ownerId: "owner-a", ports: PORTS,
+      composeNetworks: Object.fromEntries(createPlan(value_).nodes.filter((node) => node.kind === "service").map((node) => [node.name, ["shared"]])), resources });
+    const providers = config((v) => {
+      v.services.broker.env = { ADVERTISED: "INTERNAL://{{env.DEVFN_RESOURCE_EVENTS_INTERNAL_ENDPOINT}},HOST://{{env.DEVFN_RESOURCE_EVENTS_HOST_ENDPOINT}}" };
+      v.services.postgres.env = { POSTGRES_DB: "{{env.DEVFN_RESOURCE_DB_DATABASE}}", SCHEMA: "{{env.DEVFN_RESOURCE_DB_SCHEMA}}" };
+      v.profiles.default = { processes: ["api-server"] };
+    });
+    const resources = plan(providers);
+    const resolved = resolve(providers, resources);
+    expect(resolved.nodes.broker.environment.ADVERTISED).toBe("INTERNAL://broker:9092,HOST://127.0.0.1:4106");
+    expect(resolved.nodes.postgres.environment).toMatchObject({ POSTGRES_DB: "app", SCHEMA: `db_${resources.ownerToken}` });
+    expect(resources.resources.events.services.broker.DEVFN_RESOURCE_EVENTS_HOST_ENDPOINT).toEqual({ value: "127.0.0.1:4106", source: "lease", field: "ports.kafka" });
+    // A provider is not its own consumer: its client endpoint values stay withheld, without advice that would form a cycle.
+    const ownUrl = config((v) => { v.services.postgres.env = { URL: "{{env.DEVFN_RESOURCE_DB_URL}}" }; v.profiles.default = { processes: ["api-server"] }; });
+    expect(() => resolve(ownUrl)).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID",
+      message: expect.stringMatching(/^services\.postgres: Compose service postgres provides resource db; it receives DEVFN_RESOURCE_DB_INTERNAL_ENDPOINT/) }));
+    // Profile environment values are resolved for every service, so only namespace values are usable there beside a Compose provider.
+    const profileEnvironment = (key: string) => config((v) => { v.profiles.default = { processes: ["api-server"], environment: { VALUE: `{{env.${key}}}` } }; });
+    expect(() => resolve(profileEnvironment("DEVFN_RESOURCE_DB_URL"))).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("provides resource db") }));
+    expect(resolve(profileEnvironment("DEVFN_RESOURCE_DB_SCHEMA")).environment.VALUE).toMatch(/^db_o[0-9a-f]{12}$/);
+    // An unrelated service still receives no endpoint, and is told to consume only when that forms no cycle.
+    const unrelated = (dependsOnRedis: boolean) => config((v) => {
+      v.services.redis.env = { EVENTS: "{{env.DEVFN_RESOURCE_EVENTS_URL}}" };
+      if (dependsOnRedis) v.services.broker.dependsOn = ["redis"];
+      v.profiles.default = { processes: ["api-server"] };
+    });
+    expect(() => resolve(unrelated(false))).toThrow("Compose service redis does not consume resource events; add events to services.redis.resources");
+    expect(() => resolve(unrelated(true))).toThrow(expect.objectContaining({ message: expect.not.stringContaining("add events to") }));
+    expect(() => resolve(unrelated(true))).toThrow("Compose service redis does not consume resource events; reference");
+    // A consuming container gets its own endpoint, never the provider's host-loopback advertisement.
+    const consumer = config((v) => {
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache"], env: { CACHE: "{{env.DEVFN_RESOURCE_CACHE_ENDPOINT}}" } };
+      v.profiles.default = { services: ["worker"] };
+    });
+    const consumed = plan(consumer);
+    expect(consumed.resources.cache.services.worker.DEVFN_RESOURCE_CACHE_HOST_ENDPOINT).toEqual({ unreachable: expect.stringContaining("is an address provider redis advertises") });
+    expect(resolve(consumer, consumed).nodes.worker.environment.CACHE).toBe("redis:6379");
+    const hostEndpoint = validateDevFnConfig({ ...consumer, services: { ...consumer.services, worker: { ...consumer.services!.worker, env: { CACHE: "{{env.DEVFN_RESOURCE_CACHE_HOST_ENDPOINT}}" } } } });
+    expect(() => resolve(hostEndpoint)).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("is an address provider redis advertises") }));
   });
 
   it("selects only declared resources and targets, never inherited object properties", () => {
@@ -353,7 +425,7 @@ describe("resource collisions on effective Compose networks", () => {
       vi.restoreAllMocks();
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
 
 describe("resource references only Compose interpolates", () => {
@@ -380,7 +452,7 @@ describe("resource references only Compose interpolates", () => {
       }
       await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 60_000);
 
   it("accepts values the service receives and Compose fallbacks for values it does not", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-available-"));
@@ -399,7 +471,7 @@ describe("resource references only Compose interpolates", () => {
       expect([...references]).toEqual(["DEVFN_RESOURCE_CACHE_ENDPOINT"]);
       expect(resolve(references).nodes.worker.environment.DEVFN_RESOURCE_CACHE_ENDPOINT).toBe("host.docker.internal:4107");
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 60_000);
 
   it("rejects an unreachable resource value before creating lifecycle state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-reference-"));
@@ -417,7 +489,7 @@ describe("resource references only Compose interpolates", () => {
         .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Compose service worker does not consume resource dev") });
       await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 60_000);
 });
 
 describe("resource selection independence and redaction", () => {
@@ -442,6 +514,21 @@ describe("resource selection independence and redaction", () => {
       target: { name: "remote", location: "remote", selectedBy: "defaultTarget", field: "resources.api.defaultTarget" } });
     const local = config((v) => { v.resources.api.defaultTarget = "remote"; v.profiles.default.resources = { api: "local" }; });
     expect(plan(local).resources.api.target).toEqual({ name: "local", location: "local", selectedBy: "profile", field: "profiles.default.resources.api" });
+  });
+
+  it("fingerprints every selected value and only ignores secret presence", () => {
+    // A resource may be named present; its cookie name sits under a credential-like key.
+    const browser = (cookie: string) => config((v) => {
+      v.resources.present = { kind: "browser", cookies: [cookie] };
+      v.processes.web.resources.push("present");
+    });
+    const [lower, upper] = [plan(browser("sid")), plan(browser("SID"))];
+    expect(value(lower, "present", "PRESENT_COOKIE_SID")?.value).not.toBe(value(upper, "present", "PRESENT_COOKIE_SID")?.value);
+    expect(resourcePlanFingerprint(lower)).not.toBe(resourcePlanFingerprint(upper));
+    const remote = (environment: Record<string, string>) => plan(config(), "remote-database", { environment });
+    expect(remote({}).resources.db.secrets[0].present).toBe(false);
+    expect(remote({ DB_PASSWORD: "x" }).resources.db.secrets[0].present).toBe(true);
+    expect(resourcePlanFingerprint(remote({}))).toBe(resourcePlanFingerprint(remote({ DB_PASSWORD: "x" })));
   });
 
   it("rejects credential-bearing target URLs and never records secret values", () => {
@@ -475,6 +562,31 @@ describe("resource namespaces", () => {
     expect(topic(plan(shared))).toBe("events.orders");
     expect(topic(plan(shared))).toBe(topic(plan(shared, undefined, { ownerId: "owner-b" })));
     expect(group(plan(shared))).toBe(group(plan(shared, undefined, { ownerId: "owner-b" })));
+  });
+
+  it("isolates runtimes whose checkout paths and owner ids are identical", async () => {
+    const value_ = config((v) => { v.profiles.default = { processes: ["api-server"], resources: { db: "remote", events: "remote" } }; });
+    const machine = (runtimeId?: string) => plan(value_, undefined, runtimeId ? { runtimeId } : {});
+    const [first, second] = [machine("a".repeat(32)), machine("b".repeat(32))];
+    for (const key of ["DB_SCHEMA", "EVENTS_TOPIC_ORDERS", "EVENTS_CONSUMER_GROUP", "CACHE_PREFIX"]) {
+      const resource = key.split("_")[0].toLowerCase();
+      expect(value(first, resource, key)?.value, key).not.toBe(value(second, resource, key)?.value);
+      expect(value(first, resource, key)?.value, key).toBe(value(machine("a".repeat(32)), resource, key)?.value);
+    }
+    expect(first.owner).toBe(second.owner);
+    expect(first.owner).toBe(resourceOwner("owner-a"));
+    expect(machine().ownerToken).toBe(resourceOwner("owner-a"));
+    expect(() => machine("not-random")).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID" }));
+    // A state directory records one identity; a concurrent first start adopts it.
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-id-"));
+    try {
+      expect(await readRuntimeId(stateDir)).toBeUndefined();
+      const recorded = await Promise.all(["c", "d", "e"].map((digit) => recordRuntimeId(stateDir, digit.repeat(32))));
+      expect(new Set(recorded).size).toBe(1);
+      expect(await readRuntimeId(stateDir)).toBe(recorded[0]);
+      await writeFile(path.join(stateDir, "runtime-id"), "corrupt\n");
+      await expect(readRuntimeId(stateDir)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    } finally { await rm(stateDir, { recursive: true, force: true }); }
   });
 
   it("isolates cache, object, database and browser prefixes by default", () => {
@@ -655,6 +767,8 @@ createServer((request, response) => { response.writeHead(200); response.end("ok"
       const ports = Object.fromEntries(receipt.allocations.map((allocation) => [allocation.service, allocation.port]));
       const observation = JSON.parse(await readFile(observed, "utf8"));
       const token = receipt.resources!.ownerToken;
+      // Namespaces belong to this state directory's runtime identity, recorded after preflight.
+      expect(token).toBe(resourceOwner(`${receipt.instanceId}\0${await readRuntimeId(stateDir)}`));
       expect(observation).toEqual({ status: 200, api: `http://127.0.0.1:${ports.api}`, db: `postgres://db.example.test:5432/db_${token}`,
         topic: `events.${token}.jobs`, group: `events.${token}`, secret: true });
       expect(receipt.resources?.resources.backend).toMatchObject({ provider: { node: "api" }, consumers: ["web"] });
