@@ -5,7 +5,8 @@ import SwiftUI
 ///
 /// The toggle stays a toggle to accessibility; the style changes only how it
 /// looks. Like the system switch, a press flips the binding and a drag across
-/// the track sets it from the half of the track the drag ends over.
+/// the track sets it from the half of the track the drag ends over; a drag up
+/// or down sets nothing.
 public struct UIFnSwitchToggleStyle: ToggleStyle {
     public init() {}
 
@@ -242,14 +243,16 @@ struct UIFnToggleAppearance<Label: View>: View {
     }
 
     /// A drag across the track, which wins over the button's press once it
-    /// moves far enough. Drag locations run left to right in either layout
-    /// direction, so right to left the trailing half is the left one.
+    /// moves far enough. Like the system switch, a drag that ends further up
+    /// or down than across sets nothing. Drag locations run left to right in
+    /// either layout direction, so right to left the trailing half is the left
+    /// one.
     private func switchDrag(width: CGFloat) -> some Gesture {
         let isRightToLeft = layoutDirection == .rightToLeft
         return DragGesture(minimumDistance: Self.switchDragDistance)
             .updating($isDragging) { _, isDragging, _ in isDragging = true }
             .onEnded { drag in
-                guard state.isEnabled else { return }
+                guard state.isEnabled, abs(drag.translation.width) > abs(drag.translation.height) else { return }
                 let isRightHalf = drag.location.x >= width / 2
                 onSwitchDragEnd?(isRightHalf != isRightToLeft)
             }
