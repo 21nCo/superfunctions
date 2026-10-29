@@ -151,8 +151,19 @@ struct UIFnControlStyleStateTests {
         }
         let styled = try await render { TextField("Name", text: .constant("Ada")).textFieldStyle(.uifn) }
         let disabled = try await render { TextField("Name", text: .constant("Ada")).textFieldStyle(.uifn).disabled(true) }
-        let plain = try await render { TextField("Name", text: .constant("Ada")).textFieldStyle(.plain) }
+        // A plain field with the style's font and padding takes the same size,
+        // so the comparison counts only what the style draws around it.
+        let theme = UIFnTheme.uifn
+        let plain = try await render {
+            TextField("Name", text: .constant("Ada"))
+                .textFieldStyle(.plain)
+                .uifnFont(theme.typography.size.md, weight: theme.typography.weight.regular)
+                .padding(.horizontal, theme.spacing.space3)
+                .padding(.vertical, theme.spacing.space2)
+        }
+        #expect(styled.width == plain.width && styled.height == plain.height)
         #expect(styled.differingFraction(from: plain) > UIFnStateChange.minimumDifferingFraction)
+        #expect(disabled.width == styled.width && disabled.height == styled.height)
         #expect(disabled.differingFraction(from: styled) > UIFnStateChange.minimumDifferingFraction)
     }
 
@@ -220,6 +231,35 @@ struct UIFnControlStyleStateTests {
             let spaced = try #require(await UIFnSnapshot.render { subject.view.uifnTheme(roomy).isolated() })
             #expect(spaced.height > byDefault.height || spaced.width > byDefault.width, "\(subject)")
         }
+    }
+
+    /// The default theme with a bold regular weight.
+    private static let boldRegularTheme: UIFnTheme = {
+        let theme = UIFnTheme.uifn
+        let weight = theme.typography.weight
+        return UIFnTheme(
+            name: "bold-regular",
+            colors: theme.colors,
+            spacing: theme.spacing,
+            radius: theme.radius,
+            typography: UIFnTypography(
+                size: theme.typography.size,
+                lineHeight: theme.typography.lineHeight,
+                weight: UIFnFontWeights(regular: UIFnFontWeight(700), medium: weight.medium, semibold: weight.semibold, bold: weight.bold)
+            ),
+            motion: theme.motion
+        )
+    }()
+
+    /// Body text in the toggle label, the text field and the group box
+    /// content takes the theme's regular weight. The box-glyph test faces
+    /// draw every weight alike, so this renders the system font.
+    @Test(arguments: [UIFnStyleSubject.switchOn, .checkboxOn, .textFieldFilled, .groupBox])
+    func bodyTextTakesTheThemeRegularWeight(_ subject: UIFnStyleSubject) async throws {
+        let byDefault = try #require(await UIFnSnapshot.render { subject.view.padding(8) })
+        let bold = try #require(await UIFnSnapshot.render { subject.view.uifnTheme(Self.boldRegularTheme).padding(8) })
+        // Only the weight differs, so a different size counts as a change too.
+        #expect(bold.differingFraction(from: byDefault) > 0)
     }
 
     #if os(macOS)

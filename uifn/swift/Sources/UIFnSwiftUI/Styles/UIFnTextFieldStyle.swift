@@ -53,7 +53,7 @@ struct UIFnTextFieldAppearance<Field: View>: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         field
             .textFieldStyle(.plain)
-            .uifnFont(context.typography.size.md)
+            .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
             .foregroundColor(context.color(state.isEnabled ? colors.text.primary : colors.text.disabled))
             .padding(.horizontal, context.scaled(context.spacing.space3))
             .padding(.vertical, context.scaled(context.spacing.space2))

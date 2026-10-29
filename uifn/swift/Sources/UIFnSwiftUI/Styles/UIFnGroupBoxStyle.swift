@@ -31,7 +31,7 @@ struct UIFnGroupBoxAppearance<Label: View, Content: View>: View {
                 .foregroundColor(context.color(colors.text.primary))
                 .accessibilityAddTraits(.isHeader)
             content
-                .uifnFont(context.typography.size.md)
+                .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
                 .foregroundColor(context.color(colors.text.primary))
         }
         .frame(maxWidth: .infinity, alignment: .leading)

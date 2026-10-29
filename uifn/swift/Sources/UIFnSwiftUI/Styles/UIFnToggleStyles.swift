@@ -200,7 +200,7 @@ struct UIFnToggleAppearance<Label: View>: View {
 
     private var labelText: some View {
         label
-            .uifnFont(context.typography.size.md)
+            .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
             .foregroundColor(context.color(context.colors.text.primary))
     }
 
