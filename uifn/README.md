@@ -41,6 +41,8 @@ npm run verify:uifn-stable
 npm run verify:uifn-lanes
 ```
 
+Pull requests to `dev` that change a stable package's shipped code (sources, build configuration, published `package.json` fields including dependency pins) must bump that package's version and add a `## <version>` entry with content to its `CHANGELOG.md`. Tests, fixtures, stories, harnesses and Markdown docs need neither. Check locally with `node scripts/verify-uifn-version-bump.mjs --base origin/dev`, and list changes since the last published tags with `--since-published`.
+
 `verify:uifn-stable` covers only the stable lane. Run `npm run verify:uifn-phase-01` for the isolated proof that the stable lane executes with the experimental workspaces absent. `verify:uifn-lanes` always reports experimental results separately. The full 1.0 release remains fail-closed until the architecture, behavior, accessibility, compatibility, performance, security, and release gates are complete.
 
 Private React, Svelte, and Solid Workbench apps live under `uifn/examples`. Integrated pattern and Superfunction panels are experimental-demo surfaces and are excluded from the stable package result.
