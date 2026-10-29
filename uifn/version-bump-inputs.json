@@ -1,0 +1,77 @@
+{
+  "$comment": "Read by scripts/verify-uifn-version-bump.mjs. inputs: repo paths outside a stable package that feed its tarball; a shipped change to them needs that package's version bump. references: out-of-root paths its shipped files or lifecycle scripts name that do not feed the tarball. excluded: paths inside the package that are not shipped. Every entry maps a path to the reason.",
+  "schemaVersion": 1,
+  "packages": {
+    "@uifn/core": {
+      "inputs": {
+        "uifn/catalog/generated/catalog.json": "scripts/build.mjs generates dist/primitive-entries from the catalog."
+      },
+      "excluded": {
+        "scripts/dev.mjs": "Watch-mode helper for npm run dev; no lifecycle script runs it."
+      }
+    },
+    "@uifn/adapter-kit": {
+      "references": {
+        "uifn/core/src": "tsconfig paths for type-checking; tsup keeps the @uifn/core dependency external."
+      }
+    },
+    "@uifn/svelte": {
+      "references": {
+        "scripts/generate-uifn-svelte.mjs": "prepack runs it with --check, which compares the committed lib/generated sources and writes nothing."
+      }
+    },
+    "@uifn/solid": {
+      "inputs": {
+        "scripts/build-uifn-solid.mjs": "The package build script."
+      },
+      "references": {
+        "scripts/generate-uifn-solid.mjs": "prepack runs it with --check, which compares the committed src/generated sources and writes nothing.",
+        "uifn/catalog/generated/catalog.json": "scripts/build-uifn-solid.mjs reads it only to verify the generated entry count."
+      }
+    },
+    "@uifn/theme": {
+      "references": {
+        "uifn/tokens/src": "tsconfig paths for type-checking; tsup keeps the @uifn/tokens dependency external."
+      }
+    },
+    "@uifn/theme-tailwind": {
+      "references": {
+        "uifn/recipes/src": "tsconfig paths for type-checking; tsup keeps the @uifn/recipes dependency external.",
+        "uifn/theme/src": "tsconfig paths for type-checking; tsup keeps the @uifn/theme dependency external.",
+        "uifn/tokens/src": "tsconfig paths for type-checking; tsup keeps the @uifn/tokens dependency external."
+      }
+    },
+    "@uifn/components-react": {
+      "references": {
+        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
+      }
+    },
+    "@uifn/components-svelte": {
+      "references": {
+        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
+      }
+    },
+    "@uifn/components-solid": {
+      "references": {
+        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
+      }
+    },
+    "@uifn/registry": {
+      "references": {
+        "scripts/generate-uifn-registry.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing.",
+        "scripts/generate-uifn-fixture.mjs": "prepack runs it without --write, which compares the committed fixture source and writes nothing."
+      }
+    },
+    "@uifn/storybook": {
+      "inputs": {
+        "uifn/registry/src": "src/panel/compatibility.ts imports it relatively, so tsup bundles it into dist."
+      },
+      "references": {
+        "scripts/generate-uifn-docs-storybook.mjs": "prepack runs it with --check, which compares the committed generated docs and writes nothing."
+      },
+      "excluded": {
+        "generated/story-inventory.json": "Not in files and not bundled; src/validate-stories.ts reads it from a repository checkout at run time."
+      }
+    }
+  }
+}

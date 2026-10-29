@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, reportSincePublished } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, evaluatePackage, parseInputDeclarations, reportSincePublished, shippedScriptNames } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -16,6 +16,7 @@ function manifest(name, version, extra = {}) {
 }
 
 // Fixture repo: stable @uifn/core and @uifn/react (react depends on core), experimental @uifn/patterns.
+// Declared out-of-package inputs: core's build reads uifn/catalog/catalog.json; react bundles uifn/shared/src.
 function fixtureRepo(t) {
   const root = mkdtempSync(path.join(tmpdir(), "uifn-version-bump-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -42,9 +43,20 @@ function fixtureRepo(t) {
   ]));
   write("uifn/core/package.json", manifest("@uifn/core", "1.0.0"));
   write("uifn/core/src/index.ts", "export const core = 1;\n");
+  write("uifn/core/scripts/build.mjs", 'const catalog = path.resolve(packageRoot, "..", "catalog", "catalog.json");\n');
+  write("uifn/core/generated/inventory.json", "{}\n");
+  write("uifn/catalog/catalog.json", '{ "primitives": [] }\n');
+  write("uifn/shared/src/index.ts", "export const shared = 1;\n");
+  write("uifn/shared/src/__tests__/shared.test.ts", "test;\n");
+  write("uifn/version-bump-inputs.json", JSON.stringify({
+    packages: {
+      "@uifn/core": { inputs: { "uifn/catalog/catalog.json": "build reads it" }, excluded: { "generated/inventory.json": "read from a checkout at run time" } },
+      "@uifn/react": { inputs: { "uifn/shared/src": "bundled through a relative import" } },
+    },
+  }));
   write("uifn/core/CHANGELOG.md", "# Changelog\n\n## 1.0.0 - 2026-01-01\n\n- Initial.\n");
   write("uifn/react/package.json", manifest("@uifn/react", "1.0.0", { dependencies: { "@uifn/core": "1.0.0" } }));
-  write("uifn/react/src/index.ts", "export const react = 1;\n");
+  write("uifn/react/src/index.ts", 'export { shared } from "../../shared/src/index";\nexport const react = 1;\n');
   write("uifn/patterns/package.json", manifest("@uifn/patterns", "0.1.0-experimental.0"));
   write("uifn/patterns/src/index.ts", "export const patterns = 1;\n");
   commit("base");
@@ -119,6 +131,103 @@ test("a dependency-only bump in a dependent package needs its own bump", (t) => 
   assert.match(output, /@uifn\/react: shipped code changed \(package\.json \(published fields\)\)/);
 });
 
+test("a declared out-of-package input change without a bump fails and names the dependent package", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/catalog/catalog.json", '{ "primitives": ["button"] }\n');
+  repo.write("uifn/shared/src/index.ts", "export const shared = 2;\n");
+  repo.commit("change external inputs only");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: shipped code changed \(uifn\/catalog\/catalog\.json\) but version is still 1\.0\.0/);
+  assert.match(output, /@uifn\/react: shipped code changed \(uifn\/shared\/src\/index\.ts\) but version is still 1\.0\.0/);
+});
+
+test("tests inside a declared input and declared exclusions need no bump", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/shared/src/__tests__/shared.test.ts", "test 2;\n");
+  repo.write("uifn/core/generated/inventory.json", '{ "stories": 1 }\n');
+  repo.commit("tests and excluded inventory");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 0, output);
+});
+
+test("a declared input change with a bump and changelog entry passes", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/catalog/catalog.json", '{ "primitives": ["button"] }\n');
+  repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+  repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Catalog adds button.\n\n## 1.0.0"));
+  repo.commit("release core for catalog");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 0, output);
+});
+
+test("undeclared out-of-root imports, path segments and build scripts fail closed", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/core/src/extra.ts", 'import data from "../../catalog/extra.json";\n');
+  repo.write("uifn/core/tsup.config.ts", 'const x = path.join(root, "..", "theme", "tokens.css");\n');
+  repo.edit("uifn/react/package.json", (text) => text.replace('"build": "tsup"', '"build": "node ../../scripts/build-react.mjs"'));
+  repo.write("scripts/build-react.mjs", "\n");
+  repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"uifn/shared/src":"bundled through a relative import"', ""));
+  repo.commit("new undeclared inputs");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: uifn\/core\/src\/extra\.ts refers to uifn\/catalog\/extra\.json, outside uifn\/core/);
+  assert.match(output, /@uifn\/core: uifn\/core\/tsup\.config\.ts refers to uifn\/theme\/tokens\.css, outside uifn\/core/);
+  assert.match(output, /@uifn\/react: package\.json scripts\.build refers to scripts\/build-react\.mjs, outside uifn\/react/);
+  assert.match(output, /@uifn\/react: uifn\/react\/src\/index\.ts refers to uifn\/shared\/src\/index, outside uifn\/react/);
+});
+
+test("a manifest change to a script reached from a lifecycle script needs a bump", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) => text.replace('"test": "vitest run"', '"test": "vitest run",\n    "prebuild": "npm run clean",\n    "clean": "rm -rf dist"'));
+  repo.commit("add prebuild");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
+});
+
+test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scripts only", () => {
+  const scripts = {
+    prepack: "npm run generate:check && npm run --silent build",
+    prebuild: "npm run clean",
+    build: "tsup",
+    postbuild: "npm test",
+    clean: "rm -rf dist",
+    "generate:check": "node gen.mjs --check",
+    test: "vitest run",
+    dev: "tsup --watch",
+    predev: "npm run lint",
+    lint: "tsc",
+  };
+  assert.deepEqual([...shippedScriptNames(scripts)].sort(), ["build", "clean", "generate:check", "postbuild", "prebuild", "prepack", "test"]);
+});
+
+test("parseInputDeclarations rejects unknown packages, missing reasons and non-normalized paths", () => {
+  const stable = new Map([["@uifn/core", "uifn/core"]]);
+  const { errors } = parseInputDeclarations({
+    packages: {
+      "@uifn/patterns": { inputs: { "uifn/x": "why" } },
+      "@uifn/core": { inputs: { "uifn/a": "", ".": "everything", "uifn/../b": "why", "uifn/core/src": "own" }, surprises: {} },
+    },
+  }, stable);
+  assert.equal(errors.length, 6, errors.join("\n"));
+  assert.match(errors.join("\n"), /@uifn\/patterns is not a stable package/);
+  assert.match(errors.join("\n"), /"uifn\/a" needs a reason/);
+  assert.match(errors.join("\n"), /"\." must be a normalized relative path/);
+  assert.match(errors.join("\n"), /"uifn\/core\/src" is inside uifn\/core/);
+  assert.deepEqual(parseInputDeclarations(null, stable).errors, []);
+});
+
+test("a version with leading zeros is not valid semver", () => {
+  const base = { name: "@uifn/core", version: "1.0.0" };
+  for (const version of ["01.0.1", "1.0.01", "1.0.1-01"]) {
+    const result = evaluatePackage({ name: "@uifn/core", packagePath: "uifn/core", baseManifest: base, headManifest: { ...base, version }, changedFiles: [], headChangelog: `## ${version}\n- x\n` });
+    assert.match(result.errors.join(""), /is not valid semver/, version);
+  }
+  assert.throws(() => compareSemver("00.0.2", "0.0.1"), /Invalid semver/);
+  assert.ok(compareSemver("1.0.0-rc.0", "1.0.0-0") > 0);
+});
+
 test("experimental packages are not checked", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/patterns/src/index.ts", "export const patterns = 2;\n");
@@ -156,14 +265,15 @@ test("since-published report lists packages with shipped changes after their hig
   repo.git("tag", "uifn-core-v1.0.0");
   repo.git("tag", "uifn-react-v1.0.0");
   repo.write("uifn/react/src/index.ts", "export const react = 2;\n");
-  repo.commit("unreleased react change");
+  repo.write("uifn/catalog/catalog.json", '{ "primitives": ["button"] }\n');
+  repo.commit("unreleased react and catalog change");
   const report = Object.fromEntries(reportSincePublished({ cwd: repo.root }).map((entry) => [entry.name, entry]));
   assert.equal(report["@uifn/core"].tag, "uifn-core-v1.0.0");
-  assert.deepEqual(report["@uifn/core"].shippedFiles, []);
+  assert.deepEqual(report["@uifn/core"].shippedFiles, ["uifn/catalog/catalog.json"]);
   assert.deepEqual(report["@uifn/react"].shippedFiles, ["uifn/react/src/index.ts"]);
   const cli = spawnSync(process.execPath, [script, "--since-published"], { cwd: repo.root, encoding: "utf8" });
   assert.equal(cli.status, 0);
-  assert.match(cli.stdout, /1 of 2 stable packages have shipped changes/);
+  assert.match(cli.stdout, /2 of 2 stable packages have shipped changes/);
 });
 
 test("classifyPath separates tarball inputs from tests, fixtures, stories and docs", () => {
