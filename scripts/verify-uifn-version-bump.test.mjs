@@ -177,6 +177,21 @@ test("undeclared out-of-root imports, path segments and build scripts fail close
   assert.match(output, /@uifn\/react: uifn\/react\/src\/index\.ts refers to uifn\/shared\/src\/index, outside uifn\/react/);
 });
 
+test("a relative import a shipped source bundles may not resolve into a path declared only as a reference", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"@uifn/react":{"inputs"', '"@uifn/react":{"references"'));
+  repo.write("uifn/react/tsconfig.json", '{ "compilerOptions": { "paths": { "@uifn/shared": ["../shared/src/index.ts"] } }, "include": ["src"] }\n');
+  repo.commit("declare the bundled source as a reference");
+  const bundled = check(repo.root);
+  assert.equal(bundled.status, 1);
+  assert.match(bundled.output, /@uifn\/react: uifn\/react\/src\/index\.ts imports uifn\/shared\/src\/index, which uifn\/version-bump-inputs\.json declares only under "references"/);
+  repo.write("uifn/react/src/index.ts", "export const react = 1;\n");
+  repo.commit("type-check through tsconfig paths only");
+  const typechecked = check(repo.root);
+  assert.doesNotMatch(typechecked.output, /declares only under "references"/);
+  assert.doesNotMatch(typechecked.output, /refers to uifn\/shared/);
+});
+
 // Core ships styles.css through files, compiles src, and keeps a verification helper and a data dir it never ships.
 function withExclusions(repo, excluded) {
   repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "styles.css",'));
@@ -301,6 +316,10 @@ test("fileReferences reads bare strings only in build files, and marks tsconfig 
   assert.deepEqual(targets("uifn/solid/scripts/build.mjs", "path.join(packageRoot, 'tsconfig.build.json')", { root: "uifn/solid", buildFile: true }), ["~uifn/solid/tsconfig.build.json", "~uifn/solid/scripts/tsconfig.build.json"]);
   assert.deepEqual(targets("uifn/core/tsconfig.json", '{ "extends": "../../tsconfig.base.json", "include": ["src", "./tests/**/*"] }'), ["uifn/core/src", "uifn/core/tests/**/*", "tsconfig.base.json"]);
   assert.ok(fileReferences("uifn/core/tsconfig.json", '{ "include": ["src"] }').every(({ tsconfig }) => tsconfig === "uifn/core/tsconfig.json"));
+  assert.deepEqual(targets("uifn/core/tsup.config.ts", 'entry: ["./src/fixtures/runtime.ts", "./src/index.ts"]', { root: "uifn/core" }), ["uifn/core/src/fixtures/runtime.ts", "uifn/core/src/fixtures/runtime.ts/src/index.ts", "uifn/core/src/index.ts"]);
+  assert.deepEqual(targets("uifn/core/scripts/build.mjs", 'path.resolve(packageRoot, "..", "catalog", "catalog.json")', { root: "uifn/core", base: "uifn/core" }), ["uifn/core", "uifn/core/catalog/catalog.json", "uifn/catalog/catalog.json"]);
+  const bundled = (text) => fileReferences("uifn/core/src/index.ts", text).filter((reference) => reference.bundled).map(({ target }) => target);
+  assert.deepEqual(bundled('import a from "../a.js";\nexport * from "./b";\nconst c = await import("./c");\nrequire("./d");\nreadFileSync(path.join(here, "../e.json"));\n'), ["uifn/core/a.js", "uifn/core/src/b", "uifn/core/src/c", "uifn/core/src/d"]);
 });
 
 test("scriptReferences keeps glob tokens and names tsconfig.json for a bare tsc", () => {
@@ -463,6 +482,23 @@ test("a test or fixture file a build config or script names through a bare path 
   assert.match(named.output, /@uifn\/core: shipped code changed \(src\/fixtures\/entry\.ts\) but version is still 1\.0\.0/);
 });
 
+test("each ./-prefixed entry in a build config array counts, and a joined path stays an extra candidate", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/core/tsup.config.ts", 'export default { entry: ["./src/fixtures/runtime.ts", "./src/index.ts"], format: ["esm"] };\n');
+  repo.write("uifn/core/src/fixtures/runtime.ts", "export const runtime = 1;\n");
+  repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+  repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Runtime entry.\n\n## 1.0.0"));
+  repo.commit("runtime entry");
+  const added = check(repo.root);
+  assert.equal(added.status, 0, added.output);
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/src/fixtures/runtime.ts", "export const runtime = 2;\n");
+  repo.commit("runtime only");
+  const changed = check(repo.root);
+  assert.equal(changed.status, 1);
+  assert.match(changed.output, /@uifn\/core: shipped code changed \(src\/fixtures\/runtime\.ts\) but version is still 1\.0\.1/);
+});
+
 for (const specifier of ["../tools/runtime.js", "../tools/runtime"]) {
   test(`an exclusion that shipped code imports as ${specifier} fails, and a later change to it needs a bump`, (t) => {
     const repo = fixtureRepo(t);
@@ -551,6 +587,22 @@ test("validation scripts that prepack runs need no bump, while the build it runs
   assert.match(build.output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
 });
 
+test("a script an install hook reaches needs a bump whatever its name, while prepack validation does not", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) => text.replace('"test": "vitest run"', '"test": "vitest run",\n    "postinstall": "npm run check:env",\n    "check:env": "node check-env.mjs",\n    "prepack": "npm run test && npm run build"'));
+  repo.commit("install hook");
+  repo.git("branch", "-f", "base");
+  repo.edit("uifn/core/package.json", (text) => text.replace('"vitest run"', '"vitest run --coverage"'));
+  repo.commit("prepack validation only");
+  const validation = check(repo.root);
+  assert.equal(validation.status, 0, validation.output);
+  repo.edit("uifn/core/package.json", (text) => text.replace("node check-env.mjs", "node check-env.mjs --strict"));
+  repo.commit("install-time check");
+  const install = check(repo.root);
+  assert.equal(install.status, 1);
+  assert.match(install.output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
+});
+
 test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scripts, but not validation scripts", () => {
   const scripts = {
     prepack: "npm run generate:check && npm run --silent build",
@@ -566,6 +618,7 @@ test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scrip
   };
   assert.deepEqual([...shippedScriptNames(scripts)].sort(), ["build", "clean", "postbuild", "prebuild", "prepack"]);
   assert.deepEqual([...shippedScriptNames({ prepack: "npm run build", build: "npm run test:unit && npm run lint:fix && npm run verify && tsup", "test:unit": "x", "lint:fix": "x", verify: "x" })], ["prepack", "build"]);
+  assert.deepEqual([...shippedScriptNames({ postinstall: "npm run check:env", "check:env": "node env.mjs", "precheck:env": "npm test", test: "x", prepack: "npm test" })].sort(), ["check:env", "postinstall", "precheck:env", "prepack", "test"]);
 });
 
 test("parseInputDeclarations rejects unknown packages, missing reasons and non-normalized paths", () => {

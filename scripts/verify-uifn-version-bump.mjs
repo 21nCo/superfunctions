@@ -23,12 +23,14 @@ const NON_SHIPPED_FILE = /(?:\.(?:test|spec|test-d|stories)\.[^/]+|\.mdx?|\.snap
 const NON_SHIPPED_ROOT_FILE = /^(?:vitest|playwright)(?:\.[^/]+)?\.config\.[^/]+$/;
 // A root Vite config is a build input only when the package builds with Vite.
 const VITE_ROOT_FILE = /^vite(?:\.[^/]+)?\.config\.[^/]+$/;
-// Scripts that run when a package is packed, published or installed, plus `build`, which
-// prepack runs. devDependencies and scripts these never reach do not affect consumers.
-const LIFECYCLE_SCRIPTS = ["build", "prepare", "prepack", "postpack", "prepublish", "prepublishOnly", "preinstall", "install", "postinstall"];
-// Validation reached from prepack (`npm run typecheck && npm run test`, `generate:check`) can stop a
-// pack but produces nothing in it, so a script named test, typecheck, lint, check or verify, alone or
-// as a `:` part, is not followed.
+// Scripts that run when a package is packed or published, plus `build`, which prepack runs, and the
+// scripts that run on a consumer's machine when it is installed. devDependencies and scripts these never
+// reach do not affect consumers.
+const PACK_SCRIPTS = ["build", "prepare", "prepack", "postpack", "prepublish", "prepublishOnly"];
+const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall"];
+// Validation reached from pack-time scripts (`npm run typecheck && npm run test`, `generate:check`) can
+// stop a pack but produces nothing in it, so a script named test, typecheck, lint, check or verify, alone
+// or as a `:` part, is not followed from them. Everything an install script reaches runs for consumers.
 const VALIDATION_SCRIPT_PART = new Set(["test", "typecheck", "lint", "check", "verify"]);
 // Root build configs that tsup, tsc, svelte-package, vite and npm pack load without being named.
 const IMPLICIT_CONFIG = /^(?:(?:tsup|vite|rollup|svelte|babel|postcss|tailwind)(?:\.[^/]+)?\.config\.[^/]+|tsconfig[^/]*\.json|\.npmignore|\.babelrc(?:\.[^/]+)?)$/;
@@ -51,6 +53,8 @@ const SEMVER = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTI
 const SCANNED_FILE = /(?:\.(?:[cm]?[jt]sx?|svelte|css)|(?:^|\/)[tj]sconfig[^/]*\.json)$/;
 const SPECIFIER = /(['"`])(\.\.?(?:\/[^'"`\n]*?)?)(?:\1|\$\{)/g;
 const LITERAL_ARGUMENT = /\s*,\s*(['"`])([^'"`\n]*)\1/y;
+// A specifier in module position (import, export from, import(), require(), CSS @import or url()), which a bundler inlines.
+const MODULE_CONTEXT = /(?:\bfrom|\bimport|\bimport\s*\(|\brequire\s*\(|@import(?:\s+url\()?|\burl\()\s*$/;
 const REPO_PATH = /(['"`])((?:uifn|scripts)\/[^'"`\s]*?)(?:\1|\$\{)/g;
 const BARE_LITERAL = /(['"`])([^'"`\s$\\:]+)\1/g;
 const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
@@ -82,17 +86,23 @@ export function classifyPath(relative, { buildUsesVite = true } = {}) {
 
 const isValidationScript = (name) => name.split(":").some((part) => VALIDATION_SCRIPT_PART.has(part));
 
-/** Shipped lifecycle scripts, their pre/post hooks, and every non-validation script they reach through `npm run`. */
+/**
+ * Shipped lifecycle scripts, their pre/post hooks, and the scripts they reach through `npm run`: every
+ * script an install script reaches, and the non-validation scripts a pack-time script reaches.
+ */
 export function shippedScriptNames(scripts = {}) {
   const names = new Set();
-  const pending = [...LIFECYCLE_SCRIPTS];
+  const visited = new Set();
+  const pending = [...PACK_SCRIPTS.map((name) => [name, false]), ...INSTALL_SCRIPTS.map((name) => [name, true])];
   while (pending.length > 0) {
-    const name = pending.pop();
-    if (names.has(name) || isValidationScript(name) || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") continue;
+    const [name, install] = pending.pop();
+    const key = `${install}\0${name}`;
+    if (visited.has(key) || (!install && isValidationScript(name)) || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") continue;
+    visited.add(key);
     names.add(name);
-    pending.push(`pre${name}`, `post${name}`);
-    for (const [, target] of scripts[name].matchAll(NPM_RUN)) pending.push(target);
-    for (const [, alias] of scripts[name].matchAll(NPM_SHORTHAND)) pending.push(alias === "t" || alias === "tst" ? "test" : alias);
+    pending.push([`pre${name}`, install], [`post${name}`, install]);
+    for (const [, target] of scripts[name].matchAll(NPM_RUN)) pending.push([target, install]);
+    for (const [, alias] of scripts[name].matchAll(NPM_SHORTHAND)) pending.push([alias === "t" || alias === "tst" ? "test" : alias, install]);
   }
   return names;
 }
@@ -256,11 +266,13 @@ export function tsconfigEntries(file, text) {
 }
 
 /**
- * Every path a file names, as `{ target, soft, tsconfig }` with globs kept: relative specifiers, with
- * their literal path-join arguments outside JSON; in build files, repo-root paths and bare strings
- * resolved from the package root and the file's directory; in a tsconfig, its include and files entries,
- * marked with the tsconfig. Soft targets (bare strings) are ambiguous with package names and options and
- * cannot leave the package without `..`, so the out-of-root guard skips them.
+ * Every path a file names, as `{ target, soft, tsconfig, bundled }` with globs kept: each relative
+ * specifier itself and, outside JSON, also joined with the string literals that follow it, since
+ * `path.join(here, "..", "x")` names x while `["./a", "./b"]` names a and b; in build files, repo-root
+ * paths and bare strings resolved from the package root and the file's directory; in a tsconfig, its
+ * include and files entries, marked with the tsconfig. Soft targets (bare strings) are ambiguous with
+ * package names and options and cannot leave the package without `..`, so the out-of-root guard skips
+ * them. A specifier in module position in a source file is marked bundled.
  */
 export function fileReferences(file, text, { root = path.posix.dirname(file), base = path.posix.dirname(file), buildFile = false } = {}) {
   const dir = path.posix.dirname(file);
@@ -268,14 +280,16 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   const add = (target, extra = {}) => found.push({ target: path.posix.normalize(target).replace(/\/+$/, ""), soft: false, ...extra });
   const entries = TSCONFIG.test(file) ? tsconfigEntries(file, text) : [];
   for (const target of entries) add(target, { tsconfig: file });
+  const isEntry = (target) => entries.includes(path.posix.normalize(target).replace(/\/+$/, ""));
   for (const match of text.matchAll(SPECIFIER)) {
     const segments = [match[2]];
     LITERAL_ARGUMENT.lastIndex = match.index + match[0].length;
     if (!file.endsWith(".json")) for (let argument = LITERAL_ARGUMENT.exec(text); argument; argument = LITERAL_ARGUMENT.exec(text)) segments.push(argument[2]);
-    if (entries.includes(path.posix.join(dir, ...segments).replace(/\/+$/, ""))) continue;
-    add(path.posix.join(dir, ...segments));
-    // `path.resolve(packageRoot, "..", "x")`: the base expression is unknown, so also try the package root.
-    if (segments.length > 1 && match[2].startsWith("..")) add(path.posix.join(base, ...segments));
+    const bundled = !buildFile && !file.endsWith(".json") && MODULE_CONTEXT.test(text.slice(Math.max(0, match.index - 32), match.index));
+    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : {});
+    if (segments.length === 1) continue;
+    // A joined path is an extra candidate. For `path.resolve(packageRoot, "..", "x")` the base expression is unknown, so also try the package root.
+    for (const from of match[2].startsWith("..") ? [dir, base] : [dir]) if (!isEntry(path.posix.join(from, ...segments))) add(path.posix.join(from, ...segments));
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
@@ -284,7 +298,7 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
       for (const from of new Set([root, dir])) add(path.posix.join(from, value), { soft: true });
     }
   }
-  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}`, reference]));
+  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}`, reference]));
   return [...unique.values()];
 }
 
@@ -452,13 +466,19 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
 
 /**
  * Fails closed on build inputs outside a stable package: every path its shipped files, declared inputs,
- * shipped scripts or entry fields name outside its root must be a declared input or reference.
+ * shipped scripts or entry fields name outside its root must be a declared input or reference, and a
+ * module a shipped source imports, which a bundler inlines, must be a declared input.
  */
 export function findUndeclaredReferences({ name, packagePath, references, declaration }) {
   const declared = [...declaration.inputs, ...declaration.references];
   const errors = [];
-  for (const { from, target, soft } of references) {
-    if (soft || isWithin(target, packagePath) || declared.some((entry) => isWithin(target, entry))) continue;
+  for (const { from, target, soft, bundled } of references) {
+    if (soft || isWithin(target, packagePath) || declaration.inputs.some((entry) => isWithin(target, entry))) continue;
+    if (bundled && declaration.references.some((entry) => isWithin(target, entry))) {
+      errors.push(`${name}: ${from} imports ${target}, which ${INPUTS_PATH} declares only under "references"; the bundler can inline it, so declare it under "inputs"`);
+      continue;
+    }
+    if (declared.some((entry) => isWithin(target, entry))) continue;
     // An ancestor directory such as `path.resolve(here, "..")` is a base path, not a read.
     if ([packagePath, ...declaration.inputs].some((root) => isWithin(root, target))) continue;
     errors.push(`${name}: ${from} refers to ${target}, outside ${packagePath}; declare it in ${INPUTS_PATH} under "inputs" if it feeds the tarball or "references" if it does not, with a reason`);
