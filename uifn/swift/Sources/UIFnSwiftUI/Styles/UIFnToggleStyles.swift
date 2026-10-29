@@ -4,7 +4,8 @@ import SwiftUI
 /// the label, then a track that fills with the accent color when on.
 ///
 /// The toggle stays a toggle to accessibility; the style changes only how it
-/// looks and flips the binding when pressed like the system styles do.
+/// looks. Like the system switch, a press flips the binding and a drag across
+/// the track sets it from the half of the track the drag ends over.
 public struct UIFnSwitchToggleStyle: ToggleStyle {
     public init() {}
 
@@ -64,9 +65,18 @@ private struct UIFnToggleStyleBody: View {
         } label: {
             configuration.label
         }
-        .buttonStyle(UIFnToggleButtonStyle(kind: kind, value: value))
+        .buttonStyle(UIFnToggleButtonStyle(kind: kind, value: value, onDragEnd: kind == .switch ? setFromDrag : nil))
         .accessibilityRepresentation {
             representation
+        }
+    }
+
+    /// Sets a switch from the side of its track a drag ended over, unless the
+    /// drag ended on the side the thumb started.
+    private func setFromDrag(endedOnTrailingSide isTrailing: Bool) {
+        let value = UIFnToggleValue(isOn: configuration.isOn, isMixed: configuration.isMixed)
+        if isTrailing != (value != .off) {
+            configuration.isOn = isTrailing
         }
     }
 
@@ -111,9 +121,16 @@ struct UIFnAccessibilityToggle<Label: View>: View {
 private struct UIFnToggleButtonStyle: ButtonStyle {
     let kind: UIFnToggleKind
     let value: UIFnToggleValue
+    let onDragEnd: ((Bool) -> Void)?
 
     func makeBody(configuration: Configuration) -> some View {
-        UIFnToggleButtonBody(label: configuration.label, kind: kind, value: value, isPressed: configuration.isPressed)
+        UIFnToggleButtonBody(
+            label: configuration.label,
+            kind: kind,
+            value: value,
+            isPressed: configuration.isPressed,
+            onDragEnd: onDragEnd
+        )
     }
 }
 
@@ -122,6 +139,7 @@ private struct UIFnToggleButtonBody<Label: View>: View {
     let kind: UIFnToggleKind
     let value: UIFnToggleValue
     let isPressed: Bool
+    let onDragEnd: ((Bool) -> Void)?
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
 
@@ -130,7 +148,8 @@ private struct UIFnToggleButtonBody<Label: View>: View {
             label: label,
             kind: kind,
             value: value,
-            state: UIFnControlState(isPressed: isPressed, isEnabled: isEnabled, isFocused: isFocused)
+            state: UIFnControlState(isPressed: isPressed, isEnabled: isEnabled, isFocused: isFocused),
+            onSwitchDragEnd: onDragEnd
         )
     }
 }
@@ -141,7 +160,16 @@ struct UIFnToggleAppearance<Label: View>: View {
     let kind: UIFnToggleKind
     let value: UIFnToggleValue
     let state: UIFnControlState
+    /// Called with whether a drag across the switch track ended over its
+    /// trailing half. Without it the track takes no drags.
+    var onSwitchDragEnd: ((Bool) -> Void)?
     @UIFnStyleEnvironment private var context
+    @Environment(\.layoutDirection) private var layoutDirection
+    @GestureState private var isDragging = false
+
+    /// How far a press must move before the switch takes it as a drag rather
+    /// than a click or tap.
+    private static var switchDragDistance: CGFloat { 6 }
 
     var body: some View {
         row
@@ -184,7 +212,7 @@ struct UIFnToggleAppearance<Label: View>: View {
         }
     }
 
-    private var isPressed: Bool { state.isPressed && state.isEnabled }
+    private var isPressed: Bool { (state.isPressed || isDragging) && state.isEnabled }
 
     private var switchTrack: some View {
         let colors = context.colors
@@ -208,7 +236,23 @@ struct UIFnToggleAppearance<Label: View>: View {
                     .padding(inset)
             }
             .frame(width: width, height: height)
+            .contentShape(Capsule(style: .continuous))
+            .gesture(switchDrag(width: width), including: onSwitchDragEnd == nil ? .none : .all)
             .uifnFocusRing(state.isFocused && state.isEnabled, cornerRadius: height / 2, context: context)
+    }
+
+    /// A drag across the track, which wins over the button's press once it
+    /// moves far enough. Drag locations run left to right in either layout
+    /// direction, so right to left the trailing half is the left one.
+    private func switchDrag(width: CGFloat) -> some Gesture {
+        let isRightToLeft = layoutDirection == .rightToLeft
+        return DragGesture(minimumDistance: Self.switchDragDistance)
+            .updating($isDragging) { _, isDragging, _ in isDragging = true }
+            .onEnded { drag in
+                guard state.isEnabled else { return }
+                let isRightHalf = drag.location.x >= width / 2
+                onSwitchDragEnd?(isRightHalf != isRightToLeft)
+            }
     }
 
     private var checkbox: some View {
