@@ -345,7 +345,8 @@ public struct UIFnTypeSize: Equatable, Sendable {
 
 public extension View {
     /// Sets the font to a theme type size, scaled for the environment's
-    /// Dynamic Type size with the text styles.
+    /// Dynamic Type size with the text styles, in the environment's
+    /// ``SwiftUI/EnvironmentValues/uifnFontFamily`` when it is registered.
     func uifnFont(_ size: UIFnTypeSize, weight: UIFnFontWeight? = nil) -> some View {
         modifier(UIFnFontModifier(size: size, weight: weight))
     }
@@ -355,9 +356,10 @@ private struct UIFnFontModifier: ViewModifier {
     let size: UIFnTypeSize
     let weight: UIFnFontWeight?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.uifnFontFamily) private var family
 
     func body(content: Content) -> some View {
-        content.font(size.font(weight: weight, dynamicTypeSize: dynamicTypeSize))
+        content.font(size.font(family: family, weight: weight, dynamicTypeSize: dynamicTypeSize))
     }
 }
 
