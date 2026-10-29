@@ -428,6 +428,56 @@ describe("devfn CLI", () => {
     }
   }, 15_000);
 
+  it("shows resource plan provenance in up and restart JSON without secret values", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-resource-receipt-"));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-resource-receipt-state-"));
+    await writeFile(path.join(cwd, "server.mjs"), "import { createServer } from 'node:http'; createServer((_request, response) => response.end('ready')).listen(Number(process.env.PORT), '127.0.0.1');\n");
+    await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "resource-receipt" }, ports: { web: { env: "PORT" } },
+      processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], resources: ["auth-token", "login"],
+        envAllowlist: ["AUTH_TOKEN_PASSWORD"], secretEnv: ["AUTH_TOKEN_PASSWORD"], health: { type: "http", port: "web", timeoutMs: 5000 } } },
+      resources: {
+        "auth-token": { kind: "cache", defaultTarget: "remote", targets: { remote: { url: "redis://cache.example.test:6379", secrets: { password: "AUTH_TOKEN_PASSWORD" } } } },
+        login: { kind: "browser", cookies: ["session"] },
+      },
+      profiles: { default: { processes: ["web"] } } }));
+    const secret = `cache-${Date.now()}-password`;
+    const original = process.env.AUTH_TOKEN_PASSWORD;
+    process.env.AUTH_TOKEN_PASSWORD = secret;
+    const invoke = async (command: string) => {
+      let stdout = "";
+      const code = await runCli([command, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+      return { code, stdout, value: JSON.parse(stdout) as Record<string, any> };
+    };
+    // A secret-named field outside the plan still goes through the shared redaction.
+    const up = DevFnOrchestrator.prototype.up;
+    const spy = vi.spyOn(DevFnOrchestrator.prototype, "up").mockImplementation(async function (this: DevFnOrchestrator, input) {
+      return { ...await up.call(this, input), sessionToken: "fixture-secret" } as never;
+    });
+    try {
+      for (const command of ["up", "restart"]) {
+        const result = await invoke(command);
+        expect(result.code, result.stdout).toBe(0);
+        expect(result.stdout).not.toContain(secret);
+        expect(result.value.sessionToken).toBe("[REDACTED]");
+        const plan = result.value.resources;
+        expect(plan.ownerToken).toMatch(/^o[0-9a-f]+$/);
+        const cache = plan.resources["auth-token"];
+        expect(cache).toMatchObject({ kind: "cache", consumers: ["web"], remote: { url: "redis://cache.example.test:6379" },
+          target: { name: "remote", location: "remote", selectedBy: "defaultTarget", field: "resources.auth-token.defaultTarget" },
+          secrets: [{ name: "password", env: "AUTH_TOKEN_PASSWORD", field: "resources.auth-token.targets.remote.secrets.password", present: true }] });
+        expect(cache.values.DEVFN_RESOURCE_AUTH_TOKEN_URL).toEqual({ value: "redis://cache.example.test:6379", source: "manifest", field: "resources.auth-token.targets.remote.url" });
+        expect(plan.resources.login.values.DEVFN_RESOURCE_LOGIN_COOKIE_SESSION).toEqual({ value: `login_${plan.ownerToken}_session`, source: "namespace", field: "resources.login" });
+      }
+    } finally {
+      spy.mockRestore();
+      if (original === undefined) delete process.env.AUTH_TOKEN_PASSWORD;
+      else process.env.AUTH_TOKEN_PASSWORD = original;
+      await invoke("down").catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("requires a separate confirmation for public exposure", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));

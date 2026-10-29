@@ -585,6 +585,24 @@ describe("container and host endpoints", () => {
     }
     expect(plan(remote("redis://cache.example.test:6390")).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://cache.example.test:6390", source: "manifest" });
   });
+
+  it("rejects a Compose provider whose service name is a loopback name", () => {
+    const named = (service: string, mutate: (value: any) => void = () => undefined) => containerConsumer("service", (v) => { v.services.redis.service = service; mutate(v); });
+    for (const service of ["localhost", "LOCALHOST.", "127.0.0.1", "127.1", "cache.localhost"]) {
+      for (const platform of ["linux", "darwin"] as const) {
+        expect(() => plan(named(service), undefined, { platform }), `${service} ${platform}`).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining(`provided by Compose service ${service}, a loopback name`) }));
+        // Without a Compose consumer the provider's advertised internal address would still name its own container.
+        const nativeConsumer = named(service, (v) => { v.processes.app = { adapter: "command", command: ["node"], resources: ["cache"] }; v.profiles.default = { processes: ["app"] }; });
+        expect(() => plan(nativeConsumer, undefined, { platform }), `${service} ${platform} native consumer`).toThrow("a loopback name");
+      }
+    }
+    expect(plan(named("cache-0")).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://cache-0:6379", source: "compose" });
+    // A manifest without resources keeps any Compose service name.
+    const legacy = validateDevFnConfig({ version: 1, project: { id: "legacy" }, ports: { redis: {} },
+      services: { redis: { adapter: "compose", service: "localhost", ports: { redis: 6379 } } }, profiles: { default: { services: ["redis"] } } });
+    expect(planResources({ config: legacy, plan: createPlan(legacy), ownerId: "owner-a", ports: { redis: 4107 }, platform: "linux" }).resources).toEqual({});
+    expect(() => plan(containerConsumer("process"), undefined, { platform: "linux", containerHostGateway: "127.0.0.1" })).toThrow("containerHostGateway 127.0.0.1 is a loopback name");
+  });
 });
 
 describe("endpoint resolver handoff", () => {

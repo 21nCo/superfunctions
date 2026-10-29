@@ -64,6 +64,22 @@ async function withRoot(prefix: string, run: (root: string) => Promise<void>): P
   try { await run(root); } finally { await rm(root, { recursive: true, force: true }); }
 }
 
+describe("resource container hosts", () => {
+  it("rejects a loopback-named Compose provider before creating lifecycle state", async () => {
+    await withRoot("devfn-resource-loopback-provider-", async (root) => {
+      await writeFile(path.join(root, "compose.yaml"), "services:\n  localhost:\n    image: busybox\n  worker:\n    image: busybox\n");
+      const config = validateDevFnConfig({ version: 1, project: { id: "loopback-provider" }, ports: { redis: {} },
+        services: { redis: { adapter: "compose", service: "localhost", ports: { redis: 6379 } }, worker: { adapter: "compose", service: "worker", resources: ["cache"] } },
+        resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis", scheme: "redis" } } } },
+        profiles: { default: { services: ["worker"] } } });
+      await onEachPlatform(async (platform) => {
+        effective.networks = { "devfn/localhost": ["shared"], "devfn/worker": ["shared"] };
+        await expectRejectedBeforeState(config, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Compose service localhost, a loopback name") }, platform);
+      });
+    });
+  }, 60_000);
+});
+
 describe("resource collisions on effective Compose networks", () => {
   it("rejects same-named providers of two projects on one network before creating lifecycle state", async () => {
     await withRoot("devfn-resource-same-names-", async (root) => {

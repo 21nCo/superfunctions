@@ -250,6 +250,12 @@ function localEndpoint(context: TargetContext, target: Extract<ResourceTargetSpe
   const { input, name } = context;
   const provider = input.plan.nodes.find((node) => node.name === target.node);
   if (!provider) invalid(`Resource ${name} selects local target ${context.targetName}, but profile ${input.plan.profile} does not start ${target.node}.`);
+  // Containers dial a Compose provider by its service name; a loopback name
+  // would reach each consumer, and the provider's advertised address, itself.
+  const service = provider.kind === "service" ? input.config.services![target.node].service : undefined;
+  if (service !== undefined && loopbackHost(service)) {
+    invalid(`Resource ${name} target ${context.targetName} is provided by Compose service ${service}, a loopback name that containers resolve to themselves; rename the Compose service.`);
+  }
   const leased = knownPort(input, target.port) ?? input.ports[target.port];
   if (!Number.isInteger(leased) || leased < 1 || leased > 65535) invalid(`Resource ${name} target ${context.targetName} requires a leased ${target.port} port.`);
   const path = context.database !== undefined ? `/${context.database}` : target.path ?? "";
@@ -289,7 +295,10 @@ function containerEndpoint(context: TargetContext, host: Endpoint, service: stri
 function defaultGateway(input: ResourcePlanInput): { host: string; field: string } | undefined {
   const platform = input.platform ?? process.platform;
   if (input.containerHostGateway === null) return undefined;
-  if (input.containerHostGateway !== undefined) return { host: input.containerHostGateway, field: "option:containerHostGateway" };
+  if (input.containerHostGateway !== undefined) {
+    if (loopbackHost(input.containerHostGateway)) invalid(`containerHostGateway ${input.containerHostGateway} is a loopback name, which a container resolves to itself.`);
+    return { host: input.containerHostGateway, field: "option:containerHostGateway" };
+  }
   return platform === "darwin" || platform === "win32" ? { host: "host.docker.internal", field: `platform:${platform}` } : undefined;
 }
 

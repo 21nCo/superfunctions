@@ -313,23 +313,37 @@ const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv
 /** Result maps keyed by route names or hostnames, which carry worktree labels, not field names. */
 const URL_MAPS = new Set(["urls", "publicUrls"]);
 
+/** A receipt's resource plan (ResourcePlan): its keys name resources, services and variables. */
+function isResourcePlan(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const plan = value as Record<string, unknown>;
+  return typeof plan.profile === "string" && typeof plan.owner === "string" && typeof plan.ownerToken === "string"
+    && !!plan.resources && typeof plan.resources === "object" && !Array.isArray(plan.resources);
+}
+
 /**
- * JSON output under the shared redaction, with two exceptions. The keys of a
- * `urls` or `publicUrls` map are data: only their values go through the
- * redaction, so a route named like a secret field still shows its URL. In
- * tunnel output a credential reference holding a variable name is shown: it
- * tells the operator which variable a binding reads, and the shared key
- * pattern would hide it.
+ * JSON output under the shared redaction, with three exceptions. The keys of
+ * a `urls` or `publicUrls` map are data: only their values go through the
+ * redaction, so a route named like a secret field still shows its URL. A
+ * receipt's resource plan is shown as planned: it is credential-free by
+ * construction (target URLs reject userinfo and encoded data, secrets are
+ * variable names and presence, never values), and its provenance is what the
+ * operator reads, while the shared key pattern would hide a resource named
+ * auth-token, every secret reference and every cookie variable. In tunnel
+ * output a credential reference holding a variable name is shown: it tells the
+ * operator which variable a binding reads, and the shared key pattern would
+ * hide it.
  */
 function redactResult(value: unknown, credentialReferences: boolean): unknown {
   if (Array.isArray(value)) return value.map((item) => redactResult(item, credentialReferences));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key,
-    credentialReferences && CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
-      : (redactValue({ [key]: null }) as Record<string, unknown>)[key] !== null ? "[REDACTED]"
-        : URL_MAPS.has(key) && nested && typeof nested === "object" && !Array.isArray(nested)
-          ? Object.fromEntries(Object.entries(nested).map(([name, url]) => [name, redactResult(url, credentialReferences)]))
-          : redactResult(nested, credentialReferences)]));
+    key === "resources" && isResourcePlan(nested) ? nested
+      : credentialReferences && CREDENTIAL_REFERENCES.has(key) && typeof nested === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nested) ? nested
+        : (redactValue({ [key]: null }) as Record<string, unknown>)[key] !== null ? "[REDACTED]"
+          : URL_MAPS.has(key) && nested && typeof nested === "object" && !Array.isArray(nested)
+            ? Object.fromEntries(Object.entries(nested).map(([name, url]) => [name, redactResult(url, credentialReferences)]))
+            : redactResult(nested, credentialReferences)]));
 }
 
 function renderResult(args: ParsedArgs, result: unknown, output: ReturnType<typeof createOutput>): void {
