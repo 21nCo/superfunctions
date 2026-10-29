@@ -83,8 +83,8 @@ describe("PostgresAdapter integration", () => {
       query: "report",
       limit: 10,
     });
-    expect(results).toContain("1");
-    expect(results).not.toContain("2");
+    expect(results).toContain(1);
+    expect(results).not.toContain(2);
   });
 
   it("removes documents and they no longer appear in search", async () => {
@@ -96,7 +96,7 @@ describe("PostgresAdapter integration", () => {
     });
 
     const firstSearch = await adapter.search({ resource: "tasks", query: "report", limit: 10 });
-    expect(firstSearch).toContain("1");
+    expect(firstSearch).toContain(1);
 
     await adapter.remove({ resource: "tasks", ids: ["1"] });
 
@@ -119,10 +119,10 @@ describe("PostgresAdapter integration", () => {
     });
 
     const alpha = await adapter.search({ resource: "tasks", query: "alpha", limit: 10 });
-    expect(alpha).not.toContain("1");
+    expect(alpha).not.toContain(1);
 
     const beta = await adapter.search({ resource: "tasks", query: "beta", limit: 10 });
-    expect(beta).toContain("1");
+    expect(beta).toContain(1);
   });
 
   // ── Deterministic ordering ─────────────────────────────────────
@@ -273,7 +273,7 @@ describe("PostgresAdapter integration", () => {
     });
 
     const results = await adapter.search({ resource: "tasks", query: "persistent", limit: 10 });
-    expect(results).toContain("1");
+    expect(results).toContain(1);
   });
 
   // ── Remove idempotency ────────────────────────────────────────
@@ -323,7 +323,7 @@ describe("PostgresAdapter integration", () => {
       fields: ["title"],
       limit: 10,
     });
-    expect(titleOnly).toContain("1");
+    expect(titleOnly).toContain(1);
 
     const bodyOnly = await adapter.search({
       resource: "tasks",
@@ -331,7 +331,7 @@ describe("PostgresAdapter integration", () => {
       fields: ["body"],
       limit: 10,
     });
-    expect(bodyOnly).not.toContain("1");
+    expect(bodyOnly).not.toContain(1);
   });
 
   // ── Bulk index efficiency ─────────────────────────────────────
@@ -440,7 +440,7 @@ describe("PostgresAdapter — prefix search", () => {
       prefix: true,
       limit: 10,
     });
-    expect(result).toContain("1");
+    expect(result).toContain(1);
   });
 
   // TV-PG-002
@@ -457,7 +457,7 @@ describe("PostgresAdapter — prefix search", () => {
       fuzzy: true,
       limit: 10,
     });
-    expect(result).toContain("1");
+    expect(result).toContain(1);
   });
 
   // TV-PG-003
@@ -483,7 +483,7 @@ describe("PostgresAdapter — prefix search", () => {
         query: "test",
         limit: 10,
       });
-      expect(result).toContain("1");
+      expect(result).toContain(1);
     } finally {
       await defaultsAdapter.dispose();
     }
