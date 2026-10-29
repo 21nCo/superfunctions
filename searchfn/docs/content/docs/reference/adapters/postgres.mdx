@@ -60,6 +60,8 @@ Pass `driver` instead of `connectionString` to run statements on a client you ow
 | `fromPg(pool)` | `pg` `Pool` | `pool.connect()` + `BEGIN` / `COMMIT` / `ROLLBACK` |
 | `fromPostgresJs(sql)` | postgres.js `sql` instance | `sql.begin()` |
 
+`fromPostgresJs` runs statements with `sql.unsafe(text, params, { prepare: true })`, so they are prepared, as Hyperdrive requires. A client created with `prepare: false` still sends unprepared statements.
+
 ```typescript
 import postgres from "postgres";
 import { PostgresAdapter, fromPostgresJs } from "@searchfn/adapter-postgres";

@@ -92,7 +92,7 @@ export function fromPg(pool: PgPoolLike): PostgresDriver {
 
 /** Structural subset of a postgres.js `Sql` or `TransactionSql`. */
 export interface PostgresJsQueryableLike {
-  unsafe(query: string, parameters?: unknown[]): PromiseLike<readonly unknown[]>;
+  unsafe(query: string, parameters?: unknown[], queryOptions?: { prepare?: boolean }): PromiseLike<readonly unknown[]>;
 }
 
 /** Structural subset of a postgres.js `Sql` instance. */
@@ -103,7 +103,9 @@ export interface PostgresJsSqlLike extends PostgresJsQueryableLike {
 function postgresJsQueryable(sql: PostgresJsQueryableLike): PostgresQueryable {
   return {
     async query<Row>(text: string, params?: readonly unknown[]) {
-      const rows = await sql.unsafe(text, params === undefined ? undefined : [...params]);
+      // unsafe() defaults to unnamed statements, which Hyperdrive's transaction pooling does not
+      // support reliably; ask for prepared ones. A client created with `prepare: false` still wins.
+      const rows = await sql.unsafe(text, params === undefined ? undefined : [...params], { prepare: true });
       return { rows: Array.from(rows) as Row[] };
     },
   };
@@ -111,7 +113,8 @@ function postgresJsQueryable(sql: PostgresJsQueryableLike): PostgresQueryable {
 
 /**
  * Bind a postgres.js `sql` instance, for example `postgres(env.HYPERDRIVE.connectionString)` on
- * Cloudflare Workers. Statements run through `sql.unsafe(text, params)`; transactions use
+ * Cloudflare Workers. Statements run as prepared statements through
+ * `sql.unsafe(text, params, { prepare: true })`, as Hyperdrive requires; transactions use
  * `sql.begin()`. The caller owns the instance: `PostgresAdapter.dispose()` does not end it.
  */
 export function fromPostgresJs(sql: PostgresJsSqlLike): PostgresDriver {

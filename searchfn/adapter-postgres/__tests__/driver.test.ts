@@ -156,19 +156,31 @@ describe("PostgresAdapter with an injected driver", () => {
       searchRows: [{ doc_id: "1", score: 1 }],
       failWhen: (_sql, attempt) => (attempt === 0 ? Object.assign(new Error(code), { code }) : undefined),
     });
-    for (const code of ["CONNECTION_CLOSED", "CONNECT_TIMEOUT", "08006", "40001"]) {
+    for (const code of ["CONNECTION_CLOSED", "CONNECT_TIMEOUT", "ECONNREFUSED", "ETIMEDOUT", "08006", "40001"]) {
       const { driver, calls } = transient(code);
       const adapter = new PostgresAdapter({ driver, retry: fastRetry });
       expect(await adapter.search({ resource: "notes", query: "q" }), code).toEqual([1]);
       expect(calls, code).toHaveLength(2);
     }
 
-    const { driver, calls } = fakeDriver({
-      failWhen: () => Object.assign(new Error("connection ended by caller"), { code: "CONNECTION_ENDED" }),
+    const down = fakeDriver({
+      failWhen: () => Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" }),
     });
-    const adapter = new PostgresAdapter({ driver, retry: fastRetry });
-    await expect(adapter.search({ resource: "notes", query: "q" })).rejects.toThrow(/connection ended by caller/);
-    expect(calls).toHaveLength(1);
+    const exhausted = new PostgresAdapter({ driver: down.driver, retry: fastRetry });
+    await expect(exhausted.search({ resource: "notes", query: "q" })).rejects.toMatchObject({
+      code: "INTERNAL",
+      message: "Postgres operation failed: connect ECONNREFUSED 127.0.0.1:5432",
+    });
+    expect(down.calls).toHaveLength(3);
+
+    for (const code of ["CONNECTION_ENDED", "42601"]) {
+      const { driver, calls } = fakeDriver({
+        failWhen: () => Object.assign(new Error(`terminal ${code}`), { code }),
+      });
+      const adapter = new PostgresAdapter({ driver, retry: fastRetry });
+      await expect(adapter.search({ resource: "notes", query: "q" }), code).rejects.toThrow(`terminal ${code}`);
+      expect(calls, code).toHaveLength(1);
+    }
   });
 
   it("treats a missing resource table (42P01) as empty for search and as a no-op for remove and clear", async () => {
@@ -254,9 +266,10 @@ describe("fromPg", () => {
 });
 
 describe("fromPostgresJs", () => {
-  it("runs statements through sql.unsafe and transactions through sql.begin", async () => {
-    const unsafe = vi.fn(async (_text: string, _params?: unknown[]) => Object.assign([{ n: 1 }], { count: 1, command: "SELECT" }));
-    const txUnsafe = vi.fn(async (_text: string, _params?: unknown[]) => [{ n: 2 }]);
+  it("runs prepared statements through sql.unsafe and transactions through sql.begin", async () => {
+    type Options = { prepare?: boolean };
+    const unsafe = vi.fn(async (_text: string, _params?: unknown[], _options?: Options) => Object.assign([{ n: 1 }], { count: 1, command: "SELECT" }));
+    const txUnsafe = vi.fn(async (_text: string, _params?: unknown[], _options?: Options) => [{ n: 2 }]);
     const begin = vi.fn(async (fn: (tx: { unsafe: typeof txUnsafe }) => Promise<unknown>) => fn({ unsafe: txUnsafe }));
     const driver = fromPostgresJs({ unsafe, begin });
 
@@ -264,14 +277,14 @@ describe("fromPostgresJs", () => {
     const result = await driver.query("SELECT $1, $2", params);
     expect(result).toEqual({ rows: [{ n: 1 }] });
     expect(Array.isArray(result.rows) && !("count" in result.rows)).toBe(true);
-    expect(unsafe).toHaveBeenCalledWith("SELECT $1, $2", ["a", ["b", "c"]]);
+    expect(unsafe).toHaveBeenCalledWith("SELECT $1, $2", ["a", ["b", "c"]], { prepare: true });
     expect(unsafe.mock.calls[0][1]).not.toBe(params);
 
     await driver.query("SELECT 1");
-    expect(unsafe).toHaveBeenLastCalledWith("SELECT 1", undefined);
+    expect(unsafe).toHaveBeenLastCalledWith("SELECT 1", undefined, { prepare: true });
 
     expect(await driver.transaction!(async (tx) => (await tx.query("SELECT 2", [])).rows)).toEqual([{ n: 2 }]);
     expect(begin).toHaveBeenCalledTimes(1);
-    expect(txUnsafe).toHaveBeenCalledWith("SELECT 2", []);
+    expect(txUnsafe).toHaveBeenCalledWith("SELECT 2", [], { prepare: true });
   });
 });

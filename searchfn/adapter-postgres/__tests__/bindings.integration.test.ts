@@ -154,8 +154,70 @@ describe.each(bindings)("PostgresAdapter with $name", ({ schema, open }) => {
   });
 });
 
-describe("postgres.js connection errors", () => {
-  it("surfaces a refused connection as a redacted SearchAdapterError", async () => {
+describe("fromPostgresJs prepared statements", () => {
+  const schema = "searchfn_it_pgjs_prepared";
+
+  it("prepares search and transactional index statements on the connection, as Hyperdrive requires", async (ctx) => {
+    if (!(await postgresAvailable())) return ctx.skip();
+    await resetSchema(schema);
+    // One connection, so pg_prepared_statements shows the session the adapter used.
+    const sql = postgres(PG_URL, { max: 1, fetch_types: false });
+    try {
+      const adapter = new PostgresAdapter({ driver: fromPostgresJs(sql), schema, retry: { maxRetries: 0 } });
+      await adapter.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+      await adapter.index({ resource: "notes", documents: [{ id: "1", fields: { title: "prepared" } }] });
+      expect(await adapter.search({ resource: "notes", query: "prepared" })).toEqual([1]);
+
+      const statements = (await sql<{ statement: string }[]>`SELECT statement FROM pg_prepared_statements`).map(
+        (row) => row.statement,
+      );
+      expect(statements.some((text) => text.includes("SELECT doc_id, score"))).toBe(true);
+      expect(statements.some((text) => text.includes(`INSERT INTO "${schema}"."searchfn_docs_notes"`))).toBe(true);
+    } finally {
+      await sql.end();
+    }
+  });
+});
+
+describe("connection errors", () => {
+  const refused = "postgres://searchfn@127.0.0.1:1/searchfn_test";
+  const refusedBindings = [
+    {
+      name: "fromPg",
+      open: () => {
+        const pool = new Pool({ connectionString: refused });
+        return { driver: fromPg(pool), close: () => pool.end() };
+      },
+    },
+    {
+      name: "fromPostgresJs",
+      open: () => {
+        const sql = postgres(refused, { max: 1, connect_timeout: 2 });
+        return { driver: fromPostgresJs(sql), close: () => sql.end({ timeout: 0 }) };
+      },
+    },
+  ];
+
+  it.each(refusedBindings)("retries a refused connection through $name", async ({ open }) => {
+    const { driver, close } = open();
+    let attempts = 0;
+    const counting: PostgresDriver = {
+      query: (text, params) => {
+        attempts++;
+        return driver.query(text, params);
+      },
+    };
+    try {
+      const adapter = new PostgresAdapter({ driver: counting, retry: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 2 } });
+      const error = await adapter.search({ resource: "notes", query: "q" }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toMatch(/ECONNREFUSED/);
+      expect(attempts).toBe(3);
+    } finally {
+      await close();
+    }
+  });
+
+  it("surfaces a refused postgres.js connection as a redacted SearchAdapterError", async () => {
     const sql = postgres("postgres://searchfn:hunter2-secret@127.0.0.1:1/searchfn_test", { max: 1, connect_timeout: 2 });
     try {
       const adapter = new PostgresAdapter({ driver: fromPostgresJs(sql), retry: { maxRetries: 0 } });

@@ -186,6 +186,7 @@ const adapter = new PostgresAdapter({ driver: fromPg(pool) });
 Notes:
 
 - `nodejs_compat` is required: postgres.js and `pg` need it on Workers, and the adapter imports `node:crypto`.
+- `fromPostgresJs` runs every statement as a prepared statement, as Hyperdrive recommends for postgres.js. Do not create the client with `prepare: false`.
 - Run `initialize()` once from a deploy script or an authenticated admin route, not on every request: it issues `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements. `search()`, `index()`, `remove()` and `clear()` work on an adapter that was not initialized in the same request.
 - A per-request adapter has no declared resources, so pass `resources` to `searchAll()`.
 - `index()` deletes and re-inserts each batch inside `sql.begin()`, so a failed batch rolls back.

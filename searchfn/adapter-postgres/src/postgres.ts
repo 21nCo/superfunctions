@@ -88,6 +88,9 @@ const RETRYABLE_PG_CODES = new Set([
   // postgres.js connection error codes; pg never reports these.
   "CONNECT_TIMEOUT",
   "CONNECTION_CLOSED",
+  // Node socket error codes, reported by both pg and postgres.js.
+  "ECONNREFUSED",
+  "ETIMEDOUT",
 ]);
 
 function isRetryable(err: unknown): boolean {
@@ -199,11 +202,17 @@ export class PostgresAdapter implements SearchAdapter {
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    // Once retries run out, report the last transient error (redacted), not a bare budget message.
+    const exhausted = retryBudgetExhaustedError();
+    let lastError: unknown;
     try {
       return await runWithRetry(fn, {
         policy: this.options.retry,
-        isRetryableError: isRetryable,
-        exhaustedError: retryBudgetExhaustedError(),
+        isRetryableError: (error) => {
+          lastError = error;
+          return isRetryable(error);
+        },
+        exhaustedError: exhausted,
         onRetry: ({ attempt, delayMs, reason }) => {
           this.logger?.warn(
             "adapter.retry",
@@ -217,6 +226,7 @@ export class PostgresAdapter implements SearchAdapter {
         },
       });
     } catch (error) {
+      if (error === exhausted) throw withRedactedErrorMessage("Postgres operation failed", lastError);
       if (error instanceof SearchAdapterError) throw error;
       throw withRedactedErrorMessage("Postgres operation failed", error);
     }
@@ -374,7 +384,7 @@ export class PostgresAdapter implements SearchAdapter {
         allResults.push({
           resource,
           id: coerceId(row.doc_id),
-          score: parseFloat(String(row.score)),
+          score: Number.parseFloat(String(row.score)),
         });
       }
     }
