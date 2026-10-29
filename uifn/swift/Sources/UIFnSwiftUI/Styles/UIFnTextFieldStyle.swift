@@ -4,8 +4,9 @@ import SwiftUI
 /// the field on the raised surface inside a bordered rounded rectangle.
 ///
 /// The field draws an accent ring while it has focus, and a disabled field
-/// sinks and takes the disabled text color. Editing, selection and focus stay
-/// the system text field's.
+/// sinks and takes the disabled text color. A click or tap in the padding
+/// focuses the field, like one on the border of a system field; editing,
+/// selection and focus stay the system text field's.
 public struct UIFnTextFieldStyle: TextFieldStyle {
     public init() {}
 
@@ -32,7 +33,8 @@ private struct UIFnTextFieldStyleBody<Field: View>: View {
     var body: some View {
         UIFnTextFieldAppearance(
             field: field.focused($isFocused),
-            state: UIFnControlState(isEnabled: isEnabled, isFocused: isFocused)
+            state: UIFnControlState(isEnabled: isEnabled, isFocused: isFocused),
+            focus: { if isEnabled { isFocused = true } }
         )
     }
 }
@@ -41,6 +43,8 @@ private struct UIFnTextFieldStyleBody<Field: View>: View {
 struct UIFnTextFieldAppearance<Field: View>: View {
     let field: Field
     let state: UIFnControlState
+    /// Focuses the field after a click or tap in the padding.
+    var focus: () -> Void = {}
     @UIFnStyleEnvironment private var context
 
     var body: some View {
@@ -53,11 +57,13 @@ struct UIFnTextFieldAppearance<Field: View>: View {
             .foregroundColor(context.color(state.isEnabled ? colors.text.primary : colors.text.disabled))
             .padding(.horizontal, context.scaled(context.spacing.space3))
             .padding(.vertical, context.scaled(context.spacing.space2))
-            .background(shape.fill(context.color(state.isEnabled ? colors.surface.raised : colors.surface.sunken)))
+            // The field takes clicks and taps on its text; the background
+            // takes the rest, so they never compete.
+            .background(shape.fill(context.color(state.isEnabled ? colors.surface.raised : colors.surface.sunken)).onTapGesture(perform: focus))
             .overlay {
                 shape.strokeBorder(context.color(state.isEnabled ? colors.border.default : colors.border.subtle), lineWidth: 1)
+                    .allowsHitTesting(false)
             }
-            .contentShape(shape)
             .uifnFocusRing(state.isFocused && state.isEnabled, cornerRadius: radius, context: context)
             .animation(context.stateAnimation, value: state)
     }

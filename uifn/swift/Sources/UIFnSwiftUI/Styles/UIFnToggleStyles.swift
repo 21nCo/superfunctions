@@ -72,7 +72,12 @@ private struct UIFnToggleStyleBody: View {
 
     @ViewBuilder
     private var representation: some View {
-        let toggle = Toggle(isOn: configuration.$isOn) { configuration.label }
+        let toggle = UIFnAccessibilityToggle(
+            value: UIFnToggleValue(isOn: configuration.isOn, isMixed: configuration.isMixed),
+            isOn: configuration.$isOn
+        ) {
+            configuration.label
+        }
         #if os(macOS)
         switch kind {
         case .switch: toggle.toggleStyle(.switch)
@@ -81,6 +86,25 @@ private struct UIFnToggleStyleBody: View {
         #else
         toggle.toggleStyle(.switch)
         #endif
+    }
+}
+
+/// The system toggle accessibility sees in place of a UIFn toggle: off, on or
+/// mixed like the UIFn toggle, and setting it sets the UIFn toggle.
+struct UIFnAccessibilityToggle<Label: View>: View {
+    let value: UIFnToggleValue
+    let isOn: Binding<Bool>
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        if value == .mixed {
+            // Sources that disagree make a system toggle mixed. Only the
+            // first passes a new value on, so it is set once.
+            let sources = [Binding(get: { true }, set: { isOn.wrappedValue = $0 }), .constant(false)]
+            Toggle(sources: sources, isOn: \.self, label: label)
+        } else {
+            Toggle(isOn: isOn, label: label)
+        }
     }
 }
 

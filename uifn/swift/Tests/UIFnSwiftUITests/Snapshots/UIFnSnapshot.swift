@@ -117,6 +117,12 @@ enum UIFnSnapshot {
         ProcessInfo.processInfo.environment["UIFN_RECORD_SNAPSHOTS"] == "1"
     }
 
+    /// Where the rendered images of mismatched snapshots are written.
+    static var artifactDirectory: URL {
+        ProcessInfo.processInfo.environment["UIFN_SNAPSHOT_ARTIFACTS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("uifn-snapshots", isDirectory: true)
+    }
+
     /// Renders the view `content` builds at `scale` and its ideal size.
     static func render(
         colorScheme: ColorScheme = .light,
@@ -141,6 +147,8 @@ enum UIFnSnapshot {
         _ bitmap: UIFnBitmap?,
         named name: String,
         filePath: String = #filePath,
+        isRecording: Bool = isRecording,
+        artifactDirectory: URL = artifactDirectory,
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws {
         let bitmap = try #require(bitmap, "\(name) did not render", sourceLocation: sourceLocation)
@@ -165,7 +173,9 @@ enum UIFnSnapshot {
         )
         let fraction = bitmap.differingFraction(from: expected)
         guard fraction > maximumDifferingFraction else { return }
-        let failure = try writeFailure(png, named: name)
+        let failure = artifactDirectory.appendingPathComponent("\(name).png")
+        try FileManager.default.createDirectory(at: failure.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try png.write(to: failure)
         Issue.record(
             """
             \(name) differs from its reference in \(String(format: "%.2f", fraction * 100))% of pixels \
@@ -174,16 +184,6 @@ enum UIFnSnapshot {
             """,
             sourceLocation: sourceLocation
         )
-    }
-
-    private static func writeFailure(_ png: Data, named name: String) throws -> URL {
-        let environment = ProcessInfo.processInfo.environment
-        let directory = environment["UIFN_SNAPSHOT_ARTIFACTS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.temporaryDirectory.appendingPathComponent("uifn-snapshots", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(name).png")
-        try png.write(to: url)
-        return url
     }
 }
 
