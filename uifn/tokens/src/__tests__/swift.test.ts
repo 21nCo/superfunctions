@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createFoundationalTokens } from '../foundations';
-import { oklchToGamutMappedRgb } from '../gamut';
+import { isOklchInGamut, oklchToGamutMappedRgb } from '../gamut';
 import { parseOklch } from '../oklch';
 import { UIFnTokenError, type DesignToken, type DesignTokenTheme, type TokenTree } from '../schema';
 import { runSwiftTokensCli, type SwiftCliIo } from '../swift-cli';
@@ -119,6 +119,12 @@ function referTo(target: DesignTokenTheme, path: string, targetPath: string): vo
   const segments = path.split('.');
   const parent = segments.slice(0, -1).reduce((node, key) => node[key] as TokenTree, target.tokens);
   parent[segments.at(-1)!] = { $type: 'color', $value: `{${targetPath}}`, $extensions: { uifn: { fallbackValue: '#000' } } };
+}
+
+function setExtensions(target: DesignTokenTheme, path: string, uifn: NonNullable<NonNullable<DesignToken['$extensions']>['uifn']>): void {
+  const segments = path.split('.');
+  const token = segments.reduce((node, key) => node[key] as TokenTree, target.tokens) as unknown as DesignToken;
+  token.$extensions = { uifn: { ...token.$extensions?.uifn, ...uifn } };
 }
 
 function errorOf(run: () => unknown): UIFnTokenError {
@@ -485,6 +491,46 @@ describe('generateSwiftTokens', () => {
       expect(errorOf(() => generateSwiftTokens({ light: lowContrast }, { name: 'fixture' })).code).toBe('UIFN_CONTRAST_BUDGET');
     }
   });
+
+  it('checks contrast on the emitted gamut-mapped colors, not the clipped ones', () => {
+    // validateTokenTheme measures 4.53:1; the emitted sRGB fill is 2.52:1 against white.
+    const saturated = theme('light', { 'color.accent.solid': 'oklch(73% 0.4 275)', 'color.accent.contrast': '#fff' });
+    expect(validateTokenTheme(saturated).ok).toBe(true);
+    const pair = { foreground: 'color.accent.contrast', background: 'color.accent.solid', minimum: 4.5 };
+    const rejected = errorOf(() => generateSwiftTokens({ light: saturated }, { name: 'fixture' }));
+    expect(rejected.code).toBe('UIFN_CONTRAST_BUDGET');
+    expect(rejected.details).toEqual({ appearance: 'light', ...pair, gamut: 'srgb', contrastRatio: 2.52 });
+
+    // Passes in sRGB (4.54:1) but not in Display P3 (4.46:1).
+    const p3Only = theme('light', { 'color.accent.solid': 'oklch(59% 0.25 265)' });
+    expect(validateTokenTheme(p3Only).ok).toBe(true);
+    expect(errorOf(() => generateSwiftTokens({ light: p3Only }, { name: 'fixture' })).details).toEqual({
+      appearance: 'light', ...pair, gamut: 'display-p3', contrastRatio: 4.46,
+    });
+
+    // Through a reference to a hex color, and in a variant appearance.
+    const referenced = theme('light', { 'color.accent.solid': 'oklch(73% 0.4 275)', 'color.custom.solid': '#ffffff' });
+    referTo(referenced, 'color.accent.contrast', 'color.custom.solid');
+    const highContrastLight = { ...referenced, name: 'fixture-hcl', mode: 'high-contrast-light' as const };
+    expect(errorOf(() => generateSwiftTokens({ light: theme('light', { 'color.custom.solid': '#ffffff' }), highContrastLight }, { name: 'fixture' })).details).toMatchObject({
+      appearance: 'highContrastLight', ...pair, gamut: 'srgb',
+    });
+
+    // A contrastAgainst pair is checked unless either token is decorative.
+    const against = theme('light', { 'color.custom.solid': 'oklch(73% 0.4 275)', 'color.custom.contrast': '#fff' });
+    setExtensions(against, 'color.custom.contrast', { contrastAgainst: 'color.custom.solid' });
+    expect(validateTokenTheme(against).ok).toBe(true);
+    expect(errorOf(() => generateSwiftTokens({ light: against }, { name: 'fixture' })).details).toMatchObject({
+      foreground: 'color.custom.contrast', background: 'color.custom.solid',
+    });
+    setExtensions(against, 'color.custom.solid', { decorativeOnly: true });
+    expect(() => generateSwiftTokens({ light: against }, { name: 'fixture' })).not.toThrow();
+
+    // Out-of-sRGB colors that keep their contrast once mapped still generate.
+    expect(['oklch(45% 0.3 275)', 'oklch(50% 0.25 25)'].map((value) => isOklchInGamut(parseOklch(value), 'srgb'))).toEqual([false, false]);
+    const vivid = theme('light', { 'color.accent.solid': 'oklch(45% 0.3 275)', 'color.danger.solid': 'oklch(50% 0.25 25)' });
+    expect(colorBlock(generateSwiftTokens({ light: vivid }, { name: 'fixture' }), 'solid')).toContain('// light: oklch(45% 0.3 275)');
+  });
 });
 
 describe('swiftTextStyleForPoints', () => {
@@ -546,6 +592,15 @@ describe('uifn-swift-tokens CLI', () => {
     const memory = memoryIo({ 'light.json': JSON.stringify(hex) });
     expect(runSwiftTokensCli(['--name', 'fixture', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(0);
     expect(memory.files['T.swift']).toBe(generateSwiftTokens({ light: hex }, { name: 'fixture' }));
+  });
+
+  it('exits nonzero without writing when an emitted color pair is below the contrast budget', () => {
+    const saturated = theme('light', { 'color.accent.solid': 'oklch(73% 0.4 275)', 'color.accent.contrast': '#fff' });
+    const memory = memoryIo({ 'light.json': JSON.stringify(saturated) });
+    expect(runSwiftTokensCli(['--name', 'fixture', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(1);
+    expect(memory.err.at(-1)).toContain('Generated Swift color contrast is below the required minimum.');
+    expect(memory.err.at(-1)).toContain('"background":"color.accent.solid","gamut":"srgb"');
+    expect(memory.files['T.swift']).toBeUndefined();
   });
 
   it('exits nonzero without writing when a theme value cannot be emitted', () => {

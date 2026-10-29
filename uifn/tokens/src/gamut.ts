@@ -118,6 +118,11 @@ function deltaEOK(rgb: RgbTriple, gamut: RgbGamut, reference: OklchColor): numbe
   return Math.hypot(l1 - l2, a1 - a2, b1 - b2);
 }
 
+/** The relative luminance (CIE Y) of gamma-encoded RGB channels in their gamut. */
+export function rgbRelativeLuminance(rgb: RgbTriple, gamut: RgbGamut): number {
+  return multiply(LINEAR_TO_XYZ[gamut], rgb.map(decode) as RgbTriple)[1];
+}
+
 /** Returns true when the OKLCH color is representable in the RGB gamut without clipping. */
 export function isOklchInGamut(color: OklchColor, gamut: RgbGamut): boolean {
   return isInGamut(toEncodedRgb(color, gamut));

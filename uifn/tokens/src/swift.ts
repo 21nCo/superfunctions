@@ -1,6 +1,6 @@
 import { createFoundationalTokens } from './foundations';
-import { oklchToGamutMappedRgb, type RgbTriple } from './gamut';
-import { parseColorToOklch } from './oklch';
+import { oklchToGamutMappedRgb, rgbRelativeLuminance, type RgbGamut, type RgbTriple } from './gamut';
+import { CONTRAST_MINIMUM, luminanceContrastRatio, parseColorToOklch, themeContrastPairs } from './oklch';
 import {
   PUBLIC_TOKEN_GROUPS,
   UIFnTokenError,
@@ -362,6 +362,43 @@ function colorValue(token: DesignToken, path: string): SwiftColorValue {
   }
 }
 
+const EMITTED_GAMUTS: ReadonlyArray<[keyof SwiftColorValue, RgbGamut]> = [
+  ['srgb', 'srgb'],
+  ['displayP3', 'display-p3'],
+];
+
+// validateTokenTheme measures contrast on channel-clipped sRGB, while Swift
+// emits chroma-reduced colors, so an out-of-gamut color can pass there yet be
+// unreadable as emitted. Check each contrast pair again on the emitted values.
+function validateEmittedContrast(appearances: Record<SwiftAppearance, Map<string, DesignToken>>): void {
+  const checked = new Set<Map<string, DesignToken>>();
+  for (const appearance of APPEARANCES) {
+    const tokens = appearances[appearance];
+    if (checked.has(tokens)) continue;
+    checked.add(tokens);
+    for (const [foreground, background] of themeContrastPairs(tokens)) {
+      const foregroundValue = colorValue(tokens.get(foreground)!, foreground);
+      const backgroundValue = colorValue(tokens.get(background)!, background);
+      for (const [key, gamut] of EMITTED_GAMUTS) {
+        const ratio = luminanceContrastRatio(
+          rgbRelativeLuminance(foregroundValue[key], gamut),
+          rgbRelativeLuminance(backgroundValue[key], gamut)
+        );
+        if (ratio < CONTRAST_MINIMUM) {
+          throw new UIFnTokenError('UIFN_CONTRAST_BUDGET', 'Generated Swift color contrast is below the required minimum.', {
+            appearance,
+            foreground,
+            background,
+            gamut,
+            contrastRatio: ratio,
+            minimum: CONTRAST_MINIMUM,
+          });
+        }
+      }
+    }
+  }
+}
+
 class SwiftWriter {
   private readonly lines: string[] = [];
   private depth = 0;
@@ -474,7 +511,8 @@ function swiftModule(name: string): string {
 /**
  * Generates one Swift source file declaring `UIFnTheme.<name>` from a uifn
  * theme set. Each theme is validated with `validateTokenTheme` and its token
- * references are resolved first.
+ * references are resolved first; its contrast pairs must also meet the budget
+ * on the emitted sRGB and Display P3 values.
  */
 export function generateSwiftTokens(themes: SwiftThemeSet, options: SwiftTokenOptions): string {
   if (!SWIFT_IDENTIFIER.test(options.name) || UNREFERENCEABLE_MEMBERS.has(options.name)) {
@@ -487,6 +525,7 @@ export function generateSwiftTokens(themes: SwiftThemeSet, options: SwiftTokenOp
   }
 
   const { colors, values } = resolveAppearances(themes);
+  validateEmittedContrast(colors);
   const sources = APPEARANCES.filter((appearance) => themes[appearance]).map(
     (appearance) => `${appearance}: ${commentText(themes[appearance]!.name)}`
   );

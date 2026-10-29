@@ -1,4 +1,4 @@
-import { UIFnTokenError, type DesignTokenTheme, flattenTokens } from './schema';
+import { UIFnTokenError, type DesignToken, type DesignTokenTheme, flattenTokens } from './schema';
 
 export interface OklchColor {
   l: number;
@@ -142,19 +142,28 @@ function relativeLuminance(color: OklchColor): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-export function contrastRatio(foreground: string, background: string): number {
-  const fg = relativeLuminance(parseColorToOklch(foreground));
-  const bg = relativeLuminance(parseColorToOklch(background));
-  const lighter = Math.max(fg, bg);
-  const darker = Math.min(fg, bg);
+/** The WCAG contrast ratio of two relative luminances, rounded to two decimals. */
+export function luminanceContrastRatio(first: number, second: number): number {
+  const lighter = Math.max(first, second);
+  const darker = Math.min(first, second);
 
   return Math.round(((lighter + 0.05) / (darker + 0.05)) * 100) / 100;
 }
 
+export function contrastRatio(foreground: string, background: string): number {
+  return luminanceContrastRatio(
+    relativeLuminance(parseColorToOklch(foreground)),
+    relativeLuminance(parseColorToOklch(background))
+  );
+}
+
+/** The minimum contrast ratio of every theme contrast pair (WCAG AA body text). */
+export const CONTRAST_MINIMUM = 4.5;
+
 export function validateContrastPair(
   foreground: string,
   background: string,
-  minimum = 4.5
+  minimum = CONTRAST_MINIMUM
 ): { ok: true; contrastRatio: number; minimum: number } {
   const ratio = contrastRatio(foreground, background);
 
@@ -197,9 +206,12 @@ export function createCustomSurface(options: {
   };
 }
 
-export function validateThemeContrast(theme: DesignTokenTheme): { ok: true; checkedPairs: number } {
-  const flattened = flattenTokens(theme.tokens);
-  const byPath = new Map(flattened.map(({ path, token }) => [path.join('.'), token]));
+/**
+ * The foreground and background token paths a theme's contrast budget covers:
+ * the built-in text and tone pairs plus each token's `contrastAgainst`, skipping
+ * pairs with a missing or decorative-only token.
+ */
+export function themeContrastPairs(tokens: ReadonlyMap<string, DesignToken>): Array<[string, string]> {
   const pairs: Array<[string, string]> = [
     ['color.text.primary', 'color.surface.canvas'],
     ['color.text.secondary', 'color.surface.canvas'],
@@ -209,35 +221,34 @@ export function validateThemeContrast(theme: DesignTokenTheme): { ok: true; chec
     ['color.success.contrast', 'color.success.solid'],
   ];
 
-  flattened.forEach(({ path, token }) => {
+  tokens.forEach((token, path) => {
     const contrastAgainst = token.$extensions?.uifn?.contrastAgainst;
     if (contrastAgainst) {
-      pairs.push([path.join('.'), contrastAgainst]);
+      pairs.push([path, contrastAgainst]);
     }
   });
 
   const uniquePairs = Array.from(new Set(pairs.map((pair) => pair.join('|')))).map((pair) =>
     pair.split('|') as [string, string]
   );
-  let checkedPairs = 0;
 
-  uniquePairs.forEach(([foregroundPath, backgroundPath]) => {
-    const foreground = byPath.get(foregroundPath);
-    const background = byPath.get(backgroundPath);
-    if (!foreground || !background) {
-      return;
-    }
+  return uniquePairs.filter((pair) => {
+    const [foreground, background] = pair.map((path) => tokens.get(path));
+    return foreground && background &&
+      !foreground.$extensions?.uifn?.decorativeOnly && !background.$extensions?.uifn?.decorativeOnly;
+  });
+}
 
-    if (foreground.$extensions?.uifn?.decorativeOnly || background.$extensions?.uifn?.decorativeOnly) {
-      return;
-    }
+export function validateThemeContrast(theme: DesignTokenTheme): { ok: true; checkedPairs: number } {
+  const byPath = new Map(flattenTokens(theme.tokens).map(({ path, token }) => [path.join('.'), token]));
+  const pairs = themeContrastPairs(byPath);
 
-    validateContrastPair(String(foreground.$value), String(background.$value));
-    checkedPairs += 1;
+  pairs.forEach(([foregroundPath, backgroundPath]) => {
+    validateContrastPair(String(byPath.get(foregroundPath)!.$value), String(byPath.get(backgroundPath)!.$value));
   });
 
   return {
     ok: true,
-    checkedPairs,
+    checkedPairs: pairs.length,
   };
 }
