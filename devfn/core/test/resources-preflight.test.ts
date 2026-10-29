@@ -178,6 +178,35 @@ describe("resource collisions on effective Compose networks", () => {
       });
     } finally { Object.defineProperty(process, "platform", original); }
   }, 60_000);
+
+  it("rejects a consumer that maps its selected provider's service name to the host gateway before creating lifecycle state", async () => {
+    const gatewayNamed = validateDevFnConfig({ version: 1, project: { id: "resource-gateway-provider" }, ports: { redis: {} },
+      services: {
+        redis: { adapter: "compose", service: "host.docker.internal", ports: { redis: 6379 } },
+        worker: { adapter: "compose", service: "worker", resources: ["cache"] },
+      },
+      resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
+      profiles: { default: { services: ["worker"] } } });
+    await withRoot("devfn-resource-gateway-provider-", async (root) => {
+      await writeFile(path.join(root, "compose.yaml"), "services:\n  host.docker.internal:\n    image: busybox\n  worker:\n    image: busybox\n");
+      effective.networks = { "devfn/host.docker.internal": ["shared"], "devfn/worker": ["shared"] };
+      await onEachPlatform(async (platform) => {
+        effective.names = { "devfn/worker": { networks: {}, overrides: [{ name: "host.docker.internal", address: "host-gateway" }] } };
+        await expectRejectedBeforeState(gatewayNamed, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("is the service name of its selected provider redis") }, platform);
+      });
+      // Unmapped, it collides with the macOS gateway name; Linux has no gateway, so it is an ordinary service name.
+      // A reservation creates state, so it runs last.
+      effective.names = {};
+      for (const platform of ["darwin", "linux"] as const) {
+        const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+        Object.defineProperty(process, "platform", { ...original, value: platform });
+        try {
+          if (platform === "linux") await expectReservation(gatewayNamed, root);
+          else await expectRejectedBeforeState(gatewayNamed, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("that name is also the container host gateway") }, platform);
+        } finally { Object.defineProperty(process, "platform", original); }
+      }
+    });
+  }, 60_000);
 });
 
 describe("resource references only Compose interpolates", () => {

@@ -776,6 +776,57 @@ describe("container and host endpoints", () => {
     expect(() => aliased([], { provisionalNetworks: true })).not.toThrow();
     expect(() => aliased([], { composeNetworks: { other: ["private"], worker: ["shared"] } })).not.toThrow();
   });
+
+  it("never routes a selected provider's service name to the host gateway", () => {
+    // containerRoute decides by source: a selected provider's service name is never the gateway.
+    const gatewayNamed = containerConsumer("service", (v) => { v.services.redis.service = "host.docker.internal"; });
+    const withOverrides = (overrides: Array<{ name: string; address?: string }>, options: Partial<Parameters<typeof planResources>[0]>) =>
+      plan(gatewayNamed, undefined, { composeNames: { worker: { networks: {}, overrides } }, ...options });
+    const remapped = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("is the service name of its selected provider redis, which its own links") });
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      for (const overrides of [[{ name: "host.docker.internal", address: "host-gateway" }], [{ name: "HOST.docker.internal." }], [{ name: "host.docker.internal", address: "10.1.2.3" }]]) {
+        let error: unknown;
+        try { withOverrides(overrides, { platform }); } catch (caught) { error = caught; }
+        expect(error, `${platform} ${JSON.stringify(overrides)}`).toEqual(remapped);
+        expect((error as Error).message).not.toContain("10.1.2.3");
+      }
+    }
+    // Unmapped, a provider named like a defined gateway fails closed; elsewhere it is an ordinary service name.
+    const collision = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("selected provider redis, but that name is also the container host gateway") });
+    for (const options of [{ platform: "darwin" }, { platform: "win32" }, { platform: "linux", containerHostGateway: "host.docker.internal" }] as const) {
+      expect(() => plan(gatewayNamed, undefined, options), JSON.stringify(options)).toThrow(collision);
+    }
+    expect(plan(gatewayNamed).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL)
+      .toEqual({ value: "redis://host.docker.internal:6379", source: "compose", field: "services.redis.ports.redis" });
+  });
+
+  it("reaches the host through any name a consumer maps only to host-gateway", () => {
+    // Linux has no implicit gateway, but extra_hosts <name>:host-gateway still reaches host loopback.
+    const remote = (base: string) => config((v) => {
+      delete v.services.redis;
+      v.processes.redis = { adapter: "command", command: ["redis-server"], ports: ["redis"] };
+      v.processes.app = { adapter: "command", command: ["node"], resources: ["cache"] };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base }, targets: { dev: { url: "redis://host.docker.internal:4107" } } };
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["sessions"] };
+      v.profiles.default = { processes: ["app"], services: ["worker"] };
+    });
+    const mapped = (overrides: Array<{ name: string; address?: string }>, base = "other") =>
+      plan(remote(base), undefined, { composeNames: { worker: { networks: {}, overrides } } });
+    const hostGateway = [{ name: "host.docker.internal", address: "host-gateway" }];
+    expect(mapped(hostGateway).resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_URL)
+      .toEqual({ value: "redis://host.docker.internal:4107", source: "manifest", field: "resources.sessions.targets.dev.url" });
+    // Its listener is the host's loopback port, which the local cache leases.
+    expect(() => mapped(hostGateway, "data")).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") }));
+    expect(() => plan(remote("data"))).not.toThrow();
+    const elsewhere = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("is a name its own links, external_links or extra_hosts map") });
+    for (const overrides of [[{ name: "host.docker.internal", address: "10.1.2.3" }], [...hostGateway, { name: "host.docker.internal", address: "10.1.2.3" }], [{ name: "host.docker.internal" }]]) {
+      let error: unknown;
+      try { mapped(overrides); } catch (caught) { error = caught; }
+      expect(error, JSON.stringify(overrides)).toEqual(elsewhere);
+      expect((error as Error).message).not.toContain("10.1.2.3");
+    }
+  });
 });
 
 describe("endpoint resolver handoff", () => {
