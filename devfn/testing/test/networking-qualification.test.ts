@@ -884,17 +884,23 @@ describe("run execution", () => {
     }
   });
 
-  it("withdraws its own published receipt, then releases its claim, when a repeated signal forces the exit", async () => {
+  it("withdraws its own published receipt, then releases its claim, when a repeated signal forces the exit, whatever its stderr does", async () => {
     const command = [process.execPath, "--import", createRequire(import.meta.url).resolve("tsx"), fileURLToPath(new URL("./forced-exit-child.ts", import.meta.url))];
     const unrelated = { "notes.txt": "operator notes\n", "other.json": `${JSON.stringify({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", runId: "0123456789ab" })}\n`, "other.json.lock": "{}\n" };
-    for (const phase of ["publication", "root removal", "reconciliation", "unwithdrawable"] as const) {
+    const phases = ["publication", "root removal", "reconciliation"] as const;
+    // A closed stderr fails each write with EPIPE; a full one, which the parent reads only after the exit, with EAGAIN.
+    const runs = [...[...phases, "unwithdrawable" as const].map((phase) => ({ phase, stderr: "open" })), ...(["closed", "full"] as const).flatMap((stderr) => phases.map((phase) => ({ phase, stderr })))];
+    for (const { phase: step, stderr: mode } of runs) {
+      const phase = `${step} (stderr ${mode})`;
       const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-forced-exit-")));
       dirs.push(dir);
       const root = path.join(dir, "receipts");
       await mkdir(root, { mode: 0o700 });
       for (const [name, text] of Object.entries(unrelated)) await writeFile(path.join(root, name), text);
       const [node, ...args] = command;
-      const child = spawn(node, [...args, root, phase], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(node, [...args, root, step, mode], { stdio: ["ignore", "pipe", "pipe"] });
+      if (mode === "closed") child.stderr.destroy();
+      if (mode === "full") child.once("exit", () => child.stderr.resume());
       let stdout = "";
       let stderr = "";
       child.stdout.on("data", (chunk: Buffer) => {
@@ -903,7 +909,7 @@ describe("run execution", () => {
         // Real signals from outside while a step is held: an interrupt, then the repeated signal that forces the exit.
         if (holding) { child.kill("SIGINT"); setTimeout(() => child.kill("SIGTERM"), 300); }
       });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
+      if (mode === "open") child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
       const bound = setTimeout(() => child.kill("SIGKILL"), 45_000);
       // "close" comes only once stdout and stderr are drained; "exit" can come before their last lines.
       const [code, killedBy] = await once(child, "close") as [number | null, NodeJS.Signals | null];
@@ -912,8 +918,8 @@ describe("run execution", () => {
       expect({ phase, code, killedBy }, stderr).toEqual({ phase, code: 130, killedBy: null });
       expect(log, phase).toContain("published");
       expect(log, phase).not.toContain("returned");
-      expect(stderr, phase).toMatch(/SIGTERM: exiting without cleanup/);
-      if (phase === "unwithdrawable") {
+      if (mode === "open") expect(stderr, phase).toMatch(/SIGTERM: exiting without cleanup/);
+      if (step === "unwithdrawable") {
         // A receipt the exit cannot withdraw is reported, never passed over in silence.
         expect(stderr).toMatch(/the receipt .*receipt\.json could not be withdrawn and is not evidence: EACCES/);
         await chmod(root, 0o700);
@@ -1665,14 +1671,16 @@ describe("live host cleanup handlers", () => {
         for (const service of ["web", "api"]) await writeFile(path.join(cwd!, `seen-${service}.json`), JSON.stringify({ pid: answers.pid?.(name(cwd), service) ?? process.pid, env: {} }));
         return devfnOk({ state: "ready", instanceId: "i1" });
       },
-      restart: { ok: true, state: "ready", instanceId: "i1" },
+      restart: { ok: true, state: "ready", instanceId: "i1" }, down: { ok: true, state: "stopped" },
       url: async (_signal?: AbortSignal, cwd?: string) => devfnOk({ urls: { web: `https://${path.basename(cwd!)}.localhost:8443/`, api: `https://svc-${path.basename(cwd!)}.localhost:8443/api` } }),
       ports: { ok: true, allocations: [] }, "ports gc": { ok: true },
     } });
     fixture.host.ca = async () => "fixture-ca";
     fixture.host.request = async (target: string) => {
       const url = new URL(target);
-      return answers.request?.(url) ?? { status: 200, body: "", headers: {}, json: { marker: url.hostname.split(".")[0].replace(/^svc-/, ""), name: url.pathname.startsWith("/api") ? "api" : "web" } };
+      // As the fixture server behind the proxy answers: api's route strips its /api prefix.
+      return answers.request?.(url) ?? { status: 200, body: "", headers: {}, json: { marker: url.hostname.split(".")[0].replace(/^svc-/, ""), name: url.pathname.startsWith("/api") ? "api" : "web",
+        path: url.pathname.startsWith("/api") ? url.pathname.slice("/api".length) || "/" : url.pathname } };
     };
     return fixture;
   }
@@ -1752,6 +1760,55 @@ describe("live host cleanup handlers", () => {
     expect(restored).toMatchObject({ ok: false, detail: expect.stringMatching(/\d+ probes unanswered: https:\/\/svc-qabcdef12-sentinel.localhost:8443\/api\/watched in round \d+/) });
     expect(restored.detail).not.toContain("unanswered after the scenario");
   }, 30_000);
+
+  it("keeps sentinel-preserved only while the unaffected lifecycle's routes keep every material field and its api receives its stripped path", async () => {
+    const { failing, sibling } = failureInjection(hostFixture());
+    const stamp = "2026-10-29T00:00:00.000Z";
+    const web = { id: "s1-web", instanceId: "s1", hostname: "qabcdef12-sentinel.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "internal", updatedAt: stamp };
+    const api = { id: "s1-api", instanceId: "s1", hostname: "svc-qabcdef12-sentinel.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "internal", path: "/api", match: "prefix", stripPrefix: true, updatedAt: stamp };
+    /** Drive scenario with the sentinel as owner s1; the first start of another checkout makes routes its routes, then the probes run a while. */
+    const run = async (scenario: string, routes?: Array<Record<string, unknown>>, request?: (url: URL) => Answer | undefined) => {
+      let changed = false;
+      const fixture = await scenarioHost({
+        up: async (name, cwd) => {
+          if (name !== "sentinel" && !changed) {
+            changed = true;
+            if (routes) await writeFile(path.join(fixture.host.stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes }));
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+          if (name !== "failing" || !readdirSync(cwd).includes(`fail-${failing}`)) return undefined;
+          await writeFile(path.join(cwd, `seen-${failing}.json`), JSON.stringify({ pid: DEAD, env: {}, sibling: { name: sibling, marker: path.basename(cwd) } }));
+          await writeFile(path.join(cwd, `seen-${sibling}.json`), JSON.stringify({ pid: DEAD, env: {} }));
+          return devfnError("DEVFN_START_FAILED");
+        },
+        status: (name) => name === "sentinel" ? devfnOk({ state: "ready", instanceId: "s1", processes: [{}, {}] }) : name === "failing" ? { code: 0, stdout: JSON.stringify({ ok: false, state: "failed", instanceId: "i1" }), stderr: "" } : undefined,
+        ...(request ? { request } : {}),
+      });
+      fixture.host.owner = async (cwd) => path.basename(cwd) === "qabcdef12-sentinel" ? "s1" : "i1";
+      await mkdir(fixture.host.stateDir, { recursive: true });
+      await writeFile(path.join(fixture.host.stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [web, api] }));
+      const { observed, error } = await drive(scenario, fixture);
+      await rm(dir, { recursive: true, force: true });
+      expect(error === undefined || /^sentinel-preserved:/.test(String((error as Error).message)), String(error)).toBe(true);
+      return observed["sentinel-preserved"];
+    };
+    const kept = expect.stringContaining("its URLs and 2 routes");
+    expect(await run("recovery.startup-failure")).toMatchObject({ ok: true, detail: kept });
+    // Only the times DevFn rewrites change, or a default is spelled out: the routing is the same.
+    expect(await run("recovery.startup-failure", [{ ...web, updatedAt: "2026-10-29T01:00:00.000Z" }, { ...api, updatedAt: "2026-10-29T01:00:00.000Z" }])).toMatchObject({ ok: true, detail: kept });
+    expect(await run("recovery.startup-failure", [{ ...web, path: "/", match: "prefix", stripPrefix: false }, api])).toMatchObject({ ok: true, detail: kept });
+    // Each material field changes alone under the same hostnames, while every probe still gets the worktree's marker.
+    for (const routes of [[web, { ...api, stripPrefix: false }], [web, { ...api, path: "/v2" }], [{ ...web, match: "exact" }, api], [web, { ...api, targetPort: 4999 }],
+      [web, { ...api, targetHost: "::1" }], [{ ...web, tls: "off" }, api], [web, { ...api, id: "s1-api-2" }]]) {
+      expect(await run("recovery.startup-failure", routes), JSON.stringify(routes)).toMatchObject({ ok: false, detail: expect.stringContaining("routes changed from ") });
+    }
+    // An api that receives /api/watched, its prefix not stripped, fails every probe round although it answers as api.
+    const unstripped = (url: URL): Answer | undefined => url.pathname.startsWith("/api") ? { status: 200, body: "", headers: {}, json: { marker: "qabcdef12-sentinel", name: "api", path: url.pathname } } : undefined;
+    expect(await run("recovery.startup-failure", undefined, unstripped)).toMatchObject({ ok: false, detail: expect.stringContaining("unanswered after the scenario: https://svc-qabcdef12-sentinel.localhost:8443/api/watched") });
+    // The same watch serves every recovery scenario: proxy reload fails on a changed prefix too.
+    expect(await run("recovery.proxy-reload")).toMatchObject({ ok: true, detail: kept });
+    expect(await run("recovery.proxy-reload", [web, { ...api, stripPrefix: false }])).toMatchObject({ ok: false, detail: expect.stringContaining("routes changed from svc-qabcdef12-sentinel.localhost/api -> 127.0.0.1:4101 ") });
+  }, 60_000);
 
   it("counts a concurrent start as single-owner only when the loser is DevFn's own lock or already-running refusal", async () => {
     const run = async (loser: Reply, status?: Reply) => {

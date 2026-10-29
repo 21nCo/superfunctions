@@ -10,7 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { defaultStateDir, matchesProcessIdentity, processBirthSignature } from "@devfn/config";
 import { resolveInstanceIdentity } from "@devfn/core";
-import { parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus } from "@devfn/ports";
+import { parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus, type PersistedProxyRoute } from "@devfn/ports";
 import { proxyListenerPorts, PUBLIC_ORIGIN_HEADER, readRegisteredDomains } from "@devfn/proxy";
 import { readRelayService } from "@devfn/proxy/oauth-relay";
 import { caddyInternalRoot, CloudflareTunnelProvider, ngrokMarker, ownershipMarker, readTunnelBindings, readTunnelState, tunnelCapabilities, type TunnelBinding } from "@devfn/proxy/tunnel";
@@ -636,8 +636,23 @@ export class LiveHost {
 
   /** Routes of an owner in the run's DevFn proxy state. */
   public async routesOf(instanceId: string): Promise<string[]> {
+    return (await this.ownedRoutes(instanceId)).map((route) => route.hostname);
+  }
+
+  /**
+   * An owner's routes, each named by hostname, path and target with a digest
+   * of every material field (all but its timestamps; path, match and prefix
+   * stripping with their defaults), sorted: two snapshots are equal only
+   * when the owner is routed the same way.
+   */
+  public async routeSnapshot(instanceId: string): Promise<string[]> {
+    return (await this.ownedRoutes(instanceId)).map((route) => `${route.hostname}${route.path ?? "/"} -> ${route.targetHost}:${route.targetPort} ${materialDigest({ ...route,
+      path: route.path ?? "/", match: route.match ?? "prefix", stripPrefix: route.stripPrefix ?? false })}`).sort(byCodeUnit);
+  }
+
+  private async ownedRoutes(instanceId: string): Promise<PersistedProxyRoute[]> {
     const text = await readFile(path.join(this.stateDir, "proxy-routes.json"), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
-    return text === undefined ? [] : parsePersistedProxyRoutes(JSON.parse(text)).filter((route) => route.instanceId === instanceId).map((route) => route.hostname);
+    return text === undefined ? [] : parsePersistedProxyRoutes(JSON.parse(text)).filter((route) => route.instanceId === instanceId);
   }
 
   /** Recorded fixture process IDs of a checkout that still run. Only an absent checkout has none; any other failed read throws. */

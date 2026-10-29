@@ -216,10 +216,10 @@ export function detach<T>(promise: Promise<T>): () => Promise<T> {
   return async () => { const outcome = await settled; if ("error" in outcome) throw outcome.error; return outcome.value; };
 }
 
-/** Whether url answers with cwd's marker, and with service's own name when given, through the local DevFn proxy. */
-async function serves(host: LiveHost, url: string, cwd: string, ca: string, service?: string): Promise<boolean> {
+/** Whether url answers with cwd's marker, and with service's own name and the path it received when given, through the local DevFn proxy. */
+async function serves(host: LiveHost, url: string, cwd: string, ca: string, service?: string, received?: string): Promise<boolean> {
   const answer = await host.request(url, { ca }).catch(() => undefined);
-  return answer?.status === 200 && answer.json?.marker === marker(cwd) && (service === undefined || answer.json.name === service);
+  return answer?.status === 200 && answer.json?.marker === marker(cwd) && (service === undefined || answer.json.name === service) && (received === undefined || answer.json.path === received);
 }
 
 /** Every service of the generic host fixture: web on its own host, api behind its stripped /api path route. */
@@ -240,24 +240,26 @@ async function sentinel(context: ScenarioContext, host: LiveHost): Promise<strin
 /**
  * Run body while a running host-fixture lifecycle at cwd, which the scenario
  * must leave alone, is watched. Before body, every service's process (with
- * its birth identity), its devfn url URLs and its owner's proxy routes are
- * recorded. While body runs, every route (web, and api under its path) is
- * probed each round for that service's own answer. sentinel-preserved then
- * passes only when every probe answered, a final round answers, the status
- * reads ready, and every process, URL and route is the one recorded. A
- * failing body still ends the probes before its error is rethrown.
+ * its birth identity), its devfn url URLs and its owner's proxy routes, by
+ * every material field, are recorded. While body runs, every route (web,
+ * and api under its stripped path) is probed each round for that service's
+ * own answer to the path it should receive. sentinel-preserved then passes
+ * only when every probe answered, a final round answers, the status reads
+ * ready, and every process, URL and route is the one recorded. A failing
+ * body still ends the probes before its error is rethrown.
  */
 async function watchLifecycle(context: ScenarioContext, host: LiveHost, cwd: string, body: (watched: WatchedLifecycle) => Promise<void>): Promise<void> {
   const ca = await host.ca();
   const owner = await host.owner(cwd);
   const before = await urls(host, cwd);
-  const routes = await host.routesOf(owner);
+  const routes = await host.routeSnapshot(owner);
   const processes = await Promise.all(HOST_FIXTURE_SERVICES.map(async (service) => ({ service, recorded: await host.recordProcess((await host.seen(cwd, service)).pid) })));
   const targets = HOST_FIXTURE_SERVICES.map((service) => {
     if (!before[service]) throw new Error(`the watched lifecycle ${marker(cwd)} has no URL for ${service}`);
-    return { service, url: service === "web" ? before[service] : `${before[service].replace(/\/$/, "")}/watched` };
+    // api's route strips its /api prefix, so the api process receives /watched.
+    return service === "web" ? { service, url: before[service], received: new URL(before[service]).pathname } : { service, url: `${before[service].replace(/\/$/, "")}/watched`, received: "/watched" };
   });
-  const round = async () => (await Promise.all(targets.map(async (target) => await serves(host, target.url, cwd, ca, target.service) ? [] : [target.url]))).flat();
+  const round = async () => (await Promise.all(targets.map(async (target) => await serves(host, target.url, cwd, ca, target.service, target.received) ? [] : [target.url]))).flat();
   let probing = true;
   let rounds = 0;
   const missed: string[] = [];
@@ -281,7 +283,8 @@ async function watchLifecycle(context: ScenarioContext, host: LiveHost, cwd: str
     if (!recorded || now?.pid !== recorded.pid || !await host.stillRecorded(recorded)) replaced.push(`${service} process ${String(recorded?.pid ?? "unrecorded")} -> ${String(now?.pid ?? "unreadable")}`);
   }
   const moved = HOST_FIXTURE_SERVICES.filter((service) => after[service] !== before[service]).map((service) => `${service} URL ${before[service]} -> ${String(after[service])}`);
-  const rerouted = JSON.stringify(await host.routesOf(owner)) === JSON.stringify(routes) ? [] : [`routes ${routes.join(", ") || "none"} changed`];
+  const rerouted = await host.routeSnapshot(owner).then((now) => JSON.stringify(now) === JSON.stringify(routes) ? []
+    : [`routes changed from ${routes.filter((item) => !now.includes(item)).join(", ") || "none"} to ${now.filter((item) => !routes.includes(item)).join(", ") || "none"}`]);
   const last = await round();
   const problems = [...(rounds === 0 ? ["no probe round completed"] : []), ...(missed.length ? [`${missed.length} probes unanswered: ${missed.slice(0, 3).join(", ")}`] : []),
     ...(last.length ? [`unanswered after the scenario: ${last.join(", ")}`] : []), ...(status?.state === "ready" ? [] : [`state ${status ? status.state : "unreadable"}`]), ...replaced, ...moved, ...rerouted];

@@ -49,7 +49,7 @@ export const DEFERRED_ROWS: Readonly<Record<QualificationScenario["row"] | 6, st
 
 /** The unaffected lifecycle's claim in every recovery scenario that must preserve one. */
 const SENTINEL_PRESERVED: PlannedAssertion = { id: "sentinel-preserved",
-  claim: "A running sentinel worktree that the scenario leaves alone answers as each of its services (web, and api behind its /api path route) on every probe round taken while the scenario runs and once after it, and keeps the same web and api processes (by birth identity), URLs and routes and a ready status." };
+  claim: "A running sentinel worktree that the scenario leaves alone answers as each of its services (web, and api behind its stripped /api path route), at the path each should receive, on every probe round taken while the scenario runs and once after it, and keeps the same web and api processes (by birth identity), URLs, routes (every material field but their timestamps) and a ready status." };
 const HOST: readonly PrerequisiteId[] = ["supported-host", "devfn-cli", "git", "caddy", "process-tools", "proxy-ports"];
 const a = (id: string, claim: string): PlannedAssertion => ({ id, claim });
 /** A withdrawn or unserved public name is shown only by a conclusive refusal, never by a failed probe. */

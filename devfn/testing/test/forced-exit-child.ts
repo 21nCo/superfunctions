@@ -1,13 +1,30 @@
 // A run in a child process for the forced-exit fixture: it publishes its receipt in the slot "receipt.json" of a
 // given root and gets repeated signals while publishing (sent to itself), or while its root removal or its
 // reconciliation rewrite is held (sent by the parent once it prints "holding"). Its run root is the parent's
-// private directory holding that receipt root. Run through tsx.
+// private directory holding that receipt root. With stderr "full", it first fills its stderr, which the parent does
+// not read, until not one more byte fits. Run through tsx.
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 
 const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
-const [root, phase] = process.argv.slice(2);
+const [root, phase, stderr] = process.argv.slice(2);
 const log = (line: string): void => { fs.writeSync(1, `${line}\n`); };
+if (stderr === "full") {
+  // process.stderr makes fd 2 nonblocking, so a full pipe answers EAGAIN instead of blocking.
+  void process.stderr.fd;
+  const fill = (): number => {
+    let written = 0;
+    for (let size = 65_536; size >= 1;) {
+      try { written += fs.writeSync(2, "x".repeat(size)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error; size = Math.floor(size / 2); }
+    }
+    return written;
+  };
+  // Full once two fills, apart, wrote nothing: the parent stopped reading.
+  for (let idle = 0; idle < 2;) {
+    idle = fill() === 0 ? idle + 1 : 0;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 // Each move and removal in the root is logged once done, so the parent reads their order.
 for (const name of ["linkSync", "renameSync", "rmSync"] as const) {
   const real = fs[name] as (...args: unknown[]) => unknown;

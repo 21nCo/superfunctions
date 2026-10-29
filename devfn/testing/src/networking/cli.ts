@@ -252,19 +252,27 @@ export async function main(argv: readonly string[], receiptDirectory = receiptRo
  * calls onInterrupt and aborts the returned signal; a second exits at once,
  * after withdrawing this run's receipt, should it have published one, and
  * only then releasing its claim. What could not be withdrawn is reported.
+ * Diagnostics are best-effort from here on: a closed or full stderr loses
+ * the message, never the withdrawal, the release or exit 130.
  */
 export function interruptOnSignals(slot: ReceiptSlot, runId: string, ledger: string, onInterrupt: () => void): AbortSignal {
   const interrupt = new AbortController();
+  // A failed asynchronous stderr write (EPIPE once its reader is gone) is otherwise an uncaught error that ends the run before its withdrawal.
+  process.stderr.on("error", () => undefined);
+  // Written synchronously, since process.exit drops whatever an asynchronous write still holds; a closed or full stderr throws, and is ignored.
+  const report = (text: string): void => { try { writeSync(2, text); } catch { /* best-effort */ } };
   const onSignal = (signal: NodeJS.Signals): void => {
     if (interrupt.signal.aborted) {
-      // Written synchronously: process.exit drops whatever an asynchronous stderr write still holds.
-      writeSync(2, `${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`);
-      for (const problem of slot.abandonSync(runId)) writeSync(2, `${problem}\n`);
-      process.exit(130);
+      let problems: string[] = [];
+      try { problems = slot.abandonSync(runId); } finally {
+        report(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`);
+        for (const problem of problems) report(`${problem}\n`);
+        process.exit(130);
+      }
     }
-    process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
     interrupt.abort(signal);
     onInterrupt();
+    process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
   };
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
   return interrupt.signal;
