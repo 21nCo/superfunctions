@@ -89,6 +89,11 @@ function own<T>(map: Readonly<Record<string, T>> | undefined, name: string): T |
   return map && Object.hasOwn(map, name) ? map[name] : undefined;
 }
 
+/** The manifest entry of a lifecycle node, by its kind. */
+function nodeSpec(config: DevFnConfig, node: { name: string; kind: string }) {
+  return node.kind === "process" ? own(config.processes, node.name) : own(config.services, node.name);
+}
+
 /** The target a profile selects for a resource, or undefined when it selects none. */
 export function selectedResourceTarget(config: DevFnConfig, profile: string, resource: string): { name: string; selectedBy: "profile" | "defaultTarget" } | undefined {
   const selected = own(own(config.profiles, profile)?.resources, resource);
@@ -234,10 +239,10 @@ function namespaceValues(name: string, spec: ResourceSpec, token: string, prefix
  */
 function sharesComposeNetwork(input: ResourcePlanInput, producer: string, consumer: string): boolean {
   const { config, ownerId } = input;
-  const project = (name: string) => composeProjectName(config.services![name].projectName ?? "devfn", ownerId);
+  const project = (name: string) => composeProjectName(own(config.services, name)!.projectName ?? "devfn", ownerId);
   if (project(producer) !== project(consumer)) return false;
-  const consumerNetworks = input.composeNetworks?.[consumer] ?? [];
-  return (input.composeNetworks?.[producer] ?? []).some((network) => consumerNetworks.includes(network));
+  const consumerNetworks = own(input.composeNetworks, consumer) ?? [];
+  return (own(input.composeNetworks, producer) ?? []).some((network) => consumerNetworks.includes(network));
 }
 
 interface TargetContext {
@@ -258,7 +263,7 @@ function exactPort(input: ResourcePlanInput, port: string): number | undefined {
 
 /** A leased port's number, or undefined while it is a preflight placeholder. */
 function knownPort(input: ResourcePlanInput, port: string): number | undefined {
-  return input.provisionalPorts ? exactPort(input, port) : input.ports[port];
+  return input.provisionalPorts ? exactPort(input, port) : own(input.ports, port);
 }
 
 function localEndpoint(context: TargetContext, target: Extract<ResourceTargetSpec, { node: string }>): { host: Endpoint; provider: PlannedResource["provider"] } {
@@ -267,12 +272,12 @@ function localEndpoint(context: TargetContext, target: Extract<ResourceTargetSpe
   if (!provider) invalid(`Resource ${name} selects local target ${context.targetName}, but profile ${input.plan.profile} does not start ${target.node}.`);
   // Containers dial a Compose provider by its service name; a loopback name
   // would reach each consumer, and the provider's advertised address, itself.
-  const service = provider.kind === "service" ? input.config.services![target.node].service : undefined;
+  const service = provider.kind === "service" ? own(input.config.services, target.node)!.service : undefined;
   if (service !== undefined && loopbackHost(service)) {
     invalid(`Resource ${name} target ${context.targetName} is provided by Compose service ${service}, a loopback name that containers resolve to themselves; rename the Compose service.`);
   }
-  const leased = knownPort(input, target.port) ?? input.ports[target.port];
-  if (!Number.isInteger(leased) || leased < 1 || leased > 65535) invalid(`Resource ${name} target ${context.targetName} requires a leased ${target.port} port.`);
+  const leased = knownPort(input, target.port) ?? own(input.ports, target.port);
+  if (leased === undefined || !Number.isInteger(leased) || leased < 1 || leased > 65535) invalid(`Resource ${name} target ${context.targetName} requires a leased ${target.port} port.`);
   const path = context.database !== undefined ? `/${context.database}` : target.path ?? "";
   return { host: { ...(target.scheme ? { scheme: target.scheme } : {}), host: "127.0.0.1", port: String(leased), path },
     provider: { node: target.node, kind: provider.kind, port: target.port } };
@@ -288,9 +293,9 @@ function remoteEndpoint(context: TargetContext, raw: string): Endpoint {
 function containerEndpoint(context: TargetContext, host: Endpoint, service: string): { endpoint: Endpoint; source: ResourceValueSource; field: string } | { unreachable: string } {
   const { input, target, gateway } = context;
   if ("node" in target) {
-    const producer = input.config.services?.[target.node];
+    const producer = own(input.config.services, target.node);
     if (producer && input.plan.nodes.some((node) => node.name === target.node && node.kind === "service") && sharesComposeNetwork(input, target.node, service)) {
-      return { endpoint: { ...host, host: producer.service, port: String(producer.ports![target.port]) }, source: "compose", field: `services.${target.node}.ports.${target.port}` };
+      return { endpoint: { ...host, host: producer.service, port: String(own(producer.ports, target.port)) }, source: "compose", field: `services.${target.node}.ports.${target.port}` };
     }
   } else {
     const loopback = loopbackHost(host.host);
@@ -341,7 +346,7 @@ function defaultGateway(input: ResourcePlanInput): { host: string; field: string
 
 function consumersOf(input: ResourcePlanInput, resource: string): string[] {
   const { config, plan } = input;
-  return plan.nodes.filter((node) => (node.kind === "process" ? config.processes?.[node.name]?.resources : config.services?.[node.name]?.resources)?.includes(resource))
+  return plan.nodes.filter((node) => nodeSpec(config, node)?.resources?.includes(resource))
     .map((node) => node.name);
 }
 
@@ -349,9 +354,9 @@ function plannedSecrets(input: ResourcePlanInput, name: string, context: TargetC
   if (!context) return [];
   const field = `resources.${name}.targets.${context.targetName}.secrets`;
   const secrets = Object.entries(context.target.secrets ?? {}).map(([secret, env]) => ({ name: secret, env, field: `${field}.${secret}`,
-    ...(input.environment ? { present: input.environment[env] !== undefined } : {}) }));
+    ...(input.environment ? { present: own(input.environment, env) !== undefined } : {}) }));
   for (const consumer of consumers) {
-    const spec = input.config.processes?.[consumer] ?? input.config.services?.[consumer];
+    const spec = nodeSpec(input.config, input.plan.nodes.find((node) => node.name === consumer)!);
     for (const secret of secrets) {
       if (!spec?.envAllowlist?.includes(secret.env) || !spec.secretEnv?.includes(secret.env)) {
         invalid(`${consumer} consumes resource ${name}, whose target ${context.targetName} needs secret ${secret.env}; add it to the consumer's envAllowlist and secretEnv.`);
@@ -368,7 +373,7 @@ function hostListener(endpoint: Endpoint): string {
 
 /** A selected Compose service's container port, whichever network or name reaches it. */
 function containerListener(input: ResourcePlanInput, node: string, port: string | number): string {
-  const spec = input.config.services![node];
+  const spec = own(input.config.services, node)!;
   return `container:${composeProjectName(spec.projectName ?? "devfn", input.ownerId)}:${spec.service}:${port}`;
 }
 
@@ -396,11 +401,11 @@ function containerListeners(context: TargetContext, endpoint: Endpoint, consumer
  * service has that name.
  */
 function reachedServices(input: ResourcePlanInput, host: string, consumer: string): string[] | undefined {
-  const named = input.plan.nodes.filter((node) => node.kind === "service" && canonicalHost(input.config.services![node.name].service) === host);
+  const named = input.plan.nodes.filter((node) => node.kind === "service" && canonicalHost(own(input.config.services, node.name)!.service) === host);
   if (!named.length) return [];
   if (input.provisionalNetworks) return undefined;
-  const networks = new Set(input.composeNetworks?.[consumer] ?? []);
-  return named.filter((node) => (input.composeNetworks?.[node.name] ?? []).some((network) => networks.has(network))).map((node) => node.name);
+  const networks = new Set(own(input.composeNetworks, consumer) ?? []);
+  return named.filter((node) => (own(input.composeNetworks, node.name) ?? []).some((network) => networks.has(network))).map((node) => node.name);
 }
 
 /**
@@ -445,7 +450,7 @@ function targetListeners(context: TargetContext, host: Endpoint, containers: Rea
   const leased = knownPort(input, target.port) !== undefined;
   const listeners = [`port:${target.port}`, ...(leased ? [`loopback:${host.port}`] : [])];
   const provider = input.plan.nodes.find((node) => node.name === target.node);
-  if (provider?.kind === "service") listeners.push(containerListener(input, target.node, input.config.services![target.node].ports![target.port]));
+  if (provider?.kind === "service") listeners.push(containerListener(input, target.node, own(own(input.config.services, target.node)!.ports, target.port)!));
   return [...listeners, ...reached.filter((listener) => leased || !listener.startsWith("loopback:"))];
 }
 
@@ -458,13 +463,14 @@ function planTarget(context: TargetContext, prefix: string, consumers: readonly 
   const values = endpointValues(prefix, host, local ? "lease" : "manifest", local ? `ports.${(target as { port: string }).port}` : `${targetField}.url`);
   if (local) {
     values[`${prefix}HOST_ENDPOINT`] = { value: `127.0.0.1:${host.port}`, source: "lease", field: `ports.${local.provider!.port}` };
-    const producer = input.config.services?.[local.provider!.node];
+    const producer = own(input.config.services, local.provider!.node);
     if (producer && local.provider!.kind === "service") {
-      values[`${prefix}INTERNAL_ENDPOINT`] = { value: `${producer.service}:${producer.ports![local.provider!.port]}`, source: "compose", field: `services.${local.provider!.node}.ports.${local.provider!.port}` };
+      values[`${prefix}INTERNAL_ENDPOINT`] = { value: `${producer.service}:${own(producer.ports, local.provider!.port)}`, source: "compose", field: `services.${local.provider!.node}.ports.${local.provider!.port}` };
     }
   }
   // Only consumers receive container-side endpoints (serviceValues).
-  const services: PlannedResource["services"] = {};
+  // Keyed by manifest service names, which may spell __proto__.
+  const services: PlannedResource["services"] = Object.create(null);
   const containers = new Map<string, Endpoint>();
   for (const node of input.plan.nodes) {
     if (node.kind !== "service" || !consumers.includes(node.name)) continue;
@@ -566,7 +572,7 @@ function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, nam
 }
 
 function selectedResourceNames(config: DevFnConfig, plan: LifecyclePlan): string[] {
-  const consumed = plan.nodes.flatMap((node) => (node.kind === "process" ? config.processes?.[node.name]?.resources : config.services?.[node.name]?.resources) ?? []);
+  const consumed = plan.nodes.flatMap((node) => nodeSpec(config, node)?.resources ?? []);
   return [...new Set([...Object.keys(own(config.profiles, plan.profile)?.resources ?? {}), ...consumed])].sort();
 }
 
@@ -598,7 +604,7 @@ export function planResources(input: ResourcePlanInput): ResourcePlan {
       ...(namespace.database !== undefined ? { database: namespace.database } : {}), ...(gateway ? { gateway } : {}) } : undefined;
     const { listeners: reached, path: targetPath, ...target } = targetContext ? planTarget(targetContext, prefix, consumers) :
       // Every browser resource names state in the same local browser profile.
-      { values: {}, services: {}, listeners: ["browser"], path: "" };
+      { values: {} as PlannedResource["values"], services: Object.create(null) as PlannedResource["services"], listeners: ["browser"], path: "" };
     listeners.set(name, reached);
     // An object store's keys live below its target path; the prefix names keys there.
     if (spec.kind === "object-store") namespace.scope = [...pathSegments(targetPath), ...pathSegments(namespace.prefix)];
@@ -650,7 +656,7 @@ export function resourceEnvironment(plan: ResourcePlan | undefined): Record<stri
 export function resourceServiceEnvironment(plan: ResourcePlan | undefined, service: string): Map<string, { value: string } | { unreachable: string }> {
   const environment = new Map<string, { value: string } | { unreachable: string }>();
   for (const resource of Object.values(plan?.resources ?? {})) {
-    for (const [key, value] of Object.entries(resource.services[service] ?? {})) environment.set(key, "unreachable" in value ? value : { value: value.value });
+    for (const [key, value] of Object.entries(own(resource.services, service) ?? {})) environment.set(key, "unreachable" in value ? value : { value: value.value });
   }
   return environment;
 }
@@ -663,6 +669,6 @@ export function resourcesNeedComposeNetworks(config: DevFnConfig, plan: Lifecycl
   if (!config.resources) return false;
   const services = new Set(plan.nodes.filter((node) => node.kind === "service").map((node) => node.name));
   return JSON.stringify(config).includes("{{env.DEVFN_RESOURCE_") ||
-    [...services].some((node) => (config.services?.[node]?.resources?.length ?? 0) > 0) ||
+    [...services].some((node) => (own(config.services, node)?.resources?.length ?? 0) > 0) ||
     selectedResourceNames(config, plan).some((name) => services.has(localProvider(config, plan.profile, name) ?? ""));
 }

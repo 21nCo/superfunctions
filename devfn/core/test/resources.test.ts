@@ -445,6 +445,28 @@ describe("resource validation before side effects", () => {
     expect(() => plan(leaky, "split-backends")).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("needs secret DB_PASSWORD") }));
   });
 
+  it("reads consumers by their own manifest entries whatever their names", () => {
+    // A computed key keeps __proto__ an own entry, as a parsed manifest does.
+    const manifest = (kind: "processes" | "services", name: string, declared: boolean) => {
+      const spec = { ...(kind === "processes" ? { adapter: "command", command: ["node", "app.mjs"], ports: ["app"] } : { adapter: "compose", service: "app", ports: { app: 8080 } }),
+        resources: ["cache"], ...(declared ? { envAllowlist: ["CACHE_PASSWORD"], secretEnv: ["CACHE_PASSWORD"] } : {}) };
+      return validateDevFnConfig({ version: 1, project: { id: "names" }, ports: { app: {} }, processes: {}, services: {}, [kind]: { [name]: spec },
+        resources: { cache: { kind: "cache", defaultTarget: "remote", targets: { remote: { url: "redis://cache.example.test:6379", secrets: { password: "CACHE_PASSWORD" } } } } },
+        profiles: { default: { [kind]: [name] } } });
+    };
+    for (const kind of ["processes", "services"] as const) {
+      for (const name of ["constructor", "toString", "__proto__"]) {
+        const declared = manifest(kind, name, true);
+        expect(Object.hasOwn(declared[kind]!, name)).toBe(true);
+        const resources = plan(declared, undefined, { environment: { CACHE_PASSWORD: "unused" } });
+        expect(resources.resources.cache.consumers).toEqual([name]);
+        expect(resources.resources.cache.secrets).toEqual([{ name: "password", env: "CACHE_PASSWORD", field: "resources.cache.targets.remote.secrets.password", present: true }]);
+        if (kind === "services") expect(Object.hasOwn(resources.resources.cache.services, name)).toBe(true);
+        expect(() => plan(manifest(kind, name, false))).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("needs secret CACHE_PASSWORD") }));
+      }
+    }
+  });
+
   it("fails an invalid selection before creating lifecycle state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-preflight-"));
     const stateDir = path.join(root, "state");
