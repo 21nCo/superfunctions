@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedScriptNames, tsconfigEntries } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedClosure, shippedScriptNames, tsconfigEntries, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -615,6 +615,63 @@ test("a tsconfig's entries count test paths only when the build names that tscon
   const emitted = check(repo.root);
   assert.equal(emitted.status, 1);
   assert.match(emitted.output, /@uifn\/core: shipped code changed \(src\/fixtures\/emitted\.ts\) but version is still 1\.0\.0/);
+});
+
+// The test, fixture and story files @uifn/core's shipped closure promotes, over an in-memory tree of core files, with
+// tsconfigRoots reading the same tree, when the package builds with `build`.
+function promotedBy(build, tree) {
+  const files = Object.keys(tree).map((file) => `uifn/core/${file}`);
+  const read = (file) => tree[file.slice("uifn/core/".length)] ?? null;
+  const inventory = fileInventory(files);
+  const manifest = { name: "@uifn/core", version: "1.0.0", scripts: { build } };
+  const { promoted } = shippedClosure({ packagePath: "uifn/core", manifest, files, read: (paths) => new Map(paths.map((file) => [file, read(file)])), tsconfigRoots: (file) => tsconfigRoots(file, inventory, read) });
+  return [...promoted.keys()].map((file) => file.slice("uifn/core/".length)).sort();
+}
+
+const sources = { "src/index.ts": "export const core = 1;\n", "src/__tests__/core.test.ts": "test;\n", "src/__tests__/fixtures/tree.ts": "export const tree = 1;\n", "src/fixtures/runtime.ts": "export const runtime = 1;\n", "src/fixtures/legacy.js": "export const legacy = 1;\n" };
+
+// tsc compiles what TypeScript resolves for the tsconfig the build names, not what its own include and exclude strings say.
+const base = '{ "include": ["src", "tests"], "exclude": ["src/__tests__"] }';
+for (const [cell, build, tsconfigs, expected] of [
+  ["files entries compile whatever exclude says", "tsc -p tsconfig.json", { "tsconfig.json": '{ "include": ["src"], "exclude": ["src/__tests__/**"], "files": ["src/__tests__/fixtures/tree.ts"] }' }, ["src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"]],
+  ["no include or files means the default include **/*", "tsc -p tsconfig.json", { "tsconfig.json": '{ "compilerOptions": { "outDir": "dist" } }' }, ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"]],
+  ["a child that overrides exclude inherits the include", "tsc -p tsconfig.build.json", { "tsconfig.json": base, "tsconfig.build.json": '{ "extends": "./tsconfig.json", "exclude": ["dist"] }' }, ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"]],
+  ["a child include keeps the inherited exclude", "tsc -p tsconfig.build.json", { "tsconfig.json": base, "tsconfig.build.json": '{ "extends": "./tsconfig.json", "include": ["src"] }' }, ["src/fixtures/runtime.ts"]],
+  ["allowJs compiles .js files", "tsc -p tsconfig.json", { "tsconfig.json": '{ "compilerOptions": { "allowJs": true }, "include": ["src/fixtures"] }' }, ["src/fixtures/legacy.js", "src/fixtures/runtime.ts"]],
+  ["tsc -b builds referenced projects", "tsc -b tsconfig.json", { "tsconfig.json": '{ "include": ["src/index.ts"], "references": [{ "path": "./tsconfig.fixtures.json" }] }', "tsconfig.fixtures.json": '{ "compilerOptions": { "composite": true }, "include": ["src/fixtures"] }' }, ["src/fixtures/runtime.ts"]],
+  ["an extends TypeScript cannot read fails closed", "tsc -p tsconfig.json", { "tsconfig.json": '{ "extends": "@missing/tsconfig", "include": ["src/index.ts"] }' }, ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/legacy.js", "src/fixtures/runtime.ts"]],
+  ["a tsconfig no build names only type-checks", "tsup", { "tsconfig.json": '{ "include": ["src"] }' }, []],
+]) {
+  test(`an emitting tsconfig consumes what TypeScript resolves: ${cell}`, () => {
+    assert.deepEqual(promotedBy(build, { ...sources, ...tsconfigs }), expected);
+  });
+}
+
+test("a ! glob drops only the matches of its own entry array or script command", () => {
+  const tree = { "src/index.ts": "export const core = 1;\n", "src/fixtures/data.ts": "export const data = 1;\n", "src/core.test.ts": "test;\n" };
+  assert.deepEqual(promotedBy("tsup", { ...tree, "tsup.config.ts": 'export default [{ entry: ["src/fixtures/*.ts"] }, { entry: ["src/**/*.ts", "!src/fixtures/**", "!src/**/*.test.ts"] }];\n' }), ["src/fixtures/data.ts"]);
+  assert.deepEqual(promotedBy("tsup", { ...tree, "tsup.config.ts": 'export default { entry: ["src/**/*.ts", "!src/fixtures/**", "!src/**/*.test.ts"] };\n' }), []);
+  assert.deepEqual(promotedBy("tsup 'src/fixtures/*.ts' && tsup 'src/**/*.ts' '!src/fixtures/**' '!src/**/*.test.ts'", tree), ["src/fixtures/data.ts"]);
+  assert.deepEqual(promotedBy("tsup 'src/**/*.ts' '!src/fixtures/**' '!src/**/*.test.ts'", tree), []);
+});
+
+test("a package the change demotes but keeps needs a bump for a shipped file the change adds", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/package-graph.json", JSON.stringify({
+    stable: [{ name: "@uifn/core", path: "uifn/core" }],
+    experimental: [{ name: "@uifn/patterns", path: "uifn/patterns" }, { name: "@uifn/react", path: "uifn/react" }],
+  }));
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    delete document.packages["@uifn/react"];
+    return JSON.stringify(document);
+  });
+  repo.write("uifn/react/src/added.ts", "export const added = 1;\n");
+  repo.commit("demote react and add a source");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/react: shipped code changed \(src\/added\.ts\) but version is still 1\.0\.0/);
+  assert.doesNotMatch(output, /is not a stable package/);
 });
 
 test("entryReferences reads every condition, array fallback and pattern of the entry fields", () => {

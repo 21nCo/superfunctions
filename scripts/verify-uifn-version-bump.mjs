@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -59,25 +60,20 @@ const REPO_PATH = /(['"`])((?:uifn|scripts)\/[^'"`\s]*?)(?:\1|\$\{)/g;
 const BARE_LITERAL = /(['"`])([^'"`\s$\\:]+)\1/g;
 const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
-const TSCONFIG_EXCLUDE = /"exclude"\s*:\s*\[([^\]]*)\]/;
-// Sources tsc emits from an include glob or directory.
-const TS_SOURCE = /\.[cm]?tsx?$/;
 const GLOB = /[*?[{]/;
 // A command that runs tsc without -p or -b compiles ./tsconfig.json.
 const BARE_TSC = /(?:^|\s)tsc(?=\s|$)(?![^&|;]*\s(?:-p|--project|-b|--build)(?:\s|=|$))/;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
-// True when a glob or path names the file or one of its directories, as tsconfig exclude and manifest `files` do.
 const coversPath = (pattern, file) => file.split("/").some((_, index, parts) => globToRegExp(pattern).test(parts.slice(0, index + 1).join("/")));
 
-// The innermost bracket open at `index`, so `["../a", "../b"]` elements are not joined like call arguments.
 function enclosingBracket(text, index) {
   for (let position = index - 1, depth = 0; position >= Math.max(0, index - 4096); position -= 1) {
     if (")]}".includes(text[position])) depth += 1;
-    else if ("([{".includes(text[position]) && (depth -= 1) < 0) return text[position];
+    else if ("([{".includes(text[position]) && (depth -= 1) < 0) return position;
   }
-  return "";
+  return -1;
 }
 
 /** Classifies a path relative to the package root as "manifest", "shipped" or "excluded". */
@@ -305,48 +301,48 @@ export function tsconfigEntries(file, text) {
  * paths and bare strings resolved from the package root and the file's directory; in a tsconfig, its
  * include and files entries, marked with the tsconfig. Soft targets (bare strings) are ambiguous with
  * package names and options and cannot leave the package without `..`, so the out-of-root guard skips
- * them; a `!` glob is marked negated. A specifier in module position in a source file is marked bundled.
+ * them. A specifier in module position in a source file is marked bundled.
+ * A `!` glob is marked negated, a reference keeps its enclosing bracket as `list`, and a tsconfig's own specifiers are overridden.
  */
 export function fileReferences(file, text, { root = path.posix.dirname(file), base = path.posix.dirname(file), buildFile = false } = {}) {
   const dir = path.posix.dirname(file);
   const found = [];
   const add = (target, extra = {}) => found.push({ target: path.posix.normalize(target).replace(/\/+$/, ""), soft: false, ...extra });
   const entries = TSCONFIG.test(file) ? tsconfigEntries(file, text) : [];
-  const exclude = [...(text.match(TSCONFIG_EXCLUDE)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(([, entry]) => path.posix.join(dir, entry).replace(/\/+$/, ""));
-  for (const target of entries) add(target, { tsconfig: file, exclude });
+  for (const target of entries) add(target, { tsconfig: file });
   const isEntry = (target) => entries.includes(path.posix.normalize(target).replace(/\/+$/, ""));
   for (const match of text.matchAll(SPECIFIER)) {
     const segments = [match[2]];
     LITERAL_ARGUMENT.lastIndex = match.index + match[0].length;
     if (!file.endsWith(".json")) for (let argument = LITERAL_ARGUMENT.exec(text); argument; argument = LITERAL_ARGUMENT.exec(text)) segments.push(argument[2]);
     const bundled = !buildFile && !file.endsWith(".json") && MODULE_CONTEXT.test(text.slice(Math.max(0, match.index - 32), match.index));
-    // A tsconfig with its own include or files replaces those of the tsconfig it extends, so naming that one does not make tsc emit from it.
-    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : entries.length > 0 ? { overridden: true } : {});
-    if (segments.length === 1 || enclosingBracket(text, match.index) === "[") continue;
+    const list = enclosingBracket(text, match.index);
+    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : TSCONFIG.test(file) ? { overridden: true } : { list });
+    if (segments.length === 1 || text[list] === "[") continue;
     // A joined path is an extra candidate. For `path.resolve(packageRoot, "..", "x")` the base expression is unknown, so also try the package root.
     for (const from of match[2].startsWith("..") ? [dir, base] : [dir]) if (!isEntry(path.posix.join(from, ...segments))) add(path.posix.join(from, ...segments));
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
-    for (const [, , value] of text.matchAll(BARE_LITERAL)) {
+    for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
       if (!negated && /^(?:\/|\.\.?(?:\/|$))/.test(value)) continue;
-      for (const from of new Set([root, dir])) add(path.posix.join(from, value.slice(Number(negated))), negated ? { soft: true, negated } : { soft: true });
+      for (const from of new Set([root, dir])) add(path.posix.join(from, value.slice(Number(negated))), { soft: true, list: enclosingBracket(text, index), ...(negated ? { negated } : {}) });
     }
   }
-  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}`, reference]));
+  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}`, reference]));
   return [...unique.values()];
 }
 
-/** Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked negated. */
+/** Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked negated, with the command they are in. */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
-    for (const token of scripts[name].split(/[\s;&|<>()]+/)) {
+    for (const [list, command] of scripts[name].split(/&&|\|\||[;|]/).entries()) for (const token of command.split(/[\s&<>()]+/)) {
       const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
       const negated = /^!./.test(value);
-      if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, ...(negated ? { negated } : {}) });
+      if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : {}) });
     }
     if (scripts[name].split(/&&|\|\||[;|]/).some((command) => BARE_TSC.test(command))) found.push({ from, target: `${packagePath}/tsconfig.json`, soft: false });
   }
@@ -449,14 +445,13 @@ export function resolveReference(target, inventory) {
  * manifest entry fields; each scanned file adds its references (fileReferences). A resolved file is promoted
  * (counted as shipped, and scanned in turn) when it is a declared exclusion, which the guard then rejects,
  * or a test, fixture or docs path that the reference consumes: a file it names, a file a glob matches unless
- * a `!` glob from the same file or script negates it (build entries such as `src/hooks/*.ts` build every match),
- * or a file under a directory that is itself such a path. So `path.join(root, "src")` does not pull in
- * src/__tests__. A tsconfig's include promotes the sources it matches outside its exclude only when a shipped
- * script or build file names that tsconfig, since only then does tsc emit from it. References to
- * the package root, a declared input root, or their ancestors are base paths, not reads, unless a bundled
+ * a `!` glob in the same array or script command negates it (so `src/hooks/*.ts` builds every match), or a file under a
+ * directory that is itself such a path, so `path.join(root, "src")` does not pull in src/__tests__. A tsconfig a shipped
+ * script or build file names consumes its `tsconfigRoots`, or everything under it if null; its own include entries, a
+ * directory meaning everything under it, promote only declared exclusions. References to the package root, a declared input root, or their ancestors are base paths, not reads, unless a bundled
  * import names a file there, such as a directory's index.
  */
-export function shippedClosure({ packagePath, manifest, files, inputs = [], excluded = [], read }) {
+export function shippedClosure({ packagePath, manifest, files, inputs = [], excluded = [], read, tsconfigRoots = () => null }) {
   const scope = { packagePath, inputs, excluded, options: classifyOptions(manifest) };
   const inventory = fileInventory(files);
   const roots = [packagePath, ...inputs];
@@ -473,6 +468,7 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
   const named = new Set();
   const scanned = new Set();
   const resolved = new Map();
+  const compiled = new Set();
   let wave = files.filter((file) => pathKind(file, scope) === "shipped");
   for (let changed = true; changed; ) {
     const unread = wave.filter((file) => SCANNED_FILE.test(file) && !scanned.has(file));
@@ -480,8 +476,11 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
     for (const file of unread) scanned.add(file);
     wave = [];
     changed = false;
+    for (const config of [...named].filter((file) => TSCONFIG.test(file) && !compiled.has(file))) {
+      compiled.add(config);
+      for (const target of tsconfigRoots(config) ?? [`${path.posix.dirname(config)}/**`]) references.push({ from: config, target, soft: false });
+    }
     for (const reference of references) {
-      // A tsconfig include directory compiles everything under it, not just its index.
       const target = reference.tsconfig && inventory.dirs.has(reference.target) ? `${reference.target}/**` : reference.target;
       if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
       const { files: matches, direct } = resolved.get(target);
@@ -492,14 +491,11 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
         changed = true;
       }
       const glob = GLOB.test(target);
-      const negations = glob ? references.filter((other) => other.negated && other.from === reference.from) : [];
-      const consumes = (file) =>
-        reference.tsconfig
-          ? named.has(reference.tsconfig) && (direct || TS_SOURCE.test(file)) && !reference.exclude.some((pattern) => coversPath(pattern, file))
-          : direct || glob || pathKind(`${target}/_`, scope) !== "shipped";
+      const negations = glob ? references.filter((other) => other.negated && other.from === reference.from && other.list === reference.list) : [];
+      const consumes = !reference.tsconfig && (direct || glob || pathKind(`${target}/_`, scope) !== "shipped");
       for (const file of matches) {
         const kind = pathKind(file, scope);
-        if (promoted.has(file) || negations.some((other) => coversPath(other.target, file)) || !(kind === "declared" || (kind === "excluded" && consumes(file)))) continue;
+        if (promoted.has(file) || negations.some((other) => coversPath(other.target, file)) || !(kind === "declared" || (kind === "excluded" && consumes))) continue;
         promoted.set(file, reference);
         wave.push(file);
         changed = true;
@@ -507,6 +503,23 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
     }
   }
   return { promoted, references };
+}
+
+/**
+ * What tsc compiles from the tsconfig `file` as TypeScript computes it over `inventory` (extends, include, exclude, files, allowJs), plus
+ * the tsconfigs it references (which `tsc -b` builds; counted for `tsc -p` too); null on any error but TS18003, no inputs.
+ */
+export function tsconfigRoots(file, inventory, readFile) {
+  const ts = createRequire(import.meta.url)("typescript");
+  const repoPath = (entry) => entry.replace(/^\/+|\/+$/g, "");
+  const read = (entry) => (inventory.set.has(repoPath(entry)) ? (readFile(repoPath(entry)) ?? undefined) : undefined);
+  const within = (dir, entries) => entries.filter((entry) => path.posix.dirname(entry) === (repoPath(dir) || ".")).map((entry) => path.posix.basename(entry));
+  const entries = (dir) => ({ files: within(dir, inventory.files), directories: within(dir, [...inventory.dirs]) });
+  const host = { useCaseSensitiveFileNames: true, fileExists: (entry) => inventory.set.has(repoPath(entry)), readFile: read, readDirectory: (root, extensions, excludes, includes, depth) => ts.matchFiles(root, extensions, excludes, includes, true, "/", depth, entries, (entry) => entry) };
+  const { config, error } = ts.readConfigFile(`/${file}`, read);
+  const parsed = error ? null : ts.parseJsonConfigFileContent(config, host, `/${path.posix.dirname(file)}`, undefined, `/${file}`);
+  if (!parsed || parsed.errors.some((diagnostic) => diagnostic.code !== 18003)) return null;
+  return [...parsed.fileNames, ...(parsed.projectReferences ?? []).map((reference) => ts.resolveProjectReferencePath(reference))].map(repoPath);
 }
 
 /**
@@ -657,7 +670,8 @@ function packageState(cwd, commit, pkg) {
   const manifest = readJsonAt(cwd, commit, `${pkg.packagePath}/package.json`);
   const packageFiles = listFiles(cwd, commit, [pkg.packagePath]);
   const files = [...packageFiles, ...(pkg.inputs.length > 0 ? listFiles(cwd, commit, pkg.inputs) : [])];
-  const { promoted, references } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths) });
+  let tree;
+  const { promoted, references } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths), tsconfigRoots: (file) => tsconfigRoots(file, (tree ??= fileInventory(listFiles(cwd, commit, ["."]))), (entry) => readAt(cwd, commit, entry)) });
   const present = new Set(files);
   const scope = { packagePath: pkg.packagePath, inputs: pkg.inputs, excluded: pkg.excluded, options: classifyOptions(manifest) };
   return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (promoted.has(file) || pathKind(file, scope) === "shipped") };
@@ -714,7 +728,7 @@ function evaluateRange(cwd, from, to, entries, stateAt) {
       headManifest: readJsonAt(cwd, to, `${headPath}/package.json`),
       shippedFiles: files.filter((file) => ends.some((state) => state.ships(file))),
       headChangelog: readAt(cwd, to, `${headPath}/CHANGELOG.md`),
-      stable: Boolean(head),
+      stable: Boolean(head) && !head.demoted,
     });
   });
 }
@@ -734,13 +748,14 @@ export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" })
   }
   const atHead = loadPackages(cwd, headCommit);
   const atBase = loadPackages(cwd, mergeBase, { required: false });
-  // A package the head demotes, moves or drops is still judged at its merge-base path.
+  // A package the head demotes, moves or drops is still judged at its merge-base path, and one it keeps at the head too, with its base declarations.
   const names = [...new Set([...atBase.packages.keys(), ...atHead.packages.keys()])];
   const entries = names.map((name) => {
     const basePackage = atBase.packages.get(name) ?? null;
     const headPackage = atHead.packages.get(name) ?? null;
     const basePath = atBase.locations.get(name) ?? headPackage?.packagePath ?? atHead.locations.get(name);
-    return { name, base: basePackage, head: headPackage, basePath, headPath: atHead.locations.get(name) ?? basePath };
+    const headPath = atHead.locations.get(name) ?? basePath;
+    return { name, base: basePackage, head: headPackage ?? (basePackage && { ...basePackage, packagePath: headPath, demoted: true }), basePath, headPath };
   });
   const stateAt = stateCache(cwd);
   const results = evaluateRange(cwd, mergeBase, headCommit, entries, stateAt);
