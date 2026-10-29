@@ -160,17 +160,21 @@ describe("ComposeController", () => {
       await writeFile(path.join(root, "compose.yaml"), "services:\n  redis:\n    image: busybox\n    container_name: shared-redis\n" +
         "    networks:\n      shared:\n        aliases: [cache]\n      private: {}\n" +
         "  worker:\n    image: busybox\n    links: [redis, 'redis:redis', 'redis:kv']\n    external_links: ['outside:ext']\n" +
-        "    extra_hosts: ['db:10.0.0.5', 'gateway=host-gateway']\n    networks: [shared]\n" +
+        "    extra_hosts: ['db:10.0.0.5', 'gateway:host-gateway']\n    networks: [shared]\n" +
         "  host:\n    image: busybox\n    network_mode: host\n    extra_hosts: ['db:10.0.0.5']\n" +
+        "  mapped:\n    image: busybox\n    extra_hosts:\n      host.docker.internal: 127.0.0.1\n      v6.example: '::1'\n" +
         "networks:\n  shared: {}\n  private:\n    external: true\n    name: fixture-private\n");
       const redis = await read("redis");
       const shared = redis.networks.find((network) => network !== "fixture-private")!;
       expect(redis.names).toEqual({ networks: { [shared]: ["shared-redis", "cache"], "fixture-private": ["shared-redis"] }, overrides: [] });
       const worker = await read("worker");
       expect(worker.networks).toEqual([shared]);
-      expect(worker.names).toEqual({ networks: { [shared]: [] }, overrides: ["kv", "ext", "db", "gateway"] });
+      // Each extra_hosts mapping keeps its address; a link names a container instead.
+      expect(worker.names).toEqual({ networks: { [shared]: [] }, overrides: [{ name: "kv" }, { name: "ext" },
+        { name: "db", address: "10.0.0.5" }, { name: "gateway", address: "host-gateway" }] });
+      expect((await read("mapped")).names.overrides).toEqual(expect.arrayContaining([{ name: "host.docker.internal", address: "127.0.0.1" }, { name: "v6.example", address: "::1" }]));
       // Its own mappings apply even without a Compose DNS network.
-      expect(await read("host")).toEqual({ networks: [], names: { networks: {}, overrides: ["db"] } });
+      expect(await read("host")).toEqual({ networks: [], names: { networks: {}, overrides: [{ name: "db", address: "10.0.0.5" }] } });
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 30_000);
   it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("fingerprints effective Compose command and env_file inputs", async () => {

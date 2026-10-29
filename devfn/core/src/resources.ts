@@ -387,6 +387,37 @@ function containerListener(input: ResourcePlanInput, node: string, port: string 
 }
 
 /**
+ * Where a host name leads from inside one Compose consumer, decided once for
+ * listener identity and endpoint ambiguity: "gateway" for the host's loopback
+ * ports, otherwise the selected services that answer it (reachedServices).
+ * The consumer's own links, external_links and extra_hosts resolve a name
+ * ahead of Docker DNS, so a name it maps has no listener DevFn can establish,
+ * except the gateway mapped only to Docker's host-gateway address. An
+ * unmapped gateway name that a selected service also answers is ambiguous.
+ * Mapped addresses are never echoed.
+ */
+function containerRoute(context: TargetContext, endpoint: Endpoint, consumer: string): "gateway" | string[] | undefined {
+  const { input, name, gateway } = context;
+  const host = canonicalHost(endpoint.host);
+  const isGateway = gateway !== undefined && host === canonicalHost(gateway.host);
+  const mapped = own(input.composeNames, consumer)?.overrides.filter((entry) => canonicalHost(entry.name) === host) ?? [];
+  const toGateway = isGateway && mapped.every((entry) => entry.address === "host-gateway");
+  if (mapped.length && !toGateway) {
+    const reason = isGateway ? "the container host gateway, which its own links, external_links or extra_hosts map to an address other than host-gateway" :
+      "a name its own links, external_links or extra_hosts map";
+    invalid(`Compose service ${consumer} consumes resource ${name}, whose endpoint ${endpoint.host}:${endpoint.port} is ${reason}; remove that mapping or select a target it does not map.`);
+  }
+  if (!isGateway) return reachedServices(input, host, consumer);
+  // Its extra_hosts entry resolves ahead of Docker DNS, which a selected service would otherwise answer first.
+  const shadowing = mapped.length ? [] : reachedServices(input, host, consumer) ?? [];
+  if (shadowing.length) {
+    invalid(`Compose service ${consumer} consumes resource ${name}, whose endpoint ${endpoint.host}:${endpoint.port} is the container host gateway, but Docker DNS also answers that name with ` +
+      `${shadowing.join(", ")} on the networks ${consumer} joins; rename them or map the gateway to host-gateway in its extra_hosts.`);
+  }
+  return "gateway";
+}
+
+/**
  * The listeners an endpoint reaches from inside one Compose consumer. The
  * host gateway is the host's loopback port. Docker DNS resolves a service
  * name on every network the consumer joins, whichever project owns the
@@ -396,12 +427,11 @@ function containerListener(input: ResourcePlanInput, node: string, port: string 
  * networks; with provisional networks it is left to a later pass.
  */
 function containerListeners(context: TargetContext, endpoint: Endpoint, consumer: string): string[] {
-  const { input, gateway } = context;
-  const host = canonicalHost(endpoint.host);
-  if (gateway && host === canonicalHost(gateway.host)) return [`loopback:${endpoint.port}`];
-  const reached = reachedServices(input, host, consumer);
-  if (!reached) return [];
-  return reached.length ? reached.map((node) => containerListener(input, node, endpoint.port)) : [`dns:${host}:${endpoint.port}`];
+  const { input } = context;
+  const route = containerRoute(context, endpoint, consumer);
+  if (route === "gateway") return [`loopback:${endpoint.port}`];
+  if (!route) return [];
+  return route.length ? route.map((node) => containerListener(input, node, endpoint.port)) : [`dns:${canonicalHost(endpoint.host)}:${endpoint.port}`];
 }
 
 /**
@@ -428,15 +458,9 @@ function reachedServices(input: ResourcePlanInput, host: string, consumer: strin
  * select. Decided on effective networks, before state or leases.
  */
 function rejectAmbiguousContainerEndpoint(context: TargetContext, endpoint: Endpoint, source: ResourceValueSource, consumer: string): void {
-  if (source === "host-gateway") return;
   const { input, name, target } = context;
-  // Its own mapping of the name bypasses Docker DNS, so no listener is known.
-  if (own(input.composeNames, consumer)?.overrides.some((mapped) => canonicalHost(mapped) === canonicalHost(endpoint.host))) {
-    invalid(`Compose service ${consumer} consumes resource ${name}, whose endpoint ${endpoint.host}:${endpoint.port} its own links, external_links or extra_hosts map; ` +
-      "remove that mapping or select a target it does not map.");
-  }
-  const reached = reachedServices(input, canonicalHost(endpoint.host), consumer);
-  if (!reached) return;
+  const reached = containerRoute(context, endpoint, consumer);
+  if (!reached || reached === "gateway") return;
   const selected = source === "compose" && "node" in target ? containerListener(input, target.node, endpoint.port) : undefined;
   const listeners = new Set(reached.map((node) => containerListener(input, node, endpoint.port)));
   const competing = reached.filter((node) => containerListener(input, node, endpoint.port) !== selected);

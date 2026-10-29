@@ -1279,12 +1279,21 @@ export interface ComposeServiceDnsNames {
   /** Its container_name and that network's aliases, by effective network name. */
   networks: Record<string, string[]>;
   /** Names its own links, external_links and extra_hosts map inside it, ahead of Docker DNS. */
-  overrides: string[];
+  overrides: ComposeNameOverride[];
 }
 
-/** The name a link (service:alias) or extra_hosts entry (name:address, name=address or a mapping key) gives. */
-function mappedName(entry: string): string {
-  return /^[^:=]*/.exec(entry)![0];
+/** A name a service maps itself, with the address extra_hosts gives it; a link names a container instead. */
+export interface ComposeNameOverride { name: string; address?: string }
+
+/** Each extra_hosts entry: name:address or name=address, or in mapping form a name and its address or addresses. */
+function hostMappings(extraHosts: string[] | Record<string, unknown> | undefined): ComposeNameOverride[] {
+  if (!Array.isArray(extraHosts)) {
+    return Object.entries(extraHosts ?? {}).flatMap(([name, address]) => [address].flat().map((value) => ({ name, address: String(value ?? "") })));
+  }
+  return extraHosts.map((entry) => {
+    const separator = /[:=]/.exec(entry)?.index ?? entry.length;
+    return { name: entry.slice(0, separator), address: entry.slice(separator + 1) };
+  });
 }
 
 /** What effectiveComposeServiceNetworks reports in dnsNames for one effective service. */
@@ -1297,11 +1306,10 @@ function serviceDnsNames(service: { container_name?: string; networks?: Record<s
   const links = (service.links ?? []).flatMap((link) => {
     const separator = link.indexOf(":");
     const alias = link.slice(separator + 1);
-    return separator >= 0 && alias !== link.slice(0, separator) ? [alias] : [];
+    return separator >= 0 && alias !== link.slice(0, separator) ? [{ name: alias }] : [];
   });
-  const external = (service.external_links ?? []).map((link) => link.slice(link.indexOf(":") + 1));
-  const hosts = Array.isArray(service.extra_hosts) ? service.extra_hosts.map(mappedName) : Object.keys(service.extra_hosts ?? {});
-  return { networks, overrides: [...links, ...external, ...hosts] };
+  const external = (service.external_links ?? []).map((link) => ({ name: link.slice(link.indexOf(":") + 1) }));
+  return { networks, overrides: [...links, ...external, ...hostMappings(service.extra_hosts)] };
 }
 
 /**

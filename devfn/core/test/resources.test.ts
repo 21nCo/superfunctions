@@ -328,7 +328,7 @@ describe("resource validation before side effects", () => {
 
   it("identifies Compose listeners by every Docker DNS name a consumer resolves", () => {
     // Docker DNS also answers a container_name and the aliases a service has on each network.
-    const names = (networks: Record<string, string[]>, overrides: string[] = []) => ({ networks, overrides });
+    const names = (networks: Record<string, string[]>, overrides: Array<{ name: string; address?: string }> = []) => ({ networks, overrides });
     const shared = { composeNetworks: { redis: ["shared"], worker: ["shared"] } };
     const aliased = (url: string) => config((v) => {
       v.resources.cache.namespace = { base: "data" };
@@ -359,12 +359,12 @@ describe("resource validation before side effects", () => {
       v.services.worker = { adapter: "compose", service: "worker", resources: ["cache"] };
       v.profiles.default = { services: ["worker"] };
     });
-    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, ["REDIS."]) } }))
+    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, [{ name: "REDIS." }]) } }))
       .toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("its own links, external_links or extra_hosts map") }));
-    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, ["db"]) } })).not.toThrow();
-    // The gateway name is the platform's to provide, as extra_hosts host-gateway does on Linux.
+    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, [{ name: "db", address: "10.0.0.5" }]) } })).not.toThrow();
+    // The gateway name may be mapped only to the platform's host-gateway address (containerRoute).
     expect(() => plan(consumer, undefined, { platform: "darwin", composeNetworks: { redis: ["one"], worker: ["two"] },
-      composeNames: { worker: names({}, ["host.docker.internal"]) } })).not.toThrow();
+      composeNames: { worker: names({}, [{ name: "host.docker.internal", address: "host-gateway" }]) } })).not.toThrow();
   });
 
   it("canonicalizes hosts with long runs of dots in linear time", () => {
@@ -737,6 +737,44 @@ describe("container and host endpoints", () => {
     for (const gateway of ["localhost", "127.0.0.1", "[::1]", "[::ffff:127.0.0.1]"]) {
       expect(() => gatewayPlan(gateway), gateway).toThrow("is a loopback name");
     }
+  });
+
+  it("reaches the host gateway only through Docker's host-gateway mapping", () => {
+    // Inside a consumer its own extra_hosts and links resolve a name ahead of Docker DNS.
+    const mapped = (overrides: Array<{ name: string; address?: string }>, options: Partial<Parameters<typeof planResources>[0]> = {}, mutate?: (value: any) => void) =>
+      plan(containerConsumer("process", mutate), undefined, { platform: "darwin", composeNames: { worker: { networks: {}, overrides } }, ...options });
+    const elsewhere = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("map to an address other than host-gateway") });
+    for (const platform of ["darwin", "win32"] as const) {
+      for (const overrides of [[{ name: "host.docker.internal", address: "127.0.0.1" }], [{ name: "HOST.docker.internal.", address: "10.1.2.3" }],
+        [{ name: "host.docker.internal", address: "host-gateway" }, { name: "host.docker.internal", address: "127.0.0.1" }], [{ name: "host.docker.internal" }]]) {
+        let error: unknown;
+        try { mapped(overrides, { platform }); } catch (caught) { error = caught; }
+        expect(error, `${platform} ${JSON.stringify(overrides)}`).toEqual(elsewhere);
+        // The mapped address is not echoed.
+        expect((error as Error).message).not.toMatch(/127\.0\.0\.1|10\.1\.2\.3/);
+      }
+      expect(mapped([{ name: "Host.Docker.Internal.", address: "host-gateway" }], { platform }).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL)
+        .toEqual({ value: "redis://host.docker.internal:4107", source: "host-gateway", field: `platform:${platform}` });
+    }
+    // Linux has a gateway only by option; the option and its host-gateway mapping together reach the host.
+    expect(() => mapped([{ name: "host.docker.internal", address: "host-gateway" }], { platform: "linux" })).toThrow("cannot reach on this platform");
+    expect(mapped([{ name: "host.docker.internal", address: "host-gateway" }], { platform: "linux", containerHostGateway: "host.docker.internal" })
+      .resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://host.docker.internal:4107", source: "host-gateway" });
+    expect(() => mapped([{ name: "host.docker.internal", address: "172.17.0.1" }], { platform: "linux", containerHostGateway: "host.docker.internal" })).toThrow(elsewhere);
+    // A remote URL naming the gateway follows the same rule as a rewritten loopback target.
+    const remote = (v: any) => { v.resources.cache.targets.dev = { url: "redis://host.docker.internal:6390" }; v.profiles.default.resources = { cache: "dev" }; };
+    expect(() => mapped([{ name: "host.docker.internal", address: "127.0.0.1" }], {}, remote)).toThrow(elsewhere);
+    expect(mapped([{ name: "host.docker.internal", address: "host-gateway" }], {}, remote).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL)
+      .toMatchObject({ value: "redis://host.docker.internal:6390", source: "manifest" });
+    // A selected service answering the gateway name on a shared network competes with it, unless extra_hosts maps the gateway first.
+    const answering = (v: any) => { v.services.other = { adapter: "compose", service: "other" }; v.profiles.default.services.push("other"); };
+    const shadow = { composeNetworks: { other: ["shared"], worker: ["shared"] } };
+    const aliased = (overrides: Array<{ name: string; address?: string }>, options = {}) => plan(containerConsumer("process", answering), undefined,
+      { platform: "darwin", ...shadow, composeNames: { other: { networks: { shared: ["host.docker.internal"] }, overrides: [] }, worker: { networks: {}, overrides } }, ...options });
+    expect(() => aliased([])).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("is the container host gateway, but Docker DNS also answers that name with other") }));
+    expect(() => aliased([{ name: "host.docker.internal", address: "host-gateway" }])).not.toThrow();
+    expect(() => aliased([], { provisionalNetworks: true })).not.toThrow();
+    expect(() => aliased([], { composeNetworks: { other: ["private"], worker: ["shared"] } })).not.toThrow();
   });
 });
 

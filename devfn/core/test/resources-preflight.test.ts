@@ -15,7 +15,7 @@ import { sameServiceNames } from "./resource-fixtures.js";
  * `docker compose config`, so these preflight checks need no Docker; the
  * references a service interpolates still come from its Compose source.
  */
-const effective = vi.hoisted(() => ({ networks: {} as Record<string, string[]>, names: {} as Record<string, { networks: Record<string, string[]>; overrides: string[] }> }));
+const effective = vi.hoisted(() => ({ networks: {} as Record<string, string[]>, names: {} as Record<string, { networks: Record<string, string[]>; overrides: Array<{ name: string; address?: string }> }> }));
 
 vi.mock("@devfn/compose", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@devfn/compose")>();
@@ -155,6 +155,28 @@ describe("resource collisions on effective Compose networks", () => {
       effective.names = { "devfn/other": { networks: { private: ["redis"] }, overrides: [] } };
       await expectReservation(competing, root);
     });
+  }, 60_000);
+
+  it("rejects a consumer that maps the container host gateway elsewhere before creating lifecycle state", async () => {
+    const hostProvider = validateDevFnConfig({ version: 1, project: { id: "resource-gateway-mapping" }, ports: { redis: {} },
+      processes: { redis: { adapter: "command", command: ["redis-server"], ports: ["redis"] } },
+      services: { worker: { adapter: "compose", service: "worker", resources: ["cache"] } },
+      resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
+      profiles: { default: { services: ["worker"] } } });
+    const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...original, value: "darwin" });
+    try {
+      await withRoot("devfn-resource-gateway-mapping-", async (root) => {
+        await writeFile(path.join(root, "compose.yaml"), "services:\n  worker:\n    image: busybox\n");
+        effective.networks = { "devfn/worker": ["shared"] };
+        for (const overrides of [[{ name: "host.docker.internal", address: "127.0.0.1" }], [{ name: "host.docker.internal" }]]) {
+          effective.names = { "devfn/worker": { networks: {}, overrides } };
+          await expectRejectedBeforeState(hostProvider, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("map to an address other than host-gateway") }, JSON.stringify(overrides));
+        }
+        effective.names = { "devfn/worker": { networks: {}, overrides: [{ name: "host.docker.internal", address: "host-gateway" }] } };
+        await expectReservation(hostProvider, root);
+      });
+    } finally { Object.defineProperty(process, "platform", original); }
   }, 60_000);
 });
 
