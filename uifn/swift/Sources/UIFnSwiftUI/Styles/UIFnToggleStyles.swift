@@ -8,10 +8,9 @@ import SwiftUI
 /// the track sets it from the half of the track the drag ends over; a drag up
 /// or down sets nothing.
 ///
-/// Like the system styles, it draws no label under `labelsHidden()` or
-/// `labelsVisibility(.hidden)`, and accessibility still reads the label. It
-/// can read that only on iOS 18, macOS 15 and later; earlier, it always draws
-/// the label, so leave the label empty there to hide it.
+/// Like the system styles, it draws no label under `labelsHidden()`, and
+/// accessibility still reads the label. `labelsVisibility(_:)` works from
+/// iOS 18 and macOS 15, where SwiftUI has it.
 public struct UIFnSwitchToggleStyle: ToggleStyle {
     public init() {}
 
@@ -27,10 +26,9 @@ public struct UIFnSwitchToggleStyle: ToggleStyle {
 /// The toggle stays a toggle to accessibility; the style changes only how it
 /// looks and flips the binding when pressed like the system styles do.
 ///
-/// Like the system styles, it draws no label under `labelsHidden()` or
-/// `labelsVisibility(.hidden)`, and accessibility still reads the label. It
-/// can read that only on iOS 18, macOS 15 and later; earlier, it always draws
-/// the label, so leave the label empty there to hide it.
+/// Like the system styles, it draws no label under `labelsHidden()`, and
+/// accessibility still reads the label. `labelsVisibility(_:)` works from
+/// iOS 18 and macOS 15, where SwiftUI has it.
 public struct UIFnCheckboxToggleStyle: ToggleStyle {
     public init() {}
 
@@ -191,26 +189,28 @@ struct UIFnToggleAppearance<Label: View>: View {
 
     @ViewBuilder
     private var row: some View {
+        // The label brings the spacing next to the control, so a hidden or
+        // empty label leaves none.
         let spacing = context.scaled(context.spacing.space3)
         switch kind {
         case .switch:
             // Like the system switch, only the track takes presses.
-            HStack(spacing: spacing) {
-                labelText.allowsHitTesting(false)
+            HStack(spacing: 0) {
+                labelText(spacing: spacing, after: true).allowsHitTesting(false)
                 control
             }
         case .checkbox:
             // Like the system checkbox, the whole row takes presses.
-            HStack(spacing: spacing) {
+            HStack(spacing: 0) {
                 control
-                labelText
+                labelText(spacing: spacing, after: false)
             }
             .contentShape(Rectangle())
         }
     }
 
-    private var labelText: some View {
-        UIFnHidableLabel {
+    private func labelText(spacing: CGFloat, after: Bool) -> some View {
+        UIFnHidableLabel(spacing: spacing, isSpacingAfter: after) {
             label
                 .uifnFont(context.typography.size.md, weight: context.typography.weight.regular)
                 .foregroundColor(context.color(context.colors.text.primary))
@@ -300,17 +300,127 @@ struct UIFnToggleAppearance<Label: View>: View {
     }
 }
 
-/// A toggle's visible label, which is left out where labels are hidden. Only
-/// iOS 18, macOS 15 and later tell a style that labels are hidden.
+/// A toggle's visible label and the spacing between it and the control, both
+/// left out where labels are hidden or the label is empty. Only iOS 18,
+/// macOS 15 and later tell a style that labels are hidden; earlier, the label
+/// is drawn as the label of a `LabeledContent` with no content, which SwiftUI
+/// leaves out under `labelsHidden()`.
 private struct UIFnHidableLabel<Content: View>: View {
+    let spacing: CGFloat
+    let isSpacingAfter: Bool
     @ViewBuilder let content: () -> Content
+    @Environment(\.uifnHidesLabelsWithLabeledContent) private var hidesWithLabeledContent
 
     var body: some View {
-        if #available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *) {
-            UIFnVisibleLabel(content: content)
-        } else {
-            content()
+        UIFnLabelSlot(spacing: spacing, isSpacingAfter: isSpacingAfter) {
+            if #available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *), !hidesWithLabeledContent {
+                UIFnVisibleLabel(content: content)
+            } else {
+                // Some containers, such as forms, put space after the label
+                // of a `LabeledContent`. An empty label shows how much, so the
+                // slot can leave it out.
+                LabeledContent {
+                    EmptyView()
+                } label: {
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .layoutValue(key: UIFnLabeledContentSpaceKey.self, value: true)
+                LabeledContent {
+                    EmptyView()
+                } label: {
+                    content()
+                }
+            }
         }
+    }
+}
+
+/// Marks the empty `LabeledContent` that measures the space a container puts
+/// after a label.
+private struct UIFnLabeledContentSpaceKey: LayoutValueKey {
+    static let defaultValue = false
+}
+
+/// Lays out a toggle label with spacing on the side of the control. A label
+/// that takes no width, because it is hidden or empty, gets no spacing.
+private struct UIFnLabelSlot: Layout {
+    let spacing: CGFloat
+    let isSpacingAfter: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let label = measure(proposal: proposal, subviews: subviews) else { return .zero }
+        return CGSize(width: label.width + spacing, height: label.size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let label = measure(proposal: proposal, subviews: subviews)
+        for subview in subviews {
+            guard let label, subview == label.subview else {
+                subview.place(at: bounds.origin, proposal: .zero)
+                continue
+            }
+            let x = isSpacingAfter ? bounds.minX : bounds.minX + spacing
+            subview.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(label.size))
+        }
+    }
+
+    /// The label's spacing to views next to the slot, or the default spacing
+    /// when the label takes no width.
+    func spacing(subviews: Subviews, cache: inout ()) -> ViewSpacing {
+        measure(proposal: .unspecified, subviews: subviews)?.subview.spacing ?? ViewSpacing()
+    }
+
+    /// The label shows no column guides a form gives `LabeledContent`.
+    func explicitAlignment(
+        of guide: HorizontalAlignment,
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGFloat? {
+        nil
+    }
+
+    /// The label's own guides, such as its text baselines.
+    func explicitAlignment(
+        of guide: VerticalAlignment,
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGFloat? {
+        guard let label = measure(proposal: proposal, subviews: subviews) else { return nil }
+        return label.subview.dimensions(in: ProposedViewSize(label.size))[explicit: guide].map { bounds.minY + $0 }
+    }
+
+    /// The label, its size and the width it takes without the space a
+    /// container puts after it, or nil when it takes none. The label takes
+    /// no more than its ideal width, as text does, though `LabeledContent`
+    /// fills the width it is offered on some platforms.
+    private func measure(
+        proposal: ProposedViewSize,
+        subviews: Subviews
+    ) -> (subview: LayoutSubview, size: CGSize, width: CGFloat)? {
+        let space = subviews.first { $0[UIFnLabeledContentSpaceKey.self] }?.sizeThatFits(.unspecified).width ?? 0
+        guard let label = subviews.first(where: { !$0[UIFnLabeledContentSpaceKey.self] }) else { return nil }
+        let ideal = label.sizeThatFits(ProposedViewSize(width: nil, height: proposal.height)).width
+        let width = proposal.width.map { min(ideal, max(0, $0 - spacing) + space) } ?? ideal
+        let size = label.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+        let takenWidth = size.width - space
+        return takenWidth > 0.5 ? (label, size, takenWidth) : nil
+    }
+}
+
+private struct UIFnHidesLabelsWithLabeledContentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether UIFn toggles hide their labels the way they do before iOS 18
+    /// and macOS 15, so tests can check that path on later versions.
+    var uifnHidesLabelsWithLabeledContent: Bool {
+        get { self[UIFnHidesLabelsWithLabeledContentKey.self] }
+        set { self[UIFnHidesLabelsWithLabeledContentKey.self] = newValue }
     }
 }
 
