@@ -51,7 +51,16 @@ jobs:
       - name: swift build
         run: swift build --only-use-versions-from-resolved-file
       - name: swift test
+        env:
+          UIFN_SNAPSHOT_ARTIFACTS: ${{ runner.temp }}/uifn-snapshots
         run: swift test --only-use-versions-from-resolved-file
+      - name: Upload UIFnSwiftUI snapshots that differ from their references
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uifn-snapshot-failures
+          path: ${{ runner.temp }}/uifn-snapshots
+          if-no-files-found: ignore
       - name: UIFnSwiftUI tests on an iOS simulator (UIKit trait collections)
         run: |
           udid=$(xcrun simctl list devices available --json | python3 -c '
