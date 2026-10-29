@@ -142,19 +142,25 @@ function relativeLuminance(color: OklchColor): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-/** The WCAG contrast ratio of two relative luminances, rounded to two decimals. */
+/**
+ * The unrounded WCAG contrast ratio of two relative luminances. Compare this
+ * with a minimum: WCAG does not round a ratio up to its threshold.
+ */
 export function luminanceContrastRatio(first: number, second: number): number {
   const lighter = Math.max(first, second);
   const darker = Math.min(first, second);
 
-  return Math.round(((lighter + 0.05) / (darker + 0.05)) * 100) / 100;
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
+/** The contrast ratio of two theme colors, rounded to two decimals. */
 export function contrastRatio(foreground: string, background: string): number {
-  return luminanceContrastRatio(
+  const ratio = luminanceContrastRatio(
     relativeLuminance(parseColorToOklch(foreground)),
     relativeLuminance(parseColorToOklch(background))
   );
+
+  return Math.round(ratio * 100) / 100;
 }
 
 /** The minimum contrast ratio of every theme contrast pair (WCAG AA body text). */

@@ -501,11 +501,11 @@ describe('generateSwiftTokens', () => {
     expect(rejected.code).toBe('UIFN_CONTRAST_BUDGET');
     expect(rejected.details).toEqual({ appearance: 'light', ...pair, gamut: 'srgb', contrastRatio: 2.52 });
 
-    // Passes in sRGB (4.54:1) but not in Display P3 (4.46:1).
+    // Passes in sRGB (4.54:1) but not in Display P3 (4.458:1).
     const p3Only = theme('light', { 'color.accent.solid': 'oklch(59% 0.25 265)' });
     expect(validateTokenTheme(p3Only).ok).toBe(true);
     expect(errorOf(() => generateSwiftTokens({ light: p3Only }, { name: 'fixture' })).details).toEqual({
-      appearance: 'light', ...pair, gamut: 'display-p3', contrastRatio: 4.46,
+      appearance: 'light', ...pair, gamut: 'display-p3', contrastRatio: 4.45,
     });
 
     // Through a reference to a hex color, and in a variant appearance.
@@ -530,6 +530,27 @@ describe('generateSwiftTokens', () => {
     expect(['oklch(45% 0.3 275)', 'oklch(50% 0.25 25)'].map((value) => isOklchInGamut(parseOklch(value), 'srgb'))).toEqual([false, false]);
     const vivid = theme('light', { 'color.accent.solid': 'oklch(45% 0.3 275)', 'color.danger.solid': 'oklch(50% 0.25 25)' });
     expect(colorBlock(generateSwiftTokens({ light: vivid }, { name: 'fixture' }), 'solid')).toContain('// light: oklch(45% 0.3 275)');
+  });
+
+  it('compares the unrounded contrast of the colors as written to Swift with the minimum', () => {
+    const pair = { foreground: 'color.accent.contrast', background: 'color.accent.solid', minimum: 4.5 };
+    for (const [solid, gamut] of [
+      ['oklch(59.73% 0.4 275)', 'srgb'], // sRGB 4.4981:1
+      ['oklch(59.12% 0.25 25)', 'srgb'], // sRGB 4.4983:1
+      ['oklch(58.22% 0.25 260)', 'display-p3'], // sRGB 4.5975:1, Display P3 4.4997:1
+      ['oklch(59.106575% 0.25 25)', 'srgb'], // sRGB 4.5000012:1 before the six-decimal channels, 4.4999969:1 after
+    ]) {
+      const boundary = theme('light', { 'color.accent.solid': solid });
+      expect(validateTokenTheme(boundary).ok).toBe(true);
+      expect(errorOf(() => generateSwiftTokens({ light: boundary }, { name: 'fixture' })).details).toEqual({
+        appearance: 'light', ...pair, gamut, contrastRatio: 4.49,
+      });
+    }
+
+    // Just at or above the minimum in both gamuts as emitted (4.5009, 4.5021 and 4.5012:1 at the least).
+    for (const solid of ['oklch(59.1% 0.25 25)', 'oklch(59.71% 0.4 275)', 'oklch(58.21% 0.25 260)']) {
+      expect(() => generateSwiftTokens({ light: theme('light', { 'color.accent.solid': solid }) }, { name: 'fixture' })).not.toThrow();
+    }
   });
 });
 
@@ -595,12 +616,14 @@ describe('uifn-swift-tokens CLI', () => {
   });
 
   it('exits nonzero without writing when an emitted color pair is below the contrast budget', () => {
-    const saturated = theme('light', { 'color.accent.solid': 'oklch(73% 0.4 275)', 'color.accent.contrast': '#fff' });
-    const memory = memoryIo({ 'light.json': JSON.stringify(saturated) });
-    expect(runSwiftTokensCli(['--name', 'fixture', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(1);
-    expect(memory.err.at(-1)).toContain('Generated Swift color contrast is below the required minimum.');
-    expect(memory.err.at(-1)).toContain('"background":"color.accent.solid","gamut":"srgb"');
-    expect(memory.files['T.swift']).toBeUndefined();
+    for (const [solid, contrastRatio] of [['oklch(73% 0.4 275)', 2.52], ['oklch(59.73% 0.4 275)', 4.49]] as const) {
+      const saturated = theme('light', { 'color.accent.solid': solid, 'color.accent.contrast': '#fff' });
+      const memory = memoryIo({ 'light.json': JSON.stringify(saturated) });
+      expect(runSwiftTokensCli(['--name', 'fixture', '--light', 'light.json', '--out', 'T.swift'], memory.io)).toBe(1);
+      expect(memory.err.at(-1)).toContain('Generated Swift color contrast is below the required minimum.');
+      expect(memory.err.at(-1)).toContain(`"background":"color.accent.solid","gamut":"srgb","contrastRatio":${contrastRatio}`);
+      expect(memory.files['T.swift']).toBeUndefined();
+    }
   });
 
   it('exits nonzero without writing when a theme value cannot be emitted', () => {

@@ -113,11 +113,16 @@ function swiftString(value: string): string {
   return JSON.stringify(value);
 }
 
+// Swift source carries six decimals; contrast is measured on the same values.
+function serializedNumber(value: number): number {
+  return Number(value.toFixed(6));
+}
+
 function swiftNumber(value: number, path: string): string {
   if (!Number.isFinite(value)) {
     throw unsupported('Swift numeric tokens must be finite.', { path, value: String(value) });
   }
-  const rounded = Number(value.toFixed(6));
+  const rounded = serializedNumber(value);
   return Object.is(rounded, -0) ? '0' : String(rounded);
 }
 
@@ -367,9 +372,15 @@ const EMITTED_GAMUTS: ReadonlyArray<[keyof SwiftColorValue, RgbGamut]> = [
   ['displayP3', 'display-p3'],
 ];
 
+function serializedLuminance(rgb: RgbTriple, gamut: RgbGamut): number {
+  return rgbRelativeLuminance(rgb.map(serializedNumber) as RgbTriple, gamut);
+}
+
 // validateTokenTheme measures contrast on channel-clipped sRGB, while Swift
 // emits chroma-reduced colors, so an out-of-gamut color can pass there yet be
-// unreadable as emitted. Check each contrast pair again on the emitted values.
+// unreadable as emitted. Check each contrast pair again on the serialized
+// values, comparing the unrounded ratio; the reported ratio is floored so a
+// failing pair never reads as the minimum.
 function validateEmittedContrast(appearances: Record<SwiftAppearance, Map<string, DesignToken>>): void {
   const checked = new Set<Map<string, DesignToken>>();
   for (const appearance of APPEARANCES) {
@@ -381,8 +392,8 @@ function validateEmittedContrast(appearances: Record<SwiftAppearance, Map<string
       const backgroundValue = colorValue(tokens.get(background)!, background);
       for (const [key, gamut] of EMITTED_GAMUTS) {
         const ratio = luminanceContrastRatio(
-          rgbRelativeLuminance(foregroundValue[key], gamut),
-          rgbRelativeLuminance(backgroundValue[key], gamut)
+          serializedLuminance(foregroundValue[key], gamut),
+          serializedLuminance(backgroundValue[key], gamut)
         );
         if (ratio < CONTRAST_MINIMUM) {
           throw new UIFnTokenError('UIFN_CONTRAST_BUDGET', 'Generated Swift color contrast is below the required minimum.', {
@@ -390,7 +401,7 @@ function validateEmittedContrast(appearances: Record<SwiftAppearance, Map<string
             foreground,
             background,
             gamut,
-            contrastRatio: ratio,
+            contrastRatio: Math.floor(ratio * 100) / 100,
             minimum: CONTRAST_MINIMUM,
           });
         }
