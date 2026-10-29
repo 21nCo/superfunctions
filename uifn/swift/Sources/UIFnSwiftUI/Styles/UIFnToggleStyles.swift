@@ -301,10 +301,11 @@ struct UIFnToggleAppearance<Label: View>: View {
 }
 
 /// A toggle's visible label and the spacing between it and the control, both
-/// left out where labels are hidden or the label is empty. Only iOS 18,
-/// macOS 15 and later tell a style that labels are hidden; earlier, the label
-/// is drawn as the label of a `LabeledContent` with no content, which SwiftUI
-/// leaves out under `labelsHidden()`.
+/// left out where labels are hidden or the label is empty. A label of several
+/// views is drawn as one leading-aligned column. Only iOS 18, macOS 15 and
+/// later tell a style that labels are hidden; earlier, the label is drawn as
+/// the label of a `LabeledContent` with no content, which SwiftUI leaves out
+/// under `labelsHidden()`.
 private struct UIFnHidableLabel<Content: View>: View {
     let spacing: CGFloat
     let isSpacingAfter: Bool
@@ -314,7 +315,7 @@ private struct UIFnHidableLabel<Content: View>: View {
     var body: some View {
         UIFnLabelSlot(spacing: spacing, isSpacingAfter: isSpacingAfter) {
             if #available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *), !hidesWithLabeledContent {
-                UIFnVisibleLabel(content: content)
+                UIFnVisibleLabel(content: column)
             } else {
                 // Some containers, such as forms, put space after the label
                 // of a `LabeledContent`. An empty label shows how much, so the
@@ -328,9 +329,17 @@ private struct UIFnHidableLabel<Content: View>: View {
                 LabeledContent {
                     EmptyView()
                 } label: {
-                    content()
+                    column()
                 }
             }
+        }
+    }
+
+    /// The label as one view, since the slot would otherwise lay out each
+    /// view of a label of several views on its own.
+    private func column() -> some View {
+        VStack(alignment: .leading) {
+            content()
         }
     }
 }

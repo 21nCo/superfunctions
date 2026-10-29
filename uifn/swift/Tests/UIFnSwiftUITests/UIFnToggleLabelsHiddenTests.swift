@@ -129,6 +129,66 @@ struct UIFnToggleLabelsHiddenTests {
             #expect(labeledContent.differingFraction(from: visibility) == 0, "\(label ?? "no label")")
         }
     }
+
+    @MainActor
+    private static func toggle(_ style: Style, path: Path, @ViewBuilder label: () -> some View) -> some View {
+        Toggle(isOn: .constant(true), label: label)
+            .toggleStyle(style)
+            .environment(\.uifnHidesLabelsWithLabeledContent, path == .labeledContent)
+    }
+
+    /// A label of several views, such as a title and a subtitle, is drawn
+    /// whole on either path, as one leading-aligned column, and hidden whole
+    /// where labels are hidden.
+    @Test(arguments: Style.allCases, Path.allCases)
+    func aLabelOfSeveralViewsIsDrawnAsAColumn(_ style: Style, _ path: Path) async throws {
+        if #unavailable(iOS 18.0, macOS 15.0), path == .labelsVisibility { return }
+        let title = try await Self.render { Self.toggle(style, path: path) { Text("Remember") } }
+        let titleAndSubtitle = try await Self.render {
+            Self.toggle(style, path: path) {
+                Text("Remember")
+                Text("On this device only")
+            }
+        }
+        let column = try await Self.render {
+            Self.toggle(style, path: path) {
+                VStack(alignment: .leading) {
+                    Text("Remember")
+                    Text("On this device only")
+                }
+            }
+        }
+        #expect(titleAndSubtitle.height > title.height)
+        #expect(titleAndSubtitle.width > title.width)
+        #expect(titleAndSubtitle.width == column.width && titleAndSubtitle.height == column.height)
+        #expect(titleAndSubtitle.differingFraction(from: column) == 0)
+
+        let unlabelled = try await Self.render { Self.toggle(style, label: nil, path: path) }
+        let hidden = try await Self.render {
+            Self.toggle(style, path: path) {
+                Text("Remember")
+                Text("On this device only")
+            }
+            .labelsHidden()
+        }
+        #expect(hidden.width == unlabelled.width && hidden.height == unlabelled.height)
+        #expect(hidden.differingFraction(from: unlabelled) == 0)
+    }
+
+    @Test(arguments: Style.allCases)
+    func bothPathsDrawALabelOfSeveralViewsAlike(_ style: Style) async throws {
+        guard #available(iOS 18.0, macOS 15.0, *) else { return }
+        @MainActor func content(_ path: Path) -> some View {
+            Self.toggle(style, path: path) {
+                Text("Remember")
+                Text("On this device only")
+            }
+        }
+        let visibility = try await Self.render { content(.labelsVisibility) }
+        let labeledContent = try await Self.render { content(.labeledContent) }
+        #expect(labeledContent.width == visibility.width && labeledContent.height == visibility.height)
+        #expect(labeledContent.differingFraction(from: visibility) == 0)
+    }
 }
 
 private extension Toggle {
