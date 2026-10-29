@@ -1,5 +1,5 @@
 {
-  "$comment": "Read by scripts/verify-uifn-version-bump.mjs. inputs: repo paths outside a stable package that feed its tarball; a shipped change to them needs that package's version bump. references: out-of-root paths its shipped files or lifecycle scripts name that do not feed the tarball. excluded: paths inside the package that never reach the tarball; the check fails if one is in files, a tsconfig include, or referred to by a shipped file or lifecycle script. Every entry maps a path to the reason.",
+  "$comment": "Read by scripts/verify-uifn-version-bump.mjs. inputs: repo paths outside a stable package that feed its tarball; a shipped change to them needs that package's version bump. references: out-of-root paths its shipped files or lifecycle scripts name that do not feed the tarball (validation scripts such as test, typecheck and generate:check are not followed). Inputs declared at the merge base keep counting, and the gate honors an exclusion only once it is on the base branch. excluded: paths inside the package that never reach the tarball; the check fails if one is in files, a tsconfig include or a build config loaded implicitly, or is referred to by a shipped file or lifecycle script. Every entry maps a path to the reason.",
   "schemaVersion": 1,
   "packages": {
     "@uifn/core": {
@@ -15,17 +15,12 @@
         "uifn/core/src": "tsconfig paths for type-checking; tsup keeps the @uifn/core dependency external."
       }
     },
-    "@uifn/svelte": {
-      "references": {
-        "scripts/generate-uifn-svelte.mjs": "prepack runs it with --check, which compares the committed lib/generated sources and writes nothing."
-      }
-    },
+    "@uifn/svelte": {},
     "@uifn/solid": {
       "inputs": {
         "scripts/build-uifn-solid.mjs": "The package build script."
       },
       "references": {
-        "scripts/generate-uifn-solid.mjs": "prepack runs it with --check, which compares the committed src/generated sources and writes nothing.",
         "uifn/catalog/generated/catalog.json": "scripts/build-uifn-solid.mjs reads it only to verify the generated entry count."
       }
     },
@@ -46,29 +41,14 @@
         "registry": "Per-component contract JSON. Not in files and src does not import it; read only by src/__tests__/registry-contract.ts and scripts/verify-uifn-{a11y,examples,secrets,stories}.mjs."
       }
     },
-    "@uifn/components-react": {
-      "references": {
-        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
-      }
-    },
+    "@uifn/components-react": {},
     "@uifn/components-svelte": {
-      "references": {
-        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
-      },
       "excluded": {
         "scripts/svelte-script-sources.mjs": "Verification helper imported only by scripts/verify-uifn-package-graph.mjs; not in files and no lifecycle script runs it."
       }
     },
-    "@uifn/components-solid": {
-      "references": {
-        "scripts/generate-uifn-components.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing."
-      }
-    },
+    "@uifn/components-solid": {},
     "@uifn/registry": {
-      "references": {
-        "scripts/generate-uifn-registry.mjs": "prepack runs it with --check, which compares the committed generated sources and writes nothing.",
-        "scripts/generate-uifn-fixture.mjs": "prepack runs it without --write, which compares the committed fixture source and writes nothing."
-      },
       "excluded": {
         "catalog": "Hook, pattern and sf catalog JSON for the experimental lanes, read by scripts/generate-uifn-phase-17.mjs (which writes storybook workbenches and docs) and verify-uifn-* scripts. Not in files and src does not import it.",
         "generated": "Repository copies written by scripts/generate-uifn-phase-16.mjs and scripts/sign-uifn-registry.mjs. The shipped copies are src/generated/*.ts, which count. Not in files and src does not import it.",
@@ -79,9 +59,6 @@
     "@uifn/storybook": {
       "inputs": {
         "uifn/registry/src": "src/panel/compatibility.ts imports it relatively, so tsup bundles it into dist."
-      },
-      "references": {
-        "scripts/generate-uifn-docs-storybook.mjs": "prepack runs it with --check, which compares the committed generated docs and writes nothing."
       },
       "excluded": {
         "generated/story-inventory.json": "Not in files and not bundled; src/validate-stories.ts reads it from a repository checkout at run time."

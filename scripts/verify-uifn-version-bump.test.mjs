@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, evaluatePackage, parseInputDeclarations, reportSincePublished, shippedScriptNames, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, effectiveDeclaration, evaluatePackage, parseInputDeclarations, reportSincePublished, resolveTarget, shippedScriptNames, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -233,6 +233,87 @@ test("an exclusion that files, a tsconfig include, a shipped file or a lifecycle
   assert.match(output, /@uifn\/core excludes missing, which does not exist in uifn\/core/);
 });
 
+// Stable @uifn/theme bundles src/fixtures/data.ts, a path the fixtures rule would exclude, through src/index.ts.
+test("a test, fixture or docs path that shipped code imports counts as shipped", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/package-graph.json", (text) => text.replace('"stable":[', '"stable":[{"name":"@uifn/theme","path":"uifn/theme"},'));
+  repo.write("uifn/theme/package.json", manifest("@uifn/theme", "0.0.2"));
+  repo.write("uifn/theme/CHANGELOG.md", "# Changelog\n\n## 0.0.2\n\n- Fixtures.\n");
+  repo.write("uifn/theme/tsup.config.ts", 'export default { entry: [path.join(root, "./src")] };\n');
+  repo.write("uifn/theme/src/index.ts", 'export * from "./fixtures/data";\n');
+  repo.write("uifn/theme/src/fixtures/data.ts", 'export { more } from "./more.js";\nexport const data = 1;\n');
+  repo.write("uifn/theme/src/fixtures/more.ts", "export const more = 1;\n");
+  repo.write("uifn/theme/src/__tests__/theme.test.ts", 'import { data } from "../fixtures/data";\n');
+  repo.write("uifn/theme/src/__tests__/fixtures/case.ts", "export const fixture = 1;\n");
+  repo.commit("theme bundles a fixtures dir");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/theme/src/__tests__/theme.test.ts", 'import { data } from "../fixtures/data";\ntest;\n');
+  repo.write("uifn/theme/src/__tests__/fixtures/case.ts", "export const fixture = 2;\n");
+  repo.commit("tests only");
+  const tests = check(repo.root);
+  assert.equal(tests.status, 0, tests.output);
+  repo.write("uifn/theme/src/fixtures/data.ts", 'export { more } from "./more.js";\nexport const data = 2;\n');
+  repo.write("uifn/theme/src/fixtures/more.ts", "export const more = 2;\n");
+  repo.commit("bundled fixture data");
+  const bundled = check(repo.root);
+  assert.equal(bundled.status, 1);
+  assert.match(bundled.output, /@uifn\/theme: shipped code changed \(src\/fixtures\/data\.ts, src\/fixtures\/more\.ts\) but version is still 0\.0\.2/);
+});
+
+test("resolveTarget tries implied extensions, index files and the TypeScript source of a .js specifier", () => {
+  const files = new Set(["src/a.ts", "src/b/index.tsx", "src/c.mts", "src/d.svelte", "src/e.js"]);
+  assert.deepEqual(resolveTarget("src/a", files), ["src/a.ts"]);
+  assert.deepEqual(resolveTarget("src/b", files), ["src/b/index.tsx"]);
+  assert.deepEqual(resolveTarget("src/c.mjs", files), ["src/c.mts"]);
+  assert.deepEqual(resolveTarget("src/d.svelte", files), ["src/d.svelte"]);
+  assert.deepEqual(resolveTarget("src/e.js", files), ["src/e.js"]);
+  assert.deepEqual(resolveTarget("src/missing", files), []);
+});
+
+test("an exclusion of a build config that tools load implicitly fails", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/react/tsup.config.ts", "export default {};\n");
+  repo.write("uifn/react/tsconfig.build.json", "{}\n");
+  repo.write("uifn/react/.npmignore", "src\n");
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    document.packages["@uifn/react"].excluded = { "tsup.config.ts": "x", "tsconfig.build.json": "x", ".npmignore": "x" };
+    return JSON.stringify(document);
+  });
+  repo.commit("exclude build configs");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  for (const config of ["tsup\\.config\\.ts", "tsconfig\\.build\\.json", "\\.npmignore"]) {
+    assert.match(output, new RegExp(`@uifn/react excludes ${config}, but the build loads ${config} implicitly`));
+  }
+});
+
+test("a change cannot loosen its own declarations", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/core/data/contract.json", "{}\n");
+  repo.commit("data dir");
+  repo.git("branch", "-f", "base");
+  repo.edit("uifn/version-bump-inputs.json", (text) => {
+    const document = JSON.parse(text);
+    document.packages["@uifn/core"] = { references: { "uifn/catalog/catalog.json": "moved" }, excluded: { ...document.packages["@uifn/core"].excluded, data: "new exclusion" } };
+    return JSON.stringify(document);
+  });
+  repo.write("uifn/catalog/catalog.json", '{ "primitives": ["button"] }\n');
+  repo.write("uifn/core/data/contract.json", '{ "parts": 2 }\n');
+  repo.commit("move the input to references and exclude data in the same change");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: shipped code changed \(uifn\/catalog\/catalog\.json, data\/contract\.json\) but version is still 1\.0\.0/);
+});
+
+test("effectiveDeclaration unions inputs and keeps only exclusions declared at both ends unless asked", () => {
+  const earlier = { inputs: ["uifn/a"], references: [], excluded: ["data", "scripts/x.mjs"] };
+  const head = { inputs: ["uifn/b"], references: ["uifn/a"], excluded: ["data/sub", "scripts/x.mjs", "fresh"] };
+  assert.deepEqual(effectiveDeclaration(earlier, head), { inputs: ["uifn/a", "uifn/b"], references: ["uifn/a"], excluded: ["scripts/x.mjs", "data/sub"] });
+  assert.deepEqual(effectiveDeclaration(earlier, head, { honorNewExclusions: true }).excluded, head.excluded);
+  assert.deepEqual(effectiveDeclaration(undefined, head).excluded, []);
+});
+
 test("tsconfigRoots resolves the static prefix of include and files entries", () => {
   const text = '{ "compilerOptions": { "outDir": "dist" }, "include": ["src/**/*", "vitest.config.ts", "./lib"], "files": ["**/*.d.ts"] }';
   assert.deepEqual(tsconfigRoots("uifn/core/tsconfig.json", text), ["uifn/core/src", "uifn/core/vitest.config.ts", "uifn/core/lib", "uifn/core"]);
@@ -247,7 +328,25 @@ test("a manifest change to a script reached from a lifecycle script needs a bump
   assert.match(output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
 });
 
-test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scripts only", () => {
+test("validation scripts that prepack runs need no bump, while the build it runs still does", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) =>
+    text.replace('"test": "vitest run"', '"test": "vitest run",\n    "typecheck": "tsc --noEmit",\n    "generate:check": "node gen.mjs --check",\n    "prepack": "npm run generate:check && npm run typecheck && npm run test && npm run build"')
+  );
+  repo.commit("prepack validates before building");
+  repo.git("branch", "-f", "base");
+  repo.edit("uifn/core/package.json", (text) => text.replace('"vitest run"', '"vitest run --coverage"').replace('"tsc --noEmit"', '"tsc --noEmit --strict"').replace("--check", "--check --verbose"));
+  repo.commit("validation scripts only");
+  const validation = check(repo.root);
+  assert.equal(validation.status, 0, validation.output);
+  repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', '"build": "tsup --minify"'));
+  repo.commit("build script");
+  const build = check(repo.root);
+  assert.equal(build.status, 1);
+  assert.match(build.output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/);
+});
+
+test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scripts, but not validation scripts", () => {
   const scripts = {
     prepack: "npm run generate:check && npm run --silent build",
     prebuild: "npm run clean",
@@ -260,7 +359,8 @@ test("shippedScriptNames follows pre/post hooks and npm run from lifecycle scrip
     predev: "npm run lint",
     lint: "tsc",
   };
-  assert.deepEqual([...shippedScriptNames(scripts)].sort(), ["build", "clean", "generate:check", "postbuild", "prebuild", "prepack", "test"]);
+  assert.deepEqual([...shippedScriptNames(scripts)].sort(), ["build", "clean", "postbuild", "prebuild", "prepack"]);
+  assert.deepEqual([...shippedScriptNames({ prepack: "npm run build", build: "npm run test:unit && npm run lint:fix && npm run verify && tsup", "test:unit": "x", "lint:fix": "x", verify: "x" })], ["prepack", "build"]);
 });
 
 test("parseInputDeclarations rejects unknown packages, missing reasons and non-normalized paths", () => {
@@ -335,6 +435,18 @@ test("since-published report lists packages with shipped changes after their hig
   const cli = spawnSync(process.execPath, [script, "--since-published"], { cwd: repo.root, encoding: "utf8" });
   assert.equal(cli.status, 0);
   assert.match(cli.stdout, /2 of 2 stable packages have shipped changes/);
+});
+
+test("a failure to build the since-published report warns without failing, while the gate still fails", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/package-graph.json", "{}\n");
+  repo.commit("graph without a stable list");
+  const report = spawnSync(process.execPath, [script, "--since-published"], { cwd: repo.root, encoding: "utf8" });
+  assert.equal(report.status, 0, report.stderr);
+  assert.match(report.stderr, /warning: could not report changes since the last published tags: .*has no stable package list/);
+  const gate = check(repo.root);
+  assert.equal(gate.status, 1);
+  assert.match(gate.output, /error: .*has no stable package list/);
 });
 
 test("classifyPath separates tarball inputs from tests, fixtures, stories and docs", () => {

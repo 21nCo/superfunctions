@@ -25,6 +25,14 @@ const VITE_ROOT_FILE = /^vite(?:\.[^/]+)?\.config\.[^/]+$/;
 // Scripts that run when a package is packed, published or installed, plus `build`, which
 // prepack runs. devDependencies and scripts these never reach do not affect consumers.
 const LIFECYCLE_SCRIPTS = ["build", "prepare", "prepack", "postpack", "prepublish", "prepublishOnly", "preinstall", "install", "postinstall"];
+// Validation reached from prepack (`npm run typecheck && npm run test`, `generate:check`) can stop a
+// pack but produces nothing in it, so a script named test, typecheck, lint, check or verify, alone or
+// as a `:` part, is not followed.
+const VALIDATION_SCRIPT_PART = new Set(["test", "typecheck", "lint", "check", "verify"]);
+// Root build configs that tsup, tsc, svelte-package, vite and npm pack load without being named.
+const IMPLICIT_CONFIG = /^(?:(?:tsup|vite|rollup|svelte|babel|postcss|tailwind)(?:\.[^/]+)?\.config\.[^/]+|tsconfig[^/]*\.json|\.npmignore|\.babelrc(?:\.[^/]+)?)$/;
+// Extensions a bundler or tsc tries for an extensionless specifier or a directory index.
+const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".json", ".css"];
 const NPM_RUN = /\bnpm\s+(?:run(?:-script)?|rum|urn)\s+(?:-{1,2}[\w-]+(?:=\S+)?\s+)*([^\s&|;<>()'"]+)/g;
 const NPM_SHORTHAND = /\bnpm\s+(test|tst|t|start|stop|restart)\b/g;
 
@@ -57,13 +65,15 @@ export function classifyPath(relative, { buildUsesVite = true } = {}) {
   return "shipped";
 }
 
-/** Shipped lifecycle scripts, their pre/post hooks, and every script they reach through `npm run`. */
+const isValidationScript = (name) => name.split(":").some((part) => VALIDATION_SCRIPT_PART.has(part));
+
+/** Shipped lifecycle scripts, their pre/post hooks, and every non-validation script they reach through `npm run`. */
 export function shippedScriptNames(scripts = {}) {
   const names = new Set();
   const pending = [...LIFECYCLE_SCRIPTS];
   while (pending.length > 0) {
     const name = pending.pop();
-    if (names.has(name) || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") continue;
+    if (names.has(name) || isValidationScript(name) || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") continue;
     names.add(name);
     pending.push(`pre${name}`, `post${name}`);
     for (const [, target] of scripts[name].matchAll(NPM_RUN)) pending.push(target);
@@ -168,19 +178,28 @@ function classifyOptions(manifest) {
   return { buildUsesVite: buildScripts.some((script) => /\bvite\b/.test(script)) };
 }
 
+/**
+ * Default class of a repo path for one package: "shipped", "excluded" (tests, fixtures, docs),
+ * "declared" (a declared exclusion), "manifest" or "outside". Inside a declared input directory,
+ * tests and docs are "excluded" too.
+ */
+export function pathKind(file, { packagePath, inputs = [], excluded = [], options = {} }) {
+  if (file.startsWith(`${packagePath}/`)) {
+    const relative = file.slice(packagePath.length + 1);
+    if (excluded.some((entry) => isWithin(relative, entry))) return "declared";
+    return classifyPath(relative, options);
+  }
+  const input = inputs.find((entry) => isWithin(file, entry));
+  if (!input) return "outside";
+  return file === input || classifyPath(file.slice(input.length + 1)) !== "excluded" ? "shipped" : "excluded";
+}
+
 /** Pure per-package decision shared by the PR gate and the since-published report. */
-export function evaluatePackage({ name, packagePath, baseManifest, headManifest, changedFiles, headChangelog, inputs = [], excluded = [] }) {
+export function evaluatePackage({ name, packagePath, baseManifest, headManifest, changedFiles, headChangelog, inputs = [], excluded = [], promoted = new Set() }) {
   const prefix = `${packagePath}/`;
   const options = classifyOptions(headManifest ?? baseManifest);
-  const isShipped = (file) => {
-    if (file.startsWith(prefix)) {
-      const relative = file.slice(prefix.length);
-      return !excluded.some((entry) => isWithin(relative, entry)) && classifyPath(relative, options) === "shipped";
-    }
-    // Declared out-of-package inputs count too; inside a declared directory, tests and docs still do not.
-    const input = inputs.find((entry) => isWithin(file, entry));
-    return Boolean(input) && (file === input || classifyPath(file.slice(input.length + 1)) !== "excluded");
-  };
+  // `promoted` holds test, fixture or docs paths that a shipped file or lifecycle script uses.
+  const isShipped = (file) => promoted.has(file) || pathKind(file, { packagePath, inputs, excluded, options }) === "shipped";
   const shippedFiles = changedFiles.filter(isShipped).sort();
   const result = { name, packagePath, shippedFiles, manifestChanged: false, baseVersion: baseManifest?.version, headVersion: headManifest?.version, bumped: false, errors: [] };
   if (!headManifest) {
@@ -206,7 +225,7 @@ export function evaluatePackage({ name, packagePath, baseManifest, headManifest,
   } else if (changed) {
     const reasons = [...shippedFiles.map((file) => (file.startsWith(prefix) ? file.slice(prefix.length) : file)), ...(result.manifestChanged ? ["package.json (published fields)"] : [])];
     const listed = reasons.slice(0, 5).join(", ") + (reasons.length > 5 ? `, and ${reasons.length - 5} more` : "");
-    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md, or declare in-package paths that never reach the tarball under "excluded" in ${INPUTS_PATH}`);
+    result.errors.push(`${name}: shipped code changed (${listed}) but version is still ${result.headVersion}; bump ${packagePath}/package.json and add a "## <new version>" entry to ${packagePath}/CHANGELOG.md, or, for in-package paths that never reach the tarball, first land an "excluded" declaration in ${INPUTS_PATH} (the gate honors exclusions already on the base branch)`);
   }
   return result;
 }
@@ -233,10 +252,63 @@ export function scriptReferences(scripts, packagePath) {
   for (const name of shippedScriptNames(scripts ?? {})) {
     for (const token of scripts[name].split(/[\s;&|<>()]+/)) {
       const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
-      if (value) found.push({ from: `package.json scripts.${name}`, target: path.posix.join(packagePath, value).replace(/\/+$/, "") });
+      // Bare words such as `tsup` or `test` are commands, not paths, so only path-like tokens promote files.
+      if (value) found.push({ from: `package.json scripts.${name}`, target: path.posix.join(packagePath, value).replace(/\/+$/, ""), pathLike: /[/.]/.test(value) });
     }
   }
   return found;
+}
+
+/** Files a reference names: the path itself, with an implied extension or index file, or a `.js` specifier's TypeScript source. */
+export function resolveTarget(target, files) {
+  const candidates = [target, ...RESOLVE_EXTENSIONS.flatMap((extension) => [`${target}${extension}`, `${target}/index${extension}`])];
+  const compiled = target.match(/^(.*)\.([mc]?)js(x?)$/);
+  if (compiled) candidates.push(`${compiled[1]}.${compiled[2]}ts${compiled[3]}`);
+  return candidates.filter((candidate) => files.has(candidate));
+}
+
+/**
+ * Every package or declared-input file that can reach the tarball: the default-shipped files plus,
+ * transitively, test, fixture or docs paths that a shipped file or lifecycle script refers to. A
+ * directory reference promotes its files only when the directory itself is a test, fixture or docs
+ * path, so `path.join(root, "src")` does not pull in src/__tests__. Declared exclusions are not
+ * followed; findConsumedExclusions rejects a reference into one instead.
+ */
+export function shippedClosure({ packagePath, manifest, files, inputs = [], excluded = [], read }) {
+  const scope = { packagePath, inputs, excluded, options: classifyOptions(manifest) };
+  const fileSet = new Set(files);
+  const promoted = new Set();
+  const scanned = [];
+  const describe = (file) => {
+    if (file.startsWith(`${packagePath}/`)) {
+      const relative = file.slice(packagePath.length + 1);
+      return { file, base: packagePath, buildFile: relative.startsWith("scripts/") || /^[^/]+\.config\.[^/]+$/.test(relative) };
+    }
+    const input = inputs.find((entry) => isWithin(file, entry));
+    return { file, base: file === input ? path.posix.dirname(file) : input, buildFile: !file.startsWith("uifn/") };
+  };
+  let targets = scriptReferences(manifest?.scripts, packagePath).filter(({ pathLike }) => pathLike).map(({ target }) => target);
+  let wave = files.filter((file) => pathKind(file, scope) === "shipped");
+  while (wave.length > 0 || targets.length > 0) {
+    const blobs = read(wave.filter((file) => SCANNED_FILE.test(file)));
+    for (const [file, text] of blobs) {
+      const entry = { ...describe(file), text };
+      scanned.push(entry);
+      targets.push(...fileReferences(file, text, entry));
+    }
+    wave = [];
+    for (const target of targets) {
+      const named = resolveTarget(target, fileSet);
+      if (pathKind(`${target}/_`, scope) === "excluded") named.push(...files.filter((file) => file.startsWith(`${target}/`)));
+      for (const file of named) {
+        if (promoted.has(file) || pathKind(file, scope) !== "excluded") continue;
+        promoted.add(file);
+        wave.push(file);
+      }
+    }
+    targets = [];
+  }
+  return { promoted, scanned };
 }
 
 const staticPrefix = (pattern) => {
@@ -279,18 +351,26 @@ export function findUndeclaredReferences({ name, packagePath, manifest, files, d
 
 /**
  * An "excluded" path must not reach the tarball: it may not overlap the manifest `files` list or a
- * tsconfig include, and no shipped file, declared input or shipped script may refer into it.
+ * tsconfig include, cover a build config that tools load implicitly, and no shipped file, declared
+ * input or shipped script may refer into it.
  */
-export function findConsumedExclusions({ name, packagePath, manifest, files, excluded }) {
+export function findConsumedExclusions({ name, packagePath, manifest, files, excluded, packageFiles = [] }) {
   const listed = Array.isArray(manifest?.files) ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : [];
   const roots = [
     ...listed.map((entry) => ({ from: "package.json files", target: path.posix.join(packagePath, staticPrefix(entry)).replace(/\/+$/, "") })),
     ...files.filter(({ file }) => TSCONFIG.test(file)).flatMap(({ file, text }) => tsconfigRoots(file, text).map((target) => ({ from: `${file} include`, target }))),
   ];
   const references = collectReferences({ packagePath, manifest, files });
+  const options = classifyOptions(manifest);
   const errors = [];
   for (const entry of excluded) {
     const absolute = `${packagePath}/${entry}`;
+    const config = [entry, ...packageFiles.filter((file) => isWithin(file, absolute)).map((file) => file.slice(packagePath.length + 1))]
+      .find((relative) => !relative.includes("/") && IMPLICIT_CONFIG.test(relative) && classifyPath(relative, options) === "shipped");
+    if (config) {
+      errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, but the build loads ${config} implicitly; it shapes the tarball, so remove the exclusion`);
+      continue;
+    }
     const root = roots.find(({ target }) => isWithin(absolute, target) || isWithin(target, absolute));
     const reference = references.find(({ target }) => isWithin(target, absolute));
     const user = root ? `${root.from} includes ${root.target}` : reference && `${reference.from} refers to ${reference.target}`;
@@ -330,7 +410,35 @@ function loadPackages(cwd, commit) {
   if (!Array.isArray(graph?.stable)) throw new Error(`${GRAPH_PATH} at ${commit} has no stable package list`);
   const stable = new Map(graph.stable.map(({ name, path: packagePath }) => [name, packagePath]));
   const { declarations, errors } = parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable);
-  return { packages: [...stable].map(([name, packagePath]) => ({ name, packagePath, ...declarations.get(name) })), errors };
+  return { stable, packages: [...stable].map(([name, packagePath]) => ({ name, packagePath, ...declarations.get(name) })), errors };
+}
+
+/** Declarations at an older commit, read leniently: a missing or malformed file declares nothing. */
+function loadEarlierDeclarations(cwd, commit, stable) {
+  try {
+    return parseInputDeclarations(readJsonAt(cwd, commit, INPUTS_PATH), stable).declarations;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Paths covered by an entry in both lists. */
+function sharedPaths(left, right) {
+  const covered = (entries, others) => entries.filter((entry) => others.some((other) => isWithin(entry, other)));
+  return [...new Set([...covered(left, right), ...covered(right, left)])];
+}
+
+/**
+ * The declarations a range is judged by, so a change cannot loosen its own check: inputs declared at
+ * either end count, and in the PR gate only exclusions already declared at the merge base are honored.
+ * The since-published report honors the head's exclusions, because published tags predate the file.
+ */
+export function effectiveDeclaration(earlier, head, { honorNewExclusions = false } = {}) {
+  return {
+    ...head,
+    inputs: [...new Set([...(earlier?.inputs ?? []), ...head.inputs])],
+    excluded: honorNewExclusions ? head.excluded : sharedPaths(earlier?.excluded ?? [], head.excluded),
+  };
 }
 
 function listFiles(cwd, commit, pathspecs) {
@@ -353,7 +461,15 @@ function readBlobs(cwd, commit, files) {
   return blobs;
 }
 
-/** Runs the out-of-root guard for every stable package at `commit`. */
+/** Reads one package at `commit` and computes the files that can reach its tarball. */
+function packageState(cwd, commit, pkg) {
+  const manifest = readJsonAt(cwd, commit, `${pkg.packagePath}/package.json`);
+  const packageFiles = listFiles(cwd, commit, [pkg.packagePath]);
+  const files = [...packageFiles, ...(pkg.inputs.length > 0 ? listFiles(cwd, commit, pkg.inputs) : [])];
+  return { manifest, packageFiles, ...shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths) }) };
+}
+
+/** Runs the out-of-root and exclusion guard for every stable package at `commit`, with the head's own declarations. */
 function guardReferences(cwd, commit, packages) {
   const errors = [];
   for (const pkg of packages) {
@@ -364,25 +480,9 @@ function guardReferences(cwd, commit, packages) {
     for (const entry of excluded) {
       if (listFiles(cwd, commit, [`${packagePath}/${entry}`]).length === 0) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, which does not exist in ${packagePath}`);
     }
-    const prefix = `${packagePath}/`;
-    const manifest = readJsonAt(cwd, commit, `${packagePath}/package.json`);
-    const options = classifyOptions(manifest);
-    const scanned = [];
-    for (const file of listFiles(cwd, commit, [packagePath])) {
-      const relative = file.slice(prefix.length);
-      if (!SCANNED_FILE.test(file) || excluded.some((entry) => isWithin(relative, entry)) || classifyPath(relative, options) !== "shipped") continue;
-      scanned.push({ file, base: packagePath, buildFile: relative.startsWith("scripts/") || /^[^/]+\.config\.[^/]+$/.test(relative) });
-    }
-    for (const input of inputs) {
-      for (const file of listFiles(cwd, commit, [input])) {
-        if (!SCANNED_FILE.test(file) || (file !== input && classifyPath(file.slice(input.length + 1)) === "excluded")) continue;
-        scanned.push({ file, base: file === input ? path.posix.dirname(file) : input, buildFile: !file.startsWith("uifn/") });
-      }
-    }
-    const blobs = readBlobs(cwd, commit, scanned.map(({ file }) => file));
-    const files = scanned.filter(({ file }) => blobs.has(file)).map((entry) => ({ ...entry, text: blobs.get(entry.file) }));
+    const { manifest, packageFiles, scanned: files } = packageState(cwd, commit, pkg);
     errors.push(...findUndeclaredReferences({ name, packagePath, manifest, files, declaration: pkg }));
-    errors.push(...findConsumedExclusions({ name, packagePath, manifest, files, excluded }));
+    errors.push(...findConsumedExclusions({ name, packagePath, manifest, files, excluded, packageFiles }));
   }
   return errors;
 }
@@ -391,10 +491,13 @@ function changedFiles(cwd, from, to, pathspecs) {
   return git(cwd, ["diff", "--name-only", "-z", "--no-renames", from, to, "--", ...pathspecs]).split("\0").filter(Boolean);
 }
 
+/** Judges each package by its effective declarations; a path promoted at either end counts. */
 function evaluateRange(cwd, from, to, packages) {
   const files = changedFiles(cwd, from, to, [...new Set(packages.flatMap(({ packagePath, inputs }) => [packagePath, ...inputs]))]);
-  return packages.map(({ name, packagePath, inputs, excluded }) =>
-    evaluatePackage({
+  return packages.map((pkg) => {
+    const { name, packagePath, inputs, excluded } = pkg;
+    const promoted = new Set([...packageState(cwd, from, pkg).promoted, ...packageState(cwd, to, pkg).promoted]);
+    return evaluatePackage({
       name,
       packagePath,
       baseManifest: readJsonAt(cwd, from, `${packagePath}/package.json`),
@@ -403,8 +506,9 @@ function evaluateRange(cwd, from, to, packages) {
       headChangelog: readAt(cwd, to, `${packagePath}/CHANGELOG.md`),
       inputs,
       excluded,
-    })
-  );
+      promoted,
+    });
+  });
 }
 
 /**
@@ -420,8 +524,9 @@ export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" })
   } catch {
     throw new Error(`${base} and ${head} share no history; fetch full history before running this check`);
   }
-  const { packages, errors: declarationErrors } = loadPackages(cwd, headCommit);
-  const results = evaluateRange(cwd, mergeBase, headCommit, packages);
+  const { stable, packages, errors: declarationErrors } = loadPackages(cwd, headCommit);
+  const earlier = loadEarlierDeclarations(cwd, mergeBase, stable);
+  const results = evaluateRange(cwd, mergeBase, headCommit, packages.map((pkg) => effectiveDeclaration(earlier.get(pkg.name), pkg)));
   const errors = [...declarationErrors, ...guardReferences(cwd, headCommit, packages), ...results.flatMap((result) => result.errors)];
   return { mergeBase, head: headCommit, results, errors };
 }
@@ -430,7 +535,8 @@ export function verifyVersionBumps({ cwd = process.cwd(), base, head = "HEAD" })
 export function reportSincePublished({ cwd = process.cwd(), head = "HEAD" }) {
   const headCommit = resolveCommit(cwd, head);
   const targets = readJsonAt(cwd, headCommit, RELEASE_TARGETS_PATH) ?? [];
-  return loadPackages(cwd, headCommit).packages.map((pkg) => {
+  const { stable, packages } = loadPackages(cwd, headCommit);
+  return packages.map((pkg) => {
     const slug = targets.find((target) => target.name === pkg.name)?.slug ?? `uifn-${path.posix.basename(pkg.packagePath)}`;
     const tags = git(cwd, ["tag", "--list", `${slug}-v*`])
       .split("\n")
@@ -438,7 +544,9 @@ export function reportSincePublished({ cwd = process.cwd(), head = "HEAD" }) {
       .filter(({ tag, version }) => tag && parseSemver(version))
       .sort((a, b) => compareSemver(b.version, a.version));
     if (tags.length === 0) return { name: pkg.name, packagePath: pkg.packagePath, tag: null };
-    const [result] = evaluateRange(cwd, resolveCommit(cwd, tags[0].tag), headCommit, [pkg]);
+    const tagCommit = resolveCommit(cwd, tags[0].tag);
+    const declaration = effectiveDeclaration(loadEarlierDeclarations(cwd, tagCommit, stable).get(pkg.name), pkg, { honorNewExclusions: true });
+    const [result] = evaluateRange(cwd, tagCommit, headCommit, [declaration]);
     return { ...result, tag: tags[0].tag };
   });
 }
@@ -469,7 +577,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       options: { base: { type: "string" }, head: { type: "string", default: "HEAD" }, "since-published": { type: "boolean", default: false } },
     });
     if (values["since-published"]) {
-      console.log(formatReport(reportSincePublished({ head: values.head })));
+      // The report is informational, so a failure to build it warns instead of failing CI.
+      try {
+        console.log(formatReport(reportSincePublished({ head: values.head })));
+      } catch (error) {
+        console.warn(`warning: could not report changes since the last published tags: ${error.message}`);
+      }
     } else {
       if (!values.base) throw new Error("Usage: verify-uifn-version-bump.mjs --base <ref> [--head <ref>] | --since-published [--head <ref>]");
       const { mergeBase, head, results, errors } = verifyVersionBumps({ base: values.base, head: values.head });
