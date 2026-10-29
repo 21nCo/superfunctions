@@ -42,7 +42,7 @@ export function generateDrizzleSchema(
   const shareableResources: string[] = [];
 
   const nsEnabled = isNamespaced(schema);
-  const sqliteBoolean = allocateSqliteBooleanBindings(schema);
+  const bindings = allocateGeneratedBindings(schema);
 
   for (const resource of resources) {
     const tableName = resource.name;
@@ -150,12 +150,12 @@ export function generateDrizzleSchema(
 
     for (const field of fields) {
       const colDef = capabilityFieldNames.has(field.name)
-        ? buildCapabilityColumnDefinition(field, dialect, usedImports, sqliteBoolean.helper)
-        : buildColumnDefinition(field, dialect, usedImports, sqliteBoolean.helper, nsEnabled);
+        ? buildCapabilityColumnDefinition(field, dialect, usedImports, bindings.helper)
+        : buildColumnDefinition(field, dialect, usedImports, bindings, nsEnabled);
       lines.push(`  ${renderTsObjectKey(field.name)}: ${colDef},`);
     }
     for (const field of capabilityFields) {
-      const colDef = buildCapabilityColumnDefinition(field, dialect, usedImports, sqliteBoolean.helper);
+      const colDef = buildCapabilityColumnDefinition(field, dialect, usedImports, bindings.helper);
       lines.push(`  ${renderTsObjectKey(field.name)}: ${colDef},`);
     }
 
@@ -374,7 +374,7 @@ export function generateDrizzleSchema(
     joinFields.push(
       {
         name: fromCol,
-        def: buildSimpleColumn(fromCol, "string", dialect, usedImports, sqliteBoolean.helper, true),
+        def: buildSimpleColumn(fromCol, "string", dialect, usedImports, bindings.helper, true),
       },
       {
         name: "id",
@@ -383,14 +383,14 @@ export function generateDrizzleSchema(
           "string",
           dialect,
           usedImports,
-          sqliteBoolean.helper,
+          bindings.helper,
           nsEnabled, // notNull when namespaced (PK defined in callback)
           !nsEnabled, // primaryKey only when not namespaced
         ),
       },
       {
         name: toCol,
-        def: buildSimpleColumn(toCol, "string", dialect, usedImports, sqliteBoolean.helper, true),
+        def: buildSimpleColumn(toCol, "string", dialect, usedImports, bindings.helper, true),
       },
     );
 
@@ -421,7 +421,7 @@ export function generateDrizzleSchema(
             meta.type,
             dialect,
             usedImports,
-            sqliteBoolean.helper,
+            bindings.helper,
             isDeclaredDiscriminator,
           ),
         });
@@ -438,7 +438,7 @@ export function generateDrizzleSchema(
           const snakeName = camelToSnake(fieldDef.name);
           const { call, importName } = fieldDef.type === "date"
             ? getEpochColumnType(dialect, snakeName)
-            : getColumnType(fieldDef.type, dialect, snakeName, sqliteBoolean.helper);
+            : getColumnType(fieldDef.type, dialect, snakeName, bindings.helper);
           usedImports.add(importName);
           joinFields.push({
             name: fieldDef.name,
@@ -494,17 +494,17 @@ export function generateDrizzleSchema(
   lines.push("");
 
   if (usedImports.delete("customType")) {
-    const { customType } = sqliteBoolean;
-    usedImports.add(customType === "customType" ? customType : `customType as ${customType}`);
+    usedImports.add(importSpecifier("customType", bindings.customType));
     // After the "// Database" header and its blank line, ahead of the tables.
-    lines.splice(4, 0, ...sqliteBooleanType(sqliteBoolean));
+    lines.splice(4, 0, ...sqliteBooleanType(bindings));
   }
 
   const needsSql = usedImports.delete("sql");
   const sortedImports = [...usedImports].sort();
   const importLine = `import { ${sortedImports.join(", ")} } from "${importPath}";`;
+  const sqlImportLine = `import { ${importSpecifier("sql", bindings.sql)} } from "drizzle-orm";`;
 
-  lines.splice(2, 0, importLine, ...(needsSql ? ['import { sql } from "drizzle-orm";'] : []));
+  lines.splice(2, 0, importLine, ...(needsSql ? [sqlImportLine] : []));
 
   return lines.join("\n");
 }
@@ -548,13 +548,13 @@ function buildColumnDefinition(
   field: DatafnFieldSchema,
   dialect: Dialect,
   usedImports: Set<string>,
-  sqliteBooleanHelper: string,
+  bindings: GeneratedBindings,
   isNamespaced = false,
 ): string {
   const snakeName = camelToSnake(field.name);
   const { call, importName } = field.type === "date"
     ? getEpochColumnType(dialect, snakeName)
-    : getColumnType(field.type, dialect, snakeName, sqliteBooleanHelper);
+    : getColumnType(field.type, dialect, snakeName, bindings.helper);
   usedImports.add(importName);
 
   let def = call;
@@ -572,7 +572,7 @@ function buildColumnDefinition(
   }
 
   if (field.default !== undefined) {
-    def += `.default(${renderColumnDefault(field, dialect, usedImports)})`;
+    def += `.default(${renderColumnDefault(field, dialect, usedImports, bindings.sql)})`;
   }
 
   return def;
@@ -582,10 +582,11 @@ function renderColumnDefault(
   field: DatafnFieldSchema,
   dialect: Dialect,
   usedImports: Set<string>,
+  sqlBinding: string,
 ): string {
   if (dialect === "sqlite" && isJsonFieldType(field.type) && field.default !== null) {
     usedImports.add("sql");
-    return sqliteJsonDefault(field.default);
+    return sqliteJsonDefault(field.default, sqlBinding);
   }
   return JSON.stringify(field.default);
 }
@@ -599,26 +600,30 @@ function isJsonFieldType(fieldType: string): boolean {
  * JSON text as an SQL string literal. A plain `.default("hello")` would make
  * drizzle-kit emit `DEFAULT 'hello'`, which is not valid JSON.
  */
-function sqliteJsonDefault(value: unknown): string {
+function sqliteJsonDefault(value: unknown, sqlBinding: string): string {
   const literal = `'${JSON.stringify(value).replaceAll("'", "''")}'`;
-  return `sql.raw(${JSON.stringify(literal)})`;
+  return `${sqlBinding}.raw(${JSON.stringify(literal)})`;
 }
 
-interface SqliteBooleanBindings {
-  /** Local name of the drizzle `customType` import. */
+/** Local names of the module bindings the generator adds beside the tables. */
+interface GeneratedBindings {
+  /** The drizzle-orm `sql` import, used by SQLite JSON defaults. */
+  sql: string;
+  /** The drizzle `customType` import. */
   customType: string;
-  /** Name of the generated boolean column type. */
+  /** The generated SQLite boolean column type. */
   helper: string;
 }
 
 /**
- * Picks names for the SQLite boolean helper and its `customType` import that no
- * other module binding uses. Resource and join-table exports come from schema
- * names, so either may already be `datafnBoolean` or `customType`. Internal
- * tables are all `__datafn_*`, so they cannot clash with these names.
+ * Picks a name for each generator-added binding that no other module binding
+ * uses. Resource and join-table exports come from schema names, so they may
+ * already be `sql`, `customType` or `datafnBoolean`. Internal tables are all
+ * `__datafn_*`, so they cannot clash with these names. Without a clash, every
+ * binding keeps its base name.
  */
-function allocateSqliteBooleanBindings(schema: DatafnSchema): SqliteBooleanBindings {
-  const taken = new Set(["schema", "sql"]);
+function allocateGeneratedBindings(schema: DatafnSchema): GeneratedBindings {
+  const taken = new Set(["schema"]);
   for (const resource of schema.resources) {
     taken.add(sanitizeVarName(resource.name));
   }
@@ -629,13 +634,20 @@ function allocateSqliteBooleanBindings(schema: DatafnSchema): SqliteBooleanBindi
   }
   const allocate = (base: string): string => {
     let name = base;
-    for (let suffix = 2; taken.has(name); suffix++) {
+    let suffix = 1;
+    while (taken.has(name)) {
+      suffix += 1;
       name = `${base}_${suffix}`;
     }
     taken.add(name);
     return name;
   };
-  return { customType: allocate("customType"), helper: allocate("datafnBoolean") };
+  return { sql: allocate("sql"), customType: allocate("customType"), helper: allocate("datafnBoolean") };
+}
+
+/** An import specifier that binds `imported` under the local name `local`. */
+function importSpecifier(imported: string, local: string): string {
+  return imported === local ? imported : `${imported} as ${local}`;
 }
 
 /**
@@ -643,7 +655,7 @@ function allocateSqliteBooleanBindings(schema: DatafnSchema): SqliteBooleanBindi
  * as 0/1; any other value, such as an E2EE envelope, is stored as JSON text so
  * it reads back unchanged.
  */
-function sqliteBooleanType({ customType, helper }: SqliteBooleanBindings): string[] {
+function sqliteBooleanType({ customType, helper }: GeneratedBindings): string[] {
   return [
     `const ${helper} = ${customType}<{ data: boolean; driverData: number | string }>({`,
     '  dataType: () => "integer",',

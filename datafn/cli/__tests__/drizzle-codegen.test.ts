@@ -834,13 +834,22 @@ describe("Drizzle Schema Codegen", () => {
       expect(config.fromDriver(config.toDriver(envelope))).toEqual(envelope);
     });
 
-    it("names the sqlite boolean helper and customType import apart from resource and join-table exports", () => {
+    it("names the sql and customType imports and the sqlite boolean helper apart from resource and join-table exports", () => {
       const boolField = (name: string) => ({ name, type: "boolean", required: false });
       const schema = {
         namespaced: false,
         resources: [
           { name: "datafnBoolean", version: 1, fields: [{ name: "id", type: "string", required: true }, boolField("on")] },
           { name: "customType", version: 1, fields: [{ name: "id", type: "string", required: true }, boolField("on")] },
+          {
+            name: "sql",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              boolField("on"),
+              { name: "meta", type: "object", required: false, default: { a: 1 } },
+            ],
+          },
         ],
         relations: [
           {
@@ -856,13 +865,17 @@ describe("Drizzle Schema Codegen", () => {
 
       const result = generateDrizzleSchema(schema, "sqlite");
       expect(result).toContain('import { customType as customType_2, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";');
+      expect(result).toContain('import { sql as sql_2 } from "drizzle-orm";');
       expect(result).toContain("const datafnBoolean_3 = customType_2<");
       expect(result).toContain('export const datafnBoolean = sqliteTable("datafnBoolean", {');
       expect(result).toContain('export const customType = sqliteTable("customType", {');
+      expect(result).toContain('export const sql = sqliteTable("sql", {');
       expect(result).toContain('export const datafnBoolean_2 = sqliteTable("datafnBoolean_2", {');
-      expect(result).toContain('  on: datafnBoolean_3("on"),');
+      expect(result.match(/ {2}on: datafnBoolean_3\("on"\),/g)).toHaveLength(3);
       expect(result).toContain('  pinned: datafnBoolean_3("pinned"),');
+      expect(result).toContain(`  meta: text("meta", { mode: "json" }).default(sql_2.raw("'{\\"a\\":1}'")),`);
       expect(result).not.toMatch(/\bdatafnBoolean(_2)?\("/);
+      expect(result).not.toMatch(/\bsql\.raw\(|import \{ sql \}/);
     });
 
     it("emits sqlite JSON defaults as JSON text SQL literals", () => {
