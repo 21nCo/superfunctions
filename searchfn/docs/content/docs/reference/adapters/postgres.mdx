@@ -1,21 +1,26 @@
 ---
 title: Postgres Adapter
-description: Production-grade full-text search using Postgres tsvector.
+description: Production-grade full-text search using Postgres tsvector, on Node or Cloudflare Workers.
 ---
 
-The Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`) for production-grade search with no additional infrastructure beyond your existing database.
+The Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`) for production-grade search with no additional infrastructure beyond your existing database. Give it a connection string and it manages a `pg` Pool, or inject a driver: `fromPg(pool)` for a `pg` Pool you own, or `fromPostgresJs(sql)` for postgres.js, which is how it runs on Cloudflare Workers through Hyperdrive.
 
 ## When to Use
 
 - Production apps already running Postgres
 - Server-side search that needs SQL-level durability and transactions
 - Moderate document volumes where a dedicated search engine is unnecessary
+- Cloudflare Workers backed by Postgres through [Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive)
 
 ## Installation
 
 ```bash
 npm install @searchfn/adapter-postgres
+# Only for fromPostgresJs:
+npm install postgres
 ```
+
+`pg` is a dependency of the package, but it is imported only when you pass `connectionString`.
 
 ## Setup
 
@@ -46,18 +51,60 @@ await adapter.index({
 const ids = await adapter.search({ resource: "tasks", query: "docs" });
 ```
 
+## Drivers
+
+Pass `driver` instead of `connectionString` to run statements on a client you own:
+
+| Binding | Client | Transactions for `index()` |
+| --- | --- | --- |
+| `fromPg(pool)` | `pg` `Pool` | `pool.connect()` + `BEGIN` / `COMMIT` / `ROLLBACK` |
+| `fromPostgresJs(sql)` | postgres.js `sql` instance | `sql.begin()` |
+
+`fromPostgresJs` runs statements with `sql.unsafe(text, params, { prepare: true })`, so they are prepared, as Hyperdrive requires. A client created with `prepare: false` still sends unprepared statements.
+
+```typescript
+import postgres from "postgres";
+import { PostgresAdapter, fromPostgresJs } from "@searchfn/adapter-postgres";
+
+const sql = postgres(process.env.SEARCH_DB_URL!);
+const adapter = new PostgresAdapter({ driver: fromPostgresJs(sql) });
+// ...
+await adapter.dispose(); // does not end `sql`
+await sql.end();
+```
+
+The adapter never closes an injected driver; the code that created the client owns it. `queryTimeoutMs` is rejected with `driver`: set timeouts on the client instead. Passing both `driver` and `connectionString` throws.
+
+### Custom drivers
+
+Any object with this shape works:
+
+```typescript
+interface PostgresDriver {
+  query<Row>(sql: string, params?: readonly unknown[]): Promise<{ rows: Row[] }>;
+  transaction?<T>(fn: (tx: { query: PostgresDriver["query"] }) => Promise<T>): Promise<T>;
+}
+```
+
+Statements use `$1`, `$2`, ... placeholders. Parameters are only strings and numbers: the adapter encodes array parameters as Postgres array literals, so a driver does not need to serialize arrays.
+
+`transaction(fn)` must run `fn` on one connection inside one transaction, committing when it resolves and rolling back when it rejects. Without it, `index()` deletes and re-inserts each batch as separate statements: a failure can leave documents missing from the index until the call is retried, and concurrent writes to the same document can interleave. Both bindings above provide it.
+
+Errors with SQLSTATE codes for connection failures, serialization failures, deadlocks, cancelled queries and too many connections are retried, as are postgres.js `CONNECT_TIMEOUT` and `CONNECTION_CLOSED`. Expose the SQLSTATE as `error.code` so retries and the missing-table handling work.
+
 ## Configuration
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `connectionString` | `string` | — | Required. Postgres connection string (DSN). |
+| `connectionString` | `string` | — | Postgres connection string (DSN). The adapter creates a `pg` Pool and ends it on `dispose()`. Pass this or `driver`. |
+| `driver` | `PostgresDriver` | — | Caller-owned driver, for example `fromPostgresJs(sql)` or `fromPg(pool)`. Pass this or `connectionString`. |
 | `schema` | `string` | `"public"` | Target database schema. |
-| `queryTimeoutMs` | `number` | `30000` | Timeout for individual queries. |
+| `queryTimeoutMs` | `number` | `30000` | `statement_timeout` for the Pool created from `connectionString`. Not allowed with `driver`. |
 | `maxBatchSize` | `number` | `10000` | Maximum documents per index batch. |
 | `retry.maxRetries` | `number` | `2` | Retry attempts for transient failures. |
 | `retry.baseDelayMs` | `number` | `100` | Base delay between retries (with jitter). |
 | `retry.maxDelayMs` | `number` | `5000` | Maximum delay between retries. |
-| `logger` | `PostgresAdapterLogger` | — | Optional adapter-level logger. |
+| `observability` | `ObservabilityInput` | — | Optional logger/observability hooks; retries are logged as `adapter.retry`. |
 
 ## Capabilities
 
@@ -67,6 +114,7 @@ const ids = await adapter.search({ resource: "tasks", query: "docs" });
 | `searchAll` | Yes |
 | `fuzzy` | Yes |
 | `fieldBoosts` | No |
+| `prefix` | Yes |
 
 ## Behavior
 

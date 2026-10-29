@@ -5,7 +5,7 @@
  * Uses a single table per resource with Postgres-native tsvector for full-text search.
  */
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { PostgresQueryable } from "./driver";
 
 /**
  * Name of the schema table that tracks initialized resources and their fields.
@@ -44,6 +44,20 @@ function quoteIdentifier(identifier: string): string {
 }
 
 /**
+ * Encode a string list as a Postgres array literal for a `text[]` parameter.
+ *
+ * Every parameter the adapter sends is a string or number, so an injected driver never has to
+ * serialize arrays (postgres.js cannot without fetching types, which Hyperdrive setups disable).
+ * The encoding matches what `pg` itself sends for a JavaScript array, so the wire value is unchanged.
+ */
+export function textArrayParam(items: readonly string[]): string {
+  const elements = items.map((item) =>
+    item === null || item === undefined ? "NULL" : `"${String(item).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+  );
+  return `{${elements.join(",")}}`;
+}
+
+/**
  * Get the fully qualified table name for a resource, optionally within a schema.
  */
 export function resourceTableName(resource: string, schema?: string): string {
@@ -54,9 +68,9 @@ export function resourceTableName(resource: string, schema?: string): string {
 /**
  * Bootstrap the meta table if it doesn't exist.
  */
-export async function ensureMetaTable(pool: Pool, schema?: string): Promise<void> {
+export async function ensureMetaTable(db: PostgresQueryable, schema?: string): Promise<void> {
   const schemaPrefix = schema ? `${quoteIdentifier(schema)}.` : "";
-  await pool.query(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS ${schemaPrefix}${META_TABLE} (
       resource TEXT PRIMARY KEY,
       search_fields TEXT[] NOT NULL,
@@ -69,7 +83,7 @@ export async function ensureMetaTable(pool: Pool, schema?: string): Promise<void
  * Bootstrap a per-resource document table with tsvector index.
  */
 export async function ensureResourceTable(
-  pool: Pool,
+  db: PostgresQueryable,
   resource: string,
   searchFields: string[],
   schema?: string,
@@ -77,7 +91,7 @@ export async function ensureResourceTable(
   const table = resourceTableName(resource, schema);
   const safeName = boundedIdentifier(TABLE_PREFIX, resource).replace(TABLE_PREFIX, "");
 
-  await pool.query(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS ${table} (
       doc_id TEXT NOT NULL,
       field_name TEXT NOT NULL,
@@ -89,17 +103,17 @@ export async function ensureResourceTable(
 
   // GIN index on tsvector for fast full-text search
   const indexName = quoteIdentifier(boundedIdentifier("idx_", `${TABLE_PREFIX}${safeName}_tsv`));
-  await pool.query(`
+  await db.query(`
     CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} USING GIN (tsv)
   `);
 
   // Upsert into meta table
   const schemaPrefix = schema ? `${quoteIdentifier(schema)}.` : "";
-  await pool.query(
+  await db.query(
     `INSERT INTO ${schemaPrefix}${META_TABLE} (resource, search_fields)
      VALUES ($1, $2)
      ON CONFLICT (resource) DO UPDATE SET search_fields = EXCLUDED.search_fields`,
-    [resource, searchFields],
+    [resource, textArrayParam(searchFields)],
   );
 }
 
@@ -107,12 +121,12 @@ export async function ensureResourceTable(
  * Drop a resource table and remove its meta entry.
  */
 export async function dropResourceTable(
-  pool: Pool,
+  db: PostgresQueryable,
   resource: string,
   schema?: string,
 ): Promise<void> {
   const table = resourceTableName(resource, schema);
   const schemaPrefix = schema ? `${quoteIdentifier(schema)}.` : "";
-  await pool.query(`DROP TABLE IF EXISTS ${table}`);
-  await pool.query(`DELETE FROM ${schemaPrefix}${META_TABLE} WHERE resource = $1`, [resource]);
+  await db.query(`DROP TABLE IF EXISTS ${table}`);
+  await db.query(`DELETE FROM ${schemaPrefix}${META_TABLE} WHERE resource = $1`, [resource]);
 }

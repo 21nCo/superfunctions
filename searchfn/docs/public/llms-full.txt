@@ -3325,6 +3325,7 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 ## What works on Workers
 
 - **`@searchfn/adapter-sqlite`** — SQLite FTS5 search inside a [D1](https://developers.cloudflare.com/d1/) database through the `fromD1(env.DB)` binding. No external service. See [SQLite on D1](#sqlite-on-d1).
+- **`@searchfn/adapter-postgres`** — Postgres full-text search through [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) with an injected driver: `fromPostgresJs(sql)` or `fromPg(pool)`. See [Postgres through Hyperdrive](#postgres-through-hyperdrive).
 - **`@searchfn/adapter-meilisearch`** — talks to Meili over HTTP. Works on Workers.
 - **`@searchfn/adapter-elasticsearch`** / **`@searchfn/adapter-opensearch`** — same; HTTP-based.
 
@@ -3332,7 +3333,7 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 
 - **`@searchfn/adapter-memory`** — RAM is reset between requests.
 - **`@searchfn/adapter-indexeddb`** — no IndexedDB on Workers.
-- **`@searchfn/adapter-postgres`** — node-postgres doesn't run on Workers. Use [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) + a compatible driver if you must.
+- **`@searchfn/adapter-postgres` with `connectionString`** — the adapter-owned `pg` Pool lives across requests, which Workers do not allow. Inject a per-request driver instead (below).
 
 ## Setup
 
@@ -3447,6 +3448,74 @@ Notes:
 
 See the [SQLite adapter reference](/docs/reference/adapters/sqlite) for query behavior and storage.
 
+## Postgres through Hyperdrive
+
+`@searchfn/adapter-postgres` runs every statement through an injected driver. On Workers, open a client on the [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) connection string and pass it to the adapter: `fromPostgresJs(sql)` for postgres.js, or `fromPg(pool)` for a `pg` Pool. The adapter loads `pg` itself only for the `connectionString` option, so a Worker that injects postgres.js does not use `pg`.
+
+```typescript
+// worker.ts
+import postgres from "postgres";
+import { PostgresAdapter, fromPostgresJs } from "@searchfn/adapter-postgres";
+
+interface Env {
+  HYPERDRIVE: Hyperdrive;
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // Workers cannot reuse a connection across requests: create the client per request.
+    const sql = postgres(env.HYPERDRIVE.connectionString, { max: 5, fetch_types: false });
+    const adapter = new PostgresAdapter({ driver: fromPostgresJs(sql), schema: "public" });
+    try {
+      const query = new URL(request.url).searchParams.get("q") ?? "";
+      const hits = await adapter.searchAll({ query, resources: ["memos", "notes"], prefix: true });
+      return Response.json(hits);
+    } finally {
+      ctx.waitUntil(sql.end());
+    }
+  },
+};
+```
+
+`wrangler.toml`:
+
+```toml
+name = "searchfn-worker"
+main = "worker.ts"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "<your-hyperdrive-config-id>"
+```
+
+With `pg`, create the Pool per request in the same way and end it with `ctx.waitUntil(pool.end())`:
+
+```typescript
+import { Pool } from "pg";
+import { PostgresAdapter, fromPg } from "@searchfn/adapter-postgres";
+
+const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 5 });
+const adapter = new PostgresAdapter({ driver: fromPg(pool) });
+```
+
+Notes:
+
+- `nodejs_compat` is required: postgres.js and `pg` need it on Workers, and the adapter imports `node:crypto`.
+- `fromPostgresJs` runs every statement as a prepared statement, as Hyperdrive recommends for postgres.js. Do not create the client with `prepare: false`.
+- Run `initialize()` once from a deploy script or an authenticated admin route, not on every request: it issues `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements. `search()`, `index()`, `remove()` and `clear()` work on an adapter that was not initialized in the same request.
+- A per-request adapter has no declared resources, so pass `resources` to `searchAll()`.
+- `index()` deletes and re-inserts each batch inside `sql.begin()`, so a failed batch rolls back.
+- `index()` with `fromPg` runs each batch in `BEGIN` / `COMMIT` on one pooled client.
+- The adapter never ends the client. Call `ctx.waitUntil(sql.end())` (or `pool.end()`) yourself.
+- Set timeouts on the client (for example postgres.js `idle_timeout` and `connect_timeout`); `queryTimeoutMs` applies only to `connectionString`.
+- The adapter encodes its array parameters as Postgres array literals, so `fetch_types: false` (the setting Cloudflare recommends for Hyperdrive) works.
+
+The package's tests run the shared adapter contract with postgres.js and `pg` inside workerd through a local Hyperdrive binding (Miniflare connects straight to a Postgres 16 server). They do not exercise a live Hyperdrive configuration.
+
+See the [Postgres adapter reference](/docs/reference/adapters/postgres) for drivers and options.
+
 ## Caveats
 
 - Worker invocations are short. If `initialize()` takes more than a few seconds, the first invocation after a deploy may time out. Mitigation: hit `/searchfn/status` from a warmer cron after deploy.
@@ -3485,6 +3554,7 @@ Each tenant gets a dedicated DO instance, which gets a dedicated Meilisearch ind
 ## See also
 
 - [SQLite adapter](/docs/reference/adapters/sqlite)
+- [Postgres adapter](/docs/reference/adapters/postgres)
 - [Meilisearch adapter](/docs/reference/adapters/meilisearch)
 - [Scaling](/docs/documentation/deploy/scaling)
 
@@ -6835,6 +6905,8 @@ const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
 
 Initialize the same adapter instance passed to the server, before accepting requests. Keep the Hono routes and server startup from above. See the [Postgres adapter](/docs/reference/adapters/postgres) for provisioning details.
 
+On Cloudflare Workers, the adapter cannot own a long-lived Pool: inject a per-request postgres.js or `pg` client on Hyperdrive instead. See [Postgres through Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive).
+
 ## Next steps
 
 - [Authorization](/docs/documentation/security/request-authz) — gate `/searchfn/*` per user/role
@@ -6940,7 +7012,7 @@ For a tighter loop, call the server adapter directly from a server action instea
 
 ## Edge runtime
 
-The MemoryAdapter and PostgresAdapter both work on Node.js. For Edge runtimes (Vercel Edge, Cloudflare Workers), use Meilisearch or Elasticsearch via HTTP — direct DB drivers don't run on Edge. See [Deploy: Cloudflare Workers](/docs/documentation/deploy/cloudflare-workers).
+The MemoryAdapter and PostgresAdapter both work on Node.js. On Vercel Edge, use Meilisearch or Elasticsearch via HTTP — direct DB drivers don't run there. On Cloudflare Workers, PostgresAdapter runs through Hyperdrive with an injected postgres.js or `pg` driver; see [Postgres through Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive).
 
 ## Next steps
 
@@ -9444,22 +9516,27 @@ This is the same search engine that powers the [IndexedDB Adapter](/docs/referen
 ### Postgres Adapter
 
 URL: https://searchfn.com/docs/reference/adapters/postgres
-Description: Production-grade full-text search using Postgres tsvector.
+Description: Production-grade full-text search using Postgres tsvector, on Node or Cloudflare Workers.
 --------------------------------------------------------------------------------
 
-The Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`) for production-grade search with no additional infrastructure beyond your existing database.
+The Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`) for production-grade search with no additional infrastructure beyond your existing database. Give it a connection string and it manages a `pg` Pool, or inject a driver: `fromPg(pool)` for a `pg` Pool you own, or `fromPostgresJs(sql)` for postgres.js, which is how it runs on Cloudflare Workers through Hyperdrive.
 
 ## When to Use
 
 - Production apps already running Postgres
 - Server-side search that needs SQL-level durability and transactions
 - Moderate document volumes where a dedicated search engine is unnecessary
+- Cloudflare Workers backed by Postgres through [Hyperdrive](/docs/documentation/deploy/cloudflare-workers#postgres-through-hyperdrive)
 
 ## Installation
 
 ```bash
 npm install @searchfn/adapter-postgres
+# Only for fromPostgresJs:
+npm install postgres
 ```
+
+`pg` is a dependency of the package, but it is imported only when you pass `connectionString`.
 
 ## Setup
 
@@ -9490,18 +9567,60 @@ await adapter.index({
 const ids = await adapter.search({ resource: "tasks", query: "docs" });
 ```
 
+## Drivers
+
+Pass `driver` instead of `connectionString` to run statements on a client you own:
+
+| Binding | Client | Transactions for `index()` |
+| --- | --- | --- |
+| `fromPg(pool)` | `pg` `Pool` | `pool.connect()` + `BEGIN` / `COMMIT` / `ROLLBACK` |
+| `fromPostgresJs(sql)` | postgres.js `sql` instance | `sql.begin()` |
+
+`fromPostgresJs` runs statements with `sql.unsafe(text, params, { prepare: true })`, so they are prepared, as Hyperdrive requires. A client created with `prepare: false` still sends unprepared statements.
+
+```typescript
+import postgres from "postgres";
+import { PostgresAdapter, fromPostgresJs } from "@searchfn/adapter-postgres";
+
+const sql = postgres(process.env.SEARCH_DB_URL!);
+const adapter = new PostgresAdapter({ driver: fromPostgresJs(sql) });
+// ...
+await adapter.dispose(); // does not end `sql`
+await sql.end();
+```
+
+The adapter never closes an injected driver; the code that created the client owns it. `queryTimeoutMs` is rejected with `driver`: set timeouts on the client instead. Passing both `driver` and `connectionString` throws.
+
+### Custom drivers
+
+Any object with this shape works:
+
+```typescript
+interface PostgresDriver {
+  query<Row>(sql: string, params?: readonly unknown[]): Promise<{ rows: Row[] }>;
+  transaction?<T>(fn: (tx: { query: PostgresDriver["query"] }) => Promise<T>): Promise<T>;
+}
+```
+
+Statements use `$1`, `$2`, ... placeholders. Parameters are only strings and numbers: the adapter encodes array parameters as Postgres array literals, so a driver does not need to serialize arrays.
+
+`transaction(fn)` must run `fn` on one connection inside one transaction, committing when it resolves and rolling back when it rejects. Without it, `index()` deletes and re-inserts each batch as separate statements: a failure can leave documents missing from the index until the call is retried, and concurrent writes to the same document can interleave. Both bindings above provide it.
+
+Errors with SQLSTATE codes for connection failures, serialization failures, deadlocks, cancelled queries and too many connections are retried, as are postgres.js `CONNECT_TIMEOUT` and `CONNECTION_CLOSED`. Expose the SQLSTATE as `error.code` so retries and the missing-table handling work.
+
 ## Configuration
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `connectionString` | `string` | — | Required. Postgres connection string (DSN). |
+| `connectionString` | `string` | — | Postgres connection string (DSN). The adapter creates a `pg` Pool and ends it on `dispose()`. Pass this or `driver`. |
+| `driver` | `PostgresDriver` | — | Caller-owned driver, for example `fromPostgresJs(sql)` or `fromPg(pool)`. Pass this or `connectionString`. |
 | `schema` | `string` | `"public"` | Target database schema. |
-| `queryTimeoutMs` | `number` | `30000` | Timeout for individual queries. |
+| `queryTimeoutMs` | `number` | `30000` | `statement_timeout` for the Pool created from `connectionString`. Not allowed with `driver`. |
 | `maxBatchSize` | `number` | `10000` | Maximum documents per index batch. |
 | `retry.maxRetries` | `number` | `2` | Retry attempts for transient failures. |
 | `retry.baseDelayMs` | `number` | `100` | Base delay between retries (with jitter). |
 | `retry.maxDelayMs` | `number` | `5000` | Maximum delay between retries. |
-| `logger` | `PostgresAdapterLogger` | — | Optional adapter-level logger. |
+| `observability` | `ObservabilityInput` | — | Optional logger/observability hooks; retries are logged as `adapter.retry`. |
 
 ## Capabilities
 
@@ -9511,6 +9630,7 @@ const ids = await adapter.search({ resource: "tasks", query: "docs" });
 | `searchAll` | Yes |
 | `fuzzy` | Yes |
 | `fieldBoosts` | No |
+| `prefix` | Yes |
 
 ## Behavior
 
