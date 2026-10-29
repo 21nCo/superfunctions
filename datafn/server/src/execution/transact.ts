@@ -60,6 +60,20 @@ export async function executeTransaction(
   const steps = request.steps;
   const isAtomic = request.atomic !== false; // Default true
   const hasMutations = steps.some((step) => Boolean(step.mutation));
+  if (isAtomic && hasMutations && db.capabilities?.transactions?.supported === false) {
+    // Adapters that declare no transactions (Drizzle on SQLite and Cloudflare
+    // D1) cannot roll back, so sequential execution could apply some steps and
+    // not others. Refuse before anything, including directory work, is written.
+    return {
+      ok: false,
+      error: {
+        code: "DFQL_UNSUPPORTED",
+        message:
+          "Atomic transact with mutations requires database transactions, which this adapter does not support; send atomic: false to apply steps one at a time",
+        details: { path: "atomic" },
+      },
+    };
+  }
   const multiRegionRuntime = getDatafnMultiRegionRuntimeConfig(plugins);
   const needsPermissionDirectoryOutbox = Boolean(
     hasMutations &&
@@ -219,7 +233,13 @@ export async function executeTransaction(
     return null; // Should not happen due to validation
   };
 
-  if (isAtomic && typeof (db as any).transaction === "function") {
+  // Read-only atomic transacts on adapters without transactions run below;
+  // there is nothing to roll back.
+  if (
+    isAtomic &&
+    db.capabilities?.transactions?.supported !== false &&
+    typeof (db as any).transaction === "function"
+  ) {
     // REL-001: Atomic execution with DB transaction support
     const deferredPermissionDirectorySyncs: DeferredPermissionDirectorySync[] = [];
     const reconcilePermissionDirectoryAfterSettlement = async () => {

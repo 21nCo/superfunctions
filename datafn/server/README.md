@@ -435,6 +435,8 @@ The mutation is rejected with `CONFLICT` if the guard condition is not met.
 
 Atomic multi-step transactions mixing queries and mutations.
 
+Atomic execution needs database transactions. When the adapter reports `capabilities.transactions.supported === false` (for example the Drizzle adapter on SQLite or Cloudflare D1), an atomic transact with any mutation step returns HTTP 400 with `DFQL_UNSUPPORTED` (`details.path: "atomic"`) before anything is written. Send `"atomic": false` to apply steps one at a time.
+
 **Request:**
 
 ```json

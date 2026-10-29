@@ -56,7 +56,7 @@ Both account updates succeed or neither does.
 
 When `atomic` is `true` (the default):
 
-- All steps execute sequentially within a database transaction (if the adapter supports it).
+- All steps execute sequentially within a database transaction. On an adapter that declares no transaction support, a request with any mutation step is rejected with `DFQL_UNSUPPORTED` before anything is written (see [Database Transaction Support](#database-transaction-support)).
 - Later steps see the results of earlier steps.
 - If any mutation step fails, all prior mutations are rolled back.
 - The response marks rolled-back steps with `rolledBack: true`.
@@ -147,10 +147,11 @@ Atomic transactions require database adapter support for `db.transaction()`. The
 
 | Adapter | Transaction Support |
 |---|---|
-| Drizzle (PostgreSQL, SQLite, etc.) | Full transaction support with rollback |
-| Memory adapter | Sequential execution without rollback |
+| Drizzle (PostgreSQL, MySQL) | Full transaction support with rollback |
+| Drizzle (SQLite, including Cloudflare D1) | No transactions: an atomic transact with a mutation step returns `DFQL_UNSUPPORTED` before anything is written; query-only and `atomic: false` transacts run step by step |
+| Memory adapter | Rollback by restoring a snapshot of the store |
 
-When the adapter does not support transactions, steps execute sequentially. In atomic mode, execution stops on the first failure, but prior steps are not rolled back.
+An adapter that declares `transactions.supported: false` never applies part of an atomic transact. See [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ## Query Caching Within Transactions
 

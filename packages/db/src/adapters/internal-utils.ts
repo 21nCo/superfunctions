@@ -89,6 +89,8 @@ export function normalizeInternalResultCount(result: any): number {
   const count =
     result?.count ??
     normalizedResult?.changes ??
+    // Cloudflare D1 reports affected rows on the result's meta object.
+    normalizedResult?.meta?.changes ??
     normalizedResult?.affectedRows ??
     normalizedResult?.rowsAffected ??
     normalizedResult?.rowCount ??
