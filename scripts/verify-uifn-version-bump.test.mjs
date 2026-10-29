@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedScriptNames, tsconfigEntries } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedScriptNames, tsconfigEntries } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -342,10 +342,20 @@ test("fileReferences reads bare strings only in build files, and marks tsconfig 
   assert.deepEqual(targets("uifn/solid/scripts/build.mjs", "path.join(packageRoot, 'tsconfig.build.json')", { root: "uifn/solid", buildFile: true }), ["~uifn/solid/tsconfig.build.json", "~uifn/solid/scripts/tsconfig.build.json"]);
   assert.deepEqual(targets("uifn/core/tsconfig.json", '{ "extends": "../../tsconfig.base.json", "include": ["src", "./tests/**/*"] }'), ["uifn/core/src", "uifn/core/tests/**/*", "tsconfig.base.json"]);
   assert.ok(fileReferences("uifn/core/tsconfig.json", '{ "include": ["src"] }').every(({ tsconfig }) => tsconfig === "uifn/core/tsconfig.json"));
-  assert.deepEqual(targets("uifn/core/tsup.config.ts", 'entry: ["./src/fixtures/runtime.ts", "./src/index.ts"]', { root: "uifn/core" }), ["uifn/core/src/fixtures/runtime.ts", "uifn/core/src/fixtures/runtime.ts/src/index.ts", "uifn/core/src/index.ts"]);
+  assert.deepEqual(targets("uifn/core/tsup.config.ts", 'entry: ["./src/fixtures/runtime.ts", "./src/index.ts"]', { root: "uifn/core" }), ["uifn/core/src/fixtures/runtime.ts", "uifn/core/src/index.ts"]);
   assert.deepEqual(targets("uifn/core/scripts/build.mjs", 'path.resolve(packageRoot, "..", "catalog", "catalog.json")', { root: "uifn/core", base: "uifn/core" }), ["uifn/core", "uifn/core/catalog/catalog.json", "uifn/catalog/catalog.json"]);
   const bundled = (text) => fileReferences("uifn/core/src/index.ts", text).filter((reference) => reference.bundled).map(({ target }) => target);
   assert.deepEqual(bundled('import a from "../a.js";\nexport * from "./b";\nconst c = await import("./c");\nrequire("./d");\nreadFileSync(path.join(here, "../e.json"));\n'), ["uifn/core/a.js", "uifn/core/src/b", "uifn/core/src/c", "uifn/core/src/d"]);
+});
+
+test("array elements are separate paths, while path.join and path.resolve arguments still join", () => {
+  const config = 'const here = path.dirname(fileURLToPath(import.meta.url));\nexport default { entry: ["../shared/first.ts", "../shared/second.ts"], define: { catalog: path.join(here, "..", "catalog", "catalog.json") } };\n';
+  const references = fileReferences("uifn/core/tsup.config.ts", config, { root: "uifn/core", base: "uifn/core", buildFile: true });
+  const targets = references.filter(({ soft }) => !soft).map(({ target }) => target);
+  assert.deepEqual(targets, ["uifn/shared/first.ts", "uifn/shared/second.ts", "uifn", "uifn/catalog/catalog.json"]);
+  const inventory = fileInventory(["uifn/core/tsup.config.ts", "uifn/shared/first.ts", "uifn/shared/second.ts", "uifn/catalog/catalog.json"]);
+  const declaration = { inputs: ["uifn/shared/first.ts", "uifn/shared/second.ts", "uifn/catalog/catalog.json"], references: [] };
+  assert.deepEqual(findUndeclaredReferences({ name: "@uifn/core", packagePath: "uifn/core", references: references.map((reference) => ({ from: "uifn/core/tsup.config.ts", ...reference })), declaration, inventory }), []);
 });
 
 test("scriptReferences keeps glob tokens and names tsconfig.json for a bare tsc", () => {
@@ -353,6 +363,17 @@ test("scriptReferences keeps glob tokens and names tsconfig.json for a bare tsc"
   assert.ok(targets({ build: "tsup src/index.ts 'src/fixtures/*.ts'" }).includes("uifn/core/src/fixtures/*.ts"));
   assert.ok(targets({ build: "tsup && tsc --emitDeclarationOnly" }).includes("uifn/core/tsconfig.json"));
   for (const build of ["tsc -p tsconfig.build.json", "tsc --project=tsconfig.build.json", "tsup --tsconfig tsconfig.build.json"]) assert.ok(!targets({ build }).includes("uifn/core/tsconfig.json"), build);
+});
+
+// npm's packlist matches a `files` entry without an inner slash at any depth, and includes everything under a directory it names.
+test("an exclusion fails only when a files entry matches the excluded path or a file in it", () => {
+  const packageFiles = ["uifn/components/package.json", "uifn/components/styles.css", "uifn/components/registry/button.json", "uifn/components/registry/theme/base.json"];
+  const errors = (files) => findConsumedExclusions({ name: "@uifn/components", packagePath: "uifn/components", manifest: { files }, excluded: ["registry"], packageFiles, promoted: new Map() });
+  for (const files of [["dist", "*.css", "README.md"], ["./*.css", "dist/"], ["registry-*.json"], ["!registry"]]) assert.deepEqual(errors(files), [], JSON.stringify(files));
+  assert.match(errors(["dist", "registry"])[0], /excludes registry, but package\.json files includes uifn\/components\/registry;/);
+  assert.match(errors(["registry/**"])[0], /package\.json files includes uifn\/components\/registry\/button\.json/);
+  assert.match(errors(["./registry/"])[0], /package\.json files includes uifn\/components\/registry;/);
+  assert.match(errors(["base.json"])[0], /package\.json files includes uifn\/components\/registry\/theme\/base\.json/);
 });
 
 test("an exclusion of a build config that tools load implicitly fails", (t) => {
@@ -545,6 +566,33 @@ for (const specifier of ["../tools/runtime.js", "../tools/runtime"]) {
     assert.match(helper.output, /@uifn\/core: shipped code changed \(tools\/runtime\.ts\) but version is still 1\.0\.1/);
   });
 }
+
+// tsup builds every file its entry globs match, and tsc emits declarations for every source its tsconfig includes, minus that tsconfig's exclude.
+test("a test or story file that a build-entry glob or an emitting tsconfig include matches counts as shipped", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/react/tsup.config.ts", "export default { entry: ['src/index.ts', 'src/generated/*.tsx', 'src/hooks/*.ts'], format: ['esm'] };\n");
+  repo.write("uifn/react/src/hooks/use-media.ts", "export const useMedia = 1;\n");
+  repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": "tsup 'src/**/*.ts' '!src/**/*.test.ts' && tsc -p tsconfig.build.json"`));
+  repo.write("uifn/core/tsconfig.json", '{ "include": ["src/**/*"], "exclude": ["dist"] }\n');
+  repo.write("uifn/core/tsconfig.build.json", '{ "extends": "./tsconfig.json", "include": ["src/**/*"], "exclude": ["src/__tests__/**", "**/*.test.ts"] }\n');
+  repo.write("uifn/core/src/__tests__/core.test.ts", "test;\n");
+  repo.write("uifn/core/src/__tests__/helpers.tsx", "export const helper = 1;\n");
+  repo.commit("entry globs and an emitting tsconfig");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/src/__tests__/core.test.ts", "test 2;\n");
+  repo.write("uifn/core/src/__tests__/helpers.tsx", "export const helper = 2;\n");
+  repo.commit("excluded tests only");
+  const excluded = check(repo.root);
+  assert.equal(excluded.status, 0, excluded.output);
+  repo.write("uifn/react/src/hooks/use-probe.test.ts", "export const probe = 1;\n");
+  repo.write("uifn/react/src/generated/probe.stories.tsx", "export const shipped = 1;\n");
+  repo.write("uifn/core/src/button.stories.tsx", "export const story = 1;\n");
+  repo.commit("files the build consumes");
+  const consumed = check(repo.root);
+  assert.equal(consumed.status, 1);
+  assert.match(consumed.output, /@uifn\/react: shipped code changed \(src\/generated\/probe\.stories\.tsx, src\/hooks\/use-probe\.test\.ts\) but version is still 1\.0\.0/);
+  assert.match(consumed.output, /@uifn\/core: shipped code changed \(src\/button\.stories\.tsx\) but version is still 1\.0\.0/);
+});
 
 // tsc emits what tsconfig.build.json includes because the build names it; tsconfig.json only type-checks.
 test("a tsconfig's entries count test paths only when the build names that tsconfig", (t) => {
