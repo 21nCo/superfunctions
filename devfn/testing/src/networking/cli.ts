@@ -1,0 +1,357 @@
+#!/usr/bin/env node
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
+import { access, mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+import { ApprovalError, approvedDomains, parseApproval, type QualificationApproval } from "./approval.js";
+import { liveDrivers } from "./drivers.js";
+import { DisposableInventory } from "./inventory.js";
+import { LiveHost } from "./live.js";
+import { ENDPOINT_INTERFACE, LIVE_MATRIX_TARGET, NETWORKING_QUALIFICATION_CONTRACT } from "./matrix.js";
+import { checkPrerequisites, execute, hostProbeEnvironment, localDockerEndpoint } from "./prerequisites.js";
+import { harnessFile, ownedDirectory, ReceiptSlot, receiptRoot } from "./receipt-store.js";
+import { networkingOutcomeGate, RECEIPT_CHECK, receiptProblems, redactSecrets, runExitCode, summarize, type NetworkingQualificationReceipt, type Provenance } from "./receipt.js";
+import { runScenarios, selectScenarios, type PrerequisiteResult, type RunOptions, type ScenarioResult } from "./runner.js";
+
+const USAGE = `Usage: devfn-networking-qualification <plan|run|gate> [options]
+
+  plan   Check prerequisites and list which selected scenarios could run here. Creates nothing.
+  run    Execute the selected live scenarios and write a receipt; exits 0 only if every one passed.
+  gate   Check receipts for the DEV-2 networking outcome at --head on macOS and Linux.
+
+Options:
+  --scenario <id>        Select a scenario (repeatable); default all
+  --row <n>              Select a deferred matrix row (repeatable)
+  --approval <name>      Operator approval of nonproduction resources: a JSON file name in ~/.devfn-networking-qualification (names credential variables, never values)
+  --browser-operator     A person or browser agent will complete provider sign-ins during the run
+  --devfn <file>         Built DevFn CLI entry (default: this checkout's devfn/cli/dist/index.js)
+  --head <sha>           Exact commit under test: run needs it to be this clean, built checkout's HEAD (run, gate)
+  --out <name>           Receipt file name, such as macos.json, in the harness receipt directory ~/.devfn-networking-qualification (run)
+`;
+
+const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
+
+/**
+ * An approval authorizes destructive provider operations, so it is read only
+ * as a regular file under a plain name in the harness-owned directory, never
+ * through a symlink. It is opened without blocking, so a FIFO or device is
+ * refused rather than waited on. A refusal states a fixed reason and never
+ * quotes the file.
+ */
+async function loadApproval(name: string | undefined, root: string): Promise<{ approval?: QualificationApproval; approvalError?: string }> {
+  if (!name) return {};
+  const refused = (reason: string) => ({ approvalError: `approval refused: ${reason}` });
+  const file = harnessFile(root, name);
+  if (!file) return refused(`--approval ${name} is not a file name such as approval.json; approvals are read from ${root}.`);
+  try { await ownedDirectory(root, false); } catch { return refused(`${root} is missing or not a harness-owned directory (a directory, not a symlink, of this user with mode 0700).`); }
+  let text: string;
+  try {
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      if (!(await handle.stat()).isFile()) return refused(`${name} is not a regular file in ${root}.`);
+      text = await handle.readFile("utf8");
+    } finally { await handle.close(); }
+  } catch { return refused(`${name} cannot be read as a regular file in ${root}; symlinks are not followed.`); }
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return refused(`${name} is not valid JSON.`); }
+  try { return { approval: parseApproval(value) }; } catch (error) { return refused(error instanceof ApprovalError ? error.message : "the approval is invalid."); }
+}
+
+/** Limitations every receipt records; the provider gaps of each binding the run registered are added as it registers them. */
+const HOST_LIMITATIONS = ["Windows is not qualified; no Windows support is claimed without Windows evidence.",
+  "Linux proxy listeners use ports 80 and 443; the operator must permit Caddy to bind them before the run.",
+  "Internal TLS is verified against the DevFn Caddy root by the harness only; browsers need an explicit, operator-chosen trust decision."];
+
+/**
+ * git as found in an absolute PATH directory. Relative entries such as "."
+ * are never searched, so the working directory cannot supply the binary.
+ */
+async function gitCommand(): Promise<string> {
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!path.isAbsolute(directory)) continue;
+    const candidate = path.join(directory, process.platform === "win32" ? "git.exe" : "git");
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch { /* not in this directory */ }
+  }
+  throw new Error("git was not found in an absolute PATH directory.");
+}
+
+const git = async (cwd: string, args: readonly string[]): Promise<string> => {
+  const command = await gitCommand();
+  return await new Promise((resolve, reject) => {
+    execFile(command, [...args], { cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => { if (error) reject(new Error(`git ${args.join(" ")} failed in ${cwd}`)); else resolve(String(stdout)); });
+  });
+};
+
+/**
+ * Build outputs of a checkout older than their source: for every tracked
+ * devfn/<package>/src/**.ts, its tsc output devfn/<package>/dist/**.js must
+ * exist and be at least as new. Every DevFn package the CLI and harness load
+ * is covered, not only their entry points.
+ */
+export async function staleBuildOutputs(checkout: string): Promise<string[]> {
+  const sources = (await git(checkout, ["ls-files", "-z", "--", "devfn"])).split("\0").filter((file) => /^devfn\/(?!docs\/)[^/]+\/src\/.+\.ts$/.test(file) && !file.endsWith(".d.ts"));
+  const mtime = async (file: string) => await stat(path.join(checkout, file)).then((item) => item.mtimeMs, () => undefined);
+  const stale: string[] = [];
+  for (const file of sources) {
+    const output = file.replace(/\/src\/(.+)\.ts$/, "/dist/$1.js");
+    const [source, built] = [await mtime(file), await mtime(output)];
+    if (source === undefined || built === undefined || built < source) stale.push(output);
+  }
+  return stale;
+}
+
+/**
+ * Bind a run to the code under test: the harness and the DevFn CLI must come
+ * from one clean checkout at --head whose every build output is newer than
+ * its source. Anything else is refused before a resource exists.
+ */
+async function provenance(head: string, devfnCli: string): Promise<Provenance> {
+  const harness = fileURLToPath(import.meta.url);
+  const checkout = (await git(path.dirname(harness), ["rev-parse", "--show-toplevel"])).trim();
+  // The DevFn CLI must lie inside the harness checkout before its directory is used for anything, and that checkout must be its own repository.
+  const cli = await realpath(devfnCli).catch(() => { throw new Error(`${devfnCli} does not exist; build the DevFn CLI first.`); });
+  if (!cli.startsWith(`${await realpath(checkout)}${path.sep}`)) throw new Error(`${devfnCli} is not inside the harness checkout ${checkout}.`);
+  if ((await git(path.dirname(cli), ["rev-parse", "--show-toplevel"])).trim() !== checkout) throw new Error(`${devfnCli} is not built from the harness checkout ${checkout}.`);
+  const actual = (await git(checkout, ["rev-parse", "HEAD"])).trim();
+  if (actual !== head) throw new Error(`--head ${head} is not the checkout HEAD ${actual}.`);
+  if ((await git(checkout, ["status", "--porcelain"])).trim()) throw new Error(`${checkout} has uncommitted or untracked changes; qualify a clean checkout.`);
+  const stale = await staleBuildOutputs(checkout);
+  if (stale.length) throw new Error(`Build output is missing or older than its source (${stale.slice(0, 5).join(", ")}${stale.length > 5 ? `, ${stale.length - 5} more` : ""}); rebuild before the run.`);
+  return { head: actual, checkout, clean: true, builtAfterSources: true, devfnCli };
+}
+
+export interface QualificationRun {
+  options: RunOptions;
+  /** Where the receipt goes; the caller claims it before the run and releases it afterwards. */
+  slot: ReceiptSlot;
+  /** Unhandled rejections the process reported so far; read again after every step, since one may arrive at any await. */
+  strays: readonly string[];
+  /** The receipt for these results and run errors; built again whenever a run error arrives after it was written. */
+  receipt(results: ScenarioResult[], runErrors: string[]): NetworkingQualificationReceipt;
+  /** Remove leftovers of the run root and its Compose owners; called only after their read-back was recorded. */
+  reap(): Promise<void>;
+  /** Remove the run root; called only once every resource was read back absent. */
+  removeRoot(): Promise<void>;
+  write?: (receipt: NetworkingQualificationReceipt) => Promise<void>;
+}
+
+export interface QualificationOutcome { code: number; clean: boolean; receipt?: NetworkingQualificationReceipt; runErrors: string[] }
+
+/** How many times a receipt is rewritten for run errors that keep arriving before it is withdrawn instead. */
+const RECEIPT_REWRITES = 5;
+
+/**
+ * Run the scenarios, clean up and write the receipt. A failed step, a failed
+ * ledger write or an unhandled rejection is a run error, and the remaining
+ * cleanup still runs: every recorded resource is removed and read back, and
+ * leftovers are reaped, even when an exception leaves this function. After
+ * the reap, the root removal and one macrotask turn, the receipt is
+ * rewritten whenever a run error arrived since it was written; one that
+ * cannot be brought up to date is removed. An interrupted run (code 130)
+ * writes no receipt: an interrupt that arrives while the receipt is written
+ * or finalized withdraws it. A receipt of an earlier run already in the slot
+ * is removed before anything runs, so no failed or interrupted rerun leaves
+ * it in place; a run that cannot remove it, or finds anything other than a
+ * receipt there, does not start and leaves that entry untouched. Later
+ * withdrawals and rewrites touch only this run's own receipt. The CLI
+ * withdraws it earlier still, before its preflight, so this covers direct
+ * callers.
+ */
+export async function executeRun(run: QualificationRun): Promise<QualificationOutcome> {
+  const { inventory, resources, signal } = run.options;
+  await run.slot.withdraw();
+  const failures: string[] = [];
+  const runErrors = (): string[] => [...failures, ...inventory.ledgerFailures.map((item) => `inventory ledger: ${item}`), ...run.strays.map((item) => `unhandled rejection during the run: ${item}`)];
+  const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {
+    try { await action(); } catch (error) { failures.push(`${name} failed: ${message(error)}`); }
+  };
+  let finished = false;
+  /** Leftover processes are reaped only after their read-back was recorded, so a leak stays in the evidence. */
+  const finish = async (): Promise<void> => {
+    finished = true;
+    await step("cleanup", async () => await inventory.cleanup(resources));
+    if (!inventory.allAbsent()) await step("reap", run.reap);
+  };
+  try {
+    let results: ScenarioResult[] = [];
+    await step("scenario run", async () => { results = await runScenarios(run.options); });
+    await step("run-level cleanup", async () => await inventory.cleanup(resources, "run"));
+    const clean = inventory.allAbsent();
+    if (signal?.aborted) {
+      await finish();
+      if (inventory.allAbsent()) await step("run root removal", run.removeRoot);
+      return { code: 130, clean: inventory.allAbsent(), runErrors: runErrors() };
+    }
+    const write = run.write ?? (async (item: NetworkingQualificationReceipt) => await run.slot.write(item));
+    let receipt = run.receipt(results, runErrors());
+    await write(receipt);
+    // Keep the run root, with its logs and state, whenever anything was not confirmed absent.
+    if (!clean) await finish();
+    else await step("run root removal", run.removeRoot);
+    for (let rewrites = 0; ; rewrites += 1) {
+      // A rejection left by any step above is reported within one macrotask turn.
+      await new Promise((resolve) => setImmediate(resolve));
+      if (runErrors().length === receipt.runErrors.length) break;
+      try {
+        if (rewrites === RECEIPT_REWRITES) throw new Error(`run errors kept arriving after ${RECEIPT_REWRITES} rewrites`);
+        receipt = run.receipt(results, runErrors());
+        await write(receipt);
+      } catch (error) {
+        await run.slot.withdraw(receipt.runId);
+        throw new Error(`The receipt ${run.slot.file} was withdrawn: it could not record every run error (${message(error)}).`);
+      }
+    }
+    const errors = runErrors();
+    if (signal?.aborted) {
+      await run.slot.withdraw(receipt.runId);
+      return { code: 130, clean, runErrors: errors };
+    }
+    return { code: runExitCode(receipt, receiptProblems(receipt), clean, errors.length), clean, receipt, runErrors: errors };
+  } finally {
+    if (!finished && !inventory.allAbsent()) await finish();
+  }
+}
+
+const parse = (argv: readonly string[]) => parseArgs({ args: [...argv], allowPositionals: true, options: {
+  scenario: { type: "string", multiple: true }, row: { type: "string", multiple: true }, approval: { type: "string" }, "browser-operator": { type: "boolean" },
+  devfn: { type: "string" }, head: { type: "string" }, out: { type: "string" }, help: { type: "boolean" } } });
+
+/** receiptDirectory is where run keeps receipts; it is not an operator option. */
+export async function main(argv: readonly string[], receiptDirectory = receiptRoot()): Promise<number> {
+  const { values, positionals } = parse(argv);
+  const [command, ...files] = positionals;
+  if (values.help || !command) { process.stdout.write(USAGE); return command ? 0 : 2; }
+  if (command === "gate") {
+    if (!values.head || !files.length) throw new Error("gate needs --head and at least one receipt file.");
+    const receipts = await Promise.all(files.map(async (file) => JSON.parse(await readFile(file, "utf8")) as NetworkingQualificationReceipt));
+    const gate = networkingOutcomeGate(receipts, values.head);
+    process.stdout.write(`${JSON.stringify({ ...gate, problems: Object.fromEntries(files.map((file, index) => [file, receiptProblems(receipts[index])])) }, null, 2)}\n`);
+    return gate.ready ? 0 : 1;
+  }
+  if (command !== "plan" && command !== "run") throw new Error(`Unknown command ${command}.\n${USAGE}`);
+  if (command === "plan") return await attempt("plan", values, receiptDirectory);
+  if (!values.head || !/^[a-f0-9]{40}$/.test(values.head) || !values.out) throw new Error("run needs --head <full commit SHA> and --out <receipt file name>.");
+  const slot = await ReceiptSlot.claim(values.out, receiptDirectory).catch((error: unknown) => { throw new Error(`The receipt ${values.out} cannot be claimed, so the run does not start: ${message(error)}`); });
+  try {
+    // A run attempt withdraws the earlier receipt before anything that can fail or be interrupted, so no failed rerun leaves it there.
+    await slot.withdraw().catch((error: unknown) => { throw new Error(`The receipt at ${slot.file} cannot be withdrawn, so the run does not start: ${message(error)}`); });
+    return await attempt("run", values, receiptDirectory, slot);
+  } finally { await slot.release(); }
+}
+
+/**
+ * Install the run's SIGINT, SIGTERM and SIGHUP handling. The first signal
+ * calls onInterrupt and aborts the returned signal; a second exits at once,
+ * after withdrawing this run's receipt, should it have published one, and
+ * only then releasing its claim. What could not be withdrawn is reported.
+ * Output never holds a signal up from here on: a closed, full or stopped
+ * stderr loses the message, never the withdrawal, the release, a later
+ * signal or exit 130. The forced exit's report is also appended to
+ * forced-exit.txt in the run root, the ledger's directory.
+ */
+export function interruptOnSignals(slot: ReceiptSlot, runId: string, ledger: string, onInterrupt: () => void): AbortSignal {
+  const interrupt = new AbortController();
+  // A failed asynchronous stderr write (EPIPE once its reader is gone) is otherwise an uncaught error that ends the run before its withdrawal.
+  process.stderr.on("error", () => undefined);
+  // Node makes a terminal's stderr blocking on POSIX, so a stopped or full terminal would hold the event loop and every later signal; queue instead.
+  // libuv reopened that terminal for this process, the run's commands get piped stdio, and Node restores the mode at exit.
+  const handle = (process.stderr as { _handle?: { fd?: number; setBlocking?: (blocking: boolean) => unknown } })._handle;
+  if (process.stderr.isTTY) handle?.setBlocking?.(false);
+  const fd = handle?.fd !== undefined && handle.fd >= 0 ? handle.fd : 2;
+  // One synchronous attempt on that non-blocking descriptor: what does not fit at once is lost rather than waited on or dropped by process.exit.
+  const report = (text: string): void => { try { writeSync(fd, text); } catch { /* best-effort */ } };
+  const runRoot = path.dirname(ledger);
+  const kept = path.join(runRoot, "forced-exit.txt");
+  /** Appended without following a link or waiting on a special file; a run root already removed is made again only for a problem to keep. */
+  const keep = (text: string, needed: boolean): void => {
+    try {
+      if (needed) try { mkdirSync(runRoot, { mode: 0o700 }); } catch { /* it exists, or the append below fails */ }
+      const file = openSync(kept, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+      try { writeSync(file, text); } finally { closeSync(file); }
+    } catch { /* best-effort */ }
+  };
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (interrupt.signal.aborted) {
+      let problems: string[] = [];
+      try { problems = slot.abandonSync(runId); } finally {
+        const text = [`${signal}: exiting without cleanup; ${ledger} lists what may remain, and ${kept} keeps this report.`, ...problems].join("\n");
+        keep(`${new Date().toISOString()} ${text}\n`, problems.length > 0);
+        report(`${text}\n`);
+        process.exit(130);
+      }
+    }
+    interrupt.abort(signal);
+    onInterrupt();
+    report(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
+  };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
+  return interrupt.signal;
+}
+
+async function attempt(command: "plan" | "run", values: ReturnType<typeof parse>["values"], harnessDirectory: string, slot?: ReceiptSlot): Promise<number> {
+  const scenarios = selectScenarios({ scenarios: values.scenario, rows: values.row?.map(Number) });
+  const devfnCli = path.resolve(values.devfn ?? fileURLToPath(new URL("../../../cli/dist/index.js", import.meta.url)));
+  const { approval, approvalError } = await loadApproval(values.approval, harnessDirectory);
+  const prerequisites: PrerequisiteResult[] = await checkPrerequisites(hostProbeEnvironment({ devfnCli, approval, approvalError, browserOperator: values["browser-operator"] === true }),
+    scenarios.flatMap((scenario) => scenario.prerequisites));
+  if (command === "plan") {
+    const unmet = (ids: readonly string[]) => ids.filter((id) => prerequisites.find((item) => item.id === id)?.status !== "satisfied");
+    process.stdout.write(`${JSON.stringify({ contract: NETWORKING_QUALIFICATION_CONTRACT, target: LIVE_MATRIX_TARGET, platform: process.platform, prerequisites,
+      scenarios: scenarios.map((scenario) => ({ id: scenario.id, row: scenario.row, title: scenario.title, runnable: unmet(scenario.prerequisites).length === 0,
+        unmet: unmet(scenario.prerequisites), assertions: scenario.assertions.map((item) => item.id), fixtureEvidence: scenario.fixtureEvidence })) }, null, 2)}\n`);
+    return 0;
+  }
+  const head = values.head!;
+  if (!slot) throw new Error("run needs a claimed receipt slot.");
+  const source = await provenance(head, devfnCli);
+  // Compose runs only against the local engine the prerequisite resolved, pinned for every DevFn and docker command of the run.
+  const docker = prerequisites.find((item) => item.id === "docker-compose")?.status === "satisfied" ? await localDockerEndpoint(process.env, execute) : undefined;
+  const runId = randomBytes(6).toString("hex");
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), `devfn-qualification-${runId}-`)));
+  const ledger = path.join(root, "inventory.json");
+  const inventory = new DisposableInventory({ runId, root, domains: approvedDomains(approval), ledger });
+  const host = new LiveHost({ root, devfnCli, env: process.env, inventory, docker });
+  const handlers = host.handlers();
+  process.stderr.write(`Run ${runId}: root ${root}; every resource is recorded in ${ledger} before it is created.\n`);
+  // Run-level resources outlive each scenario: the DevFn Caddy the first start launches, and any process left in the run root.
+  inventory.record("run-processes", root, "run");
+  inventory.record("proxy", host.stateDir, "run");
+  // An interrupt stops creation first: in-flight DevFn commands are killed and later ones refused. The one cleanup
+  // runs only after the running driver returned, so its read-back sees whatever that driver still created.
+  const interrupt = interruptOnSignals(slot, runId, ledger, () => host.abort());
+  // Drivers join every promise they leave running; should one still reject unhandled, the run records it and fails instead of exiting before cleanup.
+  const strays: string[] = [];
+  process.on("unhandledRejection", (error: unknown) => { strays.push(message(error)); process.stderr.write(`unhandled rejection during the run: ${message(error)}\n`); });
+  const startedAt = new Date().toISOString();
+  const secrets = approval ? [approval.oauth?.clientSecretEnv, approval.oauth?.clientIdEnv, approval.cloudflare?.apiTokenEnv, approval.ngrokReserved?.authtokenEnv, approval.ngrokReserved?.apiKeyEnv,
+    approval.ngrokEphemeral?.authtokenEnv, approval.ngrokEphemeral?.apiKeyEnv].flatMap((name) => name && process.env[name] ? [process.env[name]!] : []) : [];
+  const outcome = await executeRun({ slot, strays,
+    options: { scenarios, platform: process.platform, prerequisites, drivers: liveDrivers(host, approval), inventory, resources: handlers, snapshot: async () => await host.snapshot(), signal: interrupt },
+    receipt: (results, runErrors) => redactSecrets<NetworkingQualificationReceipt>({ contract: NETWORKING_QUALIFICATION_CONTRACT, check: RECEIPT_CHECK, target: LIVE_MATRIX_TARGET, head, runId, provenance: source,
+      host: { platform: process.platform, arch: process.arch, release: os.release(), node: process.version }, startedAt, finishedAt: new Date().toISOString(),
+      ...(approval ? { approval: { approvedBy: approval.approvedBy, expiresAt: approval.expiresAt } } : {}),
+      prerequisites, scenarios: results, runResources: inventory.list("run"), interface: ENDPOINT_INTERFACE, limitations: [...HOST_LIMITATIONS, ...host.limitations], runErrors,
+      summary: summarize(results) }, secrets),
+    reap: async () => { await host.reap(root, new Set()).catch(() => undefined); await host.reapCompose().catch(() => undefined); },
+    removeRoot: async () => await rm(root, { recursive: true, force: true }) });
+  const cleanup = outcome.clean ? "confirmed" : `incomplete; inspect ${root}`;
+  if (outcome.code === 130) {
+    process.stderr.write(`${JSON.stringify({ interrupted: interrupt.reason, cleanup, ledger, runErrors: outcome.runErrors, entries: inventory.list().filter((entry) => !entry.cleanup?.absent).map((entry) => `${entry.kind} ${entry.id}`) })}\n`);
+    return 130;
+  }
+  process.stdout.write(`${JSON.stringify({ receipt: slot.file, summary: outcome.receipt?.summary, problems: outcome.receipt ? receiptProblems(outcome.receipt) : [], cleanup }, null, 2)}\n`);
+  // The exit code applies the gate's own receipt check, so a run its producer saw fail never exits 0; a stray after the receipt was final fails it too.
+  return outcome.code === 0 && strays.length ? 1 : outcome.code;
+}
+
+if (process.argv[1] && await realpath(process.argv[1]).then((file) => file === fileURLToPath(import.meta.url), () => false)) {
+  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (error: unknown) => { process.stderr.write(`${message(error)}\n`); process.exitCode = 2; });
+}

@@ -1,6 +1,6 @@
 {
   "name": "@datafn/server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DataFn server runtime - HTTP endpoints for DFQL query, mutations, and sync",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,9 @@
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "echo 'lint not configured'",
     "lint:fix": "echo 'lint not configured'",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.workerd.config.ts",
+    "test:node": "vitest run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts",
     "test:watch": "vitest watch",
     "typecheck": "tsc --noEmit"
   },
@@ -53,16 +55,21 @@
   "sideEffects": false,
   "dependencies": {
     "@datafn/core": "0.1.1",
-    "@superfunctions/db": "0.2.1",
+    "@superfunctions/db": "0.3.2",
     "@superfunctions/http": "0.3.0",
     "@superfunctions/observability": "0.0.1"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.4",
+    "@datafn/cli": "0.1.2",
     "@datafn/client": "0.1.1",
+    "@superfunctions/http-hono": "0.2.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.9.1",
     "@types/ws": "8.18.1",
     "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.35.0",
+    "hono": "4.11.9",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",

@@ -79,4 +79,21 @@ describe('createDrizzleInternalCrud', () => {
       ]),
     ).rejects.toThrow('Internal CRUD in operator value must be an array');
   });
+
+  it('reads Cloudflare D1 affected-row counts from result meta', async () => {
+    // drizzle-orm/d1 run() resolves to the raw D1Result.
+    const changes = [1, 0];
+    const db = {
+      async run() {
+        return { success: true, results: [], meta: { changes: changes.shift(), last_row_id: 0 } };
+      },
+    };
+
+    const internal = createDrizzleInternalCrud(db, 'sqlite');
+    const where = [{ field: 'namespace', op: 'eq' as const, value: 'ns' }];
+
+    await expect(internal.update('__datafn_meta', where, { next_server_seq: 2 })).resolves.toBe(1);
+    // A lost compare-and-swap must read as zero rows, never NaN.
+    await expect(internal.delete('__datafn_meta', where)).resolves.toBe(0);
+  });
 });

@@ -123,6 +123,7 @@ This document is intended for large language models and agentic developer tools.
 - [Meilisearch Adapter](https://searchfn.com/docs/reference/adapters/meilisearch): External Meilisearch adapter for hosted or self-hosted search backends.
 - [Memory Adapter](https://searchfn.com/docs/reference/adapters/memory): In-process full-text search using SearchFn's built-in engine.
 - [Postgres Adapter](https://searchfn.com/docs/reference/adapters/postgres): Production-grade full-text search using Postgres tsvector.
+- [SQLite Adapter](https://searchfn.com/docs/reference/adapters/sqlite): Server-side full-text search on SQLite FTS5 for Node, libSQL/Turso and Cloudflare D1.
 - [Capabilities](https://searchfn.com/docs/reference/capabilities): Per-adapter feature matrix.
 - [Changelog](https://searchfn.com/docs/reference/changelog): Release notes for SearchFn packages.
 - [Client API](https://searchfn.com/docs/reference/client): Create and configure a SearchFn client for in-app search.

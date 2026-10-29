@@ -136,14 +136,16 @@ describe("Drizzle Schema Codegen", () => {
       const result = generateDrizzleSchema(schema, "sqlite");
 
       expect(result).toContain('// Database: sqlite');
-      expect(result).toContain('import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
+      expect(result).toContain('import { customType, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
       expect(result).toContain('export const item = sqliteTable("item", {');
-      expect(result).toContain('  active: integer("active").notNull(),');
+      // SQLite drivers cannot bind booleans or objects, so those columns map values.
+      expect(result).toContain('const datafnBoolean = customType<');
+      expect(result).toContain('  active: datafnBoolean("active").notNull(),');
       expect(result).toContain('  count: integer("count").notNull(),');
-      expect(result).toContain('  data: text("data"),');
+      expect(result).toContain('  data: text("data", { mode: "json" }),');
       expect(result).toContain('  id: text("id").primaryKey(),');
       expect(result).toContain('  scheduledAt: integer("scheduled_at"),');
-      // kv is always included as a built-in resource (sqlite uses text for object/array types)
+      // kv is always included as a built-in resource (sqlite stores JSON values as text)
       expect(result).toContain('export const kv = sqliteTable("kv", {');
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });
@@ -795,7 +797,118 @@ describe("Drizzle Schema Codegen", () => {
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });
 
-    it("should include the built-in kv table for sqlite with text value column", () => {
+    it("stores sqlite boolean values as 0/1 and keeps E2EE envelopes as JSON text", () => {
+      const schema = {
+        namespaced: false,
+        resources: [
+          {
+            name: "item",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "active", type: "boolean", required: false, default: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('  active: datafnBoolean("active").default(true),');
+      expect(result.indexOf("const datafnBoolean")).toBeLessThan(result.indexOf("export const item"));
+
+      const helper = result.slice(result.indexOf("const datafnBoolean"), result.indexOf("});") + 3);
+      // Evaluate the emitted mappings with a stub customType to check both directions.
+      const typeScriptOnly = /customType<[^>]*>>?\(/;
+      const config = new Function("customType", `return ${helper.replace(/^const datafnBoolean = /, "").replace(typeScriptOnly, "customType(")}`)(
+        (definition: unknown) => definition,
+      ) as {
+        dataType(): string;
+        toDriver(value: unknown): unknown;
+        fromDriver(value: unknown): unknown;
+      };
+      const envelope = { __datafnE2ee: 1, alg: "AES-GCM", keyRef: "k1", iv: "aXY=", data: "Y2lwaGVy" };
+      expect(config.dataType()).toBe("integer");
+      expect([config.toDriver(true), config.toDriver(false)]).toEqual([1, 0]);
+      expect([config.fromDriver(1), config.fromDriver(0), config.fromDriver(0n)]).toEqual([true, false, false]);
+      expect(config.fromDriver(config.toDriver(envelope))).toEqual(envelope);
+    });
+
+    it("names the sql and customType imports and the sqlite boolean helper apart from resource and join-table exports", () => {
+      const boolField = (name: string) => ({ name, type: "boolean", required: false });
+      const schema = {
+        namespaced: false,
+        resources: [
+          { name: "datafnBoolean", version: 1, fields: [{ name: "id", type: "string", required: true }, boolField("on")] },
+          { name: "customType", version: 1, fields: [{ name: "id", type: "string", required: true }, boolField("on")] },
+          {
+            name: "sql",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              boolField("on"),
+              { name: "meta", type: "object", required: false, default: { a: 1 } },
+            ],
+          },
+        ],
+        relations: [
+          {
+            from: "datafnBoolean",
+            to: "customType",
+            type: "many-many",
+            relation: "links",
+            joinTable: "datafnBoolean_2",
+            metadata: [boolField("pinned")],
+          },
+        ],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('import { customType as customType_2, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";');
+      expect(result).toContain('import { sql as sql_2 } from "drizzle-orm";');
+      expect(result).toContain("const datafnBoolean_3 = customType_2<");
+      expect(result).toContain('export const datafnBoolean = sqliteTable("datafnBoolean", {');
+      expect(result).toContain('export const customType = sqliteTable("customType", {');
+      expect(result).toContain('export const sql = sqliteTable("sql", {');
+      expect(result).toContain('export const datafnBoolean_2 = sqliteTable("datafnBoolean_2", {');
+      expect(result.match(/ {2}on: datafnBoolean_3\("on"\),/g)).toHaveLength(3);
+      expect(result).toContain('  pinned: datafnBoolean_3("pinned"),');
+      expect(result).toContain(`  meta: text("meta", { mode: "json" }).default(sql_2.raw("'{\\"a\\":1}'")),`);
+      expect(result).not.toMatch(/\bdatafnBoolean(_2)?\("/);
+      expect(result).not.toMatch(/\bsql\.raw\(|import \{ sql \}/);
+    });
+
+    it("emits sqlite JSON defaults as JSON text SQL literals", () => {
+      const schema = {
+        namespaced: false,
+        resources: [
+          {
+            name: "item",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "label", type: "json", required: false, default: "it's" },
+              { name: "flag", type: "json", required: false, default: true },
+              { name: "size", type: "json", required: false, default: 5 },
+              { name: "tags", type: "array", required: false, default: ["a"] },
+              { name: "extra", type: "object", required: false, default: null },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('import { sql } from "drizzle-orm";');
+      expect(result).toContain(`  label: text("label", { mode: "json" }).default(sql.raw("'\\"it''s\\"'")),`);
+      expect(result).toContain(`  flag: text("flag", { mode: "json" }).default(sql.raw("'true'")),`);
+      expect(result).toContain(`  size: text("size", { mode: "json" }).default(sql.raw("'5'")),`);
+      expect(result).toContain(`  tags: text("tags", { mode: "json" }).default(sql.raw("'[\\"a\\"]'")),`);
+      expect(result).toContain('  extra: text("extra", { mode: "json" }).default(null),');
+      expect(generateDrizzleSchema(schema, "postgres")).not.toContain("drizzle-orm\";");
+    });
+
+    it("should include the built-in kv table for sqlite with a JSON text value column", () => {
       const schema = {
         namespaced: false,
         resources: [
@@ -814,7 +927,7 @@ describe("Drizzle Schema Codegen", () => {
 
       expect(result).toContain('export const kv = sqliteTable("kv", {');
       expect(result).toContain('  id: text("id").primaryKey(),');
-      expect(result).toContain('  value: text("value"),');
+      expect(result).toContain('  value: text("value", { mode: "json" }),');
       expect(result).toContain('import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";');
       expect(readSchemaExports(result)).toEqual(expectedSchemaExports(["item"]));
     });

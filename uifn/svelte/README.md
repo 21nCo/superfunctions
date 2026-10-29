@@ -71,8 +71,31 @@ npm run verify:uifn-browser -- --framework svelte
 
 ## Verification
 
+Run these from the repository root. On a fresh checkout, first install dependencies, build the packages this adapter depends on, and install the Playwright browsers:
+
 ```bash
-npm --workspace @uifn/svelte run typecheck
+npm ci
+npx turbo run build --filter=@uifn/svelte^...
+npm --workspace @uifn/dom exec -- playwright install chromium firefox webkit
+npx playwright install chromium firefox webkit
 ```
 
-The phase gate covers the full catalog inventory, Svelte diagnostics, source and packed production builds, SSR/hydration equivalence, Chromium/Firefox/WebKit behavior, lifecycle counters, forms, portals, exact negative mutation codes, and clean npm tarballs.
+The two installs serve different Playwright versions. `@uifn/dom` pins its own `@playwright/test`, and the first install fetches that version's browsers for `test:browser` and for the browser stage of `verify:uifn-stable`. The second install fetches the browsers for the repository root's `playwright`, which `verify:uifn-phase-12` uses to hydrate the Svelte consumer.
+
+Then run:
+
+```bash
+npm --workspace @uifn/svelte run typecheck
+npm --workspace @uifn/svelte run test
+npm --workspace @uifn/svelte run build
+npm --workspace @uifn/dom run test:browser -- --project=chromium --project=firefox --project=webkit browser/adapters
+npm run verify:uifn-phase-12
+npm run verify:uifn-stable
+```
+
+- `typecheck` runs `svelte-check` over the package.
+- `test` runs the Vitest suites in `tests/` under jsdom, not a real browser. They render all 69 catalog compound roots, drive core behavior through compound parts and `bind:value`, update controller inputs without recreating the live service, and check DOM-owned portals, native form participation, and Menubar focus movement and restoration. They also mount, operate, and clean up every catalog public tree, and cover part-action reconciliation and hook cleanup.
+- `build` packages `lib/` into `dist/` with `svelte-package`.
+- `test:browser … browser/adapters` builds the adapters, then mounts the built package's Svelte fixtures in Chromium, Firefox, and WebKit. At present that covers Tabs selection under arrow-key, Home, and End navigation with wraparound, focus that follows the selection, pointer selection, and a clean unmount. The `uifn browser tests` CI workflow runs the full `@uifn/dom` browser suite in these three engines on every pull request to `dev`, `next`, or `main` that changes `uifn/**`, and on every push to `dev`.
+- `verify:uifn-phase-12` runs `typecheck`, `test`, and `build`, then the generated-inventory and negative mutation-code contract (`scripts/verify-uifn-phase-12-contract.mjs`). It also builds an Accordion consumer from source and from the packed tarballs, renders it on the server, and hydrates it in Chromium, Firefox, and WebKit with matching IDs and no console diagnostics (`scripts/verify-uifn-svelte-consumer.mjs`). Finally it checks the packed contents (`scripts/verify-uifn-pack.mjs`).
+- `verify:uifn-stable` runs the Svelte `typecheck`, `test` (and reports its test count), and `build`, along with the other stable packages and the `@uifn/dom` browser suite. It prints one JSON report and exits non-zero if any check fails.

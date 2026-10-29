@@ -55,7 +55,7 @@ async function evaluateGuard(
 
 ## TOCTOU Prevention
 
-Guards run within the same database transaction as the mutation they protect. This prevents time-of-check-to-time-of-use (TOCTOU) race conditions:
+Guards run within the same database transaction as the mutation they protect. This prevents time-of-check-to-time-of-use (TOCTOU) race conditions. On an adapter without transactions (Drizzle on SQLite or Cloudflare D1), the guard check and the write are separate statements, so another writer can change the record in between; see [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).
 
 ```typescript
 // Both the guard check and the update happen atomically

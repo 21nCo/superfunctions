@@ -1,0 +1,973 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSearchClient } from "@searchfn/client";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
+import {
+  FUZZY_UNSUPPORTED_WARNING,
+  SEARCH_ADAPTER_DISPOSED,
+  SqliteAdapter,
+  type SqliteDriver,
+  type SqliteStatement,
+} from "../src/index";
+import { betterSqlite, countRows, ftsTables, generationOf, type TestDatabase } from "./helpers";
+
+const BOOKMARKS = [{ name: "bookmarks", searchFields: ["title", "body"] }];
+
+let database: TestDatabase;
+let adapter: SqliteAdapter;
+
+beforeEach(async () => {
+  database = betterSqlite();
+  adapter = new SqliteAdapter({ driver: database.driver });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  database.close();
+});
+
+/**
+ * Wraps the shared driver like another process: pauses before the first call whose SQL (or any
+ * statement of its batch) matches `pauseOn`, and with `dieAfter` fails every later call.
+ */
+function gatedDriver(pauseOn: RegExp, { dieAfter = false } = {}) {
+  const inner = database.driver;
+  let reached!: () => void;
+  let release!: () => void;
+  const paused = new Promise<void>((resolve) => (reached = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let state: "waiting" | "passed" | "dead" = "waiting";
+  async function call<T>(sql: string[], run: () => Promise<T>): Promise<T> {
+    if (state === "dead") throw new Error("interrupted");
+    if (state !== "waiting" || !sql.some((text) => pauseOn.test(text))) return run();
+    state = "passed";
+    reached();
+    await gate;
+    try {
+      return await run();
+    } finally {
+      if (dieAfter) state = "dead";
+    }
+  }
+  const driver: SqliteDriver = {
+    exec: (sql) => call([sql], () => inner.exec(sql)),
+    all: (sql, params) => call([sql], () => inner.all(sql, params)),
+    run: (sql, params) => call([sql], () => inner.run(sql, params)),
+    batch: (statements) => call(statements.map((statement) => statement.sql), () => inner.batch!(statements)),
+  };
+  return { driver, paused, release };
+}
+
+async function seedBookmarks(target: SqliteAdapter = adapter): Promise<void> {
+  await target.initialize({ resources: BOOKMARKS });
+  await target.index({
+    resource: "bookmarks",
+    documents: [
+      { id: "b1", fields: { title: "Subset bookmarks sync", body: "keeps devices aligned" }, metadata: { __ns: "team-a", __region: "eu" } },
+      { id: "b2", fields: { title: "Reading list", body: "subset bookmarks for subset readers" }, metadata: { __ns: "team-a", __region: "us" } },
+      { id: "b3", fields: { title: "Subset bookmarks archive", body: "old" }, metadata: { __ns: "team-b", __region: "eu" } },
+      { id: "b4", fields: { title: "Subscription billing", body: "invoices" }, metadata: { __ns: "team-a" } },
+      { id: "b5", fields: { title: "Café menus", body: "naïve résumé" } },
+    ],
+  });
+}
+
+describe("capabilities", () => {
+  it("declares FTS5 features and reports fuzzy as unsupported", () => {
+    expect(adapter.name).toBe("sqlite");
+    expect(adapter.capabilities).toEqual({
+      persistent: true,
+      searchAll: true,
+      fuzzy: false,
+      prefix: true,
+      fieldBoosts: true,
+      metadataFilters: true,
+      maxBatchSize: 500,
+    });
+  });
+
+  it("rejects an unsafe table prefix and a missing driver", () => {
+    expect(() => new SqliteAdapter({ driver: database.driver, tablePrefix: 'x"; DROP TABLE y; --' })).toThrow(
+      /tablePrefix/,
+    );
+    expect(() => new SqliteAdapter({ driver: undefined as unknown as SqliteDriver })).toThrow(/driver/);
+  });
+});
+
+describe("query semantics", () => {
+  beforeEach(() => seedBookmarks());
+
+  it("matches whole terms by default and term prefixes with prefix: true", async () => {
+    expect(await adapter.search({ resource: "bookmarks", query: "sub" })).toEqual([]);
+    const prefixed = await adapter.search({ resource: "bookmarks", query: "sub", prefix: true });
+    expect([...prefixed].sort()).toEqual(["b1", "b2", "b3", "b4"]);
+  });
+
+  it("applies the prefix default from construct-time defaults", async () => {
+    const prefixing = new SqliteAdapter({ driver: database.driver, defaults: { prefix: true } });
+    const ids = await prefixing.search({ resource: "bookmarks", query: "subs" });
+    expect([...ids].sort()).toEqual(["b1", "b2", "b3", "b4"]);
+  });
+
+  it("requires every term of a multi-term query", async () => {
+    const ids = await adapter.search({ resource: "bookmarks", query: "subset readers" });
+    expect(ids).toEqual(["b2"]);
+  });
+
+  it("folds case and diacritics", async () => {
+    expect(await adapter.search({ resource: "bookmarks", query: "CAFE resume NAIVE" })).toEqual(["b5"]);
+  });
+
+  it("treats FTS5 syntax in user input as literal text", async () => {
+    const baseline = await adapter.search({ resource: "bookmarks", query: "subset" });
+    expect([...baseline].sort()).toEqual(["b1", "b2", "b3"]);
+    // Only the word "subset" survives tokenization, so these must behave like the baseline.
+    for (const query of ['subset"', '"subset"', "subset*", "-subset", "^subset", "(subset)", "subset:"]) {
+      expect(await adapter.search({ resource: "bookmarks", query })).toEqual(baseline);
+    }
+    // Operators and column names become literal terms that no document contains.
+    for (const query of ['"', "subset AND", "NOT subset", "title:subset", "NEAR(subset", "{c0}: subset", "AND", " ... "]) {
+      expect(await adapter.search({ resource: "bookmarks", query })).toEqual([]);
+    }
+  });
+
+  it("ranks by BM25 and honours field boosts", async () => {
+    const titleFirst = await adapter.search({
+      resource: "bookmarks",
+      query: "subset bookmarks",
+      namespaceFilter: ["team-a"],
+      fieldBoosts: { title: 10, body: 1 },
+    });
+    const bodyFirst = await adapter.search({
+      resource: "bookmarks",
+      query: "subset bookmarks",
+      namespaceFilter: ["team-a"],
+      fieldBoosts: { title: 1, body: 10 },
+    });
+    expect(titleFirst).toEqual(["b1", "b2"]);
+    expect(bodyFirst).toEqual(["b2", "b1"]);
+  });
+
+  it("rejects negative or non-finite field boosts", async () => {
+    for (const boost of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        adapter.search({ resource: "bookmarks", query: "subset", fieldBoosts: { title: boost } }),
+      ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+    }
+  });
+
+  it("restricts matching to the requested fields", async () => {
+    expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: ["title"] })).toEqual([]);
+    expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: ["body"] })).toEqual(["b2"]);
+    expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: ["unknown"] })).toEqual([]);
+  });
+
+  it("selects nothing for an explicitly empty fields or resources list and the defaults when omitted", async () => {
+    await adapter.initialize({ resources: [...BOOKMARKS, { name: "notes", searchFields: ["text"] }] });
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { text: "subset readers" } }] });
+    const ids = (results: Array<{ resource: string; id: string | number }>) =>
+      results.map(({ resource, id }) => `${resource}:${id}`).sort();
+
+    expect(await adapter.search({ resource: "bookmarks", query: "readers", fields: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", fields: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", resources: [] })).toEqual([]);
+    expect(await adapter.searchAll({ query: "readers", resources: [], fields: ["body"] })).toEqual([]);
+
+    expect(await adapter.search({ resource: "bookmarks", query: "readers" })).toEqual(["b2"]);
+    expect(ids(await adapter.searchAll({ query: "readers" }))).toEqual(["bookmarks:b2", "notes:n1"]);
+    expect(ids(await adapter.searchAll({ query: "readers", resources: ["notes"] }))).toEqual(["notes:n1"]);
+    expect(ids(await adapter.searchAll({ query: "readers", fields: ["body"] }))).toEqual(["bookmarks:b2"]);
+  });
+
+  it("enforces namespace and region filters and excludes documents without metadata", async () => {
+    const teamA = await adapter.search({ resource: "bookmarks", query: "sub", prefix: true, namespaceFilter: ["team-a"] });
+    expect([...teamA].sort()).toEqual(["b1", "b2", "b4"]);
+    const euTeamA = await adapter.search({
+      resource: "bookmarks",
+      query: "subset",
+      namespaceFilter: ["team-a", "team-b"],
+      regionFilter: ["eu"],
+    });
+    expect([...euTeamA].sort()).toEqual(["b1", "b3"]);
+    expect(await adapter.search({ resource: "bookmarks", query: "cafe", namespaceFilter: ["team-a"] })).toEqual([]);
+  });
+
+  it("normalizes limit", async () => {
+    const all = { resource: "bookmarks", query: "sub", prefix: true } as const;
+    expect(await adapter.search({ ...all, limit: 2 })).toHaveLength(2);
+    expect(await adapter.search({ ...all, limit: 0 })).toHaveLength(1);
+    expect(await adapter.search({ ...all, limit: Number.NaN })).toHaveLength(4);
+  });
+
+  it("returns empty results for an unknown resource without creating tables", async () => {
+    const fresh = betterSqlite();
+    const reader = new SqliteAdapter({ driver: fresh.driver });
+    expect(await reader.search({ resource: "nope", query: "x" })).toEqual([]);
+    expect(await reader.searchAll({ query: "x" })).toEqual([]);
+    await reader.remove({ resource: "nope", ids: ["1"] });
+    await reader.clear("nope");
+    await reader.rebuild("nope");
+    expect(await fresh.driver.all("SELECT name FROM sqlite_master")).toEqual([]);
+    fresh.close();
+  });
+});
+
+describe("tie ordering", () => {
+  // U+10000 (a surrogate pair) sorts before U+E000 with JavaScript `<`, which the searchfn client
+  // and @datafn/server use to re-sort results, but after it in code point (SQLite BINARY) order.
+  const BMP = "\uE000";
+  const ASTRAL = "\u{10000}";
+  const LOW = `r${ASTRAL}`;
+  const HIGH = `r${BMP}`;
+  // Score ties in JavaScript string order: resource first, then id.
+  const ALL = [`${LOW}:${ASTRAL}`, `${LOW}:${BMP}`, `${HIGH}:${ASTRAL}`, `${HIGH}:${BMP}`];
+  const pairs = (results: Array<{ resource: string; id: string | number }>) =>
+    results.map(({ resource, id }) => `${resource}:${id}`);
+
+  beforeEach(async () => {
+    await adapter.initialize({
+      resources: [
+        { name: HIGH, searchFields: ["title"] },
+        { name: LOW, searchFields: ["title"] },
+      ],
+    });
+    for (const resource of [HIGH, LOW]) {
+      await adapter.index({ resource, documents: [BMP, ASTRAL].map((id) => ({ id, fields: { title: "same text" } })) });
+    }
+  });
+
+  it("orders equal scores like JavaScript < at every adapter truncation and in the merge", async () => {
+    expect(await adapter.search({ resource: HIGH, query: "same", limit: 1 })).toEqual([ASTRAL]);
+    expect(await adapter.search({ resource: HIGH, query: "same" })).toEqual([ASTRAL, BMP]);
+    expect(pairs(await adapter.searchAll({ query: "same" }))).toEqual(ALL);
+    for (let limit = 1; limit <= ALL.length; limit++) {
+      expect(pairs(await adapter.searchAll({ query: "same", limit }))).toEqual(ALL.slice(0, limit));
+    }
+    expect(pairs(await adapter.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([ALL[0], ALL[2]]);
+    expect(pairs(await adapter.searchAll({ query: "same", resources: [HIGH, LOW], limit: 3 }))).toEqual(ALL.slice(0, 3));
+  });
+
+  it("keeps a smaller limit a prefix of a larger one through the searchfn client", async () => {
+    const client = createSearchClient({ adapter });
+    for (let limit = 1; limit <= ALL.length; limit++) {
+      expect(pairs(await client.searchAll({ query: "same", limit }))).toEqual(ALL.slice(0, limit));
+    }
+    expect(pairs(await client.searchAll({ query: "same", limitPerResource: 1 }))).toEqual([ALL[0], ALL[2]]);
+    expect(pairs(await client.searchAll({ query: "same", limitPerResource: 1, limit: 1 }))).toEqual([ALL[0]]);
+    expect(await client.search({ resource: LOW, query: "same", limit: 1 })).toEqual([ASTRAL]);
+    expect(await client.search({ resource: LOW, query: "same", limit: 2 })).toEqual([ASTRAL, BMP]);
+  });
+
+  it("agrees with the client fallback for an adapter without searchAll", async () => {
+    const searchOnly: SearchAdapter = {
+      name: adapter.name,
+      capabilities: { ...adapter.capabilities, searchAll: false },
+      index: (params) => adapter.index(params),
+      search: (params) => adapter.search(params),
+      remove: (params) => adapter.remove(params),
+      clear: (resource) => adapter.clear(resource),
+    };
+    const client = createSearchClient({ adapter: searchOnly });
+    // Positional scores: each resource's first id ties with the other resource's first id.
+    const query = { query: "same", resources: [HIGH, LOW], limitPerResource: 2 };
+    const expected = [`${LOW}:${ASTRAL}`, `${HIGH}:${ASTRAL}`, `${LOW}:${BMP}`, `${HIGH}:${BMP}`];
+    for (let limit = 1; limit <= expected.length; limit++) {
+      expect(pairs(await client.searchAll({ ...query, limit }))).toEqual(expected.slice(0, limit));
+    }
+    expect(pairs(await client.searchAll({ ...query, limitPerResource: 1 }))).toEqual(expected.slice(0, 2));
+  });
+});
+
+describe("fuzzy", () => {
+  beforeEach(() => seedBookmarks());
+
+  it("ignores fuzzy and warns once through the observability logger", async () => {
+    const warn = vi.fn();
+    const logged = new SqliteAdapter({ driver: database.driver, observability: { logger: { warn } } });
+    const exact = await logged.search({ resource: "bookmarks", query: "subset" });
+    expect(await logged.search({ resource: "bookmarks", query: "subset", fuzzy: true })).toEqual(exact);
+    expect(await logged.search({ resource: "bookmarks", query: "subzet", fuzzy: 2 })).toEqual([]);
+    await logged.searchAll({ query: "subset", fuzzy: true });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(FUZZY_UNSUPPORTED_WARNING, { adapter: "sqlite" });
+  });
+
+  it("falls back to console.warn, including for a fuzzy default", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fuzzyDefault = new SqliteAdapter({ driver: database.driver, defaults: { fuzzy: true } });
+    await fuzzyDefault.search({ resource: "bookmarks", query: "subset" });
+    await fuzzyDefault.search({ resource: "bookmarks", query: "subset" });
+    expect(consoleWarn).toHaveBeenCalledTimes(1);
+    expect(consoleWarn.mock.calls[0][0]).toContain(FUZZY_UNSUPPORTED_WARNING);
+  });
+
+  it("does not warn for fuzzy: false or 0", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await adapter.search({ resource: "bookmarks", query: "subset", fuzzy: false });
+    await adapter.search({ resource: "bookmarks", query: "subset", fuzzy: 0 });
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+});
+
+describe("documents and ids", () => {
+  it("preserves numeric and string id types", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    await adapter.index({
+      resource: "items",
+      documents: [
+        { id: 42, fields: { title: "alpha" } },
+        { id: "0042", fields: { title: "alpha" } },
+      ],
+    });
+    expect(await adapter.search({ resource: "items", query: "alpha" })).toEqual(["0042", 42]);
+    await adapter.remove({ resource: "items", ids: ["42"] });
+    expect(await adapter.search({ resource: "items", query: "alpha" })).toEqual(["0042"]);
+  });
+
+  it("keys documents by their string form, so 5 and \"5\" are one document", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    await adapter.index({ resource: "items", documents: [{ id: 5, fields: { title: "alpha" } }] });
+    await adapter.index({ resource: "items", documents: [{ id: "5", fields: { title: "alpha" } }] });
+    expect(await adapter.search({ resource: "items", query: "alpha" })).toEqual(["5"]);
+    expect(await countRows(database.driver, "items", "docs")).toBe(1);
+  });
+
+  it("keeps the last duplicate id within one batch", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    await adapter.index({
+      resource: "items",
+      documents: [
+        { id: "d1", fields: { title: "first" } },
+        { id: "d1", fields: { title: "second" } },
+      ],
+    });
+    expect(await adapter.search({ resource: "items", query: "first" })).toEqual([]);
+    expect(await adapter.search({ resource: "items", query: "second" })).toEqual(["d1"]);
+    expect(await countRows(database.driver, "items", "docs")).toBe(1);
+  });
+
+  it("rejects invalid ids and documents", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    for (const id of [Number.NaN, {}, null]) {
+      await expect(
+        adapter.index({ resource: "items", documents: [{ id: id as unknown as string, fields: { title: "x" } }] }),
+      ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+    }
+    await expect(
+      adapter.index({ resource: "items", documents: [{ id: "x", fields: "nope" as unknown as Record<string, string> }] }),
+    ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+  });
+
+  it("stringifies non-string field values and skips null values", async () => {
+    await adapter.initialize({ resources: [{ name: "items", searchFields: ["title", "count", "tags"] }] });
+    await adapter.index({
+      resource: "items",
+      documents: [
+        { id: "d1", fields: { title: null, count: 7, tags: ["red", "blue"] } as unknown as Record<string, string> },
+      ],
+    });
+    expect(await adapter.search({ resource: "items", query: "7" })).toEqual(["d1"]);
+    expect(await adapter.search({ resource: "items", query: "blue" })).toEqual(["d1"]);
+  });
+
+  it("registers an uninitialized resource from the indexed field names", async () => {
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { body: "hello world" } }] });
+    expect(await adapter.search({ resource: "notes", query: "hello" })).toEqual(["n1"]);
+    await expect(adapter.index({ resource: "empty", documents: [{ id: "e1", fields: {} }] })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+    });
+  });
+
+  it("indexes more documents than one batch holds", async () => {
+    const small = new SqliteAdapter({ driver: database.driver, maxBatchSize: 7 });
+    await small.initialize({ resources: [{ name: "items", searchFields: ["title"] }] });
+    await small.index({
+      resource: "items",
+      documents: Array.from({ length: 50 }, (_, i) => ({ id: i, fields: { title: `common ${i}` } })),
+    });
+    expect(await small.search({ resource: "items", query: "common", limit: 100 })).toHaveLength(50);
+    await small.remove({ resource: "items", ids: Array.from({ length: 50 }, (_, i) => i) });
+    expect(await countRows(database.driver, "items", "docs")).toBe(0);
+  });
+
+  it("bounds every write payload by serialized bytes and rejects an oversized document or id before writing", async () => {
+    const payloadBytes: number[] = [];
+    const inner = database.driver;
+    const recording = new SqliteAdapter({
+      driver: {
+        ...inner,
+        batch: (statements) => {
+          for (const { params = [] } of statements) {
+            for (const param of params) if (typeof param === "string") payloadBytes.push(Buffer.byteLength(param));
+          }
+          return inner.batch!(statements);
+        },
+      },
+    });
+    const wide = (length: number) => "é".repeat(length); // two UTF-8 bytes per character
+    await recording.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await recording.index({
+      resource: "notes",
+      documents: [1, 2, 3].map((n) => ({ id: `n${n}`, fields: { title: `doc${n} ${wide(100_000)}` } })),
+    });
+    // 300 ids are within the 500-item count limit but serialize to about 600 KB.
+    await recording.remove({ resource: "notes", ids: Array.from({ length: 300 }, (_, n) => `${n}${wide(1_000)}`) });
+    expect(await countRows(database.driver, "notes", "docs")).toBe(3);
+    expect(Math.max(...payloadBytes)).toBeLessThanOrEqual(512 * 1024);
+
+    await expect(
+      recording.index({
+        resource: "notes",
+        documents: [{ id: "small", fields: { title: "kept" } }, { id: "big", fields: { title: wide(300_000) } }],
+      }),
+    ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+    await expect(recording.remove({ resource: "notes", ids: ["n1", wide(300_000)] })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+    });
+    expect(await recording.search({ resource: "notes", query: "kept" })).toEqual([]);
+    expect(await recording.search({ resource: "notes", query: "doc1" })).toEqual(["n1"]);
+  });
+
+  it("handles hostile resource and field names as data", async () => {
+    const resource = 'x"; DROP TABLE "searchfn_resources"; --';
+    const field = "it's \"quoted\" ]";
+    await adapter.initialize({ resources: [{ name: resource, searchFields: [field] }] });
+    await adapter.index({ resource, documents: [{ id: "d1", fields: { [field]: "payload" } }] });
+    expect(await adapter.search({ resource, query: "payload", fields: [field], fieldBoosts: { [field]: 2 } })).toEqual(["d1"]);
+    await adapter.initialize({ resources: [{ name: "proto", searchFields: ["__proto__"] }] });
+    await adapter.index({ resource: "proto", documents: [{ id: "p1", fields: JSON.parse('{"__proto__": "inherited"}') }] });
+    expect(await adapter.search({ resource: "proto", query: "inherited" })).toEqual(["p1"]);
+    await expect(
+      adapter.initialize({ resources: [{ name: "bad", searchFields: ["a\u0000b"] }] }),
+    ).rejects.toMatchObject({ code: "DFQL_INVALID" });
+    await expect(adapter.initialize({ resources: [{ name: "bad", searchFields: [] }] })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+    });
+  });
+});
+
+describe("idempotency", () => {
+  it("re-initializing with the same fields in any order does not rebuild", async () => {
+    await seedBookmarks();
+    await adapter.initialize({ resources: BOOKMARKS });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["body", "title", "body"] }] });
+    expect(await generationOf(database.driver, "bookmarks")).toBe(0);
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(5);
+  });
+
+  it("upserting the same document twice leaves one row in each table", async () => {
+    await seedBookmarks();
+    const document = { id: "b1", fields: { title: "Subset bookmarks sync", body: "keeps devices aligned" } };
+    await adapter.index({ resource: "bookmarks", documents: [document] });
+    await adapter.index({ resource: "bookmarks", documents: [document] });
+    expect(await countRows(database.driver, "bookmarks", "docs")).toBe(5);
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(5);
+  });
+
+  it("an upsert replaces metadata", async () => {
+    await seedBookmarks();
+    await adapter.index({
+      resource: "bookmarks",
+      documents: [{ id: "b1", fields: { title: "Subset bookmarks sync" }, metadata: { __ns: "team-b" } }],
+    });
+    expect(await adapter.search({ resource: "bookmarks", query: "sync", namespaceFilter: ["team-a"] })).toEqual([]);
+    expect(await adapter.search({ resource: "bookmarks", query: "sync", namespaceFilter: ["team-b"] })).toEqual(["b1"]);
+  });
+
+  it("delete and clear are repeatable", async () => {
+    await seedBookmarks();
+    await adapter.remove({ resource: "bookmarks", ids: ["b1", "b1", "missing"] });
+    await adapter.remove({ resource: "bookmarks", ids: ["b1"] });
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(4);
+    await adapter.clear("bookmarks");
+    await adapter.clear("bookmarks");
+    expect(await countRows(database.driver, "bookmarks", "docs")).toBe(0);
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(0);
+  });
+
+  it("rebuild is repeatable and preserves results", async () => {
+    await seedBookmarks();
+    const before = await adapter.search({ resource: "bookmarks", query: "subset", limit: 10 });
+    await adapter.rebuild("bookmarks");
+    await adapter.rebuild("bookmarks");
+    expect(await generationOf(database.driver, "bookmarks")).toBe(2);
+    expect(await adapter.search({ resource: "bookmarks", query: "subset", limit: 10 })).toEqual(before);
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(5);
+    const fts = await database.driver.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'searchfn_r%_fts_%' AND name NOT LIKE '%\\_fts\\_%\\_%' ESCAPE '\\'",
+    );
+    expect(fts.map((row) => row.name)).toEqual(["searchfn_r1_fts_2"]);
+  });
+
+  it("changing declared fields rebuilds from stored documents", async () => {
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await adapter.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await adapter.search({ resource: "bookmarks", query: "beta" })).toEqual([]);
+
+    await adapter.initialize({ resources: BOOKMARKS });
+    expect(await generationOf(database.driver, "bookmarks")).toBe(1);
+    expect(await adapter.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1"]);
+    expect(await adapter.search({ resource: "bookmarks", query: "alpha", fields: ["title"] })).toEqual(["b1"]);
+  });
+});
+
+describe("multiple adapter instances on one database", () => {
+  it("an instance with a stale generation reloads after another instance rebuilt", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await writer.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "bookmarks", query: "alpha" })).toEqual(["b1"]);
+
+    await writer.initialize({ resources: BOOKMARKS });
+
+    expect(await reader.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1"]);
+    await reader.index({ resource: "bookmarks", documents: [{ id: "b2", fields: { title: "gamma", body: "beta" } }] });
+    expect(await writer.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1", "b2"]);
+  });
+
+  it("a stale instance restricted to a newly declared field re-reads the field list", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title", "body"] }] });
+
+    expect(await reader.search({ resource: "notes", query: "beta", fields: ["body"] })).toEqual(["n1"]);
+    expect(
+      (await reader.searchAll({ query: "beta", fields: ["body"] })).map((result) => result.id),
+    ).toEqual(["n1"]);
+  });
+
+  it("rebuild on a stale instance keeps the persisted field list", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha", body: "beta" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title", "body"] }] });
+    await reader.rebuild("notes");
+
+    expect(await generationOf(database.driver, "notes")).toBe(2);
+    for (const instance of [writer, reader, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "beta", fields: ["body"] })).toEqual(["n1"]);
+    }
+  });
+
+  it("a registration completed after a rebuild does not resurrect the retired generation", async () => {
+    let release!: () => void;
+    let paused!: () => void;
+    const pausedCompletion = new Promise<void>((resolve) => (paused = resolve));
+    const inner = database.driver;
+    const delayed: SqliteDriver = {
+      ...inner,
+      batch: async (statements) => {
+        if (statements.some((statement) => statement.sql.includes("SET generation = 0"))) {
+          paused();
+          await new Promise<void>((resolve) => (release = resolve));
+        }
+        return inner.batch!(statements);
+      },
+    };
+    const late = new SqliteAdapter({ driver: delayed });
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+
+    const lateInitialize = late.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await pausedCompletion;
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await writer.rebuild("notes");
+    release();
+    await lateInitialize;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await reader.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    expect(await writer.search({ resource: "notes", query: "gamma" })).toEqual(["n2"]);
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+
+  it("stale instances do not read or write a retired generation that still exists", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await writer.rebuild("notes");
+    // A lingering copy of the retired generation, as an interrupted write could leave it.
+    await database.driver.exec(`CREATE VIRTUAL TABLE "searchfn_r1_fts_0" USING fts5(c0)`);
+
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    await reader.clear("notes");
+    expect(await writer.search({ resource: "notes", query: "alpha" })).toEqual([]);
+    await reader.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    await reader.remove({ resource: "notes", ids: ["n2"] });
+    await reader.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "delta" } }] });
+    expect(await writer.search({ resource: "notes", query: "delta" })).toEqual(["n3"]);
+    expect(await writer.search({ resource: "notes", query: "gamma" })).toEqual([]);
+
+    await writer.rebuild("notes");
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+  });
+
+  it("cleanup of an interrupted rebuild never drops a generation another instance published", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    // A next-generation table left by a rebuild that stopped before publishing.
+    await database.driver.exec(`CREATE VIRTUAL TABLE "searchfn_r1_fts_1" USING fts5(c0)`);
+    const cleaner = gatedDriver(/^DROP TABLE IF EXISTS "searchfn_r1_fts_1"/, { dieAfter: true });
+    const rebuilding = new SqliteAdapter({ driver: cleaner.driver }).rebuild("notes").catch((error: Error) => error);
+
+    await cleaner.paused;
+    await writer.rebuild("notes");
+    cleaner.release();
+    expect(await rebuilding).toBeInstanceOf(Error);
+
+    expect(await generationOf(database.driver, "notes")).toBe(1);
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    for (const instance of [writer, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    }
+  });
+
+  it("writes and rebuilds that overlap across instances all reach the published generation", async () => {
+    const writer = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+
+    // A rebuild waits at its transaction while another instance writes: the rebuild includes the write.
+    const slowRebuild = gatedDriver(/^CREATE VIRTUAL TABLE "searchfn_r1_fts_1"/);
+    const rebuilding = new SqliteAdapter({ driver: slowRebuild.driver }).rebuild("notes");
+    await slowRebuild.paused;
+    await writer.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "beta" } }] });
+    slowRebuild.release();
+    await rebuilding;
+
+    // A write waits at its transaction while another instance publishes: the write retries on it.
+    const slowWrite = gatedDriver(/^INSERT INTO "searchfn_r1_docs"/);
+    const late = new SqliteAdapter({ driver: slowWrite.driver });
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    const writing = late.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "gamma" } }] });
+    await slowWrite.paused;
+    await writer.rebuild("notes");
+    slowWrite.release();
+    await writing;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+    for (const instance of [writer, late, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "beta" })).toEqual(["n2"]);
+      expect(await instance.search({ resource: "notes", query: "gamma" })).toEqual(["n3"]);
+    }
+  });
+
+  it("concurrent registrations of one resource converge", async () => {
+    const instances = Array.from({ length: 4 }, () => new SqliteAdapter({ driver: database.driver }));
+    await Promise.all(instances.map((instance) => instance.initialize({ resources: BOOKMARKS })));
+    await instances[0].index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "alpha" } }] });
+    for (const instance of instances) {
+      expect(await instance.search({ resource: "bookmarks", query: "alpha" })).toEqual(["b1"]);
+    }
+    expect(await generationOf(database.driver, "bookmarks")).toBe(0);
+  });
+});
+
+describe("drivers without batch()", () => {
+  function sequentialDriver(failOn?: RegExp): SqliteDriver & { failOn?: RegExp } {
+    const inner = database.driver;
+    const driver: SqliteDriver & { failOn?: RegExp } = {
+      failOn,
+      exec: (sql) => inner.exec(sql),
+      all: (sql, params) => inner.all(sql, params),
+      run: async (sql, params) => {
+        if (driver.failOn?.test(sql)) throw new Error("injected failure");
+        return inner.run(sql, params);
+      },
+    };
+    return driver;
+  }
+
+  it("runs statements one by one", async () => {
+    const sequential = new SqliteAdapter({ driver: sequentialDriver() });
+    await seedBookmarks(sequential);
+    expect(await sequential.search({ resource: "bookmarks", query: "readers" })).toEqual(["b2"]);
+    await sequential.remove({ resource: "bookmarks", ids: ["b2"] });
+    expect(await sequential.search({ resource: "bookmarks", query: "readers" })).toEqual([]);
+  });
+
+  it("recovers from a rebuild interrupted after the new FTS table was created", async () => {
+    const driver = sequentialDriver();
+    const sequential = new SqliteAdapter({ driver });
+    await sequential.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await sequential.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "alpha", body: "beta" } }] });
+
+    driver.failOn = /^INSERT INTO "searchfn_r1_fts_1"/;
+    await expect(sequential.initialize({ resources: BOOKMARKS })).rejects.toThrow("injected failure");
+    expect(await generationOf(database.driver, "bookmarks")).toBe(0);
+    expect(await sequential.search({ resource: "bookmarks", query: "alpha" })).toEqual(["b1"]);
+
+    driver.failOn = undefined;
+    await sequential.initialize({ resources: BOOKMARKS });
+    expect(await generationOf(database.driver, "bookmarks")).toBe(1);
+    expect(await sequential.search({ resource: "bookmarks", query: "beta" })).toEqual(["b1"]);
+  });
+  it("stale instances converge after a rebuild that failed after publishing", async () => {
+    const driver = sequentialDriver();
+    const writer = new SqliteAdapter({ driver });
+    const reader = new SqliteAdapter({ driver: database.driver });
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+
+    driver.failOn = /^DROP TABLE IF EXISTS "searchfn_r1_fts_0"/;
+    await expect(writer.rebuild("notes")).rejects.toThrow("injected failure");
+    driver.failOn = undefined;
+    expect(await generationOf(database.driver, "notes")).toBe(1);
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_0", "searchfn_r1_fts_1"]);
+
+    await writer.index({ resource: "notes", documents: [{ id: "n2", fields: { title: "gamma" } }] });
+    expect(await reader.search({ resource: "notes", query: "gamma" })).toEqual(["n2"]);
+    await reader.index({ resource: "notes", documents: [{ id: "n3", fields: { title: "delta" } }] });
+    expect(await writer.search({ resource: "notes", query: "delta" })).toEqual(["n3"]);
+
+    await writer.rebuild("notes");
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_2"]);
+    expect(await reader.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+
+  it.each([
+    `UPDATE "searchfn_resources" SET generation = NULL`,
+    `DROP TABLE IF EXISTS "searchfn_r1_fts_1"`,
+    `CREATE VIRTUAL TABLE "searchfn_r1_fts_1"`,
+    `INSERT INTO "searchfn_r1_fts_1"`,
+    `UPDATE "searchfn_resources" SET fields`,
+    `DROP TABLE IF EXISTS "searchfn_r1_fts_0"`,
+  ])("a serialized rebuild that stops at %s is repaired by the next rebuild", async (statement) => {
+    const driver = sequentialDriver();
+    const sequential = new SqliteAdapter({ driver });
+    await sequential.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await sequential.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+
+    driver.failOn = new RegExp(`^${statement}`);
+    await expect(sequential.rebuild("notes")).rejects.toThrow("injected failure");
+    driver.failOn = undefined;
+    await sequential.rebuild("notes");
+
+    const generation = await generationOf(database.driver, "notes");
+    expect(await ftsTables(database.driver)).toEqual([`searchfn_r1_fts_${generation}`]);
+    for (const instance of [sequential, new SqliteAdapter({ driver: database.driver })]) {
+      expect(await instance.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+    }
+  });
+
+  it("drops a generation 0 that a delayed registration recreated after a rebuild", async () => {
+    let release!: () => void;
+    let paused!: () => void;
+    const pausedCreate = new Promise<void>((resolve) => (paused = resolve));
+    const driver = sequentialDriver();
+    const run = driver.run;
+    driver.run = async (sql, params) => {
+      if (sql.startsWith(`CREATE VIRTUAL TABLE IF NOT EXISTS "searchfn_r1_fts_0"`)) {
+        paused();
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return run(sql, params);
+    };
+    const late = new SqliteAdapter({ driver });
+    const writer = new SqliteAdapter({ driver: database.driver });
+
+    const lateInitialize = late.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await pausedCreate;
+    await writer.initialize({ resources: [{ name: "notes", searchFields: ["title"] }] });
+    await writer.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "alpha" } }] });
+    await writer.rebuild("notes");
+    release();
+    await lateInitialize;
+
+    expect(await ftsTables(database.driver)).toEqual(["searchfn_r1_fts_1"]);
+    expect(await late.search({ resource: "notes", query: "alpha" })).toEqual(["n1"]);
+  });
+});
+
+describe("atomic batches", () => {
+  it("a failed write batch leaves the index unchanged", async () => {
+    await seedBookmarks();
+    const inner = database.driver;
+    const failing: SqliteDriver = {
+      ...inner,
+      batch: (statements: readonly SqliteStatement[]) =>
+        inner.batch!([...statements, { sql: "INSERT INTO missing_table VALUES (1)" }]),
+    };
+    const broken = new SqliteAdapter({ driver: failing });
+    await expect(
+      broken.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "replaced" } }] }),
+    ).rejects.toThrow(/missing_table/);
+    expect(await adapter.search({ resource: "bookmarks", query: "sync" })).toEqual(["b1"]);
+    expect(await adapter.search({ resource: "bookmarks", query: "replaced" })).toEqual([]);
+    expect(await countRows(database.driver, "bookmarks", "fts")).toBe(5);
+  });
+});
+
+describe("lifecycle and cancellation", () => {
+  it("dispose blocks operations but leaves the injected driver open", async () => {
+    await seedBookmarks();
+    await adapter.dispose();
+    await expect(adapter.search({ resource: "bookmarks", query: "subset" })).rejects.toMatchObject({
+      code: SEARCH_ADAPTER_DISPOSED,
+    });
+    await expect(adapter.index({ resource: "bookmarks", documents: [] })).rejects.toMatchObject({
+      code: SEARCH_ADAPTER_DISPOSED,
+    });
+    expect(await database.driver.all("SELECT 1 AS one")).toEqual([{ one: 1 }]);
+    await adapter.initialize({ resources: BOOKMARKS });
+    expect(await adapter.search({ resource: "bookmarks", query: "readers" })).toEqual(["b2"]);
+  });
+
+  it("stays disposed when initialize() fails after dispose()", async () => {
+    let down = false;
+    const failing: SqliteDriver = {
+      exec: (sql) => (down ? Promise.reject(new Error("driver down")) : database.driver.exec(sql)),
+      all: (sql, params) => (down ? Promise.reject(new Error("driver down")) : database.driver.all(sql, params)),
+      run: (sql, params) => (down ? Promise.reject(new Error("driver down")) : database.driver.run(sql, params)),
+      batch: (statements) => (down ? Promise.reject(new Error("driver down")) : database.driver.batch!(statements)),
+    };
+    const owned = new SqliteAdapter({ driver: failing });
+    await owned.initialize({ resources: BOOKMARKS });
+    const registered = async () =>
+      (await database.driver.all<{ resource: string }>(`SELECT resource FROM "searchfn_resources"`)).map((row) => row.resource);
+
+    const failures: Array<[string, () => Promise<void>]> = [
+      ["validation", () => owned.initialize({ resources: [{ name: "bookmarks", searchFields: [] }] })],
+      [
+        "driver",
+        () => {
+          down = true;
+          return owned.initialize({ resources: [{ name: "users", searchFields: ["email"] }] }).finally(() => {
+            down = false;
+          });
+        },
+      ],
+    ];
+    for (const [kind, initialize] of failures) {
+      await owned.dispose();
+      await expect(initialize(), kind).rejects.toThrow();
+      const disposed = { code: SEARCH_ADAPTER_DISPOSED };
+      await expect(
+        owned.index({ resource: "users", documents: [{ id: "u1", fields: { email: "a@example.com" } }] }),
+        kind,
+      ).rejects.toMatchObject(disposed);
+      await expect(owned.remove({ resource: "users", ids: ["u1"] }), kind).rejects.toMatchObject(disposed);
+      await expect(owned.search({ resource: "users", query: "example" }), kind).rejects.toMatchObject(disposed);
+      await expect(owned.searchAll({ query: "example" }), kind).rejects.toMatchObject(disposed);
+      expect(await registered(), kind).toEqual(["bookmarks"]);
+    }
+
+    await owned.initialize({ resources: BOOKMARKS });
+    await owned.index({ resource: "users", documents: [{ id: "u1", fields: { email: "a@example.com" } }] });
+    expect(await registered()).toEqual(["bookmarks"]);
+  });
+
+  it("rejects aborted operations with DFQL_ABORTED", async () => {
+    await seedBookmarks();
+    const signal = AbortSignal.abort();
+    await expect(adapter.search({ resource: "bookmarks", query: "subset", signal })).rejects.toMatchObject({
+      code: "DFQL_ABORTED",
+    });
+    await expect(adapter.searchAll({ query: "subset", signal })).rejects.toMatchObject({ code: "DFQL_ABORTED" });
+    await expect(
+      adapter.index({ resource: "bookmarks", documents: [{ id: "x", fields: { title: "x" } }], signal }),
+    ).rejects.toMatchObject({ code: "DFQL_ABORTED" });
+    await expect(adapter.remove({ resource: "bookmarks", ids: ["b1"], signal })).rejects.toMatchObject({
+      code: "DFQL_ABORTED",
+    });
+    await expect(adapter.clear("bookmarks", signal)).rejects.toMatchObject({ code: "DFQL_ABORTED" });
+    expect(await countRows(database.driver, "bookmarks", "docs")).toBe(5);
+  });
+});
+
+describe("declared resources", () => {
+  it("ignores resources that initialize() did not declare", async () => {
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await adapter.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "zebra" } }] });
+    await adapter.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra@example.com" } }] });
+    await adapter.remove({ resource: "users", ids: ["u1"] });
+
+    const [registered] = await database.driver.all<{ n: number }>(
+      `SELECT count(*) AS n FROM "searchfn_resources" WHERE resource = 'users'`,
+    );
+    expect(Number(registered.n)).toBe(0);
+    expect(await adapter.search({ resource: "users", query: "zebra" })).toEqual([]);
+    expect((await adapter.searchAll({ query: "zebra" })).map((result) => result.resource)).toEqual(["bookmarks"]);
+  });
+
+  it("does not search persisted resources that the current declaration dropped", async () => {
+    const legacy = new SqliteAdapter({ driver: database.driver });
+    await legacy.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra" } }] });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+    await adapter.index({ resource: "bookmarks", documents: [{ id: "b1", fields: { title: "zebra" } }] });
+
+    expect(await adapter.search({ resource: "users", query: "zebra" })).toEqual([]);
+    expect(await adapter.searchAll({ query: "zebra", resources: ["users", "bookmarks"] })).toMatchObject([
+      { resource: "bookmarks", id: "b1" },
+    ]);
+    expect(await adapter.searchAll({ query: "zebra" })).toHaveLength(1);
+  });
+  it("keeps a registered resource current while undeclared, so re-declaring it exposes no stale records", async () => {
+    const notes = [{ name: "notes", searchFields: ["title"] }];
+    await adapter.initialize({ resources: notes });
+    await adapter.index({
+      resource: "notes",
+      documents: [{ id: "n1", fields: { title: "alpha" } }, { id: "n2", fields: { title: "gamma" } }],
+    });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { title: "beta" } }] });
+    await adapter.remove({ resource: "notes", ids: ["n2"] });
+    expect(await adapter.search({ resource: "notes", query: "beta" })).toEqual([]);
+
+    await adapter.initialize({ resources: notes });
+    expect(await adapter.search({ resource: "notes", query: "alpha" })).toEqual([]);
+    expect(await adapter.search({ resource: "notes", query: "beta" })).toEqual(["n1"]);
+    expect(await adapter.search({ resource: "notes", query: "gamma" })).toEqual([]);
+  });
+
+  it("clear and rebuild leave undeclared resources untouched", async () => {
+    const legacy = new SqliteAdapter({ driver: database.driver });
+    await legacy.index({ resource: "users", documents: [{ id: "u1", fields: { email: "zebra" } }] });
+    await adapter.initialize({ resources: [{ name: "bookmarks", searchFields: ["title"] }] });
+
+    await adapter.clear("users");
+    await adapter.rebuild("users");
+
+    expect(await countRows(database.driver, "users", "docs")).toBe(1);
+    expect(await generationOf(database.driver, "users")).toBe(0);
+    expect(await legacy.search({ resource: "users", query: "zebra" })).toEqual(["u1"]);
+  });
+});
+
+describe("searchAll", () => {
+  it("merges resources by score, then resource, then id, and lists resources from storage", async () => {
+    await adapter.initialize({
+      resources: [
+        { name: "items", searchFields: ["title"] },
+        { name: "notes", searchFields: ["body"] },
+      ],
+    });
+    await adapter.index({ resource: "items", documents: [{ id: "i1", fields: { title: "common term" } }] });
+    await adapter.index({ resource: "notes", documents: [{ id: "n1", fields: { body: "common term" } }] });
+
+    const other = new SqliteAdapter({ driver: database.driver });
+    const results = await other.searchAll({ query: "common", limit: 10 });
+    expect(results.map((result) => [result.resource, result.id])).toEqual([
+      ["items", "i1"],
+      ["notes", "n1"],
+    ]);
+    expect(results[0].score).toBeGreaterThan(0);
+    expect(await other.searchAll({ query: "common", resources: ["notes", "missing"] })).toHaveLength(1);
+    expect(await other.searchAll({ query: "common", limit: 1 })).toHaveLength(1);
+  });
+});
