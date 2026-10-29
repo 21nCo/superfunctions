@@ -351,18 +351,24 @@ function containerListeners(context: TargetContext, endpoint: Endpoint, consumer
  * The listeners a selected target reaches in every context that receives its
  * endpoint values: the host side (native processes, readiness and environment
  * outputs) always, and each Compose service that consumes it, since only
- * consumers receive container-side endpoints. A local provider is its port,
- * its leased loopback port and, for a Compose provider, its container port,
- * which every pass knows whatever networks reach it.
+ * consumers receive container-side endpoints. Each consumer's endpoint is
+ * resolved as that container resolves it, for local and remote targets alike:
+ * a service name can reach a same-named service of another project on a
+ * shared network. A local provider is also its port, its leased loopback port
+ * and, for a Compose provider, its container port, which every pass knows
+ * whatever networks reach it.
  */
 function targetListeners(context: TargetContext, host: Endpoint, containers: ReadonlyMap<string, Endpoint>): string[] {
   const { input, target } = context;
-  if (!("node" in target)) return [hostListener(host), ...[...containers].flatMap(([consumer, endpoint]) => containerListeners(context, endpoint, consumer))];
-  // Before reservation only a manifest-fixed port names a loopback listener.
-  const listeners = [`port:${target.port}`, ...(knownPort(input, target.port) !== undefined ? [`loopback:${host.port}`] : [])];
+  const reached = [...containers].flatMap(([consumer, endpoint]) => containerListeners(context, endpoint, consumer));
+  if (!("node" in target)) return [hostListener(host), ...reached];
+  // Before reservation only a manifest-fixed port names a loopback listener,
+  // whether the host dials it or a consumer reaches it through the gateway.
+  const leased = knownPort(input, target.port) !== undefined;
+  const listeners = [`port:${target.port}`, ...(leased ? [`loopback:${host.port}`] : [])];
   const provider = input.plan.nodes.find((node) => node.name === target.node);
   if (provider?.kind === "service") listeners.push(containerListener(input, target.node, input.config.services![target.node].ports![target.port]));
-  return listeners;
+  return [...listeners, ...reached.filter((listener) => leased || !listener.startsWith("loopback:"))];
 }
 
 function planTarget(context: TargetContext, prefix: string, consumers: readonly string[]): Pick<PlannedResource, "target" | "provider" | "remote" | "values" | "services"> & { listeners: string[] } {

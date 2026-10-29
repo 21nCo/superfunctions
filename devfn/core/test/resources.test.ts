@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { createComposeEnvironment, selectedComposeEndpointReferences } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { FilePortRegistry } from "@devfn/ports";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPlan, DevFnOrchestrator, planResources, receiptPath, resolveEndpointTemplates, type ResourcePlan } from "../src/index.js";
 import { resourceOwner, resourcePlanFingerprint } from "../src/resources.js";
 import { readRuntimeId, recordRuntimeId } from "../src/runtime.js";
+import { sameServiceNames } from "./resource-fixtures.js";
 
 const PORTS = { api: 4101, reports: 4102, web: 4103, admin: 4104, pg: 4105, kafka: 4106, redis: 4107, objects: 4108 };
 
@@ -257,6 +257,34 @@ describe("resource validation before side effects", () => {
       .toThrow("share namespace data:");
   });
 
+  it("identifies a local target by what each consumer resolves, for every namespaced kind", () => {
+    // Two projects each provide a Compose redis; each consumer reaches its own by service name.
+    for (const kind of ["cache", "database", "broker"] as const) {
+      const sameName = sameServiceNames(kind);
+      const shared = { ports: { ra: 4111, rb: 4112 }, composeNetworks: { ra: ["ext"], rb: ["ext"], wa: ["ext"], wb: ["ext"] } };
+      const disjoint = plan(sameName, undefined, { ...shared, composeNetworks: { ra: ["a"], wa: ["a"], rb: ["b"], wb: ["b"] } });
+      expect(disjoint.resources.c1.services.wa.DEVFN_RESOURCE_C1_ENDPOINT).toMatchObject({ value: "redis:6379", source: "compose" });
+      expect(disjoint.resources.c2.services.wb.DEVFN_RESOURCE_C2_ENDPOINT).toMatchObject({ value: "redis:6379", source: "compose" });
+      // On one network the name reaches both providers.
+      expect(() => plan(sameName, undefined, shared), kind).toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resources c1 and c2 share namespace") }));
+      // Provisional networks leave the name to the effective-network pass.
+      expect(() => plan(sameName, undefined, { ...shared, provisionalNetworks: true }), kind).not.toThrow();
+    }
+    // Through the gateway a consumer reaches a native provider's leased port, which a preflight placeholder does not name.
+    const gateway = config((v) => {
+      v.processes.cache = { adapter: "command", command: ["node", "cache.mjs"], ports: ["redis"] };
+      v.processes.sessions = { adapter: "command", command: ["node", "sessions.mjs"], ports: ["objects"] };
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.cache.targets.local = { node: "cache", port: "redis", scheme: "redis" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "sessions", port: "objects", scheme: "redis" } } };
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache", "sessions"] };
+      v.profiles.default = { services: ["worker"] };
+    });
+    const provisional = plan(gateway, undefined, { platform: "darwin", ports: PLACEHOLDERS, provisionalPorts: true, provisionalNetworks: true });
+    expect(provisional.resources.sessions.services.worker.DEVFN_RESOURCE_SESSIONS_URL).toMatchObject({ value: "redis://host.docker.internal:1" });
+    expect(() => plan(gateway, undefined, { platform: "darwin" })).not.toThrow();
+  });
+
   it("withholds endpoint values from Compose services that do not consume a resource", () => {
     // The worker would reach both caches as redis:6379 through templates alone.
     const templateOnly = config((v) => {
@@ -393,103 +421,6 @@ describe("resource validation before side effects", () => {
       await expect(access(path.join(root, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
-});
-
-describe("resource collisions on effective Compose networks", () => {
-  // A Compose redis provider beside a remote cache written as its service name, used by a worker.
-  const aliased = validateDevFnConfig({ version: 1, project: { id: "resource-effective-networks" }, ports: { redis: {} },
-    services: {
-      redis: { adapter: "compose", service: "redis", ports: { redis: 6379 } },
-      worker: { adapter: "compose", service: "worker", resources: ["sessions"] },
-    },
-    resources: {
-      cache: { kind: "cache", defaultTarget: "local", namespace: { base: "data" }, targets: { local: { node: "redis", port: "redis" } } },
-      sessions: { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url: "redis://redis:6379" } } },
-    },
-    profiles: { default: { services: ["worker"], resources: { cache: "local" } } } });
-  const compose = (networks: boolean) => `services:\n  redis:\n    image: busybox\n${networks ? "    networks: [one]\n" : ""}  worker:\n    image: busybox\n${networks ? "    networks: [two]\nnetworks:\n  one: {}\n  two: {}\n" : ""}`;
-
-  it("rejects the alias on a shared network before creating lifecycle state and accepts it on disjoint networks", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-networks-"));
-    const stateDir = path.join(root, "state");
-    try {
-      await writeFile(path.join(root, "compose.yaml"), compose(false));
-      await expect(new DevFnOrchestrator().up({ config: aliased, root, stateDir }))
-        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
-      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
-      // Provisional networks put both on one default network; only effective ones decide.
-      await writeFile(path.join(root, "compose.yaml"), compose(true));
-      vi.spyOn(FilePortRegistry.prototype, "reserve").mockRejectedValue(new Error("stopped at port reservation"));
-      await expect(new DevFnOrchestrator().up({ config: aliased, root, stateDir })).rejects.toThrow("stopped at port reservation");
-    } finally {
-      vi.restoreAllMocks();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 60_000);
-});
-
-describe("resource references only Compose interpolates", () => {
-  // A worker that consumes a resource interpolates its values only in its Compose file.
-  const composeOnly = (environment: string) => ({
-    file: `services:\n  worker:\n    image: busybox\n    environment:\n${environment}`,
-    config: validateDevFnConfig({ version: 1, project: { id: "resource-compose-missing" }, ports: { redis: {} },
-      processes: { redis: { adapter: "command", command: ["redis-server"], ports: ["redis"] } },
-      services: { worker: { adapter: "compose", service: "worker", resources: ["cache"] } },
-      resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
-      profiles: { default: { processes: ["redis"], services: ["worker"], resources: { cache: "local" } } } }),
-  });
-
-  it("rejects a resource value the service does not receive before creating lifecycle state", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-missing-"));
-    const stateDir = path.join(root, "state");
-    try {
-      // A typo, and the URL of a target that declares no scheme.
-      for (const name of ["DEVFN_RESOURCE_CACHE_TYPO", "DEVFN_RESOURCE_CACHE_URL"]) {
-        const fixture = composeOnly(`      VALUE: \${${name}}\n`);
-        await writeFile(path.join(root, "compose.yaml"), fixture.file);
-        await expect(new DevFnOrchestrator().up({ config: fixture.config, root, stateDir }), name)
-          .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: `services.worker.compose: missing reference ${name}.` });
-      }
-      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally { await rm(root, { recursive: true, force: true }); }
-  }, 60_000);
-
-  it("accepts values the service receives and Compose fallbacks for values it does not", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-available-"));
-    try {
-      const fixture = composeOnly("      ENDPOINT: ${DEVFN_RESOURCE_CACHE_ENDPOINT}\n      URL: ${DEVFN_RESOURCE_CACHE_URL:-redis://fallback:6379}\n");
-      await writeFile(path.join(root, "compose.yaml"), fixture.file);
-      const lifecycle = createPlan(fixture.config);
-      const composeNetworks = { worker: ["shared"] };
-      const resolve = (composeReferences: Set<string>) => resolveEndpointTemplates({ config: fixture.config, plan: lifecycle, ownerId: "owner-a", ports: PORTS,
-        composeNetworks, composeReferences: { worker: composeReferences },
-        resources: planResources({ config: fixture.config, plan: lifecycle, ownerId: "owner-a", ports: PORTS, platform: "darwin", composeNetworks }) });
-      const provisional = resolve(new Set());
-      const spec = fixture.config.services!.worker;
-      const environment = createComposeEnvironment({ ...spec, env: provisional.nodes.worker.environment }, provisional.nodes.worker.environment);
-      const references = await selectedComposeEndpointReferences({ ...spec, env: provisional.nodes.worker.environment }, root, environment);
-      expect([...references]).toEqual(["DEVFN_RESOURCE_CACHE_ENDPOINT"]);
-      expect(resolve(references).nodes.worker.environment.DEVFN_RESOURCE_CACHE_ENDPOINT).toBe("host.docker.internal:4107");
-    } finally { await rm(root, { recursive: true, force: true }); }
-  }, 60_000);
-
-  it("rejects an unreachable resource value before creating lifecycle state", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-resource-compose-reference-"));
-    const stateDir = path.join(root, "state");
-    try {
-      await writeFile(path.join(root, "compose.yaml"), "services:\n  worker:\n    image: busybox\n    environment:\n      DEV_URL: ${DEVFN_RESOURCE_DEV_URL}\n");
-      const value_ = (resources?: string[]) => validateDevFnConfig({ version: 1, project: { id: "resource-compose-reference" },
-        services: { worker: { adapter: "compose", service: "worker", ...(resources ? { resources } : {}) } },
-        resources: { dev: { kind: "service", defaultTarget: "proxy", targets: { proxy: { url: "http://api.localhost:1355" } } } },
-        profiles: { default: { services: ["worker"], resources: { dev: "proxy" } } } });
-      await expect(new DevFnOrchestrator().up({ config: value_(["dev"]), root, stateDir }))
-        .rejects.toMatchObject({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("Resource dev target proxy uses loopback name api.localhost") });
-      // A service that does not consume the resource receives none of its values.
-      await expect(new DevFnOrchestrator().up({ config: value_(), root, stateDir }))
-        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("Compose service worker does not consume resource dev") });
-      await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally { await rm(root, { recursive: true, force: true }); }
-  }, 60_000);
 });
 
 describe("resource selection independence and redaction", () => {
