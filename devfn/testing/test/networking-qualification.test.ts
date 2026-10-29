@@ -889,7 +889,28 @@ describe("run execution", () => {
     const unrelated = { "notes.txt": "operator notes\n", "other.json": `${JSON.stringify({ contract: "devfn.networking-qualification/v1", check: "networking-qualification-contract", runId: "0123456789ab" })}\n`, "other.json.lock": "{}\n" };
     const phases = ["publication", "root removal", "reconciliation"] as const;
     // A closed stderr fails each write with EPIPE; a full one, which the parent reads only after the exit, with EAGAIN.
-    const runs = [...[...phases, "unwithdrawable" as const].map((phase) => ({ phase, stderr: "open" })), ...(["closed", "full"] as const).flatMap((stderr) => phases.map((phase) => ({ phase, stderr })))];
+    // A full terminal that nobody reads blocks a write instead, for as long as it stays full.
+    const runs = [...(["open", "terminal"] as const).flatMap((stderr) => [...phases, "unwithdrawable" as const].map((phase) => ({ phase, stderr }))),
+      ...(["closed", "full"] as const).flatMap((stderr) => phases.map((phase) => ({ phase, stderr })))];
+    // Runs the child with stderr on a pseudo-terminal filled to the last byte through a second, non-blocking description;
+    // its master stays open in the child and is never read.
+    const terminal = `import os, sys, time
+master, slave = os.openpty()
+fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+idle = 0
+while idle < 2:
+    written, size = 0, 65536
+    while size:
+        try: written += os.write(fill, b"x" * size)
+        except BlockingIOError: size //= 2
+    idle = idle + 1 if written == 0 else 0
+    time.sleep(0.05)
+os.close(fill)
+os.dup2(slave, 2)
+os.close(slave)
+os.set_inheritable(master, True)
+os.execv(sys.argv[1], sys.argv[1:])
+`;
     for (const { phase: step, stderr: mode } of runs) {
       const phase = `${step} (stderr ${mode})`;
       const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-forced-exit-")));
@@ -898,7 +919,8 @@ describe("run execution", () => {
       await mkdir(root, { mode: 0o700 });
       for (const [name, text] of Object.entries(unrelated)) await writeFile(path.join(root, name), text);
       const [node, ...args] = command;
-      const child = spawn(node, [...args, root, step, mode], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = mode === "terminal" ? spawn("python3", ["-I", "-c", terminal, node, ...args, root, step, mode], { stdio: ["ignore", "pipe", "pipe"] })
+        : spawn(node, [...args, root, step, mode], { stdio: ["ignore", "pipe", "pipe"] });
       if (mode === "closed") child.stderr.destroy();
       if (mode === "full") child.once("exit", () => child.stderr.resume());
       let stdout = "";
@@ -919,9 +941,14 @@ describe("run execution", () => {
       expect(log, phase).toContain("published");
       expect(log, phase).not.toContain("returned");
       if (mode === "open") expect(stderr, phase).toMatch(/SIGTERM: exiting without cleanup/);
+      // The report is kept in the run root whatever became of stderr.
+      const kept = await readFile(path.join(dir, "forced-exit.txt"), "utf8");
+      expect(kept, phase).toMatch(/SIGTERM: exiting without cleanup; .*forced-exit\.txt keeps this report/);
       if (step === "unwithdrawable") {
         // A receipt the exit cannot withdraw is reported, never passed over in silence.
-        expect(stderr).toMatch(/the receipt .*receipt\.json could not be withdrawn and is not evidence: EACCES/);
+        const unwithdrawn = /the receipt .*receipt\.json could not be withdrawn and is not evidence: EACCES/;
+        expect(kept, phase).toMatch(unwithdrawn);
+        if (mode === "open") expect(stderr, phase).toMatch(unwithdrawn);
         await chmod(root, 0o700);
         expect(readdirSync(root).sort()).toEqual(["notes.txt", "other.json", "other.json.lock", "receipt.json", "receipt.json.lock"]);
       } else {
@@ -934,7 +961,7 @@ describe("run execution", () => {
       }
       for (const [name, text] of Object.entries(unrelated)) expect(await readFile(path.join(root, name), "utf8"), `${phase} ${name}`).toBe(text);
     }
-  }, 240_000);
+  }, 720_000);
 });
 
 describe("live host cleanup handlers", () => {

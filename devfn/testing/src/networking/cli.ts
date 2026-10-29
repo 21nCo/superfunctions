@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { constants, writeSync } from "node:fs";
+import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
 import { access, mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -252,27 +252,45 @@ export async function main(argv: readonly string[], receiptDirectory = receiptRo
  * calls onInterrupt and aborts the returned signal; a second exits at once,
  * after withdrawing this run's receipt, should it have published one, and
  * only then releasing its claim. What could not be withdrawn is reported.
- * Diagnostics are best-effort from here on: a closed or full stderr loses
- * the message, never the withdrawal, the release or exit 130.
+ * Output never holds a signal up from here on: a closed, full or stopped
+ * stderr loses the message, never the withdrawal, the release, a later
+ * signal or exit 130. The forced exit's report is also appended to
+ * forced-exit.txt in the run root, the ledger's directory.
  */
 export function interruptOnSignals(slot: ReceiptSlot, runId: string, ledger: string, onInterrupt: () => void): AbortSignal {
   const interrupt = new AbortController();
   // A failed asynchronous stderr write (EPIPE once its reader is gone) is otherwise an uncaught error that ends the run before its withdrawal.
   process.stderr.on("error", () => undefined);
-  // Written synchronously, since process.exit drops whatever an asynchronous write still holds; a closed or full stderr throws, and is ignored.
-  const report = (text: string): void => { try { writeSync(2, text); } catch { /* best-effort */ } };
+  // Node makes a terminal's stderr blocking on POSIX, so a stopped or full terminal would hold the event loop and every later signal; queue instead.
+  // libuv reopened that terminal for this process, the run's commands get piped stdio, and Node restores the mode at exit.
+  const handle = (process.stderr as { _handle?: { fd?: number; setBlocking?: (blocking: boolean) => unknown } })._handle;
+  if (process.stderr.isTTY) handle?.setBlocking?.(false);
+  const fd = handle?.fd !== undefined && handle.fd >= 0 ? handle.fd : 2;
+  // One synchronous attempt on that non-blocking descriptor: what does not fit at once is lost rather than waited on or dropped by process.exit.
+  const report = (text: string): void => { try { writeSync(fd, text); } catch { /* best-effort */ } };
+  const runRoot = path.dirname(ledger);
+  const kept = path.join(runRoot, "forced-exit.txt");
+  /** Appended without following a link or waiting on a special file; a run root already removed is made again only for a problem to keep. */
+  const keep = (text: string, needed: boolean): void => {
+    try {
+      if (needed) try { mkdirSync(runRoot, { mode: 0o700 }); } catch { /* it exists, or the append below fails */ }
+      const file = openSync(kept, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+      try { writeSync(file, text); } finally { closeSync(file); }
+    } catch { /* best-effort */ }
+  };
   const onSignal = (signal: NodeJS.Signals): void => {
     if (interrupt.signal.aborted) {
       let problems: string[] = [];
       try { problems = slot.abandonSync(runId); } finally {
-        report(`${signal}: exiting without cleanup; ${ledger} lists what may remain.\n`);
-        for (const problem of problems) report(`${problem}\n`);
+        const text = [`${signal}: exiting without cleanup; ${ledger} lists what may remain, and ${kept} keeps this report.`, ...problems].join("\n");
+        keep(`${new Date().toISOString()} ${text}\n`, problems.length > 0);
+        report(`${text}\n`);
         process.exit(130);
       }
     }
     interrupt.abort(signal);
     onInterrupt();
-    process.stderr.write(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
+    report(`${signal}: no receipt is written; stopping the running scenario, then cleaning up the run's resources (${ledger}).\n`);
   };
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
   return interrupt.signal;

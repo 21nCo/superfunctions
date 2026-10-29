@@ -1,8 +1,9 @@
 // A run in a child process for the forced-exit fixture: it publishes its receipt in the slot "receipt.json" of a
 // given root and gets repeated signals while publishing (sent to itself), or while its root removal or its
 // reconciliation rewrite is held (sent by the parent once it prints "holding"). Its run root is the parent's
-// private directory holding that receipt root. With stderr "full", it first fills its stderr, which the parent does
-// not read, until not one more byte fits. Run through tsx.
+// private directory holding that receipt root, where its forced-exit report is kept. With stderr "full", it first
+// fills its stderr, which the parent does not read, until not one more byte fits; with stderr "terminal", its stderr
+// is a full terminal the parent set up and nobody reads. Run through tsx.
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 
@@ -47,7 +48,7 @@ setInterval(() => undefined, 1000);
 const hold = async (): Promise<void> => { log("holding"); await new Promise(() => undefined); };
 const runId = "abcdef123456";
 const slot = await ReceiptSlot.claim("receipt.json", root);
-const signal = interruptOnSignals(slot, runId, path.join(root, "inventory.json"), () => undefined);
+const signal = interruptOnSignals(slot, runId, path.join(path.dirname(root), "inventory.json"), () => undefined);
 const strays: string[] = [];
 let writes = 0;
 await executeRun({ slot, strays,
