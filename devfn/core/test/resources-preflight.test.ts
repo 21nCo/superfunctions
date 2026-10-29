@@ -15,14 +15,16 @@ import { sameServiceNames } from "./resource-fixtures.js";
  * `docker compose config`, so these preflight checks need no Docker; the
  * references a service interpolates still come from its Compose source.
  */
-const effective = vi.hoisted(() => ({ networks: {} as Record<string, string[]> }));
+const effective = vi.hoisted(() => ({ networks: {} as Record<string, string[]>, names: {} as Record<string, { networks: Record<string, string[]>; overrides: string[] }> }));
 
 vi.mock("@devfn/compose", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@devfn/compose")>();
   return {
     ...actual,
-    effectiveComposeServiceNetworks: async (...[spec, root, , environment, deadline, references]: Parameters<typeof actual.effectiveComposeServiceNetworks>) => {
+    effectiveComposeServiceNetworks: async (...[spec, root, , environment, deadline, references, dnsNames]: Parameters<typeof actual.effectiveComposeServiceNetworks>) => {
       for (const name of await actual.selectedComposeEndpointReferences(spec, root, environment, deadline)) references?.add(name);
+      const names = effective.names[`${spec.projectName ?? "devfn"}/${spec.service}`];
+      if (dnsNames && names) Object.assign(dnsNames, names);
       return effective.networks[`${spec.projectName ?? "devfn"}/${spec.service}`] ?? [];
     },
   };
@@ -30,6 +32,7 @@ vi.mock("@devfn/compose", async (importOriginal) => {
 
 afterEach(() => {
   effective.networks = {};
+  effective.names = {};
   vi.restoreAllMocks();
 });
 
@@ -129,6 +132,28 @@ describe("resource collisions on effective Compose networks", () => {
       // Provisional networks put both on one default network; only effective ones decide.
       effective.networks = { "devfn/redis": ["one"], "devfn/worker": ["two"] };
       await expectReservation(aliased, root);
+    });
+  }, 60_000);
+
+  it("rejects a selected service whose network alias is the provider's name before creating lifecycle state", async () => {
+    const competing = validateDevFnConfig({ version: 1, project: { id: "resource-network-aliases" }, ports: { redis: {} },
+      services: {
+        redis: { adapter: "compose", service: "redis", ports: { redis: 6379 } },
+        other: { adapter: "compose", service: "other" },
+        worker: { adapter: "compose", service: "worker", resources: ["cache"] },
+      },
+      resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis" } } } },
+      profiles: { default: { services: ["worker", "other"] } } });
+    await withRoot("devfn-resource-aliases-", async (root) => {
+      await writeFile(path.join(root, "compose.yaml"), "services:\n  redis:\n    image: busybox\n  other:\n    image: busybox\n  worker:\n    image: busybox\n");
+      effective.networks = { "devfn/redis": ["shared"], "devfn/other": ["shared", "private"], "devfn/worker": ["shared"] };
+      await onEachPlatform(async (platform) => {
+        effective.names = { "devfn/other": { networks: { shared: ["redis"] }, overrides: [] } };
+        await expectRejectedBeforeState(competing, root, { code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("which selects provider redis, but its endpoint redis:6379 also names other") }, platform);
+      });
+      // The same alias on a network the worker does not join reaches no consumer.
+      effective.names = { "devfn/other": { networks: { private: ["redis"] }, overrides: [] } };
+      await expectReservation(competing, root);
     });
   }, 60_000);
 });

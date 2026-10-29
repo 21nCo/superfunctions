@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { ComposeController, composeProjectName, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, selectedComposeEndpointReferences, type ManagedComposeService } from "@devfn/compose";
+import { ComposeController, composeProjectName, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, selectedComposeEndpointReferences, type ComposeServiceDnsNames, type ManagedComposeService } from "@devfn/compose";
 import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
@@ -76,12 +76,14 @@ interface ProvisionalInputs { ports?: boolean; networks?: boolean }
  * listeners; with provisional networks Compose service-name listeners are
  * unknown, and their collisions wait for a pass with effective networks.
  */
-function resolveEndpoints(input: Omit<EndpointResolutionInput, "resources">, provisional: ProvisionalInputs = {}): EndpointResolution {
+function resolveEndpoints({ composeNames, ...input }: Omit<EndpointResolutionInput, "resources"> & { composeNames?: Record<string, ComposeServiceDnsNames> },
+  provisional: ProvisionalInputs = {}): EndpointResolution {
   if (!input.config.resources) return resolveEndpointTemplates(input);
   const runtimeId = input.routingIdentity?.runtimeId;
+  // Only resource planning reads the other Docker DNS names; the endpoint resolver's network input is unchanged.
   const resources = planResources({ config: input.config, plan: input.plan, ownerId: input.ownerId, ports: input.ports, ...(runtimeId ? { runtimeId } : {}),
     provisionalPorts: provisional.ports === true, provisionalNetworks: provisional.networks === true,
-    ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), environment: process.env });
+    ...(input.composeNetworks ? { composeNetworks: input.composeNetworks } : {}), ...(composeNames ? { composeNames } : {}), environment: process.env });
   return resolveEndpointTemplates({ ...input, resources });
 }
 
@@ -144,16 +146,21 @@ async function resolveWithComposeNetworks(config: DevFnConfig, plan: LifecyclePl
   const deadline = Date.now() + 20_000;
   if (publicTemplate.postStartPublicRoutes?.length) await composeTemplateReferences(config, plan, root, identity, ports, hostnameSuffix, publicTemplate, provisionalNetworks, provisional, deadline, provisionalPorts);
   const composeNetworks: Record<string, string[]> = {};
+  // Keyed by manifest service names, which may spell __proto__.
+  const composeNames: Record<string, ComposeServiceDnsNames> = Object.create(null);
   const composeReferences: Record<string, Set<string>> = {};
   for (const node of plan.nodes) {
     if (node.kind !== "service") continue;
     const spec = config.services![node.name];
     const environment = createComposeEnvironment({ ...spec, env: provisional.nodes[node.name].environment }, provisional.nodes[node.name].environment);
     const references = new Set<string>();
-    composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline, references);
+    composeNames[node.name] = { networks: {}, overrides: [] };
+    composeNetworks[node.name] = await effectiveComposeServiceNetworks({ ...spec, env: provisional.nodes[node.name].environment }, root, ownerId, environment, deadline,
+      references, composeNames[node.name]);
     composeReferences[node.name] = references;
   }
-  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeReferences, ...publicTemplate }, { ports: provisionalPorts });
+  return resolveEndpoints({ config, plan, ownerId, ports, hostnameSuffix, routingIdentity: identity, composeNetworks, composeNames, composeReferences, ...publicTemplate },
+    { ports: provisionalPorts });
 }
 
 function compareCodepoint(left: string, right: string): number {

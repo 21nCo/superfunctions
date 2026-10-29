@@ -326,6 +326,60 @@ describe("resource validation before side effects", () => {
     expect(() => plan(gateway, undefined, { platform: "darwin" })).not.toThrow();
   });
 
+  it("identifies Compose listeners by every Docker DNS name a consumer resolves", () => {
+    // Docker DNS also answers a container_name and the aliases a service has on each network.
+    const names = (networks: Record<string, string[]>, overrides: string[] = []) => ({ networks, overrides });
+    const shared = { composeNetworks: { redis: ["shared"], worker: ["shared"] } };
+    const aliased = (url: string) => config((v) => {
+      v.resources.cache.namespace = { base: "data" };
+      v.resources.sessions = { kind: "cache", defaultTarget: "dev", namespace: { base: "data" }, targets: { dev: { url } } };
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache", "sessions"] };
+      v.profiles.default = { services: ["worker"] };
+    });
+    const overlap = expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("share namespace data:") });
+    expect(() => plan(aliased("redis://cache:6379"), undefined, { ...shared, composeNames: { redis: names({ shared: ["cache"] }) } })).toThrow(overlap);
+    expect(() => plan(aliased("redis://CACHE.:6379"), undefined, { ...shared, composeNames: { redis: names({ shared: ["cache"] }) } })).toThrow(overlap);
+    // An alias on a network the worker does not join names another listener; provisional passes defer.
+    const privateAlias = { composeNetworks: { redis: ["shared", "private"], worker: ["shared"] }, composeNames: { redis: names({ private: ["cache"] }) } };
+    expect(() => plan(aliased("redis://cache:6379"), undefined, privateAlias)).not.toThrow();
+    expect(() => plan(aliased("redis://cache:6379"), undefined, { ...shared, composeNames: { redis: names({ shared: ["cache"] }) }, provisionalNetworks: true })).not.toThrow();
+    // A selected service answering the provider's name competes with it.
+    const competing = config((v) => {
+      v.services.other = { adapter: "compose", service: "other" };
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache"] };
+      v.profiles.default = { services: ["worker", "other"] };
+    });
+    const networks = { redis: ["shared"], other: ["shared"], worker: ["shared"] };
+    expect(() => plan(competing, undefined, { composeNetworks: networks, composeNames: { other: names({ shared: ["redis"] }) } }))
+      .toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("which selects provider redis, but its endpoint redis:6379 also names other") }));
+    expect(plan(competing, undefined, { composeNetworks: { ...networks, other: ["private"] }, composeNames: { other: names({ private: ["redis"] }) } })
+      .resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ value: "redis://redis:6379", source: "compose" });
+    // A consumer's own links, external_links or extra_hosts map a name ahead of Docker DNS.
+    const consumer = config((v) => {
+      v.services.worker = { adapter: "compose", service: "worker", resources: ["cache"] };
+      v.profiles.default = { services: ["worker"] };
+    });
+    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, ["REDIS."]) } }))
+      .toThrow(expect.objectContaining({ code: "DEVFN_RESOURCE_INVALID", message: expect.stringContaining("its own links, external_links or extra_hosts map") }));
+    expect(() => plan(consumer, undefined, { ...shared, composeNames: { worker: names({}, ["db"]) } })).not.toThrow();
+    // The gateway name is the platform's to provide, as extra_hosts host-gateway does on Linux.
+    expect(() => plan(consumer, undefined, { platform: "darwin", composeNetworks: { redis: ["one"], worker: ["two"] },
+      composeNames: { worker: names({}, ["host.docker.internal"]) } })).not.toThrow();
+  });
+
+  it("canonicalizes hosts with long runs of dots in linear time", () => {
+    for (const host of [`${".".repeat(50_000)}x`, `cache${".".repeat(50_000)}`]) {
+      const remote = config((v) => {
+        v.resources.cache.targets.dev = { url: `redis://${host}:6390` };
+        v.services.worker = { adapter: "compose", service: "worker", resources: ["cache"] };
+        v.profiles.default = { services: ["worker"], resources: { cache: "dev" } };
+      });
+      const started = performance.now();
+      expect(plan(remote).resources.cache.services.worker.DEVFN_RESOURCE_CACHE_URL).toMatchObject({ source: "manifest" });
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+  });
+
   it("withholds endpoint values from Compose services that do not consume a resource", () => {
     // The worker would reach both caches as redis:6379 through templates alone.
     const templateOnly = config((v) => {

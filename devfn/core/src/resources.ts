@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { resourceEnvironmentKeys, resourceToken, validateDevFnConfig, type DevFnConfig, type ResourceKind, type ResourceSpec, type ResourceTargetSpec } from "@devfn/config";
-import { composeProjectName } from "@devfn/compose";
+import { composeProjectName, type ComposeServiceDnsNames } from "@devfn/compose";
 
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -63,6 +63,12 @@ export interface ResourcePlanInput {
   provisionalPorts?: boolean;
   /** Effective Compose networks by selected service, as passed to the endpoint resolver. */
   composeNetworks?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Other Docker DNS names of each selected service, read with its effective
+   * networks: container_name and network aliases, and the names its own
+   * links and extra_hosts map. Without them only service names are known.
+   */
+  composeNames?: Readonly<Record<string, ComposeServiceDnsNames>>;
   /**
    * The Compose networks are provisional placeholders, not effective
    * networks: which listener a Compose service name reaches is unknown, so
@@ -137,7 +143,10 @@ const DEFAULT_PORTS: Record<string, string> = { "http:": "80", "https:": "443", 
 function canonicalHost(host: string): string {
   let canonical = host.toLowerCase();
   try { canonical = new URL(`http://${host}/`).hostname; } catch { /* an opaque host is compared as written */ }
-  return canonical.replace(/\.+$/, "");
+  // A linear scan: a regular expression backtracks on long runs of dots.
+  let end = canonical.length;
+  while (end > 0 && canonical[end - 1] === ".") end -= 1;
+  return canonical.slice(0, end);
 }
 
 /**
@@ -397,15 +406,18 @@ function containerListeners(context: TargetContext, endpoint: Endpoint, consumer
 
 /**
  * The selected Compose services a host name reaches by Docker DNS from inside
- * one consumer, or undefined while networks are provisional and a selected
- * service has that name.
+ * one consumer: on a network both join, the service's name, its
+ * container_name or an alias it has on that network. Undefined while networks
+ * are provisional and a selected service has that name.
  */
 function reachedServices(input: ResourcePlanInput, host: string, consumer: string): string[] | undefined {
-  const named = input.plan.nodes.filter((node) => node.kind === "service" && canonicalHost(own(input.config.services, node.name)!.service) === host);
-  if (!named.length) return [];
-  if (input.provisionalNetworks) return undefined;
-  const networks = new Set(own(input.composeNetworks, consumer) ?? []);
-  return named.filter((node) => (own(input.composeNetworks, node.name) ?? []).some((network) => networks.has(network))).map((node) => node.name);
+  const services = input.plan.nodes.filter((node) => node.kind === "service");
+  if (input.provisionalNetworks) return services.some((node) => canonicalHost(own(input.config.services, node.name)!.service) === host) ? undefined : [];
+  const joined = new Set(own(input.composeNetworks, consumer) ?? []);
+  const answers = (node: string, network: string) => [own(input.config.services, node)!.service,
+    ...own(own(input.composeNames, node)?.networks, network) ?? []].some((name) => canonicalHost(name) === host);
+  return services.filter((node) => (own(input.composeNetworks, node.name) ?? []).some((network) => joined.has(network) && answers(node.name, network)))
+    .map((node) => node.name);
 }
 
 /**
@@ -418,6 +430,11 @@ function reachedServices(input: ResourcePlanInput, host: string, consumer: strin
 function rejectAmbiguousContainerEndpoint(context: TargetContext, endpoint: Endpoint, source: ResourceValueSource, consumer: string): void {
   if (source === "host-gateway") return;
   const { input, name, target } = context;
+  // Its own mapping of the name bypasses Docker DNS, so no listener is known.
+  if (own(input.composeNames, consumer)?.overrides.some((mapped) => canonicalHost(mapped) === canonicalHost(endpoint.host))) {
+    invalid(`Compose service ${consumer} consumes resource ${name}, whose endpoint ${endpoint.host}:${endpoint.port} its own links, external_links or extra_hosts map; ` +
+      "remove that mapping or select a target it does not map.");
+  }
   const reached = reachedServices(input, canonicalHost(endpoint.host), consumer);
   if (!reached) return;
   const selected = source === "compose" && "node" in target ? containerListener(input, target.node, endpoint.port) : undefined;
@@ -573,7 +590,9 @@ function rejectNamespaceCollisions(planned: Record<string, PlannedResource>, nam
 
 function selectedResourceNames(config: DevFnConfig, plan: LifecyclePlan): string[] {
   const consumed = plan.nodes.flatMap((node) => nodeSpec(config, node)?.resources ?? []);
-  return [...new Set([...Object.keys(own(config.profiles, plan.profile)?.resources ?? {}), ...consumed])].sort();
+  // Code-unit order, as a plain sort() gives: plan order is part of its fingerprint.
+  return [...new Set([...Object.keys(own(config.profiles, plan.profile)?.resources ?? {}), ...consumed])]
+    .sort((left, right) => (left < right ? -1 : Number(left > right)));
 }
 
 /**
