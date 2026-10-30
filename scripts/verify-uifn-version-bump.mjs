@@ -61,8 +61,8 @@ const BARE_LITERAL = /(['"`])([^'"`\s$\\:]+)\1/g;
 const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 const GLOB = /[*?[{]/;
-// A command that runs tsc without -p or -b compiles ./tsconfig.json.
-const BARE_TSC = /(?:^|\s)tsc(?=\s|$)(?![^&|;]*\s(?:-p|--project|-b|--build)(?:\s|=|$))/;
+const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
+const TSC_COMMAND = /(['"`])((?:npx\s+)?tsc(?:\s[^'"`\n]*)?)\1/g;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
@@ -324,6 +324,7 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
+    for (const { 2: command } of text.matchAll(TSC_COMMAND)) for (const project of tscProjects(command)) add(path.posix.join(root, project));
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
       if (!negated && /^(?:\/|\.\.?(?:\/|$))/.test(value)) continue;
@@ -334,17 +335,42 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   return [...unique.values()];
 }
 
-/** Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked negated, with the command they are in. */
+/**
+ * The tsconfigs, relative to the working directory, that a tsc command emits from: the -p/--project path, every -b/--build
+ * path, or ./tsconfig.json; a path that is not a .json file is a directory holding tsconfig.json. Null when the command
+ * does not run tsc, and none with --noEmit.
+ */
+export function tscProjects(command) {
+  const words = command.split(/[\s()<>=]+/).map((word) => word.replace(/^['"`]+|['"`]+$/g, "")).filter(Boolean);
+  const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
+  if (start < 0) return null;
+  const args = words.slice(start + 1);
+  if (args.includes("--noEmit")) return [];
+  const flag = args.findIndex((word) => TSC_PROJECT_FLAG.test(word));
+  const projects = flag < 0 ? [] : /^--?b/.test(args[flag]) ? args.slice(flag + 1).filter((word) => !word.startsWith("-")) : args.slice(flag + 1, flag + 2);
+  return (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json")));
+}
+
+/**
+ * Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked
+ * negated, with the command they are in, plus the tsconfigs each tsc command emits from. Outside tsc commands a token is
+ * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a tsc --noEmit
+ * command names nothing.
+ */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
-    for (const [list, command] of scripts[name].split(/&&|\|\||[;|]/).entries()) for (const token of command.split(/[\s&<>()]+/)) {
-      const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
-      const negated = /^!./.test(value);
-      if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : {}) });
+    for (const [list, command] of scripts[name].split(/&&|\|\||[;|]/).entries()) {
+      const projects = tscProjects(command);
+      if (projects?.length === 0) continue;
+      for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false });
+      for (const token of command.split(/[\s&<>()]+/)) {
+        const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
+        const negated = /^!./.test(value);
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }) });
+      }
     }
-    if (scripts[name].split(/&&|\|\||[;|]/).some((command) => BARE_TSC.test(command))) found.push({ from, target: `${packagePath}/tsconfig.json`, soft: false });
   }
   return found;
 }
@@ -481,7 +507,9 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
       for (const target of tsconfigRoots(config) ?? [`${path.posix.dirname(config)}/**`]) references.push({ from: config, target, soft: false });
     }
     for (const reference of references) {
-      const target = reference.tsconfig && inventory.dirs.has(reference.target) ? `${reference.target}/**` : reference.target;
+      // A tsconfig include directory, or a script's directory argument other than a root or its ancestor, means every file under it.
+      const tree = reference.tsconfig || (reference.tree && !roots.some((root) => isWithin(root, reference.target)));
+      const target = tree && inventory.dirs.has(reference.target) ? `${reference.target}/**` : reference.target;
       if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
       const { files: matches, direct } = resolved.get(target);
       if (reference.negated || (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct))) continue;
@@ -534,10 +562,11 @@ export function findUndeclaredReferences({ name, packagePath, references, declar
   const covers = (entries, files) => files.length > 0 && files.every((file) => entries.some((entry) => isWithin(file, entry)));
   const resolved = new Map();
   const errors = [];
-  for (const { from, target, soft, bundled } of references) {
+  for (const { from, target, soft, bundled, tree } of references) {
     if (soft || isWithin(target, packagePath)) continue;
-    if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory).files);
-    const files = resolved.get(target);
+    const lookup = tree && inventory.dirs.has(target) ? `${target}/**` : target;
+    if (!resolved.has(lookup)) resolved.set(lookup, resolveReference(lookup, inventory).files);
+    const files = resolved.get(lookup);
     if (bundled) {
       // A specifier that resolves to nothing cannot be inlined (such as one inside generated code strings), so its own path is judged.
       const named = files.length > 0 ? files : [target];
@@ -561,7 +590,9 @@ export function findUndeclaredReferences({ name, packagePath, references, declar
  * build config that tools load implicitly, and the shipped closure may not reach any file in it.
  */
 export function findConsumedExclusions({ name, packagePath, manifest, excluded, packageFiles = [], promoted }) {
-  const listed = Array.isArray(manifest?.files) ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : [];
+  // Without a files list npm packs the whole package.
+  const allowlist = Array.isArray(manifest?.files);
+  const listed = allowlist ? manifest.files.filter((entry) => typeof entry === "string" && !entry.startsWith("!")) : ["**"];
   // As in npm's packlist, an entry with no inner slash matches at any depth, and one that names a directory includes everything under it.
   const patterns = listed.map((entry) => path.posix.join(packagePath, /\/./.test(entry) ? "" : "**", entry).replace(/\/+$/, ""));
   const options = classifyOptions(manifest);
@@ -576,7 +607,7 @@ export function findConsumedExclusions({ name, packagePath, manifest, excluded, 
     }
     const listedFile = [absolute, ...packageFiles.filter((file) => isWithin(file, absolute))].find((file) => patterns.some((pattern) => coversPath(pattern, file)));
     const reached = [...promoted].find(([file]) => isWithin(file, absolute));
-    const user = listedFile ? `package.json files includes ${listedFile}` : reached && `${reached[1].from} refers to ${reached[0]}`;
+    const user = listedFile ? `package.json ${allowlist ? "files includes" : "has no files list, so npm packs"} ${listedFile}` : reached && `${reached[1].from} refers to ${reached[0]}`;
     if (user) errors.push(`${INPUTS_PATH}: ${name} excludes ${entry}, but ${user}; it reaches the tarball, so remove the exclusion`);
   }
   return errors;
@@ -674,7 +705,9 @@ function packageState(cwd, commit, pkg) {
   const { promoted, references } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths), tsconfigRoots: (file) => tsconfigRoots(file, (tree ??= fileInventory(listFiles(cwd, commit, ["."]))), (entry) => readAt(cwd, commit, entry)) });
   const present = new Set(files);
   const scope = { packagePath: pkg.packagePath, inputs: pkg.inputs, excluded: pkg.excluded, options: classifyOptions(manifest) };
-  return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (promoted.has(file) || pathKind(file, scope) === "shipped") };
+  // Without a files list every package file ships, tests included.
+  const packed = (file) => !Array.isArray(manifest?.files) && file.startsWith(`${pkg.packagePath}/`);
+  return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (packed(file) || promoted.has(file) || pathKind(file, scope) === "shipped") };
 }
 
 function stateCache(cwd) {

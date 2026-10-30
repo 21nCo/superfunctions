@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedClosure, shippedScriptNames, tsconfigEntries, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shippedClosure, shippedScriptNames, tscProjects, tsconfigEntries, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -376,6 +376,25 @@ test("an exclusion fails only when a files entry matches the excluded path or a 
   assert.match(errors(["base.json"])[0], /package\.json files includes uifn\/components\/registry\/theme\/base\.json/);
 });
 
+test("an exclusion fails when the manifest has no files list, since npm packs the whole package", () => {
+  const errors = (manifest) => findConsumedExclusions({ name: "@uifn/core", packagePath: "uifn/core", manifest, excluded: ["data"], packageFiles: ["uifn/core/package.json", "uifn/core/data/payload.json"], promoted: new Map() });
+  for (const manifest of [{}, { files: "dist" }]) assert.match(errors(manifest)[0], /excludes data, but package\.json has no files list, so npm packs uifn\/core\/data;/, JSON.stringify(manifest));
+  assert.deepEqual(errors({ files: ["dist"] }), []);
+});
+
+test("without a files list a test change ships and needs a bump", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) => JSON.stringify({ ...JSON.parse(text), files: undefined }));
+  repo.write("uifn/core/src/__tests__/core.test.ts", "test;\n");
+  repo.commit("no files list");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/src/__tests__/core.test.ts", "test 2;\n");
+  repo.commit("test only");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1);
+  assert.match(output, /@uifn\/core: shipped code changed \(src\/__tests__\/core\.test\.ts\) but version is still 1\.0\.0/);
+});
+
 test("an exclusion of a build config that tools load implicitly fails", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/react/tsup.config.ts", "export default {};\n");
@@ -646,6 +665,40 @@ for (const [cell, build, tsconfigs, expected] of [
     assert.deepEqual(promotedBy(build, { ...sources, ...tsconfigs }), expected);
   });
 }
+
+test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () => {
+  for (const command of ["tsc", "npx tsc --emitDeclarationOnly", "tsc -b", "tsc --build --verbose", "tsc -p .", "tsc --project ./", "tsc -b .", "tsc -p tsconfig.json"]) assert.deepEqual(tscProjects(command), ["tsconfig.json"], command);
+  assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json"), ["config/tsconfig.build.json"]);
+  assert.deepEqual(tscProjects("tsc --project=packages/a"), ["packages/a/tsconfig.json"]);
+  assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force"), ["packages/a/tsconfig.json", "tsconfig.types.json"]);
+  assert.deepEqual(tscProjects("tsc --noEmit -p tsconfig.json"), []);
+  assert.equal(tscProjects("tsup src/index.ts"), null);
+});
+
+// tsc emits the default-include fixtures in each spelling, from a script or a build file, but nothing with --noEmit.
+const emitted = ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"];
+for (const [build, extra, expected] of [
+  ["tsc -b", {}, emitted],
+  ["tsc --build", {}, emitted],
+  ["tsc -p .", {}, emitted],
+  ["tsc --project ./", {}, emitted],
+  ["tsc -b .", {}, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc');\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc -p .');\n" }, emitted],
+  ["tsc --noEmit && tsup src/index.ts", {}, []],
+]) {
+  test(`a shipped tsc invocation consumes its tsconfig: ${[build, ...Object.values(extra)].join(" with ").trim()}`, () => {
+    assert.deepEqual(promotedBy(build, { ...sources, "tsconfig.json": '{ "compilerOptions": { "outDir": "dist" } }', ...extra }), expected);
+  });
+}
+
+// svelte-package copies every file under its input directory into dist; a build config's directory reference does not.
+test("a directory argument of a shipped script consumes every file under it", () => {
+  const tree = { "lib/index.ts": "export const core = 1;\n", "lib/__tests__/probe.test.ts": "test;\n", "lib/Probe.stories.svelte": "<p />\n", "src/__tests__/core.test.ts": "test;\n" };
+  assert.deepEqual(promotedBy("svelte-package -i lib -o dist", tree), ["lib/Probe.stories.svelte", "lib/__tests__/probe.test.ts"]);
+  assert.deepEqual(promotedBy("svelte-package -i . -o dist", tree), []);
+  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...tree, "scripts/build.mjs": "const input = path.join(packageRoot, 'lib');\n" }), []);
+});
 
 test("a ! glob drops only the matches of its own entry array or script command", () => {
   const tree = { "src/index.ts": "export const core = 1;\n", "src/fixtures/data.ts": "export const data = 1;\n", "src/core.test.ts": "test;\n" };
