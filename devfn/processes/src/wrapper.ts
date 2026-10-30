@@ -31,12 +31,15 @@ if (!opened) process.exit(1);
 process.disconnect();
 
 const drainMs = Number(process.env.DEVFN_WRAPPER_DRAIN_MS ?? Number.NaN);
+const discard = process.env.DEVFN_DISCARD_OUTPUT === "1";
 const environment = { ...process.env };
 delete environment.DEVFN_WRAPPED_COMMAND;
 delete environment.DEVFN_REDACT_KEYS;
 delete environment.DEVFN_WRAPPER_DRAIN_MS;
+delete environment.DEVFN_DISCARD_OUTPUT;
 const secrets = [...new Set((keys as string[]).map((key) => environment[key]).filter((value): value is string => typeof value === "string" && value.length > 0))].sort((a, b) => b.length - a.length);
-const child = spawn(command[0], command.slice(1), { cwd: process.cwd(), env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+if (discard) process.stdout.write("[DevFn] Output of this command is not kept: it may carry secret values DevFn cannot redact.\n");
+const child = spawn(command[0], command.slice(1), { cwd: process.cwd(), env: environment, stdio: ["ignore", discard ? "ignore" : "pipe", discard ? "ignore" : "pipe"], windowsHide: true });
 
 /** Forward output, redacted; the returned function flushes what is held back. */
 function pipeRedacted(stream: NodeJS.ReadableStream, destination: NodeJS.WritableStream): () => void {
@@ -50,7 +53,7 @@ function pipeRedacted(stream: NodeJS.ReadableStream, destination: NodeJS.Writabl
   return end;
 }
 
-const flushes = [pipeRedacted(child.stdout!, process.stdout), pipeRedacted(child.stderr!, process.stderr)];
+const flushes = discard ? [] : [pipeRedacted(child.stdout!, process.stdout), pipeRedacted(child.stderr!, process.stderr)];
 const finish = (code: number | null, signal: NodeJS.Signals | null) => {
   if (signal) process.kill(process.pid, signal);
   else process.exitCode = code ?? 1;
@@ -65,8 +68,8 @@ if (Number.isInteger(drainMs) && drainMs >= 0) {
   child.once("exit", (code, signal) => {
     setTimeout(() => {
       if (closed) return;
-      child.stdout!.destroy();
-      child.stderr!.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       for (const flush of flushes) flush();
       finish(code, signal);
     }, drainMs).unref();
