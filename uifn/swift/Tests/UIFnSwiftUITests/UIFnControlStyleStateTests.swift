@@ -17,6 +17,7 @@ enum UIFnStatefulControl: String, CaseIterable, CustomTestStringConvertible {
     case buttonPrimary, buttonSecondary, buttonGhost, buttonDestructive
     case switchOff, switchOn, checkboxOff, checkboxOn, checkboxMixed
     case textField
+    case menu, segmentedPicker, tabSwitcher
 
     static let pressable = allCases.filter { $0 != .textField }
 
@@ -36,8 +37,32 @@ enum UIFnStatefulControl: String, CaseIterable, CustomTestStringConvertible {
         case .checkboxMixed: AnyView(UIFnToggleAppearance(label: Text("Remember"), kind: .checkbox, value: .mixed, state: state))
         case .textField:
             AnyView(UIFnTextFieldAppearance(field: Text("Ada").frame(maxWidth: .infinity, alignment: .leading), state: state).frame(width: 200))
+        case .menu: AnyView(UIFnMenuAppearance(label: Text("Options"), state: state))
+        // The state is the selected segment's: a focused picker draws its
+        // ring there.
+        case .segmentedPicker: AnyView(Self.segments(.segmented, selected: 1, state: state))
+        case .tabSwitcher: AnyView(Self.segments(.tabs, selected: 1, state: state))
         }
         return AnyView(view.isolated())
+    }
+
+    static let segmentLabels = ["Day", "Week", "Month"]
+
+    /// A segmented picker's segments in its track, the selected one in `state`.
+    @MainActor
+    static func segments(_ variant: UIFnSegmentedPickerVariant, selected: Int?, state: UIFnControlState) -> some View {
+        UIFnSegmentedTrack(variant: variant) {
+            ForEach(0..<segmentLabels.count, id: \.self) { index in
+                UIFnSegmentAppearance(
+                    label: Text(segmentLabels[index]),
+                    variant: variant,
+                    isSelected: index == selected,
+                    state: index == selected ? state : UIFnControlState(isEnabled: state.isEnabled)
+                )
+            }
+        }
+        .disabled(!state.isEnabled)
+        .fixedSize()
     }
 }
 
