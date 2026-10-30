@@ -1628,6 +1628,32 @@ export class ComposeController {
     }
   }
 
+  /**
+   * Prepare a finite Compose task: a one-off `docker compose run --rm` of
+   * the service, without its dependencies or published ports, labeled for
+   * this lifecycle like a started service. The caller runs the command
+   * through a gated launcher whose identity it journals with the returned
+   * launch, so stopLaunch can find a container the run left behind.
+   */
+  public async prepareTask(input: Omit<ComposeStartInput, "ports" | "portHosts" | "portProtocols" | "readinessEnvironment" | "onLaunch" | "onStarted">):
+    Promise<{ command: string[]; environment: NodeJS.ProcessEnv; launch: ComposeLaunch }> {
+    if (!/^[A-Za-z0-9_.-]+$/.test(input.name) || input.name !== input.name.trim()) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose lifecycle name ${input.name} contains unsupported characters.`);
+    const environment = createComposeEnvironment(input.spec, input.environment);
+    if (!await this.available(input.root, environment)) throw new ComposeError("DEVFN_COMPOSE_UNAVAILABLE", "Docker Compose 2.24.4 or newer is required.");
+    const projectName = composeProjectName(input.spec.projectName ?? "devfn", input.instanceId);
+    const sourceFile = await resolveContainedPath(input.root, input.spec.file ?? "compose.yaml", `services.${input.name}.file`);
+    await mkdir(path.join(input.runtimeDir, "compose"), { recursive: true, mode: 0o700 });
+    const overrideFile = await resolveContainedPath(input.runtimeDir, path.join("compose", `${input.name}.override.yaml`), `services.${input.name}`);
+    await writeFile(overrideFile, renderComposeOverride({ ...input.spec, ports: {} }, {}, {}, {}, { instanceId: input.instanceId, lifecycleName: input.name }), { encoding: "utf8", mode: 0o600 });
+    return {
+      command: ["docker", "compose", "-p", projectName, "-f", sourceFile, "-f", overrideFile, "run", "--rm", "--no-deps", "-T", input.spec.service],
+      environment,
+      // A one-off container is always new, so every container of this lifecycle and service is the run's own.
+      launch: { name: input.name, projectName, composeService: input.spec.service, preExisting: false, existingContainerIds: [], runningContainerIds: [],
+        dockerEnvironment: persistedDockerEnvironment(environment) },
+    };
+  }
+
   private async containerIds(baseArgs: string[], service: string, cwd: string, environment: NodeJS.ProcessEnv, all = false): Promise<string[]> {
     try { return (await this.run("docker", [...baseArgs, "ps", ...(all ? ["-a"] : []), "-q", service], { cwd, env: environment, timeout: 10_000, maxBuffer: 1024 * 1024 })).stdout.split(/\s+/).filter(Boolean); }
     catch (error) { throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to query Compose service ${service}.`, { cause: error instanceof Error ? error.message : String(error) }); }

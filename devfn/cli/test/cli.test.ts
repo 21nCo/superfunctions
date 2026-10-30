@@ -79,6 +79,26 @@ describe("devfn CLI", () => {
     } finally { await rm(cwd, { recursive: true, force: true }); await rm(stateDir, { recursive: true, force: true }); }
   });
 
+  it("accepts --rerun-task only for starts and rejects an unknown task before any state exists", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-rerun-cli-"));
+    const stateDir = path.join(cwd, "state");
+    try {
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" },
+        processes: { setup: { adapter: "command", command: ["node", "-e", "0"], task: {} } }, profiles: { default: { processes: ["setup"] } } }));
+      const run = async (args: string[]) => {
+        let stdout = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+        return { code, value: JSON.parse(stdout) as { error?: { code: string; message: string } } };
+      };
+      expect(await run(["status", "--rerun-task", "setup"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task applies only to up and restart." } } });
+      expect(await run(["up", "--rerun-task"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task requires a value." } } });
+      expect(await run(["up", "--rerun-task", "other"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("names no task") } } });
+      // Trust is recorded, but no lifecycle, lease or task state.
+      for (const created of ["registry.json", "tasks", "runtime-id"]) await expect(access(path.join(stateDir, created))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(cwd, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
   it("rejects invalid tail counts before command dispatch", async () => {
     for (const value of ["nope", "-1", "1.5", "9007199254740992"]) {
       let stdout = "";

@@ -17,6 +17,7 @@ import type {
   ResourceSpec,
   ResourceTargetSpec,
   RuntimePrerequisite,
+  TaskSpec,
 } from "./types.js";
 import { DevFnConfigError } from "./errors.js";
 import { isCredentialKey } from "./credentials.js";
@@ -181,6 +182,28 @@ function environmentFields(input: RecordValue, field: string, allowHost = false)
   return { ...(env ? { env } : {}), ...(envAllowlist ? { envAllowlist } : {}), ...(secretEnv ? { secretEnv } : {}) };
 }
 
+function taskSpec(value: unknown, field: string): TaskSpec | undefined {
+  if (value === undefined) return undefined;
+  const input = record(value, field);
+  const rerun = input.rerun === undefined ? "on-change" : string(input.rerun, `${field}.rerun`);
+  if (rerun !== "on-change" && rerun !== "always" && rerun !== "once") fail(`${field}.rerun must be on-change, always or once.`, `${field}.rerun`);
+  const idempotent = optionalBoolean(input.idempotent, `${field}.idempotent`) ?? false;
+  const retries = input.retries === undefined ? 0 : integer(input.retries, `${field}.retries`, 0, 5);
+  if (rerun === "always" && !idempotent) fail(`${field}.rerun always requires idempotent: true.`, `${field}.rerun`);
+  if (retries > 0 && !idempotent) fail(`${field}.retries requires idempotent: true; a non-idempotent task is never repeated automatically.`, `${field}.retries`);
+  const inputs = uniqueNames(input.inputs, `${field}.inputs`)?.map((item, index) => relativePath(item, `${field}.inputs[${index}]`));
+  return {
+    rerun, idempotent, retries,
+    timeoutMs: input.timeoutMs === undefined ? 600_000 : integer(input.timeoutMs, `${field}.timeoutMs`, 1, 86_400_000),
+    ...(inputs ? { inputs } : {}),
+  };
+}
+
+/** A task serves nothing: no ports, readiness probe or persistence, and never public. */
+function assertFiniteTask(input: RecordValue, field: string, keys: readonly string[]): void {
+  for (const key of keys) if (input[key] !== undefined) fail(`${field}.${key} cannot be declared by a task; a task is ready when it exits successfully.`, `${field}.${key}`);
+}
+
 function processSpec(value: unknown, field: string): ProcessSpec {
   const input = record(value, field);
   const adapter = string(input.adapter, `${field}.adapter`) as ProcessSpec["adapter"];
@@ -197,6 +220,9 @@ function processSpec(value: unknown, field: string): ProcessSpec {
   const dependsOn = stringArray(input.dependsOn, `${field}.dependsOn`);
   const resources = uniqueNames(input.resources, `${field}.resources`);
   const parsedHealth = health(input.health, `${field}.health`);
+  const task = taskSpec(input.task, `${field}.task`);
+  if (task) assertFiniteTask(input, field, ["ports", "health"]);
+  if (task && exposure === "public") fail(`${field}.exposure cannot be public for a task; a task serves nothing.`, `${field}.exposure`);
   return {
     adapter,
     exposure,
@@ -209,6 +235,7 @@ function processSpec(value: unknown, field: string): ProcessSpec {
     ...(resources ? { resources } : {}),
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: integer(input.shutdownTimeoutMs, `${field}.shutdownTimeoutMs`, 1, 3_600_000) }),
+    ...(task ? { task } : {}),
   };
 }
 
@@ -221,6 +248,8 @@ function serviceSpec(value: unknown, field: string): ComposeServiceSpec {
   const dependsOn = stringArray(input.dependsOn, `${field}.dependsOn`);
   const resources = uniqueNames(input.resources, `${field}.resources`);
   const parsedHealth = health(input.health, `${field}.health`);
+  const task = taskSpec(input.task, `${field}.task`);
+  if (task) assertFiniteTask(input, field, ["ports", "health", "persistent"]);
   return {
     adapter: "compose",
     service: string(input.service, `${field}.service`),
@@ -232,6 +261,7 @@ function serviceSpec(value: unknown, field: string): ComposeServiceSpec {
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.persistent === undefined ? {} : { persistent: input.persistent === true }),
     ...environmentFields(input, field, true),
+    ...(task ? { task } : {}),
   };
 }
 

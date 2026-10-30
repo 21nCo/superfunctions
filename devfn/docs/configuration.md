@@ -12,8 +12,8 @@ DevFn discovers `devfn.config.ts`, `.js`, `.mjs`, `.cjs`, or `.json` while walki
 | `defaultProfile` | no | Profile selected when `--profile` is omitted. Without it, a `profiles.default` entry is required. |
 | `runtimeDir` | no | Repository-relative generated-state root; defaults to `.devfn`. |
 | `ports` | no | Named `PortSpec` map. |
-| `processes` | no | Named native process map. |
-| `services` | no | Named Docker Compose service map. |
+| `processes` | no | Named native process map; a process with `task` is a finite [setup task](#setup-tasks). |
+| `services` | no | Named Docker Compose service map; a service with `task` is a one-off [setup task](#setup-tasks). |
 | `profiles` | yes | Named selections of processes/services plus non-secret environment and proxy choice. |
 | `hostnames` | no | Explicit local hostname routes to named ports. |
 | `resources` | no | Named backends and data stores with local or credential-free remote targets; see [resource targets and namespaces](#resource-targets-and-namespaces). |
@@ -34,7 +34,7 @@ A port can specify `protocol` (`tcp` or `udp`), `preferred`, `range: [start, end
 
 ## Native processes
 
-`adapter` is one of `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, or `extfn`. A process can specify `command`, package-manager `script`, repository-relative `cwd`, non-secret literal `env`, inherited `envAllowlist`, redacted `secretEnv`, named `ports`, `dependsOn`, `health`, `shutdownTimeoutMs`, and `exposure` (`local` or `public`).
+`adapter` is one of `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, or `extfn`. A process can specify `command`, package-manager `script`, repository-relative `cwd`, non-secret literal `env`, inherited `envAllowlist`, redacted `secretEnv`, named `ports`, `dependsOn`, `health`, `shutdownTimeoutMs`, `exposure` (`local` or `public`), and `task`.
 
 Turbo, Wrangler, and ExtFn resolve project-local binaries with offline npm execution; pnpm runs through Corepack so the repository's `packageManager` pin is honored. Adapters never download a missing tool during startup. `doctor` reports the missing prerequisite instead. Discovery marks Yarn and Bun as proposed and emits no guessed npm process; add an explicit command adapter after review.
 
@@ -47,6 +47,30 @@ Sensitive-looking keys cannot be literal manifest values. Numbered keys such as 
 A service uses `adapter: "compose"`, Compose `service`, optional repository-relative `file`, project-name prefix, named host-port-to-container-port mappings, dependencies, health, `persistent`, non-secret `env`, `envAllowlist`, and `secretEnv`. DevFn adds a digest of the exact project prefix and opaque owner to the Compose project name, keeping separate accepted prefixes and owners isolated.
 
 DevFn writes a generated override with loopback host mappings unless the named port explicitly selects public exposure. It starts only the requested service with `--no-deps`. Services declaring `secretEnv` use Docker's `none` logging driver and therefore cannot use log-pattern health checks. Ordinary cleanup stops/removes only invocation-owned containers and never passes a volume-deletion flag.
+
+## Setup tasks
+
+A process or Compose service with a `task` object is a finite setup task (database creation and migrations, bucket or topic initialization, seeds) instead of a daemon. It runs to completion during `up`, and only exit code 0 lets the nodes that depend on it (through `dependsOn` or a profile selection after it in start order) start. A process task runs its command through the gated process wrapper; a Compose task runs the service once with `docker compose run --rm --no-deps -T` in the lifecycle's Compose project, labeled like a started service and without published ports. A task may consume `resources`, which start their selected local providers first and give it the same `DEVFN_RESOURCE_*` values as any consumer. A task declares no `ports` or `health` (and, for Compose, no `persistent`), cannot be public, and therefore never provides a resource target or hostname route.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `rerun` | `on-change` | `on-change` runs when no success is recorded for the current input revision; `always` runs on every start (requires `idempotent`); `once` never runs again after a success, and a changed input revision then fails before any mutation with `DEVFN_TASK_INPUT_CHANGED`. |
+| `idempotent` | `false` | Repeating the task, also after an attempt that may have partly applied, is safe. |
+| `retries` | `0` | Further attempts within one start after a failed or timed-out attempt (0–5, backoff of one second per attempt up to ten); requires `idempotent`. |
+| `timeoutMs` | `600000` | Per-attempt limit; when it passes, the task's whole process group (and, for Compose, its one-off container) is stopped and the attempt is `timed-out`. |
+| `inputs` | none | Repository-relative files and directories whose content is part of the input revision (for example a migrations directory). Symlinks are hashed as links and never followed; at most 10,000 entries and 256 MiB. |
+
+**Input revision.** The revision covers the task's declared command, script, `cwd` (or Compose file content, service and project prefix), manifest `env` literals as written, `envAllowlist` and `secretEnv` names, the target, location, provider node and port name, remote URL and namespace of every resource it consumes, and the content of its `inputs`. Leased port numbers and secret values are not part of it, so a reallocated port or a rotated credential never reruns a task. Anything else a task reads (container images, remote state, data inside a target) is not observed: DevFn cannot see whether a target lost its data, so a task whose target may be recreated empty should use `rerun: "always"` with an idempotent command.
+
+**Completion journal.** Each task has a journal in machine state (`<state dir>/tasks/<scope>.json`) that outlives receipts and `devfn down`. It keeps the latest success (input revision, invocation, time) and the latest 20 attempts, each with its attempt number, input revision, start and end, outcome (`succeeded`, `failed`, `timed-out`, `cancelled`, `interrupted`), exit code or signal, and `effects`: `applied` for a success, `unknown` for any other attempt whose command may have run, and `none` only when the launch gate never opened. An attempt is journaled as `running`, with its launcher identity, before its command can start. Stopping a task, rolling back a failed start, `down` and restart never revert what a task did, and receipts never claim they did. The journal of a task that consumes only remote targets with shared namespaces is keyed by the project, task and those targets, so every worktree using them shares one record; any other task's journal is keyed by its lifecycle instance (and, through the state directory, its runtime).
+
+**Rerun decisions**, in order: `--rerun-task <name>` runs the task. A non-idempotent task whose latest attempt ended other than `succeeded` with effects that may have applied fails the start with `DEVFN_TASK_RERUN_REQUIRED` until it is rerun explicitly after inspection. `rerun: "always"` runs. A success recorded for the current input revision skips the task (receipt status `skipped`). `rerun: "once"` after a success with another revision fails with `DEVFN_TASK_INPUT_CHANGED`. Otherwise the task runs. These decisions, unknown `--rerun-task` names and missing `inputs` are checked before any lease, process or state is created, and decided again under the task's lock right before it runs.
+
+**Failure, timeout, cancellation and interruption.** A failed (`DEVFN_TASK_FAILED`), timed-out (`DEVFN_TASK_TIMEOUT`) or cancelled (`DEVFN_CANCELLED`) task fails the start (`DEVFN_START_FAILED` with that `causeCode`) and its dependents never start; what the start already started is rolled back as usual. Aborting `UpOptions.signal` (the CLI's first SIGINT or SIGTERM during `up`/`restart`; a second one ends DevFn at once) stops a running task and the start. A task left `running` by a DevFn that died is recorded `interrupted` with unknown effects by the next start that takes its lock, once its launcher is verified gone (the instance's own teardown stops it, and any one-off Compose container, through the registry journal first); a launcher that may still run fails the start instead.
+
+**Concurrency.** Starts of one worktree are serialized by its lifecycle lock: a duplicate concurrent `up` either waits and then reports `DEVFN_ALREADY_RUNNING`, or fails with `DEVFN_REGISTRY_LOCK_TIMEOUT` after 30 seconds, and never runs a task a second time. Every task run also holds its journal's lock; a start from another worktree sharing that journal waits up to the task's whole retry budget plus one minute, then decides from the outcome the first run recorded.
+
+Receipts list each task of the invocation under `tasks` (status `succeeded`, `skipped`, `failed`, `timed-out` or `cancelled`, the reason, input revision, this invocation's attempts, last success and log path); a task is never a running process or service, so its exit never makes a ready lifecycle degraded. `status` summarizes tasks and `logs <task>` shows a task's redacted output. A ready lifecycle whose task input revision changed reports `degraded`, and the next `up` replaces it, running the task first.
 
 ## Health checks
 

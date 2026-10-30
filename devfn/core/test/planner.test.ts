@@ -15,6 +15,18 @@ describe("lifecycle planner", () => {
     expect(createPlan(config).nodes.map((node) => node.name)).toEqual(["db", "app"]);
   });
 
+  it("marks task nodes and orders them before their dependents, rejecting cycles and unknown tasks", () => {
+    const tasks = { ...config, processes: { ...config.processes, app: { ...config.processes.app, dependsOn: ["db", "migrate"] },
+      migrate: { adapter: "command" as const, command: ["migrate"], dependsOn: ["db"], task: { rerun: "on-change" as const } } } };
+    expect(createPlan(tasks).nodes).toEqual([
+      { name: "db", kind: "service", dependencies: [] },
+      { name: "migrate", kind: "process", dependencies: ["db"], task: true },
+      { name: "app", kind: "process", dependencies: ["db", "migrate"] },
+    ]);
+    expect(() => createPlan({ ...tasks, processes: { ...tasks.processes, migrate: { ...tasks.processes.migrate, dependsOn: ["app"] } } })).toThrow(/cycle/);
+    expect(() => createPlan({ ...tasks, processes: { ...tasks.processes, app: { ...tasks.processes.app, dependsOn: ["seed"] } } })).toThrow(/Unknown lifecycle node seed/);
+  });
+
   it("rejects dependency cycles", () => {
     const cyclic = { ...config, services: { db: { ...config.services.db, dependsOn: ["app"] } } };
     expect(() => createPlan(cyclic)).toThrow(/cycle/);

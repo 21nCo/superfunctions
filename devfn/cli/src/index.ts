@@ -39,6 +39,7 @@ interface ParsedArgs {
   tunnel: Partial<Record<"provider" | "domain" | "accountId" | "zoneId" | "tunnelId" | "credentialsFile" | "apiTokenEnv" | "authtokenEnv" | "apiKeyEnv", string>>;
   nonproduction: boolean;
   ephemeral: boolean;
+  rerunTasks: string[];
 }
 
 export interface CliOptions { cwd?: string; env?: NodeJS.ProcessEnv; stdout?: (text: string) => void; stderr?: (text: string) => void }
@@ -68,6 +69,7 @@ Options:
   --json               Emit one machine-readable JSON value
   --trust              Trust the current manifest digest before loading it
   --allow-public       Confirm processes, ports or tunnel routes declared as public exposure
+  --rerun-task <name>  Run a task on this start although its record would skip or block it (repeatable)
   --yes                Confirm devfn init writes
   --state-dir <path>   Override machine state (primarily for testing)
   --output <path>      Write a ports report
@@ -91,10 +93,18 @@ const TUNNEL_OPTIONS = { "--provider": "provider", "--domain": "domain", "--acco
 function parse(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values: Record<string, string | boolean> = {};
+  const rerunTasks: string[] = [];
   const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key", "--host", ...Object.keys(TUNNEL_OPTIONS)]);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith("--")) { positionals.push(token); continue; }
+    if (token === "--rerun-task") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${token} requires a value.`);
+      if (!rerunTasks.includes(value)) rerunTasks.push(value);
+      index += 1;
+      continue;
+    }
     if (takesValue.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${token} requires a value.`);
@@ -124,6 +134,7 @@ function parse(argv: readonly string[]): ParsedArgs {
     tunnel: Object.fromEntries(Object.entries(TUNNEL_OPTIONS).flatMap(([flag, key]) => typeof values[flag] === "string" ? [[key, values[flag]]] : [])),
     nonproduction: values["--nonproduction"] === true,
     ephemeral: values["--ephemeral"] === true,
+    rerunTasks,
   };
 }
 
@@ -287,15 +298,34 @@ async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, lo
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown tunnel action ${action}. Expected list, register, unregister, urls, status or recover.`);
 }
 
+/**
+ * The first SIGINT or SIGTERM during a start stops a running task and the
+ * start, which rolls back what it started; a second one ends DevFn at once.
+ */
+async function cancellable<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  try { return await action(controller.signal); }
+  finally {
+    process.removeListener("SIGINT", abort);
+    process.removeListener("SIGTERM", abort);
+  }
+}
+
 async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
   if (args.command === "domains") return await domainsCommand(args, cwd, stateDir, loaded);
   if (args.command === "tunnel") return await tunnelCommand(args, cwd, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
+  if (args.rerunTasks.length && args.command !== "up" && args.command !== "restart") throw new DevFnError("DEVFN_RUNTIME_INVALID", "--rerun-task applies only to up and restart.");
+  const start = async (replace: boolean) => await cancellable(async (signal) => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic,
+    ...(replace ? { replace } : {}), ...(args.rerunTasks.length ? { rerunTasks: args.rerunTasks } : {}), signal }));
   const handlers: Record<string, () => Promise<unknown>> = {
-    up: async () => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic }),
+    up: async () => await start(false),
     down: async () => await orchestrator.down(lifecycle),
-    restart: async () => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic, replace: true }),
+    restart: async () => await start(true),
     status: async () => await orchestrator.status(lifecycle),
     doctor: async () => await orchestrator.doctor({ ...lifecycle, profile: args.profile }),
     logs: async () => await orchestrator.logs({ config: loaded.config, root: loaded.root, name: args.positionals[0], tail: args.tail }),

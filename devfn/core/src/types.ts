@@ -5,6 +5,7 @@ import type { ManagedProcess } from "@devfn/processes";
 import type { ProxyRoute } from "@devfn/proxy";
 
 import type { ResourcePlan } from "./resources.js";
+import type { TaskReceipt } from "./tasks.js";
 
 export type LifecycleState = "planning" | "starting" | "ready" | "degraded" | "failed" | "stopped";
 
@@ -32,7 +33,8 @@ export interface RoutingIdentity extends InstanceIdentity {
 
 export interface LifecyclePlan {
   profile: string;
-  nodes: Array<{ name: string; kind: "process" | "service"; dependencies: string[] }>;
+  /** Topological start order; a task node completes before any node after it starts. */
+  nodes: Array<{ name: string; kind: "process" | "service"; dependencies: string[]; task?: true }>;
   portNames: string[];
   proxy: boolean;
 }
@@ -73,11 +75,19 @@ export interface LifecycleReceipt {
   publicUrls?: Record<string, string>;
   /** Redacted resource selection, namespaces and value provenance; absent without resources. */
   resources?: ResourcePlan;
+  /** Finite tasks of this invocation in start order, with their attempts; absent without tasks. */
+  tasks?: TaskReceipt[];
   cleanup?: CleanupResult;
   error?: { code: string; message: string };
 }
 
-export interface UpOptions { config: DevFnConfig; root: string; profile?: string; stateDir?: string; allowPublic?: boolean; replace?: boolean }
+export interface UpOptions {
+  config: DevFnConfig; root: string; profile?: string; stateDir?: string; allowPublic?: boolean; replace?: boolean;
+  /** Tasks to run on this start although their record would skip or block them. */
+  rerunTasks?: string[];
+  /** Aborting stops a running task and the startup, which then rolls back what it started. */
+  signal?: AbortSignal;
+}
 
 export class DevFnError extends Error {
   public constructor(
@@ -92,7 +102,12 @@ export class DevFnError extends Error {
       | "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED"
       | "DEVFN_MANIFEST_UNTRUSTED"
       | "DEVFN_URL_NOT_FOUND"
-      | "DEVFN_RESOURCE_INVALID",
+      | "DEVFN_RESOURCE_INVALID"
+      | "DEVFN_TASK_FAILED"
+      | "DEVFN_TASK_TIMEOUT"
+      | "DEVFN_TASK_RERUN_REQUIRED"
+      | "DEVFN_TASK_INPUT_CHANGED"
+      | "DEVFN_CANCELLED",
     message: string,
     public readonly details?: Record<string, unknown>,
   ) { super(message); this.name = "DevFnError"; }

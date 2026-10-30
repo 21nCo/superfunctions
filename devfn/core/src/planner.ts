@@ -91,7 +91,8 @@ export function createPlan(config: DevFnConfig, requestedProfile?: string): Life
   for (const hostname of Object.values(config.hostnames ?? {})) if (profile.proxy && (!hostname.profiles || hostname.profiles.includes(profileName))) portNames.add(hostname.target);
   return {
     profile: profileName,
-    nodes: ordered.map((name) => ({ name, kind: hasProcess(name) ? "process" : "service", dependencies: dependencies(name) })),
+    nodes: ordered.map((name) => ({ name, kind: hasProcess(name) ? "process" : "service", dependencies: dependencies(name),
+      ...((hasProcess(name) ? processes[name].task : services[name].task) ? { task: true as const } : {}) })),
     portNames: [...portNames].sort(),
     proxy: profile.proxy === true,
   };
