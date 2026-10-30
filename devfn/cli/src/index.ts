@@ -305,17 +305,22 @@ async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, lo
  */
 function taskCancellation(): { signal: AbortSignal; whileTaskRuns: <T>(run: () => Promise<T>) => Promise<T> } {
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const release = () => {
+    process.removeListener("SIGINT", abort);
+    process.removeListener("SIGTERM", abort);
+  };
+  // Either signal releases both, so the next one of either kind has its default behavior.
+  function abort() {
+    release();
+    controller.abort();
+  }
   return {
     signal: controller.signal,
     whileTaskRuns: async (run) => {
-      process.once("SIGINT", abort);
-      process.once("SIGTERM", abort);
+      process.on("SIGINT", abort);
+      process.on("SIGTERM", abort);
       try { return await run(); }
-      finally {
-        process.removeListener("SIGINT", abort);
-        process.removeListener("SIGTERM", abort);
-      }
+      finally { release(); }
     },
   };
 }

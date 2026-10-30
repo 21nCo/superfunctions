@@ -140,6 +140,9 @@ describe("devfn CLI", () => {
       expect(added("SIGINT")).toHaveLength(1);
       expect(added("SIGTERM")).toHaveLength(1);
       for (const listener of added("SIGINT")) (listener as (signal: NodeJS.Signals) => void)("SIGINT");
+      // The first signal releases both, so a following SIGTERM ends DevFn at once while the task is being stopped.
+      expect(added("SIGINT")).toHaveLength(0);
+      expect(added("SIGTERM")).toHaveLength(0);
       const cancelled = await started;
       tasked.stop();
       expect(cancelled).toMatchObject({ code: 1, value: { error: { code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } } } });

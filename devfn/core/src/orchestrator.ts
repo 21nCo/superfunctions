@@ -607,18 +607,30 @@ export class DevFnOrchestrator {
     await selectedProxyRoutes(options.config, plan, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix ?? ".localhost", requestedStateDir);
     // A reference to a public URL that exists only after start fails here, before any lease, process or connector.
     const publicTemplate = await publicTemplateInputs(options.config, plan, identity, requestedStateDir);
-    const preflight = await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)
+    const resolvePreflight = async () => await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)
       ? await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate, true)
       : resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
         hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, { ports: true, networks: true });
-    // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journal.
-    await preflightTasks({ config: options.config, plan, root: options.root, stateDir: requestedStateDir, instanceId: identity.instanceId,
-      ...(preflight.resources ? { resources: preflight.resources } : {}), ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}) });
+    let preflight = await resolvePreflight();
+    const decideTasks = async (stateDir: string, locked?: { signal?: AbortSignal }) => await preflightTasks({ config: options.config, plan, root: options.root, stateDir, instanceId: identity.instanceId,
+      ...(preflight.resources ? { resources: preflight.resources } : {}), ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
+    // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
+    await decideTasks(requestedStateDir);
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
     // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
-    if (identity.runtimeId) identity.runtimeId = await recordRuntimeId(stateDir, identity.runtimeId);
+    if (identity.runtimeId) {
+      const recorded = await recordRuntimeId(stateDir, identity.runtimeId);
+      if (recorded !== identity.runtimeId) {
+        identity.runtimeId = recorded;
+        preflight = await resolvePreflight();
+      }
+    }
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+      // Concurrent starts may have ended task attempts since the preflight,
+      // and a dead DevFn may have left one: tasks are settled and decided
+      // again from their journals before any lease, replacement or node.
+      await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
       // Health and teardown may wait for minutes. The instance lock protects
       // this lifecycle while sibling route/lease transitions use the short
       // shared routing lock below.
@@ -869,7 +881,8 @@ export class DevFnOrchestrator {
           existing.updatedAt = new Date().toISOString();
           await writeReceipt(existing);
         }
-        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.${options.rerunTasks?.length
+          ? ` A task reruns on a start; replace this lifecycle with devfn restart ${options.rerunTasks.map((name) => `--rerun-task ${name}`).join(" ")}.` : ""}`);
       }
       // Validate the replacement while the old lifecycle still owns its ports
       // and containers. A malformed source must never turn a ready service off.

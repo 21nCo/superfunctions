@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, readlink, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ComposeController } from "@devfn/compose";
+import { ComposeController, type ComposeLaunch } from "@devfn/compose";
 import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
-import { createProcessEnvironment, gatedLauncherStatus, resolveAdapterCommand, ProcessSupervisor, type ProcessRunResult } from "@devfn/processes";
+import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
@@ -32,6 +32,10 @@ export interface TaskAttempt {
   effects: TaskEffects;
   /** The gated launcher identity, recorded before the command could run. */
   launcher?: { pid: number; birthSignature?: string };
+  /** A Compose attempt's one-off launch, so a start from any worktree sharing the journal can find a container it left. */
+  compose?: Omit<ComposeLaunch, "name" | "launcher">;
+  /** Nothing the attempt ran is left: its process group and any one-off container are verified gone. */
+  stopped?: boolean;
   error?: string;
 }
 
@@ -202,8 +206,9 @@ function unresolvedAttempts(journal: TaskJournal | undefined, pending: boolean):
 /**
  * The rerun contract, in order: an explicit rerun runs; a non-idempotent
  * task with an attempt since its last success that may have partly applied
- * blocks until explicitly rerun, and an idempotent one reruns; "always" runs;
- * a success recorded for the current input revision skips; "once" after a
+ * blocks until explicitly rerun, and an idempotent one reruns (a "once" task
+ * only at that attempt's or its success's revision); "always" runs; a
+ * success recorded for the current input revision skips; "once" after a
  * success with another revision blocks; anything else runs.
  */
 function decide(journal: TaskJournal | undefined, revision: string, task: TaskSpec, name: string, rerunRequested: boolean, pending = false): Decision {
@@ -214,7 +219,9 @@ function decide(journal: TaskJournal | undefined, revision: string, task: TaskSp
       { task: name, attempt: unresolved });
   }
   if (task.rerun === "always") return { run: true, reason: "rerun always" };
-  if (unresolved) return { run: true, reason: `an attempt since the last success ended ${unresolved.outcome} with unknown effects` };
+  if (unresolved && (task.rerun !== "once" || !journal?.lastSuccess || [unresolved.inputRevision, journal.lastSuccess.inputRevision].includes(revision))) {
+    return { run: true, reason: `an attempt since the last success ended ${unresolved.outcome} with unknown effects` };
+  }
   if (journal?.lastSuccess?.inputRevision === revision) return { run: false, reason: "succeeded for this input revision" };
   if (task.rerun === "once" && journal?.lastSuccess) {
     throw new DevFnError("DEVFN_TASK_INPUT_CHANGED", `Task ${name} runs once and already succeeded for another input revision; rerun it explicitly with --rerun-task ${name} to apply the change.`,
@@ -223,8 +230,43 @@ function decide(journal: TaskJournal | undefined, revision: string, task: TaskSp
   return { run: true, reason: journal?.lastSuccess ? "input revision changed" : "no recorded success" };
 }
 
-/** Validate explicit reruns and decide every selected task from its journal, before anything is mutated. */
-export async function preflightTasks(input: { config: DevFnConfig; plan: LifecyclePlan; root: string; stateDir: string; instanceId: string; resources?: ResourcePlan; rerunTasks?: readonly string[] }): Promise<void> {
+/** A task's scope lock is held for its whole retry budget, which is also how long a start waits for it. */
+const scopeLockTimeout = (task: TaskSpec) => (task.timeoutMs ?? 600_000) * (1 + (task.retries ?? 0)) + 60_000;
+const lockPath = (stateDir: string, key: string) => path.join(stateDir, "tasks", `${key}.lock`);
+
+/**
+ * Before a scope decides, nothing an earlier attempt ran may remain. The
+ * scope lock is held, so the DevFn that ran an unverified attempt is gone or
+ * already gave up stopping it; what it left (its process group, or a one-off
+ * container dockerd owns, which a gone `docker compose run` does not prove
+ * gone) is stopped through the journaled identities. A running attempt is
+ * then recorded interrupted, never reverted. Anything that cannot be
+ * verified stopped blocks every start of the scope, explicit reruns too.
+ */
+async function settleAttempts(journal: TaskJournal, name: string, compose: () => ComposeController, write: () => Promise<void>): Promise<void> {
+  for (const attempt of journal.attempts.filter((item) => item.launcher && item.stopped !== true)) {
+    try {
+      if (attempt.compose) await compose().stopLaunch({ name, ...attempt.compose, launcher: attempt.launcher });
+      else await stopGatedLauncher(attempt.launcher!);
+    } catch (error) {
+      throw new DevFnError("DEVFN_TASK_RERUN_REQUIRED", `An earlier attempt of task ${name} (invocation ${attempt.invocationId}, launcher PID ${attempt.launcher!.pid}) may still run and could not be stopped: ${error instanceof Error ? error.message : String(error)} Stop it, then start again.`,
+        { task: name, attempt });
+    }
+    attempt.stopped = true;
+    if (attempt.outcome === "running") Object.assign(attempt, { outcome: "interrupted", endedAt: new Date().toISOString(), effects: "unknown" });
+    await write();
+  }
+}
+
+/**
+ * Validate explicit reruns and decide every selected task from its journal,
+ * before anything is mutated. The early pass reads journals as they are; the
+ * locked pass (under the lifecycle lock, before any lease, replacement or
+ * node) waits for each task's scope lock, settles what earlier attempts left
+ * and decides from the outcomes concurrent starts recorded meanwhile.
+ */
+export async function preflightTasks(input: { config: DevFnConfig; plan: LifecyclePlan; root: string; stateDir: string; instanceId: string; resources?: ResourcePlan; rerunTasks?: readonly string[];
+  locked?: { compose?: ComposeController; signal?: AbortSignal } }): Promise<void> {
   const tasks = input.plan.nodes.filter((node) => node.task);
   for (const name of input.rerunTasks ?? []) {
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
@@ -232,7 +274,22 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
   for (const node of tasks) {
     const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
-    decide(await readTaskJournal(input.stateDir, key), revision, taskNode(input.config, node).task, node.name, input.rerunTasks?.includes(node.name) ?? false, true);
+    const { task } = taskNode(input.config, node);
+    const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
+    if (!input.locked) {
+      decide(await readTaskJournal(input.stateDir, key), revision, task, node.name, rerunRequested, true);
+      continue;
+    }
+    const { compose, signal } = input.locked;
+    await mkdir(path.join(input.stateDir, "tasks"), { recursive: true, mode: 0o700 });
+    await withFileLock(lockPath(input.stateDir, key), async () => {
+      const journal = await readTaskJournal(input.stateDir, key);
+      if (journal) await settleAttempts(journal, node.name, () => compose ?? new ComposeController(), async () => await writeTaskJournal(input.stateDir, key, journal));
+      decide(journal, revision, task, node.name, rerunRequested);
+    }, { timeoutMs: scopeLockTimeout(task), ...(signal ? { signal } : {}) }).catch((error: unknown) => {
+      if (signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled while task ${node.name} was decided; nothing was started.`, { task: node.name });
+      throw error;
+    });
   }
 }
 
@@ -276,19 +333,10 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
   const attemptsAllowed = 1 + (task.retries ?? 0);
   const timeoutMs = task.timeoutMs ?? 600_000;
   let locked = false;
-  return await withFileLock(path.join(stateDir, "tasks", `${key}.lock`), async () => {
+  return await withFileLock(lockPath(stateDir, key), async () => {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
-    // The scope lock is held, so a running attempt's DevFn is gone. Its
-    // command must be gone too; it is recorded interrupted, never reverted.
-    const unfinished = journal.attempts.at(-1);
-    if (unfinished?.outcome === "running") {
-      if (unfinished.launcher && await gatedLauncherStatus(unfinished.launcher) !== "gone") {
-        throw new DevFnError("DEVFN_TASK_RERUN_REQUIRED", `An interrupted attempt of task ${node.name} (PID ${unfinished.launcher.pid}) may still run; stop it, then start again.`, { task: node.name });
-      }
-      Object.assign(unfinished, { outcome: "interrupted", endedAt: new Date().toISOString(), effects: "unknown" });
-      await writeTaskJournal(stateDir, key, journal);
-    }
+    await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };
@@ -299,9 +347,9 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
         startedAt: new Date().toISOString(), outcome: "running", effects: "unknown" };
       let result: ProcessRunResult;
       try {
-        result = await runAttempt(context, spec, timeoutMs, async (launcher) => {
-          // The attempt is journaled before its command may start.
-          attempt.launcher = launcher;
+        result = await runAttempt(context, spec, timeoutMs, async (launcher, compose) => {
+          // The attempt and what can find its leftovers are journaled before its command may start.
+          Object.assign(attempt, { launcher, ...(compose ? { compose } : {}) });
           journal.attempts.push(attempt);
           receipt.attempts.push(attempt);
           await writeTaskJournal(stateDir, key, journal);
@@ -309,7 +357,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
         });
       } catch (error) {
         // runAttempt throws only while the launch gate is closed: the command never ran.
-        Object.assign(attempt, { outcome: context.signal?.aborted ? "cancelled" : "failed", effects: "none", endedAt: new Date().toISOString(),
+        Object.assign(attempt, { outcome: context.signal?.aborted ? "cancelled" : "failed", effects: "none", stopped: true, endedAt: new Date().toISOString(),
           error: error instanceof Error ? error.message : String(error) });
         receipt.status = attempt.outcome === "cancelled" ? "cancelled" : "failed";
         if (journal.attempts.includes(attempt)) await writeTaskJournal(stateDir, key, journal).catch(() => undefined);
@@ -321,7 +369,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
       const outcome = result.stopError && result.outcome === "succeeded" ? "failed" : result.outcome;
       const error = [result.error, result.stopError].filter(Boolean).join(" ");
       Object.assign(attempt, { outcome, exitCode: result.exitCode, signal: result.signal, endedAt: new Date().toISOString(),
-        effects: outcome === "succeeded" ? "applied" : "unknown", ...(error ? { error } : {}) });
+        effects: outcome === "succeeded" ? "applied" : "unknown", stopped: !result.stopError, ...(error ? { error } : {}) });
       receipt.logPath = result.process.logPath;
       if (outcome === "succeeded") {
         journal.lastSuccess = { inputRevision: revision, invocationId: context.invocationId, instanceId: context.instanceId, completedAt: attempt.endedAt! };
@@ -331,7 +379,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
       receipt.status = outcome;
       await context.record(receipt);
       if (outcome === "succeeded" || outcome === "cancelled") break;
-      // An attempt that may still run is never overlapped by a retry; its launch stays journaled for teardown.
+      // An attempt that may still run is never overlapped by a retry; its launch stays journaled for teardown, and the next start of the scope settles it first.
       if (result.stopError) break;
       if (number < attemptsAllowed) await delay(Math.min(1_000 * number, 10_000), context.signal);
     }
@@ -348,7 +396,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     }
     throw new DevFnError("DEVFN_TASK_FAILED", `Task ${node.name} exited with ${last?.signal ? `signal ${last.signal}` : `code ${String(last?.exitCode)}`} after ${receipt.attempts.length} attempt(s)${last?.error ? ` (${last.error})` : ""}; its dependents were not started. ${effects}`,
       { task: node.name, exitCode: last?.exitCode ?? null });
-  }, { timeoutMs: timeoutMs * attemptsAllowed + 60_000, ...(context.signal ? { signal: context.signal } : {}) }).catch((error: unknown) => {
+  }, { timeoutMs: scopeLockTimeout(task), ...(context.signal ? { signal: context.signal } : {}) }).catch((error: unknown) => {
     // Cancelled while another start of this scope held its lock: nothing of this task ran.
     if (!locked && context.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `Task ${node.name} was cancelled before it started; its dependents were not started.`, { task: node.name });
     throw error;
@@ -357,7 +405,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
 
 /** One attempt: a native command, or a one-off Compose container whose launch stays journaled until nothing of it remains. */
 async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskNode>["spec"], timeoutMs: number,
-  journal: (launcher: { pid: number; birthSignature?: string }) => Promise<void>): Promise<ProcessRunResult> {
+  journal: (launcher: { pid: number; birthSignature?: string }, compose?: TaskAttempt["compose"]) => Promise<void>): Promise<ProcessRunResult> {
   const supervisor = context.supervisor ?? new ProcessSupervisor();
   const { node, registry, invocationId } = context;
   const common = { name: node.name, root: context.root, runtimeDir: context.runtimeDir, timeoutMs, redactKeys: spec.secretEnv ?? [], ...(context.signal ? { signal: context.signal } : {}) };
@@ -383,7 +431,7 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   const result = await supervisor.run({ ...common, command: prepared.command, environment: prepared.environment, ...(discardOutput ? { discardOutput } : {}),
     onStarted: async (managed) => {
       launcher = { pid: managed.pid, ...(managed.birthSignature ? { birthSignature: managed.birthSignature } : {}) };
-      await journal(launcher);
+      await journal(launcher, withoutName(prepared.launch));
       await registry.beginLaunch(invocationId, node.name, { ...withoutName(prepared.launch), launcher });
     } });
   // --rm removes a container that ran to its end; any other run may have
