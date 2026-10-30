@@ -50,30 +50,41 @@ jobs:
         run: node --test scripts/swift-release.test.mjs
       - name: swift build
         run: swift build --only-use-versions-from-resolved-file
-      # The tests take a few minutes. A run still going after 15 is sampled,
-      # so the log shows every thread's stack, and stopped, so the job fails
-      # and uploads its snapshots instead of being cancelled at the timeout.
+      # The UIFnSwiftUI tests hold the main actor while they render and drive
+      # windows, so other modules' main-actor tests that wait on a deadline run
+      # in a separate process. Each run still going after 10 minutes is
+      # sampled, so the log shows every thread's stack, and stopped, so the job
+      # fails and uploads its snapshots instead of being cancelled at the
+      # timeout.
       - name: swift test
         timeout-minutes: 25
         env:
           UIFN_SNAPSHOT_ARTIFACTS: ${{ runner.temp }}/uifn-snapshots
         run: |
-          swift test --only-use-versions-from-resolved-file &
-          tests=$!
-          (
-            sleep 900
-            echo "::error::swift test was still running after 15 minutes; sampling and stopping the test processes"
-            for pid in $(pgrep -f 'swiftpm-testing-helper|xctest'); do
-              ps -o pid=,ppid=,etime=,command= -p "$pid" || true
-              sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true
-            done
-            pkill -TERM -f 'swiftpm-testing-helper|xctest' || true
-          ) &
-          watchdog=$!
+          run_tests() {
+            swift test --only-use-versions-from-resolved-file "$@" &
+            local tests=$!
+            (
+              sleep 600
+              # Stopped with the tests done: leave the next run alone.
+              kill -0 "$tests" 2>/dev/null || exit 0
+              echo "::error::swift test $* was still running after 10 minutes; sampling and stopping the test processes"
+              for pid in $(pgrep -f 'swiftpm-testing-helper|xctest'); do
+                ps -o pid=,ppid=,etime=,command= -p "$pid" || true
+                sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true
+              done
+              pkill -TERM -f 'swiftpm-testing-helper|xctest' || true
+            ) &
+            local watchdog=$!
+            local status=0
+            wait "$tests" || status=$?
+            pkill -P "$watchdog" || true
+            kill "$watchdog" 2>/dev/null || true
+            return "$status"
+          }
           status=0
-          wait "$tests" || status=$?
-          pkill -P "$watchdog" || true
-          kill "$watchdog" 2>/dev/null || true
+          run_tests --skip '^UIFnSwiftUITests\.' || status=$?
+          run_tests --filter '^UIFnSwiftUITests\.' || status=$?
           exit "$status"
       - name: Upload UIFnSwiftUI snapshots that differ from their references
         if: failure()

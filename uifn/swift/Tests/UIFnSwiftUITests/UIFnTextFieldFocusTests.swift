@@ -74,14 +74,8 @@ extension UIFnHostedWindowTests {
             }
         }
 
-        private func makeWindow(_ field: ClickedField) -> NSWindow {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
-                styleMask: [.titled],
-                backing: .buffered,
-                defer: false
-            )
-            window.isReleasedWhenClosed = false
+        private func makeWindow(_ field: ClickedField) -> UIFnHostedWindowTests.Window {
+            let window = UIFnHostedWindowTests.Window(width: 320, height: 120)
             window.contentView = NSHostingView(rootView: ClickHost(field: field))
             window.makeKeyAndOrderFront(nil)
             window.contentView?.layoutSubtreeIfNeeded()
@@ -98,23 +92,11 @@ extension UIFnHostedWindowTests {
             return field.convert(field.bounds, to: nil)
         }
 
-        private func click(_ window: NSWindow, at point: NSPoint) {
-            func event(_ type: NSEvent.EventType) -> NSEvent? {
-                NSEvent.mouseEvent(
-                    with: type,
-                    location: point,
-                    modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber,
-                    context: nil,
-                    eventNumber: 0,
-                    clickCount: 1,
-                    pressure: 1
-                )
-            }
-            guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return }
-            window.sendEvent(down)
-            window.sendEvent(up)
+        private func click(_ window: UIFnHostedWindowTests.Window, at point: NSPoint) throws {
+            window.press([
+                try UIFnHostedWindowTests.mouseEvent(.leftMouseDown, at: point, in: window),
+                try UIFnHostedWindowTests.mouseEvent(.leftMouseUp, at: point, in: window),
+            ])
         }
 
         private func becomesFocused(_ window: NSWindow, attempts: Int = 50) async throws -> Bool {
@@ -147,14 +129,14 @@ extension UIFnHostedWindowTests {
             let control = makeWindow(.roundedBorder)
             defer { control.close() }
             try #require(try textFieldFrame(in: control).contains(points.padding[0]))
-            click(control, at: points.padding[0])
+            try click(control, at: points.padding[0])
             #expect(try await becomesFocused(control))
 
             for point in points.padding + [points.text] {
                 let window = makeWindow(.styled)
                 defer { window.close() }
                 #expect(!(window.firstResponder is NSTextView))
-                click(window, at: point)
+                try click(window, at: point)
                 #expect(try await becomesFocused(window), "\(point)")
             }
         }
@@ -164,7 +146,7 @@ extension UIFnHostedWindowTests {
             for point in try styledFieldPoints().padding {
                 let window = makeWindow(.disabled)
                 defer { window.close() }
-                click(window, at: point)
+                try click(window, at: point)
                 // An enabled field takes focus in the same turn as the click.
                 #expect(!(try await becomesFocused(window, attempts: 10)), "\(point)")
             }
@@ -215,20 +197,14 @@ extension UIFnHostedWindowTests {
             let points = try styledFieldPoints()
             for point in points.padding + [points.text] {
                 let focus = AppFocus()
-                let window = NSWindow(
-                    contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
-                    styleMask: [.titled],
-                    backing: .buffered,
-                    defer: false
-                )
-                window.isReleasedWhenClosed = false
+                let window = UIFnHostedWindowTests.Window(width: 320, height: 120)
                 defer { window.close() }
                 window.contentView = NSHostingView(rootView: BindingHost(focus: focus))
                 window.makeKeyAndOrderFront(nil)
                 window.contentView?.layoutSubtreeIfNeeded()
                 #expect(!(window.firstResponder is NSTextView))
 
-                click(window, at: point)
+                try click(window, at: point)
                 #expect(try await becomesFocused(window), "\(point)")
                 #expect(try await waitUntil { focus.isFocused }, "\(point)")
 
@@ -326,7 +302,7 @@ extension UIFnHostedWindowTests {
             defer { control.close() }
             let controlBefore = try await settledCapture(control)
             let controlText = try textFieldFrame(in: control)
-            click(control, at: NSPoint(x: controlText.midX, y: controlText.midY))
+            try click(control, at: NSPoint(x: controlText.midX, y: controlText.midY))
             #expect(try await becomesFocused(control))
             try await Task.sleep(nanoseconds: 300_000_000)
             #expect(try changedPixelsOutsideTheText(controlBefore, capture(control), in: control) == 0)
@@ -335,7 +311,7 @@ extension UIFnHostedWindowTests {
             defer { window.close() }
             let before = try await settledCapture(window)
             let text = try textFieldFrame(in: window)
-            click(window, at: NSPoint(x: text.midX, y: text.midY))
+            try click(window, at: NSPoint(x: text.midX, y: text.midY))
             #expect(try await becomesFocused(window))
             let minimum = ringPixels(in: window)
             let changed = try await changedPixels(in: window, from: before, atLeast: minimum)
@@ -345,13 +321,7 @@ extension UIFnHostedWindowTests {
         @Test
         func aStyledFieldDrawsItsRingWhenTheAppFocusBindingMovesFocus() async throws {
             let focus = AppFocus()
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
-                styleMask: [.titled],
-                backing: .buffered,
-                defer: false
-            )
-            window.isReleasedWhenClosed = false
+            let window = UIFnHostedWindowTests.Window(width: 320, height: 120)
             defer { window.close() }
             window.contentView = NSHostingView(rootView: BindingHost(focus: focus).padding())
             window.makeKeyAndOrderFront(nil)
@@ -360,7 +330,7 @@ extension UIFnHostedWindowTests {
 
             // Focused by a click, with the app's binding around the field.
             let text = try textFieldFrame(in: window)
-            click(window, at: NSPoint(x: text.midX, y: text.midY))
+            try click(window, at: NSPoint(x: text.midX, y: text.midY))
             #expect(try await becomesFocused(window))
             #expect(try await waitUntil { focus.isFocused })
             var changed = try await changedPixels(in: window, from: before, atLeast: minimum)

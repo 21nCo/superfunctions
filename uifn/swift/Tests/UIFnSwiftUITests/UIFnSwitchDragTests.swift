@@ -65,14 +65,8 @@ extension UIFnHostedWindowTests {
             }
         }
 
-        private func makeWindow<Content: View>(_ content: Content) -> NSWindow {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
-                styleMask: [.titled],
-                backing: .buffered,
-                defer: false
-            )
-            window.isReleasedWhenClosed = false
+        private func makeWindow<Content: View>(_ content: Content) -> UIFnHostedWindowTests.Window {
+            let window = UIFnHostedWindowTests.Window(width: 200, height: 100)
             window.contentView = NSHostingView(rootView: content)
             window.makeKeyAndOrderFront(nil)
             window.contentView?.layoutSubtreeIfNeeded()
@@ -98,23 +92,9 @@ extension UIFnHostedWindowTests {
             }
         }
 
-        private func event(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(
-                with: type,
-                location: point,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber,
-                context: nil,
-                eventNumber: 0,
-                clickCount: 1,
-                pressure: type == .leftMouseUp ? 0 : 1
-            ))
-        }
-
         /// Presses at the first point, drags through the rest in small steps and
         /// releases at the last.
-        private func press(_ window: NSWindow, through points: [NSPoint]) throws {
+        private func press(_ window: UIFnHostedWindowTests.Window, through points: [NSPoint]) throws {
             var path: [NSPoint] = []
             for (from, to) in zip(points, points.dropFirst()) {
                 for step in 1...8 {
@@ -122,12 +102,10 @@ extension UIFnHostedWindowTests {
                     path.append(NSPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
                 }
             }
-            let events = try [event(.leftMouseDown, at: points[0], in: window)]
-                + path.map { try event(.leftMouseDragged, at: $0, in: window) }
-                + [event(.leftMouseUp, at: points[points.count - 1], in: window)]
-            for event in events {
-                window.sendEvent(event)
-            }
+            let events = try [UIFnHostedWindowTests.mouseEvent(.leftMouseDown, at: points[0], in: window)]
+                + path.map { try UIFnHostedWindowTests.mouseEvent(.leftMouseDragged, at: $0, in: window) }
+                + [UIFnHostedWindowTests.mouseEvent(.leftMouseUp, at: points[points.count - 1], in: window)]
+            window.press(events)
         }
 
         private func settle() async throws {
