@@ -44,9 +44,7 @@ function sanitizeNode(value: unknown, ancestors: Set<object>, depth: number): un
     return value;
   }
 
-  if (isDateValue(value)) {
-    return dateText(value);
-  }
+  if (isDateValue(value)) return sanitizeNode(dateText(value), ancestors, depth);
   const object = value as object;
   const unboxed = unboxPrimitive(object);
   if (unboxed !== object) {
@@ -168,7 +166,7 @@ export function sanitizeEvent(event: LogEvent): LogEvent {
       if (key === "msg") {
         sanitized.msg = String(value);
       } else if (key === "tags" && Array.isArray(value)) {
-        sanitized.tags = Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => tagText(value[index]));
+        sanitized.tags = bounded(() => Array.from({ length: Math.min(value.length, MAX_TAGS) }, (_, index) => sanitizeNode(tagText(value[index]), new Set(), 0)));
       } else {
         setOwn(sanitized, key, own ? sanitizeValue(value) : sanitizeNode(value, new Set(), 0));
       }

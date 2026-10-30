@@ -224,7 +224,7 @@ describe("shared redaction vectors", () => {
     for (const secret of ["pw-123", "hunter2", "t-1"]) expect(body).not.toContain(secret);
   });
 
-  it("serverLogger redacts the text of a date before the console", () => {
+  it("serverLogger writes a date's built-in text, never an override's, before the console", () => {
     const lines: string[] = [];
     for (const method of ["log", "info", "warn", "error", "debug"] as const) {
       vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
@@ -235,7 +235,7 @@ describe("shared redaction vectors", () => {
     when.toISOString = () => "token=DATE_SECRET";
     serverLogger({ name: "svc" }).error("date", { when });
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("token=[redacted]");
+    expect(lines[0]).toContain("2026-01-01T00:00:00.000Z");
     expect(lines[0]).not.toContain("DATE_SECRET");
   });
 

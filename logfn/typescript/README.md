@@ -76,7 +76,7 @@ when `url` is given.
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: errors become `{ name, message,
   stack, cause }`, cycles become `"[circular]"` and unserializable values
-  become `"[unserializable]"`. One walk copies at most `MAX_TRAVERSAL` (256K) values and string or key characters; past it values become `"[max-size]"` and object entries stop unread (no later getter runs), so objects shared many times cannot expand exponentially. `ctx` and each schema field (`ts`, `level`, ids) have their own budget; other fields share one. Listing an object's own keys stays linear in their number (JavaScript has no lazy key enumeration); value reads, copies and output are bounded by `MAX_TRAVERSAL`. Binary data (`Buffer`, typed arrays,
+  become `"[unserializable]"`. One walk copies at most `MAX_TRAVERSAL` (256K) values and string or key characters; past it values become `"[max-size]"` and object entries stop unread (no later getter runs), so objects shared many times cannot expand exponentially. `ctx` and each schema field (`ts`, `level`, ids) have their own budget; other fields share one. Listing an object's own keys stays linear in their number (JavaScript has no lazy key enumeration); value reads, copies and output are bounded by `MAX_TRAVERSAL`. A date is written as its built-in ISO text (no caller `toISOString` override runs) and is charged like a string, as is each tag on the tags budget. Binary data (`Buffer`, typed arrays,
   `DataView`, `ArrayBuffer`, `SharedArrayBuffer`) becomes `"[unserializable]"`
   too, also in the redaction stage: no text rule could find a secret in its
   bytes.
@@ -119,7 +119,7 @@ every other event field, object keys and top-level field names included (it reda
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`; ctx paths start at the ctx root
-and other fields are named by their field name, in one namespace, so
+and other fields, `msg` included, are named by their field name, in one namespace, so
 `userId` exempts both the `userId` field and `ctx.userId`, but not
 `ctx.user.userId`), `patterns`, `replacement`
 (default `"[redacted]"`; it must not be empty, which throws; it is inserted

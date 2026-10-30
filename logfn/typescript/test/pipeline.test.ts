@@ -75,6 +75,18 @@ describe("redaction", () => {
     expect(result.msg).toBe("ada@example.com [redacted] token=[redacted]");
   });
 
+  it("an allowlisted msg exempts the top-level message like any other field name", async () => {
+    const input = event({ msg: "mail ada@example.com", ctx: { msg: "mail ada@example.com" } });
+    const captured = capture();
+    for (const [allowlist, msg] of [[["msg"], "mail ada@example.com"], [["userId"], "mail [redacted]"]] as const) {
+      const options = { allowlist: [...allowlist] };
+      const outputs = [redactEvent(input, options), redactSecFn(options)(input) as LogEvent];
+      createLogger({ name: "test", pipeline: [redactSecFn(options)], sinks: [captured.sink] }).info(input.msg, input.ctx);
+      for (const output of [...outputs, captured.events.at(-1)!]) expect([output.msg, output.ctx?.msg]).toEqual([msg, msg]);
+    }
+    expect(redactEvent(input).msg).toBe("mail [redacted]");
+  });
+
   it("supports a custom replacement", () => {
     expect(redactEvent(event({ ctx: { apiKey: "k" } }), { replacement: "***" }).ctx).toEqual({ apiKey: "***" });
   });
@@ -101,13 +113,13 @@ describe("redaction", () => {
     expect(out).not.toContain("password=x");
   });
 
-  it("redacts dates as the text sanitization writes, so its output is final", () => {
+  it("redacts dates as the built-in text sanitization writes, so an override cannot add text", () => {
     const date = new Date("2026-01-01T00:00:00.000Z");
     date.toISOString = () => "token=DATE_SECRET";
     const invalid = new Date(Number.NaN);
     invalid.toString = () => "password=INVALID_SECRET";
     const plain = new Date("2026-01-01T00:00:00.000Z");
-    const expected = { date: "token=[redacted]", invalid: "password=[redacted]", plain: "2026-01-01T00:00:00.000Z" };
+    const expected = { date: "2026-01-01T00:00:00.000Z", invalid: "Invalid Date", plain: "2026-01-01T00:00:00.000Z" };
     expect(redactEvent(event({ ctx: { date, invalid, plain } })).ctx).toEqual(expected);
     expect((redactSecFn()(event({ ctx: { date, invalid, plain } })) as LogEvent).ctx).toEqual(expected);
   });
@@ -390,6 +402,66 @@ describe("traversal budget", () => {
       }
       if ((input.ctx as { kept?: boolean }).kept) expect(sanitizeEvent(input).ctx).toEqual({ kept: true });
     }
+  });
+
+  // Every path that writes caller dates or tags: sanitization, redaction, the logger's stage and the HTTP sink.
+  const writers = (ctx: Record<string, unknown>, tags?: string[]) => {
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+    const captured = capture();
+    const logger = createLogger({ name: "w", pipeline: [redactSecFn()], sinks: [captured.sink] });
+    return [
+      () => sanitizeValue({ ...ctx, tags }),
+      () => sanitizeEvent(event({ ctx, tags })),
+      () => redactEvent(event({ ctx, tags })),
+      () => (logger.info("m", ctx, tags), captured.events[0]),
+      async () => (sink([event({ ctx, tags })]), await sink.flush(), spy.requests[0].body),
+    ];
+  };
+
+  it("dates are written by the built-in methods only: no caller override runs and the output stays plain", async () => {
+    let calls = 0;
+    const override = (date: Date) => {
+      for (const method of ["toISOString", "toString", "getTime", "valueOf", "toJSON", Symbol.toPrimitive]) {
+        Object.defineProperty(date, method, { value: () => (calls++, { toJSON: () => (calls++, "token=OVERRIDE_SECRET") }) });
+      }
+      return date;
+    };
+    const ctx = { valid: override(new Date(0)), invalid: override(new Date(Number.NaN)) };
+    for (const run of writers(ctx)) {
+      const output = JSON.stringify(await run());
+      expect(output).toContain("1970-01-01T00:00:00.000Z");
+      expect(output).toContain("Invalid Date");
+      expect(output).not.toContain("OVERRIDE_SECRET");
+    }
+    expect(calls).toBe(0);
+  });
+
+  it.each([100, 1e5])("%i references to one date are charged by their text and stop at the budget", async (count) => {
+    const date = new Date(0);
+    // 10 MB of override text in all, whatever the count.
+    date.toISOString = () => "x".repeat(10_000_000 / count);
+    for (const run of writers({ items: Array(count).fill(date) })) {
+      const output = JSON.stringify(await run());
+      expect(output.length).toBeLessThan(2 * MAX_TRAVERSAL);
+      expect(output).not.toContain("xxxx");
+    }
+    const items = (sanitizeValue({ items: Array(count).fill(date) }) as { items: string[] }).items;
+    if (count === 100) expect(items).toEqual(Array(100).fill("1970-01-01T00:00:00.000Z"));
+    else expect([items.length < count, items.at(-1)]).toEqual([true, MAX_SIZE]);
+  });
+
+  it("tags are charged on their own budget: shared long tags stop at it, and tags within it are unchanged", async () => {
+    const long = "t".repeat(1_000_000);
+    for (const run of writers({}, Array(1000).fill(long))) {
+      const { elapsed, size } = await timed(run);
+      expect(elapsed).toBeLessThan(5000);
+      expect(size).toBeLessThan(2 * MAX_TRAVERSAL);
+    }
+    const half = "h".repeat(MAX_TRAVERSAL / 2);
+    const fill = { fill: "f".repeat(MAX_TRAVERSAL - 100) };
+    expect(sanitizeEvent(event({ ctx: fill, tags: [half, half, "late"] })).tags).toEqual([half, MAX_SIZE, MAX_SIZE]);
+    expect(redactEvent(event({ ctx: fill, tags: ["a", "token=x"] })).tags).toEqual(["a", "token=[redacted]"]);
   });
 
   it("the logger merges context layers like object spread", () => {

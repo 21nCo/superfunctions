@@ -420,9 +420,9 @@ function redactText(value: string, redactor: CompiledRedactor): string {
   return result;
 }
 
-/** Text of a date, exactly as sanitization writes it (caller code may override either method) */
+/** Text of a date by the built-in methods only, so no caller override of getTime or toISOString runs */
 export function dateText(value: Date): string {
-  return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  return Number.isNaN(Date.prototype.getTime.call(value)) ? "Invalid Date" : Date.prototype.toISOString.call(value);
 }
 
 const BOXED_VALUE_OF = new Map<string, () => unknown>([
@@ -537,7 +537,7 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
   const used = new Map<string, number>();
   for (const [key, value] of Object.entries(sanitizeEvent(event))) {
     if (key === "msg") {
-      redacted.msg = redactText(String(value), redactor);
+      redacted.msg = redactor.allowlist.has(key) ? String(value) : redactText(String(value), redactor);
     } else if (key === "ctx") {
       redacted.ctx = redactNode(value, redactor, "", new Set(), 0);
     } else if (key === "tags" && Array.isArray(value)) {
