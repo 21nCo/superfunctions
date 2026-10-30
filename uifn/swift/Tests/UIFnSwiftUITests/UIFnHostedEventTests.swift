@@ -59,6 +59,46 @@ extension UIFnHostedWindowTests {
             }
         }
 
+        /// The same, asking without waiting until the mouse-up comes. It gives
+        /// up after a thousand requests.
+        private final class Spinner: Recorder {
+            override func mouseDown(with event: NSEvent) {
+                super.mouseDown(with: event)
+                for _ in 0..<1000 {
+                    guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: nil, inMode: .eventTracking, dequeue: true) else {
+                        continue
+                    }
+                    tracked.append(next.type)
+                    if next.type == .leftMouseUp { break }
+                }
+            }
+        }
+
+        /// A tracker that, like the system switch's drag tracker, asks for any
+        /// drags already waiting after each one, without waiting, to skip to the
+        /// newest.
+        private final class Coalescer: Recorder {
+            var skipped: [NSEvent.EventType] = []
+
+            override func mouseDown(with event: NSEvent) {
+                super.mouseDown(with: event)
+                window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: 2, mode: .eventTracking) { next, stop in
+                    guard let next else {
+                        stop.pointee = true
+                        return
+                    }
+                    self.tracked.append(next.type)
+                    if next.type == .leftMouseUp {
+                        stop.pointee = true
+                        return
+                    }
+                    while let waiting = self.window?.nextEvent(matching: .leftMouseDragged, until: nil, inMode: .eventTracking, dequeue: true) {
+                        self.skipped.append(waiting.type)
+                    }
+                }
+            }
+        }
+
         /// Sends a press across a window showing the view: a mouse-down, eight
         /// drags and a mouse-up. Returns the types of the events sent.
         private func press(_ view: Recorder) throws -> [NSEvent.EventType] {
@@ -79,12 +119,22 @@ extension UIFnHostedWindowTests {
 
         @Test
         func aViewThatTracksThePressGetsAllOfItInItsMouseDown() throws {
-            for view in [Tracker(), Poller()] {
+            for view in [Tracker(), Poller(), Spinner()] {
                 let types = try press(view)
                 #expect(view.tracked == Array(types.dropFirst()), "\(type(of: view))")
                 // The events the mouse-down took are not sent again.
                 #expect(view.sent == [.leftMouseDown], "\(type(of: view))")
             }
+        }
+
+        @Test
+        func aTrackerThatSkipsToTheNewestDragStillGetsEveryDrag() throws {
+            // A real press's next drag has not come yet when the tracker asks.
+            let view = Coalescer()
+            let types = try press(view)
+            #expect(view.tracked == Array(types.dropFirst()))
+            #expect(view.skipped.isEmpty)
+            #expect(view.sent == [.leftMouseDown])
         }
 
         @Test

@@ -30,12 +30,23 @@ struct UIFnHostedWindowTests {
     /// the mouse-down returns, so the control would wait forever. This window
     /// answers those requests from the press being sent.
     ///
+    /// While a press is being sent, the first request after each event that
+    /// does not wait gets nothing, as the next event of a real press has not
+    /// come yet; asked again, it has. The system switch's drag tracker asks
+    /// that way after each drag to skip to the newest one, and if it got the
+    /// rest of the press there it would see only the first drag and the
+    /// mouse-up, and take a drag out and back for a click. The app's event
+    /// queue is not asked then: that stops the test runner too.
+    ///
     /// Posting the rest to the app's event queue instead would stop the test
     /// runner: posting an event stops the main run loop, and the runner exits
     /// when its main run loop stops.
     final class Window: NSWindow {
         /// The events of the press being sent that nothing has taken yet.
         private var rest: [NSEvent] = []
+        /// Whether a request that did not wait got nothing since the last event
+        /// of the press was taken.
+        private var polled = false
 
         convenience init(width: CGFloat, height: CGFloat) {
             self.init(
@@ -54,6 +65,7 @@ struct UIFnHostedWindowTests {
         func press(_ events: [NSEvent]) {
             guard let down = events.first else { return }
             rest = Array(events.dropFirst())
+            polled = false
             sendEvent(down)
             while !rest.isEmpty {
                 sendEvent(rest.removeFirst())
@@ -63,7 +75,10 @@ struct UIFnHostedWindowTests {
         /// The next event of the press, if the mask takes it.
         private func next(matching mask: NSEvent.EventTypeMask, dequeue: Bool) -> NSEvent? {
             guard let event = rest.first, mask.contains(NSEvent.EventTypeMask(type: event.type)) else { return nil }
-            if dequeue { rest.removeFirst() }
+            if dequeue {
+                rest.removeFirst()
+                polled = false
+            }
             return event
         }
 
@@ -73,7 +88,11 @@ struct UIFnHostedWindowTests {
             inMode mode: RunLoop.Mode,
             dequeue: Bool
         ) -> NSEvent? {
-            next(matching: mask, dequeue: dequeue)
+            if !rest.isEmpty, !polled, !(expiration.map { $0.timeIntervalSinceNow > 0 } ?? false) {
+                polled = true
+                return nil
+            }
+            return next(matching: mask, dequeue: dequeue)
                 ?? super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
         }
 

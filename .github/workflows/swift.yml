@@ -53,7 +53,8 @@ jobs:
       # The UIFnSwiftUI tests hold the main actor while they render and drive
       # windows, so other modules' main-actor tests that wait on a deadline run
       # in a separate process. Each run still going after 10 minutes is
-      # sampled, so the log shows every thread's stack, and stopped, so the job
+      # sampled, so the log shows every thread's stack, and stopped with all
+      # its processes, killed if they outlast a 30-second TERM, so the job
       # fails and uploads its snapshots instead of being cancelled at the
       # timeout.
       - name: swift test
@@ -61,25 +62,50 @@ jobs:
         env:
           UIFN_SNAPSHOT_ARTIFACTS: ${{ runner.temp }}/uifn-snapshots
         run: |
+          descendants() {
+            for child in $(pgrep -P "$1"); do
+              echo "$child"
+              descendants "$child"
+            done
+          }
           run_tests() {
             swift test --only-use-versions-from-resolved-file "$@" &
             local tests=$!
+            # Checks every second, so it ends soon after the tests do and is
+            # waited for, never left to act on the next run.
             (
-              sleep 600
-              # Stopped with the tests done: leave the next run alone.
-              kill -0 "$tests" 2>/dev/null || exit 0
-              echo "::error::swift test $* was still running after 10 minutes; sampling and stopping the test processes"
-              for pid in $(pgrep -f 'swiftpm-testing-helper|xctest'); do
-                ps -o pid=,ppid=,etime=,command= -p "$pid" || true
-                sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true
+              for _ in $(seq 600); do
+                kill -0 "$tests" 2>/dev/null || exit 0
+                sleep 1
               done
-              pkill -TERM -f 'swiftpm-testing-helper|xctest' || true
+              echo "::error::swift test $* was still running after 10 minutes; sampling and stopping it"
+              owned="$tests $(descendants "$tests")"
+              for pid in $owned; do
+                command=$(ps -o command= -p "$pid") || continue
+                echo "$pid $command"
+                case "$command" in
+                  *swiftpm-testing-helper*|*xctest*)
+                    sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true ;;
+                esac
+              done
+              # The tree as it is now: a process may have started since.
+              owned=$(printf '%s\n' $owned $(descendants "$tests") | sort -u)
+              kill -TERM $owned 2>/dev/null || true
+              for _ in $(seq 30); do
+                alive=""
+                for pid in $owned; do
+                  kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+                done
+                [ -n "$alive" ] || exit 0
+                sleep 1
+              done
+              echo "::error::swift test $* processes$alive outlasted TERM by 30 seconds; killing them"
+              kill -KILL $alive 2>/dev/null || true
             ) &
             local watchdog=$!
             local status=0
             wait "$tests" || status=$?
-            pkill -P "$watchdog" || true
-            kill "$watchdog" 2>/dev/null || true
+            wait "$watchdog" || true
             return "$status"
           }
           status=0
