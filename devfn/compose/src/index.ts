@@ -266,20 +266,47 @@ function referencedResourceNames(kind: "volumes" | "networks" | "configs" | "sec
   return names;
 }
 
-function selectedComposeResources(
-  configuration: Record<string, unknown>,
-  service: Record<string, unknown>,
-): Record<string, unknown> {
+type ComposeResourceKind = "volumes" | "networks" | "configs" | "secrets";
+const COMPOSE_RESOURCE_KINDS: readonly ComposeResourceKind[] = ["volumes", "networks", "configs", "secrets"];
+
+function declaredComposeResources(configuration: Record<string, unknown>,
+  names: (kind: ComposeResourceKind) => readonly string[]): Record<string, unknown> {
   const selected: Record<string, unknown> = {};
-  for (const kind of ["volumes", "networks", "configs", "secrets"] as const) {
+  for (const kind of COMPOSE_RESOURCE_KINDS) {
     const declared = configuration[kind];
     if (!declared || typeof declared !== "object" || Array.isArray(declared)) continue;
-    const names = referencedResourceNames(kind, service[kind]);
-    const resources = Object.fromEntries(names.filter((name) => Object.hasOwn(declared, name))
+    const resources = Object.fromEntries(names(kind).filter((name) => Object.hasOwn(declared, name))
       .map((name) => [name, (declared as Record<string, unknown>)[name]]));
     if (Object.keys(resources).length) selected[kind] = resources;
   }
   return selected;
+}
+
+function selectedComposeResources(
+  configuration: Record<string, unknown>,
+  service: Record<string, unknown>,
+): Record<string, unknown> {
+  return declaredComposeResources(configuration, (kind) => referencedResourceNames(kind, service[kind]));
+}
+
+/**
+ * Select the resource declarations a raw inventory service uses, as Compose
+ * does after interpolation: references are resolved with the selected
+ * environment, and a service declaring neither networks nor network_mode
+ * joins the project's default network.
+ */
+async function selectedInventoryResources(inventory: ComposeSourceInventory,
+  interpolate: ReturnType<typeof createScopedPathInterpolator>): Promise<Record<string, unknown>> {
+  const service = inventory.service;
+  if (!service) return {};
+  const names = new Map<ComposeResourceKind, string[]>();
+  for (const kind of COMPOSE_RESOURCE_KINDS) {
+    const written = referencedResourceNames(kind, service[kind]);
+    const resolved = await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes);
+    names.set(kind, kind === "volumes" ? resolved.map((reference) => reference.split(":", 1)[0]) : resolved);
+  }
+  if (service.networks === undefined && service.network_mode === undefined) names.get("networks")!.push("default");
+  return declaredComposeResources(inventory.resources, (kind) => names.get(kind) ?? []);
 }
 
 async function boundedConfigFileBytes(file: string, remaining: number): Promise<Buffer> {
@@ -1199,7 +1226,8 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * through include and extends, resolved with the environment startup
  * selects): that service's definition, where each part of it was defined
  * (file and the directory its relative paths resolve against), the volumes,
- * networks, configs and secrets it references with the file declaring each,
+ * networks, configs and secrets it references (resolved as Compose resolves
+ * them, including the implicit default network) with the file declaring each,
  * and the declarations of its env_file and interpolation .env files. Paths are
  * relative to the canonical repository root, so every worktree and spelling
  * of one source agrees. As in the startup fingerprint, only values are
@@ -1235,7 +1263,13 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   for (const file of await composeInterpolationEnvFiles(inventory.interpolationScopes)) {
     interpolationFiles.push([await relative(file), await maskedEnvDeclarations(file, secretNames)]);
   }
-  const resources = selectedComposeResources(inventory.resources, inventory.service);
+  let resources: Record<string, unknown>;
+  try {
+    // As at startup, a credential-named variable may name a bind source; only the declaration it selects counts.
+    resources = await selectedInventoryResources(inventory, createScopedPathInterpolator(environment, deadline, implicitInterpolationKeys(spec), true));
+  } catch (error) {
+    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to select the resources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const resourceOrigins: Array<[string, string, string | null]> = [];
   for (const [kind, declarations] of Object.entries(resources)) {
     for (const name of Object.keys(declarations && typeof declarations === "object" ? declarations : {}).sort(compareCanonicalKeys)) {

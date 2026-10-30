@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { ComposeController } from "@devfn/compose";
+import { ComposeController, composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type TaskSpec } from "@devfn/config";
 import type { FilePortRegistry } from "@devfn/ports";
 import { processBirthSignature, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
@@ -318,6 +318,43 @@ describe("task input revisions", () => {
       const list = await revision("[NPM_TOKEN=n-1, SEED_MODE=minimal]");
       expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=minimal]")).toBe(list);
       expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=full]")).not.toBe(list);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("counts the resource declarations a Compose task's interpolated references select, and its implicit default network", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-resources-"));
+    const config = (environment: Record<string, string> = {}) => validateDevFnConfig({ version: 1, project: { id: "revision-resources" },
+      services: { seed: { adapter: "compose", service: "seed", task: {} } }, profiles: { default: { services: ["seed"], environment } } });
+    const revision = async (service: string[], declarations: string[], environment?: Record<string, string>) => {
+      await writeFile(path.join(root, "compose.yaml"), ["services:", "  seed:", "    image: busybox:1", ...service.map((line) => `    ${line}`), ...declarations, ""].join("\n"));
+      return await taskInputRevision(config(environment), root, { name: "seed", kind: "service" }, "default");
+    };
+    const declared = (kind: string, field: string, selected: string, other = "other-one") => [`${kind}:`, `  data: { ${field}: ${selected} }`, `  other: { ${field}: ${other} }`];
+    const selectors = { SETUP_VOLUME: "data", SETUP_NETWORK: "data", SETUP_CONFIG: "data", SETUP_SEED_ITEM: "data" };
+    try {
+      for (const [kind, selector, reference, field] of [
+        ["volumes", "SETUP_VOLUME", "volumes: [\"${SETUP_VOLUME}:/data\"]", "name"],
+        ["volumes", "SETUP_VOLUME", "volumes: [{ type: volume, source: \"${SETUP_VOLUME}\", target: /data }]", "name"],
+        ["networks", "SETUP_NETWORK", "networks: [\"${SETUP_NETWORK}\"]", "name"],
+        ["configs", "SETUP_CONFIG", "configs: [{ source: \"${SETUP_CONFIG}\", target: /setup.conf }]", "file"],
+        ["secrets", "SETUP_SEED_ITEM", "secrets: [\"${SETUP_SEED_ITEM}\"]", "file"],
+      ] as const) {
+        const base = await revision([reference], declared(kind, field, "one"), selectors);
+        // The declaration the reference selects is an input; an unselected one is not.
+        expect(await revision([reference], declared(kind, field, "two"), selectors)).not.toBe(base);
+        expect(await revision([reference], declared(kind, field, "one", "other-two"), selectors)).toBe(base);
+        // Selecting another declaration is a changed input.
+        expect(await revision([reference], declared(kind, field, "one"), { ...selectors, [selector]: "other" })).not.toBe(base);
+      }
+      // A service declaring neither networks nor network_mode joins the default network.
+      const network = (name: string) => ["networks:", `  default: { name: ${name} }`];
+      const implicit = await revision([], network("net-one"));
+      expect(await revision([], network("net-two"))).not.toBe(implicit);
+      const isolated = await revision(["network_mode: none"], network("net-one"));
+      expect(await revision(["network_mode: none"], network("net-two"))).toBe(isolated);
+      // A reference that cannot be resolved fails before any mutation.
+      await expect(revision(["volumes: [\"${SETUP_VOLUME}:/data\"]"], declared("volumes", "name", "one")))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
@@ -1080,6 +1117,42 @@ describe("finite setup tasks (real Compose)", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 120_000);
+
+  it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("reruns an on-change Compose task and blocks a run-once one when the volume its interpolated reference selects changes", async () => {
+    const volumes = [`devfn-task-volume-one-${process.pid}`, `devfn-task-volume-two-${process.pid}`];
+    for (const rerun of ["on-change", "once"] as const) {
+      const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-compose-volume-${rerun}-`));
+      const stateDir = path.join(root, "state");
+      const orchestrator = new DevFnOrchestrator();
+      const config = validateDevFnConfig({ version: 1, project: { id: `task-compose-volume-${rerun}` },
+        services: { seed: { adapter: "compose", service: "seed", task: { rerun } } },
+        profiles: { default: { services: ["seed"], environment: { SETUP_VOLUME: "data" } } } });
+      const source = (volume: string) => ["services:", "  seed:", "    image: busybox", "    volumes: [\"${SETUP_VOLUME}:/data\"]",
+        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", "volumes:", `  data: { name: ${volume} }`, ""].join("\n");
+      try {
+        await writeFile(path.join(root, "compose.yaml"), source(volumes[0]));
+        const first = await orchestrator.up({ config, root, stateDir });
+        expect(first.tasks).toMatchObject([{ name: "seed", status: "succeeded" }]);
+        await writeFile(path.join(root, "compose.yaml"), source(volumes[1]));
+        if (rerun === "once") {
+          await expect(orchestrator.up({ config, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+        } else {
+          const second = await orchestrator.up({ config, root, stateDir });
+          expect(second.tasks).toMatchObject([{ name: "seed", status: "succeeded", reason: "input revision changed" }]);
+          // The rerun seeded the newly selected volume.
+          const { stdout } = await execFileAsync("docker", ["run", "--rm", "-v", `${volumes[1]}:/data`, "busybox", "ls", "/data"]);
+          expect(stdout).toContain("seeded");
+        }
+      } finally {
+        await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+        // DevFn leaves Compose networks in place on down, as for services; this fixture removes its own.
+        const project = composeProjectName("devfn", (await resolveInstanceIdentity(config.project.id, root)).instanceId);
+        await execFileAsync("docker", ["network", "rm", `${project}_default`]).catch(() => undefined);
+        await rm(root, { recursive: true, force: true });
+        await execFileAsync("docker", ["volume", "rm", "-f", ...volumes]).catch(() => undefined);
+      }
+    }
+  }, 180_000);
 
   it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("gates a dependent on a one-off Compose task and blocks it on failure, timeout and cancellation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-compose-"));
