@@ -180,6 +180,8 @@ let package = Package(
             name: "UIFnSwiftUITests",
             dependencies: ["UIFnSwiftUI"],
             path: "uifn/swift/Tests/UIFnSwiftUITests",
+            // Snapshot references are read from the source tree, not the bundle.
+            exclude: ["__Snapshots__"],
             resources: [.copy("Fonts")]
         ),
     ]

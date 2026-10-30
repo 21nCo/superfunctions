@@ -50,8 +50,82 @@ jobs:
         run: node --test scripts/swift-release.test.mjs
       - name: swift build
         run: swift build --only-use-versions-from-resolved-file
+      # The UIFnSwiftUI tests hold the main actor while they render and drive
+      # windows, so other modules' main-actor tests that wait on a deadline run
+      # in a separate process. Each run still going after 10 minutes is
+      # sampled, so the log shows every thread's stack, and stopped with all
+      # its processes, killed if they outlast a 30-second TERM, so the job
+      # fails and uploads its snapshots instead of being cancelled at the
+      # timeout. The step fails if either run fails or times out, even when
+      # the tests finish while they are being sampled.
       - name: swift test
-        run: swift test --only-use-versions-from-resolved-file
+        timeout-minutes: 25
+        env:
+          UIFN_SNAPSHOT_ARTIFACTS: ${{ runner.temp }}/uifn-snapshots
+        run: |
+          descendants() {
+            local parent=$1
+            for child in $(pgrep -P "$parent"); do
+              echo "$child"
+              descendants "$child"
+            done
+          }
+          run_tests() {
+            swift test --only-use-versions-from-resolved-file "$@" &
+            local tests=$!
+            # Checks every second, so it ends soon after the tests do and is
+            # waited for, never left to act on the next run.
+            (
+              for _ in $(seq 600); do
+                kill -0 "$tests" 2>/dev/null || exit 0
+                sleep 1
+              done
+              echo "::error::swift test $* was still running after 10 minutes; sampling and stopping it"
+              owned="$tests $(descendants "$tests")"
+              for pid in $owned; do
+                command=$(ps -o command= -p "$pid") || continue
+                echo "$pid $command"
+                case "$command" in
+                  *swiftpm-testing-helper*|*xctest*)
+                    sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true ;;
+                  *) ;;
+                esac
+              done
+              # The tree as it is now: a process may have started since.
+              owned=$(printf '%s\n' $owned $(descendants "$tests") | sort -u)
+              kill -TERM $owned 2>/dev/null || true
+              for _ in $(seq 30); do
+                alive=""
+                for pid in $owned; do
+                  kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+                done
+                [ -n "$alive" ] || exit 1
+                sleep 1
+              done
+              echo "::error::swift test $* processes$alive outlasted TERM by 30 seconds; killing them"
+              kill -KILL $alive 2>/dev/null || true
+              exit 1
+            ) &
+            local watchdog=$!
+            local status=0
+            wait "$tests" || status=$?
+            # The watchdog exits nonzero only when the run timed out.
+            if ! wait "$watchdog" && [ "$status" -eq 0 ]; then
+              status=1
+            fi
+            return "$status"
+          }
+          status=0
+          run_tests --skip '^UIFnSwiftUITests\.' || status=$?
+          run_tests --filter '^UIFnSwiftUITests\.' || status=$?
+          exit "$status"
+      - name: Upload UIFnSwiftUI snapshots that differ from their references
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uifn-snapshot-failures
+          path: ${{ runner.temp }}/uifn-snapshots
+          if-no-files-found: ignore
       - name: UIFnSwiftUI tests on an iOS simulator (UIKit trait collections)
         run: |
           udid=$(xcrun simctl list devices available --json | python3 -c '
