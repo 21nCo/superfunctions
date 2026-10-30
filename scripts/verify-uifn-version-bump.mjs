@@ -370,7 +370,8 @@ export function tscProjects(command) {
  * Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked
  * negated, with the command they are in, plus the tsconfigs each tsc command emits from. Outside tsc commands a token is
  * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a tsc --noEmit
- * command names nothing. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), and a leading `./x`, is marked `runs`.
+ * command names nothing. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), a leading `./x`, and a config the tool
+ * loads (`-c x`, `--config x`, `--config=x`, any named *.config.* file) is marked `runs`.
  */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
@@ -381,11 +382,13 @@ export function scriptReferences(scripts, packagePath) {
       if (projects?.length === 0) continue;
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: EMIT_OVERRIDE.test(command) });
       let runs = false;
+      let config = false;
       for (const [index, token] of command.trim().split(/[\s&<>()]+/).entries()) {
         const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || config || /^['"]?--config=|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
+        config = /^(?:-c|--config)$/.test(value);
       }
     }
   }

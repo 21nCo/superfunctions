@@ -780,9 +780,10 @@ for (const [entries, expected] of [
   });
 }
 
-// Build-file status follows execution: a file a shipped script or shell build script runs, and every local module a build file imports, is read with the package root as cwd.
+// Build-file status follows execution: a file a shipped script or shell build script runs or names as a tool config, and every local module a build file imports, is read with the package root as cwd.
 const globEntry = "await build({ entry: ['src/**/*.ts'] });\n";
 const argvTsc = "execFileSync('tsc', ['-p', 'lib']);\n";
+const globConfig = "export default { input: ['src/**/*.ts'] };\n";
 for (const [cell, build, tree, expected] of [
   ["a root build.mjs glob entry", "node build.mjs", { "build.mjs": globEntry }, emitted],
   ["a tools/build.mjs glob entry", "node tools/build.mjs", { "tools/build.mjs": globEntry }, emitted],
@@ -796,6 +797,14 @@ for (const [cell, build, tree, expected] of [
   ["a build file a shell build script runs", "./build.sh", { "build.sh": "node tools/build.mjs\n", "tools/build.mjs": globEntry }, emitted],
   ["control: a tools/build.mjs no script runs", "tsup src/index.ts", { "tools/build.mjs": globEntry }, []],
   ["control: a build.sh no script runs", "tsup src/index.ts", { ...libProject, "build.sh": "tsc -p lib\n" }, []],
+  ["rollup -c tools/rollup.config.mjs", "rollup -c tools/rollup.config.mjs", { "tools/rollup.config.mjs": globConfig }, emitted],
+  ["rollup --config build/rollup.mjs", "rollup --config build/rollup.mjs", { "build/rollup.mjs": globConfig }, emitted],
+  ["tsup --config tools/tsup.config.ts", "tsup --config tools/tsup.config.ts", { "tools/tsup.config.ts": globConfig }, emitted],
+  ["vite build --config tools/vite.config.ts", "vite build --config tools/vite.config.ts", { "tools/vite.config.ts": globConfig }, emitted],
+  ["webpack --config=build/webpack.mjs", "webpack --config=build/webpack.mjs", { "build/webpack.mjs": globConfig }, emitted],
+  ["an entry list in a helper a tool-loaded config imports", "rollup -c tools/rollup.config.mjs", { "tools/rollup.config.mjs": "import { input } from './inputs.mjs';\nexport default { input };\n", "tools/inputs.mjs": "export const input = ['src/**/*.ts'];\n" }, emitted],
+  ["control: a root rollup.config.mjs rollup -c loads", "rollup -c", { "rollup.config.mjs": globConfig }, emitted],
+  ["control: a tools/rollup.config.mjs no script loads", "rollup -c", { "tools/rollup.config.mjs": globConfig }, []],
   ["control: a ./ option value is not run", "svelte-package -i lib -o dist --tsconfig ./tsconfig.json", { "lib/index.ts": "export const lib = 1;\n", "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "exclude": ["src/**/*.test.ts"] }' }, []],
 ]) {
   test(`a file the build runs is a build file: ${cell}`, () => {
