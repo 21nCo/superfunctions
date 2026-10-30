@@ -142,24 +142,62 @@ describe("task input revisions", () => {
     ]) expect(await revision(manifest(change))).not.toBe(base);
   });
 
-  it("masks literal secret-channel and credential values of a Compose task's source, and nothing else", async () => {
+  it("masks only secret-channel and credential values of a Compose task's sources, never service names or other fields", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-compose-"));
     const config = validateDevFnConfig({ version: 1, project: { id: "revision-compose" },
-      services: { seed: { adapter: "compose", service: "seed", envAllowlist: ["SEED_KEY"], secretEnv: ["SEED_KEY"], task: {} } }, profiles: { default: { services: ["seed"] } } });
-    const source = (values: { key: string; password: string; token: string; mode: string }, comment = "") => [
-      `services:${comment}`, "  seed:", "    image: busybox", "    environment:", `      SEED_KEY: ${values.key}`, `      DB_PASSWORD: ${values.password}`, `      SEED_MODE: ${values.mode}`,
-      `    labels: [API_TOKEN=${values.token}, tier=setup]`, "    command: [sh, -c, 'echo seeded']", ""].join("\n");
-    const revision = async (values: Parameters<typeof source>[0], comment?: string) => {
-      await writeFile(path.join(root, "compose.yaml"), source(values, comment));
+      services: {
+        auth: { adapter: "compose", service: "auth", envAllowlist: ["SEED_KEY"], secretEnv: ["SEED_KEY"], task: {} },
+        "token-init": { adapter: "compose", service: "token-init", task: {} },
+      }, profiles: { default: { services: ["auth", "token-init"] } } });
+    const values = { key: "k-1", password: "p-1", token: "t-1", mode: "minimal", command: "migrate", image: "busybox:1", other: "a" };
+    const source = (value: typeof values, comment = "") => [
+      `services:${comment}`,
+      "  auth:", `    image: ${value.image}`, "    environment:", `      SEED_KEY: ${value.key}`, `      DB_PASSWORD: ${value.password}`, `      SEED_MODE: ${value.mode}`,
+      `    command: [sh, -c, '${value.command}']`,
+      "  token-init:", `    image: ${value.image}`, "    environment:", `      - API_TOKEN=${value.token}`, `      - SEED_MODE=${value.mode}`,
+      `    command: [sh, -c, '${value.command}']`,
+      "  unrelated:", `    image: busybox`, `    command: [echo, '${value.other}']`, ""].join("\n");
+    const revisions = async (value: typeof values, comment?: string) => {
+      await writeFile(path.join(root, "compose.yaml"), source(value, comment));
+      return [await taskInputRevision(config, root, { name: "auth", kind: "service" }, "default"),
+        await taskInputRevision(config, root, { name: "token-init", kind: "service" }, "default")];
+    };
+    try {
+      const base = await revisions(values);
+      // Rotated literal credentials (map and list entries), formatting and other services are not a changed input.
+      expect(await revisions({ ...values, key: "k-2", password: "p-2", token: "t-2", other: "b" }, " # rotated")).toEqual(base);
+      // A service whose name looks like a credential is hashed like any other.
+      for (const change of [{ mode: "full" }, { command: "migrate --all" }, { image: "busybox:2" }]) {
+        const changed = await revisions({ ...values, ...change });
+        expect(changed[0]).not.toBe(base[0]);
+        expect(changed[1]).not.toBe(base[1]);
+      }
+      await writeFile(path.join(root, "compose.yaml"), "services: [unclosed\n");
+      await expect(taskInputRevision(config, root, { name: "auth", kind: "service" }, "default")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("follows a Compose task's included, extended and env files, masking their credentials", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-compose-sources-"));
+    const config = validateDevFnConfig({ version: 1, project: { id: "revision-compose-sources" },
+      services: { seed: { adapter: "compose", service: "seed", task: {} } }, profiles: { default: { services: ["seed"] } } });
+    const files = { base: "migrate", included: "busybox:1", envFile: "minimal", envSecret: "s-1", dotenv: "1", dotenvSecret: "d-1" };
+    const write = async (value: typeof files) => {
+      await mkdir(path.join(root, "setup"), { recursive: true });
+      await writeFile(path.join(root, "compose.yaml"), ["include: [setup/included.yaml]", "services: {}", ""].join("\n"));
+      await writeFile(path.join(root, "setup", "included.yaml"), ["services:", "  seed:", "    extends: { file: base.yaml, service: base }",
+        `    image: \${SEED_IMAGE:-${value.included}}`, "    env_file: [seed.env]", ""].join("\n"));
+      await writeFile(path.join(root, "setup", "base.yaml"), ["services:", "  base:", `    command: [sh, -c, '${value.base}']`, ""].join("\n"));
+      await writeFile(path.join(root, "setup", "seed.env"), `SEED_MODE=${value.envFile}\nSEED_PASSWORD=${value.envSecret}\n`);
+      await writeFile(path.join(root, "setup", ".env"), `SEED_LEVEL=${value.dotenv}\nREGISTRY_TOKEN=${value.dotenvSecret}\n`);
       return await taskInputRevision(config, root, { name: "seed", kind: "service" }, "default");
     };
     try {
-      const base = await revision({ key: "k-1", password: "p-1", token: "t-1", mode: "minimal" });
-      // Rotated literal credentials (and formatting) are not a changed input.
-      expect(await revision({ key: "k-2", password: "p-2", token: "t-2", mode: "minimal" }, " # rotated")).toBe(base);
-      expect(await revision({ key: "k-2", password: "p-2", token: "t-2", mode: "full" })).not.toBe(base);
-      await writeFile(path.join(root, "compose.yaml"), "services: [unclosed\n");
-      await expect(taskInputRevision(config, root, { name: "seed", kind: "service" }, "default")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      const base = await write(files);
+      expect(await write({ ...files, envSecret: "s-2", dotenvSecret: "d-2" })).toBe(base);
+      for (const change of [{ base: "migrate --all" }, { included: "busybox:2" }, { envFile: "full" }, { dotenv: "2" }]) {
+        expect(await write({ ...files, ...change })).not.toBe(base);
+      }
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
@@ -459,7 +497,7 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
 describe("task attempt boundaries (stub launchers)", () => {
   async function context(name: string, overrides: Partial<RunTaskContext> & Pick<RunTaskContext, "node">) {
     const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-stub-${name}-`));
-    await writeFile(path.join(root, "compose.yaml"), "services: {}\n");
+    await writeFile(path.join(root, "compose.yaml"), "services:\n  seed: { image: busybox }\n  plain: { image: busybox }\n");
     const config = validateDevFnConfig({ version: 1, project: { id: `stub-${name}` },
       processes: { migrate: { adapter: "command", command: [process.execPath, "-e", "0"], task: { idempotent: true, retries: 2 } } },
       services: {
@@ -516,7 +554,7 @@ describe("task attempt boundaries (stub launchers)", () => {
 
   it("settles another worktree's unverified Compose attempt of a shared scope through its journaled launch before any new attempt", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-shared-"));
-    await writeFile(path.join(root, "compose.yaml"), "services: {}\n");
+    await writeFile(path.join(root, "compose.yaml"), "services:\n  seed: { image: busybox }\n  plain: { image: busybox }\n");
     const config = validateDevFnConfig({ version: 1, project: { id: "stub-shared" },
       services: { seed: { adapter: "compose", service: "seed", resources: ["db"], task: { idempotent: true } } },
       resources: { db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } } },

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { parseDocument } from "yaml";
 import { assertEnvironmentKeyCasing, isCredentialKey, resolveContainedPath, type ComposeServiceSpec } from "@devfn/config";
 import { runGatedCommand, stopGatedLauncher, waitForReadiness, type GatedCommandRunner } from "@devfn/processes";
 import { createScopedPathInterpolator, readComposeEnvDefinitions, selectedInterpolationReferences, simpleInterpolation } from "./path-interpolation.js";
@@ -1173,29 +1172,61 @@ async function credentialSafeComposeConfiguration(input: CredentialSafeComposeIn
   }
 }
 
+/** Env-file declarations with secret-channel and credential-named values masked; the file's absence counts too. */
+async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<string>): Promise<unknown> {
+  try {
+    return (await readComposeEnvDefinitions(file)).declarations.map(([name, value]) =>
+      [name, secretNames.has(name) || isCredentialKey(name) ? "<secret-channel>" : value]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 /**
- * Digest of a Compose source for a setup task's input revision: its parsed
- * content, canonically ordered, with the value under every secret-channel or
- * credential-named key (mapping entries and KEY=value list items) masked, as
- * the startup fingerprint masks them. A rotated literal credential therefore
- * never reruns a task; formatting and comments do not count either.
+ * Digest of a Compose setup task's source for its input revision: the
+ * selected service as its Compose files define it (through include and
+ * extends), the volumes, networks, configs and secrets it references, and the
+ * declarations of its env_file and interpolation .env files. As in the startup
+ * fingerprint, only values are masked: those of secret-channel and
+ * credential-named environment entries and env-file declarations. Service,
+ * resource and other names are never masked, interpolation expressions are
+ * hashed as written (never the values they resolve to), and formatting,
+ * comments and other services do not count.
  */
-export function composeTaskSourceDigest(content: string, secretNames: Iterable<string> = []): string {
-  const secrets = new Set(secretNames);
-  const sensitive = (key: string) => secrets.has(key) || isCredentialKey(key);
-  const document = parseDocument(content, { logLevel: "silent", merge: true });
-  if (document.errors.length) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose source is not valid YAML: ${document.errors[0].message}`);
-  const canonical = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map((item) => {
-      const assignment = typeof item === "string" ? /^([^=]+)=/.exec(item) : null;
-      return assignment && sensitive(assignment[1]) ? `${assignment[1]}=<secret-channel>` : canonical(item);
-    });
-    if (value && typeof value === "object") {
-      return Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, item]) => [key, sensitive(key) ? "<secret-channel>" : canonical(item)]);
-    }
-    return value;
-  };
-  return createHash("sha256").update(JSON.stringify(canonical(document.toJS({ maxAliasCount: 100 })))).digest("hex");
+export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
+  environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
+  const sourceFile = await resolveContainedPath(root, spec.file ?? "compose.yaml", `services.${spec.service}.file`);
+  const implicit = implicitInterpolationKeys(spec);
+  const secretNames = new Set(spec.secretEnv ?? []);
+  let inventory: ComposeSourceInventory;
+  try {
+    inventory = await assertComposeSourceGraphBounded(sourceFile, spec.service,
+      createScopedPathInterpolator(environment, Date.now() + COMPOSE_SOURCE_BUDGET_MS, implicit), implicit, secretNames);
+  } catch (error) {
+    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to read the Compose sources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!inventory.service) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is not defined in its Compose files.`);
+  // Paths relative to the repository, so every worktree of one source agrees.
+  const relative = (file: string) => path.relative(root, file).split(path.sep).join("/");
+  const { env_file: envFiles, ...service } = inventory.service;
+  const serviceEnvFiles = [];
+  for (const entry of envFiles === undefined ? [] : Array.isArray(envFiles) ? envFiles : [envFiles]) {
+    const descriptor = typeof entry === "string" ? { path: entry } : entry as { path?: unknown; required?: unknown; devfnOrigin?: unknown };
+    const file = typeof descriptor?.path === "string" ? descriptor.path : undefined;
+    // A path that still holds an interpolation expression is kept as written, not followed.
+    serviceEnvFiles.push(!file || file.includes("$") ? { path: file ?? null, required: descriptor?.required ?? null }
+      : { path: relative(file), required: descriptor.required ?? null, declarations: await maskedEnvDeclarations(file, secretNames) });
+  }
+  const interpolationFiles = [];
+  for (const file of await composeInterpolationEnvFiles(inventory.interpolationScopes)) {
+    interpolationFiles.push([relative(file), await maskedEnvDeclarations(file, secretNames)]);
+  }
+  return createHash("sha256").update(JSON.stringify({
+    service: canonicalComposeValue(service, secretNames),
+    resources: canonicalComposeValue(selectedComposeResources(inventory.resources, inventory.service), secretNames),
+    envFiles: serviceEnvFiles, interpolationFiles,
+  })).digest("hex");
 }
 
 /** Fingerprint effective Compose inputs without hashing inherited host or secret values. */

@@ -70,7 +70,6 @@ export interface TaskJournal {
 const MAX_ATTEMPTS = 20;
 const MAX_INPUT_ENTRIES = 10_000;
 const MAX_INPUT_BYTES = 256 * 1024 * 1024;
-const MAX_COMPOSE_SOURCE_BYTES = 10 * 1024 * 1024;
 /** Wait, or less once the signal aborts. */
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
   const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
@@ -112,17 +111,19 @@ async function digestInput(root: string, relative: string, field: string): Promi
   return hash.digest("hex");
 }
 
-/** Credential-safe digest of a Compose task's source file: a rotated literal secret is not a changed input. */
-async function digestComposeSource(root: string, relative: string, field: string, secretNames: readonly string[]): Promise<string> {
-  const invalid = (error: unknown) => new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
-  const file = await resolveContainedPath(root, relative, field).catch((error: unknown) => { throw invalid(error); });
+/** Credential-safe digest of a Compose task's sources: a rotated literal secret is not a changed input. */
+async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["services"]>[string], field: string): Promise<string> {
+  const relative = spec.file ?? "compose.yaml";
+  const file = await resolveContainedPath(root, relative, field).catch((error: unknown) => {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
+  });
   const stats = await stat(file).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
     throw error;
   });
-  if (!stats.isFile() || stats.size > MAX_COMPOSE_SOURCE_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file of at most ${MAX_COMPOSE_SOURCE_BYTES} bytes.`);
-  try { return composeTaskSourceDigest(await readFile(file, "utf8"), secretNames); }
-  catch (error) { throw invalid(error); }
+  if (!stats.isFile()) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file.`);
+  try { return await composeTaskSourceDigest(spec, root); }
+  catch (error) { throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
 /** Resource value sources that carry a leased host port; a reallocated port never reruns a task. */
@@ -132,7 +133,7 @@ const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
  * The input revision of a task: its declared command and settings, its
  * manifest and selected profile environment as written (secret channels by
  * name only), the targets, namespaces and values of the resources it consumes
- * as that node receives them, its Compose file and the content of its
+ * as that node receives them, its Compose sources and the content of its
  * declared inputs. Leased ports, secret values and values inherited from the
  * host through envAllowlist are not part of it, so a reallocated port, a
  * rotated credential or another shell never reruns a task.
@@ -144,7 +145,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
-      source: await digestComposeSource(root, config.services![node.name].file ?? "compose.yaml", `${field}.file`, spec.secretEnv ?? []) };
+      source: await digestComposeSource(root, config.services![node.name], `${field}.file`) };
   const consumed = sorted(spec.resources).map((name) => {
     const planned = resources?.resources[name];
     if (!planned) return [name, null];
