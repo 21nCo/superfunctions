@@ -317,6 +317,56 @@ describe("traversal budget", () => {
     }
   });
 
+  it("listing keys is linear in width; value reads, output and per-key work stay bounded by the budget", async () => {
+    const ids = { level: "warn", traceId: "t-w", requestId: "r-w" } as const;
+    const outputs = new Map<number, string[]>();
+    const keyWork = new Map<number, number>();
+    // Yields between the long synchronous steps, so the test runner's own calls are answered.
+    const tick = () => new Promise((resolve) => setTimeout(resolve));
+    for (const width of [1e4, 1e5, 1e6]) {
+      // width enumerable getters, then the schema fields last in key order.
+      let reads = 0;
+      const wide: Record<string, unknown> = {};
+      const getter = { enumerable: true, get: () => (reads++, "v") };
+      for (let index = 0; index < width; index++) Object.defineProperty(wide, `k${index}`, getter);
+      Object.assign(wide, event(), ids);
+      await tick();
+      const spy = fetchSpy();
+      const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch });
+      const captured = capture();
+      const logger = createLogger({ name: "w", now: () => new Date(0), pipeline: [redactSecFn()], sinks: [captured.sink] });
+      const runs: Array<() => unknown> = [
+        () => sanitizeValue(wide),
+        () => {
+          // Past the shared budget sanitizeEvent looks up only the schema fields, whatever the width.
+          const has = vi.spyOn(Set.prototype, "has");
+          try {
+            const output = sanitizeEvent(wide as unknown as LogEvent);
+            keyWork.set(width, has.mock.calls.length);
+            expect(output).toMatchObject(ids);
+            expect(isValidLogEvent(output)).toBe(true);
+            return output;
+          } finally {
+            has.mockRestore();
+          }
+        },
+        () => redactEvent(event({ ctx: wide })),
+        () => (logger.info("m", wide), captured.events[0]),
+        async () => (sink([event({ ctx: wide })]), await sink.flush(), spy.requests[0].body),
+      ];
+      const texts: string[] = [];
+      for (const run of runs) {
+        reads = 0;
+        texts.push(JSON.stringify(await run()));
+        expect(reads).toBeLessThanOrEqual(Math.min(width, MAX_TRAVERSAL / 4));
+        await tick();
+      }
+      outputs.set(width, texts);
+    }
+    expect(outputs.get(1e6)).toEqual(outputs.get(1e5));
+    expect(keyWork.get(1e6)).toBe(keyWork.get(1e5));
+  }, 120_000);
+
   it("ctx and each schema field have their own budget, so no field order turns level or ids into markers", async () => {
     const graph = shared(24);
     const ids = { traceId: "t-1", spanId: "s-1", requestId: "r-1", userId: "u-1", tenantId: "n-1" };

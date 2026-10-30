@@ -156,16 +156,15 @@ const OWN_BUDGET = new Set<string>(["msg", "tags", "ctx", ...METADATA_FIELDS]);
  * Returns a JSON-safe copy of every field of an event: msg becomes a string,
  * tags (at most MAX_TAGS) strings, and every other field is sanitized like
  * ctx. Undefined fields are removed. Fields outside the schema share one
- * budget; once it is spent the rest are dropped unread.
+ * budget; once it is spent the walk over the keys stops, the rest are dropped
+ * unread and the schema fields not reached yet follow in schema order.
  */
 export function sanitizeEvent(event: LogEvent): LogEvent {
   return bounded(() => {
     const sanitized: Record<string, unknown> = {};
-    for (const key of Object.keys(event)) {
-      const own = OWN_BUDGET.has(key);
-      if (!own && (budget -= key.length) < 0) continue;
+    const copy = (key: string, own: boolean) => {
       const value: unknown = (event as unknown as Record<string, unknown>)[key];
-      if (value === undefined) continue;
+      if (value === undefined) return;
       if (key === "msg") {
         sanitized.msg = String(value);
       } else if (key === "tags" && Array.isArray(value)) {
@@ -173,7 +172,18 @@ export function sanitizeEvent(event: LogEvent): LogEvent {
       } else {
         setOwn(sanitized, key, own ? sanitizeValue(value) : sanitizeNode(value, new Set(), 0));
       }
+    };
+    const keys = Object.keys(event);
+    const reached = new Set<string>();
+    let index = 0;
+    for (; index < keys.length && budget >= 0; index += 1) {
+      const own = OWN_BUDGET.has(keys[index]);
+      if (own) reached.add(keys[index]);
+      else if ((budget -= keys[index].length) < 0) break;
+      copy(keys[index], own);
     }
+    // No per-key work past the shared budget: only the schema fields, by name.
+    if (index < keys.length) for (const key of OWN_BUDGET) if (!reached.has(key) && Object.prototype.propertyIsEnumerable.call(event, key)) copy(key, true);
     if (sanitized.msg === undefined) sanitized.msg = "";
     return sanitized as unknown as LogEvent;
   });
