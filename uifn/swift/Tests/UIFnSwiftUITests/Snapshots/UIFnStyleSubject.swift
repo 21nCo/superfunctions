@@ -31,6 +31,17 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
     case textFieldEmpty = "text-field-empty"
     case textFieldFilled = "text-field-filled"
     case groupBox = "group-box"
+    case segmentedPicker = "segmented-picker"
+    case tabSwitcher = "tab-switcher"
+    case menu = "menu"
+    case menuPicker = "menu-picker"
+    case menuPickerUnselected = "menu-picker-unselected"
+    case progressLinear = "progress-linear"
+    case progressLinearIndeterminate = "progress-linear-indeterminate"
+    case progressCircular = "progress-circular"
+    case progressCircularIndeterminate = "progress-circular-indeterminate"
+    case gaugeLinear = "gauge-linear"
+    case gaugeCircular = "gauge-circular"
 
     var testDescription: String { rawValue }
 
@@ -61,7 +72,65 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
             GroupBox("Account") { Text("Signed in") }
                 .groupBoxStyle(.uifn)
                 .frame(width: 220)
+        case .segmentedPicker:
+            UIFnSegmentedPicker("Range", selection: .constant("Week"), options: ["Day", "Week", "Month"]) { Text($0) }
+                .fixedSize()
+        case .tabSwitcher:
+            UIFnSegmentedPicker("Range", selection: .constant("Week"), options: ["Day", "Week", "Month"], variant: .tabs) { Text($0) }
+                .fixedSize()
+        // UIKit draws iOS menus, which ImageRenderer cannot, so on iOS the
+        // menu subjects draw the label the style gives the menu.
+        case .menu:
+            #if os(macOS)
+            Menu("Options") { Button("Rename") {} }.menuStyle(.uifn)
+            #else
+            UIFnMenuAppearance(label: Text("Options"), state: UIFnControlState())
+            #endif
+        case .menuPicker:
+            #if os(macOS)
+            UIFnMenuPicker("Sort", selection: .constant("Name"), options: ["Name", "Date"]) { Text($0) }
+            #else
+            UIFnMenuAppearance(label: Text("Name"), state: UIFnControlState())
+            #endif
+        case .menuPickerUnselected:
+            #if os(macOS)
+            UIFnMenuPicker("Sort", selection: .constant("Size"), options: ["Name", "Date"]) { Text($0) }
+            #else
+            UIFnMenuAppearance(label: UIFnMutedText(text: "Sort"), state: UIFnControlState())
+            #endif
+        case .progressLinear:
+            ProgressView(value: 0.4) { Text("Upload") } currentValueLabel: { Text("40%") }
+                .progressViewStyle(.uifnLinear)
+                .frame(width: 200)
+        // An indeterminate progress view draws the phase it is at when it
+        // renders, so these snapshots draw the style at a fixed phase.
+        case .progressLinearIndeterminate:
+            UIFnProgressAppearance(variant: .linear, progress: .indeterminate(phase: 0.5), label: Text("Upload"), currentValueLabel: Text?.none)
+                .frame(width: 200)
+        case .progressCircular:
+            ProgressView(value: 0.4) { Text("Upload") } currentValueLabel: { Text("40%") }
+                .progressViewStyle(.uifnCircular)
+        case .progressCircularIndeterminate:
+            UIFnProgressAppearance(variant: .circular, progress: .indeterminate(phase: 0.25), label: Text("Upload"), currentValueLabel: Text?.none)
+        case .gaugeLinear:
+            Gauge(value: 0.6) { Text("Storage") } currentValueLabel: { Text("60%") } minimumValueLabel: { Text("0") } maximumValueLabel: { Text("100") }
+                .gaugeStyle(.uifnLinear)
+                .frame(width: 220)
+        case .gaugeCircular:
+            Gauge(value: 0.6) { Text("Storage") } currentValueLabel: { Text("60") } minimumValueLabel: { Text("0") } maximumValueLabel: { Text("100") }
+                .gaugeStyle(.uifnCircular)
         }
+    }
+}
+
+/// Text in the theme's muted text color, as a menu picker shows its label
+/// when no option is selected.
+struct UIFnMutedText: View {
+    let text: String
+    @UIFnStyleEnvironment private var context
+
+    var body: some View {
+        Text(text).foregroundColor(context.color(context.colors.text.muted))
     }
 }
 
