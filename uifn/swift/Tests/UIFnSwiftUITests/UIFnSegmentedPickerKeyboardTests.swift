@@ -38,6 +38,9 @@ extension UIFnHostedWindowTests {
             var isEnabled = true
             /// Whether the picker, rather than a text field beside it, is focused.
             var focusesPicker = true
+            /// Whether the picker hides the system focus ring, as it does
+            /// except on macOS 13.
+            var hidesSystemFocusRing = true
         }
 
         /// Where the picker sits in the window's content, from its top-leading corner.
@@ -65,6 +68,7 @@ extension UIFnHostedWindowTests {
                 .padding(UIFnSegmentedPickerKeyboardTests.inset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .environment(\.layoutDirection, options.layoutDirection)
+                .environment(\.uifnHidesSystemFocusRing, options.hidesSystemFocusRing)
                 .onChange(of: focus) { box.isFocused = $0 == .picker }
                 .onAppear { focus = options.focusesPicker ? .picker : .text }
             }
@@ -238,8 +242,8 @@ extension UIFnHostedWindowTests {
 
         /// The picker and the room for a focus ring around it, as drawn in
         /// a window whose picker has focus or not.
-        private func drawnPicker(focused: Bool, selection: String) async throws -> UIFnBitmap {
-            var options = Options()
+        private func drawnPicker(focused: Bool, selection: String, _ options: Options = Options()) async throws -> UIFnBitmap {
+            var options = options
             options.focusesPicker = focused
             let box = Box(selection)
             let window = makeWindow(box, options)
@@ -270,6 +274,19 @@ extension UIFnHostedWindowTests {
             let focused = try await drawnPicker(focused: true, selection: selection)
             let unfocused = try await drawnPicker(focused: false, selection: selection)
             #expect(focused.differingFraction(from: unfocused) > UIFnStateChange.minimumDifferingFraction)
+        }
+
+        /// Where the system focus ring cannot be hidden, as on macOS 13, the
+        /// focused picker leaves the ring to the system and draws none of its
+        /// own, so it shows one ring; it still takes focus and the arrows.
+        @Test(arguments: ["Week", "Year"])
+        func withoutHidingTheSystemRingThePickerDrawsNoRingOfItsOwn(_ selection: String) async throws {
+            var options = Options()
+            options.hidesSystemFocusRing = false
+            let focused = try await drawnPicker(focused: true, selection: selection, options)
+            let unfocused = try await drawnPicker(focused: false, selection: selection, options)
+            #expect(focused.differingFraction(from: unfocused) == 0)
+            #expect(try await selections(after: [.right], from: selection, options).selections == [selection == "Week" ? "Month" : "Day"])
         }
     }
 }

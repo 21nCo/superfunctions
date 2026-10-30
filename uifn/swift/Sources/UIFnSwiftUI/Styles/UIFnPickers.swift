@@ -1,9 +1,9 @@
 import SwiftUI
 
 // SwiftUI has no public way to write a picker style, so the UIFn pickers are
-// views that draw the theme around a system `Picker`: the menu picker puts one
-// in a ``UIFnMenuStyle`` menu, and the segmented picker shows accessibility a
-// segmented one in its place.
+// views built around a system `Picker`: the menu picker puts one in a
+// ``UIFnMenuStyle`` menu, and the segmented picker draws its own segments and
+// gives accessibility a system segmented picker in their place.
 
 /// How a ``UIFnSegmentedPicker`` looks.
 public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
@@ -26,7 +26,8 @@ public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
 ///
 /// A click or tap on a segment selects its option. On macOS the picker takes
 /// keyboard focus as one control, with the focus ring around the selected
-/// segment: the left and right arrows select the option beside the selected
+/// segment (on macOS 13, which cannot hide the system focus ring, the system
+/// ring around the picker instead): the left and right arrows select the option beside the selected
 /// one, in the reading direction of the layout, and stop at the first and
 /// last; with no option selected they select the first or last.
 /// Accessibility sees a system segmented `Picker` with the same options and
@@ -47,6 +48,7 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
     /// The picker's own focus, so a `focused(_:)` binding the app applies
     /// around the picker keeps working.
     @FocusState private var isFocused: Bool
+    @Environment(\.uifnHidesSystemFocusRing) private var hidesSystemFocusRing
     @UIFnStyleEnvironment private var context
 
     public init<Options: Sequence>(
@@ -72,12 +74,17 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         }
         // The selected segment draws the ring; with none, the whole picker does.
         .uifnFocusRing(
-            isFocused && isEnabled && selected == nil,
+            drawsFocusRing && isEnabled && selected == nil,
             cornerRadius: variant == .segmented ? context.radius.md : context.radius.sm,
             context: context
         )
         #if os(macOS)
-        .modifier(UIFnSegmentedKeyboard(isEnabled: isEnabled, isFocused: $isFocused, move: move))
+        .modifier(UIFnSegmentedKeyboard(
+            isEnabled: isEnabled,
+            isFocused: $isFocused,
+            hidesSystemFocusRing: hidesSystemFocusRing,
+            move: move
+        ))
         #endif
         .accessibilityRepresentation {
             Picker(selection: selection) {
@@ -98,12 +105,19 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         .buttonStyle(UIFnSegmentButtonStyle(
             variant: variant,
             isSelected: index == selected,
-            isFocused: isFocused && index == selected
+            isFocused: drawsFocusRing && index == selected
         ))
         #if os(macOS)
         // The picker takes focus as one control, not one per segment.
         .focusable(false)
         #endif
+    }
+
+    /// Whether the picker has focus and draws the style's focus ring for it,
+    /// which it does only where the system ring is hidden, so that a focused
+    /// picker shows one ring.
+    private var drawsFocusRing: Bool {
+        isFocused && hidesSystemFocusRing
     }
 
     private func select(_ index: Int) {
@@ -168,10 +182,12 @@ enum UIFnSegmentedSelection {
 }
 
 #if os(macOS)
-/// Makes the picker one focusable control whose arrow keys move the selection.
+/// Makes the picker one focusable control whose arrow keys move the
+/// selection, without the system focus ring where the picker draws its own.
 private struct UIFnSegmentedKeyboard: ViewModifier {
     let isEnabled: Bool
     let isFocused: FocusState<Bool>.Binding
+    let hidesSystemFocusRing: Bool
     let move: (MoveCommandDirection) -> Void
 
     func body(content: Content) -> some View {
@@ -179,15 +195,38 @@ private struct UIFnSegmentedKeyboard: ViewModifier {
             .focusable(isEnabled)
             .focused(isFocused)
             .onMoveCommand(perform: isEnabled ? move : nil)
-        // The picker draws its own focus ring.
         if #available(macOS 14.0, *) {
-            keyboard.focusEffectDisabled()
+            keyboard.focusEffectDisabled(hidesSystemFocusRing)
         } else {
             keyboard
         }
     }
 }
 #endif
+
+private struct UIFnHidesSystemFocusRingKey: EnvironmentKey {
+    static let defaultValue: Bool = {
+        #if os(macOS)
+        if #available(macOS 14.0, *) {
+            return true
+        }
+        // Only macOS 14 and later can hide the system focus ring.
+        return false
+        #else
+        return true
+        #endif
+    }()
+}
+
+extension EnvironmentValues {
+    /// Whether a UIFn segmented picker hides the system focus ring and draws
+    /// the style's own, as it does except on macOS 13, so tests can check the
+    /// macOS 13 path on later versions.
+    var uifnHidesSystemFocusRing: Bool {
+        get { self[UIFnHidesSystemFocusRingKey.self] }
+        set { self[UIFnHidesSystemFocusRingKey.self] = newValue }
+    }
+}
 
 /// The options in order, without any that repeat an earlier one.
 func uifnUniqueOptions<Options: Sequence>(_ options: Options) -> [Options.Element] where Options.Element: Hashable {
