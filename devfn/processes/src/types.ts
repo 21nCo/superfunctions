@@ -41,6 +41,8 @@ export interface RunProcessInput {
   runtimeDir: string;
   /** Environment keys whose values are redacted from the log. */
   redactKeys?: readonly string[];
+  /** Keep none of the command's output, for output that may carry values redaction cannot know. */
+  discardOutput?: boolean;
   timeoutMs: number;
   signal?: AbortSignal;
   shutdownTimeoutMs?: number;

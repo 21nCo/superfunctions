@@ -299,19 +299,25 @@ async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, lo
 }
 
 /**
- * The first SIGINT or SIGTERM during a start stops a running task and the
- * start, which rolls back what it started; a second one ends DevFn at once.
+ * While a task runs, the first SIGINT or SIGTERM stops it and the start,
+ * which rolls back what it started; a second one ends DevFn at once. Outside
+ * task runs both keep their default behavior.
  */
-async function cancellable<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+function taskCancellation(): { signal: AbortSignal; whileTaskRuns: <T>(run: () => Promise<T>) => Promise<T> } {
   const controller = new AbortController();
   const abort = () => controller.abort();
-  process.once("SIGINT", abort);
-  process.once("SIGTERM", abort);
-  try { return await action(controller.signal); }
-  finally {
-    process.removeListener("SIGINT", abort);
-    process.removeListener("SIGTERM", abort);
-  }
+  return {
+    signal: controller.signal,
+    whileTaskRuns: async (run) => {
+      process.once("SIGINT", abort);
+      process.once("SIGTERM", abort);
+      try { return await run(); }
+      finally {
+        process.removeListener("SIGINT", abort);
+        process.removeListener("SIGTERM", abort);
+      }
+    },
+  };
 }
 
 async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
@@ -320,8 +326,8 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
   if (args.rerunTasks.length && args.command !== "up" && args.command !== "restart") throw new DevFnError("DEVFN_RUNTIME_INVALID", "--rerun-task applies only to up and restart.");
-  const start = async (replace: boolean) => await cancellable(async (signal) => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic,
-    ...(replace ? { replace } : {}), ...(args.rerunTasks.length ? { rerunTasks: args.rerunTasks } : {}), signal }));
+  const start = async (replace: boolean) => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic,
+    ...(replace ? { replace } : {}), ...(args.rerunTasks.length ? { rerunTasks: args.rerunTasks } : {}), ...taskCancellation() });
   const handlers: Record<string, () => Promise<unknown>> = {
     up: async () => await start(false),
     down: async () => await orchestrator.down(lifecycle),

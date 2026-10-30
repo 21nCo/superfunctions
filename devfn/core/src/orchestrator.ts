@@ -412,7 +412,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     for (const node of plan.nodes.filter((item) => item.task)) {
       const completed = receipt.tasks?.find((item) => item.name === node.name);
       if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
-        completed.inputRevision !== await taskInputRevision(config, root, node, resolved.resources)) return false;
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources)) return false;
     }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
@@ -802,6 +802,8 @@ export class DevFnOrchestrator {
           receipt.updatedAt = new Date().toISOString();
           await writeReceipt(receipt);
         }
+        // A cancellation observed as the last task ended still never ends ready.
+        if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled.");
         if (plan.proxy && !activatedRoutes) {
           const routes = await selectedProxyRoutes(options.config, plan, identity, ports, suffix, stateDir);
           receipt.routes = await proxy.upsert(routes, identity.instanceId);
@@ -914,8 +916,8 @@ export class DevFnOrchestrator {
     const { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry } = context;
     if (node.task) {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
-      await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: receipt.runtimeDir,
-        instanceId: identity.instanceId, invocationId: receipt.invocationId, node, environment: resolved.nodes[node.name].environment,
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: receipt.runtimeDir,
+        instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
         command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
         ...(options.signal ? { signal: options.signal } : {}), registry, supervisor, compose,
@@ -926,6 +928,7 @@ export class DevFnOrchestrator {
           receipt.updatedAt = new Date().toISOString();
           await writeReceipt(receipt);
         } });
+      await (options.whileTaskRuns ? options.whileTaskRuns(run) : run());
       return;
     }
     // Routes may already target this lifecycle's ports. Its owner identities

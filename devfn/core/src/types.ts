@@ -87,6 +87,11 @@ export interface UpOptions {
   rerunTasks?: string[];
   /** Aborting stops a running task and the startup, which then rolls back what it started. */
   signal?: AbortSignal;
+  /**
+   * Wraps each task run, e.g. to route interrupts to signal only while a task
+   * runs and leave every other phase of the start to the default handling.
+   */
+  whileTaskRuns?: <T>(run: () => Promise<T>) => Promise<T>;
 }
 
 export class DevFnError extends Error {

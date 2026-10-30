@@ -46,6 +46,11 @@ export async function prepareProcessLog(logPath: string, resetSensitiveHistory: 
   }
 }
 
+// A process a finite command left behind can hold its output open after the
+// command exits; the wrapper stops waiting for that output after this long,
+// so the run ends with the command and the leftover is stopped with its group.
+const RUN_DRAIN_MS = 1_000;
+
 export class ProcessSupervisor {
   public async start(input: StartProcessInput): Promise<ManagedProcess> {
     const command = resolveAdapterCommand(input.spec);
@@ -76,7 +81,8 @@ export class ProcessSupervisor {
    * code 0 succeeds; nothing the command changed is undone.
    */
   public async run(input: RunProcessInput): Promise<ProcessRunResult> {
-    const { child, managed, exited } = await this.launch(input);
+    const { child, managed, exited } = await this.launch({ ...input,
+      wrapperEnvironment: { DEVFN_WRAPPER_DRAIN_MS: String(RUN_DRAIN_MS), ...(input.discardOutput ? { DEVFN_DISCARD_OUTPUT: "1" } : {}) } });
     let settle!: (value: { code: number | null; signal: NodeJS.Signals | null }) => void;
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => { settle = resolve; });
     if (exited()) settle({ code: child.exitCode, signal: child.signalCode });
@@ -123,7 +129,8 @@ export class ProcessSupervisor {
   }
 
   /** Spawn the gated wrapper for a command, its identity read and its output going to a private log. */
-  private async launch(input: { name: string; command: string[]; root: string; cwd?: string; runtimeDir: string; environment: NodeJS.ProcessEnv; redactKeys?: readonly string[]; shutdownTimeoutMs?: number }) {
+  private async launch(input: { name: string; command: string[]; root: string; cwd?: string; runtimeDir: string; environment: NodeJS.ProcessEnv; redactKeys?: readonly string[]; shutdownTimeoutMs?: number;
+    discardOutput?: boolean; wrapperEnvironment?: Record<string, string> }) {
     const { command } = input;
     if (command.length === 0) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process ${input.name} has no command.`);
     const cwd = await resolveContainedPath(input.root, input.cwd ?? ".", `processes.${input.name}.cwd`).catch((error) => {
@@ -135,11 +142,11 @@ export class ProcessSupervisor {
     const logPath = path.join(logsDir, `${input.name}.log`);
     mkdirSync(path.dirname(logPath), { recursive: true });
     const environment = input.environment;
-    const { logFd, logOffset } = await prepareProcessLog(logPath, Boolean(input.redactKeys?.length));
+    const { logFd, logOffset } = await prepareProcessLog(logPath, Boolean(input.redactKeys?.length) || input.discardOutput === true);
     const wrapperPath = fileURLToPath(new URL("./wrapper.js", import.meta.url));
     const child = spawn(process.execPath, [wrapperPath], {
       cwd,
-      env: { ...environment, DEVFN_WRAPPED_COMMAND: JSON.stringify(command), DEVFN_REDACT_KEYS: JSON.stringify(input.redactKeys ?? []) },
+      env: { ...environment, DEVFN_WRAPPED_COMMAND: JSON.stringify(command), DEVFN_REDACT_KEYS: JSON.stringify(input.redactKeys ?? []), ...input.wrapperEnvironment },
       detached: process.platform !== "win32",
       windowsHide: true,
       // The IPC channel gates the command until its identity is recorded.

@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import type { ComposeController } from "@devfn/compose";
 import { validateDevFnConfig, type TaskSpec } from "@devfn/config";
-import { processExists, ProcessSupervisor } from "@devfn/processes";
-import { describe, expect, it } from "vitest";
+import type { FilePortRegistry } from "@devfn/ports";
+import { processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
+import { describe, expect, it, vi } from "vitest";
 
-import { DevFnOrchestrator, readReceipt, readTaskJournal, resolveInstanceIdentity, taskScope, type TaskJournal } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
+import { runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
@@ -38,7 +41,7 @@ const server = createServer((request, response) => { response.writeHead(200); re
 server.listen(Number(process.env.DEVFN_PORT_WEB), "127.0.0.1");
 `;
 
-async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Record<string, unknown> = {}) {
+async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Record<string, unknown> = {}, profileEnvironment?: Record<string, string>) {
   const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
   await mkdir(path.join(root, "migrations"));
   await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
@@ -51,7 +54,7 @@ async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Rec
         task: { inputs: ["migrations"], ...task } },
       web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
     },
-    profiles: { default: { processes: ["web"] } } });
+    profiles: { default: { processes: ["web"], ...(profileEnvironment ? { environment: profileEnvironment } : {}) } } });
   const stateDir = path.join(root, "state");
   const orchestrator = new DevFnOrchestrator();
   const identity = await resolveInstanceIdentity(config.project.id, root);
@@ -90,6 +93,54 @@ describe("finite process runs", () => {
       expect(processExists(result.process.pid)).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 60_000);
+
+  it("ends a run when its command exits although a descendant still holds its output, and stops that descendant", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-run-drain-"));
+    try {
+      const started = Date.now();
+      const result = await new ProcessSupervisor().run({ name: "lingers", root, runtimeDir: path.join(root, "runtime"), environment: { PATH: process.env.PATH ?? "" }, timeoutMs: 20_000,
+        command: [process.execPath, "-e", "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit' }); require('fs').writeFileSync('child.pid', String(c.pid)); console.log('done'); process.exit(0)"] });
+      expect(result).toMatchObject({ outcome: "succeeded", exitCode: 0 });
+      expect(result.stopError).toBeUndefined();
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(processExists(Number(await readFile(path.join(root, "child.pid"), "utf8")))).toBe(false);
+      expect(await readFile(result.process.logPath, "utf8")).toContain("done");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 60_000);
+});
+
+describe("task input revisions", () => {
+  const manifest = (mutate: (value: any) => void = () => undefined) => {
+    const value: any = { version: 1, project: { id: "revision" }, ports: { api: {} },
+      processes: {
+        "api-server": { adapter: "command", command: ["node", "api.mjs"], ports: ["api"] },
+        migrate: { adapter: "command", command: ["node", "migrate.mjs"], resources: ["api", "db", "events"], dependsOn: ["api-server"], task: {} },
+      },
+      resources: {
+        api: { kind: "service", defaultTarget: "local", targets: { local: { node: "api-server", port: "api", scheme: "http" } } },
+        db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app" }, targets: { remote: { url: "postgres://db.example.test:5432" } } },
+        events: { kind: "broker", defaultTarget: "remote", topics: ["orders"], consumerGroup: "workers", targets: { remote: { url: "kafka://broker.example.test:9092" } } },
+      },
+      profiles: { default: { processes: ["migrate"], environment: { SEED_MODE: "minimal" } } } };
+    mutate(value);
+    return validateDevFnConfig(value);
+  };
+  const revision = async (config: ReturnType<typeof manifest>, port = 4100) => {
+    const plan = createPlan(config);
+    const resources = planResources({ config, plan, ownerId: "owner-a", runtimeId: "a".repeat(32), ports: { api: port }, platform: "linux" });
+    return await taskInputRevision(config, os.tmpdir(), { name: "migrate", kind: "process" }, plan.profile, resources);
+  };
+
+  it("covers the profile environment and the resource values a task receives, but not leased ports", async () => {
+    const base = await revision(manifest());
+    expect(await revision(manifest(), 4200)).toBe(base);
+    for (const change of [
+      (value: any) => { value.profiles.default.environment.SEED_MODE = "full"; },
+      (value: any) => { value.resources.db.namespace.database = "reports"; },
+      (value: any) => { value.resources.events.topics = ["orders", "refunds"]; },
+      (value: any) => { value.resources.events.consumerGroup = "importers"; },
+    ]) expect(await revision(manifest(change))).not.toBe(base);
+  });
 });
 
 describe("finite setup tasks gate dependents (real local processes)", () => {
@@ -180,6 +231,40 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     } finally { await env.cleanup(); }
   }, 90_000);
 
+  it("reruns an on-change task and blocks a run-once task when the selected profile environment changes", async () => {
+    for (const rerun of ["on-change", "once"] as const) {
+      const env = await fixture(`profile-${rerun}`, { rerun }, {}, { SEED_MODE: "minimal" });
+      try {
+        await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+        const changed = validateDevFnConfig({ ...env.config, profiles: { default: { ...env.config.profiles.default, environment: { SEED_MODE: "full" } } } });
+        if (rerun === "once") {
+          await expect(env.orchestrator.up({ config: changed, root: env.root, stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+          expect(await env.runs()).toHaveLength(1);
+        } else {
+          expect((await env.orchestrator.up({ config: changed, root: env.root, stateDir: env.stateDir })).tasks).toMatchObject([{ status: "succeeded", reason: "input revision changed" }]);
+          expect(await env.runs()).toHaveLength(2);
+        }
+      } finally { await env.cleanup(); }
+    }
+  }, 120_000);
+
+  it("never lets a recorded success mask a later attempt of unknown effect", async () => {
+    const env = await fixture("masked", { idempotent: true });
+    try {
+      await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+      await env.orchestrator.down({ config: env.config, root: env.root, stateDir: env.stateDir });
+      await env.reset({ exit: 9 });
+      await expect(env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir, rerunTasks: ["migrate"] }))
+        .rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
+      await env.reset({});
+      // The success is for this revision, but the failed attempt after it may have partly applied: the idempotent task runs again.
+      const next = await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+      expect(next.tasks).toMatchObject([{ status: "succeeded", reason: "an attempt since the last success ended failed with unknown effects" }]);
+      expect(await env.runs()).toHaveLength(3);
+      expect((await env.journal())?.attempts.map((attempt) => attempt.outcome)).toEqual(["succeeded", "failed", "succeeded"]);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
   it("refuses a changed input for a run-once task before any mutation", async () => {
     const env = await fixture("once", { rerun: "once" });
     try {
@@ -240,44 +325,154 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
   }, 90_000);
 });
 
+describe("task attempt boundaries (stub launchers)", () => {
+  async function context(name: string, overrides: Partial<RunTaskContext> & Pick<RunTaskContext, "node">) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-stub-${name}-`));
+    await writeFile(path.join(root, "compose.yaml"), "services: {}\n");
+    const config = validateDevFnConfig({ version: 1, project: { id: `stub-${name}` },
+      processes: { migrate: { adapter: "command", command: [process.execPath, "-e", "0"], task: { idempotent: true, retries: 2 } } },
+      services: {
+        seed: { adapter: "compose", service: "seed", envAllowlist: ["SEED_TOKEN"], secretEnv: ["SEED_TOKEN"], task: { idempotent: true, retries: 2 } },
+        plain: { adapter: "compose", service: "plain", task: {} },
+      },
+      profiles: { default: { processes: ["migrate"], services: ["seed", "plain"] } } });
+    const registry = { recordOwners: vi.fn(async () => undefined), beginLaunch: vi.fn(async () => undefined) };
+    const stateDir = path.join(root, "state");
+    const value: RunTaskContext = { config, root, stateDir, runtimeDir: path.join(root, "runtime"), instanceId: "instance", invocationId: "invocation", profile: "default",
+      environment: { PATH: process.env.PATH ?? "" }, generated: {}, rerunRequested: false, registry: registry as unknown as FilePortRegistry, record: async () => undefined, ...overrides };
+    const journal = async () => await readTaskJournal(stateDir, taskScope(config, "instance", overrides.node).key);
+    return { root, value, registry, journal };
+  }
+  const compose = (command: string[], stopLaunch: () => Promise<void> = async () => undefined) => ({
+    prepareTask: async (input: { name: string }) => ({ command, environment: { PATH: process.env.PATH ?? "" },
+      launch: { name: input.name, projectName: "stub", composeService: input.name, preExisting: false, existingContainerIds: [], runningContainerIds: [] } }),
+    stopLaunch: vi.fn(stopLaunch),
+  }) as unknown as ComposeController;
+  // Fails each attempt after recording its launcher; the first result may report what it could not stop.
+  const failing = (result: Partial<ProcessRunResult>) => {
+    const runs: RunProcessInput[] = [];
+    const supervisor = { run: async (input: RunProcessInput): Promise<ProcessRunResult> => {
+      runs.push(input);
+      const managed = { name: input.name, pid: 2 ** 22 + 7, command: input.command, cwd: input.root, logPath: path.join(input.root, "stub.log"), startedAt: new Date().toISOString() };
+      await input.onStarted?.(managed);
+      return { outcome: "failed", exitCode: 1, signal: null, process: managed, ...result };
+    } } as unknown as ProcessSupervisor;
+    return { runs, supervisor };
+  };
+
+  it("never retries a native attempt whose process group could not be verified stopped", async () => {
+    const stub = failing({ stopError: "process group 4194311 is still alive" });
+    const env = await context("native", { node: { name: "migrate", kind: "process" }, supervisor: stub.supervisor });
+    try {
+      await expect(runTask(env.value)).rejects.toMatchObject({ code: "DEVFN_TASK_FAILED", message: expect.stringContaining("still alive") });
+      expect(stub.runs).toHaveLength(1);
+      expect((await env.journal())?.attempts).toMatchObject([{ outcome: "failed", effects: "unknown", error: expect.stringContaining("still alive") }]);
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  });
+
+  it("never retries a Compose attempt whose container could not be removed and keeps its launch journaled", async () => {
+    const stub = failing({});
+    const controller = compose(["docker", "compose", "run"], async () => { throw new Error("one-off container still running"); });
+    const env = await context("compose", { node: { name: "seed", kind: "service" }, supervisor: stub.supervisor, compose: controller });
+    try {
+      await expect(runTask(env.value)).rejects.toMatchObject({ code: "DEVFN_TASK_FAILED", message: expect.stringContaining("still running") });
+      expect(stub.runs).toHaveLength(1);
+      expect(env.registry.beginLaunch).toHaveBeenCalledTimes(1);
+      // Resolving the launch would let teardown forget the container.
+      expect(env.registry.recordOwners).not.toHaveBeenCalled();
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  });
+
+  it("keeps no output of a Compose task with secret channels, whose values Compose may load where redaction cannot see them", async () => {
+    // The value is not in the environment DevFn passes, as with one Compose read from an env file.
+    const print = (text: string) => [process.execPath, "-e", `console.log(${JSON.stringify(text)})`];
+    const secret = await context("secret", { node: { name: "seed", kind: "service" }, compose: compose(print("seeded with compose-only-secret-987")) });
+    const plain = await context("plain", { node: { name: "plain", kind: "service" }, compose: compose(print("seeded plainly")) });
+    try {
+      const receipt = await runTask(secret.value);
+      expect(receipt).toMatchObject({ status: "succeeded" });
+      const log = await readFile(receipt.logPath!, "utf8");
+      expect(log).not.toContain("compose-only-secret-987");
+      expect(log).toContain("not kept");
+      expect(await readFile((await runTask(plain.value)).logPath!, "utf8")).toContain("seeded plainly");
+    } finally {
+      await rm(secret.root, { recursive: true, force: true });
+      await rm(plain.root, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
 describe("finite setup tasks (real Compose)", () => {
-  it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("gates a dependent on a one-off Compose task and blocks it on failure", async () => {
+  it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("gates a dependent on a one-off Compose task and blocks it on failure, timeout and cancellation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-compose-"));
     const stateDir = path.join(root, "state");
     const orchestrator = new DevFnOrchestrator();
-    const config = (exit: number) => validateDevFnConfig({ version: 1, project: { id: "task-compose" },
+    const config = (seed: { exit?: number; sleep?: number; timeoutMs?: number } = {}) => validateDevFnConfig({ version: 1, project: { id: "task-compose" },
       services: {
-        seed: { adapter: "compose", service: "seed", env: { SEED_EXIT: String(exit) }, task: { idempotent: true } },
+        seed: { adapter: "compose", service: "seed", env: { SEED_EXIT: String(seed.exit ?? 0), SEED_SLEEP: String(seed.sleep ?? 0) },
+          task: { idempotent: true, ...(seed.timeoutMs ? { timeoutMs: seed.timeoutMs } : {}) } },
+        "vault-seed": { adapter: "compose", service: "vault-seed", envAllowlist: ["SEED_TOKEN"], secretEnv: ["SEED_TOKEN"], task: {} },
         api: { adapter: "compose", service: "api", dependsOn: ["seed"], health: { type: "command", command: ["sh", "-c", "exit 0"], timeoutMs: 5_000 } },
+        "vault-api": { adapter: "compose", service: "api", dependsOn: ["vault-seed"], health: { type: "command", command: ["sh", "-c", "exit 0"], timeoutMs: 5_000 } },
       },
-      profiles: { default: { services: ["api"] } } });
+      profiles: { default: { services: ["api"] }, vault: { services: ["vault-api"] } } });
     let project: string | undefined;
+    const oneOffs = async () => project ? (await execFileAsync("docker", ["ps", "-aq", "--filter", `label=com.docker.compose.project=${project}`, "--filter", "label=com.docker.compose.oneoff=True"])).stdout.trim() : "";
+    const services = async () => (await readReceipt(config(), root, (await resolveInstanceIdentity("task-compose", root)).instanceId))?.services ?? [];
     try {
       await writeFile(path.join(root, "compose.yaml"), [
         "services:",
         "  seed:",
         "    image: busybox",
-        "    command: [sh, -c, 'echo seeded; exit ${SEED_EXIT:-0}']",
+        "    command: [sh, -c, 'echo seeded; sleep ${SEED_SLEEP:-0}; exit ${SEED_EXIT:-0}']",
+        "  vault-seed:",
+        "    image: busybox",
+        "    environment: [SEED_TOKEN]",
+        "    command: [sh, -c, 'echo token=$$SEED_TOKEN']",
         "  api:",
         "    image: busybox",
         "    command: [sleep, '3600']",
         "",
       ].join("\n"));
-      const ready = await orchestrator.up({ config: config(0), root, stateDir });
+      // Compose reads this value itself; DevFn's environment never holds it.
+      await writeFile(path.join(root, ".env"), "SEED_TOKEN=compose-dotenv-secret-555\n");
+      const ready = await orchestrator.up({ config: config(), root, stateDir });
       project = ready.services[0].projectName;
       expect(ready.tasks).toMatchObject([{ name: "seed", kind: "service", status: "succeeded", attempts: [{ exitCode: 0, effects: "applied" }] }]);
       expect(ready.services.map((item) => item.name)).toEqual(["api"]);
       expect(await readFile(ready.tasks![0].logPath!, "utf8")).toContain("seeded");
       // No one-off container is left behind.
-      const leftover = await execFileAsync("docker", ["ps", "-aq", "--filter", `label=com.docker.compose.project=${project}`, "--filter", "label=com.docker.compose.oneoff=True"]);
-      expect(leftover.stdout.trim()).toBe("");
-      await orchestrator.down({ config: config(0), root, stateDir });
-      await expect(orchestrator.up({ config: config(5), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
-      expect(await readReceipt(config(5), root, ready.instanceId)).toMatchObject({ state: "failed", services: [], tasks: [{ status: "failed", attempts: [{ exitCode: 5 }] }] });
+      expect(await oneOffs()).toBe("");
+      await orchestrator.down({ config: config(), root, stateDir });
+
+      await expect(orchestrator.up({ config: config({ exit: 5 }), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
+      expect(await readReceipt(config(), root, ready.instanceId)).toMatchObject({ state: "failed", services: [], tasks: [{ status: "failed", attempts: [{ exitCode: 5 }] }] });
+
+      // A timeout stops the run and removes the one-off container it left.
+      await expect(orchestrator.up({ config: config({ sleep: 60, timeoutMs: 4_000 }), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_TIMEOUT" } });
+      expect(await services()).toEqual([]);
+      expect(await oneOffs()).toBe("");
+
+      // So does a cancellation while the container runs.
+      const controller = new AbortController();
+      const cancelled = orchestrator.up({ config: config({ sleep: 60 }), root, stateDir, signal: controller.signal }).catch((error: unknown) => error);
+      while (!await oneOffs()) await new Promise((resolve) => setTimeout(resolve, 200));
+      controller.abort();
+      expect(await cancelled).toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } });
+      expect(await services()).toEqual([]);
+      expect(await oneOffs()).toBe("");
+
+      // A task with secret channels keeps none of its output, so a value Compose loaded never reaches its log.
+      const vault = await orchestrator.up({ config: config(), root, stateDir, profile: "vault" });
+      expect(vault.tasks).toMatchObject([{ name: "vault-seed", status: "succeeded" }]);
+      const log = await readFile(vault.tasks![0].logPath!, "utf8");
+      expect(log).not.toContain("compose-dotenv-secret-555");
+      expect(log).toContain("not kept");
+      expect(JSON.stringify(await orchestrator.logs({ config: config(), root, name: "vault-seed" }))).not.toContain("compose-dotenv-secret-555");
     } finally {
-      await orchestrator.down({ config: config(0), root, stateDir }).catch(() => undefined);
+      await orchestrator.down({ config: config(), root, stateDir }).catch(() => undefined);
       if (project) await execFileAsync("docker", ["network", "rm", `${project}_default`]).catch(() => undefined);
       await rm(root, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 300_000);
 });
