@@ -390,8 +390,9 @@ function rewrite(marked: Marked, trigger: RegExp, replacement: string, edit: (ma
         edits.push(found);
         from = found.end;
       }
-      // An empty match moves on by one, as String.prototype.replace does.
-      trigger.lastIndex = Math.max(from - at, match.index + match[0].length, match.index + 1);
+      // An empty match moves on by one code point, as String.prototype.replace does (u/v exec reads an index inside a surrogate pair as its start).
+      const next = Math.max(from - at, match.index + match[0].length, match.index + 1);
+      trigger.lastIndex = /[uv]/.test(trigger.flags) && (stretch.codePointAt(next - 1) ?? 0) > 0xffff ? next + 1 : next;
     }
   }
   let output = "";
@@ -453,7 +454,8 @@ function redactAssignments(marked: Marked, redactor: CompiledRedactor, separator
   });
 }
 
-function redactText(value: string, redactor: CompiledRedactor): string {
+// The rules run again on their output until it stops changing (at most four passes, and only if they keep the replacement itself), so redacting twice changes nothing.
+function redactText(value: string, redactor: CompiledRedactor, pass = 1): string {
   const { replacement } = redactor;
   // The userinfo between the scheme and the last `@` only.
   let result = rewrite({ text: value, marks: [] }, URL_USERINFO, replacement, (match, at) => ({ start: at + match.index + match[1].length, end: at + match.index + match[0].length - 1 }));
@@ -465,7 +467,7 @@ function redactText(value: string, redactor: CompiledRedactor): string {
   for (const pattern of redactor.patterns) {
     result = rewrite(result, pattern, replacement, (match, at) => ({ start: at + match.index, end: at + match.index + match[0].length }));
   }
-  return result.text;
+  return result.text === value || pass === 4 || redactText(replacement, redactor, 4) !== replacement ? result.text : redactText(result.text, redactor, pass + 1);
 }
 
 /** Text of a date by the built-in methods only, so no caller override of getTime or toISOString runs */
@@ -566,7 +568,7 @@ function redactNode(
       setOwn(
         result,
         outputKey,
-        redactor.isSensitive(key) && !allowed
+        !allowed && (redactor.isSensitive(key) || redactor.isSensitive(outputKey))
           ? redactor.replacement
           : redactNode(item, redactor, itemPath, ancestors, depth + 1)
       );
@@ -594,12 +596,10 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
     } else {
       // Field names are text too, exactly like nested keys; an allowlisted name is kept, and any collision keeps both values.
       // A schema field keeps its name, and no other field takes a schema name.
+      // A value is replaced when the written name is sensitive too, so redacting the output again keeps it.
       const allowed = redactor.allowlist.has(key);
-      setOwn(
-        redacted,
-        OWN_BUDGET.has(key) ? key : uniqueKey(redacted, allowed ? key : redactText(key, redactor), used, OWN_BUDGET),
-        !allowed && redactor.isSensitive(key) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0)
-      );
+      const name = OWN_BUDGET.has(key) ? key : uniqueKey(redacted, allowed ? key : redactText(key, redactor), used, OWN_BUDGET);
+      setOwn(redacted, name, !allowed && (redactor.isSensitive(key) || redactor.isSensitive(name)) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0));
     }
   }
   return redacted as unknown as LogEvent;

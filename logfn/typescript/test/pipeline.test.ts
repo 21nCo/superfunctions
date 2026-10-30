@@ -237,6 +237,107 @@ describe("redaction", () => {
     expect(redactEvent(output, options).msg).toBe(expected);
   });
 
+  it("empty matches of u and v patterns step over whole surrogate pairs, so every redaction path ends", async () => {
+    // Throws instead of looping forever when a rule stops making progress.
+    class Bounded extends RegExp {
+      calls = 0;
+      exec(text: string) {
+        if (++this.calls > 1_000) throw new Error("no progress");
+        return super.exec(text);
+      }
+    }
+    const hasV = (() => {
+      try {
+        return new RegExp("", "v").flags === "v";
+      } catch {
+        return false;
+      }
+    })();
+    const loneSurrogates = (text: string) => text.match(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g)?.length ?? 0;
+    for (const source of ["(?:)", "(?=.)", "a*"]) {
+      for (const flags of ["gu", ...(hasV ? ["gv"] : []), "g"]) {
+        for (const msg of ["\u{1F600}", "a \u{1F600} b", "\uD83D", "\uDE00x"]) {
+          // One marker per match, as String.prototype.replace writes them (per code point in u/v mode, per
+          // UTF-16 unit otherwise, as before), with touching markers joined.
+          const expected = msg.replace(new RegExp(source, flags), "X").replace(/X+/g, "X");
+          const options = () => ({ replacement: "X", patterns: [new Bounded(source, flags)] });
+          const spy = fetchSpy();
+          const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch, redact: options() });
+          const captured = capture();
+          const logger = createLogger({ name: "test", pipeline: [redactSecFn(options())], sinks: [captured.sink] });
+          logger.info(msg);
+          createLogger({ name: "test", sinks: [sink] }).info(msg);
+          await sink.flush();
+          const sent = (JSON.parse(spy.requests[0].body) as { events: LogEvent[] }).events[0];
+          const outputs = [redactEvent(event({ msg }), options()), redactSecFn(options())(event({ msg })) as LogEvent, captured.events[0], sent];
+          for (const output of outputs) {
+            expect([source, flags, output.msg]).toEqual([source, flags, expected]);
+            if (flags !== "g") expect(loneSurrogates(output.msg)).toBe(loneSurrogates(msg));
+          }
+        }
+      }
+    }
+  });
+
+  it.each([
+    ['password="v"https://user:pw@host.example/path', 'password="R"'],
+    ['"secret":"v"https://user:pw@host.example/path', '"secret":"R"'],
+    ['token: "a"https://u:p@h.io/x', 'token: "R"'],
+  ])("a value glued to a marker is redacted to the same text again: %j", (msg, template) => {
+    for (const replacement of [REDACTED, "MASK", "x"]) {
+      const options = { replacement };
+      const expected = template.replace(/R/g, replacement);
+      for (const redact of [(input: LogEvent) => redactEvent(input, options), (input: LogEvent) => redactSecFn(options)(input) as LogEvent]) {
+        const once = redact(event({ msg }));
+        expect(once.msg).toBe(expected);
+        expect(redact(once)).toEqual(once);
+      }
+    }
+  });
+
+  it("redacting twice changes nothing, for seeded concatenations of rule inputs with and without separators", () => {
+    // mulberry32, so every run checks the same inputs.
+    let seed = 0x5eed;
+    const random = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    const parts = [
+      "https://user:pw@host.example/path", "ftp://bob:x@h.io", "ada@example.com", "user@", "password=hunter2", 'password="v"',
+      '"secret":"v"', "token: 'a'", "Bearer abcDEF123", "?token=s3cr3t&x=1", "%3Ftoken%3Dabc", "Authorization: Basic Zm9v",
+      "Cookie: sid=1; b=2", "\n", REDACTED, "MASK", "x", "a", "@", ":", "=", "/", ",", "{", "}", "tok_1",
+    ];
+    for (const separator of ["", " "]) {
+      for (const replacement of [REDACTED, "MASK", "x", "***"]) {
+        const options = { replacement, patterns: [/tok_\d/g, /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![A-Za-z0-9])/g] };
+        for (let run = 0; run < 1_000; run++) {
+          const msg = Array.from({ length: 1 + random(6) }, () => parts[random(parts.length)]).join(separator);
+          for (const redact of [(input: LogEvent) => redactEvent(input, options), (input: LogEvent) => redactSecFn(options)(input) as LogEvent]) {
+            const once = redact(event({ msg, ctx: { [msg]: msg } }));
+            expect([msg, redact(once)]).toEqual([msg, once]);
+          }
+        }
+      }
+    }
+  });
+
+  it("a value is replaced when the key it is written under is sensitive, so redacting again keeps it", () => {
+    const options = { replacement: "***" };
+    // `%3Ftoken%3Dabc` is not a sensitive name, but its redacted text `%3Ftoken%3D***` reads as `token`.
+    const input = { ...event({ ctx: { "%3Ftoken%3Dabc": "v" } }), "%3Ftoken%3Dabc": "v" } as LogEvent;
+    for (const output of [redactEvent(input, options), redactSecFn(options)(input) as LogEvent]) {
+      expect(output).toMatchObject({ ctx: { "%3Ftoken%3D***": "***" }, "%3Ftoken%3D***": "***" });
+      expect(redactEvent(output, options)).toEqual(output);
+    }
+  });
+
+  it("a replacement the rules would redact gets one pass, so its text is never redacted over and over", () => {
+    const options = { replacement: "<a a>", patterns: [/a/g] };
+    expect(redactEvent(event({ msg: "a b" }), options).msg).toBe("<a a> b");
+  });
+
   describe("error fields obey the sensitive-key rules and the allowlist, like record keys", () => {
     const failure = () => {
       const cause = new Error("cause PRIVATE_CAUSE");

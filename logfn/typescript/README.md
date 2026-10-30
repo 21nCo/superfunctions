@@ -98,7 +98,7 @@ every other event field, object keys and top-level field names included (it reda
   `secret`, `apiKey`, `authorization`, `cookie`, `credentials`, keys ending in
   `token`, `jwt` or `signature`, and a few exact names such as `auth`, `sid`).
   Keys are compared lowercased with punctuation removed; `maxTokens` and
-  `tokenCount` are kept.
+  `tokenCount` are kept. A key whose redacted text is such a name counts too.
 - URL credentials (`scheme://user:pass@host`, up to the last `@` of the
   authority as URL parsers read it), credential query and fragment
   values (names are percent-decoded; the value runs to the next `&`, `#`,
@@ -119,8 +119,10 @@ every other event field, object keys and top-level field names included (it reda
 
 Each rule reads only caller text: a marker one rule writes is never part of a
 later match (`https://MASK@host/path` keeps its host for any replacement), a
-sensitive value that runs on past a marker takes it in, and touching markers
-are written as one, so redacting twice changes nothing.
+sensitive value that runs into a marker takes the whole marker in, and
+touching markers are written as one. The rules then run again on their output
+until it stops changing (at most four passes; one when they would redact the
+replacement itself), so redacting twice changes nothing.
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`; ctx paths start at the ctx root
