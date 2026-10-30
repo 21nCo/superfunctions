@@ -172,6 +172,12 @@ describe("redaction", () => {
       "'private key'=".repeat(20_000),
       '"a b c"= "'.repeat(20_000),
       '"api key" = "' + "a\n".repeat(100_000),
+      // Keys glued into a value, which is read again for them.
+      "password=" + "token=".repeat(30_000) + "\\x",
+      'password="v"' + "xtoken=".repeat(30_000) + " a",
+      'secret="v"' + 'xtoken="a"'.repeat(20_000),
+      "secret=[a]" + "xtoken=[".repeat(25_000),
+      '"v"' + "-Bearer".repeat(30_000),
     ];
     const started = Date.now();
     for (const msg of inputs) redactEvent(event({ msg }));
@@ -333,9 +339,65 @@ describe("redaction", () => {
     }
   });
 
-  it("a replacement the rules would redact gets one pass, so its text is never redacted over and over", () => {
+  it("a replacement the rules would redact is never redacted over and over", () => {
     const options = { replacement: "<a a>", patterns: [/a/g] };
     expect(redactEvent(event({ msg: "a b" }), options).msg).toBe("<a a> b");
+  });
+
+  // Every way an event is redacted: direct, as a stage, through a logger stage and by sinkHttp before delivery.
+  async function redactEverywhere(msg: string, options: RedactionOptions): Promise<string[]> {
+    const spy = fetchSpy();
+    const sink = sinkHttp({ url: "https://collector.test/ingest", fetch: spy.fetch, redact: options });
+    const captured = capture();
+    createLogger({ name: "test", pipeline: [redactSecFn(options)], sinks: [captured.sink] }).info(msg);
+    createLogger({ name: "test", sinks: [sink] }).info(msg);
+    await sink.flush();
+    const sent = (JSON.parse(spy.requests[0].body) as { events: LogEvent[] }).events[0];
+    return [redactEvent(event({ msg }), options).msg, (redactSecFn(options)(event({ msg })) as LogEvent).msg, captured.events[0].msg, sent.msg];
+  }
+
+  it("a replacement that reads as a credential name is rejected, so a marker never turns caller words into a value", async () => {
+    for (const replacement of ["SECRET", "TOKEN", "password", "Authorization", "api-key", "[auth]"]) {
+      expect(() => redactEvent(event(), { replacement })).toThrow("sensitive key name");
+      expect(() => redactSecFn({ replacement })).toThrow("sensitive key name");
+      expect(() => sinkHttp({ url: "https://collector.test/ingest", redact: { replacement } })).toThrow("sensitive key name");
+    }
+    expect(() => redactSecFn({ replacement: "MASK", keys: ["mask"] })).toThrow("sensitive key name");
+    for (const replacement of ["MASK", "x", "***", REDACTED]) {
+      const options = { replacement };
+      for (const output of await redactEverywhere("alice@example.com: upload completed", options)) {
+        expect(output).toBe(`${replacement}: upload completed`);
+        expect(redactEvent(event({ msg: output }), options).msg).toBe(output);
+      }
+    }
+  });
+
+  it.each([
+    ["abbbbb", { replacement: "a", patterns: [/ab/g] }, "a"],
+    [`a${"b".repeat(50)}`, { replacement: "a", patterns: [/ab/g] }, "a"],
+    ["xa", { replacement: "xx", patterns: [/x(?=a)/g] }, "xx"],
+  ])("text the rules keep changing fails closed to the replacement, so redacting again changes nothing: %j", async (msg, options, expected) => {
+    for (const output of await redactEverywhere(msg, options)) {
+      expect(output).toBe(expected);
+      expect(await redactEverywhere(output, options)).toEqual([expected, expected, expected, expected]);
+    }
+  });
+
+  it("a credential glued to a quoted or bracketed value is redacted as it is after a separator", async () => {
+    const credentials = ["Authorization: Basic Zm9v", "Authorization:Basic Zm9v", "Authorization: Bearer abc123", "token=abc123", "token =abc123", 'token="Zm9v abc123"', "Bearer abc123"];
+    for (const value of ['"v"', "'v'", String.raw`\"v\"`, "[a]", "{a: 1}"]) {
+      for (const separator of ["", "x", " "]) {
+        for (const credential of credentials.filter((text) => separator !== "x" || !text.startsWith("Bearer"))) {
+          const msg = `"secret": ${value}${separator}${credential} tail`;
+          for (const output of await redactEverywhere(msg, {})) {
+            expect([msg, output]).toEqual([msg, expect.not.stringMatching(/Zm9v|abc123/)]);
+            expect([msg, redactEvent(event({ msg: output }), {}).msg]).toEqual([msg, output]);
+          }
+        }
+      }
+    }
+    expect(redactEvent(event({ msg: '"secret":"v"xAuthorization: Basic Zm9v' })).msg).toBe('"secret":"[redacted]"');
+    expect(redactEvent(event({ msg: "password=vxtoken: abc123 tail" })).msg).toBe("password=[redacted] tail");
   });
 
   describe("error fields obey the sensitive-key rules and the allowlist, like record keys", () => {

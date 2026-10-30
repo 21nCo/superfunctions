@@ -110,7 +110,8 @@ every other event field, object keys and top-level field names included (it reda
   `"api key" = x` or `'api key': x`; quoted values are consumed whole, escaped
   quotes and once-escaped JSON included, across lines to the closing quote
   (a multi-line PEM key included) or to the end of the text when
-  unterminated, with any text glued to the closing quote; an object or
+  unterminated, with any text glued to the closing quote, where a credential
+  key or bearer token also takes its own value in; an object or
   array value is consumed to its balanced closing bracket, across lines, or
   to the end of the text when unbalanced), and bearer tokens. A value that already starts with
   the replacement is left alone only when the replacement is all of it.
@@ -120,16 +121,19 @@ every other event field, object keys and top-level field names included (it reda
 Each rule reads only caller text: a marker one rule writes is never part of a
 later match (`https://MASK@host/path` keeps its host for any replacement), a
 sensitive value that runs into a marker takes the whole marker in, and
-touching markers are written as one. The rules then run again on their output
-until it stops changing (at most four passes; one when they would redact the
-replacement itself), so redacting twice changes nothing.
+touching markers are written as one. The rules then run again, keeping the
+markers, until the text stops changing and also stays the same with its markers
+read as text; text that does not settle in four passes becomes the replacement,
+so redacting twice changes nothing. A `patterns` entry that matches the
+replacement itself is the exception: its markers are redacted again on each call.
 
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`; ctx paths start at the ctx root
 and other fields, `msg` included, are named by their field name, in one namespace, so
 `userId` exempts both the `userId` field and `ctx.userId`, but not
 `ctx.user.userId`), `patterns`, `replacement`
-(default `"[redacted]"`; it must not be empty, which throws; it is inserted
+(default `"[redacted]"`; it must not be empty or read as a sensitive key name
+such as `SECRET`, which throws; it is inserted
 literally, `$&` or `$1` are not expanded). Cycles become `"[circular]"` and
 nesting beyond 32 levels becomes `"[max-depth]"`. Dates are redacted as the
 ISO text sanitization writes, so the output is final: no later step adds

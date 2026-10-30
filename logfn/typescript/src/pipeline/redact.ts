@@ -155,6 +155,7 @@ const AUTH_SCHEME = /(?:bearer|basic|digest|negotiate)[ \t]+/iy;
 const UNQUOTED_STOP = new Set([" ", "\t", "\n", "\r", "\f", "\v", "&", ";", ",", "#", '"', "'"]);
 const LINE_REST = /[^\r\n]*/y;
 const BEARER_TOKEN = /(?<![A-Za-z0-9])(bearer)[ \t]+[A-Za-z0-9\-._~+/]+=*/gi;
+const GLUED_BEARER = /bearer[ \t]+[A-Za-z0-9\-._~+/]+=*/iy;
 const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![A-Za-z0-9])/g;
 
 /** Default extra patterns applied after the credential rules */
@@ -193,6 +194,8 @@ interface CompiledRedactor {
   patterns: RegExp[];
   allowlist: Set<string>;
   isSensitive(key: string): boolean;
+  /** Whether the rules keep the replacement itself */
+  settled?: boolean;
 }
 
 function compile(options: RedactionOptions): CompiledRedactor {
@@ -202,7 +205,7 @@ function compile(options: RedactionOptions): CompiledRedactor {
   if (typeof replacement !== "string" || replacement === "") {
     throw new Error("redaction replacement must be a non-empty string");
   }
-  return {
+  const redactor: CompiledRedactor = {
     replacement,
     patterns: (options.patterns ?? DEFAULT_PATTERNS).map((pattern) =>
       pattern.global ? pattern : new RegExp(pattern.source, `${pattern.flags}g`)
@@ -210,6 +213,10 @@ function compile(options: RedactionOptions): CompiledRedactor {
     allowlist: new Set(options.allowlist ?? []),
     isSensitive: (key) => isSensitiveKey(key) || extraKeys.has(normalizeKey(key)),
   };
+  // A marker such as `SECRET` would read as a credential name, so `SECRET: word` loses the word on the next call.
+  if (redactor.isSensitive(replacement)) throw new Error("redaction replacement must not be a sensitive key name");
+  redactor.settled = applyRules({ text: replacement, marks: [] }, redactor).text === replacement;
+  return redactor;
 }
 
 // End of a quoted value whose opening quote is preceded by `slashes`
@@ -242,12 +249,15 @@ function quotedValueEnd(input: string, from: number, slashes: number, quote: str
 
 // End of text glued to the end of a quoted or bracketed value, as in
 // `"x"TAIL` or `[x]TAIL`. A backslash also ends it, so the escaped
-// whitespace after a value in serialized JSON (`\"x\"\n`) is kept.
+// whitespace after a value in serialized JSON (`\"x\"\n`) is kept. A bearer
+// token in it (`"x"Bearer abc`) is taken in whole, as after a separator.
 function gluedEnd(input: string, from: number): number {
   let index = from;
   while (index < input.length && input[index] !== "\\" && !UNQUOTED_STOP.has(input[index])) {
     const char = input[index];
     if (char === "}" || char === "]") break;
+    GLUED_BEARER.lastIndex = index;
+    if ((char === "b" || char === "B") && !/[A-Za-z0-9]/.test(input[index - 1]) && GLUED_BEARER.test(input)) return GLUED_BEARER.lastIndex;
     index++;
   }
   return index;
@@ -276,6 +286,8 @@ interface ScannedValue {
   end: number;
   /** Quote, with its escaping backslashes, written around the replacement */
   quote: string;
+  /** Start of the unquoted text in it, glued to a closing quote or bracket */
+  tail: number;
 }
 
 // End of the bracketed value opening at `start` (`{` or `[`), across lines;
@@ -316,11 +328,12 @@ function bracketedValueEnd(input: string, start: number): number {
 function scanValue(input: string, start: number, replacement: string): ScannedValue | null {
   if (replacement !== "" && input.startsWith(replacement, start)) {
     const end = unquotedValueEnd(input, start + replacement.length);
-    return end > start + replacement.length ? { end, quote: "" } : null;
+    return end > start + replacement.length ? { end, quote: "", tail: start + replacement.length } : null;
   }
   if (input[start] === "{" || input[start] === "[") {
     // Text glued to the closing bracket, as in `[x]TAIL`, is part of the value.
-    return { end: gluedEnd(input, bracketedValueEnd(input, start)), quote: "" };
+    const tail = bracketedValueEnd(input, start);
+    return { end: gluedEnd(input, tail), quote: "", tail };
   }
   AUTH_SCHEME.lastIndex = start;
   const position = AUTH_SCHEME.exec(input) ? AUTH_SCHEME.lastIndex : start;
@@ -329,14 +342,12 @@ function scanValue(input: string, start: number, replacement: string): ScannedVa
   const quote = input[position + slashes];
   if (quote === '"' || quote === "'") {
     // Text glued to the closing quote, as in `"x"TAIL`, is part of the value.
-    return {
-      end: gluedEnd(input, quotedValueEnd(input, position + slashes + 1, slashes, quote)),
-      quote: input.slice(position, position + slashes + 1),
-    };
+    const tail = quotedValueEnd(input, position + slashes + 1, slashes, quote);
+    return { end: gluedEnd(input, tail), quote: input.slice(position, position + slashes + 1), tail };
   }
   for (const from of position === start ? [start] : [position, start]) {
     const end = unquotedValueEnd(input, from);
-    if (end > from) return { end, quote: "" };
+    if (end > from) return { end, quote: "", tail: from };
   }
   return null;
 }
@@ -359,27 +370,34 @@ interface Edit {
   end: number;
   before?: string;
   after?: string;
+  /** Where the rule reads on, if before `end` */
+  resume?: number;
 }
 
 // Runs one rule. Its trigger matches caller text only, one stretch between
 // markers at a time, so no rule reads a marker as part of a key, an email or a
-// pattern. `edit` maps a match (`at` is the stretch offset) to the span to
-// replace, or null; a value may run on past markers and takes them in.
-function rewrite(marked: Marked, trigger: RegExp, replacement: string, edit: (match: RegExpExecArray, at: number) => Edit | null): Marked {
+// pattern. `edit` maps a match (`at` is the stretch offset, `covered` the end
+// of the last span) to the span to replace, or null; a value may run on past
+// markers and takes them in.
+function rewrite(marked: Marked, trigger: RegExp, replacement: string, edit: (match: RegExpExecArray, at: number, covered: number) => Edit | null): Marked {
   const { text, marks } = marked;
   const edits: Edit[] = [];
   let from = 0;
+  let resume = 0;
   for (let mark = 0; mark <= marks.length; mark += 2) {
     const at = mark === 0 ? 0 : marks[mark - 1];
     const stretch = text.slice(at, mark < marks.length ? marks[mark] : text.length);
-    trigger.lastIndex = Math.max(0, from - at);
+    trigger.lastIndex = Math.max(0, resume - at);
     let match: RegExpExecArray | null;
     while (trigger.lastIndex <= stretch.length && (match = trigger.exec(stretch)) !== null) {
-      const found = edit(match, at);
+      const found = edit(match, at, from);
       if (found) {
-        // A marker that touches another one joins it, so redacting twice gives the same text.
+        // A marker that touches another one joins it, so redacting twice gives the same text; one inside the last (a key glued to its value) extends it.
         const prev = edits.at(-1);
-        if (!found.before && prev?.end === found.start && !prev.after) {
+        if (prev && at + match.index < prev.end) {
+          edits.pop();
+          Object.assign(found, { start: prev.start, end: Math.max(prev.end, found.end), before: prev.before, after: prev.after });
+        } else if (!found.before && prev?.end === found.start && !prev.after) {
           edits.pop();
           found.start = prev.start;
           found.before = prev.before;
@@ -389,9 +407,10 @@ function rewrite(marked: Marked, trigger: RegExp, replacement: string, edit: (ma
         for (let next = mark; next < marks.length && (marks[next] < found.end || (!found.after && marks[next] === found.end)); next += 2) found.end = Math.max(found.end, marks[next + 1]);
         edits.push(found);
         from = found.end;
+        resume = found.resume ?? found.end;
       }
       // An empty match moves on by one code point, as String.prototype.replace does (u/v exec reads an index inside a surrogate pair as its start).
-      const next = Math.max(from - at, match.index + match[0].length, match.index + 1);
+      const next = Math.max(resume - at, match.index + match[0].length, match.index + 1);
       trigger.lastIndex = /[uv]/.test(trigger.flags) && (stretch.codePointAt(next - 1) ?? 0) > 0xffff ? next + 1 : next;
     }
   }
@@ -436,7 +455,7 @@ function redactQueryParams(marked: Marked, redactor: CompiledRedactor, param: Re
 function redactAssignments(marked: Marked, redactor: CompiledRedactor, separator: RegExp): Marked {
   const { replacement } = redactor;
   const input = marked.text;
-  return rewrite(marked, separator, replacement, (match, at) => {
+  return rewrite(marked, separator, replacement, (match, at, covered) => {
     const valueStart = at + match.index + match[0].length;
     if (!redactor.isSensitive(match[2])) return null;
     const value = scanValue(input, valueStart, replacement);
@@ -450,15 +469,16 @@ function redactAssignments(marked: Marked, redactor: CompiledRedactor, separator
       : (value?.end ?? valueStart);
     if (valueEnd === valueStart) return null;
     const quote = headerLine ? "" : (value?.quote ?? "");
-    return { start: valueStart, end: valueEnd, before: quote, after: quote };
+    // Text glued to the value is read again, so a credential key in it (`"v"xAuthorization: Basic x`) takes its value in too.
+    const resume = !headerLine && value && value.tail >= covered ? value.tail : valueEnd;
+    return { start: valueStart, end: valueEnd, before: quote, after: quote, resume };
   });
 }
 
-// The rules run again on their output until it stops changing (at most four passes, and only if they keep the replacement itself), so redacting twice changes nothing.
-function redactText(value: string, redactor: CompiledRedactor, pass = 1): string {
+function applyRules(marked: Marked, redactor: CompiledRedactor): Marked {
   const { replacement } = redactor;
   // The userinfo between the scheme and the last `@` only.
-  let result = rewrite({ text: value, marks: [] }, URL_USERINFO, replacement, (match, at) => ({ start: at + match.index + match[1].length, end: at + match.index + match[0].length - 1 }));
+  let result = rewrite(marked, URL_USERINFO, replacement, (match, at) => ({ start: at + match.index + match[1].length, end: at + match.index + match[0].length - 1 }));
   result = redactQueryParams(result, redactor, QUERY_PARAM, QUERY_VALUE);
   result = redactQueryParams(result, redactor, ENCODED_QUERY_PARAM, ENCODED_QUERY_VALUE);
   result = redactAssignments(result, redactor, KEY_SEPARATOR);
@@ -467,7 +487,23 @@ function redactText(value: string, redactor: CompiledRedactor, pass = 1): string
   for (const pattern of redactor.patterns) {
     result = rewrite(result, pattern, replacement, (match, at) => ({ start: at + match.index, end: at + match.index + match[0].length }));
   }
-  return result.text === value || pass === 4 || redactText(replacement, redactor, 4) !== replacement ? result.text : redactText(result.text, redactor, pass + 1);
+  return result;
+}
+
+// Each pass keeps the markers of the last, so no rule reads one as caller text. A settled result must also stay
+// the same when its markers are read as text, as a later stage or sink reads them, or the next pass starts from
+// that reading; text that does not settle in four passes becomes the replacement. With a replacement the rules
+// would redact itself, the first result that keeps its markers is kept.
+function redactText(value: string, redactor: CompiledRedactor): string {
+  let marked: Marked = { text: value, marks: [] };
+  for (let pass = 0; pass < 4; pass++) {
+    const next = applyRules(marked, redactor);
+    const same = next.text === marked.text;
+    const fresh = same && (marked.marks.length === 0 || !redactor.settled) ? next : redactor.settled ? applyRules({ text: next.text, marks: [] }, redactor) : marked;
+    if (fresh.text === next.text) return next.text;
+    marked = same ? fresh : next;
+  }
+  return redactor.replacement;
 }
 
 /** Text of a date by the built-in methods only, so no caller override of getTime or toISOString runs */
