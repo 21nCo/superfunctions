@@ -983,8 +983,8 @@ async function selectedComposeSourceState(spec: ComposeServiceSpec, root: string
   return { sourceFile, inventory, interpolation, envFileState };
 }
 
-/** Generated sibling (DEVFN_URL_) and public tunnel (DEVFN_PUBLIC_URL_) URL names. */
-const isEndpointReference = (name: string): boolean => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_PUBLIC_URL_");
+/** Generated sibling (DEVFN_URL_), public tunnel (DEVFN_PUBLIC_URL_) and selected resource (DEVFN_RESOURCE_) names. */
+const isEndpointReference = (name: string): boolean => name.startsWith("DEVFN_URL_") || name.startsWith("DEVFN_PUBLIC_URL_") || name.startsWith("DEVFN_RESOURCE_");
 
 /** Read selected raw references without a Compose config subprocess. */
 export async function selectedComposeEndpointReferences(spec: ComposeServiceSpec, root: string,
@@ -1271,15 +1271,59 @@ async function uninterpolatedComposeConfiguration(args: string[], root: string, 
   }
 }
 
-/** Read Compose's effective service networks before publishing sibling DNS URLs. */
+/**
+ * Docker DNS names of a Compose service besides its service name, which Docker
+ * resolves on every network the service joins.
+ */
+export interface ComposeServiceDnsNames {
+  /** Its container_name and that network's aliases, by effective network name. */
+  networks: Record<string, string[]>;
+  /** Names its own links, external_links and extra_hosts map inside it, ahead of Docker DNS. */
+  overrides: ComposeNameOverride[];
+}
+
+/** A name a service maps itself, with the address extra_hosts gives it; a link names a container instead. */
+export interface ComposeNameOverride { name: string; address?: string }
+
+/** Each extra_hosts entry: name:address or name=address, or in mapping form a name and its address or addresses. */
+function hostMappings(extraHosts: string[] | Record<string, unknown> | undefined): ComposeNameOverride[] {
+  if (!Array.isArray(extraHosts)) {
+    return Object.entries(extraHosts ?? {}).flatMap(([name, address]) => [address].flat().map((value) => ({ name, address: String(value ?? "") })));
+  }
+  return extraHosts.map((entry) => {
+    const separator = /[:=]/.exec(entry)?.index ?? entry.length;
+    return { name: entry.slice(0, separator), address: entry.slice(separator + 1) };
+  });
+}
+
+/** What effectiveComposeServiceNetworks reports in dnsNames for one effective service. */
+function serviceDnsNames(service: { container_name?: string; networks?: Record<string, { aliases?: string[] } | null> | string[]; links?: string[];
+  external_links?: string[]; extra_hosts?: string[] | Record<string, unknown> }, networkNames: Record<string, string>): ComposeServiceDnsNames {
+  const keyed = Array.isArray(service.networks) ? Object.fromEntries(service.networks.map((key) => [key, null])) : service.networks ?? {};
+  const container = service.container_name ? [service.container_name] : [];
+  const networks = Object.fromEntries(Object.entries(keyed).map(([key, value]) => [networkNames[key], [...container, ...(value?.aliases ?? [])]]));
+  // A plain link (service or service:service) resolves the name Docker DNS resolves already.
+  const links = (service.links ?? []).flatMap((link) => {
+    const separator = link.indexOf(":");
+    const alias = link.slice(separator + 1);
+    return separator >= 0 && alias !== link.slice(0, separator) ? [{ name: alias }] : [];
+  });
+  const external = (service.external_links ?? []).map((link) => ({ name: link.slice(link.indexOf(":") + 1) }));
+  return { networks, overrides: [...links, ...external, ...hostMappings(service.extra_hosts)] };
+}
+
+/**
+ * Read Compose's effective service networks before publishing sibling DNS URLs.
+ * With dnsNames, also report the service's other Docker DNS names.
+ */
 export async function effectiveComposeServiceNetworks(spec: ComposeServiceSpec, root: string, instanceId: string, environment: NodeJS.ProcessEnv,
-  deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS, selectedReferences?: Set<string>): Promise<string[]> {
+  deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS, selectedReferences?: Set<string>, dnsNames?: ComposeServiceDnsNames): Promise<string[]> {
   try {
     const { sourceFile, inventory, interpolation, envFileState } = await selectedComposeSourceState(spec, root, environment, deadline);
     const interpolationValues = interpolation.values;
     const args = ["compose", "-p", composeProjectName(spec.projectName ?? "devfn", instanceId), "-f", sourceFile, "config", "--format", "json"];
     const configuration = await resolvedComposeConfiguration<{
-      services?: Record<string, { networks?: Record<string, unknown> | string[]; network_mode?: string }>;
+      services?: Record<string, Parameters<typeof serviceDnsNames>[0] & { network_mode?: string }>;
       networks?: Record<string, { name?: string }>;
     }>(args, root, environment, deadline, spec.service);
     const service = configuration.services?.[spec.service];
@@ -1308,12 +1352,14 @@ export async function effectiveComposeServiceNetworks(spec: ComposeServiceSpec, 
       interpolationValues, interpolation.unknownValues);
     const active = assertActiveReferences(references, (name) => interpolation.references.get(name), implicitInterpolationKeys(spec));
     for (const name of active) selectedReferences?.add(name);
+    const keys = Array.isArray(service.networks) ? service.networks : Object.keys(service.networks ?? {});
+    const networkNames = Object.fromEntries(keys.map((key) => [key, configuration.networks?.[key]?.name ?? `${composeProjectName(spec.projectName ?? "devfn", instanceId)}_${key}`]));
+    // Its own host mappings apply in any network mode.
+    if (dnsNames) Object.assign(dnsNames, serviceDnsNames(service, networkNames));
     // Host/none/container namespace modes have no Compose DNS network. A
     // standalone service may still start; sibling URL wiring will be omitted.
-    if (service.network_mode) return [];
-    const keys = Array.isArray(service.networks) ? service.networks : Object.keys(service.networks ?? {});
-    if (!keys.length) return [];
-    return keys.map((key) => configuration.networks?.[key]?.name ?? `${composeProjectName(spec.projectName ?? "devfn", instanceId)}_${key}`);
+    if (service.network_mode || !keys.length) return [];
+    return keys.map((key) => networkNames[key]);
   } catch {
     // Compose output may contain interpolated credentials; never include it in an error.
     throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to verify effective Compose networks for ${spec.service}.`);

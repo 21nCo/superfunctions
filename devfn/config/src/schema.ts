@@ -12,6 +12,10 @@ import type {
   ProcessSpec,
   ProfileSpec,
   ProfileTunnelSpec,
+  ResourceKind,
+  ResourceNamespaceSpec,
+  ResourceSpec,
+  ResourceTargetSpec,
   RuntimePrerequisite,
 } from "./types.js";
 import { DevFnConfigError } from "./errors.js";
@@ -191,6 +195,7 @@ function processSpec(value: unknown, field: string): ProcessSpec {
   if (exposure !== "local" && exposure !== "public") fail(`${field}.exposure must be local or public.`, `${field}.exposure`);
   const ports = stringArray(input.ports, `${field}.ports`);
   const dependsOn = stringArray(input.dependsOn, `${field}.dependsOn`);
+  const resources = uniqueNames(input.resources, `${field}.resources`);
   const parsedHealth = health(input.health, `${field}.health`);
   return {
     adapter,
@@ -201,6 +206,7 @@ function processSpec(value: unknown, field: string): ProcessSpec {
     ...environmentFields(input, field, exposure === "public"),
     ...(ports ? { ports } : {}),
     ...(dependsOn ? { dependsOn } : {}),
+    ...(resources ? { resources } : {}),
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: integer(input.shutdownTimeoutMs, `${field}.shutdownTimeoutMs`, 1, 3_600_000) }),
   };
@@ -213,6 +219,7 @@ function serviceSpec(value: unknown, field: string): ComposeServiceSpec {
     Object.entries(record(input.ports, `${field}.ports`)).map(([name, internal]) => [name, integer(internal, `${field}.ports.${name}`)]),
   );
   const dependsOn = stringArray(input.dependsOn, `${field}.dependsOn`);
+  const resources = uniqueNames(input.resources, `${field}.resources`);
   const parsedHealth = health(input.health, `${field}.health`);
   return {
     adapter: "compose",
@@ -221,6 +228,7 @@ function serviceSpec(value: unknown, field: string): ComposeServiceSpec {
     ...(optionalString(input.projectName, `${field}.projectName`) ? { projectName: optionalString(input.projectName, `${field}.projectName`) } : {}),
     ...(ports ? { ports } : {}),
     ...(dependsOn ? { dependsOn } : {}),
+    ...(resources ? { resources } : {}),
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.persistent === undefined ? {} : { persistent: input.persistent === true }),
     ...environmentFields(input, field, true),
@@ -233,12 +241,15 @@ function profileSpec(value: unknown, field: string): ProfileSpec {
   const proxy = optionalBoolean(input.proxy, `${field}.proxy`);
   for (const key of Object.keys(environment ?? {})) if (isCredentialKey(key)) fail(`${field}.environment.${key} must not contain a secret. Use process envAllowlist and secretEnv.`, `${field}.environment.${key}`);
   const tunnel = input.tunnel === undefined ? undefined : profileTunnelSpec(input.tunnel, `${field}.tunnel`);
+  const resources = input.resources === undefined ? undefined : Object.fromEntries(Object.entries(record(input.resources, `${field}.resources`))
+    .map(([name, target]) => [name, string(target, `${field}.resources.${name}`)]));
   return {
     ...(stringArray(input.processes, `${field}.processes`) ? { processes: stringArray(input.processes, `${field}.processes`) } : {}),
     ...(stringArray(input.services, `${field}.services`) ? { services: stringArray(input.services, `${field}.services`) } : {}),
     ...(environment ? { environment } : {}),
     ...(proxy === undefined ? {} : { proxy }),
     ...(tunnel ? { tunnel } : {}),
+    ...(resources ? { resources } : {}),
   };
 }
 
@@ -291,6 +302,189 @@ function hostnameSpec(value: unknown, field: string): HostnameSpec {
     ...(domain ? {} : { tls }),
     ...(stringArray(input.profiles, `${field}.profiles`) ? { profiles: stringArray(input.profiles, `${field}.profiles`) } : {}),
   };
+}
+
+function uniqueNames(value: unknown, field: string): string[] | undefined {
+  const names = stringArray(value, field);
+  if (names && new Set(names).size !== names.length) fail(`${field} must name each entry once.`, field);
+  return names;
+}
+
+const RESOURCE_KINDS: readonly ResourceKind[] = ["service", "database", "broker", "cache", "object-store", "browser"];
+const RESOURCE_NAME = /^[a-z][a-z0-9_-]{0,39}$/;
+const RESOURCE_MEMBER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const DATABASE_IDENTIFIER = /^[a-z][a-z0-9_]{0,62}$/;
+// An isolated namespace appends a separator and a 13-character owner token.
+const NAMESPACE_BASE: Record<string, RegExp> = { database: /^[a-z][a-z0-9_]{0,48}$/, other: /^[a-z0-9][a-z0-9_-]{0,47}$/ };
+const DEFAULT_PORTS: Record<string, string> = { "http:": "80", "https:": "443", "ws:": "80", "wss:": "443" };
+
+/** Normalized environment token of a resource or member name. */
+export function resourceToken(name: string): string {
+  return name.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+}
+
+/** Every generated key a resource can emit, whichever target a profile selects. */
+export function resourceEnvironmentKeys(name: string, spec: ResourceSpec): string[] {
+  const prefix = `DEVFN_RESOURCE_${resourceToken(name)}_`;
+  const suffixes: string[] = [];
+  if (spec.kind !== "browser") suffixes.push("HOST", "PORT", "ENDPOINT", "URL", "HOST_ENDPOINT", "INTERNAL_ENDPOINT");
+  if (spec.kind !== "service") suffixes.push("NAMESPACE");
+  if (spec.kind === "database") suffixes.push("DATABASE", ...(spec.namespace?.level === "schema" ? ["SCHEMA"] : []));
+  if (spec.kind === "cache" || spec.kind === "object-store") suffixes.push("PREFIX");
+  if (spec.kind === "broker") suffixes.push(...(spec.topics ?? []).map((topic) => `TOPIC_${resourceToken(topic)}`), "CONSUMER_GROUP");
+  if (spec.kind === "browser") {
+    suffixes.push(...(spec.cookies ?? []).map((cookie) => `COOKIE_${resourceToken(cookie)}`));
+    suffixes.push(...(spec.storageKeys ?? []).map((key) => `STORAGE_${resourceToken(key)}`));
+  }
+  return suffixes.map((suffix) => `${prefix}${suffix}`);
+}
+
+function resourceMembers(value: unknown, field: string): string[] | undefined {
+  const names = uniqueNames(value, field);
+  const tokens = new Set<string>();
+  for (const name of names ?? []) {
+    if (!RESOURCE_MEMBER.test(name)) fail(`${field} entries must use letters, numbers, underscores, and hyphens.`, field);
+    if (tokens.has(resourceToken(name))) fail(`${field} has ambiguous names that normalize to ${resourceToken(name)}.`, field);
+    tokens.add(resourceToken(name));
+  }
+  return names;
+}
+
+function secretReferences(value: unknown, field: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  return Object.fromEntries(Object.entries(record(value, field)).map(([name, environment]) => {
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(name)) fail(`${field}.${name} must be a lowercase secret field name.`, `${field}.${name}`);
+    const key = string(environment, `${field}.${name}`);
+    environmentKey(key, `${field}.${name}`);
+    return [name, key];
+  }));
+}
+
+function remoteResourceUrl(value: unknown, kind: ResourceKind, field: string): string {
+  const raw = string(value, field);
+  let url: URL;
+  try { url = new URL(raw); } catch { fail(`${field} must be an absolute URL.`, field); }
+  if (url.username || url.password) fail(`${field} must not embed credentials; name them in secrets.`, field);
+  // Clients decode percent escapes, so an encoded assignment, query or
+  // userinfo would reach them as a credential. A target URL is only a host,
+  // port and plain path.
+  if (raw.includes("%")) fail(`${field} must not contain percent-encoded data; name credentials in secrets.`, field);
+  if (url.search || url.hash || raw.includes("?") || raw.includes("#")) fail(`${field} must not contain a query or fragment; add options in a template.`, field);
+  if (!url.hostname) fail(`${field} requires a host.`, field);
+  if (!url.port && !DEFAULT_PORTS[url.protocol]) fail(`${field} requires an explicit port for ${url.protocol} targets.`, field);
+  if (/[=;@]/.test(url.pathname)) fail(`${field} path must not carry assignments or credentials.`, field);
+  if (kind === "database" && url.pathname && url.pathname !== "/") fail(`${field} cannot name a database; the database comes from the resource namespace.`, field);
+  return raw;
+}
+
+function resourceTarget(value: unknown, kind: ResourceKind, field: string): ResourceTargetSpec {
+  const input = record(value, field);
+  const secrets = secretReferences(input.secrets, `${field}.secrets`);
+  if (input.url !== undefined) {
+    for (const key of Object.keys(input)) if (!["url", "secrets"].includes(key)) fail(`${field}.${key} is not a remote target field.`, `${field}.${key}`);
+    return { url: remoteResourceUrl(input.url, kind, `${field}.url`), ...(secrets ? { secrets } : {}) };
+  }
+  for (const key of Object.keys(input)) if (!["node", "port", "scheme", "path", "secrets"].includes(key)) fail(`${field}.${key} is not a local target field.`, `${field}.${key}`);
+  const scheme = optionalString(input.scheme, `${field}.scheme`);
+  if (scheme && !/^[a-z][a-z0-9+.-]{0,31}$/.test(scheme)) fail(`${field}.scheme must be a URL scheme without "://".`, `${field}.scheme`);
+  const targetPath = optionalString(input.path, `${field}.path`);
+  if (targetPath && (!/^\/[A-Za-z0-9._~!$&'()+,:/-]*$/.test(targetPath) || targetPath.split("/").some((part) => part === "." || part === ".."))) {
+    fail(`${field}.path must be an absolute URL path without queries, assignments, or dot segments.`, `${field}.path`);
+  }
+  if (targetPath && kind === "database") fail(`${field}.path cannot name a database; the database comes from the resource namespace.`, `${field}.path`);
+  return { node: string(input.node, `${field}.node`), port: string(input.port, `${field}.port`),
+    ...(scheme ? { scheme } : {}), ...(targetPath ? { path: targetPath } : {}), ...(secrets ? { secrets } : {}) };
+}
+
+function resourceNamespace(value: unknown, kind: ResourceKind, field: string): ResourceNamespaceSpec | undefined {
+  if (value === undefined) return undefined;
+  if (kind === "service") fail(`${field} is unavailable for service resources.`, field);
+  const input = record(value, field);
+  for (const key of Object.keys(input)) if (!["base", "sharing", "level", "database"].includes(key)) fail(`${field}.${key} is not a namespace field.`, `${field}.${key}`);
+  const base = optionalString(input.base, `${field}.base`);
+  if (base && !NAMESPACE_BASE[kind === "database" ? "database" : "other"].test(base)) fail(`${field}.base is not a valid ${kind} namespace base.`, `${field}.base`);
+  const sharing = input.sharing === undefined ? undefined : string(input.sharing, `${field}.sharing`);
+  if (sharing !== undefined && sharing !== "isolated" && sharing !== "shared") fail(`${field}.sharing must be isolated or shared.`, `${field}.sharing`);
+  const level = input.level === undefined ? undefined : string(input.level, `${field}.level`);
+  if (level !== undefined && (kind !== "database" || (level !== "database" && level !== "schema"))) fail(`${field}.level must be database or schema on a database resource.`, `${field}.level`);
+  const database = optionalString(input.database, `${field}.database`);
+  if ((level === "schema") !== (database !== undefined)) fail(`${field}.database is required exactly when level is schema.`, `${field}.database`);
+  if (database && !DATABASE_IDENTIFIER.test(database)) fail(`${field}.database must be a lowercase database identifier.`, `${field}.database`);
+  return { ...(base ? { base } : {}), ...(sharing ? { sharing: sharing as "isolated" | "shared" } : {}),
+    ...(level ? { level: level as "database" | "schema" } : {}), ...(database ? { database } : {}) };
+}
+
+function resourceSpec(value: unknown, field: string): ResourceSpec {
+  const input = record(value, field);
+  const kind = string(input.kind, `${field}.kind`) as ResourceKind;
+  if (!RESOURCE_KINDS.includes(kind)) fail(`${field}.kind must be one of ${RESOURCE_KINDS.join(", ")}.`, `${field}.kind`);
+  const allowed = new Set(["kind", "targets", "defaultTarget", "namespace",
+    ...(kind === "broker" ? ["topics", "consumerGroup"] : []), ...(kind === "browser" ? ["cookies", "storageKeys"] : [])]);
+  for (const key of Object.keys(input)) if (!allowed.has(key)) fail(`${field}.${key} is not a field of ${kind} resources.`, `${field}.${key}`);
+  if (kind === "browser" && (input.targets !== undefined || input.defaultTarget !== undefined)) fail(`${field} browser metadata has no targets.`, field);
+  const targets = input.targets === undefined ? undefined : named(input.targets, `${field}.targets`, (item, itemField) => resourceTarget(item, kind, itemField));
+  if (kind !== "browser" && (!targets || !Object.keys(targets).length)) fail(`${field}.targets must declare at least one target.`, `${field}.targets`);
+  for (const name of Object.keys(targets ?? {})) if (!RESOURCE_NAME.test(name)) fail(`${field}.targets.${name} must be a lowercase target name.`, `${field}.targets.${name}`);
+  const defaultTarget = optionalString(input.defaultTarget, `${field}.defaultTarget`);
+  if (defaultTarget && !Object.hasOwn(targets ?? {}, defaultTarget)) fail(`${field}.defaultTarget references unknown target ${defaultTarget}.`, `${field}.defaultTarget`);
+  const topics = resourceMembers(input.topics, `${field}.topics`);
+  if (kind === "broker" && !topics?.length) fail(`${field}.topics must declare at least one topic.`, `${field}.topics`);
+  const consumerGroup = optionalString(input.consumerGroup, `${field}.consumerGroup`);
+  if (consumerGroup && !RESOURCE_MEMBER.test(consumerGroup)) fail(`${field}.consumerGroup must use letters, numbers, underscores, and hyphens.`, `${field}.consumerGroup`);
+  const cookies = resourceMembers(input.cookies, `${field}.cookies`);
+  const storageKeys = resourceMembers(input.storageKeys, `${field}.storageKeys`);
+  const namespace = resourceNamespace(input.namespace, kind, `${field}.namespace`);
+  return {
+    kind,
+    ...(targets ? { targets } : {}),
+    ...(defaultTarget ? { defaultTarget } : {}),
+    ...(namespace ? { namespace } : {}),
+    ...(topics ? { topics } : {}),
+    ...(consumerGroup ? { consumerGroup } : {}),
+    ...(cookies ? { cookies } : {}),
+    ...(storageKeys ? { storageKeys } : {}),
+  };
+}
+
+function validateLocalResourceTarget(config: DevFnConfig, target: Extract<ResourceTargetSpec, { node: string }>, field: string): void {
+  const process = config.processes && Object.hasOwn(config.processes, target.node) ? config.processes[target.node] : undefined;
+  const service = config.services && Object.hasOwn(config.services, target.node) ? config.services[target.node] : undefined;
+  if (!process && !service) fail(`${field}.node references unknown lifecycle node ${target.node}.`, `${field}.node`);
+  if (!config.ports || !Object.hasOwn(config.ports, target.port)) fail(`${field}.port references unknown port ${target.port}.`, `${field}.port`);
+  const declared = process ? process.ports?.includes(target.port) : service!.ports?.[target.port] !== undefined;
+  if (!declared) fail(`${field}.port ${target.port} is not an exposed port declared by ${target.node}.`, `${field}.port`);
+}
+
+function validateResourceReferences(config: DevFnConfig): void {
+  const resources = config.resources ?? {};
+  const tokens = new Map<string, string>();
+  const keys = new Map<string, string>();
+  for (const [name, spec] of Object.entries(resources)) {
+    if (!RESOURCE_NAME.test(name)) fail(`resources.${name} must be a lowercase resource name.`, `resources.${name}`);
+    const prior = tokens.get(resourceToken(name));
+    if (prior) fail(`resources.${prior} and resources.${name} are ambiguous: both normalize to ${resourceToken(name)}.`, `resources.${name}`);
+    tokens.set(resourceToken(name), name);
+    for (const key of resourceEnvironmentKeys(name, spec)) {
+      const owner = keys.get(key);
+      if (owner && owner !== name) fail(`resources.${owner} and resources.${name} both emit ${key}.`, `resources.${name}`);
+      keys.set(key, name);
+    }
+    for (const [targetName, target] of Object.entries(spec.targets ?? {})) {
+      if ("node" in target) validateLocalResourceTarget(config, target, `resources.${name}.targets.${targetName}`);
+    }
+  }
+  const consumers = [...Object.entries(config.processes ?? {}).map(([name, spec]) => [`processes.${name}`, spec.resources] as const),
+    ...Object.entries(config.services ?? {}).map(([name, spec]) => [`services.${name}`, spec.resources] as const)];
+  for (const [field, consumed] of consumers) {
+    for (const resource of consumed ?? []) if (!Object.hasOwn(resources, resource)) fail(`${field}.resources references unknown resource ${resource}.`, `${field}.resources`);
+  }
+  for (const [profileName, profile] of Object.entries(config.profiles)) {
+    for (const [resource, target] of Object.entries(profile.resources ?? {})) {
+      const field = `profiles.${profileName}.resources.${resource}`;
+      if (!Object.hasOwn(resources, resource)) fail(`${field} references unknown resource ${resource}.`, field);
+      if (!Object.hasOwn(resources[resource].targets ?? {}, target)) fail(`${field} references unknown target ${target}.`, field);
+    }
+  }
 }
 
 function prerequisites(value: unknown): RuntimePrerequisite[] | undefined {
@@ -389,6 +583,7 @@ function validateReferences(config: DevFnConfig): void {
   validateProcessReferences(config, ports, nodes);
   validateServiceReferences(config, ports, nodes);
   validateSelectionReferences(config, ports, processes, services);
+  validateResourceReferences(config);
   const environmentOwners = new Map<string, string>();
   for (const [name, spec] of Object.entries(config.ports ?? {})) {
     if (spec.env?.toUpperCase().startsWith("DEVFN_")) fail(`ports.${name}.env cannot use reserved DEVFN_ runtime variables.`, `ports.${name}.env`);
@@ -430,6 +625,7 @@ export function validateDevFnConfig(value: unknown): DevFnConfig {
     ...(input.processes === undefined ? {} : { processes: named(input.processes, "processes", processSpec) }),
     ...(input.services === undefined ? {} : { services: named(input.services, "services", serviceSpec) }),
     ...(input.hostnames === undefined ? {} : { hostnames: named(input.hostnames, "hostnames", hostnameSpec) }),
+    ...(input.resources === undefined ? {} : { resources: named(input.resources, "resources", resourceSpec) }),
     ...(prerequisites(input.prerequisites) ? { prerequisites: prerequisites(input.prerequisites) } : {}),
     ...(environmentOutputs(input.environmentOutputs) ? { environmentOutputs: environmentOutputs(input.environmentOutputs) } : {}),
     ...(input.policy === undefined ? {} : { policy: relativePath(input.policy, "policy") }),

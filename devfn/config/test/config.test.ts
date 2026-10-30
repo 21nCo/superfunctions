@@ -8,6 +8,30 @@ import { describe, expect, it } from "vitest";
 import { classifyLegacyDarwinIdentity, classifyProcessIdentity, processBirthSignature, processIdentityStatus, discoverProject, isCredentialKey, loadTrustedDevFnConfig, trustProject, validateDevFnConfig, validateDevFnPolicy } from "../src/index.js";
 
 describe("DevFn configuration", () => {
+  it("validates resource kinds, targets and namespaces without reading secrets", () => {
+    const base = (resource: Record<string, unknown>, extra: Record<string, unknown> = {}) => validateDevFnConfig({ version: 1, project: { id: "fixture" },
+      ports: { db: {} }, services: { db: { adapter: "compose", service: "db", ports: { db: 5432 } } },
+      resources: { data: resource }, profiles: { default: { services: ["db"] } }, ...extra });
+    const local = { node: "db", port: "db", scheme: "postgres", secrets: { password: "DB_PASSWORD" } };
+    expect(base({ kind: "database", targets: { local } }).resources?.data).toEqual({ kind: "database", targets: { local } });
+    expect(() => base({ kind: "queue", targets: { local } })).toThrow("kind must be one of");
+    expect(() => base({ kind: "database" })).toThrow("at least one target");
+    expect(() => base({ kind: "service", targets: { local }, namespace: { sharing: "shared" } })).toThrow("unavailable for service resources");
+    expect(() => base({ kind: "broker", targets: { local } })).toThrow("at least one topic");
+    expect(() => base({ kind: "cache", targets: { local }, topics: ["jobs"] })).toThrow("not a field of cache resources");
+    expect(() => base({ kind: "browser", targets: { local } })).toThrow("browser metadata has no targets");
+    expect(() => base({ kind: "database", targets: { local }, namespace: { sharing: "sometimes" } })).toThrow("isolated or shared");
+    expect(() => base({ kind: "database", targets: { local }, namespace: { level: "schema" } })).toThrow("required exactly when level is schema");
+    expect(() => base({ kind: "database", targets: { local }, namespace: { base: "Bad-Name" } })).toThrow("valid database namespace base");
+    expect(() => base({ kind: "database", targets: { local: { ...local, secrets: { password: "DEVFN_SECRET" } } } })).toThrow("reserved for DevFn startup");
+    expect(() => base({ kind: "database", targets: { local: { ...local, path: "/app" } } })).toThrow("cannot name a database");
+    expect(() => base({ kind: "database", targets: { remote: { url: "postgres://db.example.test/app" } } })).toThrow("explicit port");
+    expect(() => base({ kind: "database", targets: { remote: { url: "postgres://db.example.test:5432/app" } } })).toThrow("cannot name a database");
+    expect(() => base({ kind: "service", targets: { remote: { url: "https://user@api.example.test" } } })).toThrow("must not embed credentials");
+    expect(() => base({ kind: "service", targets: { local: { node: "db", port: "db", host: "0.0.0.0" } } })).toThrow("not a local target field");
+    expect(() => base({ kind: "service", targets: { local } }, { processes: { app: { adapter: "command", command: ["app"], resources: ["data", "data"] } } })).toThrow("each entry once");
+  });
+
   it("accepts only selected proxy routes as tunnel routes and keeps provider credentials out of the manifest", () => {
     const base = { version: 1, project: { id: "fixture" }, ports: { web: {} }, hostnames: { web: { target: "web" }, admin: { target: "web", profiles: ["default"] } } };
     const profile = (tunnel: unknown, proxy = true) => validateDevFnConfig({ ...base, profiles: { default: { proxy: true }, share: { proxy, tunnel } } });

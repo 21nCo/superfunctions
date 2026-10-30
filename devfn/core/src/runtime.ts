@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "@devfn/config";
-import type { LifecycleReceipt } from "./types.js";
+import { DevFnError, type LifecycleReceipt } from "./types.js";
 
 export function runtimeDirectory(config: DevFnConfig, root: string, instanceId: string): string {
   return path.join(root, config.runtimeDir ?? ".devfn", "instances", instanceId);
@@ -40,6 +40,67 @@ async function writeAtomicReceipt(target: string, receipt: LifecycleReceipt): Pr
   const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(temp, target);
+}
+
+const RUNTIME_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * The random identity of the runtime that owns a DevFn state directory, or
+ * undefined before a start first records one. It keeps isolated resource
+ * namespaces of runtimes with identical checkout paths (devcontainers, CI
+ * runners) apart, and stays stable as long as the state directory does.
+ */
+export async function readRuntimeId(stateDir: string): Promise<string | undefined> {
+  let recorded: string;
+  try { recorded = (await readFile(path.join(stateDir, "runtime-id"), "utf8")).trim(); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  // recordRuntimeId links only a complete, flushed identity into place.
+  if (recorded === "") {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `${path.join(stateDir, "runtime-id")} is empty; DevFn never records a partial identity, so it was truncated outside DevFn. Restore it, or remove it to give isolated resource namespaces new names.`);
+  }
+  if (!RUNTIME_ID.test(recorded)) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `${path.join(stateDir, "runtime-id")} is malformed; restore it, or remove it to give isolated resource namespaces new names.`);
+  }
+  return recorded;
+}
+
+/** A runtime identity for a state directory that has none yet; recordRuntimeId writes it. */
+export function newRuntimeId(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/**
+ * Record a runtime identity unless the state directory already has one, and
+ * return the recorded one. The identity is written to a private file, flushed
+ * and then linked into place, so every reader sees either no identity or a
+ * complete one, and the first link wins. There is no fallback for a state
+ * directory without hard links: its lifecycle and registry locks link their
+ * owner records too (withFileLock), so DevFn state cannot live there at all.
+ */
+export async function recordRuntimeId(stateDir: string, candidate: string): Promise<string> {
+  const target = path.join(stateDir, "runtime-id");
+  const temp = path.join(stateDir, `runtime-id.${randomUUID()}.tmp`);
+  try {
+    const file = await open(temp, "wx", 0o600);
+    try {
+      await file.writeFile(`${candidate}\n`, "utf8");
+      await file.sync();
+    } finally { await file.close(); }
+    await link(temp, target);
+    return candidate;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EXDEV" || code === "ENOSYS") {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
+    }
+    if (code !== "EEXIST") throw error;
+  } finally { await unlink(temp).catch(() => undefined); }
+  const recorded = await readRuntimeId(stateDir);
+  if (!recorded) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);
+  return recorded;
 }
 
 export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {

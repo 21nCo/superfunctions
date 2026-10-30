@@ -157,6 +157,15 @@ it("checks generated URLs only when their value reaches the selected Compose bra
   });
 });
 
+it("selects resource references that only Compose interpolates", async () => {
+  await withDotenv("", async (root) => {
+    const spec = { adapter: "compose" as const, service: "api" };
+    await writeFile(path.join(root, "compose.yaml"), "services:\n  api:\n    image: busybox\n    environment:\n      BACKEND: ${DEVFN_RESOURCE_BACKEND_URL}\n");
+    expect(await selectedComposeEndpointReferences(spec, root, createComposeEnvironment(spec, { DEVFN_RESOURCE_BACKEND_URL: "http://backend:8080" })))
+      .toEqual(new Set(["DEVFN_RESOURCE_BACKEND_URL"]));
+  });
+});
+
 it("selects public tunnel URL references, set or not, in the service and its resources", async () => {
   await withDotenv("", async (root) => {
     const source = path.join(root, "compose.yaml");

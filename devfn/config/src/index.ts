@@ -4,7 +4,7 @@ export { discoverProject, renderDevFnConfig } from "./discovery.js";
 export { DEVFN_CONFIG_CANDIDATES, findDevFnRoot, loadDevFnConfig, loadDevFnPolicy, loadTrustedDevFnConfig, resolveDevFnManifestPath } from "./load.js";
 export { resolveContainedPath } from "./paths.js";
 export { classifyLegacyDarwinIdentity, classifyProcessIdentity, matchesProcessIdentity, processBirthSignature, processExists, processGroupStatus, processIdentityStatus, startedProcessBirthSignature, type ProcessGroupStatus, type ProcessIdentityStatus } from "./process-identity.js";
-export { validateDevFnConfig, validateDevFnPolicy } from "./schema.js";
+export { resourceEnvironmentKeys, resourceToken, validateDevFnConfig, validateDevFnPolicy } from "./schema.js";
 export { configDigest, defaultStateDir, isProjectTrusted, readTrustedManifest, trustProject } from "./trust.js";
 export type * from "./types.js";
 

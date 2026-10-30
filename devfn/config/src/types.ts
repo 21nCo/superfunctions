@@ -36,6 +36,8 @@ export interface ProcessSpec {
   secretEnv?: string[];
   ports?: string[];
   dependsOn?: string[];
+  /** Resources this node consumes; a selected local target starts before it. */
+  resources?: string[];
   health?: HealthCheck;
   shutdownTimeoutMs?: number;
 }
@@ -47,6 +49,8 @@ export interface ComposeServiceSpec {
   projectName?: string;
   ports?: Record<string, number>;
   dependsOn?: string[];
+  /** Resources this node consumes; a selected local target starts before it. */
+  resources?: string[];
   health?: HealthCheck;
   persistent?: boolean;
   env?: Record<string, string>;
@@ -78,6 +82,8 @@ export interface ProfileSpec {
   environment?: Record<string, string>;
   proxy?: boolean;
   tunnel?: ProfileTunnelSpec;
+  /** Selected target name by resource; overrides the resource's defaultTarget. */
+  resources?: Record<string, string>;
 }
 
 /**
@@ -118,6 +124,48 @@ export interface EnvironmentOutput {
   mode?: number;
 }
 
+export type ResourceKind = "service" | "database" | "broker" | "cache" | "object-store" | "browser";
+
+/**
+ * A resource target. A local target names the lifecycle node and declared
+ * port that provide it; a remote target names a credential-free URL. Secret
+ * fields name host environment variables, never values.
+ */
+export type ResourceTargetSpec =
+  | { node: string; port: string; scheme?: string; path?: string; secrets?: Record<string, string> }
+  | { url: string; secrets?: Record<string, string> };
+
+/**
+ * Isolated namespaces append an opaque runtime-owner token; shared namespaces
+ * use `base` unchanged across runtimes. Sharing is never implied.
+ */
+export interface ResourceNamespaceSpec {
+  /** Defaults to the resource name. */
+  base?: string;
+  /** Defaults to "isolated". */
+  sharing?: "isolated" | "shared";
+  /** Database resources: namespace the database (default) or a schema in `database`. */
+  level?: "database" | "schema";
+  /** Fixed database containing namespaced schemas; requires level "schema". */
+  database?: string;
+}
+
+export interface ResourceSpec {
+  kind: ResourceKind;
+  /** Required for every kind except browser. */
+  targets?: Record<string, ResourceTargetSpec>;
+  defaultTarget?: string;
+  namespace?: ResourceNamespaceSpec;
+  /** Broker topics; each receives a namespaced name. */
+  topics?: string[];
+  /** Broker consumer group suffix; the group shares the topics' namespace. */
+  consumerGroup?: string;
+  /** Browser cookie names that receive namespaced names. */
+  cookies?: string[];
+  /** Browser storage keys that receive namespaced names. */
+  storageKeys?: string[];
+}
+
 export interface DevFnConfig {
   version: 1;
   project: { id: string; name?: string };
@@ -128,6 +176,7 @@ export interface DevFnConfig {
   services?: Record<string, ComposeServiceSpec>;
   profiles: Record<string, ProfileSpec>;
   hostnames?: Record<string, HostnameSpec>;
+  resources?: Record<string, ResourceSpec>;
   prerequisites?: RuntimePrerequisite[];
   environmentOutputs?: EnvironmentOutput[];
   policy?: string;

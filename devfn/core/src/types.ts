@@ -4,6 +4,8 @@ import type { PortAllocation } from "@devfn/ports";
 import type { ManagedProcess } from "@devfn/processes";
 import type { ProxyRoute } from "@devfn/proxy";
 
+import type { ResourcePlan } from "./resources.js";
+
 export type LifecycleState = "planning" | "starting" | "ready" | "degraded" | "failed" | "stopped";
 
 export interface ProjectIdentity {
@@ -24,6 +26,8 @@ export interface RoutingIdentity extends InstanceIdentity {
    * intact and shortens only the readable name to fit one DNS label.
    */
   readableWorktreeLabel: string;
+  /** Random identity of the DevFn state directory (readRuntimeId), present when the manifest declares resources. */
+  runtimeId?: string;
 }
 
 export interface LifecyclePlan {
@@ -67,6 +71,8 @@ export interface LifecycleReceipt {
   tunnel?: { binding: string; hostnames: string[]; urlTiming?: "pre-start" | "post-start"; outstanding?: string[] };
   /** Public URLs by route name, present only after an explicitly public start: deterministic ones, or those the provider assigned once its connector ran. */
   publicUrls?: Record<string, string>;
+  /** Redacted resource selection, namespaces and value provenance; absent without resources. */
+  resources?: ResourcePlan;
   cleanup?: CleanupResult;
   error?: { code: string; message: string };
 }
@@ -85,7 +91,8 @@ export class DevFnError extends Error {
       | "DEVFN_PREREQUISITE_MISSING"
       | "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED"
       | "DEVFN_MANIFEST_UNTRUSTED"
-      | "DEVFN_URL_NOT_FOUND",
+      | "DEVFN_URL_NOT_FOUND"
+      | "DEVFN_RESOURCE_INVALID",
     message: string,
     public readonly details?: Record<string, unknown>,
   ) { super(message); this.name = "DevFnError"; }
