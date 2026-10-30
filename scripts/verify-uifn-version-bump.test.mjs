@@ -395,6 +395,31 @@ test("without a files list a test change ships and needs a bump", (t) => {
   assert.match(output, /@uifn\/core: shipped code changed \(src\/__tests__\/core\.test\.ts\) but version is still 1\.0\.0/);
 });
 
+// A file the packlist matches is scanned like shipped code: its out-of-root imports must be declared, and a change to them needs a bump.
+for (const [label, files] of [["files lists fixtures", (list) => [...list, "fixtures"]], ["no files list", () => undefined]]) {
+  test(`a packed fixture's out-of-root import must be declared, and its change needs a bump: ${label}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.edit("uifn/react/package.json", (text) => JSON.stringify({ ...JSON.parse(text), files: files(JSON.parse(text).files) }));
+    repo.write("uifn/react/fixtures/runtime.mjs", 'export { runtime } from "../../shared/runtime.mjs";\n');
+    repo.write("uifn/shared/runtime.mjs", "export const runtime = 1;\n");
+    repo.commit("packed fixture");
+    repo.git("branch", "-f", "base");
+    const undeclared = check(repo.root);
+    assert.equal(undeclared.status, 1);
+    assert.match(undeclared.output, /@uifn\/react: uifn\/react\/fixtures\/runtime\.mjs refers to uifn\/shared\/runtime\.mjs, outside uifn\/react/);
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"uifn/shared/src":', '"uifn/shared/runtime.mjs": "a packed fixture re-exports it", "uifn/shared/src":'));
+    repo.commit("declare the input");
+    repo.git("branch", "-f", "base");
+    const declared = check(repo.root);
+    assert.equal(declared.status, 0, declared.output);
+    repo.write("uifn/shared/runtime.mjs", "export const runtime = 2;\n");
+    repo.commit("change the input");
+    const changed = check(repo.root);
+    assert.equal(changed.status, 1);
+    assert.match(changed.output, /@uifn\/react: shipped code changed \(uifn\/shared\/runtime\.mjs\) but version is still 1\.0\.0/);
+  });
+}
+
 test("an exclusion of a build config that tools load implicitly fails", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/react/tsup.config.ts", "export default {};\n");
@@ -661,7 +686,7 @@ function promotedBy(build, tree) {
   const read = (file) => tree[file.slice("uifn/core/".length)] ?? null;
   const inventory = fileInventory(files);
   const manifest = { name: "@uifn/core", version: "1.0.0", scripts: { build } };
-  const { promoted } = shippedClosure({ packagePath: "uifn/core", manifest, files, read: (paths) => new Map(paths.map((file) => [file, read(file)])), tsconfigRoots: (file) => tsconfigRoots(file, inventory, read) });
+  const { promoted } = shippedClosure({ packagePath: "uifn/core", manifest, files, read: (paths) => new Map(paths.map((file) => [file, read(file)])), tsconfigRoots: (file, emit) => tsconfigRoots(file, inventory, read, emit) });
   return [...promoted.keys()].map((file) => file.slice("uifn/core/".length)).sort();
 }
 
@@ -709,11 +734,27 @@ for (const [build, extra, expected] of [
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('pnpm exec tsc -b');\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(\"yarn tsc\");\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(`node_modules/.bin/tsc -p . 2>&1`);\n" }, emitted],
+  ...["node node_modules/typescript/bin/tsc -p .", "npx --no-install tsc", "npx -p typescript tsc", "npm exec -- tsc", "npm x tsc", "bun x tsc", "pnpm dlx tsc", "yarn run tsc", "pnpm -C . exec tsc"].map((command) => ["node scripts/build.mjs", { "scripts/build.mjs": `execSync('${command}');\n` }, emitted]),
   ["tsc --noEmit && tsup src/index.ts", {}, []],
-  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
+  // The real @uifn/solid shape: the message and the bare tsc path name tsconfig.json, which is noEmit; the -p argument names the emitting build config.
+  ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/**/*"] }', "tsconfig.build.json": '{ "include": ["src/index.ts"] }', "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
 ]) {
   test(`a shipped tsc invocation consumes its tsconfig: ${[build, ...Object.values(extra)].join(" with ").trim()}`, () => {
     assert.deepEqual(promotedBy(build, { ...sources, "tsconfig.json": '{ "compilerOptions": { "outDir": "dist" } }', ...extra }), expected);
+  });
+}
+
+// A noEmit tsconfig, set directly or inherited, puts nothing in dist unless the command line turns emission back on; its project references still build.
+const noEmit = '{ "compilerOptions": { "noEmit": true } }';
+for (const [cell, build, tsconfigs, expected] of [
+  ["noEmit set directly", "tsc -p tsconfig.json && tsup src/index.ts", { "tsconfig.json": noEmit }, []],
+  ["noEmit inherited through extends", "tsc -p tsconfig.build.json", { "tsconfig.json": noEmit, "tsconfig.build.json": '{ "extends": "./tsconfig.json", "include": ["src"] }' }, []],
+  ["a script's --noEmit false overrides it", "tsc -p tsconfig.json --noEmit false", { "tsconfig.json": noEmit }, emitted],
+  ["a build file's --noEmit=false overrides it", "node scripts/build.mjs", { "tsconfig.json": noEmit, "scripts/build.mjs": "execSync('tsc --noEmit=false');\n" }, emitted],
+  ["project references still build", "tsc -b", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "files": [], "references": [{ "path": "./tsconfig.fixtures.json" }] }', "tsconfig.fixtures.json": '{ "compilerOptions": { "composite": true }, "include": ["src/fixtures"] }' }, ["src/fixtures/runtime.ts"]],
+]) {
+  test(`a tsconfig's effective noEmit decides what it consumes: ${cell}`, () => {
+    assert.deepEqual(promotedBy(build, { ...sources, ...tsconfigs }), expected);
   });
 }
 
