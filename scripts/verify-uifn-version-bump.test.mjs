@@ -480,7 +480,7 @@ test("a file a manifest entry field names, and what it imports, counts as shippe
   const repo = fixtureRepo(t);
   repo.edit("uifn/core/package.json", (text) =>
     text
-      .replace('"files": [', '"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./runtime": { "import": ["./fixtures/runtime.mjs"] } },\n  "files": [\n    "fixtures",')
+      .replace('"files": [', '"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./runtime": { "import": ["./fixtures/runtime.mjs"] } },\n  "files": [\n    "fixtures/runtime.mjs",')
       .replace('"1.0.0"', '"1.0.1"'),
   );
   repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Runtime entry.\n\n## 1.0.0"));
@@ -502,9 +502,8 @@ test("a file a manifest entry field names, and what it imports, counts as shippe
 });
 
 // Core ships docs/ through files, like @uifn/registry, and src imports one table from it.
-test("a docs asset needs no bump unless shipped code refers to it", (t) => {
+test("a docs asset outside files needs no bump unless shipped code refers to it", (t) => {
   const repo = fixtureRepo(t);
-  repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "docs",'));
   repo.write("uifn/core/docs/diagram.svg", "<svg/>\n");
   repo.write("uifn/core/docs/table.json", "{}\n");
   repo.write("uifn/core/src/index.ts", 'import table from "../docs/table.json";\nexport const core = 1;\n');
@@ -519,6 +518,25 @@ test("a docs asset needs no bump unless shipped code refers to it", (t) => {
   const table = check(repo.root);
   assert.equal(table.status, 1);
   assert.match(table.output, /@uifn\/core: shipped code changed \(docs\/table\.json\) but version is still 1\.0\.0/);
+});
+
+test("a test, asset or fixture that a files entry matches ships, while Markdown and tests outside files stay exempt", (t) => {
+  const repo = fixtureRepo(t);
+  repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "bin",\n    "docs",'));
+  for (const file of ["bin/__tests__/probe.test.cjs", "docs/diagram.svg", "docs/guide.md", "src/__tests__/core.test.ts"]) repo.write(`uifn/core/${file}`, "one\n");
+  repo.commit("files-listed bin and docs");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/docs/guide.md", "two\n");
+  repo.write("uifn/core/src/__tests__/core.test.ts", "two\n");
+  repo.commit("Markdown and a test outside files");
+  const exempt = check(repo.root);
+  assert.equal(exempt.status, 0, exempt.output);
+  repo.write("uifn/core/bin/__tests__/probe.test.cjs", "two\n");
+  repo.write("uifn/core/docs/diagram.svg", "two\n");
+  repo.commit("files-listed test and asset");
+  const listed = check(repo.root);
+  assert.equal(listed.status, 1);
+  assert.match(listed.output, /@uifn\/core: shipped code changed \(bin\/__tests__\/probe\.test\.cjs, docs\/diagram\.svg\) but version is still 1\.0\.0/);
 });
 
 // React's tsup.config.ts names a fixtures file as a bare entry string, and core's build script names a fixtures glob.
@@ -672,6 +690,9 @@ test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () =>
   assert.deepEqual(tscProjects("tsc --project=packages/a"), ["packages/a/tsconfig.json"]);
   assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force"), ["packages/a/tsconfig.json", "tsconfig.types.json"]);
   assert.deepEqual(tscProjects("tsc --noEmit -p tsconfig.json"), []);
+  assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), ["tsconfig.json"]);
+  assert.deepEqual(tscProjects("tsc -b --noEmit false"), ["tsconfig.json"]);
+  assert.deepEqual(tscProjects("tsc -p tsconfig.json --noEmit=false"), ["tsconfig.json"]);
   assert.equal(tscProjects("tsup src/index.ts"), null);
 });
 
@@ -685,19 +706,31 @@ for (const [build, extra, expected] of [
   ["tsc -b .", {}, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc');\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc -p .');\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('pnpm exec tsc -b');\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(\"yarn tsc\");\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(`node_modules/.bin/tsc -p . 2>&1`);\n" }, emitted],
   ["tsc --noEmit && tsup src/index.ts", {}, []],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
 ]) {
   test(`a shipped tsc invocation consumes its tsconfig: ${[build, ...Object.values(extra)].join(" with ").trim()}`, () => {
     assert.deepEqual(promotedBy(build, { ...sources, "tsconfig.json": '{ "compilerOptions": { "outDir": "dist" } }', ...extra }), expected);
   });
 }
 
-// svelte-package copies every file under its input directory into dist; a build config's directory reference does not.
+// svelte-package copies every file under its input directory into dist, even the package root; a build config's directory reference does not.
 test("a directory argument of a shipped script consumes every file under it", () => {
   const tree = { "lib/index.ts": "export const core = 1;\n", "lib/__tests__/probe.test.ts": "test;\n", "lib/Probe.stories.svelte": "<p />\n", "src/__tests__/core.test.ts": "test;\n" };
   assert.deepEqual(promotedBy("svelte-package -i lib -o dist", tree), ["lib/Probe.stories.svelte", "lib/__tests__/probe.test.ts"]);
-  assert.deepEqual(promotedBy("svelte-package -i . -o dist", tree), []);
+  assert.deepEqual(promotedBy("svelte-package -i . -o dist", tree), ["lib/Probe.stories.svelte", "lib/__tests__/probe.test.ts", "src/__tests__/core.test.ts"]);
   assert.deepEqual(promotedBy("node scripts/build.mjs", { ...tree, "scripts/build.mjs": "const input = path.join(packageRoot, 'lib');\n" }), []);
+});
+
+test("a directory argument naming a declared input root consumes every file under it, while a bundled import of the root does not", () => {
+  const files = ["uifn/core/package.json", "uifn/core/src/index.ts", "uifn/shared/src/index.ts", "uifn/shared/src/__tests__/shared.test.ts"];
+  const texts = { "uifn/core/src/index.ts": 'export * from "../../shared/src";\n', "uifn/shared/src/index.ts": "export const shared = 1;\n" };
+  const promoted = (build) => [...shippedClosure({ packagePath: "uifn/core", manifest: { scripts: { build } }, files, inputs: ["uifn/shared/src"], read: (paths) => new Map(paths.map((file) => [file, texts[file] ?? ""])) }).promoted.keys()];
+  for (const build of ["svelte-package -i ../shared/src -o dist", "cp -r ../shared/src dist/shared && tsup src/index.ts"]) assert.deepEqual(promoted(build), ["uifn/shared/src/__tests__/shared.test.ts"], build);
+  assert.deepEqual(promoted("tsup src/index.ts"), []);
 });
 
 test("a ! glob drops only the matches of its own entry array or script command", () => {
