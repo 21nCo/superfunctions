@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -1183,49 +1183,72 @@ async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<stri
   }
 }
 
+/** Build arguments with secret-channel and credential-named values masked, as environment entries are. */
+function maskedBuildArguments(service: Record<string, unknown>, secretNames: ReadonlySet<string>): Record<string, unknown> {
+  const build = service.build;
+  if (!build || typeof build !== "object" || Array.isArray(build)) return service;
+  const args = (build as Record<string, unknown>).args;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return service;
+  return { ...service, build: { ...build, args: Object.fromEntries(Object.entries(args).map(([name, value]) =>
+    [name, secretNames.has(name) || isCredentialKey(name) ? "<secret-channel>" : value])) } };
+}
+
 /**
- * Digest of a Compose setup task's source for its input revision: the
- * selected service as its Compose files define it (through include and
- * extends), the volumes, networks, configs and secrets it references, and the
- * declarations of its env_file and interpolation .env files. As in the startup
- * fingerprint, only values are masked: those of secret-channel and
- * credential-named environment entries and env-file declarations. Service,
- * resource and other names are never masked, interpolation expressions are
- * hashed as written (never the values they resolve to), and formatting,
- * comments and other services do not count.
+ * Digest of a Compose setup task's source for its input revision, read from
+ * the same source state as the startup fingerprint (the selected service
+ * through include and extends, resolved with the environment startup
+ * selects): that service's definition, where each part of it was defined
+ * (file and the directory its relative paths resolve against), the volumes,
+ * networks, configs and secrets it references with the file declaring each,
+ * and the declarations of its env_file and interpolation .env files. Paths are
+ * relative to the canonical repository root, so every worktree and spelling
+ * of one source agrees. As in the startup fingerprint, only values are
+ * masked: those of secret-channel and credential-named environment entries,
+ * build arguments and env-file declarations. Names are never masked,
+ * interpolation expressions are hashed as written (never the values they
+ * resolve to), and formatting, comments and other services do not count.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
-  const sourceFile = await resolveContainedPath(root, spec.file ?? "compose.yaml", `services.${spec.service}.file`);
-  const implicit = implicitInterpolationKeys(spec);
-  const secretNames = new Set(spec.secretEnv ?? []);
-  let inventory: ComposeSourceInventory;
-  try {
-    inventory = await assertComposeSourceGraphBounded(sourceFile, spec.service,
-      createScopedPathInterpolator(environment, Date.now() + COMPOSE_SOURCE_BUDGET_MS, implicit), implicit, secretNames);
-  } catch (error) {
-    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to read the Compose sources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const canonicalRoot = await realpath(root);
+  const deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS;
+  const { inventory } = await selectedComposeSourceState(spec, canonicalRoot, environment, deadline);
   if (!inventory.service) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is not defined in its Compose files.`);
-  // Paths relative to the repository, so every worktree of one source agrees.
-  const relative = (file: string) => path.relative(root, file).split(path.sep).join("/");
-  const { env_file: envFiles, ...service } = inventory.service;
-  const serviceEnvFiles = [];
-  for (const entry of envFiles === undefined ? [] : Array.isArray(envFiles) ? envFiles : [envFiles]) {
-    const descriptor = typeof entry === "string" ? { path: entry } : entry as { path?: unknown; required?: unknown; devfnOrigin?: unknown };
-    const file = typeof descriptor?.path === "string" ? descriptor.path : undefined;
-    // A path that still holds an interpolation expression is kept as written, not followed.
-    serviceEnvFiles.push(!file || file.includes("$") ? { path: file ?? null, required: descriptor?.required ?? null }
-      : { path: relative(file), required: descriptor.required ?? null, declarations: await maskedEnvDeclarations(file, secretNames) });
+  const secretNames = new Set(spec.secretEnv ?? []);
+  // A host value may spell a selected path through a symlink; its canonical location is what counts.
+  const relative = async (file: string) => path.relative(canonicalRoot, await realpath(file).catch(() => file)).split(path.sep).join("/");
+  const { env_file: _envFiles, ...service } = inventory.service;
+  let envFiles: unknown[];
+  try {
+    const entries = envFileDeclarations(inventory);
+    const resolved = await resolvedEnvFilePaths(entries, inventory, createScopedPathInterpolator(environment, deadline, implicitInterpolationKeys(spec)));
+    envFiles = [];
+    for (const [index, entry] of entries.entries()) {
+      // A selected path is hashed as written; the file it selects counts by its declarations.
+      envFiles.push({ path: entry.path.includes("$") ? entry.path : await relative(resolved[index]), required: entry.required ?? true, format: entry.format ?? null,
+        declarations: await maskedEnvDeclarations(resolved[index], secretNames) });
+    }
+  } catch (error) {
+    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to read the env_file sources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const interpolationFiles = [];
   for (const file of await composeInterpolationEnvFiles(inventory.interpolationScopes)) {
-    interpolationFiles.push([relative(file), await maskedEnvDeclarations(file, secretNames)]);
+    interpolationFiles.push([await relative(file), await maskedEnvDeclarations(file, secretNames)]);
   }
+  const resources = selectedComposeResources(inventory.resources, inventory.service);
+  const resourceOrigins: Array<[string, string, string | null]> = [];
+  for (const [kind, declarations] of Object.entries(resources)) {
+    for (const name of Object.keys(declarations && typeof declarations === "object" ? declarations : {}).sort(compareCanonicalKeys)) {
+      const file = inventory.resourceOrigins[kind]?.[name];
+      resourceOrigins.push([kind, name, file === undefined ? null : await relative(file)]);
+    }
+  }
+  const origins: Array<[string, string]> = [];
+  for (const { file, directory } of inventory.serviceOrigins) origins.push([await relative(file), await relative(directory)]);
   return createHash("sha256").update(JSON.stringify({
-    service: canonicalComposeValue(service, secretNames),
-    resources: canonicalComposeValue(selectedComposeResources(inventory.resources, inventory.service), secretNames),
-    envFiles: serviceEnvFiles, interpolationFiles,
+    service: canonicalComposeValue(maskedBuildArguments(service, secretNames), secretNames), origins,
+    resources: canonicalComposeValue(resources, secretNames), resourceOrigins,
+    envFiles, interpolationFiles,
   })).digest("hex");
 }
 

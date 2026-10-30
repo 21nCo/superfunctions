@@ -330,7 +330,6 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   if (args.command === "tunnel") return await tunnelCommand(args, cwd, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
-  if (args.rerunTasks.length && args.command !== "up" && args.command !== "restart") throw new DevFnError("DEVFN_RUNTIME_INVALID", "--rerun-task applies only to up and restart.");
   const start = async (replace: boolean) => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic,
     ...(replace ? { replace } : {}), ...(args.rerunTasks.length ? { rerunTasks: args.rerunTasks } : {}), ...taskCancellation() });
   const handlers: Record<string, () => Promise<unknown>> = {
@@ -415,6 +414,8 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   const output = createOutput({ mode: args.json ? "json" : "text", stdout: options.stdout, stderr: options.stderr, color: false });
   const stateDir = path.resolve(args.stateDir ?? defaultStateDir(options.env));
   try {
+    // Before any command dispatches, so none silently ignores it.
+    if (args.rerunTasks.length && args.command !== "up" && args.command !== "restart") throw new DevFnError("DEVFN_RUNTIME_INVALID", "--rerun-task applies only to up and restart.");
     if (args.command === "help") { if (args.json) output.json({ ok: true, help: HELP }); else options.stdout ? options.stdout(HELP) : process.stdout.write(HELP); return 0; }
     if (args.command === "init") {
       const result = await initCommand(args, cwd); if (args.json) output.json(result); else { if (!result.written) output.info(String(result.preview)); output.success(result.written ? `Created ${result.manifest}` : String(result.confirmationRequired)); } return 0;

@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -198,6 +198,126 @@ describe("task input revisions", () => {
       for (const change of [{ base: "migrate --all" }, { included: "busybox:2" }, { envFile: "full" }, { dotenv: "2" }]) {
         expect(await write({ ...files, ...change })).not.toBe(base);
       }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("tracks where a Compose task's definition resolves its relative paths, independent of the root's spelling and worktree", async () => {
+    const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-provenance-")));
+    const root = path.join(parent, "tree");
+    const config = validateDevFnConfig({ version: 1, project: { id: "revision-provenance" },
+      services: { seed: { adapter: "compose", service: "seed", task: { inputs: ["setup", "nested/setup"] } } }, profiles: { default: { services: ["seed"] } } });
+    const seed = ["  seed:", "    image: busybox:1", "    volumes: [./setup:/setup]", "    env_file: [seed.env]", "    command: [sh, /setup/run.sh]", ""];
+    const layout = async (files: Record<string, string>) => {
+      await rm(root, { recursive: true, force: true });
+      for (const directory of ["setup", "nested/setup", "lib"]) await mkdir(path.join(root, directory), { recursive: true });
+      for (const directory of ["setup", "nested/setup"]) await writeFile(path.join(root, directory, "run.sh"), "echo seeded\n");
+      for (const directory of [".", "nested", "lib"]) {
+        await writeFile(path.join(root, directory, "seed.env"), "SEED_MODE=minimal\nSEED_PASSWORD=p-1\n");
+        await writeFile(path.join(root, directory, ".env"), "SEED_LEVEL=1\n");
+      }
+      for (const [file, content] of Object.entries(files)) await writeFile(path.join(root, file), content);
+    };
+    const revision = async (at = root) => await taskInputRevision(config, at, { name: "seed", kind: "service" }, "default");
+    try {
+      await layout({ "compose.yaml": ["services:", ...seed].join("\n") });
+      const base = await revision();
+      // The identical definition in an included file binds nested/setup, not setup.
+      await layout({ "compose.yaml": "include: [nested/compose.yaml]\nservices: {}\n", "nested/compose.yaml": ["services:", ...seed].join("\n") });
+      const included = await revision();
+      expect(included).not.toBe(base);
+      // Only the include's project directory changes where its relative paths resolve.
+      await layout({ "compose.yaml": "include: [{ path: nested/compose.yaml, project_directory: . }]\nservices: {}\n", "nested/compose.yaml": ["services:", ...seed].join("\n") });
+      expect(await revision()).not.toBe(included);
+      // An extended definition counts where its file is, too.
+      const extended = ["services:", "  seed:", "    extends: { file: lib/base.yaml, service: base }", ""].join("\n");
+      await layout({ "compose.yaml": extended, "lib/base.yaml": ["services:", "  base:", ...seed.slice(1)].join("\n") });
+      const fromLib = await revision();
+      await layout({ "compose.yaml": extended.replace("lib/base.yaml", "base.yaml"), "base.yaml": ["services:", "  base:", ...seed.slice(1)].join("\n") });
+      expect(await revision()).not.toBe(fromLib);
+      // One source agrees through a symlinked root and in another worktree.
+      await layout({ "compose.yaml": "include: [nested/compose.yaml]\nservices: {}\n", "nested/compose.yaml": ["services:", ...seed].join("\n") });
+      await symlink(root, path.join(parent, "alias"));
+      await cp(root, path.join(parent, "other-worktree"), { recursive: true });
+      expect(await revision(path.join(parent, "alias"))).toBe(included);
+      expect(await revision(path.join(parent, "other-worktree"))).toBe(included);
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  it("selects a Compose task's sources with the environment startup selects them with, never hashing an inherited value", async () => {
+    const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-selected-")));
+    const root = path.join(parent, "tree");
+    const previous = process.env.TASK_TEST_SETUP_ROOT;
+    const service = (name: string, command: string) => ["services:", `  ${name}:`, "    image: busybox:1", `    command: [sh, -c, '${command}']`, ""].join("\n");
+    const write = async (files: Record<string, string>) => {
+      for (const [file, content] of Object.entries(files)) {
+        await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+        await writeFile(path.join(root, file), content);
+      }
+    };
+    const manifest = (seed: Record<string, unknown>, environment: Record<string, string> = {}) => validateDevFnConfig({ version: 1, project: { id: "revision-selected" },
+      services: { seed: { adapter: "compose", service: "seed", task: {}, ...seed } }, profiles: { default: { services: ["seed"], environment } } });
+    const revision = async (config: ReturnType<typeof manifest>, at = root, environment?: Record<string, string>) =>
+      await taskInputRevision(config, at, { name: "seed", kind: "service" }, "default", undefined, environment);
+    try {
+      await write({ "compose.yaml": "include: [\"${SETUP_SOURCE}\"]\nservices: {}\n", "setup/a.yaml": service("seed", "migrate"), "setup/b.yaml": service("seed", "migrate") });
+      // Selected by the profile environment, and by the manifest environment.
+      for (const config of [manifest({}, { SETUP_SOURCE: "setup/a.yaml" }), manifest({ env: { SETUP_SOURCE: "setup/a.yaml" } })]) {
+        const base = await revision(config);
+        await write({ "setup/b.yaml": service("seed", "migrate --all") });
+        expect(await revision(config)).toBe(base);
+        await write({ "setup/a.yaml": service("seed", "migrate --all") });
+        expect(await revision(config)).not.toBe(base);
+        await write({ "setup/a.yaml": service("seed", "migrate"), "setup/b.yaml": service("seed", "migrate") });
+      }
+      // The resolved startup environment selects, here through a resolved manifest template.
+      const templated = manifest({ env: { SETUP_SOURCE: "{{env.SETUP_FILE}}" } }, { SETUP_FILE: "setup/a.yaml" });
+      const resolved = await revision(templated, root, { SETUP_FILE: "setup/a.yaml", SETUP_SOURCE: "setup/a.yaml" });
+      await write({ "setup/a.yaml": service("seed", "migrate --all") });
+      expect(await revision(templated, root, { SETUP_FILE: "setup/a.yaml", SETUP_SOURCE: "setup/a.yaml" })).not.toBe(resolved);
+      await write({ "setup/a.yaml": service("seed", "migrate") });
+      // An extends file and an env_file path chosen by the environment.
+      await write({ "compose.yaml": ["services:", "  seed:", "    extends: { file: \"${SEED_BASE}\", service: base }", "    env_file: [\"${SEED_ENV}\"]", ""].join("\n"),
+        "setup/base.yaml": service("base", "migrate"), "setup/seed.env": "SEED_MODE=minimal\nSEED_TOKEN=t-1\n" });
+      const chosen = manifest({}, { SEED_BASE: "setup/base.yaml", SEED_ENV: "setup/seed.env" });
+      const selected = await revision(chosen);
+      await write({ "setup/seed.env": "SEED_MODE=minimal\nSEED_TOKEN=t-2\n" });
+      expect(await revision(chosen)).toBe(selected);
+      await write({ "setup/seed.env": "SEED_MODE=full\nSEED_TOKEN=t-2\n" });
+      expect(await revision(chosen)).not.toBe(selected);
+      await write({ "setup/base.yaml": service("base", "migrate --all") });
+      const changedBase = await revision(chosen);
+      expect(changedBase).not.toBe(selected);
+      // An allowlisted host value selects the source; how the host spells the same file is not an input.
+      await write({ "compose.yaml": "include: [\"${TASK_TEST_SETUP_ROOT}/setup/a.yaml\"]\nservices: {}\n" });
+      await symlink(root, path.join(parent, "alias"));
+      const inherited = manifest({ envAllowlist: ["TASK_TEST_SETUP_ROOT"] });
+      process.env.TASK_TEST_SETUP_ROOT = root;
+      const direct = await revision(inherited);
+      process.env.TASK_TEST_SETUP_ROOT = path.join(parent, "alias");
+      expect(await revision(inherited)).toBe(direct);
+      await write({ "setup/a.yaml": service("seed", "migrate --all") });
+      expect(await revision(inherited)).not.toBe(direct);
+    } finally {
+      if (previous === undefined) delete process.env.TASK_TEST_SETUP_ROOT; else process.env.TASK_TEST_SETUP_ROOT = previous;
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("masks credential build arguments of a Compose task like its credential environment entries", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-build-args-"));
+    const config = validateDevFnConfig({ version: 1, project: { id: "revision-build-args" },
+      services: { seed: { adapter: "compose", service: "seed", task: {} } }, profiles: { default: { services: ["seed"] } } });
+    const revision = async (args: string) => {
+      await writeFile(path.join(root, "compose.yaml"), ["services:", "  seed:", "    build:", "      context: .", `      args: ${args}`, ""].join("\n"));
+      return await taskInputRevision(config, root, { name: "seed", kind: "service" }, "default");
+    };
+    try {
+      const map = await revision("{ NPM_TOKEN: n-1, SEED_MODE: minimal }");
+      expect(await revision("{ NPM_TOKEN: n-2, SEED_MODE: minimal }")).toBe(map);
+      expect(await revision("{ NPM_TOKEN: n-2, SEED_MODE: full }")).not.toBe(map);
+      const list = await revision("[NPM_TOKEN=n-1, SEED_MODE=minimal]");
+      expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=minimal]")).toBe(list);
+      expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=full]")).not.toBe(list);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
@@ -642,6 +762,33 @@ describe("task attempt boundaries (stub launchers)", () => {
 });
 
 describe("finite setup tasks (real Compose)", () => {
+  it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("starts a Compose task whose source the profile environment selects, and reruns it when the selected file changes", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-compose-selected-"));
+    const stateDir = path.join(root, "state");
+    const orchestrator = new DevFnOrchestrator();
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-compose-selected" },
+      services: { seed: { adapter: "compose", service: "seed", task: { idempotent: true } } },
+      profiles: { default: { services: ["seed"], environment: { SETUP_SOURCE: "setup/compose.yaml" } } } });
+    const seed = (message: string) => ["services:", "  seed:", "    image: busybox", `    command: [sh, -c, 'echo ${message}']`, ""].join("\n");
+    try {
+      await mkdir(path.join(root, "setup"));
+      await writeFile(path.join(root, "compose.yaml"), "include: [\"${SETUP_SOURCE}\"]\nservices: {}\n");
+      await writeFile(path.join(root, "setup", "compose.yaml"), seed("seeded-one"));
+      const first = await orchestrator.up({ config, root, stateDir });
+      expect(first.tasks).toMatchObject([{ name: "seed", status: "succeeded" }]);
+      expect(await readFile(first.tasks![0].logPath!, "utf8")).toContain("seeded-one");
+      await writeFile(path.join(root, "setup", "compose.yaml"), seed("seeded-two"));
+      const second = await orchestrator.up({ config, root, stateDir });
+      expect(second.tasks).toMatchObject([{ name: "seed", status: "succeeded" }]);
+      expect(second.tasks![0].inputRevision).not.toBe(first.tasks![0].inputRevision);
+      expect(await readFile(second.tasks![0].logPath!, "utf8")).toContain("seeded-two");
+      await orchestrator.down({ config, root, stateDir });
+    } finally {
+      await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("gates a dependent on a one-off Compose task and blocks it on failure, timeout and cancellation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-compose-"));
     const stateDir = path.join(root, "state");

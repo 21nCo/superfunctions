@@ -91,7 +91,10 @@ describe("devfn CLI", () => {
         const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
         return { code, value: JSON.parse(stdout) as { error?: { code: string; message: string } } };
       };
-      expect(await run(["status", "--rerun-task", "setup"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task applies only to up and restart." } } });
+      // Commands dispatched before the manifest loads reject it as well.
+      for (const command of [["status"], ["help"], ["init"], ["domains", "list"], ["oauth-relay", "status"]]) {
+        expect(await run([...command, "--rerun-task", "setup"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task applies only to up and restart." } } });
+      }
       expect(await run(["up", "--rerun-task"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task requires a value." } } });
       expect(await run(["up", "--rerun-task", "other"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("names no task") } } });
       // Trust is recorded, but no lifecycle, lease or task state.

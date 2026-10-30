@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, readlink, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ComposeController, composeTaskSourceDigest, type ComposeLaunch } from "@devfn/compose";
+import { ComposeController, composeTaskSourceDigest, createComposeEnvironment, type ComposeLaunch } from "@devfn/compose";
 import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
@@ -111,8 +111,11 @@ async function digestInput(root: string, relative: string, field: string): Promi
   return hash.digest("hex");
 }
 
-/** Credential-safe digest of a Compose task's sources: a rotated literal secret is not a changed input. */
-async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["services"]>[string], field: string): Promise<string> {
+/**
+ * Credential-safe digest of a Compose task's sources: a rotated literal secret is not a changed input.
+ * Its sources are selected with the Compose environment startup gives the node, built from its resolved values.
+ */
+async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["services"]>[string], field: string, environment: Record<string, string>): Promise<string> {
   const relative = spec.file ?? "compose.yaml";
   const file = await resolveContainedPath(root, relative, field).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
@@ -122,7 +125,7 @@ async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["
     throw error;
   });
   if (!stats.isFile()) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file.`);
-  try { return await composeTaskSourceDigest(spec, root); }
+  try { return await composeTaskSourceDigest(spec, root, createComposeEnvironment({ ...spec, env: environment }, environment)); }
   catch (error) { throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
@@ -136,16 +139,19 @@ const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
  * as that node receives them, its Compose sources and the content of its
  * declared inputs. Leased ports, secret values and values inherited from the
  * host through envAllowlist are not part of it, so a reallocated port, a
- * rotated credential or another shell never reruns a task.
+ * rotated credential or another shell never reruns a task. The node's
+ * resolved startup environment (by default its profile and manifest
+ * environment as written) only selects the Compose sources, as at startup.
  */
-export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan): Promise<string> {
+export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
+  environment?: Record<string, string>): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
-      source: await digestComposeSource(root, config.services![node.name], `${field}.file`) };
+      source: await digestComposeSource(root, config.services![node.name], `${field}.file`, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }) };
   const consumed = sorted(spec.resources).map((name) => {
     const planned = resources?.resources[name];
     if (!planned) return [name, null];
@@ -303,14 +309,16 @@ async function settleAttempts(journal: TaskJournal, name: string, compose: () =>
  * node) waits for each task's scope lock, settles what earlier attempts left
  * and decides from the outcomes concurrent starts recorded meanwhile.
  */
-export async function preflightTasks(input: { config: DevFnConfig; plan: LifecyclePlan; root: string; stateDir: string; instanceId: string; resources?: ResourcePlan; rerunTasks?: readonly string[];
+export async function preflightTasks(input: { config: DevFnConfig; plan: LifecyclePlan; root: string; stateDir: string; instanceId: string; resources?: ResourcePlan;
+  /** Resolved startup environment of each node, by name. */
+  environments?: Record<string, { environment: Record<string, string> }>; rerunTasks?: readonly string[];
   locked?: { compose?: ComposeController; signal?: AbortSignal } }): Promise<void> {
   const tasks = input.plan.nodes.filter((node) => node.task);
   for (const name of input.rerunTasks ?? []) {
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources);
+    const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
@@ -365,7 +373,7 @@ export interface RunTaskContext {
 export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
   const { config, node, stateDir } = context;
   const { spec, task } = taskNode(config, node);
-  const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources);
+  const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment);
   const { key, scope } = taskScope(config, context.instanceId, node, context.resources);
   await mkdir(path.join(stateDir, "tasks"), { recursive: true, mode: 0o700 });
   const attemptsAllowed = 1 + (task.retries ?? 0);

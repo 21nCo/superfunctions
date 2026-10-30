@@ -412,7 +412,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     for (const node of plan.nodes.filter((item) => item.task)) {
       const completed = receipt.tasks?.find((item) => item.name === node.name);
       if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
-        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources)) return false;
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment)) return false;
     }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
@@ -613,7 +613,7 @@ export class DevFnOrchestrator {
         hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, { ports: true, networks: true });
     let preflight = await resolvePreflight();
     const decideTasks = async (stateDir: string, locked?: { signal?: AbortSignal }) => await preflightTasks({ config: options.config, plan, root: options.root, stateDir, instanceId: identity.instanceId,
-      ...(preflight.resources ? { resources: preflight.resources } : {}), ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
+      ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
