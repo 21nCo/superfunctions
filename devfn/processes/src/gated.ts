@@ -51,9 +51,13 @@ export async function stopGatedLauncher(launcher: ProcessOwnerIdentity, timeoutM
  */
 export const runGatedCommand: GatedCommandRunner = async (file, args, options) => {
   const wrapperPath = fileURLToPath(new URL("./wrapper.js", import.meta.url));
+  // Its output is always kept, whatever the inherited environment asks of the
+  // wrapper (in any key casing, as Windows reads it).
+  const environment = { ...(options.env ?? process.env) };
+  for (const key of Object.keys(environment)) if (key.toUpperCase() === "DEVFN_DISCARD_OUTPUT") delete environment[key];
   const child = spawn(process.execPath, [wrapperPath], {
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    env: { ...(options.env ?? process.env), DEVFN_WRAPPED_COMMAND: JSON.stringify([file, ...args]),
+    env: { ...environment, DEVFN_WRAPPED_COMMAND: JSON.stringify([file, ...args]),
       DEVFN_REDACT_KEYS: JSON.stringify(options.redactKeys ?? []), DEVFN_WRAPPER_DRAIN_MS: String(WRAPPER_DRAIN_MS) },
     detached: process.platform !== "win32",
     windowsHide: true,
