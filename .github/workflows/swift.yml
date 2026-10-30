@@ -56,14 +56,16 @@ jobs:
       # sampled, so the log shows every thread's stack, and stopped with all
       # its processes, killed if they outlast a 30-second TERM, so the job
       # fails and uploads its snapshots instead of being cancelled at the
-      # timeout.
+      # timeout. The step fails if either run fails or times out, even when
+      # the tests finish while they are being sampled.
       - name: swift test
         timeout-minutes: 25
         env:
           UIFN_SNAPSHOT_ARTIFACTS: ${{ runner.temp }}/uifn-snapshots
         run: |
           descendants() {
-            for child in $(pgrep -P "$1"); do
+            local parent=$1
+            for child in $(pgrep -P "$parent"); do
               echo "$child"
               descendants "$child"
             done
@@ -86,6 +88,7 @@ jobs:
                 case "$command" in
                   *swiftpm-testing-helper*|*xctest*)
                     sample "$pid" 5 -file "$RUNNER_TEMP/sample-$pid.txt" && cat "$RUNNER_TEMP/sample-$pid.txt" || true ;;
+                  *) ;;
                 esac
               done
               # The tree as it is now: a process may have started since.
@@ -96,16 +99,20 @@ jobs:
                 for pid in $owned; do
                   kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
                 done
-                [ -n "$alive" ] || exit 0
+                [ -n "$alive" ] || exit 1
                 sleep 1
               done
               echo "::error::swift test $* processes$alive outlasted TERM by 30 seconds; killing them"
               kill -KILL $alive 2>/dev/null || true
+              exit 1
             ) &
             local watchdog=$!
             local status=0
             wait "$tests" || status=$?
-            wait "$watchdog" || true
+            # The watchdog exits nonzero only when the run timed out.
+            if ! wait "$watchdog" && [ "$status" -eq 0 ]; then
+              status=1
+            fi
             return "$status"
           }
           status=0
