@@ -124,20 +124,43 @@ enum UIFnSnapshot {
     }
 
     /// Renders the view `content` builds at `scale` and its ideal size.
+    ///
+    /// The view draws with Core Graphics into an 8-bit sRGB context rather
+    /// than through `ImageRenderer.cgImage`, whose renderer can change within
+    /// a process: the first renders blend the edges of Display P3 colors
+    /// outside sRGB differently from later ones, by more than a snapshot may
+    /// differ. Core Graphics draws the same pixels on every render.
     static func render(
         colorScheme: ColorScheme = .light,
         dynamicTypeSize: DynamicTypeSize = .large,
         _ content: @escaping @MainActor () -> some View
     ) async -> UIFnBitmap? {
         await renders.enter()
-        let image = await MainActor.run {
+        let image = await MainActor.run { () -> CGImage? in
             let renderer = ImageRenderer(
                 content: content()
                     .environment(\.colorScheme, colorScheme)
                     .environment(\.dynamicTypeSize, dynamicTypeSize)
             )
             renderer.scale = scale
-            return renderer.cgImage
+            var image: CGImage?
+            renderer.render(rasterizationScale: scale) { size, draw in
+                guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                      let context = CGContext(
+                          data: nil,
+                          width: Int((size.width * scale).rounded(.up)),
+                          height: Int((size.height * scale).rounded(.up)),
+                          bitsPerComponent: 8,
+                          bytesPerRow: 0,
+                          space: space,
+                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                      )
+                else { return }
+                context.scaleBy(x: scale, y: scale)
+                draw(context)
+                image = context.makeImage()
+            }
+            return image
         }
         await renders.leave()
         return image.flatMap(UIFnBitmap.init)
