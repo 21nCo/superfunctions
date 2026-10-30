@@ -614,6 +614,71 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
   }, 90_000);
 });
 
+describe("tasks consuming targets shared across worktrees (real local processes)", () => {
+  // Two worktrees of one project sharing a state directory, as on one machine.
+  const worktrees = async (name: string, resources: Record<string, unknown>, consumed: string[], task: Partial<TaskSpec> = {}) => {
+    const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
+    const stateDir = path.join(base, "state");
+    const config = validateDevFnConfig({ version: 1, project: { id: `task-${name}` }, ports: { web: {} },
+      processes: {
+        migrate: { adapter: "command", command: [process.execPath, "task.mjs"], resources: consumed, task: { inputs: ["migrations"], ...task } },
+        web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
+      },
+      resources, profiles: { default: { processes: ["web"] } } });
+    const roots: string[] = [];
+    for (const worktree of ["a", "b"]) {
+      const root = path.join(base, worktree);
+      await mkdir(path.join(root, "migrations"), { recursive: true });
+      await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
+      await writeFile(path.join(root, "task.mjs"), taskScript);
+      await writeFile(path.join(root, "server.mjs"), serverScript);
+      await writeFile(path.join(root, "behavior.json"), JSON.stringify({ sleepMs: 1_000 }));
+      // What a task did to a shared target is visible from every worktree.
+      await writeFile(path.join(root, "migrated"), "1");
+      roots.push(root);
+    }
+    const orchestrator = new DevFnOrchestrator();
+    const runs = async () => (await Promise.all(roots.map(async (root) => (await readFile(path.join(root, "runs.log"), "utf8").catch(() => "")).split("\n").filter(Boolean)))).flat();
+    const cleanup = async () => {
+      for (const root of roots) await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+      await rm(base, { recursive: true, force: true });
+    };
+    return { config, roots, stateDir, orchestrator, runs, cleanup };
+  };
+
+  it("runs a non-idempotent task consuming a remote service once for every worktree, also for concurrent starts", async () => {
+    const env = await worktrees("remote-service", { api: { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://api.example.test" } } } }, ["api"]);
+    try {
+      const started = await Promise.all(env.roots.map(async (root) => await env.orchestrator.up({ config: env.config, root, stateDir: env.stateDir })));
+      expect(started.map((receipt) => receipt.state)).toEqual(["ready", "ready"]);
+      expect(started.map((receipt) => receipt.tasks![0].status).sort()).toEqual(["skipped", "succeeded"]);
+      expect(await env.runs()).toHaveLength(1);
+      // A later start in either worktree decides from the same record.
+      const restarted = await env.orchestrator.up({ config: env.config, root: env.roots[1], stateDir: env.stateDir, replace: true });
+      expect(restarted.tasks).toMatchObject([{ status: "skipped", reason: "succeeded for this input revision" }]);
+      expect(await env.runs()).toHaveLength(1);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
+  it("rejects a task mixing shared and per-instance targets in every worktree before any mutation", async () => {
+    const resources = {
+      db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } },
+      cache: { kind: "cache", defaultTarget: "remote", targets: { remote: { url: "redis://cache.example.test:6379" } } },
+    };
+    for (const task of [{}, { idempotent: true }]) {
+      const env = await worktrees("mixed", resources, ["db", "cache"], task);
+      try {
+        const outcomes = await Promise.all(env.roots.map(async (root) => await env.orchestrator.up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+        for (const outcome of outcomes) {
+          expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { task: "migrate", shared: ["db"], instance: ["cache"] } });
+        }
+        expect(await env.runs()).toHaveLength(0);
+        expect(await exists(env.stateDir)).toBe(false);
+      } finally { await env.cleanup(); }
+    }
+  }, 90_000);
+});
+
 describe("task attempt boundaries (stub launchers)", () => {
   async function context(name: string, overrides: Partial<RunTaskContext> & Pick<RunTaskContext, "node">) {
     const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-stub-${name}-`));

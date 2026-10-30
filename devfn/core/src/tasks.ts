@@ -168,19 +168,34 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
 }
 
 /**
- * The journal and lock a task's completion is recorded under. A task that
- * consumes only remote targets with shared namespaces changes the same
- * systems from every worktree, so its scope is the project, task and those
- * targets; any other task's is its lifecycle instance.
+ * The journal and lock a task's completion is recorded under. A consumed
+ * target is shared across worktrees when it is remote and no isolated
+ * namespace separates them: a shared namespace, or a remote resource without
+ * one (a service). Local targets, which a lifecycle starts, and isolated
+ * namespaces are per instance; browser state is neither. A task consuming
+ * shared targets changes the same systems from every worktree, so its scope
+ * is the project, task and those targets, and every worktree decides from,
+ * and serializes on, one record. Any other task's scope is its lifecycle
+ * instance. A task consuming both would need its per-instance targets set up
+ * in each worktree but must never run twice against the shared ones, so it
+ * is rejected before any mutation.
  */
 export function taskScope(config: DevFnConfig, instanceId: string, node: { name: string; kind: "process" | "service" }, resources?: ResourcePlan): { key: string; scope: TaskJournal["scope"] } {
   const { spec } = taskNode(config, node);
-  const consumed = (spec.resources ?? []).map((name) => [name, resources?.resources[name]] as const).filter(([, planned]) => planned?.kind !== "browser");
-  const shared = consumed.length > 0 && consumed.every(([, planned]) => planned?.remote && planned.namespace?.sharing === "shared");
-  const identity = shared
-    ? { project: config.project.id, task: node.name, targets: consumed.map(([name, planned]) => [name, planned!.remote!.url, planned!.namespace!.prefix]).sort((a, b) => compare(a[0], b[0])) }
+  const consumed = (spec.resources ?? []).flatMap((name) => {
+    const planned = resources?.resources[name];
+    return planned && planned.kind !== "browser" ? [[name, planned] as const] : [];
+  });
+  const shared = consumed.filter(([, planned]) => planned.remote && (!planned.namespace || planned.namespace.sharing === "shared"));
+  const instance = consumed.filter((item) => !shared.includes(item)).map(([name]) => name);
+  if (shared.length > 0 && instance.length > 0) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}) and per-instance resources (${instance.join(", ")}). Its completion cannot be recorded once for the shared targets and once per instance; split it into tasks that each consume only one kind.`,
+      { task: node.name, shared: shared.map(([name]) => name), instance });
+  }
+  const identity = shared.length > 0
+    ? { project: config.project.id, task: node.name, targets: shared.map(([name, planned]) => [name, planned.remote!.url, planned.namespace?.prefix ?? null]).sort((a, b) => compare(a[0]!, b[0]!)) }
     : { project: config.project.id, task: node.name, instance: instanceId };
-  return { key: sha256(JSON.stringify(identity)).slice(0, 40), scope: shared ? "shared" : "instance" };
+  return { key: sha256(JSON.stringify(identity)).slice(0, 40), scope: shared.length > 0 ? "shared" : "instance" };
 }
 
 const journalPath = (stateDir: string, key: string) => path.join(stateDir, "tasks", `${key}.json`);
