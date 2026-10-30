@@ -920,16 +920,20 @@ function restrictTaskResources(node: LifecyclePlan["nodes"][number], context: No
   const declared = new Set(spec.resources ?? []);
   const owners = new Map<string, string>();
   for (const [name, resource] of Object.entries(config.resources ?? {})) for (const key of resourceEnvironmentKeys(name, resource)) owners.set(key, name);
-  const check = (name: string, location: string) => {
+  const check = (name: string, location: string, profileKey?: string) => {
     const owner = owners.get(name);
     if (owner !== undefined && !declared.has(owner)) {
-      invalid(location, `task ${node.name} references ${name} of resource ${owner}, which it does not declare; a task observes only the resources it declares. Add ${owner} to ${field}.resources.`);
+      // Every task receives the profile environment, so declaring the resource is not always possible (another task may need a resource of the other scope).
+      invalid(location, `task ${node.name} references ${name} of resource ${owner}, which it does not declare; a task observes only the resources it declares. ${profileKey === undefined ? `Add ${owner} to ${field}.resources.`
+        : `Every task receives the profile environment: add ${owner} to ${field}.resources, or move ${profileKey} from the profile environment to the env of the nodes that use it.`}`);
     }
   };
   const values = (source: Record<string, string> | readonly string[] | undefined, location: string) => {
     for (const value of Object.values(source ?? {})) for (const match of value.matchAll(REFERENCE)) check(match[1], location);
   };
-  values(config.profiles[input.plan.profile]?.environment, `profiles.${input.plan.profile}.environment`);
+  for (const [key, value] of Object.entries(config.profiles[input.plan.profile]?.environment ?? {})) {
+    for (const match of value.matchAll(REFERENCE)) check(match[1], `profiles.${input.plan.profile}.environment.${key}`, key);
+  }
   values(spec.env, `${field}.env`);
   if (node.kind === "process") {
     values(config.processes![node.name].command, `${field}.command`);

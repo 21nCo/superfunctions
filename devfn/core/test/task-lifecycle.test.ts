@@ -677,6 +677,56 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       } finally { await env.cleanup(); }
     }
   }, 90_000);
+
+  it("treats browser state isolated per worktree as per-instance, and shared browser state as the same in every worktree", async () => {
+    const api = { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://api.example.test" } } };
+    for (const namespace of [{ namespace: { sharing: "isolated" } }, {}]) {
+      const env = await worktrees("browser-isolated", { api, session: { kind: "browser", cookies: ["sid"], ...namespace } }, ["api", "session"]);
+      try {
+        const outcomes = await Promise.all(env.roots.map(async (root) => await env.orchestrator.up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+        for (const outcome of outcomes) expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { task: "migrate", shared: ["api"], instance: ["session"] } });
+        expect(await env.runs()).toHaveLength(0);
+        expect(await exists(env.stateDir)).toBe(false);
+      } finally { await env.cleanup(); }
+    }
+    const env = await worktrees("browser-shared", { api, session: { kind: "browser", cookies: ["sid"], namespace: { sharing: "shared" } } }, ["api", "session"]);
+    try {
+      const started = await Promise.all(env.roots.map(async (root) => await env.orchestrator.up({ config: env.config, root, stateDir: env.stateDir })));
+      expect(started.map((receipt) => receipt.tasks![0].status).sort()).toEqual(["skipped", "succeeded"]);
+      expect(new Set(started.map((receipt) => receipt.tasks![0].inputRevision)).size).toBe(1);
+      expect(await env.runs()).toHaveLength(1);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
+  it("gives a shared-scope task the same scope and input revision in every worktree, for every resource kind", async () => {
+    const remote = (url: string) => ({ defaultTarget: "remote", targets: { remote: { url } } });
+    const resources: Record<string, unknown> = {
+      api: { kind: "service", ...remote("https://api.example.test") },
+      db: { kind: "database", namespace: { level: "schema", database: "app", sharing: "shared" }, ...remote("postgres://db.example.test:5432") },
+      cache: { kind: "cache", namespace: { sharing: "shared" }, ...remote("redis://cache.example.test:6379") },
+      objects: { kind: "object-store", namespace: { sharing: "shared" }, ...remote("https://objects.example.test/bucket") },
+      events: { kind: "broker", topics: ["orders"], consumerGroup: "workers", namespace: { sharing: "shared" }, ...remote("kafka://broker.example.test:9092") },
+      session: { kind: "browser", cookies: ["sid"], storageKeys: ["draft"], namespace: { sharing: "shared" } },
+    };
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-shared-kinds" },
+      processes: { migrate: { adapter: "command", command: ["node", "task.mjs"], resources: Object.keys(resources), task: { inputs: ["migrations"] } } },
+      resources, profiles: { default: { processes: ["migrate"] } } });
+    const base = await mkdtemp(path.join(os.tmpdir(), "devfn-task-shared-kinds-"));
+    try {
+      const outcomes = [];
+      for (const worktree of ["a", "b"]) {
+        const root = path.join(base, worktree);
+        await mkdir(path.join(root, "migrations"), { recursive: true });
+        await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
+        const plan = createPlan(config);
+        const planned = planResources({ config, plan, ownerId: `owner-${worktree}`, runtimeId: worktree.repeat(32), ports: {}, platform: "linux" });
+        const node = { name: "migrate", kind: "process" } as const;
+        outcomes.push({ scope: taskScope(config, `instance-${worktree}`, node, planned), revision: await taskInputRevision(config, root, node, plan.profile, planned) });
+      }
+      expect(outcomes[0].scope.scope).toBe("shared");
+      expect(outcomes[1]).toEqual(outcomes[0]);
+    } finally { await rm(base, { recursive: true, force: true }); }
+  });
 });
 
 describe("tasks observe only the resources they declare", () => {
@@ -740,6 +790,31 @@ describe("tasks observe only the resources they declare", () => {
       expect(await exists(env.stateDir)).toBe(false);
     } finally { await rm(env.base, { recursive: true, force: true }); }
   }, 60_000);
+
+  it("tells a task the profile environment gives an undeclared resource value how to move it, which the task then never receives", async () => {
+    const reference = "{{env.DEVFN_RESOURCE_API_URL}}";
+    const config = (moved: boolean) => validateDevFnConfig({ version: 1, project: { id: "task-observed-profile" }, ports: { web: {} },
+      processes: {
+        migrate: { adapter: "command", command: [process.execPath, "task.mjs"], task: { inputs: ["migrations"] } },
+        web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 },
+          ...(moved ? { env: { API: reference } } : {}) },
+      },
+      resources: { api }, profiles: { default: { processes: ["web"], resources: { api: "a" }, ...(moved ? {} : { environment: { API: reference } }) } } });
+    const env = await roots("undeclared-profile", 1);
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      await expect(orchestrator.up({ config: config(false), root: env.roots[0], stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID",
+        message: expect.stringContaining("move API from the profile environment to the env of the nodes that use it") });
+      expect(await exists(env.stateDir)).toBe(false);
+      // The documented way out: the nodes that use it receive it, the task does not.
+      const receipt = await orchestrator.up({ config: config(true), root: env.roots[0], stateDir: env.stateDir });
+      expect(receipt.tasks).toMatchObject([{ status: "succeeded" }]);
+      expect((await env.runs()).map((run) => run.api)).toEqual([null]);
+    } finally {
+      await orchestrator.down({ config: config(true), root: env.roots[0], stateDir: env.stateDir }).catch(() => undefined);
+      await rm(env.base, { recursive: true, force: true });
+    }
+  }, 90_000);
 
   it("resolves no undeclared resource value for a native or Compose task, while other native processes keep receiving every selected one", () => {
     const config = validateDevFnConfig({ version: 1, project: { id: "task-observed-values" },
@@ -865,6 +940,30 @@ describe("task attempt boundaries (stub launchers)", () => {
     } finally { await rm(env.root, { recursive: true, force: true }); }
   });
 
+  it("records a Compose attempt that exited 0 as succeeded only once its one-off container is verified gone", async () => {
+    const succeeding = (): ProcessSupervisor => ({ run: async (input: RunProcessInput): Promise<ProcessRunResult> => {
+      const managed = { name: input.name, pid: 2 ** 22 + 9, command: input.command, cwd: input.root, logPath: path.join(input.root, "stub.log"), startedAt: new Date().toISOString() };
+      await input.onStarted?.(managed);
+      return { outcome: "succeeded", exitCode: 0, signal: null, process: managed };
+    } }) as unknown as ProcessSupervisor;
+    const verified = compose(["docker", "compose", "run"]);
+    const ok = await context("compose-success", { node: { name: "plain", kind: "service" }, supervisor: succeeding(), compose: verified });
+    try {
+      await expect(runTask(ok.value)).resolves.toMatchObject({ status: "succeeded" });
+      expect(verified.stopLaunch).toHaveBeenCalledWith(expect.objectContaining({ name: "plain", launcher: { pid: 2 ** 22 + 9 } }));
+      expect((await ok.journal())?.attempts).toMatchObject([{ outcome: "succeeded", effects: "applied", stopped: true }]);
+    } finally { await rm(ok.root, { recursive: true, force: true }); }
+    const leftover = compose(["docker", "compose", "run"], async () => { throw new Error("one-off container still present"); });
+    const env = await context("compose-success-leftover", { node: { name: "plain", kind: "service" }, supervisor: succeeding(), compose: leftover });
+    try {
+      await expect(runTask(env.value)).rejects.toMatchObject({ code: "DEVFN_TASK_FAILED", message: expect.stringContaining("still present") });
+      const journal = await env.journal();
+      expect(journal?.lastSuccess).toBeUndefined();
+      expect(journal?.attempts).toMatchObject([{ outcome: "failed", effects: "unknown", stopped: false }]);
+      expect(env.registry.recordOwners).not.toHaveBeenCalled();
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  });
+
   it("settles another worktree's unverified Compose attempt of a shared scope through its journaled launch before any new attempt", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-shared-"));
     await writeFile(path.join(root, "compose.yaml"), "services:\n  seed: { image: busybox }\n  plain: { image: busybox }\n");
@@ -900,10 +999,10 @@ describe("task attempt boundaries (stub launchers)", () => {
       const blocked = compose(["docker"], async () => { order.push("stop"); throw new Error("container still running"); });
       await expect(runTask(worktree("worktree-b", succeeding, blocked, true))).rejects.toMatchObject({ code: "DEVFN_TASK_RERUN_REQUIRED" });
       expect(order).toEqual(["stop"]);
-      // Once it can, it stops A's leftovers through A's journaled launch, then runs.
+      // Once it can, it stops A's leftovers through A's journaled launch, then runs, then verifies its own one-off gone.
       const settles = compose(["docker"], async () => { order.push("stop"); });
       expect(await runTask(worktree("worktree-b", succeeding, settles))).toMatchObject({ status: "succeeded" });
-      expect(order).toEqual(["stop", "stop", "run"]);
+      expect(order).toEqual(["stop", "stop", "run", "stop"]);
       expect(settles.stopLaunch).toHaveBeenCalledWith(expect.objectContaining({ name: "seed", projectName: "stub-worktree-a", launcher: { pid: 2 ** 22 + 7 } }));
       expect((await readTaskJournal(stateDir, scope("worktree-a").key))?.attempts.map((attempt) => [attempt.instanceId, attempt.outcome, attempt.stopped]))
         .toEqual([["worktree-a", "failed", true], ["worktree-b", "succeeded", true]]);

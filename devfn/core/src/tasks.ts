@@ -168,11 +168,15 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
 }
 
 /**
- * The journal and lock a task's completion is recorded under. A consumed
+ * The journal and lock a task's completion is recorded under, classified
+ * from the same consumed resources its input revision covers. A consumed
  * target is shared across worktrees when it is remote and no isolated
  * namespace separates them: a shared namespace, or a remote resource without
  * one (a service). Local targets, which a lifecycle starts, and isolated
- * namespaces are per instance; browser state is neither. A task consuming
+ * namespaces, a browser's included, are per instance. A browser resource
+ * with a shared namespace names the same state in every worktree, so it is
+ * neither. Every input of a shared-scope revision is therefore identical in
+ * every worktree. A task consuming
  * shared targets changes the same systems from every worktree, so its scope
  * is the project, task and those targets, and every worktree decides from,
  * and serializes on, one record. Any other task's scope is its lifecycle
@@ -184,7 +188,7 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   const { spec } = taskNode(config, node);
   const consumed = (spec.resources ?? []).flatMap((name) => {
     const planned = resources?.resources[name];
-    return planned && planned.kind !== "browser" ? [[name, planned] as const] : [];
+    return planned && !(planned.kind === "browser" && planned.namespace?.sharing === "shared") ? [[name, planned] as const] : [];
   });
   const shared = consumed.filter(([, planned]) => planned.remote && (!planned.namespace || planned.namespace.sharing === "shared"));
   const instance = consumed.filter((item) => !shared.includes(item)).map(([name]) => name);
@@ -502,13 +506,13 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
       await journal(launcher, withoutName(prepared.launch));
       await registry.beginLaunch(invocationId, node.name, { ...withoutName(prepared.launch), launcher });
     } });
-  // --rm removes a container that ran to its end; any other run may have
-  // left one, which is stopped and removed before the launch is resolved.
-  // A launch that cannot be resolved stays journaled for teardown.
-  if (result.outcome !== "succeeded") {
-    try { await compose.stopLaunch({ ...prepared.launch, ...(launcher ? { launcher } : {}) }); }
-    catch (error) { return { ...result, stopError: [result.stopError, error instanceof Error ? error.message : String(error)].filter(Boolean).join(" ") }; }
-  }
+  // --rm removes a container that ran to its end, but a run that did not end
+  // there may have left one, and Docker may not have removed it yet: every
+  // attempt's one-off containers, found by its attempt label, are stopped and
+  // removed, and verified gone, before the launch is resolved. A launch that
+  // cannot be resolved stays journaled for teardown and fails the attempt.
+  try { await compose.stopLaunch({ ...prepared.launch, ...(launcher ? { launcher } : {}) }); }
+  catch (error) { return { ...result, stopError: [result.stopError, error instanceof Error ? error.message : String(error)].filter(Boolean).join(" ") }; }
   try { if (launcher) await registry.recordOwners(invocationId, node.name, [{ process: launcher }]); }
   catch (error) { return { ...result, stopError: [result.stopError, error instanceof Error ? error.message : String(error)].filter(Boolean).join(" ") }; }
   return result;
