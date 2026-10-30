@@ -780,6 +780,29 @@ for (const [entries, expected] of [
   });
 }
 
+// Build-file status follows execution: a file a shipped script or shell build script runs, and every local module a build file imports, is read with the package root as cwd.
+const globEntry = "await build({ entry: ['src/**/*.ts'] });\n";
+const argvTsc = "execFileSync('tsc', ['-p', 'lib']);\n";
+for (const [cell, build, tree, expected] of [
+  ["a root build.mjs glob entry", "node build.mjs", { "build.mjs": globEntry }, emitted],
+  ["a tools/build.mjs glob entry", "node tools/build.mjs", { "tools/build.mjs": globEntry }, emitted],
+  ["a tsx-run tools/build.ts glob entry", "tsx tools/build.ts", { "tools/build.ts": globEntry }, emitted],
+  ["an entry list in a helper a build script imports", "node scripts/build.mjs", { "scripts/build.mjs": "import { entries } from '../tools/entries.mjs';\nawait build({ entry: entries });\n", "tools/entries.mjs": "export const entries = ['src/**/*.ts'];\n" }, emitted],
+  ["a root build.mjs argv tsc", "node build.mjs", { ...libProject, "build.mjs": argvTsc }, ["lib/__tests__/fixtures/data.ts"]],
+  ["a tools/build.mjs argv tsc", "node tools/build.mjs", { ...libProject, "tools/build.mjs": argvTsc }, ["lib/__tests__/fixtures/data.ts"]],
+  ["an argv tsc in a helper a build script imports", "node scripts/build.mjs", { ...libProject, "scripts/build.mjs": "await import('../tools/compile.mjs');\n", "tools/compile.mjs": argvTsc }, ["lib/__tests__/fixtures/data.ts"]],
+  ["tsc -p lib in a root build.sh", "sh build.sh", { ...libProject, "build.sh": "#!/bin/sh\nset -e\ntsc -p lib\n" }, ["lib/__tests__/fixtures/data.ts"]],
+  ["tsc -p lib in scripts/build.sh", "bash scripts/build.sh", { ...libProject, "scripts/build.sh": "tsc -p lib\n" }, ["lib/__tests__/fixtures/data.ts"]],
+  ["a build file a shell build script runs", "./build.sh", { "build.sh": "node tools/build.mjs\n", "tools/build.mjs": globEntry }, emitted],
+  ["control: a tools/build.mjs no script runs", "tsup src/index.ts", { "tools/build.mjs": globEntry }, []],
+  ["control: a build.sh no script runs", "tsup src/index.ts", { ...libProject, "build.sh": "tsc -p lib\n" }, []],
+  ["control: a ./ option value is not run", "svelte-package -i lib -o dist --tsconfig ./tsconfig.json", { "lib/index.ts": "export const lib = 1;\n", "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "exclude": ["src/**/*.test.ts"] }' }, []],
+]) {
+  test(`a file the build runs is a build file: ${cell}`, () => {
+    assert.deepEqual(promotedBy(build, { ...sources, ...tree }), expected);
+  });
+}
+
 // A noEmit tsconfig, set directly or inherited, puts nothing in dist unless the command line turns emission back on; its project references still build.
 const noEmit = '{ "compilerOptions": { "noEmit": true } }';
 for (const [cell, build, tsconfigs, expected] of [

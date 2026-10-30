@@ -50,7 +50,8 @@ const SEMVER = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTI
 // Files whose references count: relative specifiers and `".."` path segments everywhere; in build files
 // (in-package scripts/ and root *.config.*, and declared inputs outside uifn/) also repo-root paths and bare
 // package-relative strings such as tsup entries; in a tsconfig, its include and files entries. Other JSON is
-// data. Runtime reads through computed paths are not detected.
+// data. Runtime reads through computed paths are not detected. A file a shipped script runs, and a local module a
+// build file imports, is a build file too, wherever it lives; a shell build file is read like a lifecycle script.
 const SCANNED_FILE = /(?:\.(?:[cm]?[jt]sx?|svelte|css)|(?:^|\/)[tj]sconfig[^/]*\.json)$/;
 const SPECIFIER = /(['"`])(\.\.?(?:\/[^'"`\n]*?)?)(?:\1|\$\{)/g;
 const LITERAL_ARGUMENT = /\s*,\s*(['"`])([^'"`\n]*)\1/y;
@@ -68,6 +69,9 @@ const STRING_LITERAL = /(['"`])((?:(?!\1)[^\n\\]|\\.)*)\1/g;
 // `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
 const RUNS_TSC = /\btsc\b/;
+// Commands that run a file with the package root as the working directory, which makes the file a build file.
+const RUNNER = /^(?:node|tsx|ts-node(?:-esm)?|esno|vite-node|jiti|bun|deno|sh|bash|zsh|dash|zx)$/;
+const RUNNABLE = /\.(?:[cm]?[jt]sx?|sh)$/;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
@@ -310,6 +314,7 @@ export function tsconfigEntries(file, text) {
  * A `!` glob is marked negated, a reference keeps its enclosing bracket as `list`, and a tsconfig's own specifiers are overridden.
  */
 export function fileReferences(file, text, { root = path.posix.dirname(file), base = path.posix.dirname(file), buildFile = false } = {}) {
+  if (buildFile && file.endsWith(".sh")) return scriptReferences({ build: text }, root);
   const dir = path.posix.dirname(file);
   const found = [];
   const add = (target, extra = {}) => found.push({ target: path.posix.normalize(target).replace(/\/+$/, ""), soft: false, ...extra });
@@ -320,9 +325,11 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
     const segments = [match[2]];
     LITERAL_ARGUMENT.lastIndex = match.index + match[0].length;
     if (!file.endsWith(".json")) for (let argument = LITERAL_ARGUMENT.exec(text); argument; argument = LITERAL_ARGUMENT.exec(text)) segments.push(argument[2]);
-    const bundled = !buildFile && !file.endsWith(".json") && MODULE_CONTEXT.test(text.slice(Math.max(0, match.index - 32), match.index));
+    const module = !file.endsWith(".json") && MODULE_CONTEXT.test(text.slice(Math.max(0, match.index - 32), match.index));
+    const bundled = !buildFile && module;
     const list = enclosingBracket(text, match.index);
-    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : TSCONFIG.test(file) ? { overridden: true } : { list });
+    // A module a build file imports runs in the build, so it is a build file too.
+    if (!isEntry(path.posix.join(dir, match[2]))) add(path.posix.join(dir, match[2]), bundled ? { bundled } : TSCONFIG.test(file) ? { overridden: true } : { list, ...(module ? { runs: true } : {}) });
     if (segments.length === 1 || text[list] === "[") continue;
     // A joined path is an extra candidate. For `path.resolve(packageRoot, "..", "x")` the base expression is unknown, so also try the package root.
     for (const from of match[2].startsWith("..") ? [dir, base] : [dir]) if (!isEntry(path.posix.join(from, ...segments))) add(path.posix.join(from, ...segments));
@@ -339,7 +346,7 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
       for (const from of new Set([root, dir])) add(path.posix.join(from, value.slice(Number(negated))), { soft: true, list: enclosingBracket(text, index), ...(negated ? { negated } : {}) });
     }
   }
-  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}`, reference]));
+  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}\0${reference.runs ?? ""}`, reference]));
   return [...unique.values()];
 }
 
@@ -363,20 +370,22 @@ export function tscProjects(command) {
  * Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked
  * negated, with the command they are in, plus the tsconfigs each tsc command emits from. Outside tsc commands a token is
  * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a tsc --noEmit
- * command names nothing.
+ * command names nothing. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), and a leading `./x`, is marked `runs`.
  */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
-    for (const [list, command] of scripts[name].split(/&&|\|\||[;|]/).entries()) {
+    for (const [list, command] of scripts[name].split(/&&|\|\||[;|\n]/).entries()) {
       const projects = tscProjects(command);
       if (projects?.length === 0) continue;
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: EMIT_OVERRIDE.test(command) });
-      for (const token of command.split(/[\s&<>()]+/)) {
+      let runs = false;
+      for (const [index, token] of command.trim().split(/[\s&<>()]+/).entries()) {
         const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        runs ||= RUNNER.test(path.posix.basename(value));
       }
     }
   }
@@ -489,13 +498,15 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
   const scope = { packagePath, inputs, excluded, options: classifyOptions(manifest) };
   const inventory = fileInventory(files);
   const roots = [packagePath, ...inputs];
+  // Files a shipped script or shell build file runs, and local modules build files import (references marked `runs`).
+  const runs = new Set();
   const describe = (file) => {
     if (file.startsWith(`${packagePath}/`)) {
       const relative = file.slice(packagePath.length + 1);
-      return { root: packagePath, base: packagePath, buildFile: relative.startsWith("scripts/") || /^[^/]+\.config\.[^/]+$/.test(relative) };
+      return { root: packagePath, base: packagePath, buildFile: runs.has(file) || relative.startsWith("scripts/") || /^[^/]+\.config\.[^/]+$/.test(relative) };
     }
     const input = inputs.find((entry) => isWithin(file, entry));
-    return { root: packagePath, base: file === input ? path.posix.dirname(file) : input, buildFile: !file.startsWith("uifn/") };
+    return { root: packagePath, base: file === input ? path.posix.dirname(file) : input, buildFile: runs.has(file) || !file.startsWith("uifn/") };
   };
   const references = [...scriptReferences(manifest?.scripts, packagePath), ...entryReferences(manifest, packagePath)];
   const promoted = new Map();
@@ -507,8 +518,8 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
   const packed = packlist(manifest, packagePath);
   let wave = files.filter((file) => pathKind(file, scope) === "shipped" || packed(file));
   for (let changed = true; changed; ) {
-    const unread = wave.filter((file) => SCANNED_FILE.test(file) && !scanned.has(file));
-    for (const [file, text] of read(unread)) references.push(...fileReferences(file, text, describe(file)).map((reference) => ({ from: file, ...reference })));
+    const unread = wave.filter((file) => (SCANNED_FILE.test(file) || (file.endsWith(".sh") && describe(file).buildFile)) && !scanned.has(file));
+    for (const [file, text] of read(unread)) references.push(...fileReferences(file, text, describe(file)).map((reference) => ({ ...reference, from: file })));
     for (const file of unread) scanned.add(file);
     wave = [];
     changed = false;
@@ -523,6 +534,13 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
       if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
       const { files: matches, direct } = resolved.get(target);
       if (reference.negated || (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct))) continue;
+      // A file that starts running in the build is read again as a build file.
+      for (const file of reference.runs && direct ? matches.filter((match) => RUNNABLE.test(match) && !runs.has(match)) : []) {
+        runs.add(file);
+        scanned.delete(file);
+        wave.push(file);
+        changed = true;
+      }
       for (const file of (direct || reference.tsc) && !reference.tsconfig && !reference.overridden ? matches : []) {
         if (named.has(file) && (!reference.emit || emitting.has(file))) continue;
         named.add(file);
