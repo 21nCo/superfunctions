@@ -82,7 +82,7 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
         // menu subjects draw the label the style gives the menu.
         case .menu:
             #if os(macOS)
-            Menu("Options") { Button("Rename") {} }.menuStyle(.uifn)
+            Menu("Options") { Button("Rename") { /* The snapshot only draws the menu. */ } }.menuStyle(.uifn)
             #else
             UIFnMenuAppearance(label: Text("Options"), state: UIFnControlState())
             #endif

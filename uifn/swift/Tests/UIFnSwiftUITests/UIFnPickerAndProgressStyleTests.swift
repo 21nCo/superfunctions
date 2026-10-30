@@ -49,6 +49,37 @@ struct UIFnPickerAndProgressStyleTests {
         )
     }
 
+    /// The selection a picker's system `Picker` gets: the selection when it
+    /// is an option, otherwise nil, so it always matches an option's tag or is
+    /// none. Choosing an option sets the selection; nil leaves it as it is.
+    @Test(arguments: ["Week", "Year"])
+    func theSystemPickerGetsTheSelectionOnlyWhenItIsAnOption(_ start: String) {
+        var value = start
+        var writes = 0
+        let selection = Binding(get: { value }, set: { value = $0; writes += 1 })
+        let system = UIFnSystemPicker<Text, String, Text>.selection(selection, options: Self.labels)
+        #expect(system.wrappedValue == (Self.labels.contains(start) ? start : nil))
+        system.wrappedValue = nil
+        #expect(value == start && writes == 0)
+        system.wrappedValue = "Month"
+        #expect(value == "Month" && writes == 1)
+        #expect(system.wrappedValue == "Month")
+    }
+
+    /// A menu-style system picker needs an item tagged with its selection, so
+    /// the menu picker's has one for no selection, showing the label, while no
+    /// option is selected; the other system pickers have only the options.
+    @Test(arguments: ["Week", "Year"], [true, false])
+    func onlyAMenuPickersSystemPickerHasAnItemForNoSelection(_ selection: String, _ labelsNoSelection: Bool) {
+        let picker = UIFnSystemPicker(
+            selection: .constant(selection),
+            options: Self.labels,
+            label: Text("Range"),
+            labelsNoSelection: labelsNoSelection
+        ) { Text($0) }
+        #expect(picker.showsNoSelectionItem == (labelsNoSelection && !Self.labels.contains(selection)))
+    }
+
     @Test
     func optionsThatRepeatAnEarlierOneAreLeftOut() async throws {
         #expect(uifnUniqueOptions(["Day", "Week", "Day", "Month", "Week"]) == ["Day", "Week", "Month"])
@@ -108,7 +139,7 @@ struct UIFnPickerAndProgressStyleTests {
     @Test(arguments: [true, false])
     func menuStyleDrawsTheEnabledState(_ isEnabled: Bool) async throws {
         try await expectSameRendering(
-            { Menu("Options") { Button("Rename") {} }.menuStyle(.uifn).disabled(!isEnabled) },
+            { Menu("Options") { Button("Rename") { /* The test only draws the menu. */ } }.menuStyle(.uifn).disabled(!isEnabled) },
             { UIFnMenuAppearance(label: Text("Options"), state: UIFnControlState(isEnabled: isEnabled)) }
         )
     }
@@ -116,7 +147,7 @@ struct UIFnPickerAndProgressStyleTests {
     @Test
     func aHiddenMenuIndicatorLeavesOutTheChevron() async throws {
         try await expectSameRendering(
-            { Menu("Options") { Button("Rename") {} }.menuStyle(.uifn).menuIndicator(.hidden) },
+            { Menu("Options") { Button("Rename") { /* The test only draws the menu. */ } }.menuStyle(.uifn).menuIndicator(.hidden) },
             { UIFnMenuAppearance(label: Text("Options"), state: UIFnControlState(), showsIndicator: false) }
         )
         let shown = try await render { UIFnMenuAppearance(label: Text("Options"), state: UIFnControlState()) }

@@ -87,12 +87,8 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         ))
         #endif
         .accessibilityRepresentation {
-            Picker(selection: selection) {
-                uifnTaggedOptions(options, content: segment)
-            } label: {
-                label
-            }
-            .pickerStyle(.segmented)
+            UIFnSystemPicker(selection: selection, options: options, label: label, content: segment)
+                .pickerStyle(.segmented)
         }
     }
 
@@ -234,14 +230,44 @@ func uifnUniqueOptions<Options: Sequence>(_ options: Options) -> [Options.Elemen
     return options.filter { seen.insert($0).inserted }
 }
 
-/// A system picker's content: each option's view tagged with the option.
-@ViewBuilder
-func uifnTaggedOptions<SelectionValue: Hashable, Content: View>(
-    _ options: [SelectionValue],
-    content: @escaping (SelectionValue) -> Content
-) -> some View {
-    ForEach(options, id: \.self) { option in
-        content(option).tag(option)
+/// A system `Picker` of the options, each option's view tagged with the
+/// option. A selection that is not among the options gives the system picker
+/// no selection rather than one with no tag, and choosing an option sets it.
+/// A menu-style system picker needs an item for no selection, so with
+/// `labelsNoSelection` and no option selected it has one showing the label,
+/// as the UIFn menu picker's label does.
+struct UIFnSystemPicker<Label: View, SelectionValue: Hashable, Content: View>: View {
+    let selection: Binding<SelectionValue>
+    let options: [SelectionValue]
+    let label: Label
+    var labelsNoSelection = false
+    let content: (SelectionValue) -> Content
+
+    var body: some View {
+        Picker(selection: Self.selection(selection, options: options)) {
+            ForEach(options, id: \.self) { option in
+                content(option).tag(SelectionValue?.some(option))
+            }
+            if showsNoSelectionItem {
+                label.tag(SelectionValue?.none)
+            }
+        } label: {
+            label
+        }
+    }
+
+    /// Whether the picker has the item for no selection.
+    var showsNoSelectionItem: Bool {
+        labelsNoSelection && !options.contains(selection.wrappedValue)
+    }
+
+    /// The selection as the system picker sees it: nil when it is not among
+    /// the options. Setting nil leaves the selection as it is.
+    static func selection(_ selection: Binding<SelectionValue>, options: [SelectionValue]) -> Binding<SelectionValue?> {
+        Binding(
+            get: { options.contains(selection.wrappedValue) ? selection.wrappedValue : nil },
+            set: { if let value = $0 { selection.wrappedValue = value } }
+        )
     }
 }
 
@@ -370,7 +396,7 @@ struct UIFnSegmentAppearance<Label: View>: View {
 /// Lays out segments side by side at equal widths: the width offered, or,
 /// with no width offered, the widest segment's for each.
 struct UIFnSegmentsLayout: Layout {
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
             ?? (subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0) * CGFloat(subviews.count)
@@ -379,7 +405,7 @@ struct UIFnSegmentsLayout: Layout {
         return CGSize(width: width, height: height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
         guard !subviews.isEmpty else { return }
         let width = bounds.width / CGFloat(subviews.count)
         for (index, subview) in subviews.enumerated() {
@@ -404,7 +430,8 @@ struct UIFnSegmentsLayout: Layout {
 /// With no option selected, the label shows the picker's label in the muted
 /// text color. The menu items are the system's, so an option's view should be
 /// one a menu item can show, such as `Text` or `Label`. Accessibility sees a
-/// system menu `Picker` with the same options and selection in its place.
+/// system menu `Picker` with the same options and selection in its place,
+/// showing the picker's label when no option is selected.
 /// Options that repeat an earlier option are left out.
 public struct UIFnMenuPicker<Label: View, SelectionValue: Hashable, Option: View>: View {
     private let selection: Binding<SelectionValue>
@@ -427,7 +454,7 @@ public struct UIFnMenuPicker<Label: View, SelectionValue: Hashable, Option: View
 
     public var body: some View {
         Menu {
-            picker.pickerStyle(.inline).labelsHidden()
+            picker().pickerStyle(.inline).labelsHidden()
         } label: {
             if options.contains(selection.wrappedValue) {
                 option(selection.wrappedValue)
@@ -437,16 +464,12 @@ public struct UIFnMenuPicker<Label: View, SelectionValue: Hashable, Option: View
         }
         .menuStyle(.uifn)
         .accessibilityRepresentation {
-            picker.pickerStyle(.menu)
+            picker(labelsNoSelection: true).pickerStyle(.menu)
         }
     }
 
-    private var picker: Picker<Label, SelectionValue, some View> {
-        Picker(selection: selection) {
-            uifnTaggedOptions(options, content: option)
-        } label: {
-            label
-        }
+    private func picker(labelsNoSelection: Bool = false) -> UIFnSystemPicker<Label, SelectionValue, Option> {
+        UIFnSystemPicker(selection: selection, options: options, label: label, labelsNoSelection: labelsNoSelection, content: option)
     }
 }
 
