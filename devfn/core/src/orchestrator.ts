@@ -932,7 +932,7 @@ export class DevFnOrchestrator {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
       const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: receipt.runtimeDir,
         instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
-        command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.generated),
+        command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
         ...(options.signal ? { signal: options.signal } : {}), registry, supervisor, compose,
         record: async (entry: TaskReceipt) => {

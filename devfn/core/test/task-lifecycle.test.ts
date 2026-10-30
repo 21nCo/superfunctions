@@ -10,7 +10,7 @@ import type { FilePortRegistry } from "@devfn/ports";
 import { processBirthSignature, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
 import { describe, expect, it, vi } from "vitest";
 
-import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveEndpointTemplates, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
 import { runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
@@ -21,7 +21,7 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 // behavior.json, which is deliberately not one of its inputs.
 const taskScript = `import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const behavior = JSON.parse(readFileSync("behavior.json", "utf8"));
-appendFileSync("runs.log", JSON.stringify({ pid: process.pid, migrations: readFileSync("migrations/001.sql", "utf8").trim(), token: process.env.SETUP_TOKEN ?? null }) + "\\n");
+appendFileSync("runs.log", JSON.stringify({ pid: process.pid, migrations: readFileSync("migrations/001.sql", "utf8").trim(), token: process.env.SETUP_TOKEN ?? null, api: process.env.DEVFN_RESOURCE_API_URL ?? null }) + "\\n");
 console.log("setup with " + (process.env.SETUP_TOKEN ?? "none"));
 writeFileSync("task.pid", String(process.pid));
 const remaining = behavior.failTimes ?? 0;
@@ -679,6 +679,134 @@ describe("tasks consuming targets shared across worktrees (real local processes)
   }, 90_000);
 });
 
+describe("tasks observe only the resources they declare", () => {
+  const api = { kind: "service", defaultTarget: "a", targets: { a: { url: "https://a.example.test" }, b: { url: "https://b.example.test" } } };
+  const manifest = (task: Record<string, unknown> = {}, profiles: Record<string, unknown> = {}) => validateDevFnConfig({ version: 1, project: { id: "task-observed" }, ports: { web: {} },
+    processes: {
+      migrate: { adapter: "command", command: [process.execPath, "task.mjs"], task: { inputs: ["migrations"] }, ...task },
+      web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
+    },
+    // Each profile selects a target of api, so every node but a task that does not declare it receives its values.
+    resources: { api }, profiles: { default: { processes: ["web"], resources: { api: "a" } }, b: { processes: ["web"], resources: { api: "b" } }, ...profiles } });
+  const roots = async (name: string, count: number) => {
+    const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
+    const created: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const root = path.join(base, String(index));
+      await mkdir(path.join(root, "migrations"), { recursive: true });
+      await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
+      await writeFile(path.join(root, "task.mjs"), taskScript);
+      await writeFile(path.join(root, "server.mjs"), serverScript);
+      await writeFile(path.join(root, "behavior.json"), "{}");
+      await writeFile(path.join(root, "migrated"), "1");
+      created.push(root);
+    }
+    const runs = async () => (await Promise.all(created.map(async (root) => (await readFile(path.join(root, "runs.log"), "utf8").catch(() => "")).split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line) as { api: string | null })))).flat();
+    return { base, roots: created, stateDir: path.join(base, "state"), runs };
+  };
+
+  it("rejects a reference to an undeclared resource in a task's argv, env or profile environment in every worktree before any mutation", async () => {
+    const reference = "{{env.DEVFN_RESOURCE_API_URL}}";
+    for (const config of [
+      manifest({ command: [process.execPath, "task.mjs", reference] }),
+      manifest({ env: { API: reference } }),
+      manifest({}, { default: { processes: ["web"], resources: { api: "a" }, environment: { API: reference } } }),
+    ]) {
+      const env = await roots("undeclared", 2);
+      const orchestrator = new DevFnOrchestrator();
+      try {
+        const outcomes = await Promise.all(env.roots.map(async (root) => await orchestrator.up({ config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+        for (const outcome of outcomes) {
+          expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("references DEVFN_RESOURCE_API_URL of resource api, which it does not declare") });
+        }
+        expect(await env.runs()).toHaveLength(0);
+        expect(await exists(env.stateDir)).toBe(false);
+      } finally {
+        for (const root of env.roots) await orchestrator.down({ config, root, stateDir: env.stateDir }).catch(() => undefined);
+        await rm(env.base, { recursive: true, force: true });
+      }
+    }
+  }, 90_000);
+
+  it("rejects a Compose task's interpolation of an undeclared resource before any mutation", async () => {
+    const env = await roots("undeclared-compose", 1);
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-observed-compose" }, services: { seed: { adapter: "compose", service: "seed", task: {} } },
+      resources: { api }, profiles: { default: { services: ["seed"], resources: { api: "a" } } } });
+    try {
+      await writeFile(path.join(env.roots[0], "compose.yaml"), "services:\n  seed:\n    image: busybox\n    environment:\n      API: ${DEVFN_RESOURCE_API_URL}\n");
+      await expect(new DevFnOrchestrator().up({ config, root: env.roots[0], stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID",
+        message: expect.stringContaining("services.seed.compose: task seed references DEVFN_RESOURCE_API_URL of resource api") });
+      expect(await exists(env.stateDir)).toBe(false);
+    } finally { await rm(env.base, { recursive: true, force: true }); }
+  }, 60_000);
+
+  it("resolves no undeclared resource value for a native or Compose task, while other native processes keep receiving every selected one", () => {
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-observed-values" },
+      processes: { migrate: { adapter: "command", command: ["node", "task.mjs"], task: {} }, check: { adapter: "command", command: ["node", "check.mjs"], resources: ["api"], task: {} },
+        worker: { adapter: "command", command: ["node", "worker.mjs"] } },
+      services: { seed: { adapter: "compose", service: "seed", task: {} } },
+      resources: { api }, profiles: { default: { processes: ["migrate", "check", "worker"], services: ["seed"], resources: { api: "a" } } } });
+    const plan = createPlan(config);
+    const composeNetworks = { seed: ["default"] };
+    const resolved = resolveEndpointTemplates({ config, plan, ownerId: "owner-a", ports: {}, composeNetworks,
+      resources: planResources({ config, plan, ownerId: "owner-a", ports: {}, platform: "linux", composeNetworks }) });
+    expect(resolved.generated.DEVFN_RESOURCE_API_URL).toBe("https://a.example.test");
+    for (const name of ["migrate", "seed"]) {
+      expect(resolved.nodes[name].environment).not.toHaveProperty("DEVFN_RESOURCE_API_URL");
+      expect(Object.keys(resolved.nodes[name].generated!).filter((key) => key.startsWith("DEVFN_RESOURCE_"))).toEqual([]);
+    }
+    expect(resolved.nodes.check.generated!.DEVFN_RESOURCE_API_URL).toBe("https://a.example.test");
+    // A native process that is not a task keeps receiving every selected resource's values, as before tasks existed.
+    expect(resolved.nodes.worker.environment.DEVFN_RESOURCE_API_URL).toBe("https://a.example.test");
+    expect(resolved.nodes.worker.generated).toBeUndefined();
+  });
+
+  it("gives a task no undeclared resource value, and reruns a task declaring the resource when its target changes", async () => {
+    const env = await roots("observed", 1);
+    const root = env.roots[0];
+    const orchestrator = new DevFnOrchestrator();
+    const undeclared = manifest();
+    const declared = manifest({ resources: ["api"] });
+    try {
+      // The undeclared target never reaches the task, so the skip after a target switch observes nothing changed.
+      expect((await orchestrator.up({ config: undeclared, root, stateDir: env.stateDir })).tasks).toMatchObject([{ status: "succeeded" }]);
+      expect((await orchestrator.up({ config: undeclared, root, stateDir: env.stateDir, profile: "b", replace: true })).tasks).toMatchObject([{ status: "skipped" }]);
+      expect((await env.runs()).map((run) => run.api)).toEqual([null]);
+      await orchestrator.down({ config: undeclared, root, stateDir: env.stateDir });
+      expect((await orchestrator.up({ config: declared, root, stateDir: env.stateDir })).tasks).toMatchObject([{ status: "succeeded" }]);
+      expect((await orchestrator.up({ config: declared, root, stateDir: env.stateDir, profile: "b", replace: true })).tasks).toMatchObject([{ status: "succeeded" }]);
+      expect((await env.runs()).map((run) => run.api)).toEqual([null, "https://a.example.test", "https://b.example.test"]);
+    } finally {
+      await orchestrator.down({ config: declared, root, stateDir: env.stateDir }).catch(() => undefined);
+      await rm(env.base, { recursive: true, force: true });
+    }
+  }, 90_000);
+});
+
+describe("task scope locks", () => {
+  it("takes over a scope lock whose holder is verified dead well within a short task's wait", async () => {
+    const env = await fixture("dead-holder", { timeoutMs: 2_000 });
+    try {
+      const { key } = taskScope(env.config, env.identity.instanceId, { name: "migrate", kind: "process" });
+      // A DevFn that died while holding the lock, a few seconds after taking it.
+      const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+      const birthSignature = await processBirthSignature(holder.pid!);
+      holder.kill("SIGKILL");
+      while (alive(holder.pid!)) await new Promise((resolve) => setTimeout(resolve, 20));
+      const lock = path.join(env.stateDir, "tasks", `${key}.lock`);
+      await mkdir(lock, { recursive: true });
+      await writeFile(path.join(lock, "owner.json"), JSON.stringify({ token: "dead", pid: holder.pid, birthSignature, createdAt: new Date(Date.now() - 15_000).toISOString() }));
+      const started = Date.now();
+      const receipt = await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+      expect(receipt.tasks).toMatchObject([{ name: "migrate", status: "succeeded" }]);
+      // The waiter's timeout is 2 s + 60 s; the default 300 s staleness would have made it time out instead.
+      expect(Date.now() - started).toBeLessThan(30_000);
+      expect(await exists(lock)).toBe(false);
+    } finally { await env.cleanup(); }
+  }, 120_000);
+});
+
 describe("task attempt boundaries (stub launchers)", () => {
   async function context(name: string, overrides: Partial<RunTaskContext> & Pick<RunTaskContext, "node">) {
     const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-stub-${name}-`));
@@ -875,23 +1003,35 @@ describe("finite setup tasks (real Compose)", () => {
         "services:",
         "  seed:",
         "    image: busybox",
-        "    command: [sh, -c, 'echo seeded; sleep ${SEED_SLEEP:-0}; exit ${SEED_EXIT:-0}']",
+        // The seed's marker exists only after a successful run; the dependent records whether it saw one when it started.
+        "    volumes: [data:/data]",
+        "    command: [sh, -c, 'rm -f /data/seeded; echo seeded; sleep ${SEED_SLEEP:-0}; test ${SEED_EXIT:-0} = 0 && touch /data/seeded; exit ${SEED_EXIT:-0}']",
         "  vault-seed:",
         "    image: busybox",
         "    environment: [SEED_TOKEN]",
         "    command: [sh, -c, 'echo token=$$SEED_TOKEN']",
         "  api:",
         "    image: busybox",
-        "    command: [sleep, '3600']",
+        "    volumes: [data:/data]",
+        "    command: [sh, -c, 'test -f /data/seeded && touch /data/api-saw-seed; exec sleep 3600']",
+        "volumes:",
+        "  data: {}",
         "",
       ].join("\n"));
       // Compose reads this value itself; DevFn's environment never holds it.
       await writeFile(path.join(root, ".env"), "SEED_TOKEN=compose-dotenv-secret-555\n");
+      const createdApi = async (since: string) => (await execFileAsync("docker", ["events", "--since", since, "--until", String(Math.ceil(Date.now() / 1000) + 1), "--filter", "type=container", "--filter", "event=create",
+        "--filter", `label=com.docker.compose.project=${project}`, "--filter", "label=com.docker.compose.service=api", "--format", "{{.Actor.ID}}"])).stdout.trim();
+      const readySince = String(Math.floor(Date.now() / 1000) - 1);
       const ready = await orchestrator.up({ config: config(), root, stateDir });
       project = ready.services[0].projectName;
+      // The event query sees the dependent's creation when there is one.
+      expect(await createdApi(readySince)).toContain(ready.services[0].containerIds[0]);
       expect(ready.tasks).toMatchObject([{ name: "seed", kind: "service", status: "succeeded", attempts: [{ exitCode: 0, effects: "applied" }] }]);
       expect(ready.services.map((item) => item.name)).toEqual(["api"]);
       expect(await readFile(ready.tasks![0].logPath!, "utf8")).toContain("seeded");
+      // The dependent started only after the seed's successful run left its marker.
+      await execFileAsync("docker", ["exec", ready.services[0].containerIds[0], "test", "-f", "/data/api-saw-seed"]);
       // No one-off container is left behind.
       expect(await oneOffs()).toBe("");
       await orchestrator.down({ config: config(), root, stateDir });
@@ -901,6 +1041,9 @@ describe("finite setup tasks (real Compose)", () => {
       await expect(orchestrator.up({ config: config(), root, stateDir, profile: "setup" })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
       await orchestrator.down({ config: config(), root, stateDir });
 
+      // From here on, a failed, timed-out or cancelled seed never lets the dependent's container be created, not even briefly before a rollback.
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      const failuresSince = String(Math.floor(Date.now() / 1000));
       await expect(orchestrator.up({ config: config({ exit: 5 }), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
       expect(await readReceipt(config(), root, ready.instanceId)).toMatchObject({ state: "failed", services: [], tasks: [{ status: "failed", attempts: [{ exitCode: 5 }] }] });
 
@@ -917,6 +1060,7 @@ describe("finite setup tasks (real Compose)", () => {
       expect(await cancelled).toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } });
       expect(await services()).toEqual([]);
       expect(await oneOffs()).toBe("");
+      expect(await createdApi(failuresSince)).toBe("");
 
       // A killed `docker compose run` leaves its one-off container to dockerd. Only the task journal knows it, as
       // for another worktree sharing the scope: the next start removes it before the task runs again.
@@ -959,6 +1103,7 @@ describe("finite setup tasks (real Compose)", () => {
     } finally {
       await orchestrator.down({ config: config(), root, stateDir }).catch(() => undefined);
       if (project) await execFileAsync("docker", ["network", "rm", `${project}_default`]).catch(() => undefined);
+      if (project) await execFileAsync("docker", ["volume", "rm", `${project}_data`]).catch(() => undefined);
       await rm(root, { recursive: true, force: true });
     }
   }, 600_000);

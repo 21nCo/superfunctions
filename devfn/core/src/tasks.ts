@@ -291,6 +291,12 @@ function decide(journal: TaskJournal | undefined, revision: string, task: TaskSp
 
 /** A task's scope lock is held for its whole retry budget, which is also how long a start waits for it. */
 const scopeLockTimeout = (task: TaskSpec) => (task.timeoutMs ?? 600_000) * (1 + (task.retries ?? 0)) + 60_000;
+/**
+ * A holder verified dead by its recorded birth signature is taken over after
+ * this long, well within any waiter's timeout, so a start from another
+ * worktree recovers the scope instead of timing out behind a dead DevFn.
+ */
+const SCOPE_LOCK_STALE_MS = 10_000;
 const lockPath = (stateDir: string, key: string) => path.join(stateDir, "tasks", `${key}.lock`);
 
 /**
@@ -347,7 +353,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
       const journal = await readTaskJournal(input.stateDir, key);
       if (journal) await settleAttempts(journal, node.name, () => compose ?? new ComposeController(), async () => await writeTaskJournal(input.stateDir, key, journal));
       decide(journal, revision, task, node.name, rerunRequested);
-    }, { timeoutMs: scopeLockTimeout(task), ...(signal ? { signal } : {}) }).catch((error: unknown) => {
+    }, { timeoutMs: scopeLockTimeout(task), staleMs: SCOPE_LOCK_STALE_MS, ...(signal ? { signal } : {}) }).catch((error: unknown) => {
       if (signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled while task ${node.name} was decided; nothing was started.`, { task: node.name });
       throw error;
     });
@@ -457,7 +463,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     }
     throw new DevFnError("DEVFN_TASK_FAILED", `Task ${node.name} exited with ${last?.signal ? `signal ${last.signal}` : `code ${String(last?.exitCode)}`} after ${receipt.attempts.length} attempt(s)${last?.error ? ` (${last.error})` : ""}; its dependents were not started. ${effects}`,
       { task: node.name, exitCode: last?.exitCode ?? null });
-  }, { timeoutMs: scopeLockTimeout(task), ...(context.signal ? { signal: context.signal } : {}) }).catch((error: unknown) => {
+  }, { timeoutMs: scopeLockTimeout(task), staleMs: SCOPE_LOCK_STALE_MS, ...(context.signal ? { signal: context.signal } : {}) }).catch((error: unknown) => {
     // Cancelled while another start of this scope held its lock: nothing of this task ran.
     if (!locked && context.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `Task ${node.name} was cancelled before it started; its dependents were not started.`, { task: node.name });
     throw error;

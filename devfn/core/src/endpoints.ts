@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { isCredentialKey, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
+import { isCredentialKey, resourceEnvironmentKeys, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { createProcessEnvironment, resolveHttpReadinessUrl } from "@devfn/processes";
 import { composeProjectName, createComposeEnvironment } from "@devfn/compose";
 
@@ -42,6 +42,8 @@ export interface ResolvedNodeStartup {
   command?: string[];
   script?: string;
   healthCommand?: string[];
+  /** A task's generated values: only the resources it declares, so its process sees nothing its input revision omits. */
+  generated?: Record<string, string>;
 }
 
 export interface EndpointResolution {
@@ -904,10 +906,46 @@ interface NodeResolutionContext {
   budget: { remaining: number };
 }
 
+/**
+ * A task observes only the resources it declares, which its input revision
+ * and completion scope are derived from. A reference to another resource's
+ * value, in anything the task receives (the profile and node environment, its
+ * command or script, its Compose interpolation), fails before any mutation,
+ * and no other resource's generated value reaches it.
+ */
+function restrictTaskResources(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string, generated: CheckedValues): void {
+  const { input, config } = context;
+  const spec = node.kind === "process" ? config.processes![node.name] : config.services![node.name];
+  if (!spec.task) return;
+  const declared = new Set(spec.resources ?? []);
+  const owners = new Map<string, string>();
+  for (const [name, resource] of Object.entries(config.resources ?? {})) for (const key of resourceEnvironmentKeys(name, resource)) owners.set(key, name);
+  const check = (name: string, location: string) => {
+    const owner = owners.get(name);
+    if (owner !== undefined && !declared.has(owner)) {
+      invalid(location, `task ${node.name} references ${name} of resource ${owner}, which it does not declare; a task observes only the resources it declares. Add ${owner} to ${field}.resources.`);
+    }
+  };
+  const values = (source: Record<string, string> | readonly string[] | undefined, location: string) => {
+    for (const value of Object.values(source ?? {})) for (const match of value.matchAll(REFERENCE)) check(match[1], location);
+  };
+  values(config.profiles[input.plan.profile]?.environment, `profiles.${input.plan.profile}.environment`);
+  values(spec.env, `${field}.env`);
+  if (node.kind === "process") {
+    values(config.processes![node.name].command, `${field}.command`);
+    values(config.processes![node.name].script === undefined ? undefined : [config.processes![node.name].script!], `${field}.script`);
+  }
+  for (const name of input.composeReferences?.[node.name] ?? []) check(name, `${field}.compose`);
+  const allowed = new Set([...declared].flatMap((name) => config.resources && Object.hasOwn(config.resources, name) ? resourceEnvironmentKeys(name, config.resources[name]) : []));
+  for (const key of Object.keys(generated.values)) {
+    if (key.startsWith("DEVFN_RESOURCE_") && !allowed.has(key)) { delete generated.values[key]; delete generated.checked[key]; }
+  }
+}
+
 function serviceGeneratedValues(node: LifecyclePlan["nodes"][number], context: NodeResolutionContext, field: string): CheckedValues {
   const { input, config, directUrls, composeUrls, checkedGenerated } = context;
   const generated: CheckedValues = { values: { ...context.generated }, checked: { ...checkedGenerated.checked } };
-  if (node.kind !== "service") return generated;
+  if (node.kind !== "service") { restrictTaskResources(node, context, field, generated); return generated; }
   const unreachable = new Map<string, string | undefined>();
   for (const producer of input.plan.nodes) {
     const producerPorts = producer.kind === "service" ? config.services![producer.name].ports ?? {} :
@@ -925,6 +963,7 @@ function serviceGeneratedValues(node: LifecyclePlan["nodes"][number], context: N
     if ("unreachable" in located) { delete generated.values[key]; delete generated.checked[key]; unreachable.set(key, located.unreachable); }
     else { generated.values[key] = located.value; generated.checked[key] = located.value; }
   }
+  restrictTaskResources(node, context, field, generated);
   rejectUnreachableReferences(node, context, field, unreachable, generated.values);
   return generated;
 }
@@ -1011,7 +1050,8 @@ function resolveNodeStartup(node: LifecyclePlan["nodes"][number], context: NodeR
   const processSpec = node.kind === "process" ? config.processes![node.name] : undefined;
   const nativeBind: Record<string, string> = processSpec && processSpec.exposure !== "public" ? { HOST: "127.0.0.1", DEVFN_HOST: "127.0.0.1" } : {};
   const nodeGenerated = serviceGeneratedValues(node, context, field);
-  const profileEnvironment = node.kind === "service" ? resolveValues(profile.environment ?? {}, nodeGenerated, nodeGenerated, `profiles.${input.plan.profile}.environment`, budget) : environment;
+  // A Compose service sees its container-side values, and a task only its declared resources, so each resolves the profile environment from its own.
+  const profileEnvironment = node.kind === "service" || spec.task ? resolveValues(profile.environment ?? {}, nodeGenerated, nodeGenerated, `profiles.${input.plan.profile}.environment`, budget) : environment;
   const nodeEnvironment = resolveValues(spec.env ?? {},
     { values: { ...profileEnvironment.values, ...nativeBind }, checked: { ...profileEnvironment.checked, ...nativeBind } },
     { values: { ...nodeGenerated.values, ...nativeBind }, checked: { ...nodeGenerated.checked, ...nativeBind } }, `${field}.env`, budget);
@@ -1023,7 +1063,7 @@ function resolveNodeStartup(node: LifecyclePlan["nodes"][number], context: NodeR
     else createComposeEnvironment({ ...config.services![node.name], env: nodeEnvironment.values });
   } catch (error) { invalid(field, error instanceof Error ? error.message : "environment keys collide after case folding."); }
   return { environment: nodeEnvironment.values, readinessEnvironment: readinessEnvironment.values,
-    ...(healthUrls.has(node.name) ? { healthUrl: healthUrls.get(node.name) } : {}), ...commands };
+    ...(healthUrls.has(node.name) ? { healthUrl: healthUrls.get(node.name) } : {}), ...commands, ...(spec.task ? { generated: { ...nodeGenerated.values } } : {}) };
 }
 
 type SelectedProxyPath = { path: string; match: "exact" | "prefix"; stripPrefix: boolean };
