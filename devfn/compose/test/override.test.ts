@@ -992,6 +992,12 @@ describe("ComposeController", () => {
     expect(actions()).toEqual([["stop", "fresh-a", "fresh-b"], ["rm", "-f", "fresh-a", "fresh-b"]]);
     expect(scans()).toBe(2);
 
+    // A task attempt's launch scans only the one-off containers carrying its attempt label.
+    calls.length = 0;
+    await docker([]).stopLaunch({ ...base, preExisting: false, existingContainerIds: [], runningContainerIds: [], taskAttempt: "invocation.1" });
+    expect(calls[0]).toEqual(["ps", "-a", "--no-trunc", "--filter", "label=com.docker.compose.project=devfn-owner", "--filter", "label=com.docker.compose.service=db",
+      "--filter", "label=devfn.task-attempt=invocation.1", "--format", '{{.ID}}\t{{.Label "devfn.lifecycle"}}\t{{.State}}']);
+
     // A reused service keeps the container that ran before the launch, and
     // stops one the launch started.
     calls.length = 0;

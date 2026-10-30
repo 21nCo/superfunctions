@@ -870,7 +870,8 @@ export class DevFnOrchestrator {
       const processStates = await Promise.all(existing.processes.map((item) => new ProcessSupervisor().status(item)));
       const serviceStates = await Promise.all(existing.services.map((item) => new ComposeController().status(item)));
       const managedCount = processStates.length + serviceStates.length;
-      const allRunning = managedCount > 0 && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
+      // A lifecycle of only setup tasks has nothing running once they completed; receiptIsReady checks them.
+      const allRunning = (managedCount > 0 || (existing.tasks?.length ?? 0) > 0) && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
       const live: { publicUrls?: Record<string, string> } = {};
       const allReady = allRunning && existing.profile === (options.profile ?? options.config.defaultProfile ?? "default") &&
         await receiptIsReady(options.config, options.root, existing, processStates, serviceStates, live);

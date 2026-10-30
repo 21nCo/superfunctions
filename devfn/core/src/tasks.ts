@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, readlink, rename, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ComposeController, type ComposeLaunch } from "@devfn/compose";
+import { ComposeController, composeTaskSourceDigest, type ComposeLaunch } from "@devfn/compose";
 import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
@@ -56,7 +56,8 @@ export interface TaskReceipt {
 
 /**
  * Durable completion record of one task scope, kept in machine state across
- * receipts and teardown. Attempts are bounded to the latest MAX_ATTEMPTS.
+ * receipts and teardown. Attempts are bounded to the latest MAX_ATTEMPTS,
+ * plus the older ones the rerun contract still depends on.
  */
 export interface TaskJournal {
   version: 1;
@@ -69,6 +70,7 @@ export interface TaskJournal {
 const MAX_ATTEMPTS = 20;
 const MAX_INPUT_ENTRIES = 10_000;
 const MAX_INPUT_BYTES = 256 * 1024 * 1024;
+const MAX_COMPOSE_SOURCE_BYTES = 10 * 1024 * 1024;
 /** Wait, or less once the signal aborts. */
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
   const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
@@ -110,6 +112,19 @@ async function digestInput(root: string, relative: string, field: string): Promi
   return hash.digest("hex");
 }
 
+/** Credential-safe digest of a Compose task's source file: a rotated literal secret is not a changed input. */
+async function digestComposeSource(root: string, relative: string, field: string, secretNames: readonly string[]): Promise<string> {
+  const invalid = (error: unknown) => new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
+  const file = await resolveContainedPath(root, relative, field).catch((error: unknown) => { throw invalid(error); });
+  const stats = await stat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
+    throw error;
+  });
+  if (!stats.isFile() || stats.size > MAX_COMPOSE_SOURCE_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file of at most ${MAX_COMPOSE_SOURCE_BYTES} bytes.`);
+  try { return composeTaskSourceDigest(await readFile(file, "utf8"), secretNames); }
+  catch (error) { throw invalid(error); }
+}
+
 /** Resource value sources that carry a leased host port; a reallocated port never reruns a task. */
 const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
 
@@ -129,7 +144,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
-      source: await digestInput(root, config.services![node.name].file ?? "compose.yaml", `${field}.file`) };
+      source: await digestComposeSource(root, config.services![node.name].file ?? "compose.yaml", `${field}.file`, spec.secretEnv ?? []) };
   const consumed = sorted(spec.resources).map((name) => {
     const planned = resources?.resources[name];
     if (!planned) return [name, null];
@@ -181,11 +196,35 @@ export async function readTaskJournal(stateDir: string, key: string): Promise<Ta
   return value;
 }
 
+/**
+ * The attempts a journal keeps. History beyond the latest MAX_ATTEMPTS is
+ * diagnostic only, except what the next decision depends on: the last
+ * success, the latest attempts since it that may have partly applied (also
+ * the latest of them that ended), and every attempt not verified stopped.
+ * Gate-closed attempts can therefore never evict an unresolved one.
+ */
+function lastSuccessIndex(attempts: readonly TaskAttempt[]): number {
+  let index = attempts.length - 1;
+  while (index >= 0 && attempts[index].outcome !== "succeeded") index -= 1;
+  return index;
+}
+
+function retainedAttempts(attempts: readonly TaskAttempt[]): TaskAttempt[] {
+  if (attempts.length <= MAX_ATTEMPTS) return [...attempts];
+  const keep = new Set(attempts.slice(-MAX_ATTEMPTS));
+  const success = lastSuccessIndex(attempts);
+  if (success >= 0) keep.add(attempts[success]);
+  const unresolved = attempts.slice(success + 1).filter((attempt) => attempt.effects !== "none");
+  for (const attempt of [unresolved.at(-1), unresolved.filter((item) => item.outcome !== "running").at(-1)]) if (attempt) keep.add(attempt);
+  for (const attempt of attempts) if (attempt.launcher && attempt.stopped !== true) keep.add(attempt);
+  return attempts.filter((attempt) => keep.has(attempt));
+}
+
 async function writeTaskJournal(stateDir: string, key: string, journal: TaskJournal): Promise<void> {
   const file = journalPath(stateDir, key);
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temp, `${JSON.stringify({ ...journal, attempts: journal.attempts.slice(-MAX_ATTEMPTS) }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(temp, `${JSON.stringify({ ...journal, attempts: retainedAttempts(journal.attempts) }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(temp, file);
 }
 
@@ -198,9 +237,7 @@ type Decision = { run: boolean; reason: string };
  */
 function unresolvedAttempts(journal: TaskJournal | undefined, pending: boolean): TaskAttempt[] {
   const attempts = journal?.attempts ?? [];
-  let index = attempts.length - 1;
-  while (index >= 0 && attempts[index].outcome !== "succeeded") index -= 1;
-  return attempts.slice(index + 1).filter((attempt) => attempt.effects !== "none" && !(pending && attempt.outcome === "running"));
+  return attempts.slice(lastSuccessIndex(attempts) + 1).filter((attempt) => attempt.effects !== "none" && !(pending && attempt.outcome === "running"));
 }
 
 /**
@@ -347,7 +384,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
         startedAt: new Date().toISOString(), outcome: "running", effects: "unknown" };
       let result: ProcessRunResult;
       try {
-        result = await runAttempt(context, spec, timeoutMs, async (launcher, compose) => {
+        result = await runAttempt(context, spec, timeoutMs, number, async (launcher, compose) => {
           // The attempt and what can find its leftovers are journaled before its command may start.
           Object.assign(attempt, { launcher, ...(compose ? { compose } : {}) });
           journal.attempts.push(attempt);
@@ -404,7 +441,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
 }
 
 /** One attempt: a native command, or a one-off Compose container whose launch stays journaled until nothing of it remains. */
-async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskNode>["spec"], timeoutMs: number,
+async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskNode>["spec"], timeoutMs: number, number: number,
   journal: (launcher: { pid: number; birthSignature?: string }, compose?: TaskAttempt["compose"]) => Promise<void>): Promise<ProcessRunResult> {
   const supervisor = context.supervisor ?? new ProcessSupervisor();
   const { node, registry, invocationId } = context;
@@ -426,7 +463,8 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   // a task with secret channels keeps none of its output, as a started
   // service with them logs nothing.
   const discardOutput = (spec.secretEnv?.length ?? 0) > 0;
-  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir: context.runtimeDir, instanceId: context.instanceId, environment: context.environment });
+  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir: context.runtimeDir, instanceId: context.instanceId, environment: context.environment,
+    attempt: `${invocationId}.${number}` });
   let launcher: { pid: number; birthSignature?: string } | undefined;
   const result = await supervisor.run({ ...common, command: prepared.command, environment: prepared.environment, ...(discardOutput ? { discardOutput } : {}),
     onStarted: async (managed) => {

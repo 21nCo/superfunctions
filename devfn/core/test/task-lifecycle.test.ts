@@ -41,7 +41,7 @@ const server = createServer((request, response) => { response.writeHead(200); re
 server.listen(Number(process.env.DEVFN_PORT_WEB), "127.0.0.1");
 `;
 
-async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Record<string, unknown> = {}, profileEnvironment?: Record<string, string>) {
+async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Record<string, unknown> = {}, profileEnvironment?: Record<string, string>, selected = ["web"]) {
   const root = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
   await mkdir(path.join(root, "migrations"));
   await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
@@ -54,7 +54,7 @@ async function fixture(name: string, task: Partial<TaskSpec> = {}, behavior: Rec
         task: { inputs: ["migrations"], ...task } },
       web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
     },
-    profiles: { default: { processes: ["web"], ...(profileEnvironment ? { environment: profileEnvironment } : {}) } } });
+    profiles: { default: { processes: selected, ...(profileEnvironment ? { environment: profileEnvironment } : {}) } } });
   const stateDir = path.join(root, "state");
   const orchestrator = new DevFnOrchestrator();
   const identity = await resolveInstanceIdentity(config.project.id, root);
@@ -140,6 +140,27 @@ describe("task input revisions", () => {
       (value: any) => { value.resources.events.topics = ["orders", "refunds"]; },
       (value: any) => { value.resources.events.consumerGroup = "importers"; },
     ]) expect(await revision(manifest(change))).not.toBe(base);
+  });
+
+  it("masks literal secret-channel and credential values of a Compose task's source, and nothing else", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-compose-"));
+    const config = validateDevFnConfig({ version: 1, project: { id: "revision-compose" },
+      services: { seed: { adapter: "compose", service: "seed", envAllowlist: ["SEED_KEY"], secretEnv: ["SEED_KEY"], task: {} } }, profiles: { default: { services: ["seed"] } } });
+    const source = (values: { key: string; password: string; token: string; mode: string }, comment = "") => [
+      `services:${comment}`, "  seed:", "    image: busybox", "    environment:", `      SEED_KEY: ${values.key}`, `      DB_PASSWORD: ${values.password}`, `      SEED_MODE: ${values.mode}`,
+      `    labels: [API_TOKEN=${values.token}, tier=setup]`, "    command: [sh, -c, 'echo seeded']", ""].join("\n");
+    const revision = async (values: Parameters<typeof source>[0], comment?: string) => {
+      await writeFile(path.join(root, "compose.yaml"), source(values, comment));
+      return await taskInputRevision(config, root, { name: "seed", kind: "service" }, "default");
+    };
+    try {
+      const base = await revision({ key: "k-1", password: "p-1", token: "t-1", mode: "minimal" });
+      // Rotated literal credentials (and formatting) are not a changed input.
+      expect(await revision({ key: "k-2", password: "p-2", token: "t-2", mode: "minimal" }, " # rotated")).toBe(base);
+      expect(await revision({ key: "k-2", password: "p-2", token: "t-2", mode: "full" })).not.toBe(base);
+      await writeFile(path.join(root, "compose.yaml"), "services: [unclosed\n");
+      await expect(taskInputRevision(config, root, { name: "seed", kind: "service" }, "default")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
 
@@ -369,6 +390,45 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     } finally { await env.cleanup(); }
   }, 90_000);
 
+  it("keeps a ready lifecycle of only setup tasks ready, so a duplicate start runs nothing", async () => {
+    const env = await fixture("task-only", { rerun: "always", idempotent: true }, {}, undefined, ["migrate"]);
+    try {
+      expect(await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir }))
+        .toMatchObject({ state: "ready", processes: [], services: [], tasks: [{ status: "succeeded" }] });
+      expect(await env.orchestrator.status({ config: env.config, root: env.root })).toMatchObject({ state: "ready" });
+      await expect(env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      expect(await env.runs()).toHaveLength(1);
+      // Only an explicit replacement runs the always task again.
+      expect((await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir, replace: true })).tasks).toMatchObject([{ status: "succeeded", reason: "rerun always" }]);
+      expect(await env.runs()).toHaveLength(2);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
+  it("lets a start waiting on a failed first start rerun an unresolved idempotent task, as documented", async () => {
+    const env = await fixture("waiter-idempotent", { idempotent: true }, { sleepMs: 1_500, exit: 4 });
+    try {
+      const first = env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir }).catch((error: unknown) => error);
+      while (!await exists(path.join(env.root, "task.pid"))) await new Promise((resolve) => setTimeout(resolve, 20));
+      // The first attempt already read its behavior; the waiter's attempt succeeds.
+      await writeFile(path.join(env.root, "behavior.json"), "{}");
+      const waiter = await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+      expect(await first).toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
+      expect(waiter).toMatchObject({ state: "ready", tasks: [{ status: "succeeded", reason: "an attempt since the last success ended failed with unknown effects" }] });
+      expect(await env.runs()).toHaveLength(2);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
+  it("runs a never-succeeded run-once task at a changed revision, as on its first start", async () => {
+    const env = await fixture("once-never", { rerun: "once", idempotent: true }, { exit: 9 });
+    try {
+      await expect(env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED" });
+      await env.reset({});
+      await writeFile(path.join(env.root, "migrations", "001.sql"), "create table two;\n");
+      expect((await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir })).tasks).toMatchObject([{ status: "succeeded" }]);
+      expect((await env.runs()).map((run) => run.migrations)).toEqual(["create table one;", "create table two;"]);
+    } finally { await env.cleanup(); }
+  }, 90_000);
+
   it("runs a task once for duplicate concurrent starts and keeps secrets out of logs, receipts and journals", async () => {
     const env = await fixture("concurrent", {}, { sleepMs: 1_000 });
     const previous = process.env.SETUP_TOKEN;
@@ -499,6 +559,31 @@ describe("task attempt boundaries (stub launchers)", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it("never lets attempts that never started evict an unresolved one from the journal", async () => {
+    for (const node of [{ name: "migrate", kind: "process" as const }, { name: "plain", kind: "service" as const }]) {
+      const gateClosed = { recordOwners: vi.fn(async () => { throw new Error("registry unavailable"); }), beginLaunch: vi.fn(async () => { throw new Error("registry unavailable"); }) };
+      const env = await context(`evict-${node.name}`, { node, supervisor: failing({}).supervisor, compose: compose(["docker"]), registry: gateClosed as unknown as FilePortRegistry, rerunRequested: true });
+      try {
+        // A success at this revision, then an attempt of unknown effect.
+        const revision = await taskInputRevision(env.value.config, env.root, node, "default");
+        const attempt = { instanceId: "instance", attempt: 1, inputRevision: revision, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), launcher: { pid: 2 ** 22 + 7 }, stopped: true };
+        await mkdir(path.join(env.value.stateDir, "tasks"), { recursive: true });
+        await writeFile(path.join(env.value.stateDir, "tasks", `${taskScope(env.value.config, "instance", node).key}.json`), JSON.stringify({ version: 1, task: node.name, scope: "instance",
+          lastSuccess: { inputRevision: revision, invocationId: "ok", instanceId: "instance", completedAt: attempt.endedAt },
+          attempts: [{ ...attempt, invocationId: "ok", outcome: "succeeded", effects: "applied" }, { ...attempt, invocationId: "partial", outcome: "failed", exitCode: 1, effects: "unknown" }] }));
+        // More explicit reruns than the journal keeps fail before their launch gate opens.
+        for (let index = 0; index < 21; index += 1) await expect(runTask({ ...env.value, invocationId: `closed-${index}` })).rejects.toThrow("registry unavailable");
+        const kept = (await env.journal())!.attempts;
+        expect(kept.filter((item) => item.effects === "none")).toHaveLength(20);
+        expect(kept.map((item) => item.invocationId).slice(0, 2)).toEqual(["ok", "partial"]);
+        // The unresolved attempt still decides the next start.
+        const next = runTask({ ...env.value, command: [process.execPath, "-e", "0"], rerunRequested: false, registry: env.registry as unknown as FilePortRegistry, supervisor: new ProcessSupervisor(), compose: compose([process.execPath, "-e", "0"]) });
+        if (node.name === "plain") await expect(next).rejects.toMatchObject({ code: "DEVFN_TASK_RERUN_REQUIRED", details: { attempt: { invocationId: "partial" } } });
+        else expect(await next).toMatchObject({ status: "succeeded", reason: "an attempt since the last success ended failed with unknown effects" });
+      } finally { await rm(env.root, { recursive: true, force: true }); }
+    }
+  }, 60_000);
+
   it("keeps no output of a Compose task with secret channels, whose values Compose may load where redaction cannot see them", async () => {
     // The value is not in the environment DevFn passes, as with one Compose read from an env file.
     const print = (text: string) => [process.execPath, "-e", `console.log(${JSON.stringify(text)})`];
@@ -531,7 +616,7 @@ describe("finite setup tasks (real Compose)", () => {
         api: { adapter: "compose", service: "api", dependsOn: ["seed"], health: { type: "command", command: ["sh", "-c", "exit 0"], timeoutMs: 5_000 } },
         "vault-api": { adapter: "compose", service: "api", dependsOn: ["vault-seed"], health: { type: "command", command: ["sh", "-c", "exit 0"], timeoutMs: 5_000 } },
       },
-      profiles: { default: { services: ["api"] }, vault: { services: ["vault-api"] } } });
+      profiles: { default: { services: ["api"] }, vault: { services: ["vault-api"] }, setup: { services: ["seed"] } } });
     let project: string | undefined;
     const oneOffs = async () => project ? (await execFileAsync("docker", ["ps", "-aq", "--filter", `label=com.docker.compose.project=${project}`, "--filter", "label=com.docker.compose.oneoff=True"])).stdout.trim() : "";
     const services = async () => (await readReceipt(config(), root, (await resolveInstanceIdentity("task-compose", root)).instanceId))?.services ?? [];
@@ -561,6 +646,11 @@ describe("finite setup tasks (real Compose)", () => {
       expect(await oneOffs()).toBe("");
       await orchestrator.down({ config: config(), root, stateDir });
 
+      // A ready lifecycle of only a completed task stays ready: a duplicate start runs nothing.
+      expect(await orchestrator.up({ config: config(), root, stateDir, profile: "setup" })).toMatchObject({ state: "ready", services: [], tasks: [{ name: "seed", status: "skipped" }] });
+      await expect(orchestrator.up({ config: config(), root, stateDir, profile: "setup" })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      await orchestrator.down({ config: config(), root, stateDir });
+
       await expect(orchestrator.up({ config: config({ exit: 5 }), root, stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
       expect(await readReceipt(config(), root, ready.instanceId)).toMatchObject({ state: "failed", services: [], tasks: [{ status: "failed", attempts: [{ exitCode: 5 }] }] });
 
@@ -581,19 +671,30 @@ describe("finite setup tasks (real Compose)", () => {
       // A killed `docker compose run` leaves its one-off container to dockerd. Only the task journal knows it, as
       // for another worktree sharing the scope: the next start removes it before the task runs again.
       const { instanceId } = await resolveInstanceIdentity("task-compose", root);
-      const prepared = await new ComposeController().prepareTask({ name: "seed", spec: config({ sleep: 60 }).services!.seed, root, runtimeDir: path.join(root, "orphan-runtime"), instanceId, environment: {} });
-      const orphan = spawn(prepared.command[0], prepared.command.slice(1), { cwd: root, env: prepared.environment, detached: true, stdio: "ignore" });
-      const launcher = { pid: orphan.pid!, birthSignature: (await processBirthSignature(orphan.pid!))! };
-      while (!await oneOffs()) await new Promise((resolve) => setTimeout(resolve, 200));
+      const prepare = async (attempt: string) => await new ComposeController().prepareTask({ name: "seed", spec: config({ sleep: 60 }).services!.seed, root, runtimeDir: path.join(root, `${attempt}-runtime`), instanceId, environment: {}, attempt });
+      const orphanRun = async (attempt: string) => {
+        const prepared = await prepare(attempt);
+        const child = spawn(prepared.command[0], prepared.command.slice(1), { cwd: root, env: prepared.environment, detached: true, stdio: "ignore" });
+        const launcher = { pid: child.pid!, birthSignature: (await processBirthSignature(child.pid!))! };
+        const labeled = async () => (await execFileAsync("docker", ["ps", "-aq", "--filter", `label=devfn.task-attempt=${attempt}`])).stdout.trim();
+        while (!await labeled()) await new Promise((resolve) => setTimeout(resolve, 200));
+        return { prepared, launcher, labeled };
+      };
+      const { prepared, launcher } = await orphanRun("killed.1");
       process.kill(-launcher.pid, "SIGKILL");
       while (alive(launcher.pid)) await new Promise((resolve) => setTimeout(resolve, 50));
       expect(await oneOffs()).not.toBe("");
+      // Another attempt's one-off container of the same project and service (as from another scope) is not this attempt's.
+      const other = await orphanRun("other.1");
       const { key } = taskScope(config(), instanceId, { name: "seed", kind: "service" });
       const { name: _name, ...launch } = prepared.launch;
       await writeFile(path.join(stateDir, "tasks", `${key}.json`), JSON.stringify({ version: 1, task: "seed", scope: "instance", attempts: [
         { invocationId: "killed", instanceId, attempt: 1, inputRevision: "x", startedAt: new Date().toISOString(), outcome: "running", effects: "unknown", launcher, compose: launch }] }));
       const recovered = await orchestrator.up({ config: config(), root, stateDir });
       expect(recovered.tasks).toMatchObject([{ status: "succeeded", reason: "an attempt since the last success ended interrupted with unknown effects" }]);
+      expect(await other.labeled()).not.toBe("");
+      process.kill(-other.launcher.pid, "SIGKILL");
+      await new ComposeController().stopLaunch({ ...other.prepared.launch, launcher: other.launcher });
       expect(await oneOffs()).toBe("");
       expect((await readTaskJournal(stateDir, key))?.attempts[0]).toMatchObject({ invocationId: "killed", outcome: "interrupted", stopped: true });
       await orchestrator.down({ config: config(), root, stateDir });

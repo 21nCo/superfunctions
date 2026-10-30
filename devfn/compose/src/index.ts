@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { parseDocument } from "yaml";
 import { assertEnvironmentKeyCasing, isCredentialKey, resolveContainedPath, type ComposeServiceSpec } from "@devfn/config";
 import { runGatedCommand, stopGatedLauncher, waitForReadiness, type GatedCommandRunner } from "@devfn/processes";
 import { createScopedPathInterpolator, readComposeEnvDefinitions, selectedInterpolationReferences, simpleInterpolation } from "./path-interpolation.js";
@@ -79,6 +80,8 @@ export interface ComposeLaunch {
   existingContainerIds: string[];
   runningContainerIds: string[];
   dockerEnvironment?: Record<string, string>;
+  /** A task attempt's one-off container label (devfn.task-attempt); only containers carrying it are the launch's. */
+  taskAttempt?: string;
   /** The gated docker compose up launcher; absent until recorded, and it runs only once recorded. */
   launcher?: { pid: number; birthSignature?: string };
 }
@@ -1170,6 +1173,31 @@ async function credentialSafeComposeConfiguration(input: CredentialSafeComposeIn
   }
 }
 
+/**
+ * Digest of a Compose source for a setup task's input revision: its parsed
+ * content, canonically ordered, with the value under every secret-channel or
+ * credential-named key (mapping entries and KEY=value list items) masked, as
+ * the startup fingerprint masks them. A rotated literal credential therefore
+ * never reruns a task; formatting and comments do not count either.
+ */
+export function composeTaskSourceDigest(content: string, secretNames: Iterable<string> = []): string {
+  const secrets = new Set(secretNames);
+  const sensitive = (key: string) => secrets.has(key) || isCredentialKey(key);
+  const document = parseDocument(content, { logLevel: "silent", merge: true });
+  if (document.errors.length) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose source is not valid YAML: ${document.errors[0].message}`);
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map((item) => {
+      const assignment = typeof item === "string" ? /^([^=]+)=/.exec(item) : null;
+      return assignment && sensitive(assignment[1]) ? `${assignment[1]}=<secret-channel>` : canonical(item);
+    });
+    if (value && typeof value === "object") {
+      return Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, item]) => [key, sensitive(key) ? "<secret-channel>" : canonical(item)]);
+    }
+    return value;
+  };
+  return createHash("sha256").update(JSON.stringify(canonical(document.toJS({ maxAliasCount: 100 })))).digest("hex");
+}
+
 /** Fingerprint effective Compose inputs without hashing inherited host or secret values. */
 export async function fingerprintComposeSource(spec: ComposeServiceSpec, root: string, instanceId: string, environment: NodeJS.ProcessEnv,
   deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS): Promise<string> {
@@ -1635,9 +1663,10 @@ export class ComposeController {
    * through a gated launcher whose identity it journals with the returned
    * launch, so stopLaunch can find a container the run left behind.
    */
-  public async prepareTask(input: Omit<ComposeStartInput, "ports" | "portHosts" | "portProtocols" | "readinessEnvironment" | "onLaunch" | "onStarted">):
+  public async prepareTask(input: Omit<ComposeStartInput, "ports" | "portHosts" | "portProtocols" | "readinessEnvironment" | "onLaunch" | "onStarted"> & { attempt: string }):
     Promise<{ command: string[]; environment: NodeJS.ProcessEnv; launch: ComposeLaunch }> {
     if (!/^[A-Za-z0-9_.-]+$/.test(input.name) || input.name !== input.name.trim()) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose lifecycle name ${input.name} contains unsupported characters.`);
+    if (!/^[A-Za-z0-9_.-]+$/.test(input.attempt)) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose task attempt ${input.attempt} contains unsupported characters.`);
     const environment = createComposeEnvironment(input.spec, input.environment);
     if (!await this.available(input.root, environment)) throw new ComposeError("DEVFN_COMPOSE_UNAVAILABLE", "Docker Compose 2.24.4 or newer is required.");
     const projectName = composeProjectName(input.spec.projectName ?? "devfn", input.instanceId);
@@ -1646,11 +1675,12 @@ export class ComposeController {
     const overrideFile = await resolveContainedPath(input.runtimeDir, path.join("compose", `${input.name}.override.yaml`), `services.${input.name}`);
     await writeFile(overrideFile, renderComposeOverride({ ...input.spec, ports: {} }, {}, {}, {}, { instanceId: input.instanceId, lifecycleName: input.name }), { encoding: "utf8", mode: 0o600 });
     return {
-      command: ["docker", "compose", "-p", projectName, "-f", sourceFile, "-f", overrideFile, "run", "--rm", "--no-deps", "-T", input.spec.service],
+      command: ["docker", "compose", "-p", projectName, "-f", sourceFile, "-f", overrideFile, "run", "--rm", "--no-deps", "-T", "--label", `devfn.task-attempt=${input.attempt}`, input.spec.service],
       environment,
-      // A one-off container is always new, so every container of this lifecycle and service is the run's own.
+      // A one-off container is always new, so every container of this lifecycle and service carrying the attempt's label is the run's own;
+      // another attempt's one-off of the same project and service (from another scope) is never matched.
       launch: { name: input.name, projectName, composeService: input.spec.service, preExisting: false, existingContainerIds: [], runningContainerIds: [],
-        dockerEnvironment: persistedDockerEnvironment(environment) },
+        dockerEnvironment: persistedDockerEnvironment(environment), taskAttempt: input.attempt },
     };
   }
 
@@ -1740,7 +1770,8 @@ export class ComposeController {
   private async launchContainers(launch: ComposeLaunch): Promise<Array<{ id: string; lifecycle: string; state: string }>> {
     try {
       const { stdout } = await this.run("docker", ["ps", "-a", "--no-trunc", "--filter", `label=com.docker.compose.project=${launch.projectName}`,
-        "--filter", `label=com.docker.compose.service=${launch.composeService}`, "--format", '{{.ID}}\t{{.Label "devfn.lifecycle"}}\t{{.State}}'],
+        "--filter", `label=com.docker.compose.service=${launch.composeService}`, ...(launch.taskAttempt ? ["--filter", `label=devfn.task-attempt=${launch.taskAttempt}`] : []),
+        "--format", '{{.ID}}\t{{.Label "devfn.lifecycle"}}\t{{.State}}'],
       { env: directDockerEnvironment(launch.dockerEnvironment), timeout: 10_000, maxBuffer: 1024 * 1024 });
       return stdout.split("\n").filter((line) => line.trim()).map((line) => {
         const [id, lifecycle = "", state = ""] = line.split("\t");
