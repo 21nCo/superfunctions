@@ -6,7 +6,7 @@
  */
 
 import type { LogEvent, PipelineStage } from "../types.js";
-import { sanitizeEvent } from "../validation.js";
+import { OWN_BUDGET, sanitizeEvent } from "../validation.js";
 
 /** Replacement written in place of a redacted value */
 export const REDACTED = "[redacted]";
@@ -347,45 +347,97 @@ function lineEnd(input: string, start: number): number {
   return LINE_REST.lastIndex;
 }
 
+// Text being redacted, with the [start, end) spans of the markers written so far.
+interface Marked {
+  text: string;
+  marks: number[];
+}
+
+// A span to replace by the marker, with text written just before and after it.
+interface Edit {
+  start: number;
+  end: number;
+  before?: string;
+  after?: string;
+}
+
+// Runs one rule. Its trigger matches caller text only, one stretch between
+// markers at a time, so no rule reads a marker as part of a key, an email or a
+// pattern. `edit` maps a match (`at` is the stretch offset) to the span to
+// replace, or null; a value may run on past markers and takes them in.
+function rewrite(marked: Marked, trigger: RegExp, replacement: string, edit: (match: RegExpExecArray, at: number) => Edit | null): Marked {
+  const { text, marks } = marked;
+  const edits: Edit[] = [];
+  let from = 0;
+  for (let mark = 0; mark <= marks.length; mark += 2) {
+    const at = mark === 0 ? 0 : marks[mark - 1];
+    const stretch = text.slice(at, mark < marks.length ? marks[mark] : text.length);
+    trigger.lastIndex = Math.max(0, from - at);
+    let match: RegExpExecArray | null;
+    while (trigger.lastIndex <= stretch.length && (match = trigger.exec(stretch)) !== null) {
+      const found = edit(match, at);
+      if (found) {
+        // A marker that touches another one joins it, so redacting twice gives the same text.
+        const prev = edits.at(-1);
+        if (!found.before && prev?.end === found.start && !prev.after) {
+          edits.pop();
+          found.start = prev.start;
+          found.before = prev.before;
+        } else if (!found.before && mark > 0 && found.start === at && (prev?.end ?? 0) <= marks[mark - 2]) {
+          found.start = marks[mark - 2];
+        }
+        for (let next = mark; next < marks.length && (marks[next] < found.end || (!found.after && marks[next] === found.end)); next += 2) found.end = Math.max(found.end, marks[next + 1]);
+        edits.push(found);
+        from = found.end;
+      }
+      // An empty match moves on by one, as String.prototype.replace does.
+      trigger.lastIndex = Math.max(from - at, match.index + match[0].length, match.index + 1);
+    }
+  }
+  let output = "";
+  const spans: number[] = [];
+  let copied = 0;
+  let mark = 0;
+  const copy = (until: number) => {
+    // Markers inside a replaced span are dropped; the others keep their place.
+    for (; mark < marks.length && marks[mark] < until; mark += 2) {
+      if (marks[mark] >= copied) spans.push(output.length + marks[mark] - copied, output.length + marks[mark + 1] - copied);
+    }
+    output += text.slice(copied, until);
+  };
+  for (const { start, end, before = "", after = "" } of edits) {
+    copy(start);
+    output += before;
+    spans.push(output.length, output.length + replacement.length);
+    output += replacement + after;
+    copied = end;
+  }
+  copy(text.length);
+  return { text: output, marks: spans };
+}
+
 // Redacts the values of sensitive query and fragment parameters up to the
 // next parameter, so `?password=one,two` loses all of `one,two`. A value that
 // is exactly the replacement is rewritten to itself, so this is idempotent.
-function redactQueryParams(
-  input: string,
-  redactor: CompiledRedactor,
-  param: RegExp,
-  value: RegExp
-): string {
-  let output = "";
-  let copied = 0;
-  param.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = param.exec(input)) !== null) {
-    const valueStart = match.index + match[0].length;
-    if (!redactor.isSensitive(match[1])) continue;
+function redactQueryParams(marked: Marked, redactor: CompiledRedactor, param: RegExp, value: RegExp): Marked {
+  return rewrite(marked, param, redactor.replacement, (match, at) => {
+    const valueStart = at + match.index + match[0].length;
+    if (!redactor.isSensitive(match[1])) return null;
     value.lastIndex = valueStart;
-    value.exec(input);
-    const valueEnd = value.lastIndex;
-    if (valueEnd === valueStart) continue;
-    output += input.slice(copied, valueStart) + redactor.replacement;
-    copied = valueEnd;
-    param.lastIndex = valueEnd;
-  }
-  return copied === 0 ? input : output + input.slice(copied);
+    value.exec(marked.text);
+    return value.lastIndex === valueStart ? null : { start: valueStart, end: value.lastIndex };
+  });
 }
 
 // Scans `name<sep>value` pairs. A non-sensitive pair consumes only its name and
 // separator so a credential inside the value (for example a query string after
 // `https:`) is still found.
-function redactAssignments(input: string, redactor: CompiledRedactor, separator: RegExp): string {
+function redactAssignments(marked: Marked, redactor: CompiledRedactor, separator: RegExp): Marked {
   const { replacement } = redactor;
-  let output = "";
-  let copied = 0;
-  separator.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = separator.exec(input)) !== null) {
-    const valueStart = match.index + match[0].length;
-    if (!redactor.isSensitive(match[2])) continue;
+  const input = marked.text;
+  return rewrite(marked, separator, replacement, (match, at) => {
+    const valueStart = at + match.index + match[0].length;
+    if (!redactor.isSensitive(match[2])) return null;
     const value = scanValue(input, valueStart, replacement);
     // An unquoted `Authorization:` or `Cookie:` header value is the whole line.
     const headerLine =
@@ -395,29 +447,25 @@ function redactAssignments(input: string, redactor: CompiledRedactor, separator:
     const valueEnd = headerLine
       ? Math.max(lineEnd(input, valueStart), value?.end ?? valueStart)
       : (value?.end ?? valueStart);
-    if (valueEnd === valueStart) continue;
+    if (valueEnd === valueStart) return null;
     const quote = headerLine ? "" : (value?.quote ?? "");
-    output += input.slice(copied, valueStart) + quote + replacement + quote;
-    copied = valueEnd;
-    separator.lastIndex = copied;
-  }
-  return copied === 0 ? input : output + input.slice(copied);
+    return { start: valueStart, end: valueEnd, before: quote, after: quote };
+  });
 }
 
 function redactText(value: string, redactor: CompiledRedactor): string {
   const { replacement } = redactor;
-  let result = value.replace(URL_USERINFO, (_match, scheme: string) => `${scheme}${replacement}@`);
+  // The userinfo between the scheme and the last `@` only.
+  let result = rewrite({ text: value, marks: [] }, URL_USERINFO, replacement, (match, at) => ({ start: at + match.index + match[1].length, end: at + match.index + match[0].length - 1 }));
   result = redactQueryParams(result, redactor, QUERY_PARAM, QUERY_VALUE);
   result = redactQueryParams(result, redactor, ENCODED_QUERY_PARAM, ENCODED_QUERY_VALUE);
   result = redactAssignments(result, redactor, KEY_SEPARATOR);
   result = redactAssignments(result, redactor, SPACED_KEY_SEPARATOR);
-  result = result.replace(BEARER_TOKEN, (_match, scheme: string) => `${scheme} ${replacement}`);
+  result = rewrite(result, BEARER_TOKEN, replacement, (match, at) => ({ start: at + match.index + match[1].length, end: at + match.index + match[0].length, before: " " }));
   for (const pattern of redactor.patterns) {
-    pattern.lastIndex = 0;
-    // A function keeps the marker literal: `$&` or `$1` are not expanded.
-    result = result.replace(pattern, () => replacement);
+    result = rewrite(result, pattern, replacement, (match, at) => ({ start: at + match.index, end: at + match.index + match[0].length }));
   }
-  return result;
+  return result.text;
 }
 
 /** Text of a date by the built-in methods only, so no caller override of getTime or toISOString runs */
@@ -466,9 +514,10 @@ function childPath(path: string, key: string): string {
 
 // Distinct keys can redact to the same text (two email keys both become the
 // marker). Each later one is kept under the first free "<key>#<n>" (n from 2)
-// instead of overwriting the earlier value. `used` holds the next n per key.
-function uniqueKey(target: Record<string, unknown>, key: string, used: Map<string, number>): string {
-  const has = (candidate: string) => Object.prototype.hasOwnProperty.call(target, candidate);
+// instead of overwriting the earlier value. `used` holds the next n per key;
+// `reserved` names are never taken, wherever they come in key order.
+function uniqueKey(target: Record<string, unknown>, key: string, used: Map<string, number>, reserved?: ReadonlySet<string>): string {
+  const has = (candidate: string) => reserved?.has(candidate) === true || Object.prototype.hasOwnProperty.call(target, candidate);
   if (!has(key)) return key;
   let index = used.get(key) ?? 2;
   while (has(`${key}#${index}`)) index += 1;
@@ -544,10 +593,11 @@ function redactWith(event: LogEvent, redactor: CompiledRedactor): LogEvent {
       redacted.tags = redactNode(Array.from({ length: value.length }, (_, index) => tagText(value[index])), redactor, key, new Set(), 0);
     } else {
       // Field names are text too, exactly like nested keys; an allowlisted name is kept, and any collision keeps both values.
+      // A schema field keeps its name, and no other field takes a schema name.
       const allowed = redactor.allowlist.has(key);
       setOwn(
         redacted,
-        uniqueKey(redacted, allowed ? key : redactText(key, redactor), used),
+        OWN_BUDGET.has(key) ? key : uniqueKey(redacted, allowed ? key : redactText(key, redactor), used, OWN_BUDGET),
         !allowed && redactor.isSensitive(key) ? redactor.replacement : redactNode(value, redactor, key, new Set(), 0)
       );
     }

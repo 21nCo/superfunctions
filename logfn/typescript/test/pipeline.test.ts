@@ -186,6 +186,57 @@ describe("redaction", () => {
     expect(redactEvent(reversed, { allowlist: ["[redacted]"] })).toMatchObject({ "[redacted]": 2, "[redacted]#2": 1 });
   });
 
+  it("schema fields keep their name and value in any key order; an extra field that redacts to a schema name is kept beside it", () => {
+    const schema = event({ ctx: { a: 1 }, tags: ["t"] });
+    const extra = { "ada@example.com": "extra" };
+    for (const replacement of ["level", "msg", "ctx", "tags", "version", "name"]) {
+      const options = { replacement };
+      const kept = { [`${replacement}#2`]: "extra" };
+      for (const input of [{ ...extra, ...schema }, { ...schema, ...extra }] as LogEvent[]) {
+        for (const output of [redactEvent(input, options), redactSecFn(options)(input) as LogEvent]) {
+          expect(output).toEqual({ ...schema, ...kept });
+          expect(isValidLogEvent(output)).toBe(true);
+          expect(redactEvent(output, options)).toEqual(output);
+        }
+      }
+      const captured = capture();
+      const addExtra = (input: LogEvent) => ({ ...extra, ...input }) as LogEvent;
+      createLogger({ name: "test", pipeline: [addExtra, redactSecFn(options)], sinks: [captured.sink] }).info("m", { a: 1 });
+      expect(captured.events[0]).toMatchObject({ level: "info", msg: "m", name: "test", ctx: { a: 1 }, ...kept });
+      expect(isValidLogEvent(captured.events[0])).toBe(true);
+    }
+    // A pattern that matches a schema name redacts its value only.
+    expect(redactEvent(schema, { patterns: [/name|level|test/] })).toEqual({ ...schema, name: REDACTED });
+  });
+
+  it("a marker written by one rule is never read by a later one, so a credential URL keeps its host for any replacement", () => {
+    const text = "see https://user:pw@host.example/path or ada@example.com";
+    for (const replacement of ["MASK", "x", REDACTED]) {
+      const options = { replacement };
+      const expected = `see https://${replacement}@host.example/path or ${replacement}`;
+      const input = event({ msg: text, ctx: { url: text, [text]: 1 } });
+      const captured = capture();
+      createLogger({ name: "test", pipeline: [redactSecFn(options)], sinks: [captured.sink] }).info(text, input.ctx);
+      for (const output of [redactEvent(input, options), redactSecFn(options)(input) as LogEvent, captured.events[0]]) {
+        expect([output.msg, output.ctx]).toEqual([expected, { url: expected, [expected]: 1 }]);
+        expect(redactEvent(output, options)).toEqual(output);
+      }
+    }
+  });
+
+  it.each([
+    ["password=https://u:p@h/x next", "password=MASK next"],
+    ["Cookie: s=1; next=https://u:p@h/x; other=secret\nkeep", "Cookie: MASK\nkeep"],
+    ["?token=a&next=https://u:p@h.example/x ada@example.com", "?token=MASK&next=https://MASK@h.example/x MASK"],
+    ["Bearer abc%ada@example.com tail", "Bearer MASK tail"],
+    ["tok_1tok_2 tok_3", "MASK MASK"],
+  ])("a sensitive value still runs past a marker, and touching markers join, so redacting twice is stable: %j", (msg, expected) => {
+    const options = { replacement: "MASK", patterns: [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/, /tok_\d/] };
+    const output = redactEvent(event({ msg }), options);
+    expect(output.msg).toBe(expected);
+    expect(redactEvent(output, options).msg).toBe(expected);
+  });
+
   describe("error fields obey the sensitive-key rules and the allowlist, like record keys", () => {
     const failure = () => {
       const cause = new Error("cause PRIVATE_CAUSE");

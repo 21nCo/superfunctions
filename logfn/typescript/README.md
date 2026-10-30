@@ -117,6 +117,11 @@ every other event field, object keys and top-level field names included (it reda
 - Email addresses, by default. `patterns` replaces this default extra list but
   never disables the credential rules.
 
+Each rule reads only caller text: a marker one rule writes is never part of a
+later match (`https://MASK@host/path` keeps its host for any replacement), a
+sensitive value that runs on past a marker takes it in, and touching markers
+are written as one, so redacting twice changes nothing.
+
 Options: `keys` (extra sensitive key names), `allowlist` (exact exempt paths
 such as `user.email`, `items[0]`, `userId`; ctx paths start at the ctx root
 and other fields, `msg` included, are named by their field name, in one namespace, so
@@ -132,7 +137,9 @@ or a proxy keeps no inherited `toJSON`) and functions, symbols and bigints
 become `"[unserializable]"`, so serializing it runs no caller code. Own `__proto__` keys are kept as ordinary keys, here and in
 sanitization. Distinct keys that redact
 to the same text (two email keys) keep every value: later ones are stored
-under `"<key>#2"`, `"#3"` and so on, in key order (an allowlisted top-level name too).
+under `"<key>#2"`, `"#3"` and so on, in key order (an allowlisted top-level name too). Schema field names (`msg`, `level`,
+`ctx`, `tags`, the ids) are never renamed or taken: an extra field whose name
+redacts to one is kept under `"<name>#2"`.
 
 Every value kind is handled alike by redaction and sanitization: `NaN` and
 `Infinity` become text; `new String`, `new Number` and `new Boolean` (JS only) become

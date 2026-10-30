@@ -147,8 +147,8 @@ function byteLength(event: LogEvent): number {
   return encoder.encode(JSON.stringify(event)).length;
 }
 
-// Walked on their own budget, so no other field can turn ctx, level or an id into MAX_SIZE.
-const OWN_BUDGET = new Set<string>(["msg", "tags", "ctx", ...METADATA_FIELDS]);
+// The schema fields. Walked on their own budget, so no other field can turn ctx, level or an id into MAX_SIZE.
+export const OWN_BUDGET = new Set<string>(["msg", "tags", "ctx", ...METADATA_FIELDS]);
 
 /**
  * Returns a JSON-safe copy of every field of an event: msg becomes a string,
