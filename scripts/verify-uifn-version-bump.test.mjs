@@ -744,6 +744,42 @@ for (const [build, extra, expected] of [
   });
 }
 
+// A build file that runs tsc names every tsconfig in its package, so a project passed in argv elements, a joined path or a literal with nested quotes still counts.
+const libProject = { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "lib/tsconfig.json": '{ "compilerOptions": { "outDir": "../dist/lib" } }', "lib/index.ts": "export const lib = 1;\n", "lib/__tests__/fixtures/data.ts": "export const data = 1;\n" };
+for (const script of [
+  "execFileSync('tsc', ['-p', 'lib']);",
+  "execFileSync('npx', ['tsc', '--project', 'lib']);",
+  "const tsc = 'node_modules/typescript/bin/tsc';\nspawnSync(process.execPath, [tsc, '--project', path.join(root, 'lib')]);",
+  "const tsc = 'node_modules/typescript/bin/tsc';\nspawnSync(process.execPath, [tsc, '-b', 'lib']);",
+  `execSync("tsc -p lib && echo 'built'");`,
+  'execSync(`tsc -p lib --outDir "dist"`);',
+]) {
+  test(`a build file that runs tsc consumes every tsconfig in its package: ${script.split("\n").at(-1)}`, () => {
+    assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...libProject, "scripts/build.mjs": `${script}\n` }), ["lib/__tests__/fixtures/data.ts"]);
+  });
+}
+
+// The argv override is read from the whole file, so it turns emission on for every tsconfig in the package.
+test("a build file's argv --noEmit false makes its noEmit tsconfigs emit, and a build file without tsc names none", () => {
+  const lib = { ...libProject, "lib/tsconfig.json": '{ "compilerOptions": { "noEmit": true } }' };
+  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib']);\n" }), []);
+  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib', '--noEmit', 'false']);\n" }), ["lib/__tests__/fixtures/data.ts", ...emitted]);
+  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...libProject, "scripts/build.mjs": "execFileSync('tsup', ['lib/index.ts']);\n" }), []);
+});
+
+// tsup in a nested build script resolves ./ entries from the working directory, the package root.
+for (const [entries, expected] of [
+  ["'./src/fixtures/runtime.ts'", ["src/fixtures/runtime.ts"]],
+  ["'./src/fixtures/*.ts'", ["src/fixtures/runtime.ts"]],
+  ["'./src/**/*.ts'", ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"]],
+  ["'./src/**/*.ts', '!./src/__tests__/**'", ["src/fixtures/runtime.ts"]],
+  ["'./src/index.ts'", []],
+]) {
+  test(`a ./ entry in a nested build script resolves from the package root: ${entries}`, () => {
+    assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, "scripts/build.mjs": `await build({ entry: [${entries}] });\n` }), expected);
+  });
+}
+
 // A noEmit tsconfig, set directly or inherited, puts nothing in dist unless the command line turns emission back on; its project references still build.
 const noEmit = '{ "compilerOptions": { "noEmit": true } }';
 for (const [cell, build, tsconfigs, expected] of [

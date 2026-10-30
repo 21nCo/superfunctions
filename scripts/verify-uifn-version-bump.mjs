@@ -63,8 +63,11 @@ const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
 // Any build-file string literal with a tsc word is a tsc command (`npx -p typescript tsc`, `bun x tsc`, a message): tscProjects maps it, and a noEmit tsconfig consumes nothing.
-const STRING_LITERAL = /(['"`])([^'"`\n]*)\1/g;
-const EMIT_OVERRIDE = /--noEmit(?:\s+|=)false\b/;
+// A literal may hold the other quote kinds (`"tsc -p lib && echo 'built'"`).
+const STRING_LITERAL = /(['"`])((?:(?!\1)[^\n\\]|\\.)*)\1/g;
+// `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
+const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
+const RUNS_TSC = /\btsc\b/;
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
@@ -327,9 +330,12 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     for (const { 2: command } of text.matchAll(STRING_LITERAL)) for (const project of tscProjects(command) ?? []) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command) });
+    // A project in argv elements or a joined path cannot be read reliably, so a build file that runs tsc names every tsconfig in its package.
+    if (RUNS_TSC.test(text)) add(path.posix.join(root, "**/tsconfig*.json"), { tsc: true, emit: EMIT_OVERRIDE.test(text) });
+    // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
-      if (!negated && /^(?:\/|\.\.?(?:\/|$))/.test(value)) continue;
+      if (!negated && /^(?:\/|\.\.?$|\.\.\/)/.test(value)) continue;
       for (const from of new Set([root, dir])) add(path.posix.join(from, value.slice(Number(negated))), { soft: true, list: enclosingBracket(text, index), ...(negated ? { negated } : {}) });
     }
   }
@@ -517,7 +523,7 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
       if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
       const { files: matches, direct } = resolved.get(target);
       if (reference.negated || (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct))) continue;
-      for (const file of direct && !reference.tsconfig && !reference.overridden ? matches : []) {
+      for (const file of (direct || reference.tsc) && !reference.tsconfig && !reference.overridden ? matches : []) {
         if (named.has(file) && (!reference.emit || emitting.has(file))) continue;
         named.add(file);
         if (reference.emit) emitting.add(file);
