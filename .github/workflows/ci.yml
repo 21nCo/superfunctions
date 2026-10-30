@@ -74,6 +74,7 @@ jobs:
         id: plan
         run: node scripts/ci-plan.mjs
 
+  # uifn-version-bump-retarget.yml reruns this job when a PR is edited, which is how a PR retargeted to dev gets it.
   uifn-version-bump:
     name: UIFn version bump
     if: github.event_name == 'pull_request' && github.base_ref == 'dev'
@@ -83,9 +84,10 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "npm"

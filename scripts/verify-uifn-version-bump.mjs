@@ -68,10 +68,14 @@ const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
 const STRING_LITERAL = /(['"`])((?:(?!\1)[^\n\\]|\\.)*)\1/g;
 // `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
-const RUNS_TSC = /\btsc\b/;
+// `--noEmit` not followed by `false`, in a command string or an argv element.
+const NO_EMIT = /--noEmit\b(?!['"`\s,=]+false\b)/g;
 // Commands that run a file with the package root as the working directory, which makes the file a build file.
 const RUNNER = /^(?:node|tsx|ts-node(?:-esm)?|esno|vite-node|jiti|bun|deno|sh|bash|zsh|dash|zx)$/;
 const RUNNABLE = /\.(?:[cm]?[jt]sx?|sh)$/;
+
+// Code-unit order, as the default sort, with an explicit comparator.
+const byCodeUnit = (a, b) => (a < b ? -1 : Number(a > b));
 
 const isWithin = (file, root) => root === "." || file === root || file.startsWith(`${root}/`);
 
@@ -148,7 +152,7 @@ export function shippedScriptNames(scripts = {}) {
 /** Returns the manifest fields that reach consumers, without the version itself. */
 export function publishedManifest(manifest) {
   const { version: _version, devDependencies: _devDependencies, scripts, ...published } = manifest;
-  const names = [...shippedScriptNames(scripts ?? {})].sort();
+  const names = [...shippedScriptNames(scripts ?? {})].sort(byCodeUnit);
   if (names.length > 0) published.scripts = Object.fromEntries(names.map((name) => [name, scripts[name]]));
   return published;
 }
@@ -263,7 +267,7 @@ export function pathKind(file, { packagePath, inputs = [], excluded = [], option
  */
 export function evaluatePackage({ name, packagePath, baseManifest, headManifest, shippedFiles: shipped, headChangelog, stable = true }) {
   const prefix = `${packagePath}/`;
-  const shippedFiles = [...shipped].sort();
+  const shippedFiles = [...shipped].sort(byCodeUnit);
   const result = { name, packagePath, shippedFiles, manifestChanged: false, baseVersion: baseManifest?.version, headVersion: headManifest?.version, bumped: false, errors: [] };
   if (!headManifest) {
     // A package removed from the graph and the tree has nothing left to publish.
@@ -336,9 +340,12 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
-    for (const { 2: command } of text.matchAll(STRING_LITERAL)) for (const project of tscProjects(command) ?? []) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command) });
+    // A build file runs tsc unless each tsc word has its own literal --noEmit (`execSync("tsc --noEmit")`, `execFileSync("tsc", ["--noEmit"])`).
+    const literals = [...text.matchAll(STRING_LITERAL)].map((match) => match[2]);
+    const runsTsc = (literals.join(" ").match(NO_EMIT)?.length ?? 0) < (text.match(/\btsc\b/g)?.length ?? 0);
+    for (const command of runsTsc ? literals : []) for (const project of tscProjects(command) ?? []) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command) });
     // A project in argv elements or a joined path cannot be read reliably, so a build file that runs tsc names every tsconfig in its package.
-    if (RUNS_TSC.test(text)) add(path.posix.join(root, "**/tsconfig*.json"), { tsc: true, emit: EMIT_OVERRIDE.test(text) });
+    if (runsTsc) add(path.posix.join(root, "**/tsconfig*.json"), { tsc: true, emit: EMIT_OVERRIDE.test(text) });
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
@@ -386,7 +393,7 @@ export function scriptReferences(scripts, packagePath) {
       for (const [index, token] of command.trim().split(/[\s&<>()]+/).entries()) {
         const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || config || /^['"]?--config=|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || config || /(?:^['"]?--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
         config = /^(?:-c|--config)$/.test(value);
       }
@@ -655,7 +662,7 @@ function git(cwd, args) {
 
 function resolveCommit(cwd, ref) {
   try {
-    return git(cwd, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).trim();
+    return git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]).trim();
   } catch {
     throw new Error(`Cannot resolve ${ref} to a commit; fetch it first (CI needs fetch-depth: 0)`);
   }
@@ -741,8 +748,9 @@ function packageState(cwd, commit, pkg) {
   const { promoted, references, packed } = shippedClosure({ ...pkg, manifest, files, read: (paths) => readBlobs(cwd, commit, paths), tsconfigRoots: (file, emit) => tsconfigRoots(file, (tree ??= fileInventory(listFiles(cwd, commit, ["."]))), (entry) => readAt(cwd, commit, entry), emit) });
   const present = new Set(files);
   const scope = { packagePath: pkg.packagePath, inputs: pkg.inputs, excluded: pkg.excluded, options: classifyOptions(manifest) };
-  // A file the packlist matches ships, tests included.
-  return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (packed(file) || promoted.has(file) || pathKind(file, scope) === "shipped") };
+  // A file the packlist matches ships, tests included. package.json always packs, so it counts only through publishedManifest.
+  const ownManifest = `${pkg.packagePath}/package.json`;
+  return { manifest, packageFiles, promoted, references, ships: (file) => present.has(file) && (promoted.has(file) || (file !== ownManifest && (packed(file) || pathKind(file, scope) === "shipped"))) };
 }
 
 function stateCache(cwd) {

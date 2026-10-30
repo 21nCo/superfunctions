@@ -122,6 +122,28 @@ test("test-only, docs-only, fixture and non-published manifest changes pass with
   assert.equal(status, 0, output);
 });
 
+// npm always packs package.json, so its changes count only through the published fields, whatever files says.
+for (const [label, files] of [["no files list", undefined], ["files lists package.json", ["dist", "package.json"]]]) {
+  test(`a manifest change outside the published fields needs no bump, and a published one does: ${label}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.edit("uifn/core/package.json", (text) => JSON.stringify({ ...JSON.parse(text), files }, null, 2));
+    // Without a files list npm packs generated/, so the fixture's exclusion of it would fail on its own.
+    repo.edit("uifn/version-bump-inputs.json", (text) => JSON.stringify({ packages: { ...JSON.parse(text).packages, "@uifn/core": { inputs: { "uifn/catalog/catalog.json": "build reads it" } } } }));
+    repo.commit("files");
+    repo.git("branch", "-f", "base");
+    repo.edit("uifn/core/package.json", (text) => JSON.stringify({ ...JSON.parse(text), devDependencies: { vitest: "3.0.0" }, scripts: { build: "tsup", test: "vitest run --coverage" } }, null, 2));
+    repo.commit("development fields");
+    assert.equal(check(repo.root).status, 0, check(repo.root).output);
+    for (const [field, value] of [["dependencies", { "left-pad": "1.0.0" }], ["scripts", { build: "tsup --minify", test: "vitest run --coverage" }]]) {
+      repo.edit("uifn/core/package.json", (text) => JSON.stringify({ ...JSON.parse(text), [field]: value }, null, 2));
+      repo.commit(field);
+      const { status, output } = check(repo.root);
+      assert.equal(status, 1, field);
+      assert.match(output, /@uifn\/core: shipped code changed \(package\.json \(published fields\)\)/, field);
+    }
+  });
+}
+
 test("a dependency-only bump in a dependent package needs its own bump", (t) => {
   const repo = fixtureRepo(t);
   repo.edit("uifn/react/package.json", (text) => text.replace('"@uifn/core": "1.0.0"', '"@uifn/core": "1.0.1"'));
@@ -736,6 +758,14 @@ for (const [build, extra, expected] of [
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(`node_modules/.bin/tsc -p . 2>&1`);\n" }, emitted],
   ...["node node_modules/typescript/bin/tsc -p .", "npx --no-install tsc", "npx -p typescript tsc", "npm exec -- tsc", "npm x tsc", "bun x tsc", "pnpm dlx tsc", "yarn run tsc", "pnpm -C . exec tsc"].map((command) => ["node scripts/build.mjs", { "scripts/build.mjs": `execSync('${command}');\n` }, emitted]),
   ["tsc --noEmit && tsup src/index.ts", {}, []],
+  // Each tsc run that a build file spells with its own --noEmit, as a command string or an argv element, emits nothing.
+  ["node scripts/build.mjs", { "scripts/build.mjs": 'execSync("tsc --noEmit");\nawait build({ entry: ["src/index.ts"] });\n' }, []],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('tsc', ['--noEmit']);\n" }, []],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('npx', ['tsc', '--noEmit', '-p', '.']);\n" }, []],
+  // An emitting tsc run beside a --noEmit one, --noEmitOnError and a --noEmit in a comment still compile.
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmit');\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmitOnError');\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "// not --noEmit\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
   // The real @uifn/solid shape: the message and the bare tsc path name tsconfig.json, which is noEmit; the -p argument names the emitting build config.
   ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/**/*"] }', "tsconfig.build.json": '{ "include": ["src/index.ts"] }', "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
 ]) {
