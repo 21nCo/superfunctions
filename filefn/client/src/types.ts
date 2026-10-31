@@ -151,3 +151,14 @@ export interface CompleteUploadResponse {
 export interface AbortUploadResponse {
   aborted: boolean;
 }
+
+/** Provider download instructions; URLs may be relative to the FileFn service. */
+export interface DownloadDescriptor { url: string; headers?: Record<string, string> }
+export interface DownloadDescriptorOptions {
+  versionId?: string;
+  signal?: AbortSignal;
+  /** Whole descriptor operation deadline, including authentication and body. Default 10000. */
+  timeoutMs?: number;
+  /** Maximum decoded HTTP response bytes. Default 65536. */
+  maxResponseBytes?: number;
+}
