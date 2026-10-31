@@ -285,6 +285,105 @@ def test_cancelling_flush_itself_still_propagates() -> None:
     assert cancelled == ["hanging"] and errors == []
 
 
+class _CancellingName:
+    """A sink whose call fails and whose __name__ raises CancelledError."""
+
+    @property
+    def __name__(self) -> str:
+        raise asyncio.CancelledError
+
+    def __call__(self, batch: list[LogEvent]) -> None:
+        raise RuntimeError("sink failed")
+
+
+def _cancelling_sink(batch: list[LogEvent]) -> None:
+    raise asyncio.CancelledError
+
+
+def _cancelling_stage(event: LogEvent) -> LogEvent:
+    raise asyncio.CancelledError
+
+
+@pytest.mark.parametrize("where", ["sink", "stage", "on_error", "name"])
+def test_a_cancelled_error_raised_synchronously_by_caller_code_is_its_failure(where: str) -> None:
+    # A synchronous call cannot be cancelled from outside, so a CancelledError
+    # it raises is that component's failure: the logging call does not raise,
+    # sibling sinks still get the event, and a failing stage drops it.
+    sink = MockSink()
+    errors: list[tuple[str, dict[str, str]]] = []
+
+    def on_error(error: BaseException, context: dict[str, str]) -> None:
+        errors.append((type(error).__name__, context))
+        if where == "on_error":
+            raise asyncio.CancelledError
+
+    first: Any = {"sink": _cancelling_sink, "name": _CancellingName()}.get(where, MockSink())
+    pipeline: Any = [_cancelling_stage] if where in ("stage", "on_error") else []
+    logger = create_logger("svc", sinks=[first, sink], pipeline=pipeline, on_error=on_error)
+    logger.info("m")
+    logger.info("m")
+    expected = {
+        "sink": ("CancelledError", {"sink": "_cancelling_sink"}),
+        "name": ("RuntimeError", {"sink": "unknown"}),
+    }.get(where, ("CancelledError", {"stage": "_cancelling_stage"}))
+    assert errors == [expected, expected]
+    assert len(sink.events) == (0 if where in ("stage", "on_error") else 2)
+
+
+@pytest.mark.parametrize("via", ["own loop", "child", "other loop"])
+def test_cancelling_flush_while_it_waits_for_logged_calls_does_not_cancel_them(via: str) -> None:
+    # Cancelling flush() ends the wait only: the sink calls made by logging
+    # keep running and still deliver.
+    gate = threading.Event()
+    delivered: list[str] = []
+
+    async def slow(batch: list[LogEvent]) -> None:
+        while not gate.is_set():
+            await asyncio.sleep(0.005)
+        delivered.extend(event["msg"] for event in batch)
+
+    logger = create_logger("svc", sinks=[slow])
+    stop = threading.Event()
+    logged = threading.Event()
+
+    def other_loop() -> None:
+        async def main() -> None:
+            logger.info("m")
+            logged.set()
+            while not stop.is_set():
+                await asyncio.sleep(0.005)
+
+        asyncio.run(main())
+
+    thread = threading.Thread(target=other_loop, daemon=True)
+
+    async def main() -> None:
+        if via == "other loop":
+            thread.start()
+            assert logged.wait(5)
+        else:
+            (logger.child(name="child") if via == "child" else logger).info("m")
+        flushing = asyncio.ensure_future(logger.flush())
+        await asyncio.sleep(0.1)
+        assert not flushing.done()
+        flushing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await flushing
+        gate.set()
+        deadline = time.monotonic() + 5
+        while delivered != ["m"]:
+            assert time.monotonic() < deadline, "the logged call was cancelled with flush()"
+            await asyncio.sleep(0.005)
+
+    try:
+        asyncio.run(main())
+    finally:
+        gate.set()
+        stop.set()
+        if thread.is_alive():
+            thread.join(5)
+
+
 def test_default_sink_is_local_console(capsys: pytest.CaptureFixture[str]) -> None:
     logger = Logger("svc", level="info")
     logger.info("hello")

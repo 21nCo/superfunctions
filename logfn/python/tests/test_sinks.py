@@ -59,6 +59,9 @@ async def eventually(predicate: Any, timeout: float = 5.0) -> None:
         ({"url": "/ingest"}, "absolute http"),
         ({"url": "ftp://logs.example.com"}, "absolute http"),
         ({"url": "https://user:pw@logs.example.com"}, "must not contain credentials"),
+        # Ports that are not a number from 0 to 65535 are rejected up front.
+        ({"url": "http://c:abc/x"}, "absolute http"),
+        ({"url": "http://c:99999/x"}, "absolute http"),
         ({"url": URL, "batch_size": 0}, "batch_size"),
         ({"url": URL, "max_queue": 1.5}, "max_queue"),
         ({"url": URL, "retry_attempts": 0}, "retry_attempts"),
@@ -1487,3 +1490,86 @@ def test_events_the_transport_logs_wait_for_the_interval() -> None:
         await sink.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("owner", ["own loop", "stopped loop"])
+def test_a_cancelled_close_drops_the_batches_in_flight_once(owner: str) -> None:
+    drops: list[tuple[int, str]] = []
+    sink = SinkHttp(URL, transport=Scripted("hang"), batch_size=1, timeout=30, on_drop=lambda n, r: drops.append((n, r)))
+    stopped = asyncio.new_event_loop()
+
+    async def start_sending() -> None:
+        sink([event("held")])
+        await eventually(lambda: sink.stats()["in_flight"] == 1)
+
+    async def cancel_close() -> None:
+        if owner == "own loop":
+            await start_sending()
+        closing = asyncio.ensure_future(sink.close())
+        await asyncio.sleep(0.2)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        # Settled by close() itself, not by asyncio.run() cancelling the drain.
+        assert drops == [(1, "closed")]
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 0}
+        await asyncio.sleep(0.05)  # The owner's delivery is cancelled, not settled again.
+        assert drops == [(1, "closed")] and sink.stats()["dropped"] == 1
+
+    try:
+        if owner == "stopped loop":
+            stopped.run_until_complete(start_sending())
+        asyncio.run(cancel_close())
+        stopped.run_until_complete(asyncio.sleep(0.05))  # A late resume changes nothing.
+        assert drops == [(1, "closed")] and sink.stats()["dropped"] == 1
+        assert not asyncio.all_tasks(stopped)
+    finally:
+        for task in asyncio.all_tasks(stopped):
+            task.cancel()
+        stopped.run_until_complete(asyncio.sleep(0))
+        stopped.close()
+
+
+@pytest.mark.parametrize(
+    ("where", "redact_error", "reported"),
+    [
+        ("on_error", RuntimeError, ["on_error"]),
+        ("on_drop", None, ["on_drop"]),
+        ("redaction", asyncio.CancelledError, ["CancelledError"]),
+    ],
+)
+def test_a_cancelled_error_raised_by_sink_caller_code_is_contained(
+    where: str, redact_error: Any, reported: list[str]
+) -> None:
+    # Synchronous caller code raising CancelledError is that code's failure:
+    # calling the sink never raises, "a" is dropped and "b" is still queued.
+    calls: list[str] = []
+
+    def cancelling(*args: Any) -> None:
+        calls.append(where)
+        raise asyncio.CancelledError
+
+    sink = SinkHttp(
+        URL,
+        transport=Scripted(),
+        max_queue=1,
+        on_error=cancelling if where == "on_error" else lambda error: calls.append(type(error).__name__),
+        on_drop=cancelling if where == "on_drop" else None,
+    )
+    redact = sink._redact
+
+    def failing_redact(event: LogEvent) -> LogEvent:
+        if event["msg"] == "a" and redact_error is not None:
+            raise redact_error
+        return redact(event)
+
+    sink._redact = failing_redact  # type: ignore[method-assign]
+    if where == "on_drop":
+        sink([event("a"), event("b")])  # The older event exceeds max_queue.
+    else:
+        sink([event("a")])
+        sink([event("b")])
+    assert calls == reported
+    assert sink.stats() == {"queued": 1, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 0}
+    asyncio.run(sink.flush())
+    assert sink.stats()["sent"] == 1

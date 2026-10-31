@@ -12,7 +12,7 @@ from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
 from typing import Any
 
-from .sinks import SinkConsole
+from .sinks import _FAILURE, SinkConsole
 from .types import (
     DEFAULT_VERSION,
     LOG_LEVEL_VALUES,
@@ -58,7 +58,7 @@ def _callable_name(value: Any) -> str:
     # must not replace the error being reported.
     try:
         return str(getattr(value, "__name__", None) or type(value).__name__ or "unknown")
-    except Exception:
+    except _FAILURE:
         return "unknown"
 
 
@@ -121,7 +121,7 @@ class Logger:
         token = _active_handlers.set(active | {id(handler)})
         try:
             # A failing error handler must not reach the caller either.
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(*_FAILURE):
                 handler(error, context)
         finally:
             _active_handlers.reset(token)
@@ -132,7 +132,7 @@ class Logger:
     def _log(self, level: LogLevel, msg: Any, ctx: Any, tags: Any, kwargs: dict[str, Any]) -> None:
         try:
             self._emit(level, msg, ctx, tags, kwargs)
-        except Exception as error:
+        except _FAILURE as error:
             self._report(error, {})
 
     def _emit(self, level: LogLevel, msg: Any, ctx: Any, tags: Any, kwargs: dict[str, Any]) -> None:
@@ -163,7 +163,7 @@ class Logger:
         for stage in self.pipeline:
             try:
                 result = stage(current)
-            except Exception as error:
+            except _FAILURE as error:
                 self._report(error, {"stage": _callable_name(stage)})
                 return
             if result is None:
@@ -180,7 +180,7 @@ class Logger:
                 result = sink([final])
                 if inspect.isawaitable(result):
                     self._schedule(result, sink)
-            except Exception as error:
+            except _FAILURE as error:
                 self._report(error, {"sink": _callable_name(sink)})
 
     def _schedule(self, awaitable: Any, sink: Sink) -> None:

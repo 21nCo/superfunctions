@@ -27,6 +27,11 @@ from .redact import REDACTED, make_redactor
 from .types import LogEvent
 from .validation import json_bytes, sanitize_event, validate_and_serialize
 
+# What a synchronous call into caller code (a callback, a sink, a stage) may
+# raise as its own failure. A CancelledError raised there is the callee's: a
+# real cancellation reaches only an await, never a synchronous call.
+_FAILURE = (Exception, asyncio.CancelledError)
+
 _COLORS = {
     "trace": "\033[90m",  # Gray
     "debug": "\033[34m",  # Blue
@@ -351,7 +356,11 @@ def _positive(value: float, name: str) -> float:
 
 def _validate_url(url: str) -> None:
     parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    try:
+        port_ok = parts.port is None or parts.port >= 0
+    except ValueError:  # Not a number from 0 to 65535.
+        port_ok = False
+    if parts.scheme not in ("http", "https") or not parts.hostname or not port_ok:
         raise ValueError("SinkHttp: url must be an absolute http(s) URL")
     if parts.username is not None or parts.password is not None:
         raise ValueError("SinkHttp: url must not contain credentials; use auth_token")
@@ -476,7 +485,7 @@ class SinkHttp:
 
     def _report(self, error: BaseException, from_feedback: bool = False) -> None:
         if from_feedback:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(*_FAILURE):
                 print(f"[logfn http-sink error] {error!r}", file=sys.stderr)
             return
         if getattr(self._reporting, "error", False):
@@ -487,7 +496,7 @@ class SinkHttp:
                 self._on_error(error)
             else:
                 print(f"[logfn http-sink error] {error!r}", file=sys.stderr)
-        except Exception:
+        except _FAILURE:
             pass  # A failing handler must not break delivery.
         finally:
             self._reporting.error = False
@@ -498,7 +507,7 @@ class SinkHttp:
         self._reporting.drop = True
         try:
             self._on_drop(count, reason)
-        except Exception:
+        except _FAILURE:
             pass
         finally:
             self._reporting.drop = False
@@ -536,7 +545,7 @@ class SinkHttp:
             for event in batch:
                 try:
                     redacted.append(self._prepare(event))
-                except Exception as error:
+                except _FAILURE as error:
                     self._drop(1, "redaction_failed")
                     self._report(error)
             with self._lock:
@@ -558,7 +567,7 @@ class SinkHttp:
                 self._start_drain()
             elif queued > 0:
                 self._schedule_timer()
-        except Exception as error:
+        except _FAILURE as error:
             self._report(error)
 
     def _trim(self) -> tuple[int, bool]:
@@ -852,7 +861,12 @@ class SinkHttp:
                 left = list(self._queue)
                 self._queue.clear()
                 self._dropped += len(left)
+                batches = list(self._batches)
             self._notify_drop(len(left), "closed", _only_feedback(left))
+            # A cancelled close() still ends the batches in flight on any loop.
+            for batch in batches:
+                if self._settle(batch, "closed"):
+                    batch.cancel()
 
     def stats(self) -> dict[str, int]:
         """Delivery counters: queued, in_flight, sent, dropped, failed_batches."""

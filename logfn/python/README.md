@@ -56,8 +56,11 @@ adds an HTTP sink only when `url` is given.
   property is reported, and sibling sinks still flush. So is a
   `CancelledError` a sink raises itself (its call or flush awaited a
   cancelled future): it is that sink's failure, reported once, and
-  `flush()` still waits for the siblings. Cancelling `flush()` itself, or
-  the loop shutting down, still cancels the sink calls and propagates. An `on_error` that
+  `flush()` still waits for the siblings. A sink, stage, `on_error` or
+  `__name__` that raises `CancelledError` from a synchronous call fails like
+  any other. Cancelling `flush()` itself propagates and cancels the sinks'
+  `flush()` calls it started; sink calls made by logging are not cancelled
+  and still deliver (only the loop shutting down cancels them). An `on_error` that
   logs through a failing sink, or schedules `flush()` while a sink's flush
   fails, is never called for the failure it caused, whether the sink raises
   at once or its awaitable fails later in a task (also through child loggers
@@ -145,7 +148,9 @@ has any id unchanged.
     accepted before the call is sent or dropped, across batches and retries;
     events logged while it waits keep their interval timer. `close()` drops
     later events and delivers, or drops as `"closed"`, everything accepted
-    before it, also when the loop cancels its delivery. Request bodies are
+    before it, also when the loop cancels its delivery or `close()` itself
+    is cancelled (then batches in flight on any loop are dropped and their
+    delivery cancelled). Request bodies are
     UTF-8 JSON with non-ASCII text unescaped, as measured by the size limit.
     `stats()` returns `queued`, `in_flight`, `sent`, `dropped` and
     `failed_batches`. A drop or error caused while `on_drop` or `on_error`
