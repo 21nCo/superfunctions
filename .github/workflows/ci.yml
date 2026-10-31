@@ -80,12 +80,22 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'dev'
     runs-on: ubuntu-latest
     steps:
-      # The PR merge ref, which holds the checker even for a branch made before it; the gate first checks that it merges base.sha and head.sha.
+      # The PR merge ref, which holds the checker even for a branch made before it, with every branch's history.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # Payload base.sha is stale after a push and the merge ref can predate the base tip, so judge a merge of exactly the base tip B and head.sha.
+      - name: Merge the PR head into the base branch tip
+        run: |
+          B=$(git rev-parse "origin/${{ github.base_ref }}") H="${{ github.event.pull_request.head.sha }}"
+          git merge-base --is-ancestor "${{ github.event.pull_request.base.sha }}" "$B" || { echo "::error::base ${{ github.event.pull_request.base.sha }} is not on ${{ github.base_ref }} at $B"; exit 1; }
+          if [ "$(git rev-parse HEAD^1 HEAD^2 | tr '\n' ' ')" != "$B $H " ]; then
+            git checkout -q --detach "$B" && git -c user.name=ci -c user.email=ci@localhost merge -q --no-ff --no-edit "$H" || { echo "::error::cannot merge head $H into ${{ github.base_ref }} at $B"; exit 1; }
+          fi
+          echo "UIFN_BASE=$B" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -101,12 +111,10 @@ jobs:
         run: node --test scripts/verify-uifn-version-bump.test.mjs
 
       - name: Require version bump and changelog entry for shipped uifn changes
-        run: |
-          git rev-parse HEAD^1 HEAD^2 | diff - <(printf '%s\n' "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}") || { echo "::error::The PR merge ref is not a merge of base ${{ github.event.pull_request.base.sha }} and head ${{ github.event.pull_request.head.sha }} (stale after a retarget); push or edit the PR to run this check again."; exit 1; }
-          node scripts/verify-uifn-version-bump.mjs --base "${{ github.event.pull_request.base.sha }}"
+        run: node scripts/verify-uifn-version-bump.mjs --base "$UIFN_BASE"
 
       - name: Report uifn changes since last published tags
-        run: node scripts/verify-uifn-version-bump.mjs --since-published --head "${{ github.event.pull_request.base.sha }}"
+        run: node scripts/verify-uifn-version-bump.mjs --since-published --head "$UIFN_BASE"
 
   javascript:
     name: JavaScript

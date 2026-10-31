@@ -208,6 +208,50 @@ test("undeclared out-of-root imports, path segments and build scripts fail close
   assert.match(output, /@uifn\/react: uifn\/react\/src\/index\.ts refers to uifn\/shared\/src\/index, outside uifn\/react/);
 });
 
+// The tsconfig sweep is additive: a build-file tsc project outside the package, named as a string or argv, a file or a directory, is still guarded.
+const sharedProject = '{ "compilerOptions": { "outDir": "dist" }, "include": ["src"] }';
+for (const run of [
+  "execSync('tsc -p ../shared/tsconfig.json');",
+  "execFileSync('tsc', ['-p', '../shared/tsconfig.json']);",
+  "execSync('tsc --noEmit -b ../shared');",
+  "execFileSync('npx', ['tsc', '--project', '../shared'], { cwd: process.env.ROOT });",
+]) {
+  test(`a build-file tsc project outside the package must be declared, and then its sources need a bump: ${run}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.write("uifn/shared/tsconfig.json", sharedProject);
+    repo.write("uifn/core/scripts/build.mjs", `${run}\n`);
+    repo.commit("external tsc project");
+    const undeclared = check(repo.root);
+    assert.equal(undeclared.status, 1, undeclared.output);
+    assert.match(undeclared.output, /@uifn\/core: uifn\/core\/scripts\/build\.mjs refers to uifn\/shared\/tsconfig\.json, outside uifn\/core; declare it/);
+    repo.git("branch", "-f", "base");
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/shared/tsconfig.json":"tsc builds it","uifn/shared/src":"tsc compiles it"'));
+    repo.commit("declare the external project");
+    repo.git("branch", "-f", "base");
+    repo.write("uifn/shared/src/index.ts", "export const shared = 2;\n");
+    repo.commit("change the external project's source");
+    const changed = check(repo.root);
+    assert.equal(changed.status, 1, changed.output);
+    assert.match(changed.output, /@uifn\/core: shipped code changed \(uifn\/shared\/src\/index\.ts\) but version is still 1\.0\.0/);
+    assert.doesNotMatch(changed.output, /outside uifn\/core/);
+  });
+}
+
+test("a build-file tsc run keeps in-package projects, and a .. path that is no tsconfig or project, or does not exist, is not an outside reference", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/shared/tsconfig.json", sharedProject);
+  repo.write("uifn/core/tsconfig.json", '{ "compilerOptions": { "outDir": "dist" }, "include": ["src"] }');
+  // From scripts/, ../../shared/tsconfig.json is uifn/shared/tsconfig.json, declared below; from the package root it would not exist.
+  repo.write("uifn/core/scripts/build.mjs", "const pkg = require('../package.json');\nexecSync('tsc -p ./tsconfig.json');\nexecFileSync('tsc', ['-p', path.join(here, '../../shared/tsconfig.json')]);\n");
+  repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"@uifn/core":{', '"@uifn/core":{"references":{"uifn/shared/tsconfig.json":"type-checked only"},'));
+  repo.commit("in-package and declared projects");
+  repo.git("branch", "-f", "base");
+  repo.write("uifn/core/docs/notes.md", "Notes.\n");
+  repo.commit("docs-only change");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 0, output);
+});
+
 test("a relative import a shipped source bundles may not resolve into a path declared only as a reference", (t) => {
   const repo = fixtureRepo(t);
   repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"@uifn/react":{"inputs"', '"@uifn/react":{"references"'));

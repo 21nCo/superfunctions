@@ -351,6 +351,9 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
+    // The sweep is additive: a `..` tsconfig or project path, in string or argv form, from the package root (tsc's cwd) and this file's directory, stays guarded where it exists.
+    const words = sweep.length > 0 ? text.split(/[\s'"`,()[\]=;]+/) : [];
+    for (const [index, word] of words.entries()) if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || TSC_PROJECT_FLAG.test(words[index - 1]))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: true });
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
@@ -607,11 +610,12 @@ export function findUndeclaredReferences({ name, packagePath, references, declar
   const covers = (entries, files) => files.length > 0 && files.every((file) => entries.some((entry) => isWithin(file, entry)));
   const resolved = new Map();
   const errors = [];
-  for (const { from, target, soft, bundled, tree } of references) {
+  for (const { from, target, soft, bundled, tree, candidate } of references) {
     if (soft || isWithin(target, packagePath)) continue;
     const lookup = tree && inventory.dirs.has(target) ? `${target}/**` : target;
     if (!resolved.has(lookup)) resolved.set(lookup, resolveReference(lookup, inventory).files);
     const files = resolved.get(lookup);
+    if (candidate && files.length === 0) continue;
     if (bundled) {
       // A specifier that resolves to nothing cannot be inlined (such as one inside generated code strings), so its own path is judged.
       const named = files.length > 0 ? files : [target];
