@@ -645,6 +645,43 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     } finally { await env.cleanup(); }
   }, 90_000);
 
+  it("never counts what DevFn writes under the repository as a task input", async () => {
+    for (const layout of [{ inputs: ["."], state: "state" }, { inputs: ["data"], state: "data/state", runtimeDir: "data/rt", environmentOutputs: [{ path: "data/app.env" }] }]) {
+      const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-own-state-"));
+      const outside = await mkdtemp(path.join(os.tmpdir(), "devfn-task-own-runs-"));
+      const stateDir = path.join(root, layout.state);
+      await mkdir(path.join(root, "data"));
+      await writeFile(path.join(root, "data", "seed.sql"), "one\n");
+      const manifest = (inputs: string[]) => validateDevFnConfig({ version: 1, project: { id: "own-state" }, ...(layout.runtimeDir ? { runtimeDir: layout.runtimeDir } : {}),
+        ...(layout.environmentOutputs ? { environmentOutputs: layout.environmentOutputs } : {}),
+        processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("fs").appendFileSync(${JSON.stringify(path.join(outside, "runs.log"))}, "x\\n")`], task: { inputs } } },
+        profiles: { default: { processes: ["seed"] } } });
+      const config = manifest(layout.inputs);
+      const orchestrator = new DevFnOrchestrator();
+      const runs = async () => (await readFile(path.join(outside, "runs.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+      try {
+        expect(await orchestrator.up({ config, root, stateDir })).toMatchObject({ state: "ready", tasks: [{ status: "succeeded" }] });
+        // The receipt, task log, journal, lock and environment outputs DevFn just wrote change no revision.
+        expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
+        await expect(orchestrator.up({ config, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+        expect((await orchestrator.up({ config, root, stateDir, replace: true })).tasks).toMatchObject([{ status: "skipped", reason: "succeeded for this input revision" }]);
+        expect(await runs()).toBe(1);
+        // A user source in the same input still does.
+        await writeFile(path.join(root, "data", "seed.sql"), "two\n");
+        expect(await orchestrator.status({ config, root })).toMatchObject({ ok: false, state: "degraded" });
+        // An input that names DevFn's own state is rejected before any mutation.
+        for (const own of [path.join(layout.runtimeDir ?? ".devfn", "instances"), layout.state]) {
+          await expect(taskInputRevision(manifest([own]), root, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir))
+            .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("DevFn runtime state") });
+        }
+      } finally {
+        await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+        await rm(root, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+      }
+    }
+  }, 90_000);
+
   it("lets a start waiting on a failed first start rerun an unresolved idempotent task, as documented", async () => {
     const env = await fixture("waiter-idempotent", { idempotent: true }, { sleepMs: 1_500, exit: 4 });
     try {

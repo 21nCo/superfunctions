@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, readlink, rename, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { ComposeController, composeTaskSourceDigest, createComposeEnvironment, type ComposeLaunch } from "@devfn/compose";
@@ -85,13 +85,15 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
 }
 
 /** Content digest of a repository file or directory; symlinks are hashed as links, never followed. */
-async function digestInput(root: string, relative: string, field: string): Promise<string> {
+async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
   const target = await resolveContainedPath(root, relative, field).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
+  if (await realpath(target).catch(() => target).then((real) => excluded.some((item) => real === item || real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
   const hash = createHash("sha256");
   const budget = { entries: 0, bytes: 0 };
   const visit = async (absolute: string, name: string): Promise<void> => {
+    if (excluded.includes(absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
     const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
@@ -144,7 +146,7 @@ const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
  * environment as written) only selects the Compose sources, as at startup.
  */
 export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
-  environment?: Record<string, string>): Promise<string> {
+  environment?: Record<string, string>, stateDir?: string): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   // A secret channel counts by name only, wherever its value is written.
@@ -165,7 +167,10 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
   const inputs: Array<[string, string]> = [];
-  for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`)]);
+  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir) is never an input, so its own writes never rerun a task.
+  const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
+    .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map(async (item) => await realpath(item).catch(() => path.resolve(item))));
+  for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs }));
 }
@@ -352,7 +357,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment);
+    const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
@@ -407,7 +412,7 @@ export interface RunTaskContext {
 export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
   const { config, node, stateDir } = context;
   const { spec, task } = taskNode(config, node);
-  const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment);
+  const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir);
   const { key, scope } = taskScope(config, context.instanceId, node, context.resources);
   await mkdir(path.join(stateDir, "tasks"), { recursive: true, mode: 0o700 });
   const attemptsAllowed = 1 + (task.retries ?? 0);
