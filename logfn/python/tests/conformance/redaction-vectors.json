@@ -1,0 +1,1137 @@
+{
+  "schema": "logfn.redaction-vectors.v1",
+  "marker": "[redacted]",
+  "encoding": {
+    "input.$error": "An object {\"$error\": {name, message, stack?, cause?}} is built as a native error: in TypeScript an Error with that name, message, optional stack (else the native one) and cause; in Python an exception class with that name, raised once so it has a traceback (stack is ignored), with __cause__. cause must be another $error.",
+    "input.$ref": "An object {\"$ref\": \"dot.path\"} is replaced, after the whole ctx is built, by the object at that path from the ctx root (\"\" is the root), which creates circular or shared references.",
+    "input.$bytes": "An object {\"$bytes\": {text, kind}} is built as binary data holding the UTF-8 bytes of text. kind \"bytes\" is a Uint8Array in TypeScript (a Buffer where Node provides one) and bytes in Python; \"mutable\" is an ArrayBuffer and a bytearray; \"view\" is a DataView and a memoryview. Binary data has no JSON form and its bytes cannot be redacted as text, so it becomes \"[unserializable]\".",
+    "input.$dag": "An object {\"$dag\": {depth, leaf}} is built as depth nested objects {\"a\": next, \"b\": next} that share one next object, ending at leaf: 2^depth paths through depth + 1 objects. Every walk (sanitization, redaction) is bounded by a traversal budget, and ctx and each schema field have their own, so only the fields outside ctx are compared.",
+    "layers": "Optional caller-added context. Effective ctx is enrich, then logger base context, then child context, then the call ctx, later layers winning on key collisions.",
+    "options": "Optional redaction options: keys (extra sensitive key names), allowlist (exempt paths: ctx paths like a.b or a[0] from the ctx root, or top-level field names like userId, tenantId, in one namespace) and replacement (a non-empty marker used instead of the default).",
+    "expected.$match": "An object {\"$match\": {includes?, excludes?}} matches a string that contains every includes entry and no excludes entry.",
+    "comparison": "Only the event fields present in expected (msg, ctx, tags, userId, tenantId or a fields key) are compared, by deep equality.",
+    "input.fields": "Optional extra top-level event fields (request ids, fields outside the LogEvent schema) set by a caller-added stage.",
+    "absent": "Optional list of strings that must not appear anywhere in the serialized redacted event (field names included)."
+  },
+  "vectors": [
+    {
+      "id": "nested-credential-keys",
+      "description": "Credential-named keys are redacted at any depth and for any value type; similar but non-credential keys are kept.",
+      "input": {
+        "msg": "loaded user profile",
+        "ctx": {
+          "user": {
+            "id": "u1",
+            "password": "hunter2",
+            "profile": {
+              "apiKey": "ak_live_123",
+              "displayName": "Ada"
+            }
+          },
+          "headers": {
+            "Authorization": "Bearer abc.def.ghi",
+            "X-Api-Key": "k-999",
+            "Content-Type": "application/json",
+            "Set-Cookie": "sid=s3cr3t; Path=/"
+          },
+          "db": {
+            "connection": {
+              "client_secret": {
+                "value": "cs-1",
+                "rotatedAt": 5
+              }
+            }
+          },
+          "items": [
+            {
+              "accessToken": "tok-1",
+              "name": "first"
+            },
+            {
+              "refresh_token": "tok-2"
+            }
+          ],
+          "tokenCount": 42,
+          "maxTokens": 100,
+          "author": "ada"
+        }
+      },
+      "expected": {
+        "msg": "loaded user profile",
+        "ctx": {
+          "user": {
+            "id": "u1",
+            "password": "[redacted]",
+            "profile": {
+              "apiKey": "[redacted]",
+              "displayName": "Ada"
+            }
+          },
+          "headers": {
+            "Authorization": "[redacted]",
+            "X-Api-Key": "[redacted]",
+            "Content-Type": "application/json",
+            "Set-Cookie": "[redacted]"
+          },
+          "db": {
+            "connection": {
+              "client_secret": "[redacted]"
+            }
+          },
+          "items": [
+            {
+              "accessToken": "[redacted]",
+              "name": "first"
+            },
+            {
+              "refresh_token": "[redacted]"
+            }
+          ],
+          "tokenCount": 42,
+          "maxTokens": 100,
+          "author": "ada"
+        }
+      }
+    },
+    {
+      "id": "non-string-values-under-sensitive-keys",
+      "description": "A sensitive key redacts numbers, arrays and objects too; nulls, booleans and unrelated values pass through.",
+      "input": {
+        "msg": "settings snapshot",
+        "ctx": {
+          "secret": 12345,
+          "credentials": [
+            "a",
+            "b"
+          ],
+          "privateKey": {
+            "pem": "-----BEGIN-----"
+          },
+          "pin": 1234,
+          "count": 3,
+          "enabled": true,
+          "nothing": null,
+          "note": "nothing sensitive here"
+        }
+      },
+      "expected": {
+        "msg": "settings snapshot",
+        "ctx": {
+          "secret": "[redacted]",
+          "credentials": "[redacted]",
+          "privateKey": "[redacted]",
+          "pin": 1234,
+          "count": 3,
+          "enabled": true,
+          "nothing": null,
+          "note": "nothing sensitive here"
+        }
+      }
+    },
+    {
+      "id": "url-credentials",
+      "description": "URL userinfo is redacted in the message and in nested string values; URLs without credentials are unchanged.",
+      "input": {
+        "msg": "fetching https://alice:s3cret@api.example.com/v1/items failed",
+        "ctx": {
+          "endpoint": "postgres://svc:pg-pass-9@db.internal:5432/app",
+          "mirror": "https://ghp_tokenvalue@github.com/org/repo.git",
+          "plain": "https://api.example.com/v1/items",
+          "nested": {
+            "urls": [
+              "redis://:r3dis@cache:6379/0"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "msg": "fetching https://[redacted]@api.example.com/v1/items failed",
+        "ctx": {
+          "endpoint": "postgres://[redacted]@db.internal:5432/app",
+          "mirror": "https://[redacted]@github.com/org/repo.git",
+          "plain": "https://api.example.com/v1/items",
+          "nested": {
+            "urls": [
+              "redis://[redacted]@cache:6379/0"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sensitive-query-values",
+      "description": "Query parameters with credential names keep their name and lose their value; other parameters are unchanged.",
+      "input": {
+        "msg": "retrying GET /v1/items?page=2&token=tk-77",
+        "ctx": {
+          "url": "https://api.example.com/cb?code_ok=1&access_token=at-123&state=xyz&api_key=k1",
+          "signed": "https://bucket.s3.amazonaws.com/o?X-Amz-Credential=AKIA%2F20260101&X-Amz-Signature=abcdef0123&X-Amz-Expires=300",
+          "search": "/search?q=password+reset&page=2"
+        }
+      },
+      "expected": {
+        "msg": "retrying GET /v1/items?page=2&token=[redacted]",
+        "ctx": {
+          "url": "https://api.example.com/cb?code_ok=1&access_token=[redacted]&state=xyz&api_key=[redacted]",
+          "signed": "https://bucket.s3.amazonaws.com/o?X-Amz-Credential=[redacted]&X-Amz-Signature=[redacted]&X-Amz-Expires=300",
+          "search": "/search?q=password+reset&page=2"
+        }
+      }
+    },
+    {
+      "id": "header-assignment-and-bearer-strings",
+      "description": "Header lines, key=value pairs, quoted JSON members and loose bearer tokens inside strings are redacted.",
+      "input": {
+        "msg": "upstream rejected Authorization: Bearer eyJhbGciOi.payload.sig",
+        "ctx": {
+          "curl": "curl -H 'X-Api-Key: k-123' -H \"Accept: text/plain\" https://x.test",
+          "line": "password=hunter2 user=ada",
+          "json": "{\"secret\":\"s-1\",\"ok\":true}",
+          "loose": "sent bearer tok_abcdef to proxy",
+          "raw": "GET / HTTP/1.1\r\nCookie: theme=dark; sid=abc123\r\nHost: x.test",
+          "signedUrl": "https://cdn.test/f?sig=abc&exp=9 then https://u:p@h.test/?token=t2"
+        }
+      },
+      "expected": {
+        "msg": "upstream rejected Authorization: [redacted]",
+        "ctx": {
+          "curl": "curl -H 'X-Api-Key: [redacted]' -H \"Accept: text/plain\" https://x.test",
+          "line": "password=[redacted] user=ada",
+          "json": "{\"secret\":\"[redacted]\",\"ok\":true}",
+          "loose": "sent bearer [redacted] to proxy",
+          "raw": "GET / HTTP/1.1\r\nCookie: [redacted]\r\nHost: x.test",
+          "signedUrl": "https://cdn.test/f?sig=[redacted]&exp=9 then https://[redacted]@h.test/?token=[redacted]"
+        }
+      }
+    },
+    {
+      "id": "error-message-stack-cause",
+      "description": "Errors become {name, message, stack, cause}; message and stack strings are redacted and causes are redacted recursively, including errors inside arrays.",
+      "input": {
+        "msg": "request failed",
+        "ctx": {
+          "error": {
+            "$error": {
+              "name": "FetchError",
+              "message": "request to https://u:pw-1@api.test/x failed with token=tk-9",
+              "stack": "FetchError: request to https://u:pw-1@api.test/x failed with token=tk-9\n    at send (client.js:10:5)",
+              "cause": {
+                "$error": {
+                  "name": "Error",
+                  "message": "connect ECONNREFUSED password=db-pass",
+                  "stack": "Error: connect ECONNREFUSED password=db-pass\n    at connect (net.js:1:1)"
+                }
+              }
+            }
+          },
+          "attempts": [
+            {
+              "$error": {
+                "name": "TimeoutError",
+                "message": "timed out sending Bearer abc123",
+                "cause": {
+                  "$error": {
+                    "name": "Error",
+                    "message": "apiKey=ak-2 phase=send"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "msg": "request failed",
+        "ctx": {
+          "error": {
+            "name": "FetchError",
+            "message": "request to https://[redacted]@api.test/x failed with token=[redacted]",
+            "stack": {
+              "$match": {
+                "includes": [
+                  "[redacted]"
+                ],
+                "excludes": [
+                  "pw-1",
+                  "tk-9"
+                ]
+              }
+            },
+            "cause": {
+              "name": "Error",
+              "message": "connect ECONNREFUSED password=[redacted]",
+              "stack": {
+                "$match": {
+                  "includes": [
+                    "[redacted]"
+                  ],
+                  "excludes": [
+                    "db-pass"
+                  ]
+                }
+              }
+            }
+          },
+          "attempts": [
+            {
+              "name": "TimeoutError",
+              "message": "timed out sending Bearer [redacted]",
+              "stack": {
+                "$match": {
+                  "excludes": [
+                    "abc123"
+                  ]
+                }
+              },
+              "cause": {
+                "name": "Error",
+                "message": "apiKey=[redacted] phase=send",
+                "stack": {
+                  "$match": {
+                    "excludes": [
+                      "ak-2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "circular-structures",
+      "description": "Back-references to an ancestor (direct or deeper) become [circular]; shared non-circular references are kept as copies; credentials inside cyclic objects are still redacted.",
+      "input": {
+        "msg": "cyclic request",
+        "ctx": {
+          "req": {
+            "id": "r1",
+            "token": "t-1",
+            "self": {
+              "$ref": "req"
+            },
+            "child": {
+              "up": {
+                "$ref": "req"
+              },
+              "label": "c"
+            }
+          },
+          "list": [
+            {
+              "$ref": "list"
+            },
+            "x"
+          ],
+          "shared": {
+            "a": {
+              "v": 1
+            }
+          },
+          "alias": {
+            "$ref": "shared.a"
+          }
+        }
+      },
+      "expected": {
+        "msg": "cyclic request",
+        "ctx": {
+          "req": {
+            "id": "r1",
+            "token": "[redacted]",
+            "self": "[circular]",
+            "child": {
+              "up": "[circular]",
+              "label": "c"
+            }
+          },
+          "list": [
+            "[circular]",
+            "x"
+          ],
+          "shared": {
+            "a": {
+              "v": 1
+            }
+          },
+          "alias": {
+            "v": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "caller-added-context",
+      "description": "Base, child, enrichment and call context, tags, userId and caller-supplied extra sensitive keys are all redacted; emails are redacted as personal data. An object tag becomes [unserializable]: its JSON text would hide sensitive keys.",
+      "options": {
+        "keys": [
+          "cardNumber"
+        ]
+      },
+      "layers": {
+        "base": {
+          "service": "billing",
+          "dbUrl": "mysql://root:base-pw@db/billing"
+        },
+        "child": {
+          "module": "charges",
+          "sessionId": "sess-123"
+        },
+        "enrich": {
+          "region": "eu-1",
+          "webhookSecret": "whsec_abc"
+        }
+      },
+      "input": {
+        "msg": "charge failed for card",
+        "ctx": {
+          "customer": {
+            "id": "c1",
+            "cardNumber": "4242424242424242",
+            "email": "ada@example.com"
+          },
+          "attempt": 2
+        },
+        "tags": [
+          "billing",
+          "token=tag-secret",
+          {
+            "api/key": "TAG_OBJ_SECRET",
+            "pass\nword": "TAG_OBJ_SECRET"
+          }
+        ],
+        "userId": "ada@example.com",
+        "tenantId": "t-1"
+      },
+      "expected": {
+        "msg": "charge failed for card",
+        "ctx": {
+          "region": "eu-1",
+          "webhookSecret": "[redacted]",
+          "service": "billing",
+          "dbUrl": "mysql://[redacted]@db/billing",
+          "module": "charges",
+          "sessionId": "[redacted]",
+          "customer": {
+            "id": "c1",
+            "cardNumber": "[redacted]",
+            "email": "[redacted]"
+          },
+          "attempt": 2
+        },
+        "tags": [
+          "billing",
+          "token=[redacted]",
+          "[unserializable]"
+        ],
+        "userId": "[redacted]",
+        "tenantId": "t-1"
+      },
+      "absent": [
+        "TAG_OBJ_SECRET"
+      ]
+    },
+    {
+      "id": "allowlisted-paths",
+      "description": "Allowlisted paths skip redaction for that exact path only; siblings and the message are still redacted.",
+      "options": {
+        "allowlist": [
+          "support.email",
+          "userId"
+        ]
+      },
+      "input": {
+        "msg": "contact ada@example.com",
+        "ctx": {
+          "support": {
+            "email": "help@example.com",
+            "password": "pw"
+          },
+          "other": "bob@example.com"
+        },
+        "userId": "ada@example.com"
+      },
+      "expected": {
+        "msg": "contact [redacted]",
+        "ctx": {
+          "support": {
+            "email": "help@example.com",
+            "password": "[redacted]"
+          },
+          "other": "[redacted]"
+        },
+        "userId": "ada@example.com"
+      }
+    },
+    {
+      "id": "escaped-quoted-values",
+      "description": "A quoted credential value is consumed whole: escaped quotes inside it, a trailing escaped backslash, single quotes and JSON that was serialized into a string again. A quoted name of several words, such as \"api key\", is a key too.",
+      "input": {
+        "msg": "rejected {\"apiKey\":\"k\\\"MSG_TAIL\"}",
+        "ctx": {
+          "json": "{\"password\":\"prefix\\\"TAIL_SECRET\",\"ok\":true}",
+          "backslashEnd": "{\"secret\":\"ends\\\\\",\"ok\":1}",
+          "single": "password='it\\'s SINGLE_TAIL' user=ada",
+          "escapedJson": "\"{\\\"token\\\":\\\"abc\\\\\\\"ESCAPED_TAIL\\\",\\\"ok\\\":true}\"",
+          "spacedKey": "{\"api key\": \"SPACED_SECRET\", \"display name\": \"Ada\"}"
+        }
+      },
+      "expected": {
+        "msg": "rejected {\"apiKey\":\"[redacted]\"}",
+        "ctx": {
+          "json": "{\"password\":\"[redacted]\",\"ok\":true}",
+          "backslashEnd": "{\"secret\":\"[redacted]\",\"ok\":1}",
+          "single": "password='[redacted]' user=ada",
+          "escapedJson": "\"{\\\"token\\\":\\\"[redacted]\\\",\\\"ok\\\":true}\"",
+          "spacedKey": "{\"api key\": \"[redacted]\", \"display name\": \"Ada\"}"
+        }
+      },
+      "absent": [
+        "MSG_TAIL",
+        "TAIL_SECRET",
+        "SINGLE_TAIL",
+        "ESCAPED_TAIL",
+        "SPACED_SECRET"
+      ]
+    },
+    {
+      "id": "query-parameter-values",
+      "description": "A sensitive query or fragment parameter loses its whole value up to the next parameter, commas and semicolons included; names are percent-decoded and may be bracketed. A parameter inside a percent-encoded URL (a redirect target) is found too.",
+      "input": {
+        "msg": "GET /cb?password=one,TWO_SECRET&page=2",
+        "ctx": {
+          "encoded": "https://x.test/v1?api%5Fkey=WHOLE_SECRET&q=1",
+          "bracket": "/search?filter[api_key]=BRACKET_SECRET&page=1",
+          "fragment": "https://app.test/cb#access_token=FRAG,SECRET&state=s",
+          "form": "grant_type=client&client%5Fsecret=FORM;SECRET",
+          "inJson": "{\"url\":\"https://x.test/?token=JSON_Q_SECRET\",\"ok\":1}",
+          "safe": "/search?q=a,b;c&page=2",
+          "nestedRedirect": "https://x.test/cb?redirect=https%3A%2F%2Fy.test%2Fcb%3Fapi_key%3DNESTED_SECRET%26page%3D2&x=1",
+          "nestedLower": "/login?next=%2Fhome%3fsecret%3dLOWER_SECRET%23top"
+        }
+      },
+      "expected": {
+        "msg": "GET /cb?password=[redacted]&page=2",
+        "ctx": {
+          "encoded": "https://x.test/v1?api%5Fkey=[redacted]&q=1",
+          "bracket": "/search?filter[api_key]=[redacted]&page=1",
+          "fragment": "https://app.test/cb#access_token=[redacted]&state=s",
+          "form": "grant_type=client&client%5Fsecret=[redacted]",
+          "inJson": "{\"url\":\"https://x.test/?token=[redacted]\",\"ok\":1}",
+          "safe": "/search?q=a,b;c&page=2",
+          "nestedRedirect": "https://x.test/cb?redirect=https%3A%2F%2Fy.test%2Fcb%3Fapi_key%3D[redacted]%26page%3D2&x=1",
+          "nestedLower": "/login?next=%2Fhome%3fsecret%3d[redacted]%23top"
+        }
+      },
+      "absent": [
+        "TWO_SECRET",
+        "WHOLE_SECRET",
+        "BRACKET_SECRET",
+        "FRAG",
+        "FORM",
+        "JSON_Q_SECRET",
+        "NESTED_SECRET",
+        "LOWER_SECRET"
+      ]
+    },
+    {
+      "id": "all-fields-and-keys",
+      "description": "Every top-level field is redacted, including request ids and fields outside the schema that a stage added, and credential text in object keys and top-level field names is redacted.",
+      "input": {
+        "msg": "sync finished",
+        "ctx": {
+          "byUrl": {
+            "https://svc:KEY_PW@db.test/app": "primary",
+            "https://db.test/replica": "replica"
+          },
+          "byEmail": {
+            "ada@example.com": {
+              "role": "admin"
+            }
+          }
+        },
+        "fields": {
+          "requestId": "req-1 access_token=REQ_SECRET",
+          "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+          "request": {
+            "headers": {
+              "Authorization": "Bearer STAGE_SECRET",
+              "Accept": "*/*"
+            },
+            "url": "/cb?code=1&state=s&id_token=ID_SECRET"
+          },
+          "password": "TOP_LEVEL_SECRET",
+          "https://svc:FIELD_KEY_PW@h.test": "primary"
+        }
+      },
+      "expected": {
+        "msg": "sync finished",
+        "ctx": {
+          "byUrl": {
+            "https://[redacted]@db.test/app": "primary",
+            "https://db.test/replica": "replica"
+          },
+          "byEmail": {
+            "[redacted]": {
+              "role": "admin"
+            }
+          }
+        },
+        "requestId": "req-1 access_token=[redacted]",
+        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "request": {
+          "headers": {
+            "Authorization": "[redacted]",
+            "Accept": "*/*"
+          },
+          "url": "/cb?code=1&state=s&id_token=[redacted]"
+        },
+        "password": "[redacted]",
+        "https://[redacted]@h.test": "primary"
+      },
+      "absent": [
+        "KEY_PW",
+        "ada@example.com",
+        "REQ_SECRET",
+        "STAGE_SECRET",
+        "ID_SECRET",
+        "TOP_LEVEL_SECRET",
+        "FIELD_KEY_PW"
+      ]
+    },
+    {
+      "id": "marker-prefixed-values",
+      "description": "A value that starts with the marker is only skipped when the marker is the whole value: text appended to it, or glued to a bracketed value, is redacted too. Already redacted text is unchanged.",
+      "input": {
+        "msg": "retry /cb?token=[redacted]QUERY_TAIL&page=2 password=[redacted]ASSIGN_TAIL done",
+        "ctx": {
+          "already": "password=[redacted] Cookie: [redacted]",
+          "glued": "api_key=abc[def]GLUED_TAIL next",
+          "json": "{\"secret\":\"[redacted]\",\"token\":[redacted]JSON_TAIL}"
+        }
+      },
+      "expected": {
+        "msg": "retry /cb?token=[redacted]&page=2 password=[redacted] done",
+        "ctx": {
+          "already": "password=[redacted] Cookie: [redacted]",
+          "glued": "api_key=[redacted] next",
+          "json": "{\"secret\":\"[redacted]\",\"token\":[redacted]}"
+        }
+      },
+      "absent": [
+        "QUERY_TAIL",
+        "ASSIGN_TAIL",
+        "GLUED_TAIL",
+        "JSON_TAIL"
+      ]
+    },
+    {
+      "id": "bracketed-values",
+      "description": "A credential key followed by an object or array loses the whole balanced value, in plain and escaped JSON and across lines; brackets inside quoted strings do not count, and an unbalanced value runs to the end of the text.",
+      "input": {
+        "msg": "upstream {\"credentials\":[\"AKIA_ONE\",\"AKIA_TWO\"],\"region\":\"eu\"}",
+        "ctx": {
+          "object": "{\"client_secret\":{\"value\":\"CS_VALUE\",\"note\":\"}\"},\"ok\":true}",
+          "escaped": "\"{\\\"apiKeys\\\":[\\\"TOK_ONE\\\",\\\"TOK_TWO\\\"],\\\"n\\\":1}\"",
+          "multiline": "password: {\n  \"v\": \"MULTI_SECRET\"\n}\nnext line",
+          "nested": "{\"auth\":{\"inner\":[{\"x\":\"]\"}],\"k\":\"NESTED_B\"},\"keep\":1}",
+          "unbalanced": "secret=[UNBALANCED_SECRET, more text"
+        }
+      },
+      "expected": {
+        "msg": "upstream {\"credentials\":[redacted],\"region\":\"eu\"}",
+        "ctx": {
+          "object": "{\"client_secret\":[redacted],\"ok\":true}",
+          "escaped": "\"{\\\"apiKeys\\\":[redacted],\\\"n\\\":1}\"",
+          "multiline": "password: [redacted]\nnext line",
+          "nested": "{\"auth\":[redacted],\"keep\":1}",
+          "unbalanced": "secret=[redacted]"
+        }
+      },
+      "absent": [
+        "AKIA_ONE",
+        "AKIA_TWO",
+        "CS_VALUE",
+        "TOK_ONE",
+        "TOK_TWO",
+        "MULTI_SECRET",
+        "NESTED_B",
+        "UNBALANCED_SECRET"
+      ]
+    },
+    {
+      "id": "custom-replacement",
+      "description": "A custom marker is used everywhere and is trusted only as a whole value, like the default one.",
+      "options": {
+        "replacement": "***"
+      },
+      "input": {
+        "msg": "login password=***TAIL_ONE token=[x]TAIL_TWO ?api_key=***&page=1",
+        "ctx": {
+          "note": "secret: {\"a\": [1, 2]} ok",
+          "password": "p-1",
+          "dsn": "postgres://svc:DSN_PW@db/app"
+        }
+      },
+      "expected": {
+        "msg": "login password=*** token=*** ?api_key=***&page=1",
+        "ctx": {
+          "note": "secret: *** ok",
+          "password": "***",
+          "dsn": "postgres://***@db/app"
+        }
+      },
+      "absent": [
+        "TAIL_ONE",
+        "TAIL_TWO",
+        "p-1",
+        "DSN_PW",
+        "[redacted]"
+      ]
+    },
+    {
+      "id": "json-whitespace-separators",
+      "description": "Any whitespace JSON allows around the separator (newlines, CRLF, tabs, indentation) is accepted, and escaped whitespace after it in once-escaped JSON, so pretty-printed and hand-written JSON keep no credential.",
+      "input": {
+        "msg": "{\"token\":\n\"LINE_SECRET\"} {\"apiKey\":\r\n  \"CRLF_SECRET\"} {\"password\"\n: \"BEFORE_SEP\"}",
+        "ctx": {
+          "pretty": "{\n  \"password\":\n    \"PRETTY_SECRET\"\n}",
+          "indented": "{\n  \"service\": {\n    \"auth\": {\n      \"token\": \"PRETTY_TOKEN\"\n    },\n    \"region\": \"eu\"\n  }\n}",
+          "tabbed": "{\n\t\"db\": {\n\t\t\"client_secret\": \"TAB_SECRET\",\n\t\t\"port\": 5432\n\t}\n}",
+          "escaped": "\"{\\n  \\\"a\\\": {\\n    \\\"token\\\": \\\"ESC_INDENT\\\"\\n  }\\n}\"",
+          "escapedCrlf": "\"{\\\"apiKey\\\":\\r\\n  \\\"ESC_CRLF\\\"}\""
+        }
+      },
+      "expected": {
+        "msg": "{\"token\":\n\"[redacted]\"} {\"apiKey\":\r\n  \"[redacted]\"} {\"password\"\n: \"[redacted]\"}",
+        "ctx": {
+          "pretty": "{\n  \"password\":\n    \"[redacted]\"\n}",
+          "indented": "{\n  \"service\": {\n    \"auth\": [redacted],\n    \"region\": \"eu\"\n  }\n}",
+          "tabbed": "{\n\t\"db\": {\n\t\t\"client_secret\": \"[redacted]\",\n\t\t\"port\": 5432\n\t}\n}",
+          "escaped": "\"{\\n  \\\"a\\\": {\\n    \\\"token\\\": \\\"[redacted]\\\"\\n  }\\n}\"",
+          "escapedCrlf": "\"{\\\"apiKey\\\":\\r\\n  \\\"[redacted]\\\"}\""
+        }
+      },
+      "absent": [
+        "LINE_SECRET",
+        "CRLF_SECRET",
+        "BEFORE_SEP",
+        "PRETTY_SECRET",
+        "PRETTY_TOKEN",
+        "TAB_SECRET",
+        "ESC_INDENT",
+        "ESC_CRLF"
+      ]
+    },
+    {
+      "id": "url-userinfo-last-at",
+      "description": "URL userinfo runs to the last @ of the authority, as URL parsers read it, so an unencoded @ in a password is redacted too.",
+      "input": {
+        "msg": "fetch https://user:prefix@TAIL_SECRET@localhost/path failed",
+        "ctx": {
+          "dsn": "postgres://u:p@ss@DBTAIL@db:5432/app",
+          "plain": "https://h.test/a@b",
+          "query": "https://u:p@w@h.test?x=a@b.c"
+        }
+      },
+      "expected": {
+        "msg": "fetch https://[redacted]@localhost/path failed",
+        "ctx": {
+          "dsn": "postgres://[redacted]@db:5432/app",
+          "plain": "https://h.test/a@b",
+          "query": "https://[redacted]@h.test?x=a@b.c"
+        }
+      },
+      "absent": [
+        "TAIL_SECRET",
+        "DBTAIL",
+        "u:p",
+        "ss@",
+        "p@w"
+      ]
+    },
+    {
+      "id": "literal-replacement",
+      "description": "A custom marker is inserted literally by every rule: substitution syntax such as $&, $`, \\g<0> or \\1 is never expanded.",
+      "options": {
+        "replacement": "<$&$`$1\\g<0>\\1>"
+      },
+      "input": {
+        "msg": "ada@example.com password=hunter2 https://u:URLPW@h.test Bearer BEARER_TOK",
+        "ctx": {
+          "apiKey": "k-1",
+          "note": "token=\"QUOTED\" mail bob@example.org"
+        }
+      },
+      "expected": {
+        "msg": "<$&$`$1\\g<0>\\1> password=<$&$`$1\\g<0>\\1> https://<$&$`$1\\g<0>\\1>@h.test Bearer <$&$`$1\\g<0>\\1>",
+        "ctx": {
+          "apiKey": "<$&$`$1\\g<0>\\1>",
+          "note": "token=\"<$&$`$1\\g<0>\\1>\" mail <$&$`$1\\g<0>\\1>"
+        }
+      },
+      "absent": [
+        "ada@example.com",
+        "hunter2",
+        "URLPW",
+        "BEARER_TOK",
+        "k-1",
+        "QUOTED",
+        "bob@example.org",
+        "[redacted]"
+      ]
+    },
+    {
+      "id": "glued-quoted-values",
+      "description": "Text glued to the closing quote of a credential value is part of the value; JSON structure and escaped whitespace after it are kept.",
+      "input": {
+        "msg": "password=\"x\"GLUE_ONE token='y'GLUE_TWO {\"secret\":\"z\"}, ok",
+        "ctx": {
+          "escaped": "\"{\\n  \\\"secret\\\": \\\"ESC_GLUE\\\",\\n  \\\"n\\\": 1\\n}\""
+        }
+      },
+      "expected": {
+        "msg": "password=\"[redacted]\" token='[redacted]' {\"secret\":\"[redacted]\"}, ok",
+        "ctx": {
+          "escaped": "\"{\\n  \\\"secret\\\": \\\"[redacted]\\\",\\n  \\\"n\\\": 1\\n}\""
+        }
+      },
+      "absent": [
+        "GLUE_ONE",
+        "GLUE_TWO",
+        "ESC_GLUE"
+      ]
+    },
+    {
+      "id": "error-names",
+      "description": "An error's name is caller-controlled text (TypeScript error.name, Python exception class name) and is redacted like its message, causes included; allowlisted name paths are kept.",
+      "input": {
+        "msg": "remote call failed",
+        "ctx": {
+          "error": {
+            "$error": {
+              "name": "RemoteError token=NAME_SECRET",
+              "message": "failed",
+              "cause": {
+                "$error": {
+                  "name": "Upstream https://u:CAUSE_NAME_SECRET@h.test/x",
+                  "message": "refused"
+                }
+              }
+            }
+          },
+          "kept": {
+            "$error": {
+              "name": "Kept password=ALLOWED_NAME",
+              "message": "ok"
+            }
+          }
+        }
+      },
+      "options": {
+        "allowlist": [
+          "kept.name"
+        ]
+      },
+      "expected": {
+        "msg": "remote call failed",
+        "ctx": {
+          "error": {
+            "name": "RemoteError token=[redacted]",
+            "message": "failed",
+            "stack": {
+              "$match": {
+                "excludes": [
+                  "NAME_SECRET"
+                ]
+              }
+            },
+            "cause": {
+              "name": "Upstream https://[redacted]@h.test/x",
+              "message": "refused",
+              "stack": {
+                "$match": {
+                  "excludes": [
+                    "CAUSE_NAME_SECRET"
+                  ]
+                }
+              }
+            }
+          },
+          "kept": {
+            "name": "Kept password=ALLOWED_NAME",
+            "message": "ok",
+            "stack": {
+              "$match": {
+                "excludes": []
+              }
+            }
+          }
+        }
+      },
+      "absent": [
+        "NAME_SECRET",
+        "CAUSE_NAME_SECRET"
+      ]
+    },
+    {
+      "id": "binary-data",
+      "description": "Binary values (TypeScript Buffer, typed arrays, ArrayBuffer and DataView; Python bytes, bytearray and memoryview) become \"[unserializable]\": serialized byte by byte, credentials in them would pass every text rule.",
+      "input": {
+        "msg": "upload failed",
+        "ctx": {
+          "raw": {
+            "$bytes": {
+              "text": "password=BYTES_SECRET",
+              "kind": "bytes"
+            }
+          },
+          "buffer": {
+            "$bytes": {
+              "text": "Authorization: Bearer MUTABLE_SECRET",
+              "kind": "mutable"
+            }
+          },
+          "nested": {
+            "parts": [
+              {
+                "$bytes": {
+                  "text": "https://u:VIEW_SECRET@h.test/?token=VIEW_TOKEN",
+                  "kind": "view"
+                }
+              },
+              "kept"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "msg": "upload failed",
+        "ctx": {
+          "raw": "[unserializable]",
+          "buffer": "[unserializable]",
+          "nested": {
+            "parts": [
+              "[unserializable]",
+              "kept"
+            ]
+          }
+        }
+      },
+      "absent": [
+        "BYTES_SECRET",
+        "MUTABLE_SECRET",
+        "VIEW_SECRET",
+        "VIEW_TOKEN"
+      ]
+    },
+    {
+      "id": "redacted-key-collisions",
+      "description": "Distinct keys that redact to the same text keep every value: the first under the redacted key, later ones under \"<key>#2\", \"#3\" in input order, never overwriting each other.",
+      "input": {
+        "msg": "role map",
+        "ctx": {
+          "byEmail": {
+            "ada@example.com": {
+              "role": "admin"
+            },
+            "bob@example.com": {
+              "role": "viewer"
+            },
+            "cy@example.com": {
+              "role": "owner"
+            }
+          }
+        }
+      },
+      "expected": {
+        "msg": "role map",
+        "ctx": {
+          "byEmail": {
+            "[redacted]": {
+              "role": "admin"
+            },
+            "[redacted]#2": {
+              "role": "viewer"
+            },
+            "[redacted]#3": {
+              "role": "owner"
+            }
+          }
+        }
+      },
+      "absent": [
+        "ada@example.com",
+        "bob@example.com",
+        "cy@example.com"
+      ]
+    },
+    {
+      "id": "multiline-quoted-values",
+      "description": "A quoted credential value runs across lines (LF or CRLF) to its closing quote, for single and double quotes, escaped quotes, quoted names with spaces, header names and quotes inside bracketed values; an unterminated quoted value runs to the end of the text.",
+      "input": {
+        "msg": "private_key=\"-----BEGIN PRIVATE KEY-----\nPEM_SECRET\n-----END PRIVATE KEY-----\" loaded",
+        "ctx": {
+          "crlf": "password='line1\r\nCRLF_SECRET' user=ada",
+          "escaped": "{\\\"token\\\":\\\"a\nESCAPED_ML_SECRET\\\",\\\"n\\\":1}",
+          "spaced": "{\"api key\": \"a\nSPACED_ML_SECRET\", \"display name\": \"Ada\"}",
+          "header": "Authorization: \"Bearer a\r\nHEADER_ML_SECRET\"\nnext: ok",
+          "nested": "config: {\"password\": \"a\nNESTED_ML_SECRET\", \"region\": \"eu\"}",
+          "bracketQuote": "token={\"note\": \"x\n}BRACKET_ML_SECRET\"} after",
+          "unterminated": "password=\"UNTERMINATED_SECRET\nrest of the log"
+        }
+      },
+      "expected": {
+        "msg": "private_key=\"[redacted]\" loaded",
+        "ctx": {
+          "crlf": "password='[redacted]' user=ada",
+          "escaped": "{\\\"token\\\":\\\"[redacted]\\\",\\\"n\\\":1}",
+          "spaced": "{\"api key\": \"[redacted]\", \"display name\": \"Ada\"}",
+          "header": "Authorization: \"[redacted]\"\nnext: ok",
+          "nested": "config: {\"password\": \"[redacted]\", \"region\": \"eu\"}",
+          "bracketQuote": "token=[redacted] after",
+          "unterminated": "password=\"[redacted]\""
+        }
+      },
+      "absent": [
+        "PEM_SECRET",
+        "CRLF_SECRET",
+        "ESCAPED_ML_SECRET",
+        "SPACED_ML_SECRET",
+        "HEADER_ML_SECRET",
+        "NESTED_ML_SECRET",
+        "BRACKET_ML_SECRET",
+        "UNTERMINATED_SECRET",
+        "rest of the log"
+      ]
+    },
+    {
+      "id": "allowlist-shared-namespace",
+      "description": "Allowlist entries name ctx paths from the ctx root and top-level fields in one namespace: userId exempts the userId field and ctx.userId, but not a nested user.userId or other keys.",
+      "options": {
+        "allowlist": [
+          "userId"
+        ]
+      },
+      "input": {
+        "msg": "m",
+        "ctx": {
+          "userId": "token=abc",
+          "user": {
+            "userId": "token=def"
+          },
+          "note": "token=ghi"
+        },
+        "userId": "token=top"
+      },
+      "expected": {
+        "ctx": {
+          "userId": "token=abc",
+          "user": {
+            "userId": "token=[redacted]"
+          },
+          "note": "token=[redacted]"
+        },
+        "userId": "token=top"
+      },
+      "absent": [
+        "token=def",
+        "token=ghi"
+      ]
+    },
+    {
+      "id": "proto-keys",
+      "description": "A key named __proto__ (as JSON.parse creates it) is an ordinary key: kept, with its contents redacted like any other, in ctx and as a top-level field.",
+      "input": {
+        "msg": "m",
+        "ctx": {
+          "__proto__": {
+            "password": "pw",
+            "note": "token=PROTO_SECRET"
+          },
+          "a": 1
+        },
+        "fields": {
+          "__proto__": "token=TOP_SECRET"
+        }
+      },
+      "expected": {
+        "ctx": {
+          "__proto__": {
+            "password": "[redacted]",
+            "note": "token=[redacted]"
+          },
+          "a": 1
+        },
+        "__proto__": "token=[redacted]"
+      },
+      "absent": [
+        "PROTO_SECRET",
+        "TOP_SECRET"
+      ]
+    },
+    {
+      "id": "quoted-spaced-names-with-equals",
+      "description": "A quoted name with spaces takes `=` as well as `:`, with or without surrounding spaces, and its value is scanned exactly as after `:` (quoted across lines, bracketed, bare, escaped quotes); configured keys with spaces match too.",
+      "options": {
+        "keys": [
+          "my_custom field"
+        ]
+      },
+      "input": {
+        "msg": "\"session id\" = EQ_SECRET_0",
+        "ctx": {
+          "quoted": "\"private key\" = \"EQ_SECRET_1\", 'api key'='EQ_SECRET_2' \"my_custom field\" = \"EQ_SECRET_7\"",
+          "bare": "{\"api key\" = EQ_SECRET_3, \"display name\" = \"Ada\"} 'access token' = [\"EQ_SECRET_5\", \"x\"] tail",
+          "multiline": "\"private key\" = \"a\nEQ_SECRET_4\" tail",
+          "escaped": "{\\\"api key\\\" = \\\"EQ_SECRET_6\\\", \\\"n\\\" = 1}"
+        }
+      },
+      "expected": {
+        "msg": "\"session id\" = [redacted]",
+        "ctx": {
+          "quoted": "\"private key\" = \"[redacted]\", 'api key'='[redacted]' \"my_custom field\" = \"[redacted]\"",
+          "bare": "{\"api key\" = [redacted], \"display name\" = \"Ada\"} 'access token' = [redacted] tail",
+          "multiline": "\"private key\" = \"[redacted]\" tail",
+          "escaped": "{\\\"api key\\\" = \\\"[redacted]\\\", \\\"n\\\" = 1}"
+        }
+      },
+      "absent": [
+        "EQ_SECRET"
+      ]
+    },
+    {
+      "id": "bounded-shared-context",
+      "description": "A ctx that shares one object on every level is walked within a bounded budget, not expanded to 2^depth copies; credentials reached in it are still redacted, and the ids after ctx keep their values.",
+      "input": {
+        "msg": "shared graph",
+        "ctx": {
+          "graph": {
+            "$dag": {
+              "depth": 24,
+              "leaf": {
+                "password": "DAG_SECRET_1",
+                "note": "token=DAG_SECRET_2"
+              }
+            }
+          }
+        },
+        "userId": "u-dag",
+        "fields": {
+          "traceId": "t-dag",
+          "requestId": "r-dag"
+        }
+      },
+      "expected": {
+        "msg": "shared graph",
+        "userId": "u-dag",
+        "traceId": "t-dag",
+        "requestId": "r-dag"
+      },
+      "absent": [
+        "DAG_SECRET"
+      ]
+    }
+  ]
+}
