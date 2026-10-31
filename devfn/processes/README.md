@@ -8,6 +8,7 @@ Native process groups, durable logs, HTTP/TCP/command/log readiness, PID-birth o
 - On POSIX, `gatedLauncherStatus`/`stopGatedLauncher` resolve such a launch only once the launcher and its process group are gone. On Windows they judge and stop only the launcher and its current process tree, so they cannot confirm that a descendant which left that tree is gone.
 - `runGatedCommand` redacts the values of `redactKeys` from the command's output and keeps at most `maxBuffer` bytes of each output stream, stopping the launcher's group as soon as either passes it.
 - Once the command exits, it waits at most a bounded drain for output that a process it left behind still holds open, then stops that process's group, waiting a bounded time for it to exit and forcing it if needed. A finished command therefore never waits indefinitely on a leftover process. A failed stop is reported together with the command's own outcome, never instead of it.
+- `ProcessSupervisor.run` runs a finite command to completion through the same gate, with its output in a private log, a per-run timeout and an abort signal, both of which stop its whole group. The same bounded drain applies, so a command that exits 0 while a descendant holds its output open succeeds and that descendant is stopped with its group. `discardOutput` keeps none of the command's output, for output that may carry values `redactKeys` cannot name.
 
 ## Process groups
 

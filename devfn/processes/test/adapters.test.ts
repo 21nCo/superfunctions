@@ -13,6 +13,12 @@ describe("runtime adapters", () => {
     expect(env.SECRET_TOKEN).toBeUndefined();
   });
 
+  it("never passes the wrapper's discard control to a process, in any key casing", () => {
+    const spec = { adapter: "command" as const, command: ["node"], envAllowlist: ["devfn_discard_output"] };
+    expect(createProcessEnvironment(spec, {}, { PATH: "/bin", devfn_discard_output: "1" })).toEqual({ PATH: "/bin", HOST: "127.0.0.1", DEVFN_HOST: "127.0.0.1" });
+    expect(createProcessEnvironment({ adapter: "command", command: ["node"] }, { DEVFN_DISCARD_OUTPUT: "1" }, { PATH: "/bin" })).toEqual({ PATH: "/bin", HOST: "127.0.0.1", DEVFN_HOST: "127.0.0.1" });
+  });
+
   it("keeps public HOST literals and inherited values while forcing local loopback", () => {
     const source = { HOST: "0.0.0.0" };
     const publicSpec = { adapter: "command" as const, command: ["node"], exposure: "public" as const, envAllowlist: ["HOST"] };

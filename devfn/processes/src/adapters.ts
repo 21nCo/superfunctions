@@ -30,5 +30,7 @@ export function createProcessEnvironment(spec: ProcessSpec, generated: Record<st
     result.DEVFN_HOST = "127.0.0.1";
   }
   if (spec.adapter === "pnpm") result.COREPACK_ENABLE_NETWORK = "0";
+  // Only DevFn's own launcher may ask the process wrapper to discard output.
+  for (const key of Object.keys(result)) if (key.toUpperCase() === "DEVFN_DISCARD_OUTPUT") delete result[key];
   return result;
 }
