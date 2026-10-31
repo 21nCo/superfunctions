@@ -1843,3 +1843,77 @@ def test_a_transport_flushing_its_own_sink_in_another_task_sends_its_batch_once(
     stats = asyncio.run(scenario())
     assert posted == [["own"]]
     assert stats == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}
+
+
+def _late_diagnostics_sink(batch_size: int, interval_ms: int, spawns: int) -> tuple[SinkHttp, list[list[str]], asyncio.Event, list[asyncio.Task[None]]]:
+    """The first `spawns` transport calls start a task that logs a diagnostic once `settled` is set, after that call returned."""
+    posted: list[list[str]] = []
+    tasks: list[asyncio.Task[None]] = []
+    settled = asyncio.Event()
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        posted.append([e["msg"] for e in json.loads(body)["events"]])
+        if len(posted) <= spawns:
+            tasks.append(asyncio.get_running_loop().create_task(late_diagnostic()))
+        return 200
+
+    async def late_diagnostic() -> None:
+        await settled.wait()
+        await asyncio.sleep(0.01)
+        sink([event("diag")])
+
+    sink = SinkHttp(URL, transport=transport, batch_size=batch_size, flush_interval_ms=interval_ms, retry_attempts=1, timeout=1)
+    return sink, posted, settled, tasks
+
+
+def test_a_diagnostic_logged_after_its_transport_call_returned_waits_for_the_interval() -> None:
+    async def scenario() -> None:
+        sink, posted, settled, tasks = _late_diagnostics_sink(batch_size=1, interval_ms=60_000, spawns=2)
+        sink([event("initial")])
+        await asyncio.wait_for(sink.flush(), 5)
+        settled.set()
+        await asyncio.wait_for(tasks[0], 5)
+        await asyncio.sleep(0.2)  # Long enough for the immediate requests this must not start.
+        assert posted == [["initial"]] and sink.stats()["queued"] == 1
+        await asyncio.wait_for(sink.flush(), 5)  # flush() still sends a queue of diagnostics.
+        await asyncio.wait_for(tasks[1], 5)
+        await asyncio.sleep(0.05)
+        assert posted == [["initial"], ["diag"]] and sink.stats()["queued"] == 1
+        await asyncio.wait_for(sink.close(), 5)  # So does close().
+        assert posted == [["initial"], ["diag"], ["diag"]]
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 3, "dropped": 0, "failed_batches": 0}
+
+    asyncio.run(scenario())
+
+
+def test_a_diagnostic_logged_after_its_transport_call_returned_is_sent_after_the_interval() -> None:
+    async def scenario() -> None:
+        sink, posted, settled, tasks = _late_diagnostics_sink(batch_size=1, interval_ms=200, spawns=1)
+        sink([event("initial")])
+        await asyncio.wait_for(sink.flush(), 5)
+        settled.set()
+        await asyncio.wait_for(tasks[0], 5)
+        logged = time.monotonic()
+        await asyncio.sleep(0.05)
+        assert posted == [["initial"]]
+        await eventually(lambda: len(posted) == 2)
+        assert time.monotonic() - logged >= 0.15 and posted[1] == ["diag"]
+        await asyncio.wait_for(sink.close(), 5)
+
+    asyncio.run(scenario())
+
+
+def test_a_queue_mixing_a_diagnostic_with_a_caller_event_drains_at_batch_size() -> None:
+    async def scenario() -> None:
+        sink, posted, settled, tasks = _late_diagnostics_sink(batch_size=2, interval_ms=60_000, spawns=1)
+        sink([event("initial"), event("second")])
+        await asyncio.wait_for(sink.flush(), 5)
+        settled.set()
+        await asyncio.wait_for(tasks[0], 5)
+        sink([event("caller")])  # No flush(): reaching batch_size with a caller event starts the request.
+        await eventually(lambda: len(posted) == 2)
+        assert posted == [["initial", "second"], ["diag", "caller"]]
+        await asyncio.wait_for(sink.close(), 5)
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 4, "dropped": 0, "failed_batches": 0}
+
+    asyncio.run(scenario())

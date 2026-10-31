@@ -567,11 +567,12 @@ class SinkHttp:
                         self._accepted += 1
                 overflow, overflow_feedback = self._trim()
                 queued = len(self._queue)
+                transport_only = all(source == _TRANSPORT for _, _, source in self._queue)
             if late:
                 self._drop(len(redacted), "closed")
                 return
             self._notify_drop(overflow, "queue_full", overflow_feedback)
-            if queued >= self.batch_size:
+            if queued >= self.batch_size and not transport_only:
                 self._start_drain()
             elif queued > 0:
                 self._schedule_timer()
