@@ -71,6 +71,13 @@ function runLimit(timeoutMs: number, signal?: AbortSignal) {
   return { reached, current: () => current, dispose: () => { clearTimeout(timer); if (onAbort) signal?.removeEventListener("abort", onAbort); } };
 }
 
+/** Why a run must never start its command once a limit was reached. */
+function notStarted(input: RunProcessInput, reached: RunLimit | undefined): { reason: unknown } | undefined {
+  if (reached === undefined) return undefined;
+  const why = reached === "timed-out" ? `timed out after ${input.timeoutMs} ms` : "was cancelled";
+  return { reason: new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} ${why} before it started.`) };
+}
+
 function runResult(managed: ManagedProcess, ended: ExitStatus | RunLimit, stopError: string | undefined, error: string | undefined): ProcessRunResult {
   let outcome: ProcessRunResult["outcome"];
   if (typeof ended === "string") outcome = ended;
@@ -131,7 +138,8 @@ export class ProcessSupervisor {
     // The timeout and abort bound the whole run: the identity recording and the gate too.
     const limit = runLimit(input.timeoutMs, input.signal);
     try {
-      const unstarted = await this.recordIdentity(input, managed, limit);
+      // Decided in the turn that sends start, so a limit reached any time before the send keeps the gate closed.
+      const unstarted = await this.recordIdentity(input, managed, limit) ?? notStarted(input, limit.current());
       if (unstarted) {
         // Closing the channel before the gate opens makes the wrapper exit without running the command.
         if (child.connected) child.disconnect();
@@ -156,19 +164,15 @@ export class ProcessSupervisor {
   }
 
   /**
-   * Await onStarted within the run's limits. Returns why the command must
-   * never run, or undefined once its identity is recorded in time. A
-   * recording that settles after the run gave up never opens the gate.
+   * Await onStarted until it settles or a run limit is reached. Returns why
+   * the recording failed; the caller checks the limits as it opens the gate,
+   * so a recording that settles after the run gave up never opens it.
    */
   private async recordIdentity(input: RunProcessInput, managed: ManagedProcess, limit: ReturnType<typeof runLimit>): Promise<{ reason: unknown } | undefined> {
     const recorded = Promise.resolve().then(async () => { await input.onStarted?.(managed); });
     recorded.catch(() => undefined);
-    let reached: RunLimit | undefined;
-    try { reached = await Promise.race([recorded.then(() => limit.current()), limit.reached]); }
+    try { await Promise.race([recorded, limit.reached]); return undefined; }
     catch (error) { return { reason: error }; }
-    if (reached === undefined) return undefined;
-    const why = reached === "timed-out" ? `timed out after ${input.timeoutMs} ms` : "was cancelled";
-    return { reason: new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} ${why} before it started.`) };
   }
 
   /** Spawn the gated wrapper for a command, its identity read and its output going to a private log. */

@@ -1,3 +1,4 @@
+import { ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:os";
 import path from "node:path";
@@ -120,6 +121,51 @@ describe.skipIf(process.platform === "win32")("finite process runs", () => {
     expect(await exists(path.join(root, "ran"))).toBe(false);
     expect(wrappers.filter(alive)).toEqual([]);
   }, 60_000);
+
+  // An abort queued any number of microtasks after the recording settles must
+  // keep the gate closed: whether start is sent is decided in the same turn as
+  // the send. The oracle is each wrapper's own IPC send, not supervisor state.
+  it("never sends start once the run was aborted, however late after the recording", async () => {
+    const sends: { signal?: AbortSignal; afterAbort: number } = { afterAbort: 0 };
+    const spawn = ChildProcess.prototype.spawn;
+    // Node installs send() on each IPC child while it spawns.
+    ChildProcess.prototype.spawn = function (this: ChildProcess, ...args: Parameters<typeof spawn>) {
+      const spawned = spawn.apply(this, args);
+      const send = this.send?.bind(this) as ((...rest: unknown[]) => boolean) | undefined;
+      if (send) this.send = ((message: unknown, ...rest: unknown[]) => { if (message === "start" && sends.signal?.aborted) sends.afterAbort++; return send(message, ...rest); }) as ChildProcess["send"];
+      return spawned;
+    };
+    const rejected: { root: string; pid: number }[] = [];
+    try {
+      for (let depth = 1; depth <= 12; depth++) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const { root, base } = await workspace(`late-abort-${depth}`);
+          const controller = new AbortController();
+          sends.signal = controller.signal;
+          let pid = 0;
+          const onStarted = async (managed: { pid: number }) => {
+            pid = managed.pid;
+            let remaining = depth;
+            const step = () => { if (--remaining <= 0) controller.abort(); else queueMicrotask(step); };
+            queueMicrotask(step);
+          };
+          const outcome = await new ProcessSupervisor().run({ ...base, name: "late-abort", signal: controller.signal, command: ["/bin/sh", "-c", "printf ran > ran"], onStarted })
+            .then((result) => result.outcome, (error: { code?: string }) => error.code);
+          if (outcome === "DEVFN_PROCESS_START_FAILED") rejected.push({ root, pid });
+          else expect(outcome).toBe("cancelled");
+        }
+      }
+    } finally {
+      ChildProcess.prototype.spawn = spawn;
+    }
+    expect(sends.afterAbort).toBe(0);
+    expect(rejected.length).toBeGreaterThan(0);
+    await delay(500);
+    for (const { root, pid } of rejected) {
+      expect(await exists(path.join(root, "ran"))).toBe(false);
+      expect(alive(pid)).toBe(false);
+    }
+  }, 120_000);
 
   // A stopped wrapper cannot acknowledge its gate; the run's limits still end it and stop its group.
   it("bounds the launch gate acknowledgement by the run's timeout and abort", async () => {
