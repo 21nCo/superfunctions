@@ -10,7 +10,7 @@ import { createProcessEnvironment, resolveAdapterCommand } from "./adapters.js";
 import { stopProcessGroup } from "./group.js";
 import { processExists, processGroupStatus, startedProcessBirthSignature } from "./identity.js";
 import { waitForReadiness } from "./readiness.js";
-import { ProcessError, type ManagedProcess, type StartProcessInput } from "./types.js";
+import { ProcessError, type ManagedProcess, type ProcessRunResult, type RunProcessInput, type StartProcessInput } from "./types.js";
 
 /** Let the wrapper run its command and wait until it detached from the channel. */
 async function openLaunchGate(child: ChildProcess): Promise<void> {
@@ -46,24 +46,119 @@ export async function prepareProcessLog(logPath: string, resetSensitiveHistory: 
   }
 }
 
+// A process a finite command left behind can hold its output open after the
+// command exits; the wrapper stops waiting for that output after this long,
+// so the run ends with the command and the leftover is stopped with its group.
+const RUN_DRAIN_MS = 1_000;
+const MAX_TIMER_MS = 2_147_483_647;
+
 export class ProcessSupervisor {
   public async start(input: StartProcessInput): Promise<ManagedProcess> {
     const command = resolveAdapterCommand(input.spec);
+    const { child, managed, logOffset, cwd, environment, exited } = await this.launch({ name: input.name, command, root: input.root, cwd: input.spec.cwd,
+      runtimeDir: input.runtimeDir, environment: createProcessEnvironment(input.spec, input.environment), redactKeys: input.spec.secretEnv ?? [],
+      ...(input.spec.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: input.spec.shutdownTimeoutMs }) });
+    try {
+      try {
+        await input.onStarted?.(managed);
+        await openLaunchGate(child);
+      } finally {
+        if (child.connected) child.disconnect();
+      }
+      await waitForReadiness({ health: input.spec.health, ports: input.ports ?? {}, logPath: managed.logPath, logOffset, cwd, environment, isAlive: () => !exited() && processExists(managed.pid) });
+      managed.readyAt = new Date().toISOString();
+      return managed;
+    } catch (error) {
+      await stopProcessGroup(managed, managed.name, input.spec.shutdownTimeoutMs ?? 10_000, { ownGroup: { leaderUnreaped: () => !exited() } }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Run a finite command to completion through the same gated wrapper: it
+   * starts only after onStarted recorded its identity (a failed recording
+   * means it never ran), and a timeout or abort stops its whole process
+   * group. Whatever it left in its group is stopped once it exits. Only exit
+   * code 0 succeeds; nothing the command changed is undone.
+   */
+  public async run(input: RunProcessInput): Promise<ProcessRunResult> {
+    // A timer clamps anything else to 1 ms, which would end every run at once.
+    if (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > MAX_TIMER_MS) {
+      throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} has an invalid timeout of ${input.timeoutMs} ms.`);
+    }
+    const { child, managed, exited } = await this.launch({ ...input,
+      wrapperEnvironment: { DEVFN_WRAPPER_DRAIN_MS: String(RUN_DRAIN_MS), ...(input.discardOutput ? { DEVFN_DISCARD_OUTPUT: "1" } : {}) } });
+    let settle!: (value: { code: number | null; signal: NodeJS.Signals | null }) => void;
+    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => { settle = resolve; });
+    if (exited()) settle({ code: child.exitCode, signal: child.signalCode });
+    else child.once("exit", (code, signal) => settle({ code, signal }));
+    // Once stopped, or past stopping, the wrapper no longer holds the caller's event loop open.
+    const stop = async () => {
+      try { await stopProcessGroup(managed, managed.name, input.shutdownTimeoutMs ?? 10_000, { ownGroup: { leaderUnreaped: () => !exited() } }); }
+      finally { child.unref(); }
+    };
+    child.ref();
+    try {
+      await input.onStarted?.(managed);
+      if (input.signal?.aborted) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} was cancelled before it started.`);
+    } catch (error) {
+      // Closing the channel before the gate opens makes the wrapper exit without running the command.
+      if (child.connected) child.disconnect();
+      await exit;
+      throw error;
+    }
+    try { await openLaunchGate(child); }
+    catch (error) {
+      // The wrapper may have received the gate and started the command, so it ends as a failed run.
+      if (child.connected) child.disconnect();
+      let stopError: string | undefined;
+      try { await stop(); } catch (failure) { stopError = failure instanceof Error ? failure.message : String(failure); }
+      return { outcome: "failed", exitCode: null, signal: null, process: managed, error: error instanceof Error ? error.message : String(error), ...(stopError ? { stopError } : {}) };
+    }
+    if (child.connected) child.disconnect();
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
+    const limited = new Promise<"timed-out" | "cancelled">((resolve) => {
+      timer = setTimeout(() => resolve("timed-out"), input.timeoutMs);
+      onAbort = () => resolve("cancelled");
+      if (input.signal?.aborted) onAbort();
+      else input.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    const outcome = await Promise.race([exit, limited]);
+    clearTimeout(timer);
+    if (onAbort) input.signal?.removeEventListener("abort", onAbort);
+    // A stop failure never hides the command's own outcome; the caller reports both.
+    let stopError: string | undefined;
+    try { await stop(); } catch (error) { stopError = error instanceof Error ? error.message : String(error); }
+    const status = typeof outcome === "string" ? { code: null, signal: null } : outcome;
+    return {
+      outcome: typeof outcome === "string" ? outcome : outcome.code === 0 ? "succeeded" : "failed",
+      exitCode: status.code, signal: status.signal, process: managed, ...(stopError ? { stopError } : {}),
+    };
+  }
+
+  /** Spawn the gated wrapper for a command, its identity read and its output going to a private log. */
+  private async launch(input: { name: string; command: string[]; root: string; cwd?: string; runtimeDir: string; environment: NodeJS.ProcessEnv; redactKeys?: readonly string[]; shutdownTimeoutMs?: number;
+    discardOutput?: boolean; wrapperEnvironment?: Record<string, string> }) {
+    const { command } = input;
     if (command.length === 0) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process ${input.name} has no command.`);
-    const cwd = await resolveContainedPath(input.root, input.spec.cwd ?? ".", `processes.${input.name}.cwd`).catch((error) => {
-      throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process cwd escapes repository: ${input.spec.cwd ?? "."}`, { cause: error instanceof Error ? error.message : String(error) });
+    const cwd = await resolveContainedPath(input.root, input.cwd ?? ".", `processes.${input.name}.cwd`).catch((error) => {
+      throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process cwd escapes repository: ${input.cwd ?? "."}`, { cause: error instanceof Error ? error.message : String(error) });
     });
     const logsDir = path.join(input.runtimeDir, "logs");
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
     if (!/^[A-Za-z0-9_.-]+$/.test(input.name) || input.name !== input.name.trim()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Invalid process name ${input.name}.`);
     const logPath = path.join(logsDir, `${input.name}.log`);
     mkdirSync(path.dirname(logPath), { recursive: true });
-    const environment = createProcessEnvironment(input.spec, input.environment);
-    const { logFd, logOffset } = await prepareProcessLog(logPath, Boolean(input.spec.secretEnv?.length));
+    // Only discardOutput may ask the wrapper to discard output, never the
+    // given environment (in any key casing, as Windows reads it).
+    const environment = { ...input.environment };
+    for (const key of Object.keys(environment)) if (key.toUpperCase() === "DEVFN_DISCARD_OUTPUT") delete environment[key];
+    const { logFd, logOffset } = await prepareProcessLog(logPath, Boolean(input.redactKeys?.length) || input.discardOutput === true);
     const wrapperPath = fileURLToPath(new URL("./wrapper.js", import.meta.url));
     const child = spawn(process.execPath, [wrapperPath], {
       cwd,
-      env: { ...environment, DEVFN_WRAPPED_COMMAND: JSON.stringify(command), DEVFN_REDACT_KEYS: JSON.stringify(input.spec.secretEnv ?? []) },
+      env: { ...environment, DEVFN_WRAPPED_COMMAND: JSON.stringify(command), DEVFN_REDACT_KEYS: JSON.stringify(input.redactKeys ?? []), ...input.wrapperEnvironment },
       detached: process.platform !== "win32",
       windowsHide: true,
       // The IPC channel gates the command until its identity is recorded.
@@ -93,22 +188,9 @@ export class ProcessSupervisor {
       cwd,
       logPath,
       startedAt: new Date().toISOString(),
-      ...(input.spec.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: input.spec.shutdownTimeoutMs }),
+      ...(input.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: input.shutdownTimeoutMs }),
     };
-    try {
-      try {
-        await input.onStarted?.(managed);
-        await openLaunchGate(child);
-      } finally {
-        if (child.connected) child.disconnect();
-      }
-      await waitForReadiness({ health: input.spec.health, ports: input.ports ?? {}, logPath, logOffset, cwd, environment, isAlive: () => !exited && processExists(managed.pid) });
-      managed.readyAt = new Date().toISOString();
-      return managed;
-    } catch (error) {
-      await stopProcessGroup(managed, managed.name, input.spec.shutdownTimeoutMs ?? 10_000, { ownGroup: { leaderUnreaped: () => !exited } }).catch(() => undefined);
-      throw error;
-    }
+    return { child, managed, logOffset, cwd, environment, exited: () => exited };
   }
 
   /**
