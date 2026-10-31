@@ -1759,3 +1759,87 @@ def test_a_transport_awaiting_its_own_sinks_flush_still_waits_for_other_batches(
     worker.join(5)
     assert seen == [[["held"]]]
     assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 2, "dropped": 0, "failed_batches": 0}
+
+
+def _transport_child_scenario(sink_options: dict[str, Any], child_step: Any, replies: list[int]) -> tuple[list[list[str]], list[Any]]:
+    """The first transport call starts a task that runs child_step(sink) once that call's batch has settled."""
+    posted: list[list[str]] = []
+    results: list[Any] = []
+    tasks: list[asyncio.Task[None]] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        posted.append([e["msg"] for e in json.loads(body)["events"]])
+        if len(posted) == 1:
+            tasks.append(asyncio.get_running_loop().create_task(child()))
+        return replies[len(posted) - 1]
+
+    async def child() -> None:
+        await settled.wait()
+        results.append(await child_step(sink))
+
+    sink = SinkHttp(URL, transport=transport, batch_size=10, flush_interval_ms=60_000, retry_attempts=1, timeout=1, **sink_options)
+
+    async def scenario() -> None:
+        nonlocal settled
+        settled = asyncio.Event()
+        sink([event("initial")])
+        await asyncio.wait_for(sink.flush(), 5)
+        settled.set()
+        await asyncio.wait_for(tasks[0], 5)
+
+    settled: asyncio.Event
+    asyncio.run(scenario())
+    return posted, results
+
+
+@pytest.mark.parametrize("method", ["flush", "close"])
+def test_a_task_the_transport_started_flushes_and_closes_normally_once_its_batch_settled(method: str) -> None:
+    async def step(sink: SinkHttp) -> dict[str, int]:
+        sink([event("later")])
+        await asyncio.wait_for(getattr(sink, method)(), 5)
+        return sink.stats()  # Read as the call returns: nothing is left queued without a drain or timer.
+
+    posted, results = _transport_child_scenario({}, step, [200, 200])
+    assert posted == [["initial"], ["later"]]
+    assert results == [{"queued": 0, "in_flight": 0, "sent": 2, "dropped": 0, "failed_batches": 0}]
+
+
+def test_events_a_task_the_transport_started_logs_stay_transport_diagnostics() -> None:
+    errors: list[BaseException] = []
+
+    async def step(sink: SinkHttp) -> dict[str, int]:
+        sink([event("diag")])
+        await asyncio.wait_for(sink.flush(), 5)
+        return sink.stats()
+
+    posted, results = _transport_child_scenario({"on_error": errors.append}, step, [200, 500])
+    assert posted == [["initial"], ["diag"]] and errors == []  # Counted, and no callback is called for it.
+    assert results == [{"queued": 0, "in_flight": 0, "sent": 1, "dropped": 1, "failed_batches": 1}]
+
+
+@pytest.mark.parametrize("wrap", ["wait_for", "gather", "child"])
+def test_a_transport_flushing_its_own_sink_in_another_task_sends_its_batch_once(wrap: str) -> None:
+    posted: list[list[str]] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        posted.append([e["msg"] for e in json.loads(body)["events"]])
+        if wrap == "wait_for":
+            await asyncio.wait_for(sink.flush(), 5)
+        elif wrap == "gather":
+            await asyncio.gather(sink.flush())
+        else:  # A task left running: its flush() returns without waiting for or losing the batch in flight.
+            asyncio.get_running_loop().create_task(sink.flush())
+            await asyncio.sleep(0.05)
+        return 200
+
+    sink = SinkHttp(URL, transport=transport, batch_size=1, retry_attempts=1, timeout=0.5)
+
+    async def scenario() -> dict[str, int]:
+        sink([event("own")])
+        await asyncio.wait_for(sink.flush(), 5)
+        await asyncio.sleep(0.01)
+        return sink.stats()
+
+    stats = asyncio.run(scenario())
+    assert posted == [["own"]]
+    assert stats == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 0, "failed_batches": 0}

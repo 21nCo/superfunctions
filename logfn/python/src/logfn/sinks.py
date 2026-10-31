@@ -811,10 +811,10 @@ class SinkHttp:
             self._cancel_timer(loop)
             with self._lock:
                 target = self._accepted
-            own = self._in_transport.get()  # Inside its own transport call: that batch and the queue behind it wait for the call.
+            own = self._in_transport.get()  # Own transport call (or a task it started): while that batch is in flight, it and the queue behind it wait for the call.
             while True:
                 with self._lock:
-                    queued = own is None and bool(self._queue) and self._queue[0][0] < target
+                    queued = own not in self._batches and bool(self._queue) and self._queue[0][0] < target
                 drain = self._start_drain() if queued else None
                 if drain is not None:
                     # One step lets a new drain take its first batch, so the
@@ -826,7 +826,7 @@ class SinkHttp:
                 # events in question are seen in one place or the other,
                 # never in neither.
                 with self._lock:
-                    queued = own is None and bool(self._queue) and self._queue[0][0] < target
+                    queued = own not in self._batches and bool(self._queue) and self._queue[0][0] < target
                     pending = [batch for batch in self._batches if batch.items[0][0] < target and batch is not own]
                     if pending:
                         waiter = loop.create_future()
