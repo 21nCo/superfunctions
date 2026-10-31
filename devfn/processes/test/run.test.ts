@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import type { runGatedCommand as GatedRunner } from "../src/gated.js";
 import type { ProcessSupervisor as Supervisor } from "../src/supervisor.js";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
@@ -15,6 +17,7 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 // next to each other, where @devfn/config still resolves.
 let dir: string;
 let ProcessSupervisor: typeof Supervisor;
+let runGatedCommand: typeof GatedRunner;
 beforeAll(async () => {
   await mkdir(path.join(packageDir, "node_modules", ".cache"), { recursive: true });
   dir = await mkdtemp(path.join(packageDir, "node_modules", ".cache", "devfn-run-"));
@@ -25,6 +28,7 @@ beforeAll(async () => {
     await writeFile(path.join(dir, name.replace(/\.ts$/, ".js")), outputText);
   }
   ({ ProcessSupervisor } = await import(/* @vite-ignore */ pathToFileURL(path.join(dir, "supervisor.js")).href) as { ProcessSupervisor: typeof Supervisor });
+  ({ runGatedCommand } = await import(/* @vite-ignore */ pathToFileURL(path.join(dir, "gated.js")).href) as { runGatedCommand: typeof GatedRunner });
 });
 afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 
@@ -118,6 +122,25 @@ describe.skipIf(process.platform === "win32")("finite process runs", () => {
     const log = await readFile(discarded.process.logPath, "utf8");
     expect(log).toContain("Output of this command is not kept");
     expect(log).not.toContain("value=");
+  }, 60_000);
+
+  // Node ignores SIGPIPE and SIGXFSZ and opens its inspector on SIGUSR1, so a
+  // wrapper that sent itself these would go on and exit 0.
+  it("fails a command a signal ended, including signals Node ignores or handles", async () => {
+    const { base } = await workspace("signal");
+    for (const signal of ["PIPE", "XFSZ", "USR1"] as const) {
+      const code = 128 + constants.signals[`SIG${signal}`];
+      const command = ["/bin/sh", "-c", `kill -${signal} $$`];
+      const result = await new ProcessSupervisor().run({ ...base, name: `sig${signal}`, command });
+      expect(result).toMatchObject({ outcome: "failed", exitCode: code, signal: null });
+      expect(await readFile(result.process.logPath, "utf8")).not.toContain("Debugger listening");
+      const failure = await runGatedCommand(command[0], command.slice(1), { onLaunched: async () => undefined }).then(() => undefined, (error: unknown) => error);
+      expect(failure).toMatchObject({ code });
+      expect((failure as { stderr: string }).stderr).not.toContain("Debugger listening");
+    }
+    const command = ["/bin/sh", "-c", "kill -TERM $$"];
+    expect(await new ProcessSupervisor().run({ ...base, name: "sigTERM", command })).toMatchObject({ outcome: "failed", exitCode: null, signal: "SIGTERM" });
+    await expect(runGatedCommand(command[0], command.slice(1), { onLaunched: async () => undefined })).rejects.toMatchObject({ signal: "SIGTERM" });
   }, 60_000);
 
   it("rejects a timeout a timer cannot hold before launching anything", async () => {
