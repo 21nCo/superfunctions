@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, cast
 
 from .redact import (
@@ -141,8 +142,27 @@ def _tag_text(tag: Any) -> str:
     if isinstance(tag, float):
         if not math.isfinite(tag):
             return cast(str, sanitize_value(tag))
-        return str(int(tag)) if tag.is_integer() and abs(tag) < 1e21 else repr(tag)
+        return _js_number(tag)
     return UNSERIALIZABLE
+
+
+def _js_number(value: float) -> str:
+    # ECMAScript Number::toString: the shortest round-trip digits (repr's),
+    # in decimal notation for exponents -7 < n <= 21, else d.ddde+N / e-N.
+    if value == 0:
+        return "0"
+    _, digit_tuple, exponent = Decimal(repr(abs(value))).normalize().as_tuple()
+    digits = "".join(map(str, digit_tuple))
+    k, n = len(digits), cast(int, exponent) + len(digits)
+    if k <= n <= 21:
+        text = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        text = f"{digits[:n]}.{digits[n:]}"
+    elif -6 < n <= 0:
+        text = "0." + "0" * -n + digits
+    else:
+        text = digits[0] + (f".{digits[1:]}" if k > 1 else "") + ("e+" if n > 0 else "e-") + str(abs(n - 1))
+    return ("-" if value < 0 else "") + text
 
 
 def sanitize_event(event: LogEvent) -> LogEvent:

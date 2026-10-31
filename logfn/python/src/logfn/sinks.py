@@ -262,7 +262,7 @@ def _post(url: str, body: bytes, headers: dict[str, str], timeout: float, attemp
         parts = urlsplit(url)
         https = parts.scheme == "https"
         connection_class = http.client.HTTPSConnection if https else http.client.HTTPConnection
-        connection = connection_class(parts.hostname or "", parts.port or (443 if https else 80), timeout=timeout)
+        connection = connection_class(parts.hostname or "", (443 if https else 80) if parts.port is None else parts.port, timeout=timeout)
         # HTTPS wraps the connected socket in TLS, which abort() also stops.
         connection._create_connection = attempt.connect  # type: ignore[attr-defined]
         target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
@@ -357,8 +357,8 @@ def _positive(value: float, name: str) -> float:
 def _validate_url(url: str) -> None:
     parts = urlsplit(url)
     try:
-        port_ok = parts.port is None or parts.port >= 0
-    except ValueError:  # Not a number from 0 to 65535.
+        port_ok = parts.port is None or parts.port > 0
+    except ValueError:  # Not a number from 0 to 65535; 0 is no port either.
         port_ok = False
     if parts.scheme not in ("http", "https") or not parts.hostname or not port_ok:
         raise ValueError("SinkHttp: url must be an absolute http(s) URL")

@@ -59,8 +59,10 @@ async def eventually(predicate: Any, timeout: float = 5.0) -> None:
         ({"url": "/ingest"}, "absolute http"),
         ({"url": "ftp://logs.example.com"}, "absolute http"),
         ({"url": "https://user:pw@logs.example.com"}, "must not contain credentials"),
-        # Ports that are not a number from 0 to 65535 are rejected up front.
+        # Ports that are not a number from 1 to 65535 are rejected up front;
+        # port 0 is never rewritten to the scheme's default port.
         ({"url": "http://c:abc/x"}, "absolute http"),
+        ({"url": "http://c:0/x"}, "absolute http"),
         ({"url": "http://c:99999/x"}, "absolute http"),
         ({"url": URL, "batch_size": 0}, "batch_size"),
         ({"url": URL, "max_queue": 1.5}, "max_queue"),
@@ -547,6 +549,23 @@ def test_direct_call_sends_only_redacted_json_safe_fields() -> None:
     sent = json.loads(bodies[0])["events"][0]
     assert sent["ctx"] == {"response": "[unserializable]", "raw": "[unserializable]", "https://[redacted]@h.test": 1}
     assert sent["userId"] == {"password": "[redacted]"} and sent["extra"] == {"password": "[redacted]"}
+
+
+def test_float_tags_are_delivered_as_javascript_writes_numbers(capsys: pytest.CaptureFixture[str]) -> None:
+    values = [1e-6, 1e-7, 2.5e-5, 1.5e21, 1e21, 123456789012345680000.0]
+    expected = ["0.000001", "1e-7", "0.000025", "1.5e+21", "1e+21", "123456789012345680000"]
+    bodies: list[bytes] = []
+
+    async def capture(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return 200
+
+    http = SinkHttp(URL, transport=capture, batch_size=1)
+    logger = create_logger("svc", sinks=[http, SinkConsole(json=True)])
+    logger.info("m", tags=values)  # type: ignore[arg-type]
+    asyncio.run(http.flush())
+    assert json.loads(bodies[0])["events"][0]["tags"] == expected
+    assert json.loads(capsys.readouterr().out)["tags"] == expected
 
 
 def test_direct_call_keeps_keys_that_sanitize_to_the_same_text() -> None:

@@ -251,6 +251,26 @@ def test_sanitize_event_makes_every_field_json_safe() -> None:
     json.dumps(out)
 
 
+# Float tags and the text String(number) gives them in JavaScript.
+JS_NUMBER_TAGS = [
+    (1e-6, "0.000001"),
+    (1e-7, "1e-7"),
+    (2.5e-5, "0.000025"),
+    (-2.5e-5, "-0.000025"),
+    (1.5e21, "1.5e+21"),
+    (1e21, "1e+21"),
+    (123456789012345680000.0, "123456789012345680000"),
+    (-0.0, "0"),
+    (0.1, "0.1"),
+    (5e-324, "5e-324"),
+]
+
+
+def test_float_tags_are_written_as_javascript_writes_numbers() -> None:
+    out = sanitize_event(make_event(tags=[value for value, _ in JS_NUMBER_TAGS]))  # type: ignore[misc]
+    assert out["tags"] == [text for _, text in JS_NUMBER_TAGS]
+
+
 
 # -- idempotency and markers (mirrors the TypeScript pipeline tests) ------------
 
