@@ -13,6 +13,11 @@ import {
   LimitExceededException
 } from '@aws-sdk/client-ses';
 import { isBareEmail } from './address';
+import { Readable } from 'node:stream';
+
+export interface SesSendOptions { signal?: AbortSignal }
+export type { AwsSesConfig } from '../types';
+export type { SendEmailRequest, SendEmailResponse } from './provider';
 
 function encodeSesAddress(value: string, foldLongHeader = false): string {
   if (/[\r\n]/.test(value)) throw new Error('Invalid sender address');
@@ -64,34 +69,93 @@ export class AwsSesAdapter implements EmailProvider {
   };
 
   private sesClient: SESClient;
+  private readonly active = new Map<Promise<SendEmailResponse>, AbortController>();
+  private closing = false;
+  private closeTask?: Promise<void>;
+  private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
 
   constructor(private config: AwsSesConfig) {
+    this.timeoutMs = config.timeoutMs ?? 30_000;
+    this.maxResponseBytes = config.maxResponseBytes ?? 1024 * 1024;
+    for (const [name, value] of Object.entries({ timeoutMs: this.timeoutMs, maxResponseBytes: this.maxResponseBytes })) {
+      if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) throw new Error(`Invalid SES ${name}`);
+    }
+    if (config.endpoint !== undefined) {
+      const endpoint = new URL(config.endpoint);
+      if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) throw new Error('Invalid SES endpoint');
+    }
     this.sesClient = new SESClient({
+      maxAttempts: 1,
+      endpoint: config.endpoint,
       region: config.region,
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
       },
     });
+    // Retain the SDK signing and transport. Bound its response before deserialization,
+    // including bodies that stall after headers (SDK socket timers need not cover these).
+    const handler = this.sesClient.config.requestHandler;
+    const handle = handler.handle.bind(handler);
+    handler.handle = async (request, options) => {
+      const result = await handle(request, options);
+      const body = result.response.body;
+      if (!(body instanceof Readable)) throw new Error('Unsupported SES response stream');
+      // Every send below supplies our native AbortController signal.
+      const signal = (options && 'abortSignal' in options ? options.abortSignal : undefined) as AbortSignal | undefined;
+      const abort = () => body.destroy(new Error('SES operation aborted'));
+      signal?.addEventListener('abort', abort, { once: true });
+      try {
+        if (signal?.aborted) abort();
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        for await (const chunk of body) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          bytes += buffer.length;
+          if (bytes > this.maxResponseBytes) throw new Error('SES response exceeds configured limit');
+          chunks.push(buffer);
+        }
+        if (signal?.aborted) throw new Error('SES operation aborted');
+        result.response.body = Readable.from([Buffer.concat(chunks, bytes)]);
+        return result;
+      } finally {
+        signal?.removeEventListener('abort', abort);
+        body.destroy();
+      }
+    };
   }
 
   async initialize(): Promise<void> {
     // No-op
   }
 
-  async sendEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
-    try {
-      if ((params.attachments && params.attachments.length > 0) || Object.keys(params.headers ?? {}).length > 0 || params.idempotencyKey) {
-        return await this.sendRawEmail(params);
-      } else {
-        return await this.sendSimpleEmail(params);
+  sendEmail(params: SendEmailRequest, options: SesSendOptions = {}): Promise<SendEmailResponse> {
+    if (this.closing) return Promise.resolve(this.handleError(new Error('SES provider is closed')));
+    if (options.signal?.aborted) return Promise.resolve(this.handleError(new Error('SES operation aborted')));
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    options.signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, this.timeoutMs);
+    const operation = (async () => {
+      try {
+        const raw = Boolean(params.attachments?.length || Object.keys(params.headers ?? {}).length || params.idempotencyKey);
+        const result = await (raw ? this.sendRawEmail(params, controller.signal) : this.sendSimpleEmail(params, controller.signal));
+        if (controller.signal.aborted) throw new Error('SES operation aborted');
+        return result;
+      } catch (error) {
+        return this.handleError(error);
+      } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
       }
-    } catch (error: any) {
-      return this.handleError(error);
-    }
+    })();
+    this.active.set(operation, controller);
+    void operation.then(() => this.active.delete(operation), () => this.active.delete(operation));
+    return operation;
   }
 
-  private async sendSimpleEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
+  private async sendSimpleEmail(params: SendEmailRequest, signal: AbortSignal): Promise<SendEmailResponse> {
     const command = new SendEmailCommand({
       Source: encodeSesAddress(params.from),
       Destination: {
@@ -111,8 +175,9 @@ export class AwsSesAdapter implements EmailProvider {
       Tags: Object.entries(params.tags ?? {}).map(([Name, Value]) => ({ Name, Value })),
     });
 
-    const result = await this.sesClient.send(command);
+    const result = await this.sesClient.send(command, { abortSignal: signal });
 
+    if (typeof result.MessageId !== 'string' || !result.MessageId.trim()) throw new Error('SES response has no message receipt');
     return {
       success: true,
       messageId: result.MessageId,
@@ -121,7 +186,7 @@ export class AwsSesAdapter implements EmailProvider {
     };
   }
 
-  private async sendRawEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
+  private async sendRawEmail(params: SendEmailRequest, signal: AbortSignal): Promise<SendEmailResponse> {
     const boundary = `----=_Part_${Date.now()}`;
     let rawMessage = '';
 
@@ -191,8 +256,9 @@ export class AwsSesAdapter implements EmailProvider {
       Tags: Object.entries(params.tags ?? {}).map(([Name, Value]) => ({ Name, Value })),
     });
 
-    const result = await this.sesClient.send(command);
+    const result = await this.sesClient.send(command, { abortSignal: signal });
 
+    if (typeof result.MessageId !== 'string' || !result.MessageId.trim()) throw new Error('SES response has no message receipt');
     return {
       success: true,
       messageId: result.MessageId,
@@ -221,11 +287,21 @@ export class AwsSesAdapter implements EmailProvider {
     }
   }
 
-  async close(): Promise<void> {
-    this.sesClient.destroy();
+  close(): Promise<void> {
+    if (!this.closeTask) {
+      this.closing = true;
+      for (const controller of this.active.values()) controller.abort();
+      this.closeTask = (async () => {
+        await Promise.all([...this.active.keys()]);
+        this.sesClient.destroy();
+      })();
+      void this.closeTask.catch(() => {});
+    }
+    return this.closeTask;
   }
 
-  private handleError(error: any): SendEmailResponse {
+  private handleError(error: unknown): SendEmailResponse {
+    const failure = error instanceof Error ? error : new Error('Unknown SES failure');
     let code = 'SENDFN_INTERNAL_ERROR';
     let retryable = false;
 
@@ -234,7 +310,7 @@ export class AwsSesAdapter implements EmailProvider {
     } else if (error instanceof LimitExceededException) {
       code = 'LIMIT_EXCEEDED';
       retryable = true;
-    } else if (error.name === 'ThrottlingException') {
+    } else if (failure.name === 'ThrottlingException') {
       code = 'THROTTLING';
       retryable = true;
     }
@@ -244,7 +320,7 @@ export class AwsSesAdapter implements EmailProvider {
       timestamp: new Date(),
       error: {
         code,
-        message: error.message || 'Unknown error occurred',
+        message: failure.message || 'Unknown error occurred',
         retryable,
       },
     };

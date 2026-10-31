@@ -45,6 +45,11 @@
       "types": "./dist/adapters/connected-mailbox.d.ts",
       "import": "./dist/adapters/connected-mailbox.mjs",
       "require": "./dist/adapters/connected-mailbox.js"
+    },
+    "./adapters/aws-ses": {
+      "types": "./dist/adapters/aws-ses.d.ts",
+      "import": "./dist/adapters/aws-ses.mjs",
+      "require": "./dist/adapters/aws-ses.js"
     }
   },
   "scripts": {
@@ -52,7 +57,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "lint": "tsc --noEmit",
-    "release:verify": "npm run build && npm run lint && npm test -- --run"
+    "release:verify": "npm run build && npm run lint && npm test -- --run",
+    "verify:ses-package": "node scripts/verify-ses-package.mjs"
   },
   "keywords": [
     "email",
