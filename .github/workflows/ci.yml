@@ -80,9 +80,11 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'dev'
     runs-on: ubuntu-latest
     steps:
+      # The PR head itself: the merge ref can be built on another base than base.sha, whose changes would count as the PR's.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 

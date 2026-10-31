@@ -63,13 +63,12 @@ const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
-// Any build-file string literal with a tsc word is a tsc command (`npx -p typescript tsc`, `bun x tsc`, a message): tscProjects maps it, and a noEmit tsconfig consumes nothing.
+// Any build-file tsc word is a tsc run (`npx -p typescript tsc`, `bun x tsc`, a message): tscProjects maps it, and a noEmit tsconfig consumes nothing.
 // A literal may hold the other quote kinds (`"tsc -p lib && echo 'built'"`).
 const STRING_LITERAL = /(['"`])((?:(?!\1)[^\n\\]|\\.)*)\1/g;
 // `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
-// `--noEmit` not followed by `false`, in a command string or an argv element.
-const NO_EMIT = /--noEmit\b(?!['"`\s,=]+false\b)/g;
+const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/;
 // Commands that run a file with the package root as the working directory, which makes the file a build file.
 const RUNNER = /^(?:node|tsx|ts-node(?:-esm)?|esno|vite-node|jiti|bun|deno|sh|bash|zsh|dash|zx)$/;
 const RUNNABLE = /\.(?:[cm]?[jt]sx?|sh)$/;
@@ -155,6 +154,16 @@ export function publishedManifest(manifest) {
   const names = [...shippedScriptNames(scripts ?? {})].sort(byCodeUnit);
   if (names.length > 0) published.scripts = Object.fromEntries(names.map((name) => [name, scripts[name]]));
   return published;
+}
+
+// Resolution tries these fields' keys in order (export conditions, typesVersions ranges); elsewhere in a manifest key order means nothing.
+const ORDERED_FIELDS = new Set(["exports", "imports", "typesVersions"]);
+
+/** A manifest value as JSON with object keys sorted, so that reordering keys changes nothing. */
+function sortedJson(value) {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(",")}]`;
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort(byCodeUnit).map((key) => `${JSON.stringify(key)}:${sortedJson(value[key])}`).join(",")}}`;
 }
 
 /** Validates the declarations document against the stable packages (name -> path). */
@@ -275,7 +284,8 @@ export function evaluatePackage({ name, packagePath, baseManifest, headManifest,
     return result;
   }
   if (!baseManifest) return result;
-  result.manifestChanged = JSON.stringify(publishedManifest(baseManifest)) !== JSON.stringify(publishedManifest(headManifest));
+  const comparable = (manifest) => sortedJson(Object.fromEntries(Object.entries(publishedManifest(manifest)).map(([key, value]) => [key, ORDERED_FIELDS.has(key) ? JSON.stringify(value) : value])));
+  result.manifestChanged = comparable(baseManifest) !== comparable(headManifest);
   const changed = shippedFiles.length > 0 || result.manifestChanged;
   if (result.baseVersion !== result.headVersion) {
     if (!parseSemver(result.headVersion)) {
@@ -340,12 +350,14 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
-    // A build file runs tsc unless each tsc word has its own literal --noEmit (`execSync("tsc --noEmit")`, `execFileSync("tsc", ["--noEmit"])`).
-    const literals = [...text.matchAll(STRING_LITERAL)].map((match) => match[2]);
-    const runsTsc = (literals.join(" ").match(NO_EMIT)?.length ?? 0) < (text.match(/\btsc\b/g)?.length ?? 0);
-    for (const command of runsTsc ? literals : []) for (const project of tscProjects(command) ?? []) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command) });
-    // A project in argv elements or a joined path cannot be read reliably, so a build file that runs tsc names every tsconfig in its package.
-    if (runsTsc) add(path.posix.join(root, "**/tsconfig*.json"), { tsc: true, emit: EMIT_OVERRIDE.test(text) });
+    // Each tsc run decides its own emission and projects from its own flags. A run whose project cannot be read names every tsconfig in its package.
+    const literals = [...text.matchAll(STRING_LITERAL)];
+    for (const { index } of text.matchAll(/\btsc\b/g)) {
+      const { command, readable } = tscInvocation(text, literals, index);
+      const projects = readable ? tscProjects(command) : null;
+      if (tscProjects(command)?.length === 0) continue;
+      for (const project of projects ?? ["**/tsconfig*.json"]) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command), ...(projects ? {} : { tsc: true }) });
+    }
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
@@ -355,6 +367,22 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}\0${reference.runs ?? ""}`, reference]));
   return [...unique.values()];
+}
+
+/**
+ * The tsc run around the tsc word at `index` of a build file: the command in its string literal (`execSync("tsc -p lib")`), or a tsc
+ * literal and the argv literals after it up to `]` or `;` (`execFileSync("tsc", ["-p", "lib"])`). It is unreadable outside a
+ * literal, with an interpolation (`${dir}`) or with a variable argument.
+ */
+function tscInvocation(text, literals, index) {
+  const literal = literals.find((match) => match.index < index && index < match.index + match[0].length);
+  if (!literal) return { command: "", readable: false };
+  const end = text.slice(index).search(/[\];]/);
+  const span = /\s/.test(literal[2]) ? null : text.slice(literal.index, end < 0 ? text.length : index + end);
+  const command = span === null
+    ? text.slice(literal.index + 1, index).split(COMMAND_SEPARATOR).at(-1) + text.slice(index, literal.index + literal[0].length - 1).split(COMMAND_SEPARATOR)[0]
+    : [...span.matchAll(STRING_LITERAL)].map((match) => match[2]).join(" ");
+  return { command, readable: !command.includes("${") && (span === null || /^[\s,()[\]]*$/.test(span.replace(STRING_LITERAL, ""))) };
 }
 
 /**
@@ -384,7 +412,7 @@ export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
-    for (const [list, command] of scripts[name].split(/&&|\|\||[;|\n]/).entries()) {
+    for (const [list, command] of scripts[name].split(COMMAND_SEPARATOR).entries()) {
       const projects = tscProjects(command);
       if (projects?.length === 0) continue;
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: EMIT_OVERRIDE.test(command) });
@@ -660,12 +688,11 @@ function git(cwd, args) {
   return execFileSync(gitBinary(), args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
 }
 
+// A user's ref reaches git on stdin, never as an argument git could read as an option; only the commit id it names is used.
 function resolveCommit(cwd, ref) {
-  try {
-    return git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]).trim();
-  } catch {
-    throw new Error(`Cannot resolve ${ref} to a commit; fetch it first (CI needs fetch-depth: 0)`);
-  }
+  const resolved = /^([0-9a-f]{40}(?:[0-9a-f]{24})?) commit \d+\n$/.exec(execFileSync(gitBinary(), ["cat-file", "--batch-check"], { cwd, input: `${ref}^{commit}\n`, encoding: "utf8" }));
+  if (!resolved) throw new Error(`Cannot resolve ${ref} to a commit; fetch it first (CI needs fetch-depth: 0)`);
+  return resolved[1];
 }
 
 function readAt(cwd, commit, file) {

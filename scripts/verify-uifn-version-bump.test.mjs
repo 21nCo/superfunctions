@@ -144,6 +144,15 @@ for (const [label, files] of [["no files list", undefined], ["files lists packag
   });
 }
 
+test("reordering manifest keys needs no bump, while reordering export conditions or changing a pin does", () => {
+  const base = { name: "@uifn/core", version: "1.0.0", main: "dist/index.js", exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js", default: "./dist/index.cjs" } }, dependencies: { "left-pad": "1.0.0", "right-pad": "2.0.0" }, peerDependencies: { react: "^19.0.0" } };
+  const changed = (headManifest) => evaluatePackage({ name: "@uifn/core", packagePath: "uifn/core", baseManifest: base, headManifest, shippedFiles: [] }).manifestChanged;
+  const { main, dependencies, ...rest } = base;
+  assert.equal(changed({ dependencies: { "right-pad": "2.0.0", "left-pad": "1.0.0" }, ...rest, main }), false);
+  assert.equal(changed({ ...base, dependencies: { ...dependencies, "left-pad": "1.0.1" } }), true);
+  assert.equal(changed({ ...base, exports: { ".": { import: "./dist/index.js", types: "./dist/index.d.ts", default: "./dist/index.cjs" } } }), true);
+});
+
 test("a dependency-only bump in a dependent package needs its own bump", (t) => {
   const repo = fixtureRepo(t);
   repo.edit("uifn/react/package.json", (text) => text.replace('"@uifn/core": "1.0.0"', '"@uifn/core": "1.0.1"'));
@@ -766,6 +775,15 @@ for (const [build, extra, expected] of [
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmit');\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmitOnError');\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "// not --noEmit\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
+  // A --noEmit outside a tsc run (a message, a quoted comment, another run's flag) does not stop an emitting run.
+  ["node scripts/build.mjs", { "scripts/build.mjs": "console.log('Building without --noEmit');\nexecSync('tsc');\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "/* \"--noEmit\" is for typecheck only */\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
+  ["node scripts/build.mjs", { "config/tsconfig.emit.json": '{ "include": ["../src"] }', "scripts/build.mjs": "execSync('tsc --noEmit');\nconsole.log('--noEmit');\nexecSync('tsc -p config/tsconfig.emit.json');\n" }, emitted],
+  // A run whose project cannot be read still names every tsconfig, whatever --noEmit literals sit beside it.
+  ["node scripts/build.mjs", { "scripts/build.mjs": "const dir = 'lib';\nconsole.log('--noEmit');\nexecSync(`tsc -p ${dir}`);\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "console.log('--noEmit');\nexecFileSync('tsc', ['-p', dir]);\n" }, emitted],
+  // --noEmit false turns emission on only for the project its own run names, not for a noEmit tsconfig.json beside it.
+  ...["execSync('tsc -p tsconfig.build.json --noEmit false');", "execFileSync('tsc', ['-p', 'tsconfig.build.json', '--noEmit', 'false']);"].map((line) => ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "tsconfig.build.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/index.ts"] }', "scripts/build.mjs": `${line}\n` }, []]),
   // The real @uifn/solid shape: the message and the bare tsc path name tsconfig.json, which is noEmit; the -p argument names the emitting build config.
   ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/**/*"] }', "tsconfig.build.json": '{ "include": ["src/index.ts"] }', "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
 ]) {
@@ -789,11 +807,11 @@ for (const script of [
   });
 }
 
-// The argv override is read from the whole file, so it turns emission on for every tsconfig in the package.
-test("a build file's argv --noEmit false makes its noEmit tsconfigs emit, and a build file without tsc names none", () => {
+// The argv override belongs to its own tsc run, so it turns emission on only for the project that run names.
+test("a build file's argv --noEmit false makes its own noEmit project emit, and a build file without tsc names none", () => {
   const lib = { ...libProject, "lib/tsconfig.json": '{ "compilerOptions": { "noEmit": true } }' };
   assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib']);\n" }), []);
-  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib', '--noEmit', 'false']);\n" }), ["lib/__tests__/fixtures/data.ts", ...emitted]);
+  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib', '--noEmit', 'false']);\n" }), ["lib/__tests__/fixtures/data.ts"]);
   assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...libProject, "scripts/build.mjs": "execFileSync('tsup', ['lib/index.ts']);\n" }), []);
 });
 
@@ -1040,6 +1058,23 @@ test("experimental packages are not checked", (t) => {
   repo.write("uifn/patterns/src/index.ts", "export const patterns = 2;\n");
   repo.commit("change patterns");
   assert.equal(check(repo.root).status, 0);
+});
+
+test("--base and --head resolve branches, tags, revisions and ids, and a ref that git could read as an option does not", (t) => {
+  const repo = fixtureRepo(t);
+  repo.git("tag", "v-base", "base");
+  repo.write("uifn/core/README.md", "# Core docs\n");
+  repo.commit("docs only");
+  const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: repo.root, encoding: "utf8" });
+  for (const args of [["--base", "base"], ["--base", "v-base"], ["--base", "HEAD~1"], ["--base", repo.git("rev-parse", "base"), "--head", repo.git("rev-parse", "HEAD")]]) {
+    const result = run(...args);
+    assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
+  }
+  for (const ref of ["missing-branch", "--output=/tmp/x", "-p"]) {
+    const result = run(`--base=${ref}`);
+    assert.equal(result.status, 1, ref);
+    assert.match(result.stderr, new RegExp(`Cannot resolve ${ref.replace(/[/.*+?^${}()|[\]\\-]/g, "\\$&")} to a commit`), ref);
+  }
 });
 
 test("a version that does not increase fails", (t) => {

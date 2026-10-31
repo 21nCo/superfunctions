@@ -1,9 +1,9 @@
 name: UIFn version bump on edit
 
 # Changing a PR's base branch only emits `edited`, which ci.yml does not run on, so a PR retargeted to dev
-# would never meet the version gate. This reruns only that gate, under the same check name, on every edit
+# would never meet the version gate. This reruns only that job, under the same check name, on every edit
 # to a PR into dev: skipping it on title or body edits would leave a newer skipped check that hides a
-# failed one, and adding `edited` to ci.yml would rerun all of CI on every edit.
+# failed one, and adding `edited` to ci.yml would rerun all of CI on every edit. Its steps match the ci.yml job.
 on:
   pull_request:
     types: [edited]
@@ -25,6 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -37,5 +38,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Verify version bump checker
+        run: node --test scripts/verify-uifn-version-bump.test.mjs
+
       - name: Require version bump and changelog entry for shipped uifn changes
         run: node scripts/verify-uifn-version-bump.mjs --base "${{ github.event.pull_request.base.sha }}"
+
+      - name: Report uifn changes since last published tags
+        run: node scripts/verify-uifn-version-bump.mjs --since-published
