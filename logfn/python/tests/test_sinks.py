@@ -1712,3 +1712,50 @@ def test_a_batch_put_back_by_another_loop_after_close_started_is_dropped_once() 
         other_loop.call_soon_threadsafe(other_loop.stop)
         other.join(5)
         other_loop.close()
+
+
+@pytest.mark.parametrize("method", ["flush", "close"])
+def test_a_transport_awaiting_its_own_sink_does_not_wait_for_or_drop_its_batch(method: str) -> None:
+    posted: list[list[str]] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        posted.append([e["msg"] for e in json.loads(body)["events"]])
+        if len(posted) == 1:
+            await getattr(sink, method)()  # Neither the batch this call sends nor "next" behind it is waited on.
+        return 200
+
+    sink = SinkHttp(URL, transport=transport, batch_size=1, retry_attempts=1, timeout=0.5)
+
+    async def scenario() -> dict[str, int]:
+        sink([event("own"), event("next")])
+        await asyncio.wait_for(sink.flush(), 5)
+        return sink.stats()
+
+    stats = asyncio.run(scenario())
+    if method == "flush":
+        assert posted == [["own"], ["next"]] and stats == {"queued": 0, "in_flight": 0, "sent": 2, "dropped": 0, "failed_batches": 0}
+    else:  # close() inside the call keeps that call's batch and drops what is still queued.
+        assert posted == [["own"]] and stats == {"queued": 0, "in_flight": 0, "sent": 1, "dropped": 1, "failed_batches": 0}
+
+
+def test_a_transport_awaiting_its_own_sinks_flush_still_waits_for_other_batches() -> None:
+    gate, main = ThreadGate(), threading.current_thread()
+    seen: list[list[list[str]]] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        if threading.current_thread() is not main:
+            return await gate(url, body, headers, timeout)
+        await sink.flush()
+        seen.append(list(gate.posted))  # What the other loop had sent when flush() returned.
+        return 200
+
+    sink = SinkHttp(URL, transport=transport, batch_size=1, timeout=2)
+    sink([event("held")])
+    worker = _in_thread(lambda: asyncio.run(sink.flush()))
+    gate.wait_for_requests(1)
+    threading.Timer(0.2, gate.release.set).start()
+    sink([event("own")])
+    asyncio.run(sink.flush())
+    worker.join(5)
+    assert seen == [[["held"]]]
+    assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 2, "dropped": 0, "failed_batches": 0}

@@ -4,8 +4,11 @@ import json
 import linecache
 import random
 import re
+import sys
 import time
+import traceback
 import tracemalloc
+import types
 from pathlib import Path
 from typing import Any
 
@@ -712,3 +715,53 @@ def test_an_error_stack_reads_no_source_text(tmp_path: Path) -> None:
     assert str(module) not in linecache.cache
     assert f'  File "{module}", line 4, in fail\n' in stack and stack.endswith("ValueError: boom\n")
     assert "hunter2" not in stack and "raise ValueError" not in stack
+
+
+@pytest.mark.parametrize("option", ["patterns", "keys", "allowlist"])
+@pytest.mark.parametrize("value", ["ctx.token", b"ctx.token", re.compile("secret")], ids=["str", "bytes", "pattern"])
+def test_a_single_string_or_pattern_is_rejected_for_every_redaction_option(option: str, value: Any) -> None:
+    # A str is an Iterable[str] of its characters: allowlist="ctx.token" would exempt every path named t, o, k...
+    for entry in (
+        lambda: redact_event(make_event(), **{option: value}),
+        lambda: redact(**{option: value}),
+        lambda: SinkHttp("https://collector.test/ingest", **{f"redact_{option}": value}),
+    ):
+        with pytest.raises(TypeError, match="collection"):
+            entry()
+
+
+def test_redaction_options_keep_their_behavior_for_any_collection() -> None:
+    event = make_event(ctx={"t": "https://u:pw123@host/x", "token": "abc", "note": "secret-1"})
+    for allowlist in (["token"], ("token",), {"token"}, (path for path in ["token"])):
+        ctx = redact_event(event, patterns=(re.compile(r"secret-\d"),), keys=iter(["note"]), allowlist=allowlist)["ctx"]
+        assert ctx == {"t": "https://[redacted]@host/x", "token": "abc", "note": "[redacted]"}
+    assert redact_event(event, allowlist=["ctx.token"])["ctx"]["t"] == "https://[redacted]@host/x"
+
+
+def test_one_walk_visits_at_most_its_budget_of_traceback_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One error whose traceback is longer than the whole walk budget, reached
+    # 20 times, then 20 distinct errors sharing that traceback.
+    tb = None
+    for _ in range(MAX_TRAVERSAL + 100):
+        tb = types.TracebackType(tb, sys._getframe(), 0, 1)
+    shared = ValueError("deep").with_traceback(tb)
+    visits = 0
+    walk_tb = traceback.walk_tb
+
+    def counted(tb: Any) -> Any:
+        nonlocal visits
+        for frame in walk_tb(tb):
+            visits += 1
+            yield frame
+
+    monkeypatch.setattr(traceback, "walk_tb", counted)
+    stacks = [e["stack"] for e in sanitize_value({"errs": [shared] * 20})["errs"] if isinstance(e, dict)]
+    assert visits <= MAX_TRAVERSAL + 64 * 20 and stacks[0] == "[max-size]" and set(stacks) == {"[max-size]"}
+
+    visits = 0
+    ctx = redact_event(make_event(ctx={"errs": [ValueError(f"e{i}").with_traceback(tb) for i in range(20)]}))["ctx"]
+    assert visits <= MAX_TRAVERSAL + 64 * 20 and {e["stack"] for e in ctx["errs"] if isinstance(e, dict)} == {"[max-size]"}
+    # Within the budget the stack is unchanged: the newest frames, file, line and function.
+    assert sanitize_value(ValueError("short").with_traceback(types.TracebackType(None, sys._getframe(), 0, 7)))["stack"] == (
+        f'Traceback (most recent call last):\n  File "{__file__}", line 7, in {sys._getframe().f_code.co_name}\nValueError: short\n'
+    )

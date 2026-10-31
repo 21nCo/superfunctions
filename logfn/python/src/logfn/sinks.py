@@ -28,9 +28,7 @@ from .redact import REDACTED, make_redactor
 from .types import LogEvent
 from .validation import json_bytes, sanitize_event, validate_and_serialize
 
-# What a synchronous call into caller code (a callback, a sink, a stage) may
-# raise as its own failure. A CancelledError raised there is the callee's: a
-# real cancellation reaches only an await, never a synchronous call.
+# A synchronous call into caller code fails with these; a real cancellation reaches only an await, never a sync call.
 _FAILURE = (Exception, asyncio.CancelledError)
 
 _COLORS = {
@@ -371,9 +369,7 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
 
 def _header_value(name: object, value: object) -> str:
-    # Values are trimmed of HTTP whitespace as fetch does. What is still not
-    # sendable fails here, and the error never carries the value, which may
-    # be a credential.
+    # Trimmed as fetch trims; what is still not sendable fails here, and the error never carries the (secret) value.
     if not isinstance(name, str) or not _HEADER_NAME.fullmatch(name):
         raise ValueError("SinkHttp: header names must be HTTP tokens")
     text = value.strip(" \t\r\n") if isinstance(value, str) else None
@@ -449,9 +445,8 @@ class SinkHttp:
                 for key in [key for key in self._headers if key.lower() == name.lower()]:
                     del self._headers[key]
                 self._headers[name] = text
-        # Set in each transport call's own task: what the transport logs to
-        # this sink is its own diagnostics (see _report).
-        self._in_transport: contextvars.ContextVar[bool] = contextvars.ContextVar("logfn_in_transport", default=False)
+        # The batch a transport call sends, set in its delivery's own context: what it logs here is its diagnostics (see _report).
+        self._in_transport: contextvars.ContextVar[_Batch | None] = contextvars.ContextVar("logfn_in_transport", default=None)
 
         # Queued events carry their position in the stream of accepted events,
         # in ascending order, so flush() can tell which were accepted before
@@ -488,14 +483,10 @@ class SinkHttp:
     # but not reported to the callback that is running on this thread, so a
     # callback is never re-entered and one event cannot start a recursion.
     #
-    # Events accepted while either callback runs on the calling thread, or
-    # while the transport runs, are their diagnostics. A batch made only of
-    # them that later fails or is dropped is counted, and its error goes to
-    # stderr, but neither callback is called for it: otherwise a collector
-    # that always fails would turn one event into an endless chain of
-    # requests and callbacks. Sending what the transport logged makes it log
-    # again, so a queue made only of those events waits for the interval
-    # timer instead of draining at once.
+    # Events accepted while either callback runs on the calling thread, or while the transport runs, are their
+    # diagnostics: a batch made only of them that fails or is dropped is counted and its error goes to stderr, but no
+    # callback is called, so a collector that always fails cannot start an endless chain of requests and callbacks. A
+    # queue made only of what the transport logged waits for the interval timer, as sending it makes it log again.
 
     def _in_callback(self) -> bool:
         return bool(getattr(self._reporting, "error", False) or getattr(self._reporting, "drop", False))
@@ -749,6 +740,7 @@ class SinkHttp:
 
     async def _deliver(self, batch: _Batch) -> None:
         body = json_bytes({"events": [event for _, event, _ in batch.items]})
+        self._in_transport.set(batch)  # Copied into each transport call's task.
         last_error: BaseException = RuntimeError("not sent")
         for attempt in range(self.retry_attempts):
             if attempt > 0:
@@ -776,7 +768,6 @@ class SinkHttp:
         raise last_error
 
     async def _call(self, body: bytes) -> int:
-        self._in_transport.set(True)  # This task's own context only.
         return await self._transport(self.url, body, dict(self._headers), self.timeout)
 
     async def _attempt(self, body: bytes) -> int:
@@ -820,9 +811,10 @@ class SinkHttp:
             self._cancel_timer(loop)
             with self._lock:
                 target = self._accepted
+            own = self._in_transport.get()  # Inside its own transport call: that batch and the queue behind it wait for the call.
             while True:
                 with self._lock:
-                    queued = bool(self._queue) and self._queue[0][0] < target
+                    queued = own is None and bool(self._queue) and self._queue[0][0] < target
                 drain = self._start_drain() if queued else None
                 if drain is not None:
                     # One step lets a new drain take its first batch, so the
@@ -834,8 +826,8 @@ class SinkHttp:
                 # events in question are seen in one place or the other,
                 # never in neither.
                 with self._lock:
-                    queued = bool(self._queue) and self._queue[0][0] < target
-                    pending = [batch for batch in self._batches if batch.items[0][0] < target]
+                    queued = own is None and bool(self._queue) and self._queue[0][0] < target
+                    pending = [batch for batch in self._batches if batch.items[0][0] < target and batch is not own]
                     if pending:
                         waiter = loop.create_future()
                         self._waiters.append((loop, waiter))
@@ -880,7 +872,7 @@ class SinkHttp:
                 left = list(self._queue)
                 self._queue.clear()
                 self._dropped += len(left)
-                batches = list(self._batches)
+                batches = [batch for batch in self._batches if batch is not self._in_transport.get()]
             self._notify_drop(len(left), "closed", _only_feedback(left))
             # A cancelled close() still ends the batches in flight on any loop.
             for batch in batches:

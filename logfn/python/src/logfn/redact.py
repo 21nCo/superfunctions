@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import takewhile
 from re import Pattern
 from typing import Any, TypeVar, cast
 
@@ -175,6 +176,8 @@ def _compile(
     keys: Iterable[str] | None = None,
     allowlist: Iterable[str] | None = None,
 ) -> _Redactor:
+    if any(isinstance(option, (str, bytes, Pattern)) for option in (patterns, keys, allowlist)):
+        raise TypeError("redaction patterns, keys and allowlist must each be a collection, not one string or pattern")
     compiled = (
         DEFAULT_PATTERNS
         if patterns is None
@@ -508,15 +511,15 @@ def _child_path(path: str, key: str) -> str:
     return f"{path}.{key}" if path else key
 
 
-def format_exception_stack(error: BaseException, message: str | None = None) -> str:
+def format_exception_stack(error: BaseException, message: str | None = None, charge: Callable[[int], bool] = lambda _: True) -> str:
     """``stack``: the last 64 frames (file, line, function; no source is read) and ``Type: message``."""
-    # A name over 200 characters becomes [max-size] whole: a cut could end inside a secret redaction then misses.
+    # A name over 200 characters becomes [max-size] whole (a cut could end inside a secret), the stack once ``charge`` fails, 1 per frame walked.
     text = exception_message(error) if message is None else message
     def fit(name: str) -> str:
         return name if len(name) <= 200 else MAX_SIZE
-    walk = deque(traceback.walk_tb(error.__traceback__), maxlen=64)
+    walk = deque(takewhile(lambda _: charge(1), traceback.walk_tb(error.__traceback__)), maxlen=64)
     frames = traceback.StackSummary.from_list([(fit(f.f_code.co_filename), n, fit(f.f_code.co_name), "") for f, n in walk]).format()
-    return "".join(["Traceback (most recent call last):\n" if frames else "", *frames, f"{type(error).__name__}{': ' if text else ''}{text}\n"])
+    return "".join(["Traceback (most recent call last):\n" if frames else "", *frames, f"{type(error).__name__}{': ' if text else ''}{text}\n"]) if charge(0) else MAX_SIZE
 
 
 def exception_message(error: BaseException) -> str:

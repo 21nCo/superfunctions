@@ -72,7 +72,7 @@ def _sanitize(value: Any, ancestors: set[int], depth: int, budget: _Budget) -> A
             }
             # The stack repeats the message: past the budget it is charged as that, never built.
             fits = budget.left > len(message) or budget.charge(len(message) + 1)
-            error["stack"] = _sanitize(format_exception_stack(value, message), ancestors, depth + 1, budget) if fits else MAX_SIZE
+            error["stack"] = _sanitize(format_exception_stack(value, message, budget.charge), ancestors, depth + 1, budget) if fits else MAX_SIZE
             chained = value.__cause__ if value.__cause__ is not None or value.__suppress_context__ else value.__context__
             if chained is not None:
                 error["cause"] = _sanitize(chained, ancestors, depth + 1, budget)
