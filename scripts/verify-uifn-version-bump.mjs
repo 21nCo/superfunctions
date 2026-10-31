@@ -351,17 +351,17 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
-    // The sweep is additive. Each string literal (a template literal may span lines) is read whole and as command words (quoted words kept whole); a `..` tsconfig or an operand of -p/--project/-b/--build
-    // (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root (tsc's cwd) and this file's directory, grouped by literal.
+    // The sweep is additive. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig, then as words: an argv array element is one word unless it is a tsc command line (`sh -c`),
+    // other literals split (quoted words kept whole). A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
     let flag = null;
     let end = 0;
     for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
       if (!/^\s*,\s*$/.test(text.slice(end, start))) flag = null;
       end = start + literal.length;
-      const value = body.replaceAll(/\\(.)/g, "$1");
-      const words = [value, ...[...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2"))];
+      const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(text.slice(Math.max(0, start - 4096), start).trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "[" && !/\btsc\b/.test(body)];
+      const words = [value, ...(argvElement ? [value] : [...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2")))];
       for (const [index, word] of words.entries()) {
-        const operand = flag !== null && !word.startsWith("-");
+        const operand = index > 0 && flag !== null && !word.startsWith("-");
         if (index > 0) flag = TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(flag ?? "") ? flag : null;
         if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || operand)) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
       }

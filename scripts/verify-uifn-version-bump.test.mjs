@@ -238,16 +238,22 @@ for (const run of [
 }
 
 // A project path with whitespace is read whole: as an argv element, a quoted command word, a -b directory, a literal bound to a variable or a word of a multi-line template.
+// An argv element is one word, so its pieces never name the unrelated, existing uifn/shared project, unless it is a tsc command line itself (`sh -c`).
 for (const run of [
   "execFileSync('tsc', ['-p', '../shared lib/tsconfig.json']);",
+  "execFileSync('tsc', [\n  '-p',\n  '../shared lib/tsconfig.json',\n]);",
   "execSync('tsc -p \"../shared lib/tsconfig.json\"');",
   "execSync('tsc --project \\'../shared lib/tsconfig.json\\'');",
   "execFileSync('tsc', ['-b', '../shared lib']);",
+  "// don't use the root config; it's for the editor\nexecFileSync('tsc', [\n  '-b',\n  '../shared lib',\n]);",
   "const project = '../shared lib/tsconfig.json';\nexecFileSync('tsc', ['-p', project]);",
   "execSync(`tsc -b\n  '../shared lib'`);",
+  "execFileSync('sh', ['-c', 'tsc -p \"../shared lib/tsconfig.json\"']);",
 ]) {
   test(`a build-file tsc project whose path has a space must be declared, and then its sources need a bump: ${run}`, (t) => {
     const repo = fixtureRepo(t);
+    repo.write("uifn/shared/tsconfig.json", sharedProject);
+    repo.write("uifn/shared/src/index.ts", "export const unrelated = 1;\n");
     repo.write("uifn/shared lib/tsconfig.json", sharedProject);
     repo.write("uifn/shared lib/src/index.ts", "export const shared = 1;\n");
     repo.write("uifn/core/scripts/build.mjs", `${run}\n`);
@@ -255,6 +261,7 @@ for (const run of [
     const undeclared = check(repo.root);
     assert.equal(undeclared.status, 1, undeclared.output);
     assert.match(undeclared.output, /@uifn\/core: uifn\/core\/scripts\/build\.mjs refers to uifn\/shared lib\/tsconfig\.json, outside uifn\/core; declare it/);
+    assert.doesNotMatch(undeclared.output, /refers to uifn\/shared\/tsconfig\.json/);
     repo.git("branch", "-f", "base");
     repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/shared lib/tsconfig.json":"tsc builds it","uifn/shared lib/src":"tsc compiles it"'));
     repo.commit("declare the external project");
