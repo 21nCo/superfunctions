@@ -35,6 +35,36 @@ it("selects the volume an interpolated short volume entry names, defaults includ
   await expect(digestOf({ "compose.yaml": withVolume("${VOLUME:?required}:/data") })).rejects.toThrow(/resources of setup/);
 }, 60_000);
 
+it("selects a short volume entry by its source alone, whatever its target interpolates", async () => {
+  // Compose substitutes an empty string for an unset target reference, and a
+  // credential-named target never selects a declaration.
+  const forms: Array<[string, Record<string, string>]> = [
+    ["data:/x/${UNSET}", {}], ["data:/x/${API_TOKEN}", {}], ["data:/x/${API_TOKEN}", { API_TOKEN: "secret" }],
+    ["${VOLUME:-data}:/x/${UNSET}:ro", {}],
+  ];
+  for (const [entry, env] of forms) {
+    const before = await digestOf({ "compose.yaml": withVolume(entry) }, env);
+    const after = await digestOf({ "compose.yaml": withVolume(entry).replace("which: data", "which: changed") }, env);
+    const unrelated = await digestOf({ "compose.yaml": withVolume(entry).replace("which: other", "which: changed") }, env);
+    expect(before, entry).not.toBe(after);
+    expect(before, entry).toBe(unrelated);
+  }
+}, 60_000);
+
+it("digests the resource declarations of the project model, not those of an extends-only file", async () => {
+  const root = (volume: string, network: string) => "services:\n  setup:\n    extends: { file: base.yaml, service: base }\n"
+    + `    volumes: [ "data:/data" ]\n    networks: [ net ]\nvolumes:\n  data:\n    name: ${volume}\nnetworks:\n  net:\n    name: ${network}\n`;
+  const base = (volume: string, network: string) => "services:\n  base:\n    image: busybox\n"
+    + `volumes:\n  data:\n    name: ${volume}\nnetworks:\n  net:\n    name: ${network}\n`;
+  const digest = async (rootFile: string, baseFile: string) => await digestOf({ "compose.yaml": rootFile, "base.yaml": baseFile });
+  const before = await digest(root("actual-one", "net-one"), base("unused", "unused"));
+  // The root declarations are the effective ones, so editing either changes the revision.
+  expect(await digest(root("actual-two", "net-one"), base("unused", "unused"))).not.toBe(before);
+  expect(await digest(root("actual-one", "net-two"), base("unused", "unused"))).not.toBe(before);
+  // Compose imports only the service through extends, so the base declarations do not count.
+  expect(await digest(root("actual-one", "net-one"), base("ignored", "ignored"))).toBe(before);
+}, 60_000);
+
 it("counts every env_file declaration Compose passes to the container, masking only credential values", async () => {
   const digest = async (content: string) => await digestOf({
     "compose.yaml": "services:\n  setup:\n    image: busybox\n    env_file: app.env\n", "app.env": content });

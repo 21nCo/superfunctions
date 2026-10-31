@@ -67,7 +67,8 @@ function absoluteEnvFiles(value: unknown, directory: string, scopes: ComposeSour
   return Array.isArray(value) ? value.map(absolute) : absolute(value);
 }
 
-function shortFields(value: string): string[] {
+/** Split a short Compose entry at colons outside any ${...} expression. */
+export function shortFields(value: string): string[] {
   const fields: string[] = [];
   let start = 0;
   let braces = 0;
@@ -235,6 +236,10 @@ export async function assertComposeSourceGraphBounded(
   const visited = new Set<string>();
   const activeServices = new Set<string>();
   const serviceCache = new Map<string, Record<string, unknown> | null>();
+  // Files that are part of the project model (the source and its includes).
+  // A file reached only through extends contributes its service, not its
+  // top-level resource declarations.
+  const modelDocuments = new Set<string>();
   const deviceCandidates = new WeakMap<Record<string, unknown>, unknown[]>();
   const origins = new WeakMap<Record<string, unknown>, Array<{ file: string; directory: string }>>();
   let selectedService: Record<string, unknown> | null = null;
@@ -414,6 +419,7 @@ export async function assertComposeSourceGraphBounded(
     if (!mark(`document\0${file}\0${directory}\0${envFiles.join("\0")}`)) return;
     await checkInterpolationFiles(directory, envFiles);
     const { data } = await load(file);
+    modelDocuments.add(file);
     const candidate = await visitService(file, serviceName, directory, await composeInterpolationEnvFiles(scopes), scopes);
     if (candidate) {
       selectedService = candidate;
@@ -442,6 +448,7 @@ export async function assertComposeSourceGraphBounded(
   const resources: Record<string, unknown> = {};
   const resourceOrigins: Record<string, Record<string, string>> = {};
   for (const [file, { data }] of documents) {
+    if (!modelDocuments.has(file)) continue;
     for (const kind of ["volumes", "networks", "configs", "secrets"] as const) {
       resources[kind] = { ...record(resources[kind]), ...record(data[kind]) };
       resourceOrigins[kind] = { ...resourceOrigins[kind], ...Object.fromEntries(Object.keys(record(data[kind]) ?? {}).map((name) => [name, file])) };

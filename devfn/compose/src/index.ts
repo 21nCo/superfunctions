@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { assertEnvironmentKeyCasing, isCredentialKey, resolveContainedPath, type ComposeServiceSpec } from "@devfn/config";
 import { runGatedCommand, stopGatedLauncher, waitForReadiness, type GatedCommandRunner } from "@devfn/processes";
 import { createScopedPathInterpolator, readComposeEnvDefinitions, selectedInterpolationReferences, simpleInterpolation } from "./path-interpolation.js";
-import { assertComposeSourceGraphBounded, composeInterpolationEnvFiles, normalizeComposeRawService, reconcileComposeUniqueResources, type ComposeSourceInventory } from "./source-files.js";
+import { assertComposeSourceGraphBounded, composeInterpolationEnvFiles, normalizeComposeRawService, reconcileComposeUniqueResources, shortFields, type ComposeSourceInventory } from "./source-files.js";
 
 const execFileAsync = promisify(execFile);
 const MINIMUM_COMPOSE_VERSION = [2, 24, 4] as const;
@@ -301,13 +301,13 @@ async function selectedInventoryResources(inventory: ComposeSourceInventory,
   if (!service) return {};
   const names = new Map<ComposeResourceKind, string[]>();
   for (const kind of COMPOSE_RESOURCE_KINDS) {
-    // A short volume entry is interpolated whole before its source is split
-    // off, since a default such as ${VOLUME:-data} itself contains a colon.
+    // Only the source of a short volume entry selects a declaration. It is
+    // split off at the first colon outside ${...}, since a default such as
+    // ${VOLUME:-data} contains a colon, and the target is never interpolated.
     const written = kind === "volumes" && Array.isArray(service.volumes)
-      ? service.volumes.flatMap((entry: unknown) => typeof entry === "string" ? [entry] : referencedResourceNames(kind, [entry]))
+      ? service.volumes.flatMap((entry: unknown) => typeof entry === "string" ? [shortFields(entry)[0]] : referencedResourceNames(kind, [entry]))
       : referencedResourceNames(kind, service[kind]);
-    const resolved = await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes);
-    names.set(kind, kind === "volumes" ? resolved.map((reference) => reference.split(":", 1)[0]) : resolved);
+    names.set(kind, await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes));
   }
   if (service.networks === undefined && service.network_mode === undefined) names.get("networks")!.push("default");
   return declaredComposeResources(inventory.resources, (kind) => names.get(kind) ?? []);
