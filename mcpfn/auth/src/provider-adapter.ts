@@ -22,6 +22,7 @@ export interface McpFnPrincipal {
   tenantId?: string;
   regionId?: string;
   authMethods?: string[];
+  /** Structured-cloneable data only; prototypes are not preserved. Enrich claims in map. */
   extra?: Record<string, unknown>;
 }
 
@@ -68,10 +69,17 @@ export type McpFnAuthProviderLike<TSession extends McpFnAuthSessionLike> =
 export interface McpFnAuthProviderAdapterOptions<TSession extends McpFnAuthSessionLike> {
   provider: McpFnAuthProviderLike<TSession>;
   resource: string | URL;
+  /** Trusted provider project/org ID associated with this MCP resource URL. */
+  providerResourceId?: string;
+  /** Explicitly permit resource-agnostic sessions. Defaults to reject. */
+  unboundSessions?: "reject" | "allow";
+  /** Map trusted identity claims; nonempty resourceIds must bind this resource. Empty IDs require unboundSessions: "allow". */
   map?(session: TSession, request: Request): McpFnPrincipal | Promise<McpFnPrincipal>;
   authorize?(input: {
     principal: McpFnPrincipal;
     request: Request;
+    resource: URL;
+    resourceBound: boolean;
   }): boolean | Promise<boolean>;
   requiredScopes?:
     | string[]
@@ -94,6 +102,14 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
 ): McpFnAuthProviderAdapter<TSession> {
   const resource = new URL(options.resource.toString());
   resource.hash = "";
+  const providerResourceId = options.providerResourceId;
+  if (providerResourceId !== undefined && (typeof providerResourceId !== "string" || (!providerResourceId.trim() || providerResourceId !== providerResourceId.trim()))) {
+    throw new TypeError("providerResourceId must be a nonempty string");
+  }
+  if (providerResourceId !== undefined && typeof options.provider.authorize !== "function") {
+    throw new TypeError("providerResourceId requires provider.authorize");
+  }
+  const matchesBinding = (id: string) => id === providerResourceId || matchesResource(id, resource);
   return {
     async authenticate(request) {
       const bearer = readBearerToken(request);
@@ -108,23 +124,40 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           credentials: "omit",
         }));
       if (!session) return null;
-      const principal = options.map
+      if (typeof session.id !== "string" || !session.id || !session.subject ||
+          typeof session.subject.actorId !== "string" || !session.subject.actorId ||
+          !optionalString(session.subject.tenantId) || !optionalString(session.subject.regionId) ||
+          (session.scopes !== undefined && !isStringArray(session.scopes)) ||
+          (session.methods !== undefined && !isStringArray(session.methods))) return null;
+      if (session.expiresAt !== undefined && !(session.expiresAt instanceof Date)) return null;
+      if (session.resourceIds !== undefined && !isStringArray(session.resourceIds)) return null;
+      if (session.resourceIds?.length && !session.resourceIds.some(matchesBinding)) return null;
+      const sessionExpiresAt = session.expiresAt === undefined
+        ? undefined : Math.floor(session.expiresAt.getTime() / 1_000);
+      const now = Math.floor(Date.now() / 1_000);
+      if (sessionExpiresAt !== undefined &&
+          (!Number.isFinite(sessionExpiresAt) || sessionExpiresAt <= now)) return null;
+      const mapped = options.map
         ? await withRequestClone(request, (mapRequest) =>
           options.map!(session, mapRequest))
         : defaultPrincipal(session);
-      if (
-        options.provider.authorize &&
-        !(await options.provider.authorize(session, resource.toString()))
-      ) {
-        return null;
-      }
-      if (
-        options.authorize &&
-        !(await withRequestClone(request, (authorizeRequest) =>
-          options.authorize!({ principal, request: authorizeRequest })))
-      ) {
-        return null;
-      }
+      const mappedPrincipal = snapshotPrincipal(mapped);
+      if (!mappedPrincipal) return null;
+      if (mappedPrincipal.expiresAt !== undefined &&
+          (!Number.isFinite(mappedPrincipal.expiresAt) || mappedPrincipal.expiresAt <= now)) return null;
+      // Mapping cannot extend the lifetime of the authenticated credential.
+      const expiresAt = sessionExpiresAt === undefined ? mappedPrincipal.expiresAt
+        : Math.min(sessionExpiresAt, mappedPrincipal.expiresAt ?? sessionExpiresAt);
+      const principal = { ...mappedPrincipal, ...(expiresAt !== undefined ? { expiresAt } : {}) };
+      const hasBinding = principal.resourceIds.some(matchesBinding);
+      if (!hasBinding && (principal.resourceIds.length > 0 || options.unboundSessions !== "allow")) return null;
+      const authorizeResource = provider.authorize;
+      if (providerResourceId !== undefined && typeof authorizeResource !== "function") return null;
+      if (authorizeResource && !(await authorizeResource.call(provider, session, providerResourceId ?? resource.toString()))) return null;
+      if (options.authorize && !(await withRequestClone(request, authorizeRequest =>
+        options.authorize!({ principal: structuredClone(principal), request: authorizeRequest, resource: new URL(resource), resourceBound: hasBinding })))) return null;
+      // Async policy evaluation must not carry credentials past their expiry.
+      if (expiresAt !== undefined && expiresAt <= Math.floor(Date.now() / 1_000)) return null;
       return {
         session,
         principal,
@@ -133,19 +166,63 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           clientId: principal.clientId,
           scopes: [...principal.scopes],
           ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
-          resource,
+          resource: new URL(resource),
           extra: {
             ...principal.extra,
+            resourceBinding: hasBinding ? "bound" : "unbound",
+            boundResourceId: hasBinding ? (providerResourceId ?? resource.toString()) : undefined,
             subject: principal.subject,
             resourceIds: [...principal.resourceIds],
-            ...(principal.tenantId ? { tenantId: principal.tenantId } : {}),
-            ...(principal.regionId ? { regionId: principal.regionId } : {}),
-            ...(principal.authMethods ? { authMethods: [...principal.authMethods] } : {}),
+            tenantId: principal.tenantId,
+            regionId: principal.regionId,
+            authMethods: principal.authMethods ? [...principal.authMethods] : undefined,
           },
         },
       };
     },
   };
+}
+
+export class McpFnPrincipalConfigurationError extends Error {
+  readonly code = "MCPFN_INVALID_PROVIDER_CONFIGURATION";
+  constructor() {
+    super("Mapped extra claims must be structured-cloneable data");
+    this.name = "McpFnPrincipalConfigurationError";
+  }
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function snapshotPrincipal(value: McpFnPrincipal): McpFnPrincipal | null {
+  if (!value || typeof value !== "object") return null;
+  // Read claims once before validation: policy hooks never receive this snapshot.
+  const { subject, clientId, scopes, resourceIds, expiresAt, tenantId, regionId, authMethods, extra } = value;
+  if (typeof subject !== "string" || !subject || typeof clientId !== "string" || !clientId ||
+      !isStringArray(scopes) || !isStringArray(resourceIds) ||
+      !optionalString(tenantId) || !optionalString(regionId) ||
+      (authMethods !== undefined && !isStringArray(authMethods)) ||
+      (expiresAt !== undefined && (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)))) return null;
+  const snapshot: McpFnPrincipal = { subject, clientId, scopes: [...scopes], resourceIds: [...resourceIds], expiresAt,
+    tenantId, regionId, authMethods: authMethods === undefined ? undefined : [...authMethods] };
+  try { snapshot.extra = extra === undefined ? undefined : structuredClone(extra); }
+  catch { throw new McpFnPrincipalConfigurationError(); }
+  return snapshot;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
+
+function matchesResource(id: string, resource: URL): boolean {
+  try {
+    const candidate = new URL(id);
+    candidate.hash = "";
+    return candidate.toString() === resource.toString();
+  } catch {
+    return false;
+  }
 }
 
 async function withRequestClone<T>(
@@ -176,7 +253,12 @@ export function createAuthProviderMcpHandler<TSession extends McpFnAuthSessionLi
     let authenticated;
     try {
       authenticated = await adapter.authenticate(authenticationRequest);
-    } catch {
+    } catch (error) {
+      if (error instanceof McpFnPrincipalConfigurationError) {
+        return Response.json({ error: "invalid_provider_configuration",
+          error_description: "Mapped extra claims must be structured-cloneable data" },
+          { status: 500, headers: { "cache-control": "no-store" } });
+      }
       return new Response(JSON.stringify({
         error: "temporarily_unavailable",
         error_description: "The authentication provider is unavailable",
@@ -198,7 +280,7 @@ export function createAuthProviderMcpHandler<TSession extends McpFnAuthSessionLi
       const scopeRequest = request.clone();
       try {
         requiredScopes = await options.requiredScopes({
-          principal: authenticated.principal,
+          principal: structuredClone(authenticated.principal),
           request: scopeRequest,
         });
       } finally {

@@ -1,3 +1,4 @@
+import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
@@ -82,7 +83,10 @@ describe("McpFnServer", () => {
     await expect(client.callTool({ name: "missing", arguments: {} })).rejects.toBeInstanceOf(McpError);
   });
 
-  it("preserves protocol errors from profile resolution", async () => {
+  it.each([
+    ["SDK", () => new McpError(ErrorCode.InvalidRequest, "denied", { reason: "policy" })],
+    ["independent SDK copy", () => Object.assign(new Error("denied"), { name: "McpError", code: ErrorCode.InvalidRequest, data: { reason: "policy" } })],
+  ])("preserves protocol errors from profile resolution (%s)", async (_label, makeError) => {
     const registry = new McpFnRegistry().register({
       name: "echo", description: "Echo.", inputSchema: { type: "object" },
       handler: async () => structuredResult({ ok: true }),
@@ -91,7 +95,7 @@ describe("McpFnServer", () => {
       info: { name: "profile-error-server", version: "1" }, registry,
       clientProfiles: {
         profiles: [],
-        resolveVerifiedIdentity: () => { throw new McpError(ErrorCode.InvalidRequest, "denied"); },
+        resolveVerifiedIdentity: () => { throw makeError(); },
       },
     });
     const client = new Client({ name: "profile-error-client", version: "1" });
@@ -99,7 +103,28 @@ describe("McpFnServer", () => {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     closeables.push(client, server);
-    await expect(client.callTool({ name: "echo", arguments: {} })).rejects.toBeInstanceOf(McpError);
+    await expect(client.callTool({ name: "echo", arguments: {} })).rejects.toMatchObject({ code: ErrorCode.InvalidRequest, data: { reason: "policy" } });
+  });
+
+  it.each([
+    ["DOMException", () => new DOMException("aborted", "AbortError")],
+    ["backend", () => Object.assign(new Error("database rejected"), { code: 11000 })],
+  ])("does not expose numeric-coded %s failures as protocol errors", async (_label, makeError) => {
+    const registry = new McpFnRegistry().register({
+      name: "echo", description: "Echo.", inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "profile-error-server", version: "1" }, registry,
+      clientProfiles: { profiles: [], resolveVerifiedIdentity: () => { throw makeError(); } },
+    });
+    const client = new Client({ name: "profile-error-client", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport); await client.connect(clientTransport);
+    closeables.push(client, server);
+    await expect(client.callTool({ name: "echo", arguments: {} })).resolves.toMatchObject({
+      isError: true, structuredContent: { error: { code: "MCPFN_TOOL_ERROR" } },
+    });
   });
 
   it("normalizes structured results without treating repeated references as cycles", () => {
@@ -463,7 +488,7 @@ describe("McpFnServer", () => {
     await server.connect(right); await client.connect(left);
     closeables.push(client, server);
 
-    await expect(client.listTools()).rejects.toThrow(/identity rejected/);
+    await expect(client.listTools()).rejects.toMatchObject({ code: ErrorCode.InternalError, message: expect.stringMatching(/Internal error$/) });
     expect(order).toEqual(["identity"]);
   });
 
@@ -697,6 +722,28 @@ describe("McpFnServer", () => {
     });
   });
 
+  it("rejects stateless HTTP task storage before callers can list or retrieve another user's tasks", async () => {
+    const taskStore = new InMemoryTaskStore();
+    // Without a transport session ID the SDK treats both callers as unscoped.
+    // Seed the same persisted task that user A creates in the HTTP reproduction.
+    const task = await taskStore.createTask({}, 1, {
+      jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "private_task" },
+    });
+    await taskStore.storeTaskResult(task.taskId, "completed", structuredResult({ secret: "user-A-only" }));
+    const server = createMcpFnServer({
+      info: { name: "shared-task-store", version: "1" }, registry: new McpFnRegistry(), taskStore,
+    });
+    closeables.push(server);
+    // Even a registry without task tools exposes tasks/list and tasks/result when
+    // supplied a taskStore, so reject the configuration before handing out HTTP.
+    await expect(server.createWebStandardHandler({ enableJsonResponse: true })).rejects.toThrow(
+      /task storage requires sessionIdGenerator/,
+    );
+    await expect(server.createWebStandardHandler({
+      enableJsonResponse: true, sessionIdGenerator: () => "secure-random-session-in-production",
+    })).resolves.toBeTypeOf("function");
+  });
+
   it("configures every isolated stateless request server before connecting it", async () => {
     const registry = new McpFnRegistry().register({
       name: "visible_without_configuration",
@@ -744,6 +791,55 @@ describe("McpFnServer", () => {
     expect(configuredServers).toHaveLength(2);
     expect(new Set(configuredServers).size).toBe(2);
     expect(configuredServers).not.toContain(server);
+  });
+
+  it("rejects authenticated stateful initialization without a stable subject even when users share a client", async () => {
+    const server = createMcpFnServer({ info: { name: "missing-subject", version: "1" }, registry: new McpFnRegistry() });
+    closeables.push(server);
+    const handler = await server.createWebStandardHandler({ enableJsonResponse: true, sessionIdGenerator: () => crypto.randomUUID() });
+    for (const extra of [undefined, {}, { subject: "" }, { subject: "  " }, { subject: null }, { subject: 123 }, { subject: "user", tenantId: null }, { subject: "user", regionId: 1 }, { subject: "user", issuer: " " }, { subject: "user", issuer: null }]) {
+      for (const token of ["user-A-token", "user-B-token"]) {
+        const response = await handler(new Request("https://example.com/mcp", {
+          method: "POST", headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "shared-client", version: "1" } } }),
+        }), { authInfo: { token, clientId: "shared-client", scopes: [], extra } });
+        expect(response.status).toBe(403);
+        expect(response.headers.has("mcp-session-id")).toBe(false);
+        await response.text();
+      }
+    }
+  });
+
+  it("binds authenticated sessions to subject, client, tenant, and region across every HTTP method", async () => {
+    const server = createMcpFnServer({ info: { name: "bound-session", version: "1" }, registry: new McpFnRegistry() });
+    closeables.push(server);
+    const handler = await server.createWebStandardHandler({ enableJsonResponse: true, sessionIdGenerator: () => crypto.randomUUID() });
+    const owner = { token: "first-token", clientId: "client-A", scopes: [], extra: { subject: "user-A", tenantId: "tenant-A", regionId: "region-A" } };
+    const request = (method: string, sessionId?: string, initialize = false) => new Request("https://example.com/mcp", {
+      method, headers: { accept: "application/json, text/event-stream", "content-type": "application/json", ...(sessionId ? { "mcp-session-id": sessionId } : {}) },
+      ...(method === "POST" ? { body: JSON.stringify(initialize ? { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "A", version: "1" } } } : { jsonrpc: "2.0", id: 2, method: "ping" }) } : {}),
+    });
+    const initialized = await handler(request("POST", undefined, true), { authInfo: owner });
+    expect(initialized.status).toBe(200); await initialized.text();
+    const id = initialized.headers.get("mcp-session-id")!;
+    expect(id).toBeTruthy();
+    for (const impostor of [
+      undefined,
+      { ...owner, clientId: "client-B" },
+      { ...owner, extra: { ...owner.extra, subject: "user-B" } },
+      { ...owner, extra: { ...owner.extra, tenantId: "tenant-B" } },
+      { ...owner, extra: { ...owner.extra, regionId: "region-B" } },
+    ]) {
+      for (const method of ["GET", "POST", "DELETE"]) {
+        const rejected = await handler(request(method, id), impostor ? { authInfo: impostor } : undefined);
+        expect(rejected.status).toBe(404); await rejected.text();
+      }
+    }
+    // Rotating the credential or its current scopes does not change identity.
+    const refreshed = await handler(request("POST", id), { authInfo: { ...owner, token: "refreshed-token", scopes: ["new-scope"] } });
+    expect(refreshed.status).toBe(200); await refreshed.text();
+    const deleted = await handler(request("DELETE", id), { authInfo: owner });
+    expect(deleted.status).toBe(200); await deleted.text();
   });
 
   it("routes sessionful HTTP clients to isolated transports", async () => {

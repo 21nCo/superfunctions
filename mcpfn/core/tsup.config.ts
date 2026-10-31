@@ -1,4 +1,10 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
+import { bundledInputs } from "./scripts/bundled-inputs.mjs";
+
+const packageRoot = dirname(fileURLToPath(import.meta.url));
+const { zodRoot, plugin } = bundledInputs(packageRoot);
 
 export default defineConfig({
   entry: ["src/index.ts"],
@@ -13,5 +19,11 @@ export default defineConfig({
   // initialization order that throws `Class2 is not a constructor` at workerd
   // startup; a self-contained bundle removes that hazard without any
   // consumer-local alias. See mcpfn/ADR-0001-COMPATIBILITY.md.
+  // Resolve every SDK Zod subpath from this package's pinned build input.
+  // Other workspaces may legitimately retain a different hoisted Zod version.
+  esbuildOptions(options) {
+    options.alias = { ...options.alias, zod: zodRoot };
+  },
+  esbuildPlugins: [plugin],
   noExternal: ["@modelcontextprotocol/sdk", "zod"],
 });

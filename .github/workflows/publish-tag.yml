@@ -53,6 +53,10 @@ jobs:
         id: resolve
         run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"
 
+      - name: Verify MCP version and dependency publication order
+        if: '!inputs.channel_only'
+        run: node ./scripts/assert-mcpfn-release-ready.mjs "$RELEASE_TAG"
+
       - name: Require prerelease for channel-only dispatch
         if: inputs.channel_only && steps.resolve.outputs.dist_tag == 'latest'
         run: |
@@ -60,9 +64,23 @@ jobs:
           exit 1
 
       - name: Install package dependencies
-        if: '!inputs.channel_only'
+        if: '!inputs.channel_only && steps.resolve.outputs.pkg_name != ''@mcpfn/core'' && steps.resolve.outputs.pkg_name != ''@mcpfn/auth'''
         working-directory: ${{ steps.resolve.outputs.pkg_path }}
         run: npm install --workspaces=false --package-lock=false
+
+      - name: Install locked MCP bundle build dependencies
+        if: '!inputs.channel_only && (steps.resolve.outputs.pkg_name == ''@mcpfn/core'' || steps.resolve.outputs.pkg_name == ''@mcpfn/auth'')'
+        run: npm ci --ignore-scripts --workspace "$PACKAGE_PATH" --include-workspace-root
+        env:
+          PACKAGE_PATH: ${{ steps.resolve.outputs.pkg_path }}
+
+      - name: Build MCP bundle dependencies from the lockfile
+        if: '!inputs.channel_only && (steps.resolve.outputs.pkg_name == ''@mcpfn/core'' || steps.resolve.outputs.pkg_name == ''@mcpfn/auth'')'
+        run: |
+          npm rebuild esbuild
+          ./node_modules/.bin/turbo run build --filter="$PACKAGE_NAME..." --concurrency=1
+        env:
+          PACKAGE_NAME: ${{ steps.resolve.outputs.pkg_name }}
 
       - name: Generate, build, typecheck, test and pack exact artifact
         if: '!inputs.channel_only'
@@ -71,6 +89,10 @@ jobs:
 
       - name: Recheck immutable release tag
         run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+
+      - name: Recheck MCP registry prerequisites before publication
+        if: '!inputs.channel_only'
+        run: node ./scripts/assert-mcpfn-release-ready.mjs "$RELEASE_TAG"
 
       - name: Publish package
         if: '!inputs.channel_only'

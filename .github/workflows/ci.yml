@@ -179,7 +179,8 @@ jobs:
         run: node scripts/ci-install-rollup-native.mjs
 
       - name: Build compatibility targets and dependencies
-        run: ./node_modules/.bin/turbo run build --filter='@mcpfn/testing...' --filter='@mcpfn/cli...'
+        # Shared test-support imports the current core independently of published consumer pins.
+        run: ./node_modules/.bin/turbo run build --filter='@mcpfn/core...' --filter='@mcpfn/testing...' --filter='@mcpfn/cli...'
 
       - name: Check transport-neutral client, testing, and CLI on Node 20
         run: |
@@ -230,6 +231,22 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      - name: Setup minimum Node 18 runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.18.0"
+
+      - name: Record minimum Node 18 executable
+        run: echo "NODE18=$(command -v node)" >> "$GITHUB_ENV"
+
+      - name: Setup minimum Node 20 runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.0.0"
+
+      - name: Record minimum Node 20 executable
+        run: echo "NODE20=$(command -v node)" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

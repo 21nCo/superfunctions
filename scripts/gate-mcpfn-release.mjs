@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 const repoRoot = process.cwd();
+if (process.platform === "win32") throw new Error("The McpFn release gate currently requires a POSIX host; Windows process-tree cleanup is not qualified");
 const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
 if (nodeMajor < 22) {
   console.error(
@@ -17,13 +18,18 @@ if (nodeMajor < 22) {
   process.exit(1);
 }
 
+if (!process.env.NODE18 || !process.env.NODE20) {
+  throw new Error("Set NODE18 and NODE20 to exact Node 18.18.0 and 20.0.0 executables for the minimum-runtime gate");
+}
+
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), "mcpfn-release-"));
 const candidateManifest = path.join(temporaryRoot, "calculator.manifest.json");
 const scenarioReport = path.join(temporaryRoot, "calculator.report.json");
 const results = [];
 
 function run(name, command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const timeout = options.timeout ?? 600_000;
+  const result = spawnSync(process.execPath, [path.join(repoRoot, "scripts/run-owned-step.mjs"), String(timeout), command, ...args], {
     cwd: options.cwd ?? repoRoot,
     env: {
       ...process.env,
@@ -34,17 +40,22 @@ function run(name, command, args, options = {}) {
     stdio: "pipe",
     encoding: "utf8",
     shell: false,
-    ...(options.timeout ? { timeout: options.timeout } : {}),
+    timeout: timeout + 10_000,
   });
   const record = {
     name,
     command: [command, ...args].join(" "),
-    ok: (result.status ?? 1) === 0,
-    status: result.status ?? 1,
+    ok: result.error === undefined && (result.status ?? 1) === 0,
+    status: result.error ? 1 : (result.status ?? 1),
     stdout: result.stdout?.trim() ?? "",
-    stderr: result.stderr?.trim() ?? "",
+    stderr: [result.stderr?.trim(), result.error?.message].filter(Boolean).join("\n"),
   };
   results.push(record);
+  if (process.env.MCPFN_ARTIFACT_DIR) {
+    const directory = path.resolve(process.env.MCPFN_ARTIFACT_DIR, "step-results");
+    mkdirSync(directory, {recursive:true});
+    writeFileSync(path.join(directory, name.replaceAll(/[^a-zA-Z0-9_.-]/g, "_") + ".json"), JSON.stringify(record, null, 2) + "\n");
+  }
   if (!record.ok) {
     throw new Error(
       `${name} failed with ${record.status}\n${record.stdout}\n${record.stderr}`,
@@ -54,6 +65,8 @@ function run(name, command, args, options = {}) {
 }
 
 function npmStep(name, args, options) {
+  // Keep the sequential release gate bounded on developer machines as well.
+  if (args[0] === "run" && args[1] === "test") args = [...args, "--", "--maxWorkers=1"];
   return run(name, process.platform === "win32" ? "npm.cmd" : "npm", args, options);
 }
 
@@ -64,19 +77,20 @@ function packageVersion(packagePath) {
 }
 
 function verifyMcpSdkSecurityPolicy() {
-  const expectedVersion = "1.29.0";
+  // This coordinated MCP release uses one patched SDK throughout its packages.
+  const expectedVersions = {
+    "mcpfn/core": "1.32.1",
+    "mcpfn/client": "1.32.1",
+    "mcpfn/auth": "1.32.1",
+    "mcpfn/testing": "1.32.1",
+    "mcpfn/inspector": "1.32.1",
+    "mcpfn/cli": "1.32.1",
+  };
   const expectedOverrides = {
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.9",
     nanoid: "3.3.18",
   };
-  const packagePaths = [
-    "mcpfn/core",
-    "mcpfn/client",
-    "mcpfn/auth",
-    "mcpfn/testing",
-    "mcpfn/inspector",
-    "mcpfn/cli",
-  ];
+  const packagePaths = Object.keys(expectedVersions);
   const resolvedVersions = Object.fromEntries(
     packagePaths.map((packagePath) => {
       const manifest = JSON.parse(
@@ -86,7 +100,7 @@ function verifyMcpSdkSecurityPolicy() {
     }),
   );
   const mismatches = Object.entries(resolvedVersions).filter(
-    ([, version]) => version !== expectedVersion,
+    ([packagePath, version]) => version !== expectedVersions[packagePath],
   );
   const rootManifest = JSON.parse(
     readFileSync(path.join(repoRoot, "package.json"), "utf8"),
@@ -104,7 +118,7 @@ function verifyMcpSdkSecurityPolicy() {
     ok,
     status: ok ? 0 : 1,
     stdout: JSON.stringify({
-      expectedVersion,
+      expectedVersions,
       resolvedVersions,
       expectedOverrides,
       resolvedOverrides,
@@ -272,14 +286,36 @@ function verifyPackedConsumer() {
     [
       "install",
       "--ignore-scripts",
-      "--legacy-peer-deps",
-      "--prefer-offline",
+      "--prefer-online",
       "--no-audit",
       "--no-fund",
       ...tarballs,
     ],
     { cwd: consumerRoot },
   );
+  npmStep("consumer:production-audit", ["audit", "--omit=dev", "--json"], { cwd: consumerRoot });
+  npmStep("consumer:dependency-tree", ["ls", "--omit=dev", "--all", "--json"], { cwd: consumerRoot });
+  const expectedGraph = Object.fromEntries(packagePaths.filter(directory => directory.startsWith("mcpfn/")).map(directory => {
+    const manifest = JSON.parse(readFileSync(path.join(repoRoot, directory, "package.json"), "utf8"));
+    return [manifest.name, manifest.version];
+  }));
+  expectedGraph["@modelcontextprotocol/sdk"] = "1.32.1";
+  expectedGraph["fast-uri"] = "3.1.9";
+  run("consumer:single-copy-graph", process.execPath, ["--input-type=module", "-e", `
+    import assert from 'node:assert/strict';
+    import {readFileSync} from 'node:fs';
+    const packages = JSON.parse(readFileSync('package-lock.json')).packages;
+    for (const [name,version] of Object.entries(${JSON.stringify(expectedGraph)})) {
+      const entries = Object.entries(packages).filter(([key]) => key === 'node_modules/'+name || key.endsWith('/node_modules/'+name));
+      assert.equal(entries.length,1,'Expected one installed copy of '+name);
+      assert.equal(entries[0][1].version,version,'Unexpected installed version of '+name);
+      if(name.startsWith('@mcpfn/')) assert(entries[0][1].resolved.startsWith('file:'),'Expected local tarball for '+name);
+    }
+    console.log(JSON.stringify({ok:true,versions:${JSON.stringify(expectedGraph)}}));
+  `], {cwd:consumerRoot});
+  for (const name of ["core", "auth"]) {
+    run(`consumer:bundled-inputs:${name}`, process.execPath, ["mcpfn/core/scripts/verify-bundled-inputs.mjs", path.join(consumerRoot, "node_modules", "@mcpfn", name)]);
+  }
   const packageNames = [
     "@superfunctions/oauth-core",
     "@mcpfn/core",
@@ -391,6 +427,10 @@ process.stdout.write(JSON.stringify({ ok: true, transports: ["stdio", "streamabl
 
 try {
   verifyMcpSdkSecurityPolicy();
+  run("release:bundle-input-boundary", process.execPath, ["--test", "mcpfn/core/scripts/verify-bundled-inputs.test.mjs"]);
+  run("release:registry-preflight-contract", process.execPath, ["--test", "scripts/assert-mcpfn-release-ready.test.mjs"]);
+  run("process-ownership:regression", process.execPath, ["--test", "scripts/run-owned-step.test.mjs"]);
+  run("bundled-inputs:negative-controls", process.execPath, ["--test", "mcpfn/core/scripts/bundled-inputs.test.mjs"]);
   for (const workspace of [
     "@superfunctions/auth",
     "@superfunctions/observability",
@@ -406,6 +446,11 @@ try {
   npmStep("core:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/core"]);
   npmStep("core:test", ["run", "test", "--workspace", "@mcpfn/core"]);
   npmStep("core:build", ["run", "build", "--workspace", "@mcpfn/core"]);
+  npmStep("admin:typecheck", ["run", "typecheck", "--workspace", "@superfunctions/admin"]);
+  npmStep("admin:test", ["run", "test", "--workspace", "@superfunctions/admin"]);
+  npmStep("admin:build", ["run", "build", "--workspace", "@superfunctions/admin"]);
+  run("core:packed-runtime", process.execPath, ["mcpfn/core/scripts/packed-runtime-acceptance.mjs"]);
+  run("core:packed-http-lifecycle", process.execPath, ["mcpfn/core/scripts/packed-http-lifecycle.mjs"]);
   for (const entry of ["esm", "cjs"]) {
     run(`core:built-schema-${entry}`, process.execPath, [
       "--disallow-code-generation-from-strings",
@@ -521,6 +566,7 @@ try {
     verifyPackage(packagePath);
   }
   verifyPackedConsumer();
+  run("ecosystem:minimum-runtimes", process.execPath, ["mcpfn/core/scripts/packed-ecosystem-runtime.mjs"]);
   verifyNamedConsumerParity();
   verifyDocumentation();
 

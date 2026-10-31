@@ -1,6 +1,6 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
-import uri from "fast-uri";
 import {
   dereference,
   encodePointer,
@@ -56,6 +56,7 @@ function isCloudflareWorker(): boolean {
 
 function createAjv(): Ajv {
   const ajv = new Ajv({
+    uriResolver: schemaUriResolver,
     allErrors: true,
     strict: false,
     allowUnionTypes: true,
@@ -147,12 +148,24 @@ const authoredResourceBase = "https://authored-schema.mcpfn.invalid/";
 // Ajv uses RFC 3986 URI resolution. Keep that identity separate from the
 // WHATWG-only URI index used by @cfworker/json-schema.
 function resolveSchemaUri(reference: string, base: string): string {
-  return uri.resolve(base, reference);
+  return schemaUriResolver.resolve(base, reference);
 }
 
 function schemaResourceUri(reference: string): string {
   const fragment = reference.indexOf("#");
   return fragment < 0 ? reference : reference.slice(0, fragment);
+}
+
+function normalizePointerFragment(reference: string): string {
+  const hash = reference.indexOf("#");
+  if (hash < 0) return reference;
+  // RFC 6901 decodes the fragment before interpreting pointer separators.
+  // cfworker indexes escaped pointer tokens with encodeURI, but does not
+  // canonicalize references. Match that representation without decoding a
+  // literal percent sequence twice or changing the resource/anchor identity.
+  const fragment = decodeURIComponent(reference.slice(hash + 1));
+  if (!fragment.startsWith("/")) return reference;
+  return `${reference.slice(0, hash + 1)}${encodeURI(fragment)}`;
 }
 
 // Encode every authored resource, including URIs that happen to parse under
@@ -283,7 +296,7 @@ function normalizeSchemaUris(
   }
 
   if (typeof schema.$ref === "string") {
-    schema.$ref = effectiveSchemaUri(schema.$ref, originalBase, effectiveBase);
+    schema.$ref = normalizePointerFragment(effectiveSchemaUri(schema.$ref, originalBase, effectiveBase));
   }
 
   forEachDraft7Subschema(schema, (subschema) => {
