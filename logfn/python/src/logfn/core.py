@@ -33,6 +33,9 @@ _FOREIGN_POLL_SECONDS = 0.05
 _active_handlers: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
     "logfn_active_handlers", default=frozenset()
 )
+# The scheduled call a sink runs in, and the calls whose sinks await flush(): flush() never waits for those.
+_sink_call: contextvars.ContextVar[asyncio.Task[Any] | None] = contextvars.ContextVar("logfn_sink_call", default=None)
+_flushing_calls: set[asyncio.Task[Any] | None] = set()
 
 
 def default_now() -> datetime:
@@ -201,6 +204,7 @@ class Logger:
             await awaitable
 
         async def run() -> None:
+            _sink_call.set(asyncio.current_task())
             error = await _isolated(call)
             if error is not None:
                 self._report(error, {"sink": _callable_name(sink)})
@@ -260,13 +264,13 @@ class Logger:
         is no longer waited for: nothing would run it. Returns whether any
         call was waited for."""
         loop = asyncio.get_running_loop()
-        current = asyncio.current_task()
+        skip = {asyncio.current_task(), _sink_call.get(), *_flushing_calls.copy()}
         own: list[asyncio.Future[Any]] = []
         foreign: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
         # Other threads add and discard tasks meanwhile: read a copy (set.copy
         # is atomic), never the live set.
         for task in self._pending.copy():
-            if task.done() or task is current:
+            if task.done() or task in skip:
                 continue
             owner = task.get_loop()
             if owner is loop:
@@ -301,12 +305,16 @@ class Logger:
     async def _drain(self) -> None:
         # Also waits for calls an on_error starts meanwhile, for at most 16
         # rounds, so an on_error that keeps logging cannot hold flush().
+        caller = _sink_call.get()
+        _flushing_calls.add(caller)
         try:
             for _ in range(16):
                 if not await self._wait_pending():
                     return
         except Exception as error:
             self._report(error, {})
+        finally:
+            _flushing_calls.discard(caller)
 
     async def flush(self) -> None:
         """Wait for async sink calls scheduled before the call, also on other
@@ -350,7 +358,7 @@ async def _isolated(call: Callable[[], Coroutine[Any, Any, None]]) -> BaseExcept
     if task.cancelled():
         try:
             task.result()
-        except asyncio.CancelledError as error:
+        except asyncio.CancelledError as error:  # NOSONAR S7497: the sink's own, not this task's (re-raised above)
             return error
     return task.exception()
 

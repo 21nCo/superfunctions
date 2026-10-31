@@ -1647,3 +1647,68 @@ def test_a_cancelled_error_raised_by_sink_caller_code_is_contained(
     assert sink.stats() == {"queued": 1, "in_flight": 0, "sent": 0, "dropped": 1, "failed_batches": 0}
     asyncio.run(sink.flush())
     assert sink.stats()["sent"] == 1
+
+
+class _AcquireGate:
+    """A lock that holds one thread before it takes the lock, until resumed."""
+
+    def __init__(self, lock: Any, thread: int) -> None:
+        self._lock, self._thread = lock, thread
+        self.arrived, self.resume, self.done = threading.Event(), threading.Event(), threading.Event()
+
+    def __enter__(self) -> None:
+        if threading.get_ident() == self._thread and not self.done.is_set():
+            self.arrived.set()
+            assert self.resume.wait(5), "not resumed"
+        self._lock.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lock.release()
+        if threading.get_ident() == self._thread and self.resume.is_set():
+            self.done.set()
+
+
+def test_a_batch_put_back_by_another_loop_after_close_started_is_dropped_once() -> None:
+    # Another loop's drain is cancelled before close() starts and is about to
+    # put its batch back; it takes the lock only once a cancelled close() has
+    # emptied the queue and listed the batches in flight. That batch must be
+    # dropped as "closed", never queued again on the closed sink.
+    drops: list[tuple[int, str]] = []
+    main = threading.get_ident()
+    sink = SinkHttp(URL, transport=Scripted("hang"), batch_size=1, timeout=30, on_drop=lambda n, r: on_drop(n, r))
+    other_loop = asyncio.new_event_loop()
+    other = threading.Thread(target=other_loop.run_forever, daemon=True)
+    other.start()
+    gate = _AcquireGate(sink._lock, other.ident or 0)
+
+    def on_drop(count: int, reason: str) -> None:
+        drops.append((count, reason))
+        if threading.get_ident() == main and not gate.resume.is_set():
+            gate.resume.set()  # The foreign put-back runs now, between close()'s snapshot and settlement.
+            assert gate.done.wait(5), "put-back not finished"
+
+    async def scenario() -> None:
+        sink([event("a"), event("b")])  # One in flight here, one queued behind it.
+        await eventually(lambda: (stats := sink.stats())["queued"] == 1 and stats["in_flight"] == 2)
+        sink._lock = gate  # type: ignore[assignment]
+        other_loop.call_soon_threadsafe(sink._drains[other_loop].cancel)
+        assert gate.arrived.wait(5)
+        closing = asyncio.ensure_future(sink.close())
+        await asyncio.sleep(0.05)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert sink.stats() == {"queued": 0, "in_flight": 0, "sent": 0, "dropped": 3, "failed_batches": 0}
+        assert sorted(drops) == [(1, "closed")] * 3
+
+    try:
+        other_loop.call_soon_threadsafe(sink, [event("foreign")])
+        deadline = time.monotonic() + 5
+        while sink.stats()["in_flight"] != 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        asyncio.run(scenario())
+    finally:
+        other_loop.call_soon_threadsafe(other_loop.stop)
+        other.join(5)
+        other_loop.close()

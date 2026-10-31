@@ -674,6 +674,8 @@ class SinkHttp:
             if batch not in self._batches:
                 return False
             self._batches.remove(batch)
+            # Decided under the lock close() sets _closed with: once closed, a batch put back is never sent.
+            outcome = "closed" if outcome == "requeue" and self._closed else outcome
             if outcome == "sent":
                 self._sent += len(batch.items)
             elif outcome == "requeue":
@@ -726,7 +728,7 @@ class SinkHttp:
         # The loop is shutting down: keep the batch for a later flush, unless
         # the sink is closed and nothing will send it again. A no-op when the
         # batch was settled elsewhere (which is what cancels a delivery).
-        self._settle(batch, "closed" if self._closed else "requeue")
+        self._settle(batch, "requeue")
 
     def _record(self, batch: _Batch, delivery: asyncio.Task[None]) -> None:
         """Settles a batch from its finished delivery."""
@@ -753,7 +755,7 @@ class SinkHttp:
                 if not self._registered(batch):
                     raise _Abandoned
                 # Exponential backoff with jitter
-                await asyncio.sleep((self.backoff_ms * 2 ** (attempt - 1) + random.random() * 100) / 1000)
+                await asyncio.sleep((self.backoff_ms * 2 ** (attempt - 1) + random.random() * 100) / 1000)  # NOSONAR S2245: jitter
             # A batch settled elsewhere (dropped by flush() or close() on
             # another loop) has its one outcome: no further attempt is made.
             if not self._registered(batch):

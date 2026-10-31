@@ -514,3 +514,95 @@ def test_ctx_and_each_schema_field_have_their_own_budget() -> None:
     assert (output["ctx"], output["traceId"], output["userId"], output["level"]) == ({"a": "b"}, "t-1", "u-1", "info")
     assert is_valid_log_event(output)
     assert len(output) < 20
+
+
+def test_long_keys_are_classified_alike_but_never_kept_in_the_key_caches() -> None:
+    import gc
+    import tracemalloc
+
+    # Plain, sensitive and percent-encoded names past the cached length are
+    # classified exactly as their short forms, also inside logged text.
+    for short, sensitive in {"a_x": False, "a_token": True, "a_api%5Fkey": True, "xPASSWORD": True}.items():
+        key = "a" * 300 + short
+        assert is_sensitive_key(key) is is_sensitive_key(short) is sensitive
+        text = redact_event(make_event(msg=f"{key}=hunter2", ctx={key: "hunter2"}))
+        assert ("hunter2" not in json.dumps(text)) is sensitive
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        for index in range(4):
+            assert is_sensitive_key(f"{index}{'a' * 1_000_000}_token")
+        gc.collect()
+        retained = tracemalloc.get_traced_memory()[0] - before
+    finally:
+        tracemalloc.stop()
+    assert retained < 100_000
+
+
+class _Counted(Exception):
+    """An error that counts how often its text is built."""
+
+    calls = 0
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.text = text
+
+    def __str__(self) -> str:
+        _Counted.calls += 1
+        return self.text
+
+
+def _chain(length: int) -> _Counted:
+    head: _Counted | None = None
+    for index in range(length):
+        error = _Counted(f"m{index}")
+        error.__cause__ = head
+        head = error
+    assert head is not None
+    return head
+
+
+def test_an_error_stack_is_built_from_the_error_alone() -> None:
+    # Each serialized error builds its text once and formats only its own
+    # traceback: never the whole cause chain, nor again for every cause.
+    _Counted.calls = 0
+    serialized = sanitize_value(_chain(10_000))
+    assert _Counted.calls == MAX_REDACTION_DEPTH
+    assert serialized["stack"] == "_Counted: m9999\n"
+    assert serialized["cause"]["stack"] == "_Counted: m9998\n"
+
+    shared = _chain(2)
+    first, second = _Counted("first"), _Counted("second")
+    first.__cause__ = second.__cause__ = shared
+    _Counted.calls = 0
+    assert [e["cause"]["message"] for e in sanitize_value([first, second])] == ["m1", "m1"]
+    assert _Counted.calls == 6
+
+
+def test_an_oversized_error_message_is_built_once_and_its_stack_never() -> None:
+    _Counted.calls = 0
+    big = _Counted("s" * (MAX_TRAVERSAL + 1))
+    big.__cause__ = _Counted("cause")
+    assert sanitize_value(big) == {"name": "_Counted", "message": "[max-size]", "stack": "[max-size]", "cause": "[max-size]"}
+    assert _Counted.calls == 1
+
+
+def test_an_error_stack_keeps_the_newest_frames_and_is_redacted() -> None:
+    def recurse(depth: int) -> None:
+        if depth == 0:
+            raise ValueError("password=hunter2")
+        recurse(depth - 1)
+
+    try:
+        recurse(200)
+    except ValueError as error:
+        failure = error
+    stack = redact_event(make_event(ctx={"err": failure}))["ctx"]["err"]["stack"]
+    # 64 frames: 63 identical recursive calls (3 written, then a count) and the raise.
+    assert "[Previous line repeated 60 more times]" in stack and stack.count('  File "') == 4
+    assert stack.startswith("Traceback (most recent call last):\n")
+    assert "raise ValueError" in stack and stack.endswith("ValueError: password=[redacted]\n")
+    assert "hunter2" not in stack

@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 import traceback
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
 from re import Pattern
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from .types import LogEvent
 
@@ -57,7 +57,8 @@ _QUERY_PARAM = re.compile(r"""[?&#]([^=&#? \t\n\r\f\v"'<>]+)=""", re.ASCII)
 # The same parameter inside a percent-encoded URL (a redirect target):
 # ``%3Fname%3D``, ``%26name%3D`` or ``%23name%3D``.
 _ENCODED_QUERY_PARAM = re.compile(
-    r"%(?:3F|26|23)((?:[A-Za-z0-9_.~\-]|%(?!3D|3F|26|23)[0-9A-Fa-f]{2})+)%3D", re.ASCII | re.IGNORECASE
+    # Linear: ``%`` is not in the class, so each character matches one way.
+    r"%(?:3F|26|23)((?:[A-Za-z0-9_.~\-]|%(?!3D|3F|26|23)[0-9A-Fa-f]{2})+)%3D", re.ASCII | re.IGNORECASE  # NOSONAR S5852
 )
 # A query value ends at the next parameter, whitespace, a double quote or an
 # escaped quote (a URL inside escaped JSON); commas and semicolons are kept.
@@ -115,16 +116,25 @@ def _decode_ascii_escape(match: re.Match[str]) -> str:
     return chr(code) if code < 0x80 else ""
 
 
+_T = TypeVar("_T")
+
+
+def _short_key_cache(function: Callable[[str], _T]) -> Callable[[str], _T]:
+    # Keys up to 256 characters only: a cached key lives as long as the process.
+    cached = lru_cache(maxsize=4096)(function)
+    return lambda key: cached(key) if len(key) <= 256 else function(key)
+
+
 # Keys repeat heavily (the same names in every event, every query string), so
 # the per-key work is cached. Percent-escapes are decoded first, so
 # ``api%5Fkey`` is ``api_key``; only ASCII escapes matter, everything else is
 # removed by the normalization anyway.
-@lru_cache(maxsize=4096)
+@_short_key_cache
 def _normalize_key(key: str) -> str:
     return _NON_ALNUM.sub("", _PERCENT_ESCAPE.sub(_decode_ascii_escape, key).lower())
 
 
-@lru_cache(maxsize=4096)
+@_short_key_cache
 def _builtin_sensitive(normalized: str) -> bool:
     if not normalized:
         return False
@@ -177,7 +187,8 @@ def _compile(
     # A marker such as ``SECRET`` would read as a credential name, so ``SECRET: word`` loses the word on the next call.
     if redactor.is_sensitive(replacement):
         raise ValueError("redaction replacement must not be a sensitive key name")
-    return replace(redactor, settled=_apply_rules((replacement, []), redactor)[0] == replacement)
+    settled = _apply_rules((replacement, []), redactor)[0] == replacement
+    return _Redactor(redactor.replacement, redactor.patterns, redactor.allowlist, redactor.extra_keys, settled)
 
 
 def _quoted_value_end(text: str, start: int, slashes: int, quote: str) -> int:
@@ -496,9 +507,13 @@ def _child_path(path: str, key: str) -> str:
     return f"{path}.{key}" if path else key
 
 
-def format_exception_stack(error: BaseException) -> str:
-    """The traceback text used as an error's ``stack``."""
-    return "".join(traceback.format_exception(type(error), error, error.__traceback__))
+def format_exception_stack(error: BaseException, message: str | None = None) -> str:
+    """The traceback text used as an error's ``stack``: its last 64 frames and
+    ``Type: message`` line. Causes are not walked; each is serialized on its own."""
+    text = exception_message(error) if message is None else message
+    frames = traceback.format_list(traceback.extract_tb(error.__traceback__, limit=-64))
+    head = ["Traceback (most recent call last):\n"] if frames else []
+    return "".join([*head, *frames, f"{type(error).__name__}: {text}\n" if text else f"{type(error).__name__}\n"])
 
 
 def exception_message(error: BaseException) -> str:

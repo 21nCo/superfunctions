@@ -689,3 +689,69 @@ def test_an_on_error_that_keeps_logging_still_lets_flush_return() -> None:
         await asyncio.wait_for(logger.flush(), 5)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("via", ["logger", "child"])
+def test_a_sink_that_awaits_flush_does_not_wait_for_its_own_call(via: str) -> None:
+    flushed: list[str] = []
+
+    async def scenario() -> None:
+        async def sink(batch: list[LogEvent]) -> None:
+            await asyncio.wait_for(flusher.flush(), 2)
+            flushed.extend(event["msg"] for event in batch)
+
+        logger = create_logger("svc", sinks=[sink], on_error=lambda error, context: flushed.append(repr(error)))
+        flusher = logger.child(name="child") if via == "child" else logger
+        flusher.info("a")
+        await asyncio.wait_for(logger.flush(), 2)
+
+    asyncio.run(scenario())
+    assert flushed == ["a"]
+
+
+def test_sinks_that_await_flush_do_not_wait_for_each_other() -> None:
+    flushed: list[str] = []
+
+    async def scenario() -> None:
+        running: list[str] = []
+        both = asyncio.Event()
+
+        async def sink(batch: list[LogEvent]) -> None:
+            running.append(batch[0]["msg"])
+            if len(running) == 2:
+                both.set()
+            await both.wait()  # Both calls are running before either flushes.
+            await asyncio.wait_for(logger.flush(), 2)
+            flushed.extend(event["msg"] for event in batch)
+
+        logger = create_logger("svc", sinks=[sink], on_error=lambda error, context: flushed.append(repr(error)))
+        logger.info("a")
+        logger.info("b")
+        await asyncio.wait_for(logger.flush(), 2)
+
+    asyncio.run(scenario())
+    assert sorted(flushed) == ["a", "b"]
+
+
+def test_a_flush_a_sink_awaits_still_waits_for_other_calls() -> None:
+    order: list[str] = []
+
+    async def scenario() -> None:
+        gate = asyncio.Event()
+
+        async def sink(batch: list[LogEvent]) -> None:
+            if batch[0]["msg"] == "slow":
+                await gate.wait()
+                order.append("slow sent")
+                return
+            asyncio.get_running_loop().call_later(0.05, gate.set)
+            await logger.flush()
+            order.append("flush returned")
+
+        logger = create_logger("svc", sinks=[sink])
+        logger.info("slow")
+        logger.info("flushing")
+        await asyncio.wait_for(logger.flush(), 2)
+
+    asyncio.run(scenario())
+    assert order == ["slow sent", "flush returned"]

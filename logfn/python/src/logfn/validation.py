@@ -65,11 +65,14 @@ def _sanitize(value: Any, ancestors: set[int], depth: int, budget: _Budget) -> A
     ancestors.add(identity)
     try:
         if isinstance(value, BaseException):
+            message = exception_message(value)
             error: dict[str, Any] = {
                 "name": _sanitize(type(value).__name__, ancestors, depth + 1, budget),
-                "message": _sanitize(exception_message(value), ancestors, depth + 1, budget),
-                "stack": _sanitize(format_exception_stack(value), ancestors, depth + 1, budget),
+                "message": _sanitize(message, ancestors, depth + 1, budget),
             }
+            # The stack repeats the message: past the budget it is charged as that, never built.
+            fits = budget.left > len(message) or budget.charge(len(message) + 1)
+            error["stack"] = _sanitize(format_exception_stack(value, message), ancestors, depth + 1, budget) if fits else MAX_SIZE
             if value.__cause__ is not None:
                 error["cause"] = _sanitize(value.__cause__, ancestors, depth + 1, budget)
             return error
