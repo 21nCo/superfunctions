@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any, cast
 
 from .redact import (
@@ -149,11 +148,15 @@ def _tag_text(tag: Any) -> str:
 def _js_number(value: float) -> str:
     # ECMAScript Number::toString: the shortest round-trip digits (repr's),
     # in decimal notation for exponents -7 < n <= 21, else d.ddde+N / e-N.
+    # Read from repr's text alone, so no decimal context can change it.
     if value == 0:
         return "0"
-    _, digit_tuple, exponent = Decimal(repr(abs(value))).normalize().as_tuple()
-    digits = "".join(map(str, digit_tuple))
-    k, n = len(digits), cast(int, exponent) + len(digits)
+    mantissa, _, exp = repr(abs(value)).partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    significant = (whole + fraction).lstrip("0")
+    digits = significant.rstrip("0")
+    k = len(digits)
+    n = int(exp or 0) - len(fraction) + len(significant)
     if k <= n <= 21:
         text = digits + "0" * (n - k)
     elif 0 < n <= 21:

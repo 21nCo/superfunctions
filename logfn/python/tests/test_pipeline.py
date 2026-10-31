@@ -1,4 +1,5 @@
 import asyncio
+import decimal
 import json
 import random
 import re
@@ -263,11 +264,22 @@ JS_NUMBER_TAGS = [
     (-0.0, "0"),
     (0.1, "0.1"),
     (5e-324, "5e-324"),
+    (1.2345, "1.2345"),
+    (123456789.0, "123456789"),
+    (0.30000000000000004, "0.30000000000000004"),
 ]
 
 
 def test_float_tags_are_written_as_javascript_writes_numbers() -> None:
     out = sanitize_event(make_event(tags=[value for value, _ in JS_NUMBER_TAGS]))  # type: ignore[misc]
+    assert out["tags"] == [text for _, text in JS_NUMBER_TAGS]
+
+
+def test_float_tags_do_not_depend_on_or_change_the_decimal_context() -> None:
+    trapping = decimal.Context(prec=2, Emax=5, Emin=-5, rounding=decimal.ROUND_DOWN, traps=[decimal.Inexact, decimal.Rounded])
+    with decimal.localcontext(trapping) as context:
+        out = sanitize_event(make_event(tags=[value for value, _ in JS_NUMBER_TAGS]))  # type: ignore[misc]
+        assert (context.prec, context.flags[decimal.Inexact], context.flags[decimal.Rounded]) == (2, False, False)
     assert out["tags"] == [text for _, text in JS_NUMBER_TAGS]
 
 

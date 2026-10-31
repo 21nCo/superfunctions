@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import decimal
 import json
 import os
 import socket
@@ -566,6 +567,16 @@ def test_float_tags_are_delivered_as_javascript_writes_numbers(capsys: pytest.Ca
     asyncio.run(http.flush())
     assert json.loads(bodies[0])["events"][0]["tags"] == expected
     assert json.loads(capsys.readouterr().out)["tags"] == expected
+
+
+def test_float_tags_are_delivered_whatever_the_decimal_context() -> None:
+    delivered: list[list[LogEvent]] = []
+    errors: list[BaseException] = []
+    logger = create_logger("svc", sinks=[delivered.append], on_error=lambda error, _event: errors.append(error))
+    with decimal.localcontext(decimal.Context(prec=2, traps=[decimal.Inexact, decimal.Rounded])):
+        logger.info("m", tags=[1.2345, 123456789.0, 0.30000000000000004])  # type: ignore[arg-type]
+    assert errors == []
+    assert [batch[0]["tags"] for batch in delivered] == [["1.2345", "123456789", "0.30000000000000004"]]
 
 
 def test_direct_call_keeps_keys_that_sanitize_to_the_same_text() -> None:
