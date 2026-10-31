@@ -25,6 +25,33 @@ export interface PortSpec {
   env?: string;
 }
 
+/**
+ * A finite lifecycle node: it runs to completion instead of serving, and
+ * only its successful exit (code 0) lets dependents start. A task declares
+ * no ports or health check and is never a resource target provider.
+ */
+export interface TaskSpec {
+  /**
+   * When a later start runs it again: "on-change" (default) when no success
+   * is recorded for its current input revision, "always" on every start
+   * (requires idempotent), "once" never after a success, failing before any
+   * mutation when its input revision changed.
+   */
+  rerun?: "on-change" | "always" | "once";
+  /**
+   * Repeating it, also after an attempt that may have partly applied, is
+   * safe. Without it a failed, timed-out, cancelled or interrupted attempt
+   * blocks later starts until the task is explicitly rerun. Defaults to false.
+   */
+  idempotent?: boolean;
+  /** Further attempts within one start after a failed or timed-out one; requires idempotent. 0-5, defaults to 0. */
+  retries?: number;
+  /** Per-attempt limit after which the task is stopped. Defaults to 600000. */
+  timeoutMs?: number;
+  /** Repository-relative files and directories whose content is part of the input revision. */
+  inputs?: string[];
+}
+
 export interface ProcessSpec {
   adapter: RuntimeAdapter;
   exposure?: "local" | "public";
@@ -40,6 +67,8 @@ export interface ProcessSpec {
   resources?: string[];
   health?: HealthCheck;
   shutdownTimeoutMs?: number;
+  /** Run as a finite task instead of a daemon. */
+  task?: TaskSpec;
 }
 
 export interface ComposeServiceSpec {
@@ -56,6 +85,8 @@ export interface ComposeServiceSpec {
   env?: Record<string, string>;
   envAllowlist?: string[];
   secretEnv?: string[];
+  /** Run the service's command once in a one-off container (docker compose run) as a finite task. */
+  task?: TaskSpec;
 }
 
 /**

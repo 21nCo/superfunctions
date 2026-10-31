@@ -15,6 +15,10 @@ export interface ComposeSourceInventory {
   serviceDirectory: string;
   interpolationEnvFiles: string[];
   interpolationScopes: Array<{ directory: string; envFiles: string[] }>;
+  /** The definitions merged into the selected service, in merge order: each one's file and the directory its relative paths resolve against. */
+  serviceOrigins: Array<{ file: string; directory: string }>;
+  /** The file whose top-level declaration of each volume, network, config and secret is in effect. */
+  resourceOrigins: Record<string, Record<string, string>>;
 }
 
 /** Explicit interpolation inputs in Compose precedence order (lowest first). */
@@ -232,6 +236,7 @@ export async function assertComposeSourceGraphBounded(
   const activeServices = new Set<string>();
   const serviceCache = new Map<string, Record<string, unknown> | null>();
   const deviceCandidates = new WeakMap<Record<string, unknown>, unknown[]>();
+  const origins = new WeakMap<Record<string, unknown>, Array<{ file: string; directory: string }>>();
   let selectedService: Record<string, unknown> | null = null;
   let selectedDirectory = path.dirname(sourceFile);
   let selectedEnvFiles: string[] = [];
@@ -338,6 +343,7 @@ export async function assertComposeSourceGraphBounded(
     if (!replace.has("devices") && base) inherited = deviceCandidates.get(base) ?? [];
     const own = Array.isArray(service.devices) ? service.devices : [];
     deviceCandidates.set(merged, [...inherited, ...own]);
+    origins.set(merged, [...(base ? origins.get(base) ?? [] : []), { file, directory }]);
     return merged;
   }
 
@@ -353,7 +359,10 @@ export async function assertComposeSourceGraphBounded(
       let service = rawService ? normalizeComposeRawService(rawService) : null;
       if (service?.env_file !== undefined) service.env_file = absoluteEnvFiles(service.env_file, directory, scopes);
       if (service?.extends) service = await resolveExtendedService(file, service, directory, envFiles, scopes, loaded.tags.get(name) ?? new Set());
-      else if (service) deviceCandidates.set(service, Array.isArray(service.devices) ? service.devices : []);
+      else if (service) {
+        deviceCandidates.set(service, Array.isArray(service.devices) ? service.devices : []);
+        origins.set(service, [{ file, directory }]);
+      }
       cacheService(key, service);
       return service;
     } finally { activeServices.delete(key); }
@@ -394,6 +403,7 @@ export async function assertComposeSourceGraphBounded(
         const next = mergeService(merged ?? {}, item, loaded.tags.get(serviceName) ?? new Set());
         deviceCandidates.set(next, [...(replaced || !merged ? [] : deviceCandidates.get(merged) ?? []),
           ...(deviceCandidates.get(item) ?? [])]);
+        origins.set(next, [...(merged ? origins.get(merged) ?? [] : []), ...origins.get(item) ?? []]);
         merged = next;
       }
     }
@@ -430,12 +440,14 @@ export async function assertComposeSourceGraphBounded(
 
   await visitDocument(sourceFile, path.dirname(sourceFile), [], selectedScopes);
   const resources: Record<string, unknown> = {};
-  for (const { data } of documents.values()) {
+  const resourceOrigins: Record<string, Record<string, string>> = {};
+  for (const [file, { data }] of documents) {
     for (const kind of ["volumes", "networks", "configs", "secrets"] as const) {
       resources[kind] = { ...record(resources[kind]), ...record(data[kind]) };
+      resourceOrigins[kind] = { ...resourceOrigins[kind], ...Object.fromEntries(Object.keys(record(data[kind]) ?? {}).map((name) => [name, file])) };
     }
   }
   return { service: selectedService, deviceCandidates: selectedService ? deviceCandidates.get(selectedService) ?? [] : [],
     resources, serviceDirectory: selectedDirectory, interpolationEnvFiles: selectedEnvFiles,
-    interpolationScopes: selectedScopes };
+    interpolationScopes: selectedScopes, serviceOrigins: selectedService ? origins.get(selectedService) ?? [] : [], resourceOrigins };
 }

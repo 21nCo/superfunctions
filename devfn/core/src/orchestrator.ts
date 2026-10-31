@@ -18,6 +18,7 @@ import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
+import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -373,8 +374,8 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     const plan = createPlan(config, receipt.profile);
     if (plan.portNames.length !== receipt.allocations.length || plan.portNames.some((name) => ports[name] === undefined ||
       (config.ports?.[name]?.exact === true && config.ports[name].preferred !== ports[name])) ||
-      plan.nodes.length !== receipt.processes.length + receipt.services.length ||
-      plan.nodes.some((node) => !(node.kind === "process" ? receipt.processes : receipt.services).some((managed) => managed.name === node.name))) return false;
+      plan.nodes.filter((node) => !node.task).length !== receipt.processes.length + receipt.services.length ||
+      plan.nodes.some((node) => !node.task && !(node.kind === "process" ? receipt.processes : receipt.services).some((managed) => managed.name === node.name))) return false;
     if (receipt.portSpecFingerprints) {
       const currentPorts = portSpecFingerprints(config, plan.portNames);
       if (Object.keys(currentPorts).length !== Object.keys(receipt.portSpecFingerprints).length ||
@@ -407,6 +408,12 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     // Receipts without startup fingerprints (v0.1) still record the resource
     // plan; a changed selection replaces the lifecycle. Absent equals absent.
     if (resourcePlanFingerprint(receipt.resources) !== resourcePlanFingerprint(resolved.resources)) return false;
+    // Every task completed for its current input revision; a changed one is rerun by a replacement.
+    for (const node of plan.nodes.filter((item) => item.task)) {
+      const completed = receipt.tasks?.find((item) => item.name === node.name);
+      if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment)) return false;
+    }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
       if (Object.keys(current).length !== Object.keys(receipt.startupFingerprints).length ||
@@ -600,17 +607,30 @@ export class DevFnOrchestrator {
     await selectedProxyRoutes(options.config, plan, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix ?? ".localhost", requestedStateDir);
     // A reference to a public URL that exists only after start fails here, before any lease, process or connector.
     const publicTemplate = await publicTemplateInputs(options.config, plan, identity, requestedStateDir);
-    if (await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)) {
-      await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate, true);
-    } else {
-      resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
+    const resolvePreflight = async () => await needsNetworkPreflight(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate)
+      ? await resolveWithComposeNetworks(options.config, plan, options.root, identity, preflightPorts, loadedPolicy?.policy.hostnameSuffix, publicTemplate, true)
+      : resolveEndpoints({ config: options.config, plan, ownerId: identity.instanceId, routingIdentity: identity, ports: preflightPorts,
         hostnameSuffix: loadedPolicy?.policy.hostnameSuffix, composeNetworks: provisionalComposeNetworks(options.config, plan, identity.instanceId), ...publicTemplate }, { ports: true, networks: true });
-    }
+    let preflight = await resolvePreflight();
+    const decideTasks = async (stateDir: string, locked?: { signal?: AbortSignal }) => await preflightTasks({ config: options.config, plan, root: options.root, stateDir, instanceId: identity.instanceId,
+      ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
+    // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
+    await decideTasks(requestedStateDir);
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
     // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
-    if (identity.runtimeId) identity.runtimeId = await recordRuntimeId(stateDir, identity.runtimeId);
+    if (identity.runtimeId) {
+      const recorded = await recordRuntimeId(stateDir, identity.runtimeId);
+      if (recorded !== identity.runtimeId) {
+        identity.runtimeId = recorded;
+        preflight = await resolvePreflight();
+      }
+    }
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+      // Concurrent starts may have ended task attempts since the preflight,
+      // and a dead DevFn may have left one: tasks are settled and decided
+      // again from their journals before any lease, replacement or node.
+      await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
       // Health and teardown may wait for minutes. The instance lock protects
       // this lifecycle while sibling route/lease transitions use the short
       // shared routing lock below.
@@ -789,10 +809,13 @@ export class DevFnOrchestrator {
         await writeReceipt(receipt);
         receipt.environmentOutputs = await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment);
         for (const node of plan.nodes) {
+          if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled before ${node.name} started.`);
           await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry });
           receipt.updatedAt = new Date().toISOString();
           await writeReceipt(receipt);
         }
+        // A cancellation observed as the last task ended still never ends ready.
+        if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled.");
         if (plan.proxy && !activatedRoutes) {
           const routes = await selectedProxyRoutes(options.config, plan, identity, ports, suffix, stateDir);
           receipt.routes = await proxy.upsert(routes, identity.instanceId);
@@ -847,7 +870,8 @@ export class DevFnOrchestrator {
       const processStates = await Promise.all(existing.processes.map((item) => new ProcessSupervisor().status(item)));
       const serviceStates = await Promise.all(existing.services.map((item) => new ComposeController().status(item)));
       const managedCount = processStates.length + serviceStates.length;
-      const allRunning = managedCount > 0 && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
+      // A lifecycle of only setup tasks has nothing running once they completed; receiptIsReady checks them.
+      const allRunning = (managedCount > 0 || (existing.tasks?.length ?? 0) > 0) && processStates.every((state) => state === "running") && serviceStates.every((state) => state === "running");
       const live: { publicUrls?: Record<string, string> } = {};
       const allReady = allRunning && existing.profile === (options.profile ?? options.config.defaultProfile ?? "default") &&
         await receiptIsReady(options.config, options.root, existing, processStates, serviceStates, live);
@@ -858,7 +882,8 @@ export class DevFnOrchestrator {
           existing.updatedAt = new Date().toISOString();
           await writeReceipt(existing);
         }
-        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.`);
+        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.${options.rerunTasks?.length
+          ? ` A task reruns on a start; replace this lifecycle with devfn restart ${options.rerunTasks.map((name) => `--rerun-task ${name}`).join(" ")}.` : ""}`);
       }
       // Validate the replacement while the old lifecycle still owns its ports
       // and containers. A malformed source must never turn a ready service off.
@@ -903,6 +928,23 @@ export class DevFnOrchestrator {
     registry: FilePortRegistry;
   }): Promise<void> {
     const { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry } = context;
+    if (node.task) {
+      // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: receipt.runtimeDir,
+        instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
+        command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
+        ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
+        ...(options.signal ? { signal: options.signal } : {}), registry, supervisor, compose,
+        record: async (entry: TaskReceipt) => {
+          const tasks = receipt.tasks ??= [];
+          const index = tasks.findIndex((item) => item.name === entry.name);
+          if (index < 0) tasks.push(entry); else tasks[index] = entry;
+          receipt.updatedAt = new Date().toISOString();
+          await writeReceipt(receipt);
+        } });
+      await (options.whileTaskRuns ? options.whileTaskRuns(run) : run());
+      return;
+    }
     // Routes may already target this lifecycle's ports. Its owner identities
     // are journaled in the registry, which outlives the worktree, so orphan
     // recovery can tell a running interrupted start from a dead one. Each
@@ -1041,7 +1083,8 @@ export class DevFnOrchestrator {
     const state = degraded ? "degraded" : receipt.state;
     // Public URLs are the ones served now; publicUrlsChanged marks those reassigned since the receipt recorded them.
     const publicUrls = state === "ready" && live.publicUrls ? { publicUrls: live.publicUrls, ...(sameUrls(live.publicUrls, receipt.publicUrls) ? {} : { publicUrlsChanged: true }) } : {};
-    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
+    const tasks = receipt.tasks?.map(({ name, kind, status, reason, inputRevision, attempts }) => ({ name, kind, status, reason, inputRevision, attempts: attempts.length }));
+    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, ...(tasks ? { tasks } : {}), allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
   }
 
   public async doctor(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string }): Promise<{ ok: boolean; diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> }> {
@@ -1094,7 +1137,7 @@ export class DevFnOrchestrator {
     const unavailableWarnings = new Set<string>();
     const localProcessPorts = new Map<string, "tcp" | "udp">();
     const requiredLocalProtocols = new Set<"tcp" | "udp">();
-    for (const node of plan.nodes.filter((candidate) => candidate.kind === "process")) {
+    for (const node of plan.nodes.filter((candidate) => candidate.kind === "process" && !candidate.task)) {
       const processSpec = options.config.processes?.[node.name];
       if (!processSpec || processSpec.exposure === "public") continue;
       if (!(processSpec.ports?.length)) {
@@ -1162,6 +1205,12 @@ export class DevFnOrchestrator {
       const lines = (await readFile(managed.logPath, "utf8").catch(() => "")).split("\n");
       const tail = options.tail ?? 200;
       output[managed.name] = redact(tail === 0 ? "" : lines.slice(-tail).join("\n"), options.config.processes?.[managed.name]?.secretEnv);
+    }
+    for (const task of receipt.tasks?.filter((item) => item.logPath && (!options.name || item.name === options.name)) ?? []) {
+      const lines = (await readFile(task.logPath!, "utf8").catch(() => "")).split("\n");
+      const tail = options.tail ?? 200;
+      const spec = task.kind === "process" ? options.config.processes?.[task.name] : options.config.services?.[task.name];
+      output[task.name] = redact(tail === 0 ? "" : lines.slice(-tail).join("\n"), spec?.secretEnv);
     }
     const compose = new ComposeController();
     for (const service of receipt.services.filter((item) => !options.name || item.name === options.name)) {

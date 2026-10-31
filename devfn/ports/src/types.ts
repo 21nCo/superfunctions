@@ -75,6 +75,8 @@ export interface ComposeLaunchRecord {
   existingContainerIds: string[];
   runningContainerIds: string[];
   dockerEnvironment?: Record<string, string>;
+  /** A task attempt's one-off container label; only containers carrying it are the launch's. */
+  taskAttempt?: string;
   /** The gated launcher, recorded before it may create or start anything. */
   launcher?: ProcessOwner;
 }
