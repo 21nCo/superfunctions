@@ -752,7 +752,7 @@ test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () =>
   assert.equal(tscProjects("tsup src/index.ts"), null);
 });
 
-// tsc emits the default-include fixtures in each spelling, from a script or a build file, but nothing with --noEmit.
+// tsc emits the default-include fixtures in each spelling, from a script or a build file; a script's --noEmit emits nothing.
 const emitted = ["src/__tests__/core.test.ts", "src/__tests__/fixtures/tree.ts", "src/fixtures/runtime.ts"];
 for (const [build, extra, expected] of [
   ["tsc -b", {}, emitted],
@@ -767,10 +767,10 @@ for (const [build, extra, expected] of [
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(`node_modules/.bin/tsc -p . 2>&1`);\n" }, emitted],
   ...["node node_modules/typescript/bin/tsc -p .", "npx --no-install tsc", "npx -p typescript tsc", "npm exec -- tsc", "npm x tsc", "bun x tsc", "pnpm dlx tsc", "yarn run tsc", "pnpm -C . exec tsc"].map((command) => ["node scripts/build.mjs", { "scripts/build.mjs": `execSync('${command}');\n` }, emitted]),
   ["tsc --noEmit && tsup src/index.ts", {}, []],
-  // Each tsc run that a build file spells with its own --noEmit, as a command string or an argv element, emits nothing.
-  ["node scripts/build.mjs", { "scripts/build.mjs": 'execSync("tsc --noEmit");\nawait build({ entry: ["src/index.ts"] });\n' }, []],
-  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('tsc', ['--noEmit']);\n" }, []],
-  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('npx', ['tsc', '--noEmit', '-p', '.']);\n" }, []],
+  // A build file's tsc run sweeps every tsconfig even with its own --noEmit, as a command string or an argv element (owner ruling).
+  ["node scripts/build.mjs", { "scripts/build.mjs": 'execSync("tsc --noEmit");\nawait build({ entry: ["src/index.ts"] });\n' }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('tsc', ['--noEmit']);\n" }, emitted],
+  ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('npx', ['tsc', '--noEmit', '-p', '.']);\n" }, emitted],
   // An emitting tsc run beside a --noEmit one, --noEmitOnError and a --noEmit in a comment still compile.
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmit');\nexecFileSync('tsc', ['-p', '.']);\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync('tsc --noEmitOnError');\n" }, emitted],
@@ -782,8 +782,8 @@ for (const [build, extra, expected] of [
   // A run whose project cannot be read still names every tsconfig, whatever --noEmit literals sit beside it.
   ["node scripts/build.mjs", { "scripts/build.mjs": "const dir = 'lib';\nconsole.log('--noEmit');\nexecSync(`tsc -p ${dir}`);\n" }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "console.log('--noEmit');\nexecFileSync('tsc', ['-p', dir]);\n" }, emitted],
-  // --noEmit false turns emission on only for the project its own run names, not for a noEmit tsconfig.json beside it.
-  ...["execSync('tsc -p tsconfig.build.json --noEmit false');", "execFileSync('tsc', ['-p', 'tsconfig.build.json', '--noEmit', 'false']);"].map((line) => ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "tsconfig.build.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/index.ts"] }', "scripts/build.mjs": `${line}\n` }, []]),
+  // A --noEmit false anywhere in the file turns emission on for every swept tsconfig, a noEmit tsconfig.json beside the run's own one too.
+  ...["execSync('tsc -p tsconfig.build.json --noEmit false');", "execFileSync('tsc', ['-p', 'tsconfig.build.json', '--noEmit', 'false']);"].map((line) => ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "tsconfig.build.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/index.ts"] }', "scripts/build.mjs": `${line}\n` }, emitted]),
   // The real @uifn/solid shape: the message and the bare tsc path name tsconfig.json, which is noEmit; the -p argument names the emitting build config.
   ["node scripts/build.mjs", { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src/**/*"] }', "tsconfig.build.json": '{ "include": ["src/index.ts"] }', "scripts/build.mjs": "execFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), ['-p', 'tsconfig.build.json']);\nfail('typescript tsc not found');\n" }, []],
 ]) {
@@ -792,7 +792,7 @@ for (const [build, extra, expected] of [
   });
 }
 
-// A build file that runs tsc names every tsconfig in its package, so a project passed in argv elements, a joined path or a literal with nested quotes still counts.
+// A build file that runs tsc names every tsconfig in its package, whatever the run's project, cwd, options or quoting.
 const libProject = { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "lib/tsconfig.json": '{ "compilerOptions": { "outDir": "../dist/lib" } }', "lib/index.ts": "export const lib = 1;\n", "lib/__tests__/fixtures/data.ts": "export const data = 1;\n" };
 for (const script of [
   "execFileSync('tsc', ['-p', 'lib']);",
@@ -801,17 +801,45 @@ for (const script of [
   "const tsc = 'node_modules/typescript/bin/tsc';\nspawnSync(process.execPath, [tsc, '-b', 'lib']);",
   `execSync("tsc -p lib && echo 'built'");`,
   'execSync(`tsc -p lib --outDir "dist"`);',
+  // A run whose working directory is set, to a literal or not: its -p tsconfig.json is lib's, not the noEmit root one.
+  "execFileSync('tsc', ['-p', 'tsconfig.json'], { cwd: 'lib' });",
+  "const sub = process.env.SUB;\nexecFileSync('tsc', ['-p', 'tsconfig.json'], { cwd: sub });",
+  "const sub = process.env.SUB;\nexecSync('tsc -p tsconfig.json', { cwd: sub });",
+  "execFileSync('tsc', ['-p', 'tsconfig.json'], { ...options });",
+  "execFileSync('tsc', ['-p', 'tsconfig.json'], { shell: true });",
+  "execFileSync('tsc', ['-p', 'lib/tsconfig.json'], { stdio: 'inherit' });",
+  "execFileSync('tsc', ['--project=lib']);",
+  // A run naming only the noEmit root project, or with its own --noEmit, still sweeps, so lib's emitting tsconfig counts.
+  "execFileSync('tsc', ['-p', 'tsconfig.json']);",
+  "execSync('tsc -p tsconfig.json', { stdio: 'inherit' });",
+  "execSync('tsc --noEmit -p lib');",
+  "execFileSync('tsc', ['-p', 'lib', '--noEmit']);",
 ]) {
   test(`a build file that runs tsc consumes every tsconfig in its package: ${script.split("\n").at(-1)}`, () => {
     assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...libProject, "scripts/build.mjs": `${script}\n` }), ["lib/__tests__/fixtures/data.ts"]);
   });
 }
 
-// The argv override belongs to its own tsc run, so it turns emission on only for the project that run names.
-test("a build file's argv --noEmit false makes its own noEmit project emit, and a build file without tsc names none", () => {
+// A --noEmit beside a run, not in its own call, never stops it: semicolonless code and a variable argv keep the run, which emits.
+for (const script of ["execSync('tsc')\nconsole.log('--noEmit')\n", "const args = process.argv.slice(2)\nexecFileSync('tsc', args)\nconsole.log('--noEmit')\nconst x = [1]\n", "execFileSync('tsc', [...args, '--noEmit'])\n", "run(execSync('tsc --noEmit'))\nexecFileSync('tsc', args)\n"]) {
+  test(`a build-file tsc run is not stopped by a --noEmit outside its own call: ${JSON.stringify(script)}`, () => {
+    assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, "tsconfig.json": '{ "compilerOptions": { "outDir": "dist" } }', "scripts/build.mjs": script }), emitted);
+  });
+}
+
+// A tsconfig in a directory with a space is swept like any other, whichever project the run names.
+const spaced = { "tsconfig.json": '{ "compilerOptions": { "noEmit": true }, "include": ["src"] }', "my lib/tsconfig.json": '{ "compilerOptions": { "outDir": "../dist" }, "include": ["../src/fixtures"] }' };
+for (const script of ["execFileSync('tsc', ['-p', 'my lib/tsconfig.json']);", `execSync('tsc -p "my lib/tsconfig.json"');`, "execFileSync('tsc', ['-p', 'tsconfig.json']);"]) {
+  test(`a build-file tsc run sweeps a tsconfig path with spaces: ${script}`, () => {
+    assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...spaced, "scripts/build.mjs": `${script}\n` }), ["src/fixtures/runtime.ts"]);
+  });
+}
+
+// Swept noEmit tsconfigs emit nothing unless the build file has an argv or string --noEmit false, and a build file without tsc names none.
+test("a build file's --noEmit false makes every swept noEmit tsconfig emit, and a build file without tsc names none", () => {
   const lib = { ...libProject, "lib/tsconfig.json": '{ "compilerOptions": { "noEmit": true } }' };
   assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib']);\n" }), []);
-  assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": "execFileSync('tsc', ['-p', 'lib', '--noEmit', 'false']);\n" }), ["lib/__tests__/fixtures/data.ts"]);
+  for (const script of ["execFileSync('tsc', ['-p', 'lib', '--noEmit', 'false']);", "execSync('tsc -p lib --noEmit false');"]) assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...lib, "scripts/build.mjs": `${script}\n` }), ["lib/__tests__/fixtures/data.ts", ...emitted]);
   assert.deepEqual(promotedBy("node scripts/build.mjs", { ...sources, ...libProject, "scripts/build.mjs": "execFileSync('tsup', ['lib/index.ts']);\n" }), []);
 });
 
@@ -842,6 +870,9 @@ for (const [cell, build, tree, expected] of [
   ["an argv tsc in a helper a build script imports", "node scripts/build.mjs", { ...libProject, "scripts/build.mjs": "await import('../tools/compile.mjs');\n", "tools/compile.mjs": argvTsc }, ["lib/__tests__/fixtures/data.ts"]],
   ["tsc -p lib in a root build.sh", "sh build.sh", { ...libProject, "build.sh": "#!/bin/sh\nset -e\ntsc -p lib\n" }, ["lib/__tests__/fixtures/data.ts"]],
   ["tsc -p lib in scripts/build.sh", "bash scripts/build.sh", { ...libProject, "scripts/build.sh": "tsc -p lib\n" }, ["lib/__tests__/fixtures/data.ts"]],
+  // A shell build file's tsc run sweeps too: its own --noEmit, project and cwd are not read.
+  ["tsc --noEmit -p tsconfig.json in build.sh", "sh build.sh", { ...libProject, "build.sh": "tsc --noEmit -p tsconfig.json\n" }, ["lib/__tests__/fixtures/data.ts"]],
+  ["cd lib && tsc -p tsconfig.json in build.sh", "sh build.sh", { ...libProject, "build.sh": "cd lib && tsc -p tsconfig.json\n" }, ["lib/__tests__/fixtures/data.ts"]],
   ["a build file a shell build script runs", "./build.sh", { "build.sh": "node tools/build.mjs\n", "tools/build.mjs": globEntry }, emitted],
   ["control: a tools/build.mjs no script runs", "tsup src/index.ts", { "tools/build.mjs": globEntry }, []],
   ["control: a build.sh no script runs", "tsup src/index.ts", { ...libProject, "build.sh": "tsc -p lib\n" }, []],
@@ -1116,6 +1147,27 @@ test("since-published report lists packages with shipped changes after their hig
   const cli = spawnSync(process.execPath, [script, "--since-published"], { cwd: repo.root, encoding: "utf8" });
   assert.equal(cli.status, 0);
   assert.match(cli.stdout, /2 of 2 stable packages have shipped changes/);
+});
+
+// CI reports the base revision (--head <base.sha>) from a PR's merge checkout: dev's unpublished changes count, the PR's own do not.
+test("since-published --head reports that revision, not the checked-out PR", (t) => {
+  const repo = fixtureRepo(t);
+  repo.git("tag", "uifn-core-v1.0.0");
+  repo.git("tag", "uifn-react-v1.0.0");
+  repo.git("checkout", "--quiet", "-b", "feature");
+  repo.write("uifn/core/src/index.ts", "export const core = 2;\n");
+  repo.commit("PR-only core change");
+  repo.git("checkout", "--quiet", "base");
+  repo.write("uifn/react/src/index.ts", 'export { shared } from "../../shared/src/index";\nexport const react = 2;\n');
+  repo.commit("base-only react change");
+  repo.git("checkout", "--quiet", "feature");
+  const shipped = (head) => Object.fromEntries(reportSincePublished({ cwd: repo.root, ...(head ? { head } : {}) }).map((entry) => [entry.name, entry.shippedFiles]));
+  assert.deepEqual(shipped("base"), { "@uifn/core": [], "@uifn/react": ["uifn/react/src/index.ts"] });
+  assert.deepEqual(shipped(), { "@uifn/core": ["uifn/core/src/index.ts"], "@uifn/react": [] });
+  const cli = spawnSync(process.execPath, [script, "--since-published", "--head", "base"], { cwd: repo.root, encoding: "utf8" });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /@uifn\/core: uifn-core-v1\.0\.0 -> HEAD: no shipped changes/);
+  assert.match(cli.stdout, /@uifn\/react: uifn-react-v1\.0\.0 -> HEAD: 1 shipped file\(s\) changed/);
 });
 
 test("a failure to build the since-published report warns without failing, while the gate still fails", (t) => {

@@ -63,9 +63,7 @@ const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
-// Any build-file tsc word is a tsc run (`npx -p typescript tsc`, `bun x tsc`, a message): tscProjects maps it, and a noEmit tsconfig consumes nothing.
-// A literal may hold the other quote kinds (`"tsc -p lib && echo 'built'"`).
-const STRING_LITERAL = /(['"`])((?:(?!\1)[^\n\\]|\\.)*)\1/g;
+// Any build-file tsc word is a tsc run (`npx -p typescript tsc`, `bun x tsc`, a message) that names every tsconfig in its package.
 // `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/;
@@ -328,7 +326,9 @@ export function tsconfigEntries(file, text) {
  * A `!` glob is marked negated, a reference keeps its enclosing bracket as `list`, and a tsconfig's own specifiers are overridden.
  */
 export function fileReferences(file, text, { root = path.posix.dirname(file), base = path.posix.dirname(file), buildFile = false } = {}) {
-  if (buildFile && file.endsWith(".sh")) return scriptReferences({ build: text }, root);
+  // A build-file tsc run sweeps every tsconfig: its arguments, quoting, --noEmit, project and cwd are not read. A noEmit tsconfig emits only if the file has a --noEmit false.
+  const sweep = buildFile && /\btsc\b/.test(text) ? [{ target: path.posix.join(root, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(text), tsc: true }] : [];
+  if (buildFile && file.endsWith(".sh")) return [...scriptReferences({ build: text }, root), ...sweep];
   const dir = path.posix.dirname(file);
   const found = [];
   const add = (target, extra = {}) => found.push({ target: path.posix.normalize(target).replace(/\/+$/, ""), soft: false, ...extra });
@@ -350,14 +350,7 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
-    // Each tsc run decides its own emission and projects from its own flags. A run whose project cannot be read names every tsconfig in its package.
-    const literals = [...text.matchAll(STRING_LITERAL)];
-    for (const { index } of text.matchAll(/\btsc\b/g)) {
-      const { command, readable } = tscInvocation(text, literals, index);
-      const projects = readable ? tscProjects(command) : null;
-      if (tscProjects(command)?.length === 0) continue;
-      for (const project of projects ?? ["**/tsconfig*.json"]) add(path.posix.join(root, project), { emit: EMIT_OVERRIDE.test(command), ...(projects ? {} : { tsc: true }) });
-    }
+    found.push(...sweep);
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
@@ -367,22 +360,6 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   }
   const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}\0${reference.runs ?? ""}`, reference]));
   return [...unique.values()];
-}
-
-/**
- * The tsc run around the tsc word at `index` of a build file: the command in its string literal (`execSync("tsc -p lib")`), or a tsc
- * literal and the argv literals after it up to `]` or `;` (`execFileSync("tsc", ["-p", "lib"])`). It is unreadable outside a
- * literal, with an interpolation (`${dir}`) or with a variable argument.
- */
-function tscInvocation(text, literals, index) {
-  const literal = literals.find((match) => match.index < index && index < match.index + match[0].length);
-  if (!literal) return { command: "", readable: false };
-  const end = text.slice(index).search(/[\];]/);
-  const span = /\s/.test(literal[2]) ? null : text.slice(literal.index, end < 0 ? text.length : index + end);
-  const command = span === null
-    ? text.slice(literal.index + 1, index).split(COMMAND_SEPARATOR).at(-1) + text.slice(index, literal.index + literal[0].length - 1).split(COMMAND_SEPARATOR)[0]
-    : [...span.matchAll(STRING_LITERAL)].map((match) => match[2]).join(" ");
-  return { command, readable: !command.includes("${") && (span === null || /^[\s,()[\]]*$/.test(span.replace(STRING_LITERAL, ""))) };
 }
 
 /**

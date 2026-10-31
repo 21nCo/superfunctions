@@ -80,11 +80,10 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'dev'
     runs-on: ubuntu-latest
     steps:
-      # The PR head itself: the merge ref can be built on another base than base.sha, whose changes would count as the PR's.
+      # The PR merge ref, which holds the checker even for a branch made before it; the gate first checks that it merges base.sha and head.sha.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -102,10 +101,12 @@ jobs:
         run: node --test scripts/verify-uifn-version-bump.test.mjs
 
       - name: Require version bump and changelog entry for shipped uifn changes
-        run: node scripts/verify-uifn-version-bump.mjs --base "${{ github.event.pull_request.base.sha }}"
+        run: |
+          git rev-parse HEAD^1 HEAD^2 | diff - <(printf '%s\n' "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}") || { echo "::error::The PR merge ref is not a merge of base ${{ github.event.pull_request.base.sha }} and head ${{ github.event.pull_request.head.sha }} (stale after a retarget); push or edit the PR to run this check again."; exit 1; }
+          node scripts/verify-uifn-version-bump.mjs --base "${{ github.event.pull_request.base.sha }}"
 
       - name: Report uifn changes since last published tags
-        run: node scripts/verify-uifn-version-bump.mjs --since-published
+        run: node scripts/verify-uifn-version-bump.mjs --since-published --head "${{ github.event.pull_request.base.sha }}"
 
   javascript:
     name: JavaScript
