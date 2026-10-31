@@ -1,0 +1,68 @@
+{
+  "$comment": "Read by scripts/verify-uifn-version-bump.mjs. inputs: repo paths outside a stable package that feed its tarball; a shipped change to them needs that package's version bump. references: out-of-root paths its shipped files or lifecycle scripts name that do not feed the tarball (validation scripts such as test, typecheck and generate:check are not followed from pack-time scripts; everything an install script reaches is; any command word that names a manifest script counts as reaching it, whatever the runner). A relative import in a shipped source is bundled, so it must resolve into inputs, not references. Each changed path is judged by the declarations at both ends of the range and counts if it ships at either end where it exists: a new path can be excluded in the same change, but an existing one counts until its exclusion is on the base branch. excluded: paths inside the package that never reach the tarball; the check fails if one is in files or is a build config loaded implicitly, or if it contains a file that a shipped file, lifecycle script, manifest entry field, build config string or tsconfig include names (resolving extensions, index files, .js to TypeScript sources, directories and globs). Every entry maps a path to the reason.",
+  "schemaVersion": 1,
+  "packages": {
+    "@uifn/core": {
+      "inputs": {
+        "uifn/catalog/generated/catalog.json": "scripts/build.mjs generates dist/primitive-entries from the catalog."
+      },
+      "excluded": {
+        "scripts/dev.mjs": "Watch-mode helper for npm run dev; no lifecycle script runs it."
+      }
+    },
+    "@uifn/adapter-kit": {
+      "references": {
+        "uifn/core/src": "tsconfig paths for type-checking; tsup keeps the @uifn/core dependency external."
+      }
+    },
+    "@uifn/svelte": {},
+    "@uifn/solid": {
+      "inputs": {
+        "scripts/build-uifn-solid.mjs": "The package build script."
+      },
+      "references": {
+        "uifn/catalog/generated/catalog.json": "scripts/build-uifn-solid.mjs reads it only to verify the generated entry count."
+      }
+    },
+    "@uifn/theme": {
+      "references": {
+        "uifn/tokens/src": "tsconfig paths for type-checking; tsup keeps the @uifn/tokens dependency external."
+      }
+    },
+    "@uifn/theme-tailwind": {
+      "references": {
+        "uifn/recipes/src": "tsconfig paths for type-checking; tsup keeps the @uifn/recipes dependency external.",
+        "uifn/theme/src": "tsconfig paths for type-checking; tsup keeps the @uifn/theme dependency external.",
+        "uifn/tokens/src": "tsconfig paths for type-checking; tsup keeps the @uifn/tokens dependency external."
+      }
+    },
+    "@uifn/components": {
+      "excluded": {
+        "registry": "Per-component contract JSON. Not in files and src does not import it; read only by src/__tests__/registry-contract.ts and scripts/verify-uifn-{a11y,examples,secrets,stories}.mjs."
+      }
+    },
+    "@uifn/components-react": {},
+    "@uifn/components-svelte": {
+      "excluded": {
+        "scripts/svelte-script-sources.mjs": "Verification helper imported only by scripts/verify-uifn-package-graph.mjs; not in files and no lifecycle script runs it."
+      }
+    },
+    "@uifn/components-solid": {},
+    "@uifn/registry": {
+      "excluded": {
+        "catalog": "Hook, pattern and sf catalog JSON for the experimental lanes, read by scripts/generate-uifn-phase-17.mjs (which writes storybook workbenches and docs) and verify-uifn-* scripts. Not in files and src does not import it.",
+        "generated": "Repository copies written by scripts/generate-uifn-phase-16.mjs and scripts/sign-uifn-registry.mjs. The shipped copies are src/generated/*.ts, which count. Not in files and src does not import it.",
+        "schemas": "component.schema.json is not in files, and nothing in src or the build reads it.",
+        "trust": "Pinned signing public key read by scripts/sign-uifn-registry.mjs and scripts/verify-uifn-phase-16.mjs; the signature ships through src/generated/signature.ts. Not in files."
+      }
+    },
+    "@uifn/storybook": {
+      "inputs": {
+        "uifn/registry/src": "src/panel/compatibility.ts imports it relatively, so tsup bundles it into dist."
+      },
+      "excluded": {
+        "generated/story-inventory.json": "Not in files and not bundled; src/validate-stories.ts reads it from a repository checkout at run time."
+      }
+    }
+  }
+}
