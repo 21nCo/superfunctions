@@ -237,7 +237,67 @@ for (const run of [
   });
 }
 
-test("a build-file tsc run keeps in-package projects, and a .. path that is no tsconfig or project, or does not exist, is not an outside reference", (t) => {
+// A project path with whitespace is read whole: as an argv element, a quoted command word, a -b directory, a literal bound to a variable or a word of a multi-line template.
+for (const run of [
+  "execFileSync('tsc', ['-p', '../shared lib/tsconfig.json']);",
+  "execSync('tsc -p \"../shared lib/tsconfig.json\"');",
+  "execSync('tsc --project \\'../shared lib/tsconfig.json\\'');",
+  "execFileSync('tsc', ['-b', '../shared lib']);",
+  "const project = '../shared lib/tsconfig.json';\nexecFileSync('tsc', ['-p', project]);",
+  "execSync(`tsc -b\n  '../shared lib'`);",
+]) {
+  test(`a build-file tsc project whose path has a space must be declared, and then its sources need a bump: ${run}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.write("uifn/shared lib/tsconfig.json", sharedProject);
+    repo.write("uifn/shared lib/src/index.ts", "export const shared = 1;\n");
+    repo.write("uifn/core/scripts/build.mjs", `${run}\n`);
+    repo.commit("external tsc project with a space");
+    const undeclared = check(repo.root);
+    assert.equal(undeclared.status, 1, undeclared.output);
+    assert.match(undeclared.output, /@uifn\/core: uifn\/core\/scripts\/build\.mjs refers to uifn\/shared lib\/tsconfig\.json, outside uifn\/core; declare it/);
+    repo.git("branch", "-f", "base");
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/shared lib/tsconfig.json":"tsc builds it","uifn/shared lib/src":"tsc compiles it"'));
+    repo.commit("declare the external project");
+    repo.git("branch", "-f", "base");
+    repo.write("uifn/shared lib/src/index.ts", "export const shared = 2;\n");
+    repo.commit("change the external project's source");
+    const changed = check(repo.root);
+    assert.equal(changed.status, 1, changed.output);
+    assert.match(changed.output, /@uifn\/core: shipped code changed \(uifn\/shared lib\/src\/index\.ts\) but version is still 1\.0\.0/);
+    assert.doesNotMatch(changed.output, /outside uifn\/core/);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the shared project.\n\n## 1.0.0"));
+    repo.commit("bump core");
+    const bumped = check(repo.root);
+    assert.equal(bumped.status, 0, bumped.output);
+  });
+}
+
+for (const run of ["execFileSync('tsc', ['-b', '../shared', '../shared lib']);", "execSync('tsc -b ../shared \"../shared lib\"');"]) {
+  test(`every -b project counts, so declaring the first leaves the second guarded: ${run}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.write("uifn/shared/tsconfig.json", sharedProject);
+    repo.write("uifn/shared lib/tsconfig.json", sharedProject);
+    repo.write("uifn/core/scripts/build.mjs", `${run}\n`);
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/shared/tsconfig.json":"tsc builds it"'));
+    repo.commit("two external tsc projects, one declared");
+    const { status, output } = check(repo.root);
+    assert.equal(status, 1, output);
+    assert.match(output, /@uifn\/core: uifn\/core\/scripts\/build\.mjs refers to uifn\/shared lib\/tsconfig\.json, outside uifn\/core; declare it/);
+    assert.doesNotMatch(output, /refers to uifn\/shared\/tsconfig\.json/);
+  });
+}
+
+test("a build-file tsc project outside the package that no reading resolves fails closed", (t) => {
+  const repo = fixtureRepo(t);
+  repo.write("uifn/core/scripts/build.mjs", "execFileSync('tsc', ['-p', '../missing/tsconfig.json']);\n");
+  repo.commit("unresolvable external tsc project");
+  const { status, output } = check(repo.root);
+  assert.equal(status, 1, output);
+  assert.match(output, /@uifn\/core: uifn\/core\/scripts\/build\.mjs refers to uifn\/missing\/tsconfig\.json, outside uifn\/core; declare it/);
+});
+
+test("a build-file tsc run keeps in-package projects, and a .. path that is no tsconfig or project, or a reading that does not exist beside one of the same literal that does, is not an outside reference", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/shared/tsconfig.json", sharedProject);
   repo.write("uifn/core/tsconfig.json", '{ "compilerOptions": { "outDir": "dist" }, "include": ["src"] }');

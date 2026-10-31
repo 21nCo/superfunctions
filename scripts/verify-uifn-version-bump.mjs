@@ -351,9 +351,21 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
-    // The sweep is additive: a `..` tsconfig or project path, in string or argv form, from the package root (tsc's cwd) and this file's directory, stays guarded where it exists.
-    const words = sweep.length > 0 ? text.split(/[\s'"`,()[\]=;]+/) : [];
-    for (const [index, word] of words.entries()) if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || TSC_PROJECT_FLAG.test(words[index - 1]))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: true });
+    // The sweep is additive. Each string literal (a template literal may span lines) is read whole and as command words (quoted words kept whole); a `..` tsconfig or an operand of -p/--project/-b/--build
+    // (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root (tsc's cwd) and this file's directory, grouped by literal.
+    let flag = null;
+    let end = 0;
+    for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
+      if (!/^\s*,\s*$/.test(text.slice(end, start))) flag = null;
+      end = start + literal.length;
+      const value = body.replaceAll(/\\(.)/g, "$1");
+      const words = [value, ...[...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2"))];
+      for (const [index, word] of words.entries()) {
+        const operand = flag !== null && !word.startsWith("-");
+        if (index > 0) flag = TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(flag ?? "") ? flag : null;
+        if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || operand)) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
+      }
+    }
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
       const negated = /^!./.test(value);
@@ -361,7 +373,7 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
       for (const from of new Set([root, dir])) add(path.posix.join(from, value.slice(Number(negated))), { soft: true, list: enclosingBracket(text, index), ...(negated ? { negated } : {}) });
     }
   }
-  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}\0${reference.runs ?? ""}`, reference]));
+  const unique = new Map(found.map((reference) => [`${reference.target}\0${reference.soft}\0${reference.tsconfig ?? ""}\0${reference.bundled ?? ""}\0${reference.negated ?? ""}\0${reference.list ?? ""}\0${reference.emit ?? ""}\0${reference.runs ?? ""}\0${reference.candidate ?? ""}`, reference]));
   return [...unique.values()];
 }
 
@@ -610,12 +622,14 @@ export function findUndeclaredReferences({ name, packagePath, references, declar
   const covers = (entries, files) => files.length > 0 && files.every((file) => entries.some((entry) => isWithin(file, entry)));
   const resolved = new Map();
   const errors = [];
+  // A tsc project reading that resolves to no file is skipped only when another reading of the same literal resolves; otherwise it fails closed below.
+  const resolvedGroups = new Set(references.filter(({ target, candidate }) => candidate && resolveReference(target, inventory).files.length > 0).map(({ candidate }) => candidate));
   for (const { from, target, soft, bundled, tree, candidate } of references) {
     if (soft || isWithin(target, packagePath)) continue;
     const lookup = tree && inventory.dirs.has(target) ? `${target}/**` : target;
     if (!resolved.has(lookup)) resolved.set(lookup, resolveReference(lookup, inventory).files);
     const files = resolved.get(lookup);
-    if (candidate && files.length === 0) continue;
+    if (candidate && files.length === 0 && resolvedGroups.has(candidate)) continue;
     if (bundled) {
       // A specifier that resolves to nothing cannot be inlined (such as one inside generated code strings), so its own path is judged.
       const named = files.length > 0 ? files : [target];
