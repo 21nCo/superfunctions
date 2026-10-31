@@ -205,6 +205,8 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   return { key: sha256(JSON.stringify(identity)).slice(0, 40), scope: shared.length > 0 ? "shared" : "instance" };
 }
 
+const OUTCOMES = new Set<unknown>(["running", "succeeded", "failed", "timed-out", "cancelled", "interrupted"]);
+const EFFECTS = new Set<unknown>(["none", "applied", "unknown"]);
 const journalPath = (stateDir: string, key: string) => path.join(stateDir, "tasks", `${key}.json`);
 
 export async function readTaskJournal(stateDir: string, key: string): Promise<TaskJournal | undefined> {
@@ -218,7 +220,11 @@ export async function readTaskJournal(stateDir: string, key: string): Promise<Ta
   let value: TaskJournal;
   try { value = JSON.parse(raw) as TaskJournal; }
   catch { value = undefined as unknown as TaskJournal; }
-  if (!value || value.version !== 1 || !Array.isArray(value.attempts) || value.attempts.some((attempt) => !attempt || typeof attempt.outcome !== "string")) {
+  // Every attempt and success is complete evidence: a known outcome and effects, a launcher until verified stopped, and a success's revision.
+  const complete = (attempt: TaskAttempt | null) => !!attempt && OUTCOMES.has(attempt.outcome) && EFFECTS.has(attempt.effects) && typeof attempt.inputRevision === "string"
+    && (attempt.stopped === true || (Number.isInteger(attempt.launcher?.pid) && attempt.launcher!.pid > 0));
+  if (!value || value.version !== 1 || !Array.isArray(value.attempts) || !value.attempts.every(complete)
+    || (value.lastSuccess === undefined ? value.attempts.some((attempt) => attempt.outcome === "succeeded") : typeof value.lastSuccess?.inputRevision !== "string")) {
     // A completion record is evidence of work done to real systems; DevFn never guesses it.
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task journal ${file} is malformed; restore it, or remove it to treat the task as never run.`);
   }

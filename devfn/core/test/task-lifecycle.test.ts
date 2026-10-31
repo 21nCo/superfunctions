@@ -552,6 +552,37 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     } finally { await env.cleanup(); }
   }, 60_000);
 
+  it("rejects a journal whose attempts or success are incomplete before any decision, explicit reruns too", async () => {
+    const env = await fixture("incomplete", { idempotent: true });
+    try {
+      const { key } = taskScope(env.config, env.identity.instanceId, { name: "migrate", kind: "process" });
+      await mkdir(path.join(env.stateDir, "tasks"), { recursive: true });
+      const at = new Date().toISOString();
+      const base = { invocationId: "i", instanceId: env.identity.instanceId, attempt: 1, inputRevision: "x", startedAt: at, endedAt: at };
+      const success = { inputRevision: "x", invocationId: "i", instanceId: env.identity.instanceId, completedAt: at };
+      const write = async (journal: Record<string, unknown>) => await writeFile(path.join(env.stateDir, "tasks", `${key}.json`), JSON.stringify({ version: 1, task: "migrate", scope: "instance", ...journal }));
+      // Shapes DevFn writes still parse: a success, a stopped failure, an interrupted attempt and a gate-closed one.
+      await write({ lastSuccess: success, attempts: [{ ...base, outcome: "succeeded", effects: "applied", stopped: true, launcher: { pid: 1 } },
+        { ...base, outcome: "failed", effects: "unknown", stopped: true, launcher: { pid: 1 } }, { ...base, outcome: "interrupted", effects: "unknown", stopped: true, launcher: { pid: 1 } },
+        { ...base, outcome: "cancelled", effects: "none", stopped: true }] });
+      expect((await env.journal())?.attempts).toHaveLength(4);
+      for (const journal of [
+        { attempts: [{ ...base, outcome: "succeeded", effects: "applied", stopped: true }] },
+        { attempts: [{ ...base, outcome: "failed", effects: "unknown", stopped: false }] },
+        { attempts: [{ ...base, outcome: "running", effects: "unknown", launcher: { pid: "1" } }] },
+        { attempts: [{ ...base, outcome: "done", effects: "unknown", stopped: true }] },
+        { attempts: [{ ...base, outcome: "failed", effects: "reverted", stopped: true }] },
+        { lastSuccess: { ...success, inputRevision: 1 }, attempts: [{ ...base, outcome: "succeeded", effects: "applied", stopped: true }] },
+      ]) {
+        await write(journal);
+        await expect(env.journal()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+        await expect(env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir, rerunTasks: ["migrate"] })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      }
+      expect(await env.runs()).toHaveLength(0);
+      expect(await readReceipt(env.config, env.root, env.identity.instanceId)).toBeNull();
+    } finally { await env.cleanup(); }
+  }, 60_000);
+
   it("stops what an earlier attempt left running before the task runs again, and blocks every start while that cannot be verified", async () => {
     const env = await fixture("leftover", { idempotent: true });
     // A process group an earlier attempt could not be verified to stop.
