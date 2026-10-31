@@ -33,9 +33,9 @@ _FOREIGN_POLL_SECONDS = 0.05
 _active_handlers: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
     "logfn_active_handlers", default=frozenset()
 )
-# The scheduled call a sink runs in, and the calls whose sinks await flush(): flush() never waits for those.
+# The scheduled call a sink runs in, and each open flush() drain's caller, once per drain (atomic list ops).
 _sink_call: contextvars.ContextVar[asyncio.Task[Any] | None] = contextvars.ContextVar("logfn_sink_call", default=None)
-_flushing_calls: set[asyncio.Task[Any] | None] = set()
+_flushing_calls: list[asyncio.Task[Any] | None] = []
 
 
 def default_now() -> datetime:
@@ -264,7 +264,8 @@ class Logger:
         is no longer waited for: nothing would run it. Returns whether any
         call was waited for."""
         loop = asyncio.get_running_loop()
-        skip = {asyncio.current_task(), _sink_call.get(), *_flushing_calls.copy()}
+        caller = _sink_call.get()  # Only a sink call skips calls that are flushing: it could wait on itself.
+        skip = {asyncio.current_task(), caller, *(_flushing_calls.copy() if caller is not None else ())}
         own: list[asyncio.Future[Any]] = []
         foreign: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
         # Other threads add and discard tasks meanwhile: read a copy (set.copy
@@ -306,7 +307,7 @@ class Logger:
         # Also waits for calls an on_error starts meanwhile, for at most 16
         # rounds, so an on_error that keeps logging cannot hold flush().
         caller = _sink_call.get()
-        _flushing_calls.add(caller)
+        _flushing_calls.append(caller)
         try:
             for _ in range(16):
                 if not await self._wait_pending():
@@ -314,7 +315,7 @@ class Logger:
         except Exception as error:
             self._report(error, {})
         finally:
-            _flushing_calls.discard(caller)
+            _flushing_calls.remove(caller)
 
     async def flush(self) -> None:
         """Wait for async sink calls scheduled before the call, also on other

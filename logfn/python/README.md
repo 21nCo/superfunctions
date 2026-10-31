@@ -66,12 +66,11 @@ adds an HTTP sink only when `url` is given.
   at once or its awaitable fails later in a task (also through child loggers
   or another logger's `on_error`); that failure goes to stderr instead, so
   one error cannot start a loop.
-  `flush()` also waits, before and after flushing the sinks and for up to 16 rounds, for sink calls an `on_error` starts meanwhile; it never waits for the sink call awaiting it, nor for calls whose sinks await `flush()` too.
+  `flush()` also waits, before and after flushing the sinks and for up to 16 rounds, for sink calls an `on_error` starts meanwhile; awaited inside a sink call, it never waits for that call nor for calls whose sinks are awaiting `flush()`.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
-  stack, cause}` (`stack` is the error's own traceback, its last 64 frames; `cause` is
-  `__cause__`), cycles become `"[circular]"` and unknown objects become
+  stack, cause}` (`stack` is the error's own traceback, its last 64 frames with each file, function and source line cut to 200 characters; `cause` is `__cause__`, else `__context__` unless suppressed), cycles become `"[circular]"` and unknown objects become
   `"[unserializable]"`. Binary data (`bytes`, `bytearray`, `memoryview`)
   becomes `"[unserializable]"` too, also in the redaction stage: no text rule
   could find a secret in its bytes.

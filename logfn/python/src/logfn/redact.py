@@ -7,6 +7,7 @@ together.
 
 from __future__ import annotations
 
+import linecache
 import re
 import traceback
 from collections.abc import Callable, Iterable
@@ -508,10 +509,11 @@ def _child_path(path: str, key: str) -> str:
 
 
 def format_exception_stack(error: BaseException, message: str | None = None) -> str:
-    """The traceback text used as an error's ``stack``: its last 64 frames and
-    ``Type: message`` line. Causes are not walked; each is serialized on its own."""
+    """``stack``: the last 64 frames, file, function and source line cut to 200 characters, and ``Type: message``."""
     text = exception_message(error) if message is None else message
-    frames = traceback.format_list(traceback.extract_tb(error.__traceback__, limit=-64))
+    summary = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__), limit=-64, lookup_lines=False)
+    cut = [(f.filename[:200], f.lineno or 0, f.name[:200], linecache.getline(f.filename, f.lineno or 0)[:400].strip()[:200]) for f in summary]
+    frames = traceback.StackSummary.from_list(cut).format()
     head = ["Traceback (most recent call last):\n"] if frames else []
     return "".join([*head, *frames, f"{type(error).__name__}: {text}\n" if text else f"{type(error).__name__}\n"])
 

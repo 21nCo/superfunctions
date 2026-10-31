@@ -1,9 +1,12 @@
 import asyncio
 import decimal
 import json
+import linecache
 import random
 import re
 import time
+import tracemalloc
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -606,3 +609,73 @@ def test_an_error_stack_keeps_the_newest_frames_and_is_redacted() -> None:
     assert stack.startswith("Traceback (most recent call last):\n")
     assert "raise ValueError" in stack and stack.endswith("ValueError: password=[redacted]\n")
     assert "hunter2" not in stack
+
+
+def _raise_in_handler(cause: BaseException | None, suppress: bool = False) -> RuntimeError:
+    try:
+        try:
+            raise ValueError("the actual database failure token=abc")
+        except ValueError:
+            if suppress:
+                raise RuntimeError("request failed") from cause
+            raise RuntimeError("request failed")  # noqa: B904 - the implicit context is the point
+    except RuntimeError as error:
+        return error
+
+
+def test_an_error_keeps_the_chain_python_shows() -> None:
+    implicit = redact_event(make_event(ctx={"err": _raise_in_handler(None)}))["ctx"]["err"]
+    assert implicit["cause"]["name"] == "ValueError"
+    assert implicit["cause"]["message"] == "the actual database failure token=[redacted]"
+    assert "abc" not in json.dumps(implicit)
+
+    explicit = sanitize_value(_raise_in_handler(KeyError("lookup"), suppress=True))
+    assert explicit["cause"]["name"] == "KeyError"
+    assert "database failure" not in json.dumps(explicit)
+
+    assert "cause" not in sanitize_value(_raise_in_handler(None, suppress=True))
+
+
+def test_an_implicit_chain_is_bounded_like_a_cause_chain() -> None:
+    first, second = ValueError("first"), ValueError("second")
+    first.__context__, second.__context__ = second, first
+    assert sanitize_value(first)["cause"]["cause"] == "[circular]"
+
+    head: _Counted | None = None
+    for index in range(10_000):
+        error = _Counted(f"m{index}")
+        error.__context__ = head
+        head = error
+    _Counted.calls = 0
+    assert "[max-depth]" in json.dumps(sanitize_value(head))
+    assert _Counted.calls == MAX_REDACTION_DEPTH
+
+
+def test_an_error_stack_cuts_long_source_lines_before_copying_them(tmp_path: Path) -> None:
+    # Every frame's source line is about 1M characters, through 100 recursive calls.
+    module = tmp_path / "long_lines.py"
+    tail = "  # password=hunter2 " + "x" * 1_000_000
+    module.write_text(
+        "def recurse(depth):\n"
+        f"    recurse(depth - 1) if depth else fail(){tail}\n"
+        "def fail():\n"
+        f"    raise ValueError('boom'){tail}\n"
+    )
+    namespace: dict[str, Any] = {}
+    exec(compile(module.read_text(), str(module), "exec"), namespace)
+    try:
+        namespace["recurse"](100)
+    except ValueError as error:
+        failure = error
+    linecache.getline(str(module), 1)  # The file is cached once, as by any traceback.
+
+    tracemalloc.start()
+    try:
+        stack = sanitize_value(failure)["stack"]
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 200_000
+    assert len(stack) < 64 * 700 and stack.endswith("ValueError: boom\n")
+    assert "    raise ValueError('boom')  # password=hunter2 xxx" in stack
+    assert "hunter2" not in redact_event(make_event(ctx={"err": failure}))["ctx"]["err"]["stack"]

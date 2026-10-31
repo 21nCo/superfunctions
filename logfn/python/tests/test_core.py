@@ -755,3 +755,88 @@ def test_a_flush_a_sink_awaits_still_waits_for_other_calls() -> None:
 
     asyncio.run(scenario())
     assert order == ["slow sent", "flush returned"]
+
+
+@pytest.mark.parametrize("via", ["logger", "child"])
+def test_an_overlapping_flush_does_not_end_the_exclusion_of_a_flushing_call(via: str) -> None:
+    # Sink A flushes the logger, completes a flush of another logger meanwhile, then lets
+    # sink B flush the logger: A is still flushing, so B must not wait for it.
+    delivered: list[str] = []
+
+    async def scenario() -> None:
+        start_b = asyncio.Event()
+
+        async def sink(batch: list[LogEvent]) -> None:
+            if batch[0]["msg"] == "a":
+                waiting = asyncio.ensure_future(flusher.flush())
+                await asyncio.sleep(0)  # A's drain is open and waits for B.
+                await asyncio.wait_for(auxiliary.flush(), 2)
+                start_b.set()
+                await asyncio.wait_for(waiting, 2)
+            else:
+                await start_b.wait()
+                await asyncio.wait_for(flusher.flush(), 2)
+            delivered.append(batch[0]["msg"])
+
+        logger = create_logger("svc", sinks=[sink], on_error=lambda error, context: delivered.append(repr(error)))
+        auxiliary = create_logger("aux", sinks=[MockSink()])
+        flusher = logger.child(name="child") if via == "child" else logger
+        logger.info("a")
+        logger.info("b")
+        await asyncio.wait_for(logger.flush(), 5)
+
+    asyncio.run(scenario())
+    assert sorted(delivered) == ["a", "b"]
+
+
+@pytest.mark.parametrize("via", ["logger", "child", "other loop"])
+def test_a_flush_outside_sinks_waits_for_a_call_that_is_flushing(via: str) -> None:
+    # Sink A awaits another logger's flush, held by a gate. A flush made outside
+    # every sink call must still wait for A's delivery.
+    gate = threading.Event()
+    flushing = threading.Event()
+    delivered: list[str] = []
+
+    async def held(batch: list[LogEvent]) -> None:
+        await asyncio.to_thread(gate.wait, 5)
+
+    other = create_logger("other", sinks=[held])
+
+    async def sink(batch: list[LogEvent]) -> None:
+        other.info("held")
+        flushing.set()
+        await other.flush()
+        delivered.append(batch[0]["msg"])
+
+    logger = create_logger("svc", sinks=[sink], on_error=lambda error, context: delivered.append(repr(error)))
+    flusher = logger if via == "logger" else logger.child(name="child")
+    stop = threading.Event()
+
+    def other_loop() -> None:
+        async def main() -> None:
+            flusher.info("a")
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+
+        asyncio.run(main())
+
+    async def scenario() -> None:
+        if via == "other loop":
+            threading.Thread(target=other_loop, daemon=True).start()
+        else:
+            flusher.info("a")
+        assert await asyncio.to_thread(flushing.wait, 5)
+        await asyncio.sleep(0.05)  # A is inside its flush.
+        outer = asyncio.ensure_future(flusher.flush())
+        await asyncio.sleep(0.2)
+        returned_early = outer.done()
+        gate.set()
+        await asyncio.wait_for(outer, 5)
+        assert not returned_early, "flush returned while a flushing sink call was still delivering"
+        assert delivered == ["a"]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        gate.set()
+        stop.set()
