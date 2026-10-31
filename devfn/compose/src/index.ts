@@ -301,7 +301,11 @@ async function selectedInventoryResources(inventory: ComposeSourceInventory,
   if (!service) return {};
   const names = new Map<ComposeResourceKind, string[]>();
   for (const kind of COMPOSE_RESOURCE_KINDS) {
-    const written = referencedResourceNames(kind, service[kind]);
+    // A short volume entry is interpolated whole before its source is split
+    // off, since a default such as ${VOLUME:-data} itself contains a colon.
+    const written = kind === "volumes" && Array.isArray(service.volumes)
+      ? service.volumes.flatMap((entry: unknown) => typeof entry === "string" ? [entry] : referencedResourceNames(kind, [entry]))
+      : referencedResourceNames(kind, service[kind]);
     const resolved = await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes);
     names.set(kind, kind === "volumes" ? resolved.map((reference) => reference.split(":", 1)[0]) : resolved);
   }
@@ -1199,7 +1203,7 @@ async function credentialSafeComposeConfiguration(input: CredentialSafeComposeIn
   }
 }
 
-/** Env-file declarations with secret-channel and credential-named values masked; the file's absence counts too. */
+/** Interpolation .env declarations with secret-channel and credential-named values masked; the file's absence counts too. */
 async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<string>): Promise<unknown> {
   try {
     return (await readComposeEnvDefinitions(file)).declarations.map(([name, value]) =>
@@ -1208,6 +1212,28 @@ async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<stri
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+/**
+ * An env_file's declarations as the startup fingerprint reads them (dotted,
+ * hyphenated and bare names too; a raw-format file line by line), with the
+ * same values masked; the file's absence counts too.
+ */
+async function maskedEnvFileDeclarations(file: string, format: string | undefined, secretNames: ReadonlySet<string>,
+  budget: { remaining: number }): Promise<unknown> {
+  const content = await readEnvFileContent(file, true, budget.remaining).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (content === undefined) return null;
+  budget.remaining -= Buffer.byteLength(content);
+  const declarations: Array<[string, string | null]> = format === "raw"
+    ? content.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim() !== "").map((line) => {
+      const separator = line.indexOf("=");
+      return separator < 0 ? [line, null] : [line.slice(0, separator), line.slice(separator + 1)];
+    })
+    : envFileAssignments(content);
+  return declarations.map(([name, value]) => [name, secretNames.has(name) || isCredentialKey(name) ? "<secret-channel>" : value]);
 }
 
 /** Build arguments with secret-channel and credential-named values masked, as environment entries are. */
@@ -1228,7 +1254,8 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * (file and the directory its relative paths resolve against), the volumes,
  * networks, configs and secrets it references (resolved as Compose resolves
  * them, including the implicit default network) with the file declaring each,
- * and the declarations of its env_file and interpolation .env files. Paths are
+ * and the declarations of its env_file (read as the startup fingerprint reads
+ * them) and interpolation .env files. Paths are
  * relative to the canonical repository root, so every worktree and spelling
  * of one source agrees. As in the startup fingerprint, only values are
  * masked: those of secret-channel and credential-named environment entries,
@@ -1251,10 +1278,11 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
     const entries = envFileDeclarations(inventory);
     const resolved = await resolvedEnvFilePaths(entries, inventory, createScopedPathInterpolator(environment, deadline, implicitInterpolationKeys(spec)));
     envFiles = [];
+    const budget = { remaining: 10 * 1024 * 1024 };
     for (const [index, entry] of entries.entries()) {
       // A selected path is hashed as written; the file it selects counts by its declarations.
       envFiles.push({ path: entry.path.includes("$") ? entry.path : await relative(resolved[index]), required: entry.required ?? true, format: entry.format ?? null,
-        declarations: await maskedEnvDeclarations(resolved[index], secretNames) });
+        declarations: await maskedEnvFileDeclarations(resolved[index], entry.format, secretNames, budget) });
     }
   } catch (error) {
     throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to read the env_file sources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);

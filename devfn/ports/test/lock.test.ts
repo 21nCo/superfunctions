@@ -442,3 +442,35 @@ it("supersedes a recoverer killed while taking a dead holder's lock over, but ne
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("never acquires a lock or runs the action for a caller cancelled before or while acquiring it", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-cancel-"));
+  const lockPath = path.join(dir, "routing.lock");
+  let ran = 0;
+  try {
+    // Already cancelled, with the lock free.
+    await expect(withFileLock(lockPath, async () => { ran += 1; }, { signal: AbortSignal.abort() })).rejects.toMatchObject({ name: "AbortError" });
+    // Cancelled after the lock directory was created, before the action.
+    const claiming = new AbortController();
+    fsHooks.beforeOwnerWrite = async () => { claiming.abort(); };
+    await expect(withFileLock(lockPath, async () => { ran += 1; }, { signal: claiming.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(await readdir(dir)).toEqual([]);
+    // Cancelled while waiting, just as the holder releases: the claim that follows still does not run the action.
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { entered = resolve; });
+    const holder = withFileLock(lockPath, async () => { entered(); await new Promise<void>((resolve) => { release = resolve; }); });
+    await held;
+    const waiting = new AbortController();
+    const waiter = withFileLock(lockPath, async () => { ran += 1; }, { signal: waiting.signal, timeoutMs: 10_000 });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    fsHooks.beforeClaim = async () => { waiting.abort(); release(); await holder; };
+    await expect(waiter).rejects.toMatchObject({ name: "AbortError" });
+    expect(ran).toBe(0);
+    expect(await readdir(dir)).toEqual([]);
+    // Nothing a cancelled caller did keeps the next one out.
+    await expect(withFileLock(lockPath, async () => "next", { timeoutMs: 1_000 })).resolves.toBe("next");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
