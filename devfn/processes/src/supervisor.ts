@@ -52,6 +52,33 @@ export async function prepareProcessLog(logPath: string, resetSensitiveHistory: 
 const RUN_DRAIN_MS = 1_000;
 const MAX_TIMER_MS = 2_147_483_647;
 
+type ExitStatus = { code: number | null; signal: NodeJS.Signals | null };
+type RunLimit = "timed-out" | "cancelled";
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** The first of a run's timeout and its abort signal, once either is reached. */
+function runLimit(timeoutMs: number, signal?: AbortSignal) {
+  let current: RunLimit | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  const reached = new Promise<RunLimit>((resolve) => {
+    const reach = (limit: RunLimit) => { current ??= limit; resolve(current); };
+    timer = setTimeout(() => reach("timed-out"), timeoutMs);
+    onAbort = () => reach("cancelled");
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  return { reached, current: () => current, dispose: () => { clearTimeout(timer); if (onAbort) signal?.removeEventListener("abort", onAbort); } };
+}
+
+function runResult(managed: ManagedProcess, ended: ExitStatus | RunLimit, stopError: string | undefined, error: string | undefined): ProcessRunResult {
+  let outcome: ProcessRunResult["outcome"];
+  if (typeof ended === "string") outcome = ended;
+  else outcome = ended.code === 0 ? "succeeded" : "failed";
+  const status = typeof ended === "string" ? { code: null, signal: null } : ended;
+  return { outcome, exitCode: status.code, signal: status.signal, process: managed, ...(error ? { error } : {}), ...(stopError ? { stopError } : {}) };
+}
+
 export class ProcessSupervisor {
   public async start(input: StartProcessInput): Promise<ManagedProcess> {
     const command = resolveAdapterCommand(input.spec);
@@ -79,7 +106,8 @@ export class ProcessSupervisor {
    * starts only after onStarted recorded its identity (a failed recording
    * means it never ran), and a timeout or abort stops its whole process
    * group. Whatever it left in its group is stopped once it exits. Only exit
-   * code 0 succeeds; nothing the command changed is undone.
+   * code 0 succeeds; nothing the command changed is undone. Both limits bound
+   * the recording too: a run that throws never ran its command.
    */
   public async run(input: RunProcessInput): Promise<ProcessRunResult> {
     // A timer clamps anything else to 1 ms, which would end every run at once.
@@ -93,48 +121,54 @@ export class ProcessSupervisor {
     if (exited()) settle({ code: child.exitCode, signal: child.signalCode });
     else child.once("exit", (code, signal) => settle({ code, signal }));
     // Once stopped, or past stopping, the wrapper no longer holds the caller's event loop open.
-    const stop = async () => {
-      try { await stopProcessGroup(managed, managed.name, input.shutdownTimeoutMs ?? 10_000, { ownGroup: { leaderUnreaped: () => !exited() } }); }
+    // A stop failure never hides the command's own outcome; the caller reports both.
+    const stop = async (): Promise<string | undefined> => {
+      try { await stopProcessGroup(managed, managed.name, input.shutdownTimeoutMs ?? 10_000, { ownGroup: { leaderUnreaped: () => !exited() } }); return undefined; }
+      catch (error) { return errorMessage(error); }
       finally { child.unref(); }
     };
     child.ref();
+    // The timeout and abort bound the whole run: the identity recording and the gate too.
+    const limit = runLimit(input.timeoutMs, input.signal);
     try {
-      await input.onStarted?.(managed);
-      if (input.signal?.aborted) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} was cancelled before it started.`);
-    } catch (error) {
-      // Closing the channel before the gate opens makes the wrapper exit without running the command.
+      const unstarted = await this.recordIdentity(input, managed, limit);
+      if (unstarted) {
+        // Closing the channel before the gate opens makes the wrapper exit without running the command.
+        if (child.connected) child.disconnect();
+        const stopError = await stop();
+        throw stopError ? new ProcessError("DEVFN_PROCESS_START_FAILED", errorMessage(unstarted.reason), { stopError }) : unstarted.reason;
+      }
+      const gate = openLaunchGate(child);
+      gate.catch(() => undefined);
+      let ended: ExitStatus | RunLimit;
+      let error: string | undefined;
+      try { ended = await Promise.race([gate.then(() => exit), limit.reached]); }
+      catch (error_) {
+        // The wrapper may have received the gate and started the command, so it ends as a failed run.
+        ended = { code: null, signal: null };
+        error = errorMessage(error_);
+      }
       if (child.connected) child.disconnect();
-      await exit;
-      throw error;
+      return runResult(managed, ended, await stop(), error);
+    } finally {
+      limit.dispose();
     }
-    try { await openLaunchGate(child); }
-    catch (error) {
-      // The wrapper may have received the gate and started the command, so it ends as a failed run.
-      if (child.connected) child.disconnect();
-      let stopError: string | undefined;
-      try { await stop(); } catch (failure) { stopError = failure instanceof Error ? failure.message : String(failure); }
-      return { outcome: "failed", exitCode: null, signal: null, process: managed, error: error instanceof Error ? error.message : String(error), ...(stopError ? { stopError } : {}) };
-    }
-    if (child.connected) child.disconnect();
-    let timer: NodeJS.Timeout | undefined;
-    let onAbort: (() => void) | undefined;
-    const limited = new Promise<"timed-out" | "cancelled">((resolve) => {
-      timer = setTimeout(() => resolve("timed-out"), input.timeoutMs);
-      onAbort = () => resolve("cancelled");
-      if (input.signal?.aborted) onAbort();
-      else input.signal?.addEventListener("abort", onAbort, { once: true });
-    });
-    const outcome = await Promise.race([exit, limited]);
-    clearTimeout(timer);
-    if (onAbort) input.signal?.removeEventListener("abort", onAbort);
-    // A stop failure never hides the command's own outcome; the caller reports both.
-    let stopError: string | undefined;
-    try { await stop(); } catch (error) { stopError = error instanceof Error ? error.message : String(error); }
-    const status = typeof outcome === "string" ? { code: null, signal: null } : outcome;
-    return {
-      outcome: typeof outcome === "string" ? outcome : outcome.code === 0 ? "succeeded" : "failed",
-      exitCode: status.code, signal: status.signal, process: managed, ...(stopError ? { stopError } : {}),
-    };
+  }
+
+  /**
+   * Await onStarted within the run's limits. Returns why the command must
+   * never run, or undefined once its identity is recorded in time. A
+   * recording that settles after the run gave up never opens the gate.
+   */
+  private async recordIdentity(input: RunProcessInput, managed: ManagedProcess, limit: ReturnType<typeof runLimit>): Promise<{ reason: unknown } | undefined> {
+    const recorded = Promise.resolve().then(async () => { await input.onStarted?.(managed); });
+    recorded.catch(() => undefined);
+    let reached: RunLimit | undefined;
+    try { reached = await Promise.race([recorded.then(() => limit.current()), limit.reached]); }
+    catch (error) { return { reason: error }; }
+    if (reached === undefined) return undefined;
+    const why = reached === "timed-out" ? `timed out after ${input.timeoutMs} ms` : "was cancelled";
+    return { reason: new ProcessError("DEVFN_PROCESS_START_FAILED", `Task ${input.name} ${why} before it started.`) };
   }
 
   /** Spawn the gated wrapper for a command, its identity read and its output going to a private log. */

@@ -5,12 +5,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { processExists } from "@devfn/config";
+
 import type { runGatedCommand as GatedRunner } from "../src/gated.js";
 import type { ProcessSupervisor as Supervisor } from "../src/supervisor.js";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// A zombie (an exited process its parent, or a container PID 1, never reaped) counts as gone.
+const alive = (pid: number) => processExists(pid);
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A run launches the compiled wrapper next to the supervisor, which the
 // package's own build may not provide yet, so its sources are transpiled
@@ -92,6 +96,50 @@ describe.skipIf(process.platform === "win32")("finite process runs", () => {
       .rejects.toMatchObject({ code: "DEVFN_PROCESS_START_FAILED" });
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(await exists(path.join(root, "ran"))).toBe(false);
+  }, 60_000);
+
+  // The command must still never run once the run gave up waiting for its recording.
+  it("bounds the identity recording by the run's timeout and abort, and never runs a command recorded late", async () => {
+    const { root, base } = await workspace("recording");
+    const command = [process.execPath, "-e", "require('fs').writeFileSync('ran', '1')"];
+    const wrappers: number[] = [];
+    let started = Date.now();
+    await expect(new ProcessSupervisor().run({ ...base, name: "unsettled", timeoutMs: 1_000, command,
+      onStarted: async (managed) => { wrappers.push(managed.pid); await new Promise(() => undefined); } })).rejects.toThrow("timed out after 1000 ms before it started");
+    expect(Date.now() - started).toBeLessThan(10_000);
+    let late!: () => void;
+    await expect(new ProcessSupervisor().run({ ...base, name: "late", timeoutMs: 1_000, command,
+      onStarted: async (managed) => { wrappers.push(managed.pid); await new Promise<void>((resolve) => { late = resolve; }); } })).rejects.toMatchObject({ code: "DEVFN_PROCESS_START_FAILED" });
+    late();
+    const controller = new AbortController();
+    started = Date.now();
+    await expect(new ProcessSupervisor().run({ ...base, name: "aborted", signal: controller.signal, command,
+      onStarted: async (managed) => { wrappers.push(managed.pid); controller.abort(); await delay(1_000); } })).rejects.toThrow("was cancelled before it started");
+    expect(Date.now() - started).toBeLessThan(10_000);
+    await delay(1_500);
+    expect(await exists(path.join(root, "ran"))).toBe(false);
+    expect(wrappers.filter(alive)).toEqual([]);
+  }, 60_000);
+
+  // A stopped wrapper cannot acknowledge its gate; the run's limits still end it and stop its group.
+  it("bounds the launch gate acknowledgement by the run's timeout and abort", async () => {
+    const { base } = await workspace("gate-ack");
+    const command = [process.execPath, "-e", "setTimeout(() => {}, 60000)"];
+    const freeze = async (managed: { pid: number }) => { process.kill(managed.pid, "SIGSTOP"); };
+    let started = Date.now();
+    const timedOut = await new ProcessSupervisor().run({ ...base, name: "unacknowledged", timeoutMs: 1_500, shutdownTimeoutMs: 500, command, onStarted: freeze });
+    expect(timedOut).toMatchObject({ outcome: "timed-out", exitCode: null, signal: null });
+    expect(timedOut.stopError).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(alive(timedOut.process.pid)).toBe(false);
+    const controller = new AbortController();
+    started = Date.now();
+    const cancelled = await new ProcessSupervisor().run({ ...base, name: "unacknowledged", signal: controller.signal, shutdownTimeoutMs: 500, command,
+      onStarted: async (managed) => { await freeze(managed); setTimeout(() => controller.abort(), 300); } });
+    expect(cancelled).toMatchObject({ outcome: "cancelled", exitCode: null, signal: null });
+    expect(cancelled.stopError).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(alive(cancelled.process.pid)).toBe(false);
   }, 60_000);
 
   it("ends when its command exits although a descendant still holds its output, and stops that descendant", async () => {
