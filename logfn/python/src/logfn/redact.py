@@ -516,8 +516,7 @@ def format_exception_stack(error: BaseException, message: str | None = None) -> 
         return name if len(name) <= 200 else MAX_SIZE
     walk = deque(traceback.walk_tb(error.__traceback__), maxlen=64)
     frames = traceback.StackSummary.from_list([(fit(f.f_code.co_filename), n, fit(f.f_code.co_name), "") for f, n in walk]).format()
-    head = ["Traceback (most recent call last):\n"] if frames else []
-    return "".join([*head, *frames, f"{type(error).__name__}: {text}\n" if text else f"{type(error).__name__}\n"])
+    return "".join(["Traceback (most recent call last):\n" if frames else "", *frames, f"{type(error).__name__}{': ' if text else ''}{text}\n"])
 
 
 def exception_message(error: BaseException) -> str:
