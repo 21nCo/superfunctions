@@ -270,3 +270,36 @@ MIT License - see LICENSE file for details.
 - [Documentation](https://sendfn.com/docs)
 - [GitHub](https://github.com/21nCo/super-functions)
 - [Issues](https://github.com/21nCo/super-functions/issues)
+
+### SES operation ownership and shutdown
+
+`AwsSesConfig` accepts `connectTimeout`/`readTimeout` (seconds, greater than zero,
+at most120; defaults5/10) and an optional trusted `endpointUrl`. The default uses
+the AWS regional endpoint. Overrides must use HTTP(S) without embedded credentials
+or fragments; use HTTPS for production. Credentials remain explicit. The SDK makes
+**one HTTP attempt per provider call**; SendFn's higher-level retry/backoff policy
+remains responsible for any retry. This removes hidden multiplication of retries
+inside Botocore.
+
+A fully settled client-construction failure can be retried by a later call;
+concurrent callers share one construction task. Cancelled construction remains
+owned, and closing prevents any new construction attempt.
+
+Provider initialization, sends and health checks run off the event loop and remain
+tracked if their awaiting caller cancels. `pending_operations` reports outstanding
+SDK operations. Cancellation means the external result is unknown: it does not
+cancel an already running thread, and must not be interpreted as permission to send
+the same email again. `close()` stops new admissions, drains admitted operations,
+and then closes the SDK client. Cancelling a `close()` await leaves its drain owned;
+await `close()` again on the same event loop to observe completion. Do not close the
+event loop or discard the provider until that drain completes. A close failure is
+retained for subsequent close awaits, including when its original caller cancelled;
+detached failures are consumed without logging raw errors, not converted to success.
+
+Socket bounds are **not a hard overall wall-clock deadline**: DNS resolution or a
+peer that keeps supplying bytes can extend operation/drain time. A shutdown that
+cannot finish draining has outstanding work and is not cleanly complete. Use a
+process-level supervisor if hard termination is required. Provider instances are
+bound to their first async event loop and cannot be reused on another loop or
+reopened after close. These semantics cover the real SES provider, not arbitrary
+application-supplied providers.
