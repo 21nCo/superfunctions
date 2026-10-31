@@ -351,20 +351,19 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   if (buildFile) {
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
-    // The sweep is additive. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig, then as words: an argv array element is one word unless it is a tsc command line (`sh -c`),
-    // other literals split (quoted words kept whole). A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
-    let flag = null;
-    let end = 0;
+    // The sweep is additive. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig. An argv array element, by its position whatever its text, is one word that sets, carries or consumes the flag;
+    // only after a shell -c option is it also a command string, split with fresh flag state that nothing carries into or out of. Other literals split, carrying the flag (quoted words kept whole). A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
+    let [flag, end] = [null, 0];
     for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
-      if (!/^\s*,\s*$/.test(text.slice(end, start))) flag = null;
-      end = start + literal.length;
-      const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(text.slice(Math.max(0, start - 4096), start).trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "[" && !/\btsc\b/.test(body)];
-      const words = [value, ...(argvElement ? [value] : [...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2")))];
-      for (const [index, word] of words.entries()) {
-        const operand = index > 0 && flag !== null && !word.startsWith("-");
-        if (index > 0) flag = TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(flag ?? "") ? flag : null;
-        if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || operand)) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
-      }
+      [flag, end] = [/^\s*,\s*$/.test(text.slice(end, start)) ? flag : null, start + literal.length];
+      const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(text.slice(Math.max(0, start - 4096), start).trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "["];
+      const words = [...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2"));
+      const read = (list, state) => list.reduce((carried, word) => {
+        if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || (carried !== null && !word.startsWith("-")))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
+        return TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(carried ?? "") ? carried : null;
+      }, state);
+      if (!argvElement || /(['"`])-[a-z]*c\1\s*,\s*$/.test(text.slice(Math.max(0, start - 64), start))) read(argvElement ? words : [value], null);
+      flag = read(argvElement ? [value] : words, flag);
     }
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
