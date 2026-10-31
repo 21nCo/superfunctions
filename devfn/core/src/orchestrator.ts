@@ -831,6 +831,7 @@ export class DevFnOrchestrator {
           receipt.publicUrls = urls;
         } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);
+        if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled.");
         clearInterval(heartbeat);
         await registry.markActive(invocationId, startupOwners(options.config, receipt));
         receipt.state = "ready";

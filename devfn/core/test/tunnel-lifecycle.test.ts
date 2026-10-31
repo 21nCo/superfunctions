@@ -123,6 +123,27 @@ it.skipIf(process.platform === "win32")("withdraws, rather than relaunches, the 
   await orchestrator.down({ config, root, stateDir });
 }, 60_000);
 
+it("rolls back, rather than ends ready, a start cancelled while its public routes are published", async () => {
+  await registerPreview();
+  await stubLifecycleHost();
+  const controller = new AbortController();
+  const orchestrator = new DevFnOrchestrator({ ...overrides, probeOrigin: async () => { controller.abort(); } });
+  await expect(orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true, signal: controller.signal }))
+    .rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } });
+  const identity = await resolveInstanceIdentity("fixture", root);
+  const receipt = JSON.parse(await readFile(path.join(root, ".devfn", "instances", identity.instanceId, "receipt.json"), "utf8")) as { state: string; processes: Array<{ pid: number }> };
+  expect(receipt.state).toBe("failed");
+  expect(() => process.kill(receipt.processes[0].pid, 0)).toThrow();
+  expect([...provider.records.keys()]).toEqual([]);
+  expect(await readOwnerBindings(stateDir, identity.instanceId)).toEqual([]);
+  const { routes } = JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8")) as { routes: unknown[] };
+  expect(routes).toEqual([]);
+  expect((await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations.filter((item) => item.instanceId === identity.instanceId).map((item) => item.state)).toEqual(["failed"]);
+  // A start that is not cancelled still ends ready.
+  expect(await new DevFnOrchestrator(overrides).up({ config, root, stateDir, profile: "share", allowPublic: true })).toMatchObject({ state: "ready" });
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
 it("withdraws an orphaned owner's public routes during recovery and leaves an owner whose command runs", async () => {
   const tunnel = await registerPreview();
   const live = "web-live-0123456789abcdef0123.tunnel.example.test";
