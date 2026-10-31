@@ -607,7 +607,7 @@ def test_an_error_stack_keeps_the_newest_frames_and_is_redacted() -> None:
     # 64 frames: 63 identical recursive calls (3 written, then a count) and the raise.
     assert "[Previous line repeated 60 more times]" in stack and stack.count('  File "') == 4
     assert stack.startswith("Traceback (most recent call last):\n")
-    assert "raise ValueError" in stack and stack.endswith("ValueError: password=[redacted]\n")
+    assert "raise ValueError" not in stack and stack.endswith("ValueError: password=[redacted]\n")
     assert "hunter2" not in stack
 
 
@@ -651,23 +651,56 @@ def test_an_implicit_chain_is_bounded_like_a_cause_chain() -> None:
     assert _Counted.calls == MAX_REDACTION_DEPTH
 
 
-def test_an_error_stack_cuts_long_source_lines_before_copying_them(tmp_path: Path) -> None:
-    # Every frame's source line is about 1M characters, through 100 recursive calls.
-    module = tmp_path / "long_lines.py"
-    tail = "  # password=hunter2 " + "x" * 1_000_000
-    module.write_text(
-        "def recurse(depth):\n"
-        f"    recurse(depth - 1) if depth else fail(){tail}\n"
-        "def fail():\n"
-        f"    raise ValueError('boom'){tail}\n"
-    )
+SECRET_URL = "https://user:supersecret" + "x" * 180 + "@host"
+
+
+def _raise_from(filename: str, function: str, tail: str = "", directory: Path | None = None) -> ValueError:
+    # Recurses 100 times in a module named ``filename`` whose lines end in ``tail``, a real file under ``directory``.
+    source = f"def recurse(depth):\n    recurse(depth - 1) if depth else fail(){tail}\ndef fail():\n    raise ValueError('boom'){tail}\n"
+    if directory is not None:
+        filename = str(directory / filename)
+        Path(filename).write_text(source)
     namespace: dict[str, Any] = {}
-    exec(compile(module.read_text(), str(module), "exec"), namespace)
+    exec(compile(source, filename, "exec"), namespace)
+    namespace["fail"].__code__ = namespace["fail"].__code__.replace(co_name=function)
     try:
         namespace["recurse"](100)
     except ValueError as error:
-        failure = error
-    linecache.getline(str(module), 1)  # The file is cached once, as by any traceback.
+        return error
+    raise AssertionError("not raised")
+
+
+@pytest.mark.parametrize(
+    ("filename", "function", "tail"),
+    [
+        (SECRET_URL + "/file.py", "fail", ""),
+        ("module.py", SECRET_URL, ""),
+        ("module.py", "fail", "  # " + "y" * 148 + SECRET_URL),
+    ],
+    ids=["filename", "function", "source"],
+)
+def test_an_error_stack_never_cuts_a_credential_out_of_redaction(filename: str, function: str, tail: str, tmp_path: Path) -> None:
+    failure = _raise_from(filename, function, tail, tmp_path if tail else None)
+    bodies: list[bytes] = []
+
+    async def transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
+        bodies.append(body)
+        return 200
+
+    sink = SinkHttp("https://collector.test/ingest", transport=transport)
+    sink([make_event(ctx={"err": failure})])
+    asyncio.run(sink.flush())
+    stack = sanitize_value(failure)["stack"]
+    for output in (stack, json.dumps(redact_event(make_event(ctx={"err": failure}))), bodies[0].decode()):
+        assert "supersecret" not in output and "ValueError: boom" in output
+    assert ("[max-size]" in stack) == (tail == "")  # An overlong name is replaced whole; source is never read.
+
+
+def test_an_error_stack_reads_no_source_text(tmp_path: Path) -> None:
+    # Every frame's source line is about 1M characters, through 100 recursive calls.
+    failure = _raise_from("long_lines.py", "fail", "  # password=hunter2 " + "x" * 1_000_000, tmp_path)
+    module = tmp_path / "long_lines.py"
+    linecache.clearcache()
 
     tracemalloc.start()
     try:
@@ -676,6 +709,6 @@ def test_an_error_stack_cuts_long_source_lines_before_copying_them(tmp_path: Pat
     finally:
         tracemalloc.stop()
     assert peak < 200_000
-    assert len(stack) < 64 * 700 and stack.endswith("ValueError: boom\n")
-    assert "    raise ValueError('boom')  # password=hunter2 xxx" in stack
-    assert "hunter2" not in redact_event(make_event(ctx={"err": failure}))["ctx"]["err"]["stack"]
+    assert str(module) not in linecache.cache
+    assert f'  File "{module}", line 4, in fail\n' in stack and stack.endswith("ValueError: boom\n")
+    assert "hunter2" not in stack and "raise ValueError" not in stack

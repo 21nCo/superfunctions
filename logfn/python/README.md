@@ -70,7 +70,7 @@ adds an HTTP sink only when `url` is given.
 - A pipeline stage that raises drops the event, so a failing redaction stage
   cannot let an unredacted event through.
 - Events are sanitized after the pipeline: exceptions become `{name, message,
-  stack, cause}` (`stack` is the error's own traceback, its last 64 frames with each file, function and source line cut to 200 characters; `cause` is `__cause__`, else `__context__` unless suppressed), cycles become `"[circular]"` and unknown objects become
+  stack, cause}` (`stack` is the error's own traceback, its last 64 frames as file, line and function with no source text, a name over 200 characters becoming `"[max-size]"` whole; `cause` is `__cause__`, else `__context__` unless suppressed), cycles become `"[circular]"` and unknown objects become
   `"[unserializable]"`. Binary data (`bytes`, `bytearray`, `memoryview`)
   becomes `"[unserializable]"` too, also in the redaction stage: no text rule
   could find a secret in its bytes.

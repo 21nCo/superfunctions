@@ -7,9 +7,9 @@ together.
 
 from __future__ import annotations
 
-import linecache
 import re
 import traceback
+from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -509,11 +509,13 @@ def _child_path(path: str, key: str) -> str:
 
 
 def format_exception_stack(error: BaseException, message: str | None = None) -> str:
-    """``stack``: the last 64 frames, file, function and source line cut to 200 characters, and ``Type: message``."""
+    """``stack``: the last 64 frames (file, line, function; no source is read) and ``Type: message``."""
+    # A name over 200 characters becomes [max-size] whole: a cut could end inside a secret redaction then misses.
     text = exception_message(error) if message is None else message
-    summary = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__), limit=-64, lookup_lines=False)
-    cut = [(f.filename[:200], f.lineno or 0, f.name[:200], linecache.getline(f.filename, f.lineno or 0)[:400].strip()[:200]) for f in summary]
-    frames = traceback.StackSummary.from_list(cut).format()
+    def fit(name: str) -> str:
+        return name if len(name) <= 200 else MAX_SIZE
+    walk = deque(traceback.walk_tb(error.__traceback__), maxlen=64)
+    frames = traceback.StackSummary.from_list([(fit(f.f_code.co_filename), n, fit(f.f_code.co_name), "") for f, n in walk]).format()
     head = ["Traceback (most recent call last):\n"] if frames else []
     return "".join([*head, *frames, f"{type(error).__name__}: {text}\n" if text else f"{type(error).__name__}\n"])
 
