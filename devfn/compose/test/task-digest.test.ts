@@ -49,6 +49,9 @@ it("selects a short volume entry by its source alone, whatever its target interp
     expect(before, entry).not.toBe(after);
     expect(before, entry).toBe(unrelated);
   }
+  // An anonymous entry has no source, so it selects no declaration and its target is never interpolated.
+  const anonymous = await digestOf({ "compose.yaml": withVolume("/x/${UNSET}") });
+  expect(await digestOf({ "compose.yaml": withVolume("/x/${UNSET}").replace("which: data", "which: changed") })).toBe(anonymous);
 }, 60_000);
 
 it("digests the resource declarations of the project model, not those of an extends-only file", async () => {

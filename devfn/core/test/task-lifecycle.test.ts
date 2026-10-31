@@ -142,6 +142,21 @@ describe("task input revisions", () => {
     ]) expect(await revision(manifest(change))).not.toBe(base);
   });
 
+  it("counts a secret channel by name only, in the node and the profile environment", async () => {
+    const secret = (where: "env" | "profile", value: string, key = "SEED_VALUE", mode = "minimal") => manifest((config) => {
+      Object.assign(config.processes.migrate, { envAllowlist: [key], secretEnv: [key] });
+      if (where === "env") config.processes.migrate.env = { [key]: value, SEED_LEVEL: mode };
+      else config.profiles.default.environment = { [key]: value, SEED_LEVEL: mode };
+    });
+    for (const where of ["env", "profile"] as const) {
+      const base = await revision(secret(where, "one"));
+      // A rotated secret never reruns a task; a changed setting or secret name does.
+      expect(await revision(secret(where, "two")), where).toBe(base);
+      expect(await revision(secret(where, "one", "SEED_VALUE", "full")), where).not.toBe(base);
+      expect(await revision(secret(where, "one", "SEED_OTHER")), where).not.toBe(base);
+    }
+  });
+
   it("masks only secret-channel and credential values of a Compose task's sources, never service names or other fields", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-compose-"));
     const config = validateDevFnConfig({ version: 1, project: { id: "revision-compose" },

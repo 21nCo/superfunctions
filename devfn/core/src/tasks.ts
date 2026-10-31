@@ -147,7 +147,10 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   environment?: Record<string, string>): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
-  const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).sort(([a], [b]) => compare(a, b));
+  // A secret channel counts by name only, wherever its value is written.
+  const secrets = new Set(spec.secretEnv ?? []);
+  const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {})
+    .map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",

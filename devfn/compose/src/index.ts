@@ -304,8 +304,13 @@ async function selectedInventoryResources(inventory: ComposeSourceInventory,
     // Only the source of a short volume entry selects a declaration. It is
     // split off at the first colon outside ${...}, since a default such as
     // ${VOLUME:-data} contains a colon, and the target is never interpolated.
+    // An anonymous entry (a target only) selects nothing.
     const written = kind === "volumes" && Array.isArray(service.volumes)
-      ? service.volumes.flatMap((entry: unknown) => typeof entry === "string" ? [shortFields(entry)[0]] : referencedResourceNames(kind, [entry]))
+      ? service.volumes.flatMap((entry: unknown) => {
+        if (typeof entry !== "string") return referencedResourceNames(kind, [entry]);
+        const fields = shortFields(entry);
+        return fields.length > 1 ? [fields[0]] : [];
+      })
       : referencedResourceNames(kind, service[kind]);
     names.set(kind, await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes));
   }
