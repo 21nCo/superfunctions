@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
 
 import { createStreamingRedactor } from "./redaction.js";
 
@@ -54,9 +55,14 @@ function pipeRedacted(stream: NodeJS.ReadableStream, destination: NodeJS.Writabl
 }
 
 const flushes = discard ? [] : [pipeRedacted(child.stdout!, process.stdout), pipeRedacted(child.stderr!, process.stderr)];
+// Node ignores SIGPIPE and SIGXFSZ and opens its inspector on SIGUSR1, so
+// the wrapper never sends itself those. Whatever becomes of a signal it does
+// send itself, its exit code reports a command a signal ended as failed.
+const unmirrored = new Set<NodeJS.Signals>(["SIGPIPE", "SIGXFSZ", "SIGUSR1"]);
 const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-  if (signal) process.kill(process.pid, signal);
-  else process.exitCode = code ?? 1;
+  if (!signal) { process.exitCode = code ?? 1; return; }
+  process.exitCode = 128 + (constants.signals[signal] ?? 0);
+  if (!unmirrored.has(signal)) process.kill(process.pid, signal);
 };
 let closed = false;
 child.once("error", (error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

@@ -13,6 +13,8 @@ DevFn is the local-development counterpart to HostFn: a portable command contrac
 - `@devfn/proxy` — shared Caddy route control.
 - `@devfn/testing` — deterministic fixtures and fake listeners.
 
+macOS and Linux are the validated v0.1 hosts. On Windows, a finite command's descendants are not contained once its wrapper exits; that containment, with a Windows CI lane, is tracked in DEV-47 (see `@devfn/processes`).
+
 DevFn does not replace HostFn deployment, ProbeFn browser evidence, ExtFn extension semantics, Docker Compose, Wrangler, or Xcode. It coordinates those local runtimes through explicit adapters.
 
 See [the configuration reference](./docs/configuration.md), [the v0.1 contract](./SPEC.md), and the CLI package's security and migration guides.
