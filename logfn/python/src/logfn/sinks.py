@@ -11,6 +11,7 @@ import ipaddress
 import math
 import os
 import random
+import re
 import selectors
 import socket
 import sys
@@ -366,6 +367,21 @@ def _validate_url(url: str) -> None:
         raise ValueError("SinkHttp: url must not contain credentials; use auth_token")
 
 
+_HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+
+def _header_value(name: object, value: object) -> str:
+    # Values are trimmed of HTTP whitespace as fetch does. What is still not
+    # sendable fails here, and the error never carries the value, which may
+    # be a credential.
+    if not isinstance(name, str) or not _HEADER_NAME.fullmatch(name):
+        raise ValueError("SinkHttp: header names must be HTTP tokens")
+    text = value.strip(" \t\r\n") if isinstance(value, str) else None
+    if text is None or any(char in "\r\n\0" or char > "\xff" for char in text):
+        raise ValueError(f"SinkHttp: header {name} must be a Latin-1 string without CR, LF or NUL")
+    return text
+
+
 def _retryable(status: int) -> bool:
     return status in (408, 429) or status >= 500
 
@@ -429,9 +445,10 @@ class SinkHttp:
         )
         for source in ({"Content-Type": "application/json"}, headers or {}, credential):
             for name, value in source.items():
+                text = _header_value(name, value)
                 for key in [key for key in self._headers if key.lower() == name.lower()]:
                     del self._headers[key]
-                self._headers[name] = value
+                self._headers[name] = text
         # Set in each transport call's own task: what the transport logs to
         # this sink is its own diagnostics (see _report).
         self._in_transport: contextvars.ContextVar[bool] = contextvars.ContextVar("logfn_in_transport", default=False)

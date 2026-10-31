@@ -165,7 +165,7 @@ has any id unchanged.
     independent event is reported as usual. Events a callback hands to
     another thread or task are not recognized as its diagnostics.
     Events the transport logs to the same sink are its diagnostics too: a queue holding only them is sent after `flush_interval_ms`, so a transport that logs adds at most one request per interval.
-  - `headers` apply after `Content-Type` and before the `auth_token` header; names are case-insensitive, and each drops every earlier spelling.
+  - `headers` apply after `Content-Type` and before the `auth_token` header; names are case-insensitive, and each drops every earlier spelling. Header values (the `auth_token` one included) are trimmed of leading and trailing spaces, tabs, CR and LF as `fetch` does; a name that is not an HTTP token, or a value that is not a string, holds CR, LF or NUL or is not Latin-1, raises `ValueError` at construction, and no error or diagnostic carries the value.
   - A `CancelledError` raised by a custom transport (its own request was
     cancelled) is a failed attempt within the retry budget. Only cancelling
     the delivering loop's work (loop shutdown) puts a batch back. A call that

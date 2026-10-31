@@ -423,6 +423,50 @@ def test_default_transport_posts_to_a_real_collector(collector: tuple[str, list[
     assert auth == ["Bearer tok"]
 
 
+def test_header_values_are_trimmed_as_fetch_trims_them(collector: tuple[str, list[dict[str, Any]], list[str]]) -> None:
+    url, received, auth = collector
+    errors: list[BaseException] = []
+    sink = SinkHttp(url, auth_token="tok\n", retry_attempts=1, on_error=errors.append)
+    sink([event("m")])
+    asyncio.run(sink.flush())
+    assert auth == ["Bearer tok"] and [e["msg"] for e in received] == ["m"] and errors == []
+
+    custom = Scripted()
+    sink = SinkHttp(URL, headers={"Cookie": " \tc=1\r\n"}, auth_token="\tk-1 ", secret_header="X-Api-Key", transport=custom)
+    sink([event("m")])
+    asyncio.run(sink.flush())
+    assert custom.calls[0][1] == {"Content-Type": "application/json", "Cookie": "c=1", "X-Api-Key": "k-1"}
+
+
+SECRET = "S3CRET-VALUE"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"auth_token": f"{SECRET}\r\nX-Injected: 1"},
+        {"auth_token": f"{SECRET}\0"},
+        {"auth_token": f"{SECRET}\u20ac"},
+        {"auth_token": f"{SECRET}\nx", "secret_header": "X-Api-Key"},
+        {"headers": {"X-Api-Key": f"{SECRET}\r\nx"}},
+        {"headers": {"Cookie": f"a={SECRET}\u0100"}},
+        {"headers": {"Authorization": f"Bearer {SECRET}\nx"}},
+        {"headers": {"X-Api-Key": 12345}},
+        {"headers": {f"X-Key: {SECRET}": "v"}},
+        {"auth_token": SECRET, "secret_header": "X Api Key"},
+    ],
+)
+def test_unsendable_headers_fail_construction_without_their_values(
+    kwargs: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    errors: list[BaseException] = []
+    with pytest.raises(ValueError, match="^SinkHttp: header") as raised:
+        SinkHttp(URL, retry_attempts=1, on_error=errors.append, **kwargs)
+    reported = [raised.value, raised.value.__cause__, raised.value.__context__]
+    assert all(SECRET not in repr(error) and "12345" not in repr(error) for error in reported)
+    assert SECRET not in "".join(capsys.readouterr()) and errors == []
+
+
 def test_console_sink_json(capsys: pytest.CaptureFixture[str]) -> None:
     SinkConsole(json=True)([event("hello", ctx={"a": 1})])
     assert json.loads(capsys.readouterr().out) == event("hello", ctx={"a": 1})
