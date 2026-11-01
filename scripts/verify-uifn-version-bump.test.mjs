@@ -334,6 +334,43 @@ for (const run of [
   }
 }
 
+// Every reading only adds: an argv element that holds a whole tsc command is also split as one, a project flag ending one element's split
+// carries into the next, and a comment between a flag and its operand is whitespace.
+for (const [dir, run] of [
+  ["sharedlib", "const steps = ['tsc -p ../sharedlib', 'vite build'];\nfor (const step of steps) execSync(step);"],
+  ["sharedlib", "spawnSync('npx', ['tsc -b ../sharedlib'], { shell: true });"],
+  ["sharedlib", "execSync(['tsc --build', '../sharedlib'].join(' '));"],
+  ["shared tsc lib", "execFileSync('tsc', ['-b', /* x */ '../shared tsc lib']);"],
+  ["shared tsc lib", "execFileSync('tsc', [\n  '-b', // c\n  '../shared tsc lib',\n]);"],
+  ["shared tsc lib", "execFileSync('tsc', [\n  '-p', // c\n  '../shared tsc lib',\n]);"],
+  ["shared tsc lib", "execFileSync('tsc', ['-b' /* x */, '../shared tsc lib']);"],
+  ["shared tsc lib", "execFileSync('sh', ['-c' /* x */, 'tsc -b \"../shared tsc lib\"']);"],
+]) {
+  test(`a build-file tsc project read by any argv reading or past a comment counts: ${run}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.write(`uifn/${dir}/tsconfig.json`, sharedProject);
+    repo.write(`uifn/${dir}/src/index.ts`, "export const shared = 1;\n");
+    repo.write("uifn/core/scripts/build.mjs", `${run}\n`);
+    repo.commit("external tsc project");
+    const undeclared = check(repo.root);
+    assert.equal(undeclared.status, 1, undeclared.output);
+    assert.ok(undeclared.output.includes(`@uifn/core: uifn/core/scripts/build.mjs refers to uifn/${dir}/tsconfig.json, outside uifn/core; declare it`), undeclared.output);
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', `"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/${dir}/tsconfig.json":"tsc builds it","uifn/${dir}/src":"tsc compiles it"`));
+    repo.commit("declare the external project");
+    repo.git("branch", "-f", "base");
+    repo.write(`uifn/${dir}/src/index.ts`, "export const shared = 2;\n");
+    repo.commit("change the external project's source");
+    const changed = check(repo.root);
+    assert.equal(changed.status, 1, changed.output);
+    assert.ok(changed.output.includes(`@uifn/core: shipped code changed (uifn/${dir}/src/index.ts) but version is still 1.0.0`), changed.output);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the shared project.\n\n## 1.0.0"));
+    repo.commit("bump core");
+    const bumped = check(repo.root);
+    assert.equal(bumped.status, 0, bumped.output);
+  });
+}
+
 test("a build-file tsc project outside the package that no reading resolves fails closed", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/core/scripts/build.mjs", "execFileSync('tsc', ['-p', '../missing/tsconfig.json']);\n");
