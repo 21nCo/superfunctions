@@ -371,6 +371,36 @@ for (const [dir, run] of [
   });
 }
 
+// --noEmit only sets emission (tsc takes the last one) and never drops a project: a lifecycle script or a shell build file
+// that runs tsc with --noEmit still names its -p/-b project, which must be declared and bumped when its source changes.
+for (const [kind, command] of ["--noEmit -p ../sharedlib/tsconfig.json --noEmit false", "--noEmit -p ../sharedlib/tsconfig.json", "-b ../sharedlib --noEmit"].flatMap((args) => [["script", `tsc ${args}`], ["build.sh", `tsc ${args}`]])) {
+  test(`a ${kind} tsc --noEmit run still names its external project: ${command}`, (t) => {
+    const repo = fixtureRepo(t);
+    const from = kind === "script" ? "package.json scripts.build" : "uifn/core/scripts/build.sh";
+    repo.write("uifn/sharedlib/tsconfig.json", sharedProject);
+    repo.write("uifn/sharedlib/src/index.ts", "export const shared = 1;\n");
+    if (kind === "build.sh") repo.write("uifn/core/scripts/build.sh", `#!/bin/sh\n${command}\n`);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": "${kind === "script" ? command : "sh scripts/build.sh"}"`));
+    repo.commit("external tsc project run with --noEmit");
+    const undeclared = check(repo.root);
+    assert.equal(undeclared.status, 1, undeclared.output);
+    assert.ok(undeclared.output.includes(`@uifn/core: ${from} refers to uifn/sharedlib/tsconfig.json, outside uifn/core; declare it`), undeclared.output);
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/sharedlib/tsconfig.json":"tsc builds it","uifn/sharedlib/src":"tsc compiles it"'));
+    repo.commit("declare the external project");
+    repo.git("branch", "-f", "base");
+    repo.write("uifn/sharedlib/src/index.ts", "export const shared = 2;\n");
+    repo.commit("change the external project's source");
+    const changed = check(repo.root);
+    assert.equal(changed.status, 1, changed.output);
+    assert.ok(changed.output.includes("@uifn/core: shipped code changed (uifn/sharedlib/src/index.ts) but version is still 1.0.0"), changed.output);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the shared project.\n\n## 1.0.0"));
+    repo.commit("bump core");
+    const bumped = check(repo.root);
+    assert.equal(bumped.status, 0, bumped.output);
+  });
+}
+
 test("a build-file tsc project outside the package that no reading resolves fails closed", (t) => {
   const repo = fixtureRepo(t);
   repo.write("uifn/core/scripts/build.mjs", "execFileSync('tsc', ['-p', '../missing/tsconfig.json']);\n");
@@ -932,7 +962,7 @@ test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () =>
   assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json"), ["config/tsconfig.build.json"]);
   assert.deepEqual(tscProjects("tsc --project=packages/a"), ["packages/a/tsconfig.json"]);
   assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force"), ["packages/a/tsconfig.json", "tsconfig.types.json"]);
-  assert.deepEqual(tscProjects("tsc --noEmit -p tsconfig.json"), []);
+  for (const command of ["tsc --noEmit -p tsconfig.json", "tsc --noEmit -p tsconfig.json --noEmit false", "tsc -b . --noEmit"]) assert.deepEqual(tscProjects(command), ["tsconfig.json"], command);
   assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), ["tsconfig.json"]);
   assert.deepEqual(tscProjects("tsc -b --noEmit false"), ["tsconfig.json"]);
   assert.deepEqual(tscProjects("tsc -p tsconfig.json --noEmit=false"), ["tsconfig.json"]);
