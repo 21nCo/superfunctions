@@ -63,8 +63,7 @@ const TSCONFIG = /(?:^|\/)tsconfig[^/]*\.json$/;
 const TSCONFIG_LIST = /"(?:include|files)"\s*:\s*\[([^\]]*)\]/g;
 const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
-// Any build-file tsc word is a tsc run (`npx -p typescript tsc`, `bun x tsc`, a message) that names every tsconfig in its package.
-// `--noEmit false` on a command line, `--noEmit=false`, or across argv elements (`"--noEmit", "false"`).
+// Any build-file tsc word is a tsc run (`npx -p typescript tsc`, a message) naming every tsconfig in its package; `--noEmit false`, `--noEmit=false` or `"--noEmit", "false"` emits.
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/;
 // Commands that run a file with the package root as the working directory, which makes the file a build file.
@@ -352,13 +351,14 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
     // The sweep is additive and every reading only adds. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig; comments between literals are whitespace. An argv array element, by its position whatever its text, is one word that sets, carries or consumes the flag,
-    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split, carrying the flag (quoted words kept whole). A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
+    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split into shell words, carrying the flag; a nested command word is read again from fresh flag state, and a tsc run's `..` source file operand is named too. A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
     let [flag, end] = [null, 0];
     for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
       const gap = text.slice(end, start).replaceAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ");
       [flag, end] = [/^\s*,\s*$/.test(gap) ? flag : null, start + literal.length];
       const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(gap.trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "["];
-      const words = [...value.matchAll(/"[^"]*"|'[^']*'|\S+/g)].map(([word]) => word.replace(/^(["'])(.*)\1$/, "$2"));
+      const words = shellWords(value).flatMap((word, index, all) => (nestedCommand(all, index) ? [word, ...shellWords(word)] : [word]));
+      for (const word of words.slice(words.findIndex((word) => /(?:^|\/)tsc$/.test(word)) + 1 || words.length)) if (/^\.\.\/.*\.[cm]?[jt]sx?$/.test(word)) for (const from of new Set([root, dir])) add(path.posix.join(from, word), { candidate: `${file}:${start}` });
       const read = (list, state) => list.reduce((carried, word) => {
         if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || (carried !== null && !word.startsWith("-")))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
         return TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(carried ?? "") ? carried : null;
@@ -377,13 +377,18 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
   return [...unique.values()];
 }
 
-/**
- * The tsconfigs, relative to the working directory, that a tsc command emits from: the -p/--project path, every -b/--build
- * path, or ./tsconfig.json; a path that is not a .json file is a directory holding tsconfig.json. A quoted word is one word. Null
- * when tsc does not run. `emit` follows the last --noEmit (bare: false; --noEmit false: true; none: undefined); it removes no project.
- */
+const SHELL_PART = /\\([^])|'([^']*)'?|(["`])((?:\\[^]|(?!\3)[^\\])*)\3?|([^])/g;
+/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a removed quote, so "" is a word). */
+export function shellWords(command, separator = /\s/) {
+  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => escaped ?? (char === undefined ? `\u0001${single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : char.replace(separator, "\0")));
+  return text.split("\0").filter(Boolean).map((word) => word.replaceAll("\u0001", ""));
+}
+
+const nestedCommand = (words, index) => !words.slice(0, index).some((word) => /(?:^|\/)tsc$/.test(word)) && ((words[index - 1] === "-c" && /^(?:sh|bash|zsh|dash)$/.test(path.posix.basename(words[index - 2] ?? ""))) || (/\s/.test(words[index]) && (/\btsc\b/.test(words[index]) || RUNNER.test(path.posix.basename(shellWords(words[index])[0] ?? "")))));
+
+/** The tsconfigs a tsc command emits from (the -p/--project path, every -b/--build path, or ./tsconfig.json; a directory holds tsconfig.json), or null without tsc. `emit` follows the last --noEmit (bare: false; false: true; none: undefined). */
 export function tscProjects(command) {
-  const words = (command.replace(/\d*>>?&?\s*[^\s&|;]+|<\s*\S+/g, " ").match(/(?:"[^"]*"|'[^']*'|[^\s()<>=])+/g) ?? []).map((word) => word.replaceAll(/["'`]/g, "")).filter(Boolean);
+  const words = shellWords(command.replace(/\d*>>?&?\s*[^\s&|;]+|<\s*\S+/g, " "), /[\s()<>=]/).filter(Boolean);
   const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
   if (start < 0) return null;
   const args = words.slice(start + 1);
@@ -392,13 +397,8 @@ export function tscProjects(command) {
   return { projects: (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json"))), emit: noEmit < 0 ? undefined : args[noEmit + 1] === "false" };
 }
 
-/**
- * Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked
- * negated, with the command they are in, plus the tsconfigs each tsc command emits from. Outside tsc commands a token is
- * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a quoted word is one token. A tsc
- * command whose last --noEmit is bare emits none of its projects' files, but still names each project, which must be declared. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), a leading `./x`, and a config the tool
- * loads (`-c x`, `--config x`, `--config=x`, any named *.config.* file) is marked `runs`.
- */
+/** Paths shipped lifecycle scripts name: each shell word from the package root (globs kept, `!` globs negated; outside tsc a `tree`, as `svelte-package -i lib` reads all of lib; after a runner, a leading `./x` or a loaded config `-c x`/`--config=x`/*.config.*, it `runs`) and each tsc command's projects.
+ * A bare last --noEmit emits nothing: its projects are overridden and its words `quiet`, named only to be declared. A nested command (a shell's -c argument, or a word outside a tsc run's arguments holding whitespace that runs tsc or a runner, as `concurrently "tsc -p x"`) is read like a script; a tsc word that no reading places sweeps every tsconfig. */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
@@ -406,13 +406,15 @@ export function scriptReferences(scripts, packagePath) {
     for (const [list, command] of scripts[name].split(COMMAND_SEPARATOR).entries()) {
       const { projects, emit } = tscProjects(command) ?? {};
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
-      if (emit === false) continue;
-      let runs = false;
-      let config = false;
-      for (const [index, token] of (command.match(/(?:"[^"]*"|'[^']*'|[^\s&<>()])+/g) ?? []).entries()) {
-        const value = token.replaceAll(/["']/g, "").replace(/^-{1,2}[\w-]+=/, "");
+      const words = shellWords(command, /[\s&<>()]/);
+      const nested = words.filter((_, index) => nestedCommand(words, index));
+      for (const word of nested) found.push(...scriptReferences({ build: word }, packagePath).map((reference) => ({ ...reference, from, list })));
+      if (!projects && words.some((word) => /\btsc\b/.test(word) && !nested.includes(word))) found.push({ from, target: path.posix.join(packagePath, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(command), tsc: true });
+      let [runs, config] = [false, false];
+      for (const [index, token] of words.entries()) {
+        const value = nested.includes(token) ? "" : token.replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || config || /(?:^['"]?--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : emit === false ? { quiet: true } : projects ? {} : { tree: true }), ...(runs || config || /^--config=|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
         config = /^(?:-c|--config)$/.test(value);
       }
@@ -562,7 +564,7 @@ export function shippedClosure({ packagePath, manifest, files, inputs = [], excl
       const target = tree && inventory.dirs.has(reference.target) ? `${reference.target}/**` : reference.target;
       if (!resolved.has(target)) resolved.set(target, resolveReference(target, inventory));
       const { files: matches, direct } = resolved.get(target);
-      if (reference.negated || (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct))) continue;
+      if (reference.negated || reference.quiet || (roots.some((root) => isWithin(root, target)) && !(reference.bundled && direct))) continue;
       // A file that starts running in the build is read again as a build file.
       for (const file of reference.runs && direct ? matches.filter((match) => RUNNABLE.test(match) && !runs.has(match)) : []) {
         runs.add(file);
