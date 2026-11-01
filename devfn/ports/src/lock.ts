@@ -76,10 +76,7 @@ export async function withFileLock<T>(lockPath: string, action: () => Promise<T>
     await delay(20 + Math.floor(Math.random() * 20));
   }
   // Cancelled while the lock was being acquired: release it without running the action.
-  if (options.signal?.aborted) {
-    await releaseLock(lockPath, token);
-    options.signal.throwIfAborted();
-  }
+  if (options.signal?.aborted) { await releaseLock(lockPath, token); options.signal.throwIfAborted(); }
   try { return await action(); }
   finally { await releaseLock(lockPath, token); }
 }

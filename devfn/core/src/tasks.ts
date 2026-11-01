@@ -365,12 +365,12 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir);
+    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
     if (!input.locked) {
-      decide(await readTaskJournal(input.stateDir, key), revision, task, node.name, rerunRequested, true);
+      decide(await readTaskJournal(input.stateDir, key), await revision(), task, node.name, rerunRequested, true);
       continue;
     }
     const { compose, signal } = input.locked;
@@ -378,7 +378,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     await withFileLock(lockPath(input.stateDir, key), async () => {
       const journal = await readTaskJournal(input.stateDir, key);
       if (journal) await settleAttempts(journal, node.name, () => compose ?? new ComposeController(), async () => await writeTaskJournal(input.stateDir, key, journal));
-      decide(journal, revision, task, node.name, rerunRequested);
+      decide(journal, await revision(), task, node.name, rerunRequested);
     }, { timeoutMs: scopeLockTimeout(task), staleMs: SCOPE_LOCK_STALE_MS, ...(signal ? { signal } : {}) }).catch((error: unknown) => {
       if (signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled while task ${node.name} was decided; nothing was started.`, { task: node.name });
       throw error;
@@ -420,7 +420,6 @@ export interface RunTaskContext {
 export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
   const { config, node, stateDir } = context;
   const { spec, task } = taskNode(config, node);
-  const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir);
   const { key, scope } = taskScope(config, context.instanceId, node, context.resources);
   await mkdir(path.join(stateDir, "tasks"), { recursive: true, mode: 0o700 });
   const attemptsAllowed = 1 + (task.retries ?? 0);
@@ -430,6 +429,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir);
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };

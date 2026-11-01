@@ -6,12 +6,12 @@ import { promisify } from "node:util";
 
 import { ComposeController, composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type TaskSpec } from "@devfn/config";
-import type { FilePortRegistry } from "@devfn/ports";
+import { withFileLock, type FilePortRegistry } from "@devfn/ports";
 import { processBirthSignature, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
 import { describe, expect, it, vi } from "vitest";
 
 import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveEndpointTemplates, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
-import { runTask, type RunTaskContext } from "../src/tasks.js";
+import { preflightTasks, runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
@@ -1349,6 +1349,64 @@ describe("task scope locks", () => {
       expect(await exists(lock)).toBe(false);
     } finally { await env.cleanup(); }
   }, 120_000);
+  it("decides and records a task from the input revision under its scope lock, so a change made while another start held it counts, in either worktree of a shared scope", async () => {
+    const config = (rerun: TaskSpec["rerun"]) => validateDevFnConfig({ version: 1, project: { id: "task-lock-revision" },
+      processes: { migrate: { adapter: "command", command: [process.execPath, "-e", "0"], resources: ["api"], task: { inputs: ["seed.sql"], rerun } } },
+      resources: { api: { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://api.example.test" } } } }, profiles: { default: { processes: ["migrate"] } } });
+    const node = { name: "migrate", kind: "process" } as const;
+    for (const rerun of ["on-change", "once"] as const) {
+      const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-lock-revision-${rerun}-`));
+      const stateDir = path.join(base, "state");
+      const runs: string[] = [];
+      const supervisor = { run: async (input: RunProcessInput): Promise<ProcessRunResult> => {
+        runs.push(input.root);
+        const managed = { name: input.name, pid: 2 ** 22 + 11, command: input.command, cwd: input.root, logPath: path.join(input.root, "stub.log"), startedAt: new Date().toISOString() };
+        await input.onStarted?.(managed);
+        return { outcome: "succeeded", exitCode: 0, signal: null, process: managed };
+      } } as unknown as ProcessSupervisor;
+      const plan = createPlan(config(rerun));
+      const worktree = async (name: string) => {
+        const root = path.join(base, name);
+        await mkdir(root, { recursive: true });
+        await writeFile(path.join(root, "seed.sql"), "create table one;\n");
+        const resources = planResources({ config: config(rerun), plan, ownerId: `owner-${name}`, runtimeId: name.repeat(32), ports: {}, platform: "linux" });
+        const context: RunTaskContext = { config: config(rerun), root, stateDir, runtimeDir: path.join(root, "runtime"), instanceId: `instance-${name}`, invocationId: `invocation-${name}`, node,
+          profile: "default", environment: { PATH: process.env.PATH ?? "" }, generated: {}, resources, rerunRequested: false, supervisor,
+          registry: { recordOwners: async () => undefined } as unknown as FilePortRegistry, record: async () => undefined };
+        return { root, resources, context, revision: async () => await taskInputRevision(config(rerun), root, node, "default", resources, undefined, stateDir) };
+      };
+      try {
+        const [a, b] = [await worktree("a"), await worktree("b")];
+        const { key, scope } = taskScope(config(rerun), "instance-a", node, a.resources);
+        expect(scope).toBe("shared");
+        const first = await runTask(a.context);
+        expect(first).toMatchObject({ status: "succeeded", inputRevision: await b.revision() });
+        // Another start holds the scope lock while worktree b's start waits on it, and b's input changes meanwhile.
+        const whileHeld = async <T>(start: () => Promise<T>) => await withFileLock(path.join(stateDir, "tasks", `${key}.lock`), async () => {
+          const waiting = start().then((value) => ({ value }), (error: unknown) => ({ error }));
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await writeFile(path.join(b.root, "seed.sql"), "create table two;\n");
+          return { waiting };
+        }, { timeoutMs: 10_000 }).then(async ({ waiting }) => await waiting);
+        // The locked preflight pass decides from it before anything is mutated.
+        const preflight = await whileHeld(async () => await preflightTasks({ config: config(rerun), plan, root: b.root, stateDir, instanceId: "instance-b", resources: b.resources, locked: {} }));
+        const changed = await b.revision();
+        expect(changed).not.toBe(first.inputRevision);
+        if (rerun === "once") expect(preflight).toMatchObject({ error: { code: "DEVFN_TASK_INPUT_CHANGED", details: { recordedRevision: first.inputRevision, currentRevision: changed } } });
+        else expect(preflight).toEqual({ value: undefined });
+        await writeFile(path.join(b.root, "seed.sql"), "create table one;\n");
+        const outcome = await whileHeld(async () => await runTask(b.context));
+        if (rerun === "once") {
+          expect(outcome).toMatchObject({ error: { code: "DEVFN_TASK_INPUT_CHANGED", details: { currentRevision: changed } } });
+          expect(runs).toHaveLength(1);
+        } else {
+          expect(outcome).toMatchObject({ value: { status: "succeeded", reason: "input revision changed", inputRevision: changed } });
+          expect(runs).toEqual([a.root, b.root]);
+          expect((await readTaskJournal(stateDir, key))?.lastSuccess).toMatchObject({ inputRevision: changed, instanceId: "instance-b" });
+        }
+      } finally { await rm(base, { recursive: true, force: true }); }
+    }
+  }, 60_000);
 });
 
 describe("task attempt boundaries (stub launchers)", () => {
