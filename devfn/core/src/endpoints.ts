@@ -5,6 +5,7 @@ import { createProcessEnvironment, resolveHttpReadinessUrl } from "@devfn/proces
 import { composeProjectName, createComposeEnvironment } from "@devfn/compose";
 
 import { domainAliases } from "./identity.js";
+import { taskScope } from "./tasks.js";
 import { resourceEnvironment, resourceOwner, resourceServiceEnvironment, type ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan, type RoutingIdentity } from "./types.js";
 
@@ -920,7 +921,10 @@ function restrictTaskResources(node: LifecyclePlan["nodes"][number], context: No
   const declared = new Set(spec.resources ?? []);
   const owners = new Map<string, string>();
   for (const [name, resource] of Object.entries(config.resources ?? {})) for (const key of resourceEnvironmentKeys(name, resource)) owners.set(key, name);
+  // A task completed once for every worktree observes no per-worktree value (instance id, profile, ports, URLs): only the project id and its declared resources.
+  const perInstance = (name: string) => name !== "DEVFN_PROJECT_ID" && !owners.has(name) && Object.hasOwn(context.generated, name) && taskScope(config, "", node, input.resources).scope === "shared";
   const check = (name: string, location: string, profileKey?: string) => {
+    if (perInstance(name)) invalid(location, `task ${node.name} completes once for every worktree, so it cannot reference ${name}, which differs per worktree.${profileKey === undefined ? "" : ` Move ${profileKey} from the profile environment to the env of the nodes that use it.`}`);
     const owner = owners.get(name);
     if (owner !== undefined && !declared.has(owner)) {
       // Every task receives the profile environment, so declaring the resource is not always possible (another task may need a resource of the other scope).
@@ -942,7 +946,7 @@ function restrictTaskResources(node: LifecyclePlan["nodes"][number], context: No
   for (const name of input.composeReferences?.[node.name] ?? []) check(name, `${field}.compose`);
   const allowed = new Set([...declared].flatMap((name) => config.resources && Object.hasOwn(config.resources, name) ? resourceEnvironmentKeys(name, config.resources[name]) : []));
   for (const key of Object.keys(generated.values)) {
-    if (key.startsWith("DEVFN_RESOURCE_") && !allowed.has(key)) { delete generated.values[key]; delete generated.checked[key]; }
+    if (key.startsWith("DEVFN_RESOURCE_") ? !allowed.has(key) : perInstance(key)) { delete generated.values[key]; delete generated.checked[key]; }
   }
 }
 

@@ -765,15 +765,18 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
 
 describe("tasks consuming targets shared across worktrees (real local processes)", () => {
   // Two worktrees of one project sharing a state directory, as on one machine.
-  const worktrees = async (name: string, resources: Record<string, unknown>, consumed: string[], task: Partial<TaskSpec> = {}) => {
+  const worktrees = async (name: string, resources: Record<string, unknown>, consumed: string[], task: Partial<TaskSpec> = {},
+    extra: { migrate?: Record<string, unknown>; environment?: Record<string, string> } = {}) => {
     const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
     const stateDir = path.join(base, "state");
-    const config = validateDevFnConfig({ version: 1, project: { id: `task-${name}` }, ports: { web: {} },
+    const config = validateDevFnConfig({ version: 1, project: { id: `task-${name}` }, ports: { web: { env: "WEB_PORT" } },
       processes: {
-        migrate: { adapter: "command", command: [process.execPath, "task.mjs"], resources: consumed, task: { inputs: ["migrations"], ...task } },
+        // An undefined key in extra.migrate removes it.
+        migrate: Object.fromEntries(Object.entries({ adapter: "command", command: [process.execPath, "task.mjs"], resources: consumed, task: { inputs: ["migrations"], ...task }, ...extra.migrate })
+          .filter(([, value]) => value !== undefined)),
         web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], dependsOn: ["migrate"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
       },
-      resources, profiles: { default: { processes: ["web"] } } });
+      resources, profiles: { default: { processes: ["web"], ...(extra.environment ? { environment: extra.environment } : {}) } } });
     const roots: string[] = [];
     for (const worktree of ["a", "b"]) {
       const root = path.join(base, worktree);
@@ -826,6 +829,56 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       } finally { await env.cleanup(); }
     }
   }, 90_000);
+
+  it("rejects a shared-scope task's reference to a per-worktree generated value in its env, argv, script or profile environment, in every worktree before any mutation", async () => {
+    const db = { db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } } };
+    const cases: Array<[Parameters<typeof worktrees>[4], string]> = [
+      [{ migrate: { env: { TENANT: "{{env.DEVFN_INSTANCE_ID}}" } } }, "processes.migrate.env: task migrate completes once for every worktree, so it cannot reference DEVFN_INSTANCE_ID"],
+      [{ migrate: { command: [process.execPath, "task.mjs", "{{env.DEVFN_URL_WEB}}"] } }, "processes.migrate.command: task migrate completes once for every worktree, so it cannot reference DEVFN_URL_WEB"],
+      [{ migrate: { adapter: "npm", command: undefined, script: "migrate:{{env.WEB_PORT}}" } }, "processes.migrate.script: task migrate completes once for every worktree, so it cannot reference WEB_PORT"],
+      [{ environment: { WEB: "{{env.DEVFN_PORT_WEB}}" } }, "profiles.default.environment.WEB: task migrate completes once for every worktree, so it cannot reference DEVFN_PORT_WEB, which differs per worktree. Move WEB from the profile environment"],
+      [{ migrate: { env: { PROFILE: "{{env.DEVFN_PROFILE}}" } } }, "cannot reference DEVFN_PROFILE"],
+    ];
+    for (const [extra, message] of cases) {
+      const env = await worktrees("shared-instance-value", db, ["db"], {}, extra);
+      try {
+        const outcomes = await Promise.all(env.roots.map(async (root) => await env.orchestrator.up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+        for (const outcome of outcomes) expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(message) });
+        expect(await env.runs()).toHaveLength(0);
+        expect(await exists(env.stateDir)).toBe(false);
+      } finally { await env.cleanup(); }
+    }
+  }, 120_000);
+
+  it("withholds every per-worktree generated value from a shared-scope task, while an instance-scope task and other nodes keep receiving and referencing them", () => {
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-shared-generated" }, ports: { web: { env: "WEB_PORT" } },
+      processes: {
+        migrate: { adapter: "command", command: ["node", "task.mjs"], resources: ["db"], env: { PROJECT: "{{env.DEVFN_PROJECT_ID}}", DB: "{{env.DEVFN_RESOURCE_DB_URL}}" }, task: {} },
+        local: { adapter: "command", command: ["node", "task.mjs", "{{env.DEVFN_URL_WEB}}"], env: { TENANT: "{{env.DEVFN_INSTANCE_ID}}", PORT: "{{env.WEB_PORT}}" }, task: {} },
+        web: { adapter: "command", command: ["node", "server.mjs"], ports: ["web"], dependsOn: ["migrate", "local"], env: { TENANT: "{{env.DEVFN_INSTANCE_ID}}" }, health: { type: "http", port: "web" } },
+      },
+      services: { seed: { adapter: "compose", service: "seed", resources: ["db"], task: {} } },
+      resources: { db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } } },
+      profiles: { default: { processes: ["web"], services: ["seed"] } } });
+    const plan = createPlan(config);
+    const composeNetworks = { seed: ["default"] };
+    const input = { config, plan, ownerId: "owner-a", ports: { web: 4100 }, composeNetworks, resources: planResources({ config, plan, ownerId: "owner-a", ports: { web: 4100 }, platform: "linux", composeNetworks }) };
+    const resolved = resolveEndpointTemplates(input);
+    const perWorktree = (values: Record<string, string>) => Object.keys(values).filter((key) => /^DEVFN_(INSTANCE_ID|PROFILE|PORT_|URL_|PUBLIC_URL_)/.test(key) || key === "WEB_PORT");
+    for (const name of ["migrate", "seed"]) {
+      expect(perWorktree(resolved.nodes[name].generated!)).toEqual([]);
+      expect(perWorktree(resolved.nodes[name].environment)).toEqual([]);
+    }
+    expect(resolved.nodes.migrate.generated).toMatchObject({ DEVFN_PROJECT_ID: "task-shared-generated", DEVFN_RESOURCE_DB_URL: expect.stringContaining("db.example.test") });
+    expect(resolved.nodes.migrate.environment).toMatchObject({ PROJECT: "task-shared-generated", DB: expect.stringContaining("db.example.test") });
+    expect(resolved.nodes.local.generated).toMatchObject({ DEVFN_INSTANCE_ID: "owner-a", DEVFN_PORT_WEB: "4100", WEB_PORT: "4100", DEVFN_URL_WEB: "http://127.0.0.1:4100" });
+    expect(resolved.nodes.local.environment).toMatchObject({ TENANT: "owner-a", PORT: "4100" });
+    expect(resolved.nodes.local.command).toContain("http://127.0.0.1:4100");
+    expect(resolved.nodes.web.environment).toMatchObject({ TENANT: "owner-a", DEVFN_PORT_WEB: "4100" });
+    // A shared-scope Compose task's interpolation of a per-worktree value fails like any other reference.
+    expect(() => resolveEndpointTemplates({ ...input, composeReferences: { seed: new Set(["DEVFN_INSTANCE_ID"]) } })).toThrow(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID",
+      message: expect.stringContaining("services.seed.compose: task seed completes once for every worktree, so it cannot reference DEVFN_INSTANCE_ID") }));
+  });
 
   it("treats browser state isolated per worktree as per-instance, and shared browser state as the same in every worktree", async () => {
     const api = { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://api.example.test" } } };
@@ -939,6 +992,17 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       } finally { await rm(env.base, { recursive: true, force: true }); }
     }
   }, 240_000);
+
+  it("rejects a shared-scope Compose task interpolating a per-worktree generated value, in every worktree before any mutation", async () => {
+    const env = await composeWorktrees("compose-instance-value", "{ name: devfn-task-fixture-data }", ["db"], ["    environment:", "      TENANT: \"$" + "{DEVFN_INSTANCE_ID}\""]);
+    try {
+      const outcomes = await Promise.all(env.roots.map(async (root) => await new DevFnOrchestrator().up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+      for (const outcome of outcomes) {
+        expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("services.seed.compose: task seed completes once for every worktree, so it cannot reference DEVFN_INSTANCE_ID") });
+      }
+      expect(await exists(env.stateDir)).toBe(false);
+    } finally { await rm(env.base, { recursive: true, force: true }); }
+  }, 120_000);
 
   it("keeps a shared-scope Compose task using an external or explicitly named volume shared, and an instance-scope one using a project volume per worktree", async () => {
     for (const volume of ["{ external: true }", "{ name: devfn-task-fixture-data }"]) {
@@ -1341,7 +1405,7 @@ describe("finite setup tasks (real Compose)", () => {
         services: { seed: { adapter: "compose", service: "seed", task: { rerun } } },
         profiles: { default: { services: ["seed"], environment: { SETUP_VOLUME: "data" } } } });
       const source = (volume: string) => ["services:", "  seed:", "    image: busybox", "    volumes: [\"${SETUP_VOLUME}:/data\"]",
-        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", ...service, "volumes:", `  data: { name: ${volume} }`, ""].join("\n");
+        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", "volumes:", `  data: { name: ${volume} }`, ""].join("\n");
       try {
         await writeFile(path.join(root, "compose.yaml"), source(volumes[0]));
         const first = await orchestrator.up({ config, root, stateDir });

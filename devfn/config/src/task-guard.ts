@@ -6,9 +6,7 @@ import type { DevFnConfig, TaskSpec } from "./types.js";
 
 type RecordValue = Record<string, unknown>;
 
-function fail(message: string, field: string): never {
-  throw new DevFnConfigError("DEVFN_CONFIG_INVALID", message, field);
-}
+function fail(message: string, field: string): never { throw new DevFnConfigError("DEVFN_CONFIG_INVALID", message, field); }
 
 function integer(value: unknown, field: string, min: number, max: number): number {
   if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) fail(`${field} must be an integer between ${min} and ${max}.`, field);
@@ -45,16 +43,11 @@ function taskSpec(value: unknown, field: string): TaskSpec {
   };
 }
 
-/**
- * Validate a manifest and its finite setup-task contracts. The schema drops
- * fields it does not know, so `task` is read from the manifest here; a task
- * serves nothing: no ports, readiness probe or persistence, and never public.
- */
+/** Validate a manifest and its finite setup-task contracts; the schema drops unknown fields, so `task` is read here. A task serves nothing: no ports, readiness, persistence or public exposure. */
 export function validateDevFnConfig(value: unknown): DevFnConfig {
   const isRecord = (item: unknown): item is RecordValue => Boolean(item) && typeof item === "object" && !Array.isArray(item);
   const tasks: Array<[kind: "processes" | "services", name: string, task: TaskSpec]> = [];
-  // Like the other per-node fields, task contracts are checked after the
-  // manifest version and before cross-references between nodes.
+  // Like other per-node fields, task contracts are checked after the manifest version and before cross-references between nodes.
   if (isRecord(value) && value.version === 1) {
     for (const kind of ["processes", "services"] as const) {
       if (!isRecord(value[kind])) continue;
