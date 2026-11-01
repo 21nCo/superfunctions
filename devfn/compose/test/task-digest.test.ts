@@ -141,4 +141,25 @@ describe.skipIf(!composeAtLeast(2, 24, 4))("Compose task source digest", () => {
     expect(merged).toMatch(/^[a-f0-9]{64}$/);
     for (const tag of ["!override", "!reset"]) expect(await tagged(tag), tag).not.toBe(merged);
   }, 60_000);
+
+  it("masks a value an included scope derives from a credential, directly, through a nested include and through its project .env", async () => {
+    const resources = "volumes:\n  data:\n    labels: { marker: \"${LABEL_VALUE}\", plain: \"${PLAIN_VALUE}\" }\n";
+    const env = (password: string, plain = "one") => `DB_PASSWORD=${password}\nLABEL_VALUE=\${DB_PASSWORD}\nPLAIN_VALUE=${plain}\n`;
+    const root = (include: string) => `include:\n  - ${include}\nservices:\n  setup:\n    image: busybox\n    volumes: [ "data:/data" ]\n`;
+    const layouts: Array<[string, (value: string) => Record<string, string>]> = [
+      ["include env_file", (value) => ({ "compose.yaml": root("{ path: resources/compose.yaml, env_file: resources/project.env }"),
+        "resources/compose.yaml": resources, "resources/project.env": value })],
+      ["nested include", (value) => ({ "compose.yaml": root("{ path: outer/compose.yaml }"),
+        "outer/compose.yaml": "include:\n  - { path: inner/compose.yaml, env_file: inner/project.env }\n",
+        "outer/inner/compose.yaml": resources, "outer/inner/project.env": value })],
+      ["include project .env", (value) => ({ "compose.yaml": root("resources/compose.yaml"),
+        "resources/compose.yaml": resources, "resources/.env": value })],
+    ];
+    for (const [layout, files] of layouts) {
+      const before = await digestOf(files(env("one")));
+      // Rotating the credential an alias carries never counts; a non-credential value in the same scope does.
+      expect(await digestOf(files(env("two"))), layout).toBe(before);
+      expect(await digestOf(files(env("one", "two"))), layout).not.toBe(before);
+    }
+  }, 120_000);
 });

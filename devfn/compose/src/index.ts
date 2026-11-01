@@ -1239,9 +1239,9 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * Compose project name is fixed, so every worktree and spelling of one
  * source agrees. As in the startup fingerprint, only values are masked:
  * those of secret-channel and credential-named entries, build arguments and
- * env-file declarations. Names are never masked, interpolation expressions in
- * the service are hashed as written, and formatting, comments and other
- * services do not count.
+ * env-file declarations, and values a model scope derives from a credential.
+ * Names are never masked; service interpolation expressions are hashed as
+ * written, and formatting, comments and other services do not count.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
@@ -1293,6 +1293,27 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   })).digest("hex");
 }
 
+/** Names each model scope chain derives from a credential (as the selected scopes' secret-derived names are), with their credential-safe values. */
+async function credentialDerivedInModelScopes(names: Iterable<string>, inventory: ComposeSourceInventory, environment: NodeJS.ProcessEnv,
+  secretNames: ReadonlySet<string>, deadline: number): Promise<Map<string, string | undefined>> {
+  const used = new Set([...names].filter((name) => !isCredentialKey(name) && !secretNames.has(name)));
+  const expressions = [...used].map((name) => ({ value: `\${${name}}` }));
+  const derived = new Map<string, string | undefined>();
+  for (const chain of inventory.modelScopes ?? []) {
+    const scopes = await configScopeDeclarations(chain);
+    const selected = selectedConfigDeclarations(scopes, expressions, environment, deadline);
+    const definitions = new Map<string, ConfigEnvProvenance>();
+    const budget = { remaining: MAX_CONFIG_EXPANSION_BYTES };
+    for (const [scopeIndex, declarations] of scopes.entries()) {
+      for (const [name, entry] of configScopeProvenance({ declarations, scopeIndex, selected, environment, prior: definitions, secretNames, budget })) {
+        if (!definitions.has(name)) definitions.set(name, entry);
+      }
+    }
+    for (const name of used) if (definitions.get(name)?.secretDerived) derived.set(name, definitions.get(name)!.safeValue);
+  }
+  return derived;
+}
+
 /**
  * The selected service and resources of the effective Compose model, read as
  * the startup fingerprint reads them: raw references are checked against the
@@ -1336,14 +1357,18 @@ async function credentialSafeComposeView(spec: ComposeServiceSpec, root: string,
   const maskNames = new Set([...(spec.secretEnv ?? []), ...Object.keys(environment).filter(isCredentialKey),
     ...Object.keys(effectiveEnvironment).filter(isCredentialKey), ...[...referencedInterpolation].filter(isCredentialKey),
     ...interpolation.secretDerived,
-    // The task digest also masks every credential a selected resource names, whichever scope defines it.
+    // The task digest also masks every credential a selected resource names, and every value a model scope derives from one.
     ...(maskUnscoped ? [...pathInterpolationNames(JSON.stringify(rawSelectedResources))].filter(isCredentialKey) : [])]);
+  const derived = maskUnscoped ? await credentialDerivedInModelScopes(pathInterpolationNames(JSON.stringify(rawSelectedResources)),
+    inventory, environment, new Set([...maskNames, ...envFileState.secretDerived]), deadline) : new Map<string, string | undefined>();
+  for (const name of derived.keys()) maskNames.add(name);
   const secretNames = new Set([...maskNames, ...envFileState.secretDerived]);
   assertSelectedInterpolation(inventory.service?.env_file, new Set([...implicitInterpolationKeys(spec), ...secretNames]),
     referencedInterpolation, interpolationValues, interpolation.unknownValues);
   const safeConfiguration = secretNames.size > 0
     ? await credentialSafeComposeConfiguration({ args, root, environment, sourceFile, inventory, rawService,
-      rawSelectedResources, maskNames, interpolation, service: spec.service, deadline, maskUnscoped })
+      rawSelectedResources, maskNames, interpolation: { ...interpolation, safeValues: { ...interpolation.safeValues, ...Object.fromEntries(derived) } },
+      service: spec.service, deadline, maskUnscoped })
     : configuration;
   const safeSelected = safeConfiguration.services?.[spec.service];
   if (!safeSelected) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is absent from the effective configuration.`);
