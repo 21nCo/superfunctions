@@ -85,3 +85,20 @@ it("counts every env_file declaration Compose passes to the container, masking o
   expect(await raw("app.mode=one\n")).not.toBe(await raw("app.mode=two\n"));
   expect(await raw("API_TOKEN=one\n")).toBe(await raw("API_TOKEN=two\n"));
 }, 60_000);
+
+it("digests resource declarations merged in Compose include order, not file load order", async () => {
+  const setup = (extra = "") => `include:\n  - path: [a.yaml, b.yaml]\nservices:\n  setup:\n${extra}    image: busybox\n    volumes: [ "data:/data" ]\n    networks: [ net ]\n`;
+  const layer = (volume: string, network = "") => `volumes:\n  data:\n    ${volume}\n${network ? `networks:\n  net:\n    ${network}\n` : ""}`;
+  // A later file that redeclares only labels keeps the earlier name, so that name still counts.
+  const partial = async (name: string, driver: string) => await digestOf({ "compose.yaml": setup(),
+    "a.yaml": layer(`name: ${name}`, `driver_opts: { mode: ${driver} }`), "b.yaml": layer("labels: { which: b }", "labels: { which: b }") });
+  const base = await partial("seed-one", "one");
+  expect(await partial("seed-two", "one")).not.toBe(base);
+  expect(await partial("seed-one", "two")).not.toBe(base);
+  // The later file of the path list wins, even when an extends loads it before the earlier one.
+  const ordered = async (a: string, b: string) => await digestOf({ "compose.yaml": setup("    extends: { file: b.yaml, service: tmpl }\n"),
+    "a.yaml": layer(`name: ${a}`), "b.yaml": `services:\n  tmpl:\n    image: busybox\n${layer(`name: ${b}`)}` });
+  const effective = await ordered("from-a", "from-b");
+  expect(await ordered("from-a", "edited-b")).not.toBe(effective);
+  expect(await ordered("edited-a", "from-b")).toBe(effective);
+}, 60_000);

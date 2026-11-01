@@ -1303,11 +1303,11 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   } catch (error) {
     throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to select the resources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const resourceOrigins: Array<[string, string, string | null]> = [];
+  const resourceOrigins: Array<[string, string, string[]]> = [];
   for (const [kind, declarations] of Object.entries(resources)) {
     for (const name of Object.keys(declarations && typeof declarations === "object" ? declarations : {}).sort(compareCanonicalKeys)) {
-      const file = inventory.resourceOrigins[kind]?.[name];
-      resourceOrigins.push([kind, name, file === undefined ? null : await relative(file)]);
+      const files = inventory.resourceOrigins[kind]?.[name] ?? [];
+      resourceOrigins.push([kind, name, await Promise.all(files.map(relative))]);
     }
   }
   const origins: Array<[string, string]> = [];
