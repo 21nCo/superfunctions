@@ -17,43 +17,9 @@ export interface ComposeSourceInventory {
   interpolationScopes: Array<{ directory: string; envFiles: string[] }>;
   /** The definitions merged into the selected service, in merge order: each one's file and the directory its relative paths resolve against. */
   serviceOrigins: Array<{ file: string; directory: string }>;
-  /** The files whose top-level declarations merge into each effective volume, network, config and secret, in merge order. */
-  resourceOrigins: Record<string, Record<string, string[]>>;
 }
 
 /** Explicit interpolation inputs in Compose precedence order (lowest first). */
-type ResourceModel = { resources: Record<string, unknown>; origins: Record<string, Record<string, string[]>> };
-
-/** Compose's default model merge: mappings merge per key, sequences append, a later scalar wins and a null keeps the earlier value. */
-function mergeResource(base: unknown, value: unknown): unknown {
-  if (value == null) return base;
-  if (Array.isArray(base) && Array.isArray(value)) return [...base, ...value];
-  const baseRecord = record(base);
-  const valueRecord = record(value);
-  if (!baseRecord || !valueRecord) return value;
-  const merged = { ...baseRecord };
-  for (const [key, item] of Object.entries(valueRecord)) merged[key] = mergeResource(merged[key], item);
-  return merged;
-}
-
-/**
- * Fold a model's resource declarations into another. A later file of one
- * include path list overrides; an included model never displaces a
- * declaration already present (Compose rejects that as a conflict), but every
- * contributing file still counts.
- */
-function foldResources(target: ResourceModel, source: ResourceModel, override: boolean): void {
-  for (const kind of ["volumes", "networks", "configs", "secrets"]) {
-    const declarations = { ...record(target.resources[kind]) };
-    const origins = target.origins[kind] = { ...target.origins[kind] };
-    for (const [name, value] of Object.entries(record(source.resources[kind]) ?? {})) {
-      declarations[name] = (override ? mergeResource(declarations[name], value) : mergeResource(value, declarations[name])) ?? null;
-      origins[name] = [...origins[name] ?? [], ...source.origins[kind]?.[name] ?? []];
-    }
-    target.resources[kind] = declarations;
-  }
-}
-
 export async function composeInterpolationEnvFiles(scopes: ComposeSourceInventory["interpolationScopes"]): Promise<string[]> {
   const files: string[] = [];
   for (const scope of [...scopes].reverse()) {
@@ -99,8 +65,7 @@ function absoluteEnvFiles(value: unknown, directory: string, scopes: ComposeSour
   return Array.isArray(value) ? value.map(absolute) : absolute(value);
 }
 
-/** Split a short Compose entry at colons outside any ${...} expression. */
-export function shortFields(value: string): string[] {
+function shortFields(value: string): string[] {
   const fields: string[] = [];
   let start = 0;
   let braces = 0;
@@ -268,10 +233,6 @@ export async function assertComposeSourceGraphBounded(
   const visited = new Set<string>();
   const activeServices = new Set<string>();
   const serviceCache = new Map<string, Record<string, unknown> | null>();
-  // The resource model of each visited project file with its includes. A
-  // file reached only through extends contributes its service, not its
-  // top-level resource declarations.
-  const models = new Map<string, ResourceModel>();
   const deviceCandidates = new WeakMap<Record<string, unknown>, unknown[]>();
   const origins = new WeakMap<Record<string, unknown>, Array<{ file: string; directory: string }>>();
   let selectedService: Record<string, unknown> | null = null;
@@ -447,14 +408,10 @@ export async function assertComposeSourceGraphBounded(
     return merged;
   }
 
-  async function visitDocument(file: string, directory: string, envFiles: string[], scopes: ComposeSourceInventory["interpolationScopes"]): Promise<ResourceModel> {
-    const key = `document\0${file}\0${directory}\0${envFiles.join("\0")}`;
-    if (!mark(key)) return models.get(key) ?? { resources: {}, origins: {} };
+  async function visitDocument(file: string, directory: string, envFiles: string[], scopes: ComposeSourceInventory["interpolationScopes"]): Promise<void> {
+    if (!mark(`document\0${file}\0${directory}\0${envFiles.join("\0")}`)) return;
     await checkInterpolationFiles(directory, envFiles);
     const { data } = await load(file);
-    const model: ResourceModel = { resources: {}, origins: {} };
-    foldResources(model, { resources: data, origins: Object.fromEntries(["volumes", "networks", "configs", "secrets"].map((kind) =>
-      [kind, Object.fromEntries(Object.keys(record(data[kind]) ?? {}).map((name) => [name, [file]]))])) }, true);
     const candidate = await visitService(file, serviceName, directory, await composeInterpolationEnvFiles(scopes), scopes);
     if (candidate) {
       selectedService = candidate;
@@ -468,10 +425,7 @@ export async function assertComposeSourceGraphBounded(
     for (const include of includes) {
       const { includedFiles, projectDirectory, localEnvFiles } = await resolveInclude(file, include, scopes);
       const childScopes = [...scopes, { directory: projectDirectory, envFiles: localEnvFiles }];
-      // Compose merges an include path list in order, then imports it into the including model.
-      const included: ResourceModel = { resources: {}, origins: {} };
-      for (const includedFile of includedFiles) foldResources(included, await visitDocument(includedFile, projectDirectory, localEnvFiles, childScopes), true);
-      foldResources(model, included, false);
+      for (const includedFile of includedFiles) await visitDocument(includedFile, projectDirectory, localEnvFiles, childScopes);
       const merged = await mergedIncludedService(includedFiles, projectDirectory, await composeInterpolationEnvFiles(childScopes), childScopes);
       if (merged) {
         selectedService = merged;
@@ -480,12 +434,16 @@ export async function assertComposeSourceGraphBounded(
         selectedScopes = childScopes;
       }
     }
-    models.set(key, model);
-    return model;
   }
 
-  const { resources, origins: resourceOrigins } = await visitDocument(sourceFile, path.dirname(sourceFile), [], selectedScopes);
+  await visitDocument(sourceFile, path.dirname(sourceFile), [], selectedScopes);
+  const resources: Record<string, unknown> = {};
+  for (const { data } of documents.values()) {
+    for (const kind of ["volumes", "networks", "configs", "secrets"] as const) {
+      resources[kind] = { ...record(resources[kind]), ...record(data[kind]) };
+    }
+  }
   return { service: selectedService, deviceCandidates: selectedService ? deviceCandidates.get(selectedService) ?? [] : [],
     resources, serviceDirectory: selectedDirectory, interpolationEnvFiles: selectedEnvFiles,
-    interpolationScopes: selectedScopes, serviceOrigins: selectedService ? origins.get(selectedService) ?? [] : [], resourceOrigins };
+    interpolationScopes: selectedScopes, serviceOrigins: selectedService ? origins.get(selectedService) ?? [] : [] };
 }

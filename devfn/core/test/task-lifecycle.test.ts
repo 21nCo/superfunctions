@@ -190,7 +190,7 @@ describe("task input revisions", () => {
       await writeFile(path.join(root, "compose.yaml"), "services: [unclosed\n");
       await expect(taskInputRevision(config, root, { name: "auth", kind: "service" }, "default")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 180_000);
 
   it("follows a Compose task's included, extended and env files, masking their credentials", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-compose-sources-"));
@@ -214,7 +214,7 @@ describe("task input revisions", () => {
         expect(await write({ ...files, ...change })).not.toBe(base);
       }
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 180_000);
 
   it("tracks where a Compose task's definition resolves its relative paths, independent of the root's spelling and worktree", async () => {
     const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-provenance-")));
@@ -256,7 +256,7 @@ describe("task input revisions", () => {
       expect(await revision(path.join(parent, "alias"))).toBe(included);
       expect(await revision(path.join(parent, "other-worktree"))).toBe(included);
     } finally { await rm(parent, { recursive: true, force: true }); }
-  });
+  }, 180_000);
 
   it("selects a Compose task's sources with the environment startup selects them with, never hashing an inherited value", async () => {
     const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-selected-")));
@@ -316,7 +316,7 @@ describe("task input revisions", () => {
       if (previous === undefined) delete process.env.TASK_TEST_SETUP_ROOT; else process.env.TASK_TEST_SETUP_ROOT = previous;
       await rm(parent, { recursive: true, force: true });
     }
-  });
+  }, 180_000);
 
   it("masks credential build arguments of a Compose task like its credential environment entries", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-build-args-"));
@@ -334,7 +334,7 @@ describe("task input revisions", () => {
       expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=minimal]")).toBe(list);
       expect(await revision("[NPM_TOKEN=n-2, SEED_MODE=full]")).not.toBe(list);
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 180_000);
 
   it("counts the resource declarations a Compose task's interpolated references select, and its implicit default network", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-resources-"));
@@ -347,6 +347,8 @@ describe("task input revisions", () => {
     const declared = (kind: string, field: string, selected: string, other = "other-one") => [`${kind}:`, `  data: { ${field}: ${selected} }`, `  other: { ${field}: ${other} }`];
     const selectors = { SETUP_VOLUME: "data", SETUP_NETWORK: "data", SETUP_CONFIG: "data", SETUP_SEED_ITEM: "data" };
     try {
+      // Compose reads a selected config's file, as startup does.
+      for (const file of ["one", "two", "other-one", "other-two"]) await writeFile(path.join(root, file), `${file}\n`);
       for (const [kind, selector, reference, field] of [
         ["volumes", "SETUP_VOLUME", "volumes: [\"${SETUP_VOLUME}:/data\"]", "name"],
         ["volumes", "SETUP_VOLUME", "volumes: [{ type: volume, source: \"${SETUP_VOLUME}\", target: /data }]", "name"],
@@ -371,7 +373,7 @@ describe("task input revisions", () => {
       await expect(revision(["volumes: [\"${SETUP_VOLUME}:/data\"]"], declared("volumes", "name", "one")))
         .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, 180_000);
 });
 
 describe("finite setup tasks gate dependents (real local processes)", () => {

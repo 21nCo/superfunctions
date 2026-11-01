@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { assertEnvironmentKeyCasing, isCredentialKey, resolveContainedPath, type ComposeServiceSpec } from "@devfn/config";
 import { runGatedCommand, stopGatedLauncher, waitForReadiness, type GatedCommandRunner } from "@devfn/processes";
 import { createScopedPathInterpolator, readComposeEnvDefinitions, selectedInterpolationReferences, simpleInterpolation } from "./path-interpolation.js";
-import { assertComposeSourceGraphBounded, composeInterpolationEnvFiles, normalizeComposeRawService, reconcileComposeUniqueResources, shortFields, type ComposeSourceInventory } from "./source-files.js";
+import { assertComposeSourceGraphBounded, composeInterpolationEnvFiles, normalizeComposeRawService, pathInterpolationNames, reconcileComposeUniqueResources, type ComposeSourceInventory } from "./source-files.js";
 
 const execFileAsync = promisify(execFile);
 const MINIMUM_COMPOSE_VERSION = [2, 24, 4] as const;
@@ -287,35 +287,6 @@ function selectedComposeResources(
   service: Record<string, unknown>,
 ): Record<string, unknown> {
   return declaredComposeResources(configuration, (kind) => referencedResourceNames(kind, service[kind]));
-}
-
-/**
- * Select the resource declarations a raw inventory service uses, as Compose
- * does after interpolation: references are resolved with the selected
- * environment, and a service declaring neither networks nor network_mode
- * joins the project's default network.
- */
-async function selectedInventoryResources(inventory: ComposeSourceInventory,
-  interpolate: ReturnType<typeof createScopedPathInterpolator>): Promise<Record<string, unknown>> {
-  const service = inventory.service;
-  if (!service) return {};
-  const names = new Map<ComposeResourceKind, string[]>();
-  for (const kind of COMPOSE_RESOURCE_KINDS) {
-    // Only the source of a short volume entry selects a declaration. It is
-    // split off at the first colon outside ${...}, since a default such as
-    // ${VOLUME:-data} contains a colon, and the target is never interpolated.
-    // An anonymous entry (a target only) selects nothing.
-    const written = kind === "volumes" && Array.isArray(service.volumes)
-      ? service.volumes.flatMap((entry: unknown) => {
-        if (typeof entry !== "string") return referencedResourceNames(kind, [entry]);
-        const fields = shortFields(entry);
-        return fields.length > 1 ? [fields[0]] : [];
-      })
-      : referencedResourceNames(kind, service[kind]);
-    names.set(kind, await interpolate(written, inventory.serviceDirectory, [], inventory.interpolationScopes));
-  }
-  if (service.networks === undefined && service.network_mode === undefined) names.get("networks")!.push("default");
-  return declaredComposeResources(inventory.resources, (kind) => names.get(kind) ?? []);
 }
 
 async function boundedConfigFileBytes(file: string, remaining: number): Promise<Buffer> {
@@ -1174,6 +1145,8 @@ interface CredentialSafeComposeInput {
   interpolation: SelectedInterpolationState;
   service: string;
   deadline: number;
+  /** Also mask a credential the selected scopes leave undefined (an included model may define it), so neither its value nor its presence counts. */
+  maskUnscoped?: boolean;
 }
 
 async function credentialSafeComposeConfiguration(input: CredentialSafeComposeInput): Promise<ComposeConfiguration> {
@@ -1193,9 +1166,9 @@ async function credentialSafeComposeConfiguration(input: CredentialSafeComposeIn
     // Typed fields use valid sentinels while credential bytes stay out of the digest.
     const booleanNames = booleanComposeInterpolations(rawService, rawSelectedResources);
     const durationNames = durationComposeInterpolations(rawService);
-    const masked = [...maskNames].filter((name) => presence.has(name) && presence.get(name) !== null).map((name) => {
+    const masked = [...maskNames].filter((name) => input.maskUnscoped ? /^[A-Za-z_]\w*$/.test(name) : presence.has(name) && presence.get(name) !== null).map((name) => {
       let value = "";
-      if (presence.get(name)) value = booleanNames.has(name) ? "true"
+      if (presence.get(name) ?? input.maskUnscoped) value = booleanNames.has(name) ? "true"
         : durationNames.get(name) ?? (interpolation.safeValues[name] || "1");
       return [name, value];
     });
@@ -1256,23 +1229,31 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * the same source state as the startup fingerprint (the selected service
  * through include and extends, resolved with the environment startup
  * selects): that service's definition, where each part of it was defined
- * (file and the directory its relative paths resolve against), the volumes,
- * networks, configs and secrets it references (resolved as Compose resolves
- * them, including the implicit default network) with the file declaring each,
- * and the declarations of its env_file (read as the startup fingerprint reads
- * them) and interpolation .env files. Paths are
- * relative to the canonical repository root, so every worktree and spelling
- * of one source agrees. As in the startup fingerprint, only values are
- * masked: those of secret-channel and credential-named environment entries,
- * build arguments and env-file declarations. Names are never masked,
- * interpolation expressions are hashed as written (never the values they
- * resolve to), and formatting, comments and other services do not count.
+ * (file and the directory its relative paths resolve against), the
+ * declarations of its env_file (read as the startup fingerprint reads them)
+ * and interpolation .env files, and the volumes, networks, configs (with the
+ * content they select) and secrets it uses, taken from the effective model
+ * Compose resolves exactly as the startup fingerprint takes them (include,
+ * merge, extends and interpolation are Compose's own, credential values
+ * masked). Paths are relative to the canonical repository root and the
+ * Compose project name is fixed, so every worktree and spelling of one
+ * source agrees. As in the startup fingerprint, only values are masked:
+ * those of secret-channel and credential-named entries, build arguments and
+ * env-file declarations. Names are never masked, interpolation expressions in
+ * the service are hashed as written, and formatting, comments and other
+ * services do not count.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
   const canonicalRoot = await realpath(root);
   const deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS;
-  const { inventory } = await selectedComposeSourceState(spec, canonicalRoot, environment, deadline);
+  let view: Awaited<ReturnType<typeof credentialSafeComposeView>>;
+  try {
+    view = await credentialSafeComposeView(spec, canonicalRoot, composeProjectName(spec.projectName ?? "devfn", "task-source"), environment, deadline, true);
+  } catch (error) {
+    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to select the resources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const { inventory } = view;
   if (!inventory.service) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is not defined in its Compose files.`);
   const secretNames = new Set(spec.secretEnv ?? []);
   // A host value may spell a selected path through a symlink; its canonical location is what counts.
@@ -1296,36 +1277,33 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   for (const file of await composeInterpolationEnvFiles(inventory.interpolationScopes)) {
     interpolationFiles.push([await relative(file), await maskedEnvDeclarations(file, secretNames)]);
   }
-  let resources: Record<string, unknown>;
-  try {
-    // As at startup, a credential-named variable may name a bind source; only the declaration it selects counts.
-    resources = await selectedInventoryResources(inventory, createScopedPathInterpolator(environment, deadline, implicitInterpolationKeys(spec), true));
-  } catch (error) {
-    throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to select the resources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const resourceOrigins: Array<[string, string, string[]]> = [];
-  for (const [kind, declarations] of Object.entries(resources)) {
-    for (const name of Object.keys(declarations && typeof declarations === "object" ? declarations : {}).sort(compareCanonicalKeys)) {
-      const files = inventory.resourceOrigins[kind]?.[name] ?? [];
-      resourceOrigins.push([kind, name, await Promise.all(files.map(relative))]);
-    }
-  }
+  // Compose writes resolved paths absolute; inside the repository they count relative to it.
+  const portable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(portable);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, portable(item)]));
+    const inside = typeof value === "string" && path.isAbsolute(value) ? path.relative(canonicalRoot, value) : undefined;
+    return inside !== undefined && !inside.startsWith("..") && !path.isAbsolute(inside) ? inside.split(path.sep).join("/") : value;
+  };
   const origins: Array<[string, string]> = [];
   for (const { file, directory } of inventory.serviceOrigins) origins.push([await relative(file), await relative(directory)]);
   return createHash("sha256").update(JSON.stringify({
     service: canonicalComposeValue(maskedBuildArguments(service, secretNames), secretNames), origins,
-    resources: canonicalComposeValue(resources, secretNames), resourceOrigins,
+    resources: portable(view.safeResources), configFiles: view.configFiles,
     envFiles, interpolationFiles,
   })).digest("hex");
 }
 
-/** Fingerprint effective Compose inputs without hashing inherited host or secret values. */
-export async function fingerprintComposeSource(spec: ComposeServiceSpec, root: string, instanceId: string, environment: NodeJS.ProcessEnv,
-  deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS): Promise<string> {
+/**
+ * The selected service and resources of the effective Compose model, read as
+ * the startup fingerprint reads them: raw references are checked against the
+ * uninterpolated model, then hashed values come from the configuration Compose
+ * resolves with secret-channel and credential-named values masked.
+ */
+async function credentialSafeComposeView(spec: ComposeServiceSpec, root: string, projectName: string, environment: NodeJS.ProcessEnv, deadline: number, maskUnscoped = false) {
   const { sourceFile, inventory, interpolation, envFileState } = await selectedComposeSourceState(spec, root, environment, deadline);
   const referencedInterpolation = new Set<string>();
   const interpolationValues = interpolation.values;
-  const args = ["compose", "-p", composeProjectName(spec.projectName ?? "devfn", instanceId),
+  const args = ["compose", "-p", projectName,
     "-f", sourceFile, "config", "--format", "json"];
   const configuration = await resolvedComposeConfiguration<ComposeConfiguration>(args, root, environment, deadline, spec.service);
   const rawConfiguration = await uninterpolatedComposeConfiguration(args, root, environment, spec.service, inventory, deadline,
@@ -1357,13 +1335,15 @@ export async function fingerprintComposeSource(spec: ComposeServiceSpec, root: s
   assertActiveReferences(referencedInterpolation, (name) => interpolation.references.get(name), implicitInterpolationKeys(spec));
   const maskNames = new Set([...(spec.secretEnv ?? []), ...Object.keys(environment).filter(isCredentialKey),
     ...Object.keys(effectiveEnvironment).filter(isCredentialKey), ...[...referencedInterpolation].filter(isCredentialKey),
-    ...interpolation.secretDerived]);
+    ...interpolation.secretDerived,
+    // The task digest also masks every credential a selected resource names, whichever scope defines it.
+    ...(maskUnscoped ? [...pathInterpolationNames(JSON.stringify(rawSelectedResources))].filter(isCredentialKey) : [])]);
   const secretNames = new Set([...maskNames, ...envFileState.secretDerived]);
   assertSelectedInterpolation(inventory.service?.env_file, new Set([...implicitInterpolationKeys(spec), ...secretNames]),
     referencedInterpolation, interpolationValues, interpolation.unknownValues);
   const safeConfiguration = secretNames.size > 0
     ? await credentialSafeComposeConfiguration({ args, root, environment, sourceFile, inventory, rawService,
-      rawSelectedResources, maskNames, interpolation, service: spec.service, deadline })
+      rawSelectedResources, maskNames, interpolation, service: spec.service, deadline, maskUnscoped })
     : configuration;
   const safeSelected = safeConfiguration.services?.[spec.service];
   if (!safeSelected) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is absent from the effective configuration.`);
@@ -1375,6 +1355,14 @@ export async function fingerprintComposeSource(spec: ComposeServiceSpec, root: s
   const declared = safeSelected.environment;
   const declaredEnvironment = declared && typeof declared === "object" && !Array.isArray(declared)
     ? declared as Record<string, unknown> : {};
+  return { inventory, envFileState, safeService, safeResources, configFiles, declaredEnvironment };
+}
+
+/** Fingerprint effective Compose inputs without hashing inherited host or secret values. */
+export async function fingerprintComposeSource(spec: ComposeServiceSpec, root: string, instanceId: string, environment: NodeJS.ProcessEnv,
+  deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS): Promise<string> {
+  const { envFileState, safeService, safeResources, configFiles, declaredEnvironment } = await credentialSafeComposeView(spec, root,
+    composeProjectName(spec.projectName ?? "devfn", instanceId), environment, deadline);
   return createHash("sha256")
     .update(JSON.stringify(safeService))
     .update("\0").update(JSON.stringify(canonicalFingerprintEnvironment(declaredEnvironment, envFileState, spec)))

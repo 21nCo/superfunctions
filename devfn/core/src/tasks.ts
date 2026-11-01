@@ -141,7 +141,8 @@ const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
  * as that node receives them, its Compose sources and the content of its
  * declared inputs. Leased ports, secret values and values inherited from the
  * host through envAllowlist are not part of it, so a reallocated port, a
- * rotated credential or another shell never reruns a task. The node's
+ * rotated credential or another shell never reruns a task, unless an inherited
+ * value changes the effective Compose resource the task uses. The node's
  * resolved startup environment (by default its profile and manifest
  * environment as written) only selects the Compose sources, as at startup.
  */
