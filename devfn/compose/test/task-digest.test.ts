@@ -162,4 +162,29 @@ describe.skipIf(!composeAtLeast(2, 24, 4))("Compose task source digest", () => {
       expect(await digestOf(files(env("one", "two"))), layout).not.toBe(before);
     }
   }, 120_000);
+
+  it("masks a credential-derived value only in the scopes whose selected declarations use it, and rejects scopes that disagree", async () => {
+    const include = (name: string) => `  - { path: ${name}/compose.yaml, env_file: ${name}/project.env }\n`;
+    const volume = (name: string, field = "labels: { marker: \"${LABEL_VALUE}\" }") => `volumes:\n  ${name}:\n    ${field}\n`;
+    const project = (uses: string[], envA: string, envB: string, rootVolumes = "", a = volume("data")) => ({
+      "compose.yaml": `include:\n${include("a")}${include("b")}services:\n  setup:\n    image: busybox\n    volumes: ${JSON.stringify(uses)}\n${rootVolumes}`,
+      "a/compose.yaml": a, "a/project.env": envA, "b/compose.yaml": volume("other"), "b/project.env": envB,
+    });
+    const derived = (password: string, alias = "${DB_PASSWORD}") => `DB_PASSWORD=${password}\nLABEL_VALUE=${alias}\n`;
+    // A: the selected volume reads a plain value; another include derives the same name from a credential for a volume setup does not use.
+    const before = await digestOf(project(["data:/data"], "LABEL_VALUE=one\n", derived("one")));
+    expect(await digestOf(project(["data:/data"], "LABEL_VALUE=two\n", derived("one")))).not.toBe(before);
+    // Rotating or rewriting that unrelated include's alias does not count.
+    expect(await digestOf(project(["data:/data"], "LABEL_VALUE=one\n", derived("two")))).toBe(before);
+    expect(await digestOf(project(["data:/data"], "LABEL_VALUE=one\n", derived("one", "x-${DB_PASSWORD}")))).toBe(before);
+    // B: a root default counts although an unrelated include derives the name from a credential.
+    const rootDefault = (value: string) => project(["data:/data"], "", derived("one"),
+      volume("data", `name: \${LABEL_VALUE:-${value}}`), "services:\n  helper:\n    image: busybox\n");
+    expect(await digestOf(rootDefault("seed-two"))).not.toBe(await digestOf(rootDefault("seed-one")));
+    // Selected volumes whose scopes disagree on the name's provenance cannot be masked through one process environment.
+    await expect(digestOf(project(["data:/data", "other:/other"], "LABEL_VALUE=one\n", derived("one")))).rejects.toThrow(/LABEL_VALUE/);
+    // Where every scope that uses the name derives it from a credential, rotation still does not count.
+    const both = (password: string) => project(["data:/data", "other:/other"], derived(password), derived(password));
+    expect(await digestOf(both("two"))).toBe(await digestOf(both("one")));
+  }, 180_000);
 });

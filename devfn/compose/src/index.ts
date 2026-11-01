@@ -1192,11 +1192,8 @@ async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<stri
   }
 }
 
-/**
- * An env_file's declarations as the startup fingerprint reads them (dotted,
- * hyphenated and bare names too; a raw-format file line by line), with the
- * same values masked; the file's absence counts too.
- */
+/** An env_file's declarations as the startup fingerprint reads them (a raw-format file line by line), with the same values masked;
+ * the file's absence counts too. */
 async function maskedEnvFileDeclarations(file: string, format: string | undefined, secretNames: ReadonlySet<string>,
   budget: { remaining: number }): Promise<unknown> {
   const content = await readEnvFileContent(file, true, budget.remaining).catch((error: NodeJS.ErrnoException) => {
@@ -1229,19 +1226,13 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * the same source state as the startup fingerprint (the selected service
  * through include and extends, resolved with the environment startup
  * selects): that service's definition, where each part of it was defined
- * (file and the directory its relative paths resolve against), the
- * declarations of its env_file (read as the startup fingerprint reads them)
- * and interpolation .env files, and the volumes, networks, configs (with the
- * content they select) and secrets it uses, taken from the effective model
- * Compose resolves exactly as the startup fingerprint takes them (include,
- * merge, extends and interpolation are Compose's own, credential values
- * masked). Paths are relative to the canonical repository root and the
- * Compose project name is fixed, so every worktree and spelling of one
- * source agrees. As in the startup fingerprint, only values are masked:
- * those of secret-channel and credential-named entries, build arguments and
- * env-file declarations, and values a model scope derives from a credential.
- * Names are never masked; service interpolation expressions are hashed as
- * written, and formatting, comments and other services do not count.
+ * and the declarations of its env_file and interpolation .env files, and the
+ * volumes, networks, configs (with the content they select) and secrets it
+ * uses, as Compose's own effective model resolves them. Paths are relative to
+ * the canonical repository root and the project name is fixed, so worktrees
+ * agree. Only values are masked: those of secret-channel and credential-named
+ * entries, build arguments, env-file declarations, and values the scopes
+ * declaring a selected resource derive from a credential.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
@@ -1293,33 +1284,41 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   })).digest("hex");
 }
 
-/** Names each model scope chain derives from a credential (as the selected scopes' secret-derived names are), with their credential-safe values. */
-async function credentialDerivedInModelScopes(names: Iterable<string>, inventory: ComposeSourceInventory, environment: NodeJS.ProcessEnv,
-  secretNames: ReadonlySet<string>, deadline: number): Promise<Map<string, string | undefined>> {
-  const used = new Set([...names].filter((name) => !isCredentialKey(name) && !secretNames.has(name)));
-  const expressions = [...used].map((name) => ({ value: `\${${name}}` }));
-  const derived = new Map<string, string | undefined>();
-  for (const chain of inventory.modelScopes ?? []) {
-    const scopes = await configScopeDeclarations(chain);
-    const selected = selectedConfigDeclarations(scopes, expressions, environment, deadline);
+/** Names that every scope chain declaring a selected resource with them derives from a credential, with credential-safe values.
+ * The mask is process environment, global to all scopes, so chains (or the selected service's scopes) that disagree fail closed. */
+async function credentialDerivedInModelScopes(selected: Record<string, unknown>, inventory: ComposeSourceInventory,
+  environment: NodeJS.ProcessEnv, secretNames: ReadonlySet<string>, serviceDerived: ReadonlySet<string>, deadline: number): Promise<Map<string, string | undefined>> {
+  const chains = new Map<string, Set<string>>();
+  for (const { scopes, data } of inventory.modelDocuments ?? []) {
+    const names = chains.get(JSON.stringify(scopes)) ?? new Set<string>();
+    const own = declaredComposeResources(data, (kind) => Object.keys((selected[kind] ?? {}) as object));
+    for (const name of pathInterpolationNames(JSON.stringify(own))) if (!isCredentialKey(name) && !secretNames.has(name)) names.add(name);
+    if (names.size) chains.set(JSON.stringify(scopes), names);
+  }
+  // Per name, the credential-safe value in each chain that uses it, or null where that chain does not derive it from a credential.
+  const provenance = new Map<string, Array<string | undefined | null>>();
+  for (const [chain, names] of chains) {
+    const scopes = await configScopeDeclarations(JSON.parse(chain) as ComposeSourceInventory["interpolationScopes"]);
+    const chosen = selectedConfigDeclarations(scopes, [...names].map((name) => ({ value: `\${${name}}` })), environment, deadline);
     const definitions = new Map<string, ConfigEnvProvenance>();
     const budget = { remaining: MAX_CONFIG_EXPANSION_BYTES };
     for (const [scopeIndex, declarations] of scopes.entries()) {
-      for (const [name, entry] of configScopeProvenance({ declarations, scopeIndex, selected, environment, prior: definitions, secretNames, budget })) {
+      for (const [name, entry] of configScopeProvenance({ declarations, scopeIndex, selected: chosen, environment, prior: definitions, secretNames, budget })) {
         if (!definitions.has(name)) definitions.set(name, entry);
       }
     }
-    for (const name of used) if (definitions.get(name)?.secretDerived) derived.set(name, definitions.get(name)!.safeValue);
+    for (const name of names) provenance.set(name, [...provenance.get(name) ?? [], definitions.get(name)?.secretDerived ? definitions.get(name)!.safeValue : null]);
   }
-  return derived;
+  for (const [name, values] of provenance) {
+    if (new Set(values).size > 1 || (values.includes(null) && serviceDerived.has(name))) {
+      throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Selected Compose resources interpolate ${name}, which their scopes do not derive from a credential alike, so it cannot be masked in one scope only.`);
+    }
+  }
+  return new Map([...provenance].filter(([, values]) => !values.includes(null)).map(([name, values]) => [name, values[0] as string | undefined]));
 }
 
-/**
- * The selected service and resources of the effective Compose model, read as
- * the startup fingerprint reads them: raw references are checked against the
- * uninterpolated model, then hashed values come from the configuration Compose
- * resolves with secret-channel and credential-named values masked.
- */
+/** The selected service and resources of the effective Compose model, read as the startup fingerprint reads them: raw references are
+ * checked against the uninterpolated model, then hashed values come from the model Compose resolves with secret values masked. */
 async function credentialSafeComposeView(spec: ComposeServiceSpec, root: string, projectName: string, environment: NodeJS.ProcessEnv, deadline: number, maskUnscoped = false) {
   const { sourceFile, inventory, interpolation, envFileState } = await selectedComposeSourceState(spec, root, environment, deadline);
   const referencedInterpolation = new Set<string>();
@@ -1357,10 +1356,10 @@ async function credentialSafeComposeView(spec: ComposeServiceSpec, root: string,
   const maskNames = new Set([...(spec.secretEnv ?? []), ...Object.keys(environment).filter(isCredentialKey),
     ...Object.keys(effectiveEnvironment).filter(isCredentialKey), ...[...referencedInterpolation].filter(isCredentialKey),
     ...interpolation.secretDerived,
-    // The task digest also masks every credential a selected resource names, and every value a model scope derives from one.
+    // The task digest also masks every credential a selected resource names, and a value the scopes declaring it derive from one.
     ...(maskUnscoped ? [...pathInterpolationNames(JSON.stringify(rawSelectedResources))].filter(isCredentialKey) : [])]);
-  const derived = maskUnscoped ? await credentialDerivedInModelScopes(pathInterpolationNames(JSON.stringify(rawSelectedResources)),
-    inventory, environment, new Set([...maskNames, ...envFileState.secretDerived]), deadline) : new Map<string, string | undefined>();
+  const derived = maskUnscoped ? await credentialDerivedInModelScopes(rawSelectedResources, inventory, environment,
+    new Set(spec.secretEnv ?? []), interpolation.secretDerived, deadline) : new Map<string, string | undefined>();
   for (const name of derived.keys()) maskNames.add(name);
   const secretNames = new Set([...maskNames, ...envFileState.secretDerived]);
   assertSelectedInterpolation(inventory.service?.env_file, new Set([...implicitInterpolationKeys(spec), ...secretNames]),

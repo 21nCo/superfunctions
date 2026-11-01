@@ -17,8 +17,8 @@ export interface ComposeSourceInventory {
   interpolationScopes: Array<{ directory: string; envFiles: string[] }>;
   /** The definitions merged into the selected service, in merge order: each one's file and the directory its relative paths resolve against. */
   serviceOrigins: Array<{ file: string; directory: string }>;
-  /** The interpolation scope chain of every model file visited (root, then each include), whose values selected resources may use. */
-  modelScopes?: Array<ComposeSourceInventory["interpolationScopes"]>;
+  /** Every model file visited (root, then each include): its interpolation scope chain and its own parsed declarations. */
+  modelDocuments?: Array<{ scopes: ComposeSourceInventory["interpolationScopes"]; data: Record<string, unknown> }>;
 }
 
 /** Explicit interpolation inputs in Compose precedence order (lowest first). */
@@ -241,7 +241,7 @@ export async function assertComposeSourceGraphBounded(
   let selectedDirectory = path.dirname(sourceFile);
   let selectedEnvFiles: string[] = [];
   let selectedScopes: ComposeSourceInventory["interpolationScopes"] = [{ directory: selectedDirectory, envFiles: [] }];
-  const modelScopes = new Map<string, ComposeSourceInventory["interpolationScopes"]>();
+  const modelDocuments: NonNullable<ComposeSourceInventory["modelDocuments"]> = [];
   let totalBytes = 0;
   let materializedBytes = 0;
   let interpolations = 0;
@@ -414,8 +414,8 @@ export async function assertComposeSourceGraphBounded(
   async function visitDocument(file: string, directory: string, envFiles: string[], scopes: ComposeSourceInventory["interpolationScopes"]): Promise<void> {
     if (!mark(`document\0${file}\0${directory}\0${envFiles.join("\0")}`)) return;
     await checkInterpolationFiles(directory, envFiles);
-    modelScopes.set(JSON.stringify(scopes), scopes);
     const { data } = await load(file);
+    modelDocuments.push({ scopes, data });
     const candidate = await visitService(file, serviceName, directory, await composeInterpolationEnvFiles(scopes), scopes);
     if (candidate) {
       selectedService = candidate;
@@ -450,5 +450,5 @@ export async function assertComposeSourceGraphBounded(
   return { service: selectedService, deviceCandidates: selectedService ? deviceCandidates.get(selectedService) ?? [] : [],
     resources, serviceDirectory: selectedDirectory, interpolationEnvFiles: selectedEnvFiles,
     interpolationScopes: selectedScopes, serviceOrigins: selectedService ? origins.get(selectedService) ?? [] : [],
-    modelScopes: [...modelScopes.values()] };
+    modelDocuments };
 }
