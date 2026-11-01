@@ -176,6 +176,30 @@ describe("task input revisions", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 120_000);
 
+  it("selects a Compose task's sources with the keys its profile declares, as startup does, and still rejects an undeclared host value", async () => {
+    const revisionIn = async (files: Record<string, string>, environment?: Record<string, string>) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-declared-"));
+      try {
+        for (const [name, content] of Object.entries(files)) await writeFile(path.join(root, name), content);
+        const config = validateDevFnConfig({ version: 1, project: { id: "revision-declared" }, services: { seed: { adapter: "compose", service: "seed", task: {} } },
+          profiles: { default: { services: ["seed"], ...(environment ? { environment } : {}) } } }) as ReturnType<typeof manifest>;
+        const plan = createPlan(config, "default");
+        const resources = planResources({ config, plan, ownerId: "owner-a", runtimeId: "a".repeat(32), ports: {}, platform: "linux", composeNetworks: { seed: ["default"] } });
+        const resolved = resolveEndpointTemplates({ config, plan, ownerId: "owner-a", ports: {}, composeNetworks: { seed: ["default"] }, resources });
+        return await taskInputRevision(config, root, { name: "seed", kind: "service" }, plan.profile, resources, resolved.nodes.seed.environment);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    };
+    const service = (...lines: string[]) => ({ "compose.yaml": ["services:", "  seed:", "    image: busybox", ...lines, ""].join("\n"), "fixture-user.env": "SEED=1\n" });
+    // A profile-declared inherited key is explicit in the definition, an env_file path and a selected volume source, as at startup; its value counts, and it is equal in every worktree.
+    for (const files of [service("    environment:", "      SETUP_USER: $" + "{USER}"), service("    env_file: ./$" + "{USER}.env"), service("    volumes: [ \"./$" + "{USER}:/seed\" ]")]) {
+      const first = await revisionIn(files, { USER: "fixture-user" });
+      expect(await revisionIn(files, { USER: "fixture-user" })).toBe(first);
+      if (!files["compose.yaml"].includes("env_file")) expect(await revisionIn(files, { USER: "other-user" })).not.toBe(first);
+      // Without the declaration the same source interpolates an inherited host value and is still rejected.
+      await expect(revisionIn(files)).rejects.toThrow(/inherited host value|undeclared host|env_file provenance/);
+    }
+  }, 120_000);
+
   it("counts a secret channel by name only, in the node and the profile environment", async () => {
     const secret = (where: "env" | "profile", value: string, key = "SEED_VALUE", mode = "minimal") => manifest((config) => {
       Object.assign(config.processes.migrate, { envAllowlist: [key], secretEnv: [key] });

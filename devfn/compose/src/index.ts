@@ -1279,13 +1279,13 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   })).digest("hex");
 }
 
-/** Names every scope chain declaring a selected resource with them derives from a credential, with credential-safe values; the mask is global process environment, so chains (or the service's scopes) that disagree fail closed. */
+/** Names every scope chain declaring a selected resource with them derives from a credential, with credential-safe values; a declaration counts only for names the effective resource still references (uninterpolated, Compose lists merged labels in order and the later one for a key wins), so an overridden one adds none. The mask is global process environment, so chains (or the service's scopes) that disagree fail closed. */
 async function credentialDerivedInModelScopes(selected: Record<string, unknown>, inventory: ComposeSourceInventory, environment: NodeJS.ProcessEnv, secretNames: ReadonlySet<string>, serviceDerived: ReadonlySet<string>, deadline: number): Promise<Map<string, string | undefined>> {
   const chains = new Map<string, Set<string>>();
+  const effective = (resource: { labels?: unknown } = {}) => [...pathInterpolationNames(JSON.stringify({ ...resource, labels: Array.isArray(resource.labels) ? Object.fromEntries(resource.labels.map((label: string) => [label.split("=")[0], label])) : resource.labels }))];
   for (const { scopes, data } of inventory.modelDocuments ?? []) {
-    const names = chains.get(JSON.stringify(scopes)) ?? new Set<string>();
-    const own = declaredComposeResources(data, (kind) => Object.keys((selected[kind] ?? {}) as object));
-    for (const name of pathInterpolationNames(JSON.stringify(own))) if (!isCredentialKey(name) && !secretNames.has(name)) names.add(name);
+    const names = chains.get(JSON.stringify(scopes)) ?? new Set<string>(), own = declaredComposeResources(data, (kind) => Object.keys((selected[kind] ?? {}) as object));
+    for (const [kind, declared] of Object.entries(own)) for (const [key, item] of Object.entries(declared as object)) for (const name of pathInterpolationNames(JSON.stringify(item))) if (!isCredentialKey(name) && !secretNames.has(name) && effective((selected[kind] as Record<string, { labels?: unknown }>)[key]).includes(name)) names.add(name);
     if (names.size) chains.set(JSON.stringify(scopes), names);
   }
   // Per name, the credential-safe value in each chain that uses it, or null where that chain does not derive it from a credential.

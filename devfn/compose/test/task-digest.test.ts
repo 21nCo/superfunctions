@@ -187,4 +187,20 @@ describe.skipIf(!composeAtLeast(2, 24, 4))("Compose task source digest", () => {
     const both = (password: string) => project(["data:/data", "other:/other"], derived(password), derived(password));
     expect(await digestOf(both("two"))).toBe(await digestOf(both("one")));
   }, 180_000);
+
+  it("attributes credential provenance only to the selected declarations that survive Compose's merge", async () => {
+    const volume = (name: string, marker: string) => `volumes:\n  ${name}:\n    labels: { marker: "${marker}" }\n`;
+    const project = (password: string, overridden = true, plain = "plain") => ({
+      "compose.yaml": `include:\n  - { path: ${overridden ? "[ a/a.yaml, a/b.yaml ]" : "a/a.yaml"}, env_file: a/a.env }\n  - { path: c/c.yaml, env_file: c/c.env }\n`
+        + "services:\n  setup:\n    image: busybox\n    volumes: [ \"data:/data\", \"other:/other\" ]\n",
+      "a/a.yaml": volume("data", "${LABEL_VALUE}"), "a/b.yaml": volume("data", "literal"), "c/c.yaml": volume("other", "${LABEL_VALUE}"),
+      "a/a.env": `DB_PASSWORD=${password}\nLABEL_VALUE=\${DB_PASSWORD}\n`, "c/c.env": `LABEL_VALUE=${plain}\n`,
+    });
+    // An overridden declaration's credential-derived name says nothing about the effective model: c's plain value counts, a's credential never does.
+    const before = await digestOf(project("one"));
+    expect(await digestOf(project("two"))).toBe(before);
+    expect(await digestOf(project("one", true, "other"))).not.toBe(before);
+    // Where a's declaration is effective, the selected volumes still disagree on the name's provenance.
+    await expect(digestOf(project("one", false))).rejects.toThrow(/LABEL_VALUE/);
+  }, 120_000);
 });

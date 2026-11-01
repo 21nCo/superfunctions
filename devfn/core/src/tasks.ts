@@ -128,7 +128,7 @@ async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["
     throw error;
   });
   if (!stats.isFile()) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file.`);
-  try { return await composeTaskSourceDigest(spec, root, createComposeEnvironment({ ...spec, env: environment }, environment), shared); }
+  try { return await composeTaskSourceDigest({ ...spec, env: environment }, root, createComposeEnvironment({ ...spec, env: environment }, environment), shared); }
   catch (error) { throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
