@@ -403,51 +403,37 @@ for (const [kind, command, lib] of [["--noEmit -p ../sharedlib/tsconfig.json --n
   });
 }
 
-// A lifecycle tsc run reads its words as the shell does: a quoted project path with a space is one word, and the last --noEmit
-// decides emission (bare: none; --noEmit false: emit), so the tsconfig in "my lib" compiles test/ into the tarball unless the run is quiet.
-for (const [command, emits] of [['tsc -p "my lib/tsconfig.json"', true], ["tsc -p 'my lib/tsconfig.json'", true], ['tsc -b "my lib"', true], ["tsc --noEmit --noEmit false -p 'my lib'", true], ["tsc --noEmit false --noEmit -p 'my lib'", false]]) {
-  test(`a lifecycle tsc run compiles what its shell words name: ${command}`, (t) => {
-    const repo = fixtureRepo(t);
-    repo.write("uifn/core/my lib/tsconfig.json", '{ "compilerOptions": { "outDir": "../dist/fixtures" }, "include": ["../test"] }');
-    repo.write("uifn/core/test/fixture.ts", "export const fixture = 1;\n");
-    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(command)}`));
-    repo.commit("in-package project in a directory with a space");
-    repo.git("branch", "-f", "base");
-    repo.write("uifn/core/test/fixture.ts", "export const fixture = 2;\n");
-    repo.commit("change the compiled fixture");
-    const changed = check(repo.root);
-    assert.equal(changed.status, emits ? 1 : 0, changed.output);
-    if (!emits) return;
-    assert.ok(changed.output.includes("@uifn/core: shipped code changed (test/fixture.ts) but version is still 1.0.0"), changed.output);
-    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
-    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the fixtures.\n\n## 1.0.0"));
-    repo.commit("bump core");
-    const bumped = check(repo.root);
-    assert.equal(bumped.status, 0, bumped.output);
-  });
-}
-
 // One shell-word rule for every reader: only delimiting quotes are removed, so a quote of the other kind or a backslash-escaped one stays
 // literal; an unclosed quote runs to the end and "" is still a word.
 test("shellWords reads a command's words as the shell does", () => {
   assert.deepEqual(shellWords(`tsc -p "my'lib/tsconfig.json"`), ["tsc", "-p", "my'lib/tsconfig.json"]);
   assert.deepEqual(shellWords(String.raw`tsc -p my\'lib "a\"b" 'c\d' e\ f`), ["tsc", "-p", "my'lib", 'a"b', "c\\d", "e f"]);
   assert.deepEqual(shellWords(`sh -c 'tsc -p x' "" "open y`), ["sh", "-c", "tsc -p x", "", "open y"]);
-  assert.deepEqual(shellWords("tsc --project=x>log", /[\s=<>]/), ["tsc", "--project", "x", "log"]);
+  assert.deepEqual(shellWords('tsc --project=x>log "a>b"', /[\s=<>]/), ["tsc", "--project", "x", "\u0002", "log", "a>b"]);
+  assert.deepEqual(tscProjects('tsc -p "my>lib/tsconfig.json" --noEmit false'), { projects: ["my>lib/tsconfig.json"], emit: true });
+  assert.deepEqual(tscProjects("tsc -b x > log.txt 2>&1 <in.txt"), { projects: ["x/tsconfig.json"], emit: undefined });
   for (const command of [`tsc -p "my'lib/tsconfig.json"`, `tsc -b "my'lib"`, String.raw`tsc -p my\'lib/tsconfig.json`]) assert.deepEqual(tscProjects(command).projects, ["my'lib/tsconfig.json"], command);
 });
 
-// A lifecycle command nested in a shell's -c argument or a runner's quoted word (concurrently, npm-run-all) is read like a script, a quote of the
-// other kind in a quoted path stays literal ("my'lib" names my'lib, never mylib), and a tsc word no reading places sweeps every tsconfig.
+// A lifecycle command reads its words as the shell does: a quoted project path with a space or a > is one word, the last --noEmit decides emission
+// (bare: none; --noEmit false: emit), a command nested in a shell's -c argument or a runner's quoted word (concurrently, npm-run-all) is read like a
+// script, a quote of the other kind in a quoted path stays literal ("my'lib" names my'lib, never mylib), a tsc word no reading places sweeps every
+// tsconfig, and a ! glob drops only its own command's matches, never another nested command's.
 for (const [command, compiled, emits] of [
+  ...['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --noEmit --noEmit false -p 'my lib'"].map((command) => [command, "my lib", true]),
+  ["tsc --noEmit false --noEmit -p 'my lib'", "my lib", false],
+  ...['tsc -p "my>lib/tsconfig.json" --noEmit false', "tsc -b 'my>lib' > build.log"].map((command) => [command, "my>lib", true]),
   ...["sh -c 'tsc -p mylib/tsconfig.json'", 'sh -c "tsc -p mylib/tsconfig.json"', "bash -c 'tsc -p mylib/tsconfig.json'", 'concurrently "tsc -p mylib/tsconfig.json" "echo hi"', 'npm-run-all -p "tsc -p mylib/tsconfig.json"'].map((command) => [command, "mylib", true]),
   ...[`tsc -p "my'lib/tsconfig.json"`, `tsc -b "my'lib"`, String.raw`tsc -p my\'lib/tsconfig.json`].flatMap((command) => [[command, "my'lib", true], [command, "mylib", false]]),
   ["npx tsc@5", ".", true],
   ["tsc --noEmit test/fixture.ts && tsup", ".", false],
+  ...['node scripts/a.mjs test/*.ts "node scripts/b.mjs !test/fixture.ts"', 'concurrently "node scripts/a.mjs test/*.ts" "node scripts/b.mjs !test/fixture.ts"', "node scripts/a.mjs test/*.ts && node scripts/b.mjs !test/fixture.ts", "sh -c 'node scripts/a.mjs test/*.ts && node scripts/b.mjs !test/fixture.ts'"].map((command) => [command, "", true]),
+  ["node scripts/a.mjs test/*.ts !test/fixture.ts", "", false],
 ]) {
-  test(`a lifecycle command compiles what its shell words name: ${command} (${compiled} compiles test/)`, (t) => {
+  test(`a lifecycle command compiles what its shell words name: ${command} (${compiled || "no tsconfig"} compiles test/)`, (t) => {
     const repo = fixtureRepo(t);
-    for (const dir of ["mylib", "my'lib", "."]) repo.write(`uifn/core/${dir}/tsconfig.json`, `{ "compilerOptions": { "outDir": "${dir === "." ? "" : "../"}dist/fixtures" }, "include": ["${dir === "." ? "" : "../"}${dir === compiled ? "test" : "src"}"] }`);
+    for (const dir of ["mylib", "my'lib", "my lib", "my>lib", "."]) repo.write(`uifn/core/${dir}/tsconfig.json`, `{ "compilerOptions": { "outDir": "${dir === "." ? "" : "../"}dist/fixtures" }, "include": ["${dir === "." ? "" : "../"}${dir === compiled ? "test" : "src"}"] }`);
+    for (const name of ["a", "b"]) repo.write(`uifn/core/scripts/${name}.mjs`, "// reads its arguments\n");
     repo.write("uifn/core/test/fixture.ts", "export const fixture = 1;\n");
     repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(command)}`));
     repo.commit("tsconfigs compiling test/ or src/");
@@ -467,14 +453,17 @@ for (const [command, compiled, emits] of [
 }
 
 // A quiet tsc run (last --noEmit bare) still names every word, so an external source operand must be declared, and so must a shell -c command's
-// path; a build file's tsc command string names its `..` source operands too.
-for (const [kind, command] of [["script", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.sh", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.mjs", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.mjs", "tsc ../sharedlib/src/a.ts"], ["script", "sh -c 'cp ../sharedlib/src/a.ts dist'"]]) {
+// path; a build file's tsc run names its `..` source operands too, in its command string or in later elements of its argv array.
+for (const [kind, command] of [
+  ["script", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.sh", "tsc --noEmit ../sharedlib/src/a.ts"], ["script", "sh -c 'cp ../sharedlib/src/a.ts dist'"],
+  ...['execSync("tsc --noEmit ../sharedlib/src/a.ts");', 'execSync("tsc ../sharedlib/src/a.ts");', "execFileSync('tsc', ['../sharedlib/src/a.ts']);", "execFileSync('npx', ['tsc', '../sharedlib/src/a.ts']);", "spawnSync('tsc', ['--noEmit', '../sharedlib/src/a.ts']);"].map((code) => ["build.mjs", code]),
+]) {
   test(`a ${kind} names an external word of a quiet or nested command: ${command}`, (t) => {
     const repo = fixtureRepo(t);
     const from = { script: "package.json scripts.build", "build.sh": "uifn/core/scripts/build.sh", "build.mjs": "uifn/core/scripts/build.mjs" }[kind];
     repo.write("uifn/sharedlib/src/a.ts", "export const shared = 1;\n");
     if (kind === "build.sh") repo.write("uifn/core/scripts/build.sh", `#!/bin/sh\n${command}\n`);
-    if (kind === "build.mjs") repo.write("uifn/core/scripts/build.mjs", `execSync(${JSON.stringify(command)});\n`);
+    if (kind === "build.mjs") repo.write("uifn/core/scripts/build.mjs", `${command}\n`);
     repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(kind === "script" ? command : `${kind === "build.sh" ? "sh" : "node"} scripts/${kind}`)}`));
     repo.commit("external source operand");
     const undeclared = check(repo.root);

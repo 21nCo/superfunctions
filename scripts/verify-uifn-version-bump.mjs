@@ -351,20 +351,20 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
     // The sweep is additive and every reading only adds. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig; comments between literals are whitespace. An argv array element, by its position whatever its text, is one word that sets, carries or consumes the flag,
-    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split into shell words, carrying the flag; a nested command word is read again from fresh flag state, and a tsc run's `..` source file operand is named too. A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
-    let [flag, end] = [null, 0];
+    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split into shell words, carrying the flag; a nested command word is read again from fresh flag state, and a tsc run's `..` source file operand is named too, also in later elements of its argv array. A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
+    let [flag, end, run] = [null, 0, false];
     for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
       const gap = text.slice(end, start).replaceAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ");
-      [flag, end] = [/^\s*,\s*$/.test(gap) ? flag : null, start + literal.length];
+      [flag, run, end] = [/^\s*,\s*$/.test(gap) ? flag : null, /^\s*,\s*\[?\s*$/.test(gap) && run, start + literal.length];
       const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(gap.trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "["];
       const words = shellWords(value).flatMap((word, index, all) => (nestedCommand(all, index) ? [word, ...shellWords(word)] : [word]));
-      for (const word of words.slice(words.findIndex((word) => /(?:^|\/)tsc$/.test(word)) + 1 || words.length)) if (/^\.\.\/.*\.[cm]?[jt]sx?$/.test(word)) for (const from of new Set([root, dir])) add(path.posix.join(from, word), { candidate: `${file}:${start}` });
+      for (const word of words.slice(run ? 0 : words.findIndex((word) => /(?:^|\/)tsc$/.test(word)) + 1 || words.length)) if (/^\.\.\/.*\.[cm]?[jt]sx?$/.test(word)) for (const from of new Set([root, dir])) add(path.posix.join(from, word), { candidate: `${file}:${start}` });
       const read = (list, state) => list.reduce((carried, word) => {
         if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || (carried !== null && !word.startsWith("-")))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
         return TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(carried ?? "") ? carried : null;
       }, state);
       const ended = read(argvElement ? words : [value], null);
-      flag = read(argvElement ? [value] : words, flag) ?? ended;
+      [flag, run] = [read(argvElement ? [value] : words, flag) ?? ended, run || words.some((word) => /(?:^|\/)tsc$/.test(word))];
     }
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
@@ -378,9 +378,9 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
 }
 
 const SHELL_PART = /\\([^])|'([^']*)'?|(["`])((?:\\[^]|(?!\3)[^\\])*)\3?|([^])/g;
-/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a removed quote, so "" is a word). */
+/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a removed quote, so "" is a word; an unquoted < or > separator is the word \u0002). */
 export function shellWords(command, separator = /\s/) {
-  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => escaped ?? (char === undefined ? `\u0001${single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : char.replace(separator, "\0")));
+  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => escaped ?? (char === undefined ? `\u0001${single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : separator.test(char) ? (/[<>]/.test(char) ? "\0\u0002\0" : "\0") : char));
   return text.split("\0").filter(Boolean).map((word) => word.replaceAll("\u0001", ""));
 }
 
@@ -388,7 +388,7 @@ const nestedCommand = (words, index) => !words.slice(0, index).some((word) => /(
 
 /** The tsconfigs a tsc command emits from (the -p/--project path, every -b/--build path, or ./tsconfig.json; a directory holds tsconfig.json), or null without tsc. `emit` follows the last --noEmit (bare: false; false: true; none: undefined). */
 export function tscProjects(command) {
-  const words = shellWords(command.replace(/\d*>>?&?\s*[^\s&|;]+|<\s*\S+/g, " "), /[\s()<>=]/).filter(Boolean);
+  const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\u0002" && all[index - 1] !== "\u0002" && !(all[index + 1] === "\u0002" && /^\d+$/.test(word)));
   const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
   if (start < 0) return null;
   const args = words.slice(start + 1);
@@ -406,15 +406,15 @@ export function scriptReferences(scripts, packagePath) {
     for (const [list, command] of scripts[name].split(COMMAND_SEPARATOR).entries()) {
       const { projects, emit } = tscProjects(command) ?? {};
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
-      const words = shellWords(command, /[\s&<>()]/);
+      const words = shellWords(command, /[\s&<>()]/).filter((word) => word !== "\u0002");
       const nested = words.filter((_, index) => nestedCommand(words, index));
-      for (const word of nested) found.push(...scriptReferences({ build: word }, packagePath).map((reference) => ({ ...reference, from, list })));
+      for (const [index, word] of nested.entries()) found.push(...scriptReferences({ build: word }, packagePath).map((reference) => ({ ...reference, from, list: `${list}:${index}:${reference.list}` })));
       if (!projects && words.some((word) => /\btsc\b/.test(word) && !nested.includes(word))) found.push({ from, target: path.posix.join(packagePath, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(command), tsc: true });
       let [runs, config] = [false, false];
       for (const [index, token] of words.entries()) {
         const value = nested.includes(token) ? "" : token.replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : emit === false ? { quiet: true } : projects ? {} : { tree: true }), ...(runs || config || /^--config=|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : emit === false ? { quiet: true } : projects ? {} : { tree: true }), ...(runs || config || /(?:^--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
         config = /^(?:-c|--config)$/.test(value);
       }
