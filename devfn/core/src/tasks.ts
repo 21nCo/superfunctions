@@ -85,9 +85,9 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
   return { spec, task: spec.task!, field: `${node.kind === "process" ? "processes" : "services"}.${node.name}` };
 }
 
-/** Content digest of a repository file or directory; symlinks are hashed as links, never followed. */
+/** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. */
 async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
-  const target = await resolveContainedPath(root, relative, field).catch((error: unknown) => {
+  const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
   if (await realpath(target).catch(() => target).then((real) => excluded.some((item) => real === item || real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);

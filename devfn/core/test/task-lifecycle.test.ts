@@ -711,6 +711,39 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     }
   });
 
+  it("never counts DevFn state reached through a symlinked ancestor of an input, while user content still counts and a leaf symlink stays a link", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-alias-state-"));
+    const config = (inputs: string[]) => validateDevFnConfig({ version: 1, project: { id: "alias-state" }, runtimeDir: "real/data/rt", environmentOutputs: [{ path: "real/data/out/app.env" }],
+      processes: { seed: { adapter: "command", command: ["node", "seed.mjs"], task: { inputs, rerun: "once" } } }, profiles: { default: { processes: ["seed"] } } });
+    const revision = async (inputs: string[]) => await taskInputRevision(config(inputs), root, { name: "seed", kind: "process" }, "default", undefined, undefined, path.join(root, "real", "data", "state"));
+    const write = async (file: string, content: string) => {
+      await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+      await writeFile(path.join(root, file), content);
+    };
+    try {
+      await write("real/data/seed.sql", "create table one;\n");
+      await write(".devfn/user.txt", "user\n");
+      await symlink("real", path.join(root, "alias"));
+      await symlink(".", path.join(root, "loop"));
+      const fresh = { alias: await revision(["alias/data"]), loop: await revision(["loop/.devfn"]), leaf: await revision(["alias"]) };
+      // A state dir, a custom runtime dir and environment outputs under the aliased input, and the default receipts reached through a link to the root.
+      for (const [file, content] of [["real/data/state/tasks/seed.json", "{}"], ["real/data/rt/instances/i/pid", "1"], ["real/data/out/app.env", "A=1"], [".devfn/receipts/i.json", "{}"], ["real/data/state/tasks/seed.json", "{\"rewritten\":true}"]]) {
+        await write(file, content);
+        expect({ alias: await revision(["alias/data"]), loop: await revision(["loop/.devfn"]) }).toEqual({ alias: fresh.alias, loop: fresh.loop });
+      }
+      await write("real/data/seed.sql", "create table two;\n");
+      expect(await revision(["alias/data"])).not.toBe(fresh.alias);
+      await write(".devfn/notes.txt", "user\n");
+      expect(await revision(["loop/.devfn"])).not.toBe(fresh.loop);
+      // A leaf symlink input is hashed as a link: its target's content is not followed, its target is.
+      expect(await revision(["alias"])).toBe(fresh.leaf);
+      await rm(path.join(root, "alias"));
+      await symlink("real/data", path.join(root, "alias"));
+      expect(await revision(["alias"])).not.toBe(fresh.leaf);
+      await expect(revision(["alias/state"])).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("is DevFn runtime state") });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("lets a start waiting on a failed first start rerun an unresolved idempotent task, as documented", async () => {
     const env = await fixture("waiter-idempotent", { idempotent: true }, { sleepMs: 1_500, exit: 4 });
     try {
