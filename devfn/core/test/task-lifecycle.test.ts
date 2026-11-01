@@ -684,6 +684,33 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     }
   }, 90_000);
 
+  it("never counts a directory DevFn creates only to hold its own state, while user content in or beside it still counts", async () => {
+    const layouts = [{ state: ".devfn/state", own: [".devfn/instances/i/pid", ".devfn/receipts/i.json", ".devfn/state/tasks/j.json"], user: [".devfn/notes.txt", "notes.txt"] },
+      { runtimeDir: "rt/devfn", environmentOutputs: [{ path: "out/env/app.env" }], state: "st/state", own: ["rt/devfn/instances/i/pid", ".devfn/receipts/i.json", "out/env/app.env", "st/state/tasks/j.json"], user: ["out/user.txt", "rt/notes.txt"] }];
+    for (const layout of layouts) {
+      const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-own-parents-"));
+      const config = validateDevFnConfig({ version: 1, project: { id: "own-parents" }, ...(layout.runtimeDir ? { runtimeDir: layout.runtimeDir } : {}),
+        ...(layout.environmentOutputs ? { environmentOutputs: layout.environmentOutputs } : {}),
+        processes: { seed: { adapter: "command", command: ["node", "seed.mjs"], task: { inputs: ["."], rerun: "once" } } }, profiles: { default: { processes: ["seed"] } } });
+      const revision = async () => await taskInputRevision(config, root, { name: "seed", kind: "process" }, "default", undefined, undefined, path.join(root, layout.state));
+      try {
+        await writeFile(path.join(root, "seed.mjs"), "1\n");
+        const fresh = await revision();
+        for (const file of layout.own) {
+          await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+          await writeFile(path.join(root, file), "devfn\n");
+        }
+        expect(await revision()).toBe(fresh);
+        for (const file of layout.user) {
+          const before = await revision();
+          await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+          await writeFile(path.join(root, file), "user\n");
+          expect(await revision()).not.toBe(before);
+        }
+      } finally { await rm(root, { recursive: true, force: true }); }
+    }
+  });
+
   it("lets a start waiting on a failed first start rerun an unresolved idempotent task, as documented", async () => {
     const env = await fixture("waiter-idempotent", { idempotent: true }, { sleepMs: 1_500, exit: 4 });
     try {
@@ -850,8 +877,33 @@ describe("tasks consuming targets shared across worktrees (real local processes)
     } finally { await rm(base, { recursive: true, force: true }); }
   });
 
+  it("decides a run-once task over a whole worktree alike whether or not DevFn has initialized that worktree", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "devfn-task-shared-tree-"));
+    const stateDir = path.join(base, "state");
+    const config = validateDevFnConfig({ version: 1, project: { id: "task-shared-tree" },
+      processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("fs").appendFileSync(${JSON.stringify(path.join(base, "runs.log"))}, "x\\n")`], resources: ["db"], task: { inputs: ["."], rerun: "once" } } },
+      resources: { db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } } },
+      profiles: { default: { processes: ["seed"] } } });
+    const [a, b] = ["a", "b"].map((worktree) => path.join(base, worktree));
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      for (const root of [a, b]) {
+        await mkdir(path.join(root, "migrations"), { recursive: true });
+        await writeFile(path.join(root, "migrations", "001.sql"), "create table one;\n");
+      }
+      // Initialized a records the success; fresh b, and a again, decide from it.
+      const started = [await orchestrator.up({ config, root: a, stateDir }), await orchestrator.up({ config, root: b, stateDir }), await orchestrator.up({ config, root: a, stateDir, replace: true })];
+      expect(started.map((receipt) => receipt.tasks![0].status)).toEqual(["succeeded", "skipped", "skipped"]);
+      expect(new Set(started.map((receipt) => receipt.tasks![0].inputRevision)).size).toBe(1);
+      expect((await readFile(path.join(base, "runs.log"), "utf8")).split("\n").filter(Boolean)).toHaveLength(1);
+    } finally {
+      for (const root of [a, b]) await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+      await rm(base, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   // A Compose task runs in each worktree's own project, so a volume Compose names after that project is different state per worktree.
-  const composeWorktrees = async (name: string, volume: string, consumed: string[]) => {
+  const composeWorktrees = async (name: string, volume: string, consumed: string[], service: string[] = []) => {
     const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
     const config = validateDevFnConfig({ version: 1, project: { id: `task-${name}` },
       services: { seed: { adapter: "compose", service: "seed", resources: consumed, task: {} } },
@@ -861,7 +913,7 @@ describe("tasks consuming targets shared across worktrees (real local processes)
     for (const root of roots) {
       await mkdir(root, { recursive: true });
       await writeFile(path.join(root, "compose.yaml"), ["services:", "  seed:", "    image: busybox", "    volumes: [\"data:/data\"]",
-        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", "volumes:", `  data: ${volume}`, ""].join("\n"));
+        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", ...service, "volumes:", `  data: ${volume}`, ""].join("\n"));
     }
     return { base, config, roots, stateDir: path.join(base, "state") };
   };
@@ -872,16 +924,21 @@ describe("tasks consuming targets shared across worktrees (real local processes)
     return { scope: taskScope(env.config, `instance-${index}`, node, planned).scope, revision: await taskInputRevision(env.config, root, node, plan.profile, planned) };
   }));
 
-  it("rejects a shared-scope Compose task using a volume named after its per-worktree project, in every worktree before any mutation", async () => {
-    const env = await composeWorktrees("compose-project-volume", "{}", ["db"]);
-    try {
-      const outcomes = await Promise.all(env.roots.map(async (root) => await new DevFnOrchestrator().up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
-      for (const outcome of outcomes) {
-        expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringMatching(/^services\.seed\.file: Compose volume data is per worktree, but this task's completion is shared across worktrees/) });
-      }
-      expect(await exists(env.stateDir)).toBe(false);
-    } finally { await rm(env.base, { recursive: true, force: true }); }
-  }, 120_000);
+  it("rejects a shared-scope Compose task using any value derived from its per-worktree project name, in every worktree before any mutation", async () => {
+    const project = "$" + "{COMPOSE_PROJECT_NAME}";
+    const cases: Array<[string, string[], string]> = [["{}", [], "volume data"], [`{ name: "${project}-data" }`, [], "volume data"], [`{ name: "data-${project}" }`, [], "volume data"],
+      [`{ external: true, name: "${project}-x" }`, [], "volume data"], ["{ name: devfn-task-fixture-data }", ["    environment:", `      TARGET_DB: "${project}"`], "definition"]];
+    for (const [volume, service, part] of cases) {
+      const env = await composeWorktrees("compose-project-volume", volume, ["db"], service);
+      try {
+        const outcomes = await Promise.all(env.roots.map(async (root) => await new DevFnOrchestrator().up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+        for (const outcome of outcomes) {
+          expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(`services.seed.file: Compose ${part} depends on the per-worktree Compose project name, but this task's completion is shared across worktrees`) });
+        }
+        expect(await exists(env.stateDir)).toBe(false);
+      } finally { await rm(env.base, { recursive: true, force: true }); }
+    }
+  }, 240_000);
 
   it("keeps a shared-scope Compose task using an external or explicitly named volume shared, and an instance-scope one using a project volume per worktree", async () => {
     for (const volume of ["{ external: true }", "{ name: devfn-task-fixture-data }"]) {
@@ -1284,7 +1341,7 @@ describe("finite setup tasks (real Compose)", () => {
         services: { seed: { adapter: "compose", service: "seed", task: { rerun } } },
         profiles: { default: { services: ["seed"], environment: { SETUP_VOLUME: "data" } } } });
       const source = (volume: string) => ["services:", "  seed:", "    image: busybox", "    volumes: [\"${SETUP_VOLUME}:/data\"]",
-        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", "volumes:", `  data: { name: ${volume} }`, ""].join("\n");
+        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", ...service, "volumes:", `  data: { name: ${volume} }`, ""].join("\n");
       try {
         await writeFile(path.join(root, "compose.yaml"), source(volumes[0]));
         const first = await orchestrator.up({ config, root, stateDir });

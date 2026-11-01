@@ -77,6 +77,7 @@ const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) 
   signal?.addEventListener("abort", done, { once: true });
 });
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+const canonical = async (item: string): Promise<string> => realpath(item).catch(async () => path.dirname(item) === item ? item : path.join(await canonical(path.dirname(item)), path.basename(item)));
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "service" }) {
@@ -101,7 +102,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     });
     if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
     else if (stats.isDirectory()) {
-      hash.update(`d\0${name}\0`);
+      if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
       for (const entry of (await readdir(absolute)).sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
@@ -168,9 +169,9 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
   const inputs: Array<[string, string]> = [];
-  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir) is never an input, so its own writes never rerun a task.
+  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
   const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
-    .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map(async (item) => await realpath(item).catch(() => path.resolve(item))));
+    .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs }));

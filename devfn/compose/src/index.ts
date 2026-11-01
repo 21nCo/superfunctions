@@ -1223,11 +1223,10 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * the same source state as the startup fingerprint (the selected service
  * through include and extends, resolved with the environment startup
  * selects): that service's definition, where each part of it was defined
- * and the declarations of its env_file and interpolation .env files, and the volumes, networks, configs (with
- * the content they select) and secrets it uses, as Compose's own effective model resolves them. Paths are relative
- * to the canonical root and the project name is fixed, so worktrees agree. Only values are masked: those of secret-channel
- * and credential-named entries, build arguments, env-file declarations, and values the scopes declaring a selected
- * resource derive from a credential. A task shared across worktrees may not use a volume named after its project.
+ * and the declarations of its env_file and interpolation .env files, and the volumes, networks, configs (with the content they select) and secrets it uses,
+ * as Compose's own effective model resolves them. Paths are relative to the canonical root and the project name is fixed, so worktrees agree. Only values are masked:
+ * those of secret-channel and credential-named entries, build arguments, env-file declarations, and values the scopes declaring a selected resource derive from a credential.
+ * Each worktree runs a task under its own project name, so a shared task may use no value derived from it: a volume named after it, or ${COMPOSE_PROJECT_NAME}.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec), shared = false): Promise<string> {
@@ -1239,9 +1238,8 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   });
   const { inventory } = view;
   if (!inventory.service) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is not defined in its Compose files.`);
-  // Each worktree runs the task in its own project, where a volume Compose names after the project (neither external nor named) differs.
-  for (const [key, volume] of shared ? Object.entries((view.safeResources as { volumes?: Record<string, { name?: unknown }> }).volumes ?? {}) : []) {
-    if (String(volume.name).startsWith(`${project}_`)) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose volume ${key} is per worktree, but this task's completion is shared across worktrees; make the volume external or give it an explicit name.`);
+  for (const [part, value] of shared ? [...Object.entries((view.safeResources as { volumes?: object }).volumes ?? {}).map(([key, volume]) => [`volume ${key}`, volume]), ["definition", [view.safeService, view.declaredEnvironment]]] : []) {
+    if (JSON.stringify(value).includes(project)) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose ${part} depends on the per-worktree Compose project name, but this task's completion is shared across worktrees; use literal external or explicit names.`);
   }
   const secretNames = new Set(spec.secretEnv ?? []);
   // A host value may spell a selected path through a symlink; its canonical location is what counts.
