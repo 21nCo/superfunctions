@@ -117,7 +117,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
  * Credential-safe digest of a Compose task's sources: a rotated literal secret is not a changed input.
  * Its sources are selected with the Compose environment startup gives the node, built from its resolved values.
  */
-async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["services"]>[string], field: string, environment: Record<string, string>): Promise<string> {
+async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["services"]>[string], field: string, environment: Record<string, string>, shared: boolean): Promise<string> {
   const relative = spec.file ?? "compose.yaml";
   const file = await resolveContainedPath(root, relative, field).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
@@ -127,7 +127,7 @@ async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["
     throw error;
   });
   if (!stats.isFile()) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is not a file.`);
-  try { return await composeTaskSourceDigest(spec, root, createComposeEnvironment({ ...spec, env: environment }, environment)); }
+  try { return await composeTaskSourceDigest(spec, root, createComposeEnvironment({ ...spec, env: environment }, environment), shared); }
   catch (error) { throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
@@ -157,7 +157,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
-      source: await digestComposeSource(root, config.services![node.name], `${field}.file`, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }) };
+      source: await digestComposeSource(root, config.services![node.name], `${field}.file`, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }, taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
     const planned = resources?.resources[name];
     if (!planned) return [name, null];

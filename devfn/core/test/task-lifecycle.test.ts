@@ -849,6 +849,77 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       expect(outcomes[1]).toEqual(outcomes[0]);
     } finally { await rm(base, { recursive: true, force: true }); }
   });
+
+  // A Compose task runs in each worktree's own project, so a volume Compose names after that project is different state per worktree.
+  const composeWorktrees = async (name: string, volume: string, consumed: string[]) => {
+    const base = await mkdtemp(path.join(os.tmpdir(), `devfn-task-${name}-`));
+    const config = validateDevFnConfig({ version: 1, project: { id: `task-${name}` },
+      services: { seed: { adapter: "compose", service: "seed", resources: consumed, task: {} } },
+      resources: { db: { kind: "database", defaultTarget: "remote", namespace: { level: "schema", database: "app", sharing: "shared" }, targets: { remote: { url: "postgres://db.example.test:5432" } } } },
+      profiles: { default: { services: ["seed"] } } });
+    const roots = ["a", "b"].map((worktree) => path.join(base, worktree));
+    for (const root of roots) {
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, "compose.yaml"), ["services:", "  seed:", "    image: busybox", "    volumes: [\"data:/data\"]",
+        "    command: [sh, -c, 'touch /data/seeded && echo seeded']", "volumes:", `  data: ${volume}`, ""].join("\n"));
+    }
+    return { base, config, roots, stateDir: path.join(base, "state") };
+  };
+  const revisions = async (env: Awaited<ReturnType<typeof composeWorktrees>>) => await Promise.all(env.roots.map(async (root, index) => {
+    const plan = createPlan(env.config);
+    const planned = planResources({ config: env.config, plan, ownerId: `owner-${index}`, runtimeId: String(index).repeat(32), ports: {}, platform: "linux" });
+    const node = { name: "seed", kind: "service" } as const;
+    return { scope: taskScope(env.config, `instance-${index}`, node, planned).scope, revision: await taskInputRevision(env.config, root, node, plan.profile, planned) };
+  }));
+
+  it("rejects a shared-scope Compose task using a volume named after its per-worktree project, in every worktree before any mutation", async () => {
+    const env = await composeWorktrees("compose-project-volume", "{}", ["db"]);
+    try {
+      const outcomes = await Promise.all(env.roots.map(async (root) => await new DevFnOrchestrator().up({ config: env.config, root, stateDir: env.stateDir }).catch((error: unknown) => error)));
+      for (const outcome of outcomes) {
+        expect(outcome).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringMatching(/^services\.seed\.file: Compose volume data is per worktree, but this task's completion is shared across worktrees/) });
+      }
+      expect(await exists(env.stateDir)).toBe(false);
+    } finally { await rm(env.base, { recursive: true, force: true }); }
+  }, 120_000);
+
+  it("keeps a shared-scope Compose task using an external or explicitly named volume shared, and an instance-scope one using a project volume per worktree", async () => {
+    for (const volume of ["{ external: true }", "{ name: devfn-task-fixture-data }"]) {
+      const env = await composeWorktrees("compose-shared-volume", volume, ["db"]);
+      try {
+        const [a, b] = await revisions(env);
+        expect(a.scope).toBe("shared");
+        expect(b).toEqual(a);
+      } finally { await rm(env.base, { recursive: true, force: true }); }
+    }
+    const env = await composeWorktrees("compose-instance-volume", "{}", []);
+    try {
+      expect((await revisions(env)).map((item) => item.scope)).toEqual(["instance", "instance"]);
+    } finally { await rm(env.base, { recursive: true, force: true }); }
+  }, 180_000);
+
+  it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("runs a shared-scope Compose task with an explicitly named volume once for every worktree, and an instance-scope one in each", async () => {
+    const volume = `devfn-task-shared-volume-${process.pid}`;
+    for (const [consumed, statuses] of [[["db"], ["succeeded", "skipped"]], [[], ["succeeded", "succeeded"]]] as const) {
+      const env = await composeWorktrees(`compose-run-${consumed.length}`, consumed.length ? `{ name: ${volume} }` : "{}", [...consumed]);
+      const orchestrator = new DevFnOrchestrator();
+      try {
+        const started = [];
+        for (const root of env.roots) started.push(await orchestrator.up({ config: env.config, root, stateDir: env.stateDir }));
+        expect(started.map((receipt) => receipt.tasks![0].status)).toEqual(statuses);
+        if (consumed.length) expect(started[1].tasks![0]).toMatchObject({ reason: "succeeded for this input revision", inputRevision: started[0].tasks![0].inputRevision });
+      } finally {
+        for (const root of env.roots) {
+          await orchestrator.down({ config: env.config, root, stateDir: env.stateDir }).catch(() => undefined);
+          const project = composeProjectName("devfn", (await resolveInstanceIdentity(env.config.project.id, root)).instanceId);
+          await execFileAsync("docker", ["network", "rm", `${project}_default`]).catch(() => undefined);
+          await execFileAsync("docker", ["volume", "rm", "-f", `${project}_data`]).catch(() => undefined);
+        }
+        await rm(env.base, { recursive: true, force: true });
+        await execFileAsync("docker", ["volume", "rm", "-f", volume]).catch(() => undefined);
+      }
+    }
+  }, 240_000);
 });
 
 describe("tasks observe only the resources they declare", () => {

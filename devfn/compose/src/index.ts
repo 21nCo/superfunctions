@@ -1192,8 +1192,7 @@ async function maskedEnvDeclarations(file: string, secretNames: ReadonlySet<stri
   }
 }
 
-/** An env_file's declarations as the startup fingerprint reads them (a raw-format file line by line), with the same values masked;
- * the file's absence counts too. */
+/** An env_file's declarations as the startup fingerprint reads them (a raw-format file line by line), with the same values masked; its absence counts too. */
 async function maskedEnvFileDeclarations(file: string, format: string | undefined, secretNames: ReadonlySet<string>,
   budget: { remaining: number }): Promise<unknown> {
   const content = await readEnvFileContent(file, true, budget.remaining).catch((error: NodeJS.ErrnoException) => {
@@ -1203,10 +1202,8 @@ async function maskedEnvFileDeclarations(file: string, format: string | undefine
   if (content === undefined) return null;
   budget.remaining -= Buffer.byteLength(content);
   const declarations: Array<[string, string | null]> = format === "raw"
-    ? content.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim() !== "").map((line) => {
-      const separator = line.indexOf("=");
-      return separator < 0 ? [line, null] : [line.slice(0, separator), line.slice(separator + 1)];
-    })
+    ? content.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim() !== "")
+      .map((line): [string, string | null] => line.includes("=") ? [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)] : [line, null])
     : envFileAssignments(content);
   return declarations.map(([name, value]) => [name, secretNames.has(name) || isCredentialKey(name) ? "<secret-channel>" : value]);
 }
@@ -1226,26 +1223,26 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * the same source state as the startup fingerprint (the selected service
  * through include and extends, resolved with the environment startup
  * selects): that service's definition, where each part of it was defined
- * and the declarations of its env_file and interpolation .env files, and the
- * volumes, networks, configs (with the content they select) and secrets it
- * uses, as Compose's own effective model resolves them. Paths are relative to
- * the canonical repository root and the project name is fixed, so worktrees
- * agree. Only values are masked: those of secret-channel and credential-named
- * entries, build arguments, env-file declarations, and values the scopes
- * declaring a selected resource derive from a credential.
+ * and the declarations of its env_file and interpolation .env files, and the volumes, networks, configs (with
+ * the content they select) and secrets it uses, as Compose's own effective model resolves them. Paths are relative
+ * to the canonical root and the project name is fixed, so worktrees agree. Only values are masked: those of secret-channel
+ * and credential-named entries, build arguments, env-file declarations, and values the scopes declaring a selected
+ * resource derive from a credential. A task shared across worktrees may not use a volume named after its project.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
-  environment: NodeJS.ProcessEnv = createComposeEnvironment(spec)): Promise<string> {
+  environment: NodeJS.ProcessEnv = createComposeEnvironment(spec), shared = false): Promise<string> {
   const canonicalRoot = await realpath(root);
   const deadline = Date.now() + COMPOSE_SOURCE_BUDGET_MS;
-  let view: Awaited<ReturnType<typeof credentialSafeComposeView>>;
-  try {
-    view = await credentialSafeComposeView(spec, canonicalRoot, composeProjectName(spec.projectName ?? "devfn", "task-source"), environment, deadline, true);
-  } catch (error) {
+  const project = composeProjectName(spec.projectName ?? "devfn", "task-source");
+  const view = await credentialSafeComposeView(spec, canonicalRoot, project, environment, deadline, true).catch((error: unknown) => {
     throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Unable to select the resources of ${spec.service}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  });
   const { inventory } = view;
   if (!inventory.service) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose service ${spec.service} is not defined in its Compose files.`);
+  // Each worktree runs the task in its own project, where a volume Compose names after the project (neither external nor named) differs.
+  for (const [key, volume] of shared ? Object.entries((view.safeResources as { volumes?: Record<string, { name?: unknown }> }).volumes ?? {}) : []) {
+    if (String(volume.name).startsWith(`${project}_`)) throw new ComposeError("DEVFN_COMPOSE_START_FAILED", `Compose volume ${key} is per worktree, but this task's completion is shared across worktrees; make the volume external or give it an explicit name.`);
+  }
   const secretNames = new Set(spec.secretEnv ?? []);
   // A host value may spell a selected path through a symlink; its canonical location is what counts.
   const relative = async (file: string) => path.relative(canonicalRoot, await realpath(file).catch(() => file)).split(path.sep).join("/");
@@ -1284,8 +1281,7 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   })).digest("hex");
 }
 
-/** Names that every scope chain declaring a selected resource with them derives from a credential, with credential-safe values.
- * The mask is process environment, global to all scopes, so chains (or the selected service's scopes) that disagree fail closed. */
+/** Names every scope chain declaring a selected resource with them derives from a credential, with credential-safe values; the mask is global process environment, so chains (or the service's scopes) that disagree fail closed. */
 async function credentialDerivedInModelScopes(selected: Record<string, unknown>, inventory: ComposeSourceInventory,
   environment: NodeJS.ProcessEnv, secretNames: ReadonlySet<string>, serviceDerived: ReadonlySet<string>, deadline: number): Promise<Map<string, string | undefined>> {
   const chains = new Map<string, Set<string>>();
@@ -1317,8 +1313,7 @@ async function credentialDerivedInModelScopes(selected: Record<string, unknown>,
   return new Map([...provenance].filter(([, values]) => !values.includes(null)).map(([name, values]) => [name, values[0] as string | undefined]));
 }
 
-/** The selected service and resources of the effective Compose model, read as the startup fingerprint reads them: raw references are
- * checked against the uninterpolated model, then hashed values come from the model Compose resolves with secret values masked. */
+/** The selected service and resources of the effective Compose model as the startup fingerprint reads them: raw references checked against the uninterpolated model, hashed values from the resolved model with secrets masked. */
 async function credentialSafeComposeView(spec: ComposeServiceSpec, root: string, projectName: string, environment: NodeJS.ProcessEnv, deadline: number, maskUnscoped = false) {
   const { sourceFile, inventory, interpolation, envFileState } = await selectedComposeSourceState(spec, root, environment, deadline);
   const referencedInterpolation = new Set<string>();
