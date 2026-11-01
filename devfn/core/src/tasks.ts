@@ -153,13 +153,12 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
  * host through envAllowlist are not part of it, so a reallocated port, a
  * rotated credential or another shell never reruns a task. The node's
  * resolved startup environment (by default its profile and manifest
- * environment as written) only selects the Compose sources, as at startup; any value changing the effective Compose resource the task uses counts.
+ * environment as written) only selects the Compose sources, as at startup; any value changing the effective Compose resource the task uses counts, and its profile's name where a written value names DEVFN_PROFILE.
  */
 export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
   environment?: Record<string, string>, stateDir?: string): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
-  // A secret channel counts by name only, wherever its value is written.
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
@@ -181,7 +180,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
-    envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs }));
+    envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
 }
 
 /**

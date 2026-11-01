@@ -1225,7 +1225,7 @@ function maskedBuildArguments(service: Record<string, unknown>, secretNames: Rea
  * and the declarations of its env_file and interpolation .env files, and the volumes, networks, configs (with the content they select) and secrets it uses,
  * as Compose's own effective model resolves them. Paths are relative to the canonical root and the project name is fixed, so worktrees agree. Only values are masked:
  * those of secret-channel and credential-named entries, build arguments, env-file declarations, and values the scopes declaring a selected resource derive from a credential.
- * Each worktree runs a task under its own project name, so a shared task may use no value derived from it in its selected view (only the config and secret object names Compose generates, and its networks, may carry it): a volume named after it, or ${COMPOSE_PROJECT_NAME}.
+ * Its definition is hashed as written, so the profile counts where it or its env or interpolation files name DEVFN_PROFILE. Each worktree runs a task under its own project name, so a shared task may use no value derived from it in its selected view (only the config and secret object names Compose generates, and its networks, may carry it): a volume named after it, or ${COMPOSE_PROJECT_NAME}.
  */
 export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: string,
   environment: NodeJS.ProcessEnv = createComposeEnvironment(spec), shared = false): Promise<string> {
@@ -1274,7 +1274,7 @@ export async function composeTaskSourceDigest(spec: ComposeServiceSpec, root: st
   for (const { file, directory } of inventory.serviceOrigins) origins.push([await relative(file), await relative(directory)]);
   return createHash("sha256").update(JSON.stringify({
     service: canonicalComposeValue(maskedBuildArguments(service, secretNames), secretNames), origins,
-    resources: portable(view.safeResources), configFiles: view.configFiles,
+    resources: portable(view.safeResources), configFiles: view.configFiles, profile: JSON.stringify([inventory.service, envFiles, interpolationFiles]).includes("DEVFN_PROFILE") ? environment.DEVFN_PROFILE : undefined,
     envFiles, interpolationFiles,
   })).digest("hex");
 }

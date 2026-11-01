@@ -142,6 +142,40 @@ describe("task input revisions", () => {
     ]) expect(await revision(manifest(change))).not.toBe(base);
   });
 
+  it("counts the selected profile only for a task whose command, script, env, profile environment or Compose definition names DEVFN_PROFILE", async () => {
+    const byProfile = async (config: ReturnType<typeof manifest>, node: { name: string; kind: "process" | "service" } = { name: "migrate", kind: "process" }, root = os.tmpdir()) =>
+      await Promise.all(["default", "other"].map(async (name) => {
+        const plan = createPlan(config, name);
+        const resources = planResources({ config, plan, ownerId: "owner-a", runtimeId: "a".repeat(32), ports: { api: 4100 }, platform: "linux", composeNetworks: { seed: ["default"], plain: ["default"] } });
+        const resolved = resolveEndpointTemplates({ config, plan, ownerId: "owner-a", ports: { api: 4100 }, composeNetworks: { seed: ["default"], plain: ["default"] }, resources });
+        return await taskInputRevision(config, root, node, plan.profile, resources, resolved.nodes[node.name].environment);
+      }));
+    const profiled = (mutate: (value: any) => void = () => undefined) => manifest((value) => { mutate(value); value.profiles.other = structuredClone(value.profiles.default); });
+    // Two profiles with identical written inputs: a task that never names the profile keeps one revision.
+    const [plain, plainOther] = await byProfile(profiled());
+    expect(plainOther).toBe(plain);
+    for (const mutate of [
+      (value: any) => { value.processes.migrate.command.push("{{env.DEVFN_PROFILE}}"); },
+      (value: any) => { Object.assign(value.processes.migrate, { adapter: "npm", command: undefined, script: "seed:{{env.DEVFN_PROFILE}}" }); },
+      (value: any) => { value.processes.migrate.env = { TENANT: "{{env.DEVFN_PROFILE}}" }; },
+      (value: any) => { value.profiles.default.environment.TAG = "seed-{{env.DEVFN_PROFILE}}"; },
+    ]) {
+      const [first, second] = await byProfile(profiled(mutate));
+      expect(second).not.toBe(first);
+    }
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-revision-profile-"));
+    try {
+      await writeFile(path.join(root, "compose.yaml"), ["services:", "  seed:", "    image: busybox", "    environment:", "      P: $" + "{DEVFN_PROFILE}", "  plain:", "    image: busybox", "    environment:", "      P: fixed", ""].join("\n"));
+      const config = validateDevFnConfig({ version: 1, project: { id: "revision-profile" },
+        services: { seed: { adapter: "compose", service: "seed", task: {} }, plain: { adapter: "compose", service: "plain", task: {} } },
+        profiles: { default: { services: ["seed", "plain"] }, other: { services: ["seed", "plain"] } } });
+      const [seed, seedOther] = await byProfile(config as ReturnType<typeof manifest>, { name: "seed", kind: "service" }, root);
+      expect(seedOther).not.toBe(seed);
+      const [fixed, fixedOther] = await byProfile(config as ReturnType<typeof manifest>, { name: "plain", kind: "service" }, root);
+      expect(fixedOther).toBe(fixed);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 120_000);
+
   it("counts a secret channel by name only, in the node and the profile environment", async () => {
     const secret = (where: "env" | "profile", value: string, key = "SEED_VALUE", mode = "minimal") => manifest((config) => {
       Object.assign(config.processes.migrate, { envAllowlist: [key], secretEnv: [key] });
@@ -483,6 +517,29 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
       } finally { await env.cleanup(); }
     }
   }, 120_000);
+
+  it("reruns an on-change task and blocks a run-once task naming DEVFN_PROFILE after a profile switch, and skips a task that does not name it", async () => {
+    for (const [rerun, named] of [["on-change", true], ["once", true], ["once", false]] as const) {
+      const env = await fixture(`profile-switch-${rerun}-${named}`, { rerun });
+      try {
+        const config = structuredClone(env.config);
+        if (named) config.processes!.migrate.command!.push("{{env.DEVFN_PROFILE}}");
+        config.profiles.other = structuredClone(config.profiles.default);
+        await env.orchestrator.up({ config, root: env.root, stateDir: env.stateDir });
+        const switched = env.orchestrator.up({ config, root: env.root, stateDir: env.stateDir, profile: "other", replace: true });
+        if (!named) {
+          expect((await switched).tasks).toMatchObject([{ status: "skipped", reason: "succeeded for this input revision" }]);
+          expect(await env.runs()).toHaveLength(1);
+        } else if (rerun === "once") {
+          await expect(switched).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+          expect(await env.runs()).toHaveLength(1);
+        } else {
+          expect((await switched).tasks).toMatchObject([{ status: "succeeded", reason: "input revision changed" }]);
+          expect(await env.runs()).toHaveLength(2);
+        }
+      } finally { await env.cleanup(); }
+    }
+  }, 180_000);
 
   it("never lets a recorded success mask a later attempt of unknown effect", async () => {
     const env = await fixture("masked", { idempotent: true });
