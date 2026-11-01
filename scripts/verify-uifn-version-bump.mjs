@@ -65,7 +65,7 @@ const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
 // Any build-file tsc word is a tsc run (`npx -p typescript tsc`, a message) naming every tsconfig in its package; `--noEmit false`, `--noEmit=false` or `"--noEmit", "false"` emits.
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
-const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/;
+const COMMAND_SEPARATOR = /&&|\|\||(?<!>)\||[;\n]/;
 // Commands that run a file with the package root as the working directory, which makes the file a build file.
 const RUNNER = /^(?:node|tsx|ts-node(?:-esm)?|esno|vite-node|jiti|bun|deno|sh|bash|zsh|dash|zx)$/;
 const RUNNABLE = /\.(?:[cm]?[jt]sx?|sh)$/;
@@ -351,20 +351,20 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
     for (const match of text.matchAll(REPO_PATH)) add(match[2]);
     found.push(...sweep);
     // The sweep is additive and every reading only adds. Each string literal (a template literal may span lines) is read whole as a `..` tsconfig; comments between literals are whitespace. An argv array element, by its position whatever its text, is one word that sets, carries or consumes the flag,
-    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split into shell words, carrying the flag; a nested command word is read again from fresh flag state, and a tsc run's `..` source file operand is named too, also in later elements of its argv array. A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
-    let [flag, end, run] = [null, 0, false];
+    // and is also a command string split from fresh flag state, whose ending flag carries on only when the whole word leaves none. Other literals split into shell words, carrying the flag; a nested command word is read again from fresh flag state, and a tsc run's `..` source file operand is named too, also in every later literal of its bracket or of an array opened in it, whatever lies between (`execFileSync('tsc', [...flags, x])`). A `..` tsconfig word or an operand of -p/--project/-b/--build (every -b operand, also across an argv array; a directory holds tsconfig.json) is a project from the package root and file directory.
+    let [flag, end, run] = [null, 0, -1];
     for (const { 0: literal, 2: quoted, 3: body = quoted, index: start } of sweep.length > 0 ? text.matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1|`((?:\\.|[^\\`])*)`/g) : []) {
-      const gap = text.slice(end, start).replaceAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ");
-      [flag, run, end] = [/^\s*,\s*$/.test(gap) ? flag : null, /^\s*,\s*\[?\s*$/.test(gap) && run, start + literal.length];
-      const [value, argvElement] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(gap.trimEnd().at(-1)) && text[enclosingBracket(text, start)] === "["];
+      const [gap, bracket] = [text.slice(end, start).replaceAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " "), enclosingBracket(text, start)];
+      [flag, end] = [/^\s*,\s*$/.test(gap) ? flag : null, start + literal.length];
+      const [value, argvElement, inRun] = [body.replaceAll(/\\(.)/g, "$1"), "[,".includes(gap.trimEnd().at(-1)) && text[bracket] === "[", run >= 0 && (bracket === run || (text[bracket] === "[" && enclosingBracket(text, bracket) === run))];
       const words = shellWords(value).flatMap((word, index, all) => (nestedCommand(all, index) ? [word, ...shellWords(word)] : [word]));
-      for (const word of words.slice(run ? 0 : words.findIndex((word) => /(?:^|\/)tsc$/.test(word)) + 1 || words.length)) if (/^\.\.\/.*\.[cm]?[jt]sx?$/.test(word)) for (const from of new Set([root, dir])) add(path.posix.join(from, word), { candidate: `${file}:${start}` });
+      for (const word of words.slice(inRun ? 0 : words.findIndex((word) => /(?:^|\/)tsc$/.test(word)) + 1 || words.length)) if (/^\.\.\/.*\.[cm]?[jt]sx?$/.test(word)) for (const from of new Set([root, dir])) add(path.posix.join(from, word), { candidate: `${file}:${start}` });
       const read = (list, state) => list.reduce((carried, word) => {
         if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && (TSCONFIG.test(word) || (carried !== null && !word.startsWith("-")))) for (const from of new Set([root, dir])) add(path.posix.join(from, word.endsWith(".json") ? word : `${word}/tsconfig.json`), { emit: sweep[0].emit, candidate: `${file}:${start}` });
         return TSC_PROJECT_FLAG.test(word) ? word : /^--?b/.test(carried ?? "") ? carried : null;
       }, state);
       const ended = read(argvElement ? words : [value], null);
-      [flag, run] = [read(argvElement ? [value] : words, flag) ?? ended, run || words.some((word) => /(?:^|\/)tsc$/.test(word))];
+      [flag, run] = [read(argvElement ? [value] : words, flag) ?? ended, bracket >= 0 && words.some((word) => /(?:^|\/)tsc$/.test(word)) ? bracket : run];
     }
     // Tools such as tsup resolve `./src/x` from the working directory, the package root, as well as from this file's directory.
     for (const { 2: value, index } of text.matchAll(BARE_LITERAL)) {
@@ -378,17 +378,17 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
 }
 
 const SHELL_PART = /\\([^])|'([^']*)'?|(["`])((?:\\[^]|(?!\3)[^\\])*)\3?|([^])/g;
-/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a removed quote, so "" is a word; an unquoted < or > separator is the word \u0002). */
+/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a quoted or escaped character, so "" is a word). When < and > separate words, an unquoted redirection operator (<, >, >>, >|, <>, <&, >&, &>, &>>) with its IO number, only unquoted digits right before it that start a shell word (an = separator splits no shell word), is the one word \u0002; quoted characters never join it. */
 export function shellWords(command, separator = /\s/) {
-  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => escaped ?? (char === undefined ? `\u0001${single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : separator.test(char) ? (/[<>]/.test(char) ? "\0\u0002\0" : "\0") : char));
-  return text.split("\0").filter(Boolean).map((word) => word.replaceAll("\u0001", ""));
+  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => (char === undefined ? `\u0001${escaped ?? single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : separator.test("<") && /[<>&]/.test(char) ? `\u0002${char}` : separator.test(char) ? (char === "=" ? "\u0003" : "\0") : char));
+  return text.replaceAll(/(?:(?<=^|\0|\u0002&)\d+)?(?:\u0002&)?(?:\u0002[<>])+(?:\u0002&|\|)?/g, "\0\u0002\0").replaceAll("\u0002&", separator.test("&") ? "\0" : "&").replaceAll("\u0003", "\0").split("\0").filter(Boolean).map((word) => word.replaceAll("\u0001", ""));
 }
 
 const nestedCommand = (words, index) => !words.slice(0, index).some((word) => /(?:^|\/)tsc$/.test(word)) && ((words[index - 1] === "-c" && /^(?:sh|bash|zsh|dash)$/.test(path.posix.basename(words[index - 2] ?? ""))) || (/\s/.test(words[index]) && (/\btsc\b/.test(words[index]) || RUNNER.test(path.posix.basename(shellWords(words[index])[0] ?? "")))));
 
 /** The tsconfigs a tsc command emits from (the -p/--project path, every -b/--build path, or ./tsconfig.json; a directory holds tsconfig.json), or null without tsc. `emit` follows the last --noEmit (bare: false; false: true; none: undefined). */
 export function tscProjects(command) {
-  const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\u0002" && all[index - 1] !== "\u0002" && !(all[index + 1] === "\u0002" && /^\d+$/.test(word)));
+  const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\u0002" && all[index - 1] !== "\u0002");
   const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
   if (start < 0) return null;
   const args = words.slice(start + 1);
