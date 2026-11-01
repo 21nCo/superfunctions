@@ -74,6 +74,48 @@ jobs:
         id: plan
         run: node scripts/ci-plan.mjs
 
+  # uifn-version-bump-retarget.yml reruns this job when a PR is edited, which is how a PR retargeted to dev gets it.
+  uifn-version-bump:
+    name: UIFn version bump
+    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      # The PR merge ref, which holds the checker even for a branch made before it, with every branch's history.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Payload base.sha is stale after a push and the merge ref can predate the base tip, so judge a merge of exactly the base tip B and head.sha.
+      - name: Merge the PR head into the base branch tip
+        run: |
+          B=$(git rev-parse "origin/${{ github.base_ref }}") H="${{ github.event.pull_request.head.sha }}"
+          git merge-base --is-ancestor "${{ github.event.pull_request.base.sha }}" "$B" || { echo "::error::base ${{ github.event.pull_request.base.sha }} is not on ${{ github.base_ref }} at $B"; exit 1; }
+          if [ "$(git rev-parse HEAD^1 HEAD^2 | tr '\n' ' ')" != "$B $H " ]; then
+            git checkout -q --detach "$B" && git -c user.name=ci -c user.email=ci@localhost merge -q --no-ff --no-edit "$H" || { echo "::error::cannot merge head $H into ${{ github.base_ref }} at $B"; exit 1; }
+          fi
+          echo "UIFN_BASE=$B" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # The checker resolves tsconfigs with the repository's TypeScript.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify version bump checker
+        run: node --test scripts/verify-uifn-version-bump.test.mjs
+
+      - name: Require version bump and changelog entry for shipped uifn changes
+        run: node scripts/verify-uifn-version-bump.mjs --base "$UIFN_BASE"
+
+      - name: Report uifn changes since last published tags
+        run: node scripts/verify-uifn-version-bump.mjs --since-published --head "$UIFN_BASE"
+
   javascript:
     name: JavaScript
     needs: plan
