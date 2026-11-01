@@ -373,28 +373,54 @@ for (const [dir, run] of [
 
 // --noEmit only sets emission (tsc takes the last one) and never drops a project: a lifecycle script or a shell build file
 // that runs tsc with --noEmit still names its -p/-b project, which must be declared and bumped when its source changes.
-for (const [kind, command] of ["--noEmit -p ../sharedlib/tsconfig.json --noEmit false", "--noEmit -p ../sharedlib/tsconfig.json", "-b ../sharedlib --noEmit"].flatMap((args) => [["script", `tsc ${args}`], ["build.sh", `tsc ${args}`]])) {
-  test(`a ${kind} tsc --noEmit run still names its external project: ${command}`, (t) => {
+// A quoted project path is one word, as the shell reads it, so "../shared lib" names uifn/shared lib, never uifn/shared.
+for (const [kind, command, lib] of [["--noEmit -p ../sharedlib/tsconfig.json --noEmit false", "sharedlib"], ["--noEmit -p ../sharedlib/tsconfig.json", "sharedlib"], ["-b ../sharedlib --noEmit", "sharedlib"], ['-p "../shared lib/tsconfig.json"', "shared lib"], ["-b '../shared lib'", "shared lib"], ['-b "../shared lib" --noEmit', "shared lib"]].flatMap(([args, lib]) => [["script", `tsc ${args}`, lib], ["build.sh", `tsc ${args}`, lib]])) {
+  test(`a ${kind} tsc run names its external project, --noEmit or not: ${command}`, (t) => {
     const repo = fixtureRepo(t);
     const from = kind === "script" ? "package.json scripts.build" : "uifn/core/scripts/build.sh";
-    repo.write("uifn/sharedlib/tsconfig.json", sharedProject);
-    repo.write("uifn/sharedlib/src/index.ts", "export const shared = 1;\n");
+    repo.write(`uifn/${lib}/tsconfig.json`, sharedProject);
+    repo.write(`uifn/${lib}/src/index.ts`, "export const shared = 1;\n");
     if (kind === "build.sh") repo.write("uifn/core/scripts/build.sh", `#!/bin/sh\n${command}\n`);
-    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": "${kind === "script" ? command : "sh scripts/build.sh"}"`));
-    repo.commit("external tsc project run with --noEmit");
+    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(kind === "script" ? command : "sh scripts/build.sh")}`));
+    repo.commit("external tsc project run");
     const undeclared = check(repo.root);
     assert.equal(undeclared.status, 1, undeclared.output);
-    assert.ok(undeclared.output.includes(`@uifn/core: ${from} refers to uifn/sharedlib/tsconfig.json, outside uifn/core; declare it`), undeclared.output);
-    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', '"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/sharedlib/tsconfig.json":"tsc builds it","uifn/sharedlib/src":"tsc compiles it"'));
+    assert.ok(undeclared.output.includes(`@uifn/core: ${from} refers to uifn/${lib}/tsconfig.json, outside uifn/core; declare it`), undeclared.output);
+    assert.doesNotMatch(undeclared.output, /uifn\/shared\/tsconfig\.json/);
+    repo.edit("uifn/version-bump-inputs.json", (text) => text.replace('"inputs":{"uifn/catalog/catalog.json":"build reads it"', `"inputs":{"uifn/catalog/catalog.json":"build reads it","uifn/${lib}/tsconfig.json":"tsc builds it","uifn/${lib}/src":"tsc compiles it"`));
     repo.commit("declare the external project");
     repo.git("branch", "-f", "base");
-    repo.write("uifn/sharedlib/src/index.ts", "export const shared = 2;\n");
+    repo.write(`uifn/${lib}/src/index.ts`, "export const shared = 2;\n");
     repo.commit("change the external project's source");
     const changed = check(repo.root);
     assert.equal(changed.status, 1, changed.output);
-    assert.ok(changed.output.includes("@uifn/core: shipped code changed (uifn/sharedlib/src/index.ts) but version is still 1.0.0"), changed.output);
+    assert.ok(changed.output.includes(`@uifn/core: shipped code changed (uifn/${lib}/src/index.ts) but version is still 1.0.0`), changed.output);
     repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
     repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the shared project.\n\n## 1.0.0"));
+    repo.commit("bump core");
+    const bumped = check(repo.root);
+    assert.equal(bumped.status, 0, bumped.output);
+  });
+}
+
+// A lifecycle tsc run reads its words as the shell does: a quoted project path with a space is one word, and the last --noEmit
+// decides emission (bare: none; --noEmit false: emit), so the tsconfig in "my lib" compiles test/ into the tarball unless the run is quiet.
+for (const [command, emits] of [['tsc -p "my lib/tsconfig.json"', true], ["tsc -p 'my lib/tsconfig.json'", true], ['tsc -b "my lib"', true], ["tsc --noEmit --noEmit false -p 'my lib'", true], ["tsc --noEmit false --noEmit -p 'my lib'", false]]) {
+  test(`a lifecycle tsc run compiles what its shell words name: ${command}`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.write("uifn/core/my lib/tsconfig.json", '{ "compilerOptions": { "outDir": "../dist/fixtures" }, "include": ["../test"] }');
+    repo.write("uifn/core/test/fixture.ts", "export const fixture = 1;\n");
+    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(command)}`));
+    repo.commit("in-package project in a directory with a space");
+    repo.git("branch", "-f", "base");
+    repo.write("uifn/core/test/fixture.ts", "export const fixture = 2;\n");
+    repo.commit("change the compiled fixture");
+    const changed = check(repo.root);
+    assert.equal(changed.status, emits ? 1 : 0, changed.output);
+    if (!emits) return;
+    assert.ok(changed.output.includes("@uifn/core: shipped code changed (test/fixture.ts) but version is still 1.0.0"), changed.output);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the fixtures.\n\n## 1.0.0"));
     repo.commit("bump core");
     const bumped = check(repo.root);
     assert.equal(bumped.status, 0, bumped.output);
@@ -958,14 +984,16 @@ for (const [cell, build, tsconfigs, expected] of [
 }
 
 test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () => {
-  for (const command of ["tsc", "npx tsc --emitDeclarationOnly", "tsc -b", "tsc --build --verbose", "tsc -p .", "tsc --project ./", "tsc -b .", "tsc -p tsconfig.json"]) assert.deepEqual(tscProjects(command), ["tsconfig.json"], command);
-  assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json"), ["config/tsconfig.build.json"]);
-  assert.deepEqual(tscProjects("tsc --project=packages/a"), ["packages/a/tsconfig.json"]);
-  assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force"), ["packages/a/tsconfig.json", "tsconfig.types.json"]);
-  for (const command of ["tsc --noEmit -p tsconfig.json", "tsc --noEmit -p tsconfig.json --noEmit false", "tsc -b . --noEmit"]) assert.deepEqual(tscProjects(command), ["tsconfig.json"], command);
-  assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), ["tsconfig.json"]);
-  assert.deepEqual(tscProjects("tsc -b --noEmit false"), ["tsconfig.json"]);
-  assert.deepEqual(tscProjects("tsc -p tsconfig.json --noEmit=false"), ["tsconfig.json"]);
+  for (const command of ["tsc", "npx tsc --emitDeclarationOnly", "tsc -b", "tsc --build --verbose", "tsc -p .", "tsc --project ./", "tsc -b .", "tsc -p tsconfig.json"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: undefined }, command);
+  assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json").projects, ["config/tsconfig.build.json"]);
+  assert.deepEqual(tscProjects("tsc --project=packages/a").projects, ["packages/a/tsconfig.json"]);
+  assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force").projects, ["packages/a/tsconfig.json", "tsconfig.types.json"]);
+  for (const command of ["tsc --noEmit -p tsconfig.json", "tsc --noEmit false -p tsconfig.json --noEmit", "tsc -b . --noEmit", "tsc --noEmit=false --noEmit"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: false }, command);
+  for (const command of ["tsc --noEmit -p tsconfig.json --noEmit false", "tsc -b --noEmit false", "tsc -p tsconfig.json --noEmit=false", "tsc '--noEmit' 'false'"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: true }, command);
+  assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), { projects: ["tsconfig.json"], emit: undefined });
+  assert.deepEqual(tscProjects("tsc --noEmitOnError"), { projects: ["tsconfig.json"], emit: undefined });
+  for (const command of ['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --project='my lib'"]) assert.deepEqual(tscProjects(command).projects, ["my lib/tsconfig.json"], command);
+  assert.deepEqual(tscProjects('tsc -b "../shared lib" "a b/tsconfig.x.json"').projects, ["../shared lib/tsconfig.json", "a b/tsconfig.x.json"]);
   assert.equal(tscProjects("tsup src/index.ts"), null);
 });
 
@@ -984,6 +1012,11 @@ for (const [build, extra, expected] of [
   ["node scripts/build.mjs", { "scripts/build.mjs": "execSync(`node_modules/.bin/tsc -p . 2>&1`);\n" }, emitted],
   ...["node node_modules/typescript/bin/tsc -p .", "npx --no-install tsc", "npx -p typescript tsc", "npm exec -- tsc", "npm x tsc", "bun x tsc", "pnpm dlx tsc", "yarn run tsc", "pnpm -C . exec tsc"].map((command) => ["node scripts/build.mjs", { "scripts/build.mjs": `execSync('${command}');\n` }, emitted]),
   ["tsc --noEmit && tsup src/index.ts", {}, []],
+  // The last --noEmit wins, as in tsc; a quoted project path is one word.
+  ["tsc --noEmit false --noEmit", {}, []],
+  ["tsc --noEmit --noEmit false", {}, emitted],
+  ["tsc --noEmit=false --noEmit", {}, []],
+  ...['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --project='my lib'"].map((build) => [build, { "my lib/tsconfig.json": '{ "compilerOptions": { "outDir": "../dist" }, "include": ["../src/fixtures"] }' }, ["src/fixtures/runtime.ts"]]),
   // A build file's tsc run sweeps every tsconfig even with its own --noEmit, as a command string or an argv element (owner ruling).
   ["node scripts/build.mjs", { "scripts/build.mjs": 'execSync("tsc --noEmit");\nawait build({ entry: ["src/index.ts"] });\n' }, emitted],
   ["node scripts/build.mjs", { "scripts/build.mjs": "execFileSync('tsc', ['--noEmit']);\n" }, emitted],

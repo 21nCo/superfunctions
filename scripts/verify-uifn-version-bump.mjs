@@ -379,24 +379,24 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
 
 /**
  * The tsconfigs, relative to the working directory, that a tsc command emits from: the -p/--project path, every -b/--build
- * path, or ./tsconfig.json; a path that is not a .json file is a directory holding tsconfig.json. Null when the command
- * does not run tsc. --noEmit only sets emission (the last one wins) and never removes a project.
+ * path, or ./tsconfig.json; a path that is not a .json file is a directory holding tsconfig.json. A quoted word is one word. Null
+ * when tsc does not run. `emit` follows the last --noEmit (bare: false; --noEmit false: true; none: undefined); it removes no project.
  */
 export function tscProjects(command) {
-  const words = command.replace(/\d*>>?&?\s*[^\s&|;]+|<\s*\S+/g, " ").split(/[\s()<>=]+/).map((word) => word.replace(/^['"`]+|['"`]+$/g, "")).filter(Boolean);
+  const words = (command.replace(/\d*>>?&?\s*[^\s&|;]+|<\s*\S+/g, " ").match(/(?:"[^"]*"|'[^']*'|[^\s()<>=])+/g) ?? []).map((word) => word.replaceAll(/["'`]/g, "")).filter(Boolean);
   const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
   if (start < 0) return null;
   const args = words.slice(start + 1);
-  const flag = args.findIndex((word) => TSC_PROJECT_FLAG.test(word));
+  const [flag, noEmit] = [args.findIndex((word) => TSC_PROJECT_FLAG.test(word)), args.findLastIndex((word) => word === "--noEmit")];
   const projects = flag < 0 ? [] : /^--?b/.test(args[flag]) ? args.slice(flag + 1).filter((word) => !/^(?:-|true$|false$)/.test(word)) : args.slice(flag + 1, flag + 2);
-  return (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json")));
+  return { projects: (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json"))), emit: noEmit < 0 ? undefined : args[noEmit + 1] === "false" };
 }
 
 /**
  * Paths that shipped lifecycle scripts name, each token resolved from the package root, globs kept and `!` globs marked
  * negated, with the command they are in, plus the tsconfigs each tsc command emits from. Outside tsc commands a token is
- * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a tsc --noEmit
- * command (no --noEmit false) emits none of its projects' files, but still names each project, which must be declared. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), a leading `./x`, and a config the tool
+ * marked `tree`, since a tool given a directory (`svelte-package -i lib`) reads every file under it; a quoted word is one token. A tsc
+ * command whose last --noEmit is bare emits none of its projects' files, but still names each project, which must be declared. Every word after a runner (`node x.mjs`, `tsx x.ts`, `sh x.sh`), a leading `./x`, and a config the tool
  * loads (`-c x`, `--config x`, `--config=x`, any named *.config.* file) is marked `runs`.
  */
 export function scriptReferences(scripts, packagePath) {
@@ -404,13 +404,13 @@ export function scriptReferences(scripts, packagePath) {
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
     for (const [list, command] of scripts[name].split(COMMAND_SEPARATOR).entries()) {
-      const [projects, quiet] = [tscProjects(command), /--noEmit(?![\w-])/.test(command) && !EMIT_OVERRIDE.test(command)];
-      for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: EMIT_OVERRIDE.test(command), ...(quiet ? { overridden: true } : {}) });
-      if (projects && quiet) continue;
+      const { projects, emit } = tscProjects(command) ?? {};
+      for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
+      if (emit === false) continue;
       let runs = false;
       let config = false;
-      for (const [index, token] of command.trim().split(/[\s&<>()]+/).entries()) {
-        const value = token.replace(/^['"]+|['"]+$/g, "").replace(/^-{1,2}[\w-]+=/, "");
+      for (const [index, token] of (command.match(/(?:"[^"]*"|'[^']*'|[^\s&<>()])+/g) ?? []).entries()) {
+        const value = token.replaceAll(/["']/g, "").replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
         if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : projects ? {} : { tree: true }), ...(runs || config || /(?:^['"]?--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
