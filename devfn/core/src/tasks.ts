@@ -135,6 +135,15 @@ async function digestComposeSource(root: string, spec: NonNullable<DevFnConfig["
 /** Resource value sources that carry a leased host port; a reallocated port never reruns a task. */
 const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
 
+/** The Compose environment with each per-lease value (a port, its URL or alias, a leased resource value) and each written env value built from one as a stable sentinel, so a decision before the lease and the run agree; one pass per written value reaches a value built from one however indirectly. */
+function leaseStable(config: DevFnConfig, node: string, profile: string, resources: ResourcePlan | undefined, environment: Record<string, string>): Record<string, string> {
+  const lease = new Set([...Object.values(config.ports ?? {}).flatMap((port) => port.env ? [port.env] : []), ...Object.values(resources?.resources ?? {}).flatMap((planned) => Object.entries(planned.services[node] ?? {}).flatMap(([key, value]) => "unreachable" in value || !LEASED_SOURCES.has(value.source) ? [] : [key]))]);
+  const leased = (name: string) => lease.has(name) || /^DEVFN_(PORT|URL|PUBLIC_URL)_/.test(name);
+  const written = Object.entries({ ...config.profiles[profile]?.environment, ...config.services![node].env });
+  for (let pass = 0; pass < written.length; pass++) for (const [key, value] of written) if ([...value.matchAll(/\{\{env\.(\w+)\}\}/g)].some(([, name]) => leased(name))) lease.add(key);
+  return Object.fromEntries(Object.entries(environment).map(([key, value]) => [key, leased(key) ? "1" : value]));
+}
+
 /**
  * The input revision of a task: its declared command and settings, its
  * manifest and selected profile environment as written (secret channels by
@@ -152,12 +161,11 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   // A secret channel counts by name only, wherever its value is written.
   const secrets = new Set(spec.secretEnv ?? []);
-  const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {})
-    .map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
+  const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
     ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
-      source: await digestComposeSource(root, config.services![node.name], `${field}.file`, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }, taskScope(config, "", node, resources).scope === "shared") };
+      source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
     const planned = resources?.resources[name];
     if (!planned) return [name, null];

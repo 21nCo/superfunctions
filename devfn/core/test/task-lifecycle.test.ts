@@ -980,7 +980,11 @@ describe("tasks consuming targets shared across worktrees (real local processes)
   it("rejects a shared-scope Compose task using any value derived from its per-worktree project name, in every worktree before any mutation", async () => {
     const project = "$" + "{COMPOSE_PROJECT_NAME}";
     const cases: Array<[string, string[], string]> = [["{}", [], "volume data"], [`{ name: "${project}-data" }`, [], "volume data"], [`{ name: "data-${project}" }`, [], "volume data"],
-      [`{ external: true, name: "${project}-x" }`, [], "volume data"], ["{ name: devfn-task-fixture-data }", ["    environment:", `      TARGET_DB: "${project}"`], "definition"]];
+      [`{ external: true, name: "${project}-x" }`, [], "volume data"], ["{ name: devfn-task-fixture-data }", ["    environment:", `      TARGET_DB: "${project}"`], "definition"],
+      // Every selected config and secret the task observes counts: its content and the variable it reads.
+      ["{ name: devfn-task-fixture-data }", ["    configs: [settings]", "configs:", "  settings:", `    content: "target=${project}"`], "config settings"],
+      ["{ name: devfn-task-fixture-data }", ["    configs: [settings]", "configs:", "  settings:", `    environment: "SETTINGS_${project}"`], "config settings"],
+      ["{ name: devfn-task-fixture-data }", ["    secrets: [token]", "secrets:", "  token:", `    environment: "TOKEN_${project}"`], "secret token"]];
     for (const [volume, service, part] of cases) {
       const env = await composeWorktrees("compose-project-volume", volume, ["db"], service);
       try {
@@ -1005,8 +1009,10 @@ describe("tasks consuming targets shared across worktrees (real local processes)
   }, 120_000);
 
   it("keeps a shared-scope Compose task using an external or explicitly named volume shared, and an instance-scope one using a project volume per worktree", async () => {
-    for (const volume of ["{ external: true }", "{ name: devfn-task-fixture-data }"]) {
-      const env = await composeWorktrees("compose-shared-volume", volume, ["db"]);
+    // Literal configs and secrets stay shared: Compose names their objects after the project itself, as it does the default network.
+    const literal = ["    configs: [settings]", "    secrets: [token]", "configs:", "  settings:", "    content: target=app", "secrets:", "  token:", "    file: ./token.txt"];
+    for (const [volume, service] of [["{ external: true }", []], ["{ name: devfn-task-fixture-data }", []], ["{ name: devfn-task-fixture-data }", literal]] as const) {
+      const env = await composeWorktrees("compose-shared-volume", volume, ["db"], [...service]);
       try {
         const [a, b] = await revisions(env);
         expect(a.scope).toBe("shared");
@@ -1018,6 +1024,41 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       expect((await revisions(env)).map((item) => item.scope)).toEqual(["instance", "instance"]);
     } finally { await rm(env.base, { recursive: true, force: true }); }
   }, 180_000);
+
+  it("gives a Compose task whose selected resources use leased values one input revision before and after the lease, while other values still count", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-task-compose-lease-"));
+    try {
+      const config = validateDevFnConfig({ version: 1, project: { id: "task-compose-lease" }, ports: { web: { env: "WEB_PORT" }, redis: {} },
+        processes: { web: { adapter: "command", command: ["node", "server.mjs"], ports: ["web"] }, redis: { adapter: "command", command: ["redis-server"], ports: ["redis"] } },
+        services: { seed: { adapter: "compose", service: "seed", resources: ["cache"], task: { rerun: "once" },
+          env: { UPSTREAM: "http://host.docker.internal:{{env.DEVFN_PORT_WEB}}", ALIASED: "{{env.UPSTREAM}}/{{env.WEB_PORT}}", CACHE: "{{env.DEVFN_RESOURCE_CACHE_URL}}" } } },
+        resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "redis", scheme: "redis" } } } },
+        profiles: { default: { processes: ["web", "redis"], services: ["seed"] } } });
+      const compose = (label: string) => ["services:", "  seed:", "    image: busybox", "    configs: [settings]", "    volumes: [\"data:/data\"]",
+        "configs:", "  settings:", "    content: \"upstream=$" + "{UPSTREAM} aliased=$" + "{ALIASED} cache=$" + "{CACHE}\"",
+        "volumes:", "  data:", "    labels:", `      marker: "${label}-$` + "{UPSTREAM}\"", ""].join("\n");
+      const plan = createPlan(config);
+      const node = { name: "seed", kind: "service" } as const;
+      // The decision resolves every port as 1 before any lease; the run and later reuse checks resolve the leased ports.
+      const revision = async (ports: Record<string, number>) => {
+        const composeNetworks = { seed: ["default"] };
+        const resources = planResources({ config, plan, ownerId: "owner-a", ports, platform: "darwin", composeNetworks });
+        const resolved = resolveEndpointTemplates({ config, plan, ownerId: "owner-a", ports, composeNetworks, resources });
+        return await taskInputRevision(config, root, node, plan.profile, resources, resolved.nodes.seed.environment);
+      };
+      await writeFile(path.join(root, "compose.yaml"), compose("one"));
+      const preflight = await revision({ web: 1, redis: 1 });
+      expect(await revision({ web: 4100, redis: 4107 })).toBe(preflight);
+      expect(await revision({ web: 4200, redis: 4207 })).toBe(preflight);
+      // A value that is not leased still counts, in the resource and in the env the resource reads.
+      await writeFile(path.join(root, "compose.yaml"), compose("two"));
+      expect(await revision({ web: 4100, redis: 4107 })).not.toBe(preflight);
+      // A leased value is masked only as written: the env written around it counts.
+      await writeFile(path.join(root, "compose.yaml"), compose("one"));
+      config.services!.seed.env!.UPSTREAM = "http://other.example.test:{{env.DEVFN_PORT_WEB}}";
+      expect(await revision({ web: 4100, redis: 4107 })).not.toBe(preflight);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 120_000);
 
   it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("runs a shared-scope Compose task with an explicitly named volume once for every worktree, and an instance-scope one in each", async () => {
     const volume = `devfn-task-shared-volume-${process.pid}`;

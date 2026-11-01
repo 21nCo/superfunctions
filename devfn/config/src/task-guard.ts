@@ -36,18 +36,13 @@ function taskSpec(value: unknown, field: string): TaskSpec {
   if (rerun === "always" && !idempotent) fail(`${field}.rerun always requires idempotent: true.`, `${field}.rerun`);
   if (retries > 0 && !idempotent) fail(`${field}.retries requires idempotent: true; a non-idempotent task is never repeated automatically.`, `${field}.retries`);
   const inputs = taskInputs(input.inputs, `${field}.inputs`);
-  return {
-    rerun, idempotent, retries,
-    timeoutMs: input.timeoutMs === undefined ? 600_000 : integer(input.timeoutMs, `${field}.timeoutMs`, 1, 86_400_000),
-    ...(inputs ? { inputs } : {}),
-  };
+  return { rerun, idempotent, retries, timeoutMs: input.timeoutMs === undefined ? 600_000 : integer(input.timeoutMs, `${field}.timeoutMs`, 1, 86_400_000), ...(inputs ? { inputs } : {}) };
 }
 
-/** Validate a manifest and its finite setup-task contracts; the schema drops unknown fields, so `task` is read here. A task serves nothing: no ports, readiness, persistence or public exposure. */
+/** Validate a manifest and its finite setup-task contracts; the schema drops unknown fields, so `task` is read here. A task serves nothing: no ports, readiness, persistence or public exposure. Like other per-node fields, task contracts are checked after the manifest version and before cross-references between nodes. */
 export function validateDevFnConfig(value: unknown): DevFnConfig {
   const isRecord = (item: unknown): item is RecordValue => Boolean(item) && typeof item === "object" && !Array.isArray(item);
   const tasks: Array<[kind: "processes" | "services", name: string, task: TaskSpec]> = [];
-  // Like other per-node fields, task contracts are checked after the manifest version and before cross-references between nodes.
   if (isRecord(value) && value.version === 1) {
     for (const kind of ["processes", "services"] as const) {
       if (!isRecord(value[kind])) continue;
