@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { ComposeController, composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type TaskSpec } from "@devfn/config";
 import { withFileLock, type FilePortRegistry } from "@devfn/ports";
-import { processBirthSignature, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
+import { processBirthSignature, ProcessError, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
 import { describe, expect, it, vi } from "vitest";
 
 import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveEndpointTemplates, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
@@ -15,7 +15,8 @@ import { preflightTasks, runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// An exited child its parent has not reaped yet (a zombie) runs nothing, so it is not alive.
+const alive = (pid: number) => processExists(pid);
 
 // An application-neutral setup task: it records each run, then follows
 // behavior.json, which is deliberately not one of its inputs.
@@ -130,6 +131,22 @@ describe("task input revisions", () => {
     const resources = planResources({ config, plan, ownerId: "owner-a", runtimeId: "a".repeat(32), ports: { api: port }, platform: "linux" });
     return await taskInputRevision(config, os.tmpdir(), { name: "migrate", kind: "process" }, plan.profile, resources);
   };
+
+  it("bounds an input directory's entries as it reads them, and counts entries alike either side of the bound", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-task-input-budget-")));
+    const config = validateDevFnConfig({ version: 1, project: { id: "budget" }, processes: { migrate: { adapter: "command", command: ["node", "migrate.mjs"], task: { inputs: ["seeds"] } } },
+      profiles: { default: { processes: ["migrate"] } } });
+    const digest = async () => await taskInputRevision(config, root, { name: "migrate", kind: "process" }, "default");
+    try {
+      await mkdir(path.join(root, "seeds"));
+      for (let index = 0; index < 9_999; index += 500) await Promise.all(Array.from({ length: Math.min(500, 9_999 - index) }, async (_, offset) => await writeFile(path.join(root, "seeds", `${index + offset}.sql`), "")));
+      // The directory and its 9,999 files are 10,000 entries: within the budget, and digested alike each time.
+      const within = await digest();
+      expect(await digest()).toBe(within);
+      await writeFile(path.join(root, "seeds", "extra.sql"), "");
+      await expect(digest()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("more than 10000 entries") });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 60_000);
 
   it("covers the profile environment and the resource values a task receives, but not leased ports", async () => {
     const base = await revision(manifest());
@@ -1453,6 +1470,34 @@ describe("task attempt boundaries (stub launchers)", () => {
       expect((await env.journal())?.attempts).toMatchObject([{ outcome: "failed", effects: "unknown", error: expect.stringContaining("still alive") }]);
     } finally { await rm(env.root, { recursive: true, force: true }); }
   });
+
+  it("keeps a launcher its closed launch gate could not stop unresolved, so every later start settles it first or blocks", async () => {
+    for (const verifiable of [true, false]) {
+      // A launcher left running: the gate never opened, but stopping its group failed.
+      const leftover = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { detached: true, stdio: "ignore" });
+      const birthSignature = verifiable ? await processBirthSignature(leftover.pid!) : undefined;
+      const supervisor = { run: async (input: RunProcessInput): Promise<ProcessRunResult> => {
+        await input.onStarted?.({ name: input.name, pid: leftover.pid!, ...(birthSignature ? { birthSignature } : {}), command: input.command, cwd: input.root, logPath: path.join(input.root, "stub.log"), startedAt: new Date().toISOString() });
+        throw new ProcessError("DEVFN_PROCESS_START_FAILED", "identity recording timed out", { stopError: `process group ${leftover.pid} is still alive` });
+      } } as unknown as ProcessSupervisor;
+      const env = await context(`gate-stop-${verifiable}`, { node: { name: "migrate", kind: "process" }, supervisor });
+      try {
+        await expect(runTask(env.value)).rejects.toThrow("identity recording timed out");
+        expect((await env.journal())?.attempts).toMatchObject([{ outcome: "failed", effects: "none", stopped: false, launcher: { pid: leftover.pid }, error: expect.stringContaining("still alive") }]);
+        const next = runTask({ ...env.value, invocationId: "next", supervisor: new ProcessSupervisor(), command: [process.execPath, "-e", "0"], rerunRequested: !verifiable });
+        if (verifiable) {
+          // The next start stops the journaled launcher before it decides, then runs.
+          expect(await next).toMatchObject({ status: "succeeded" });
+          expect(processExists(leftover.pid!)).toBe(false);
+          expect((await env.journal())?.attempts).toMatchObject([{ invocationId: "invocation", stopped: true }, { invocationId: "next", outcome: "succeeded" }]);
+        } else {
+          // Without a verifiable identity it is never signalled, and every start blocks, an explicit rerun too.
+          await expect(next).rejects.toMatchObject({ code: "DEVFN_TASK_RERUN_REQUIRED" });
+          expect(processExists(leftover.pid!)).toBe(true);
+        }
+      } finally { leftover.kill("SIGKILL"); await rm(env.root, { recursive: true, force: true }); }
+    }
+  }, 60_000);
 
   it("never retries a Compose attempt whose container could not be removed and keeps its launch journaled", async () => {
     const stub = failing({});

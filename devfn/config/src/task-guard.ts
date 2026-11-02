@@ -28,7 +28,7 @@ function taskInputs(value: unknown, field: string): string[] | undefined {
 function taskSpec(value: unknown, field: string): TaskSpec {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${field} must be an object.`, field);
   const input = value as RecordValue;
-  const rerun = input.rerun ?? "on-change";
+  const rerun = input.rerun === undefined ? "on-change" : input.rerun;
   if (rerun !== "on-change" && rerun !== "always" && rerun !== "once") fail(`${field}.rerun must be on-change, always or once.`, `${field}.rerun`);
   if (input.idempotent !== undefined && typeof input.idempotent !== "boolean") fail(`${field}.idempotent must be a boolean.`, `${field}.idempotent`);
   const idempotent = input.idempotent === true;

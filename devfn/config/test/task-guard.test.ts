@@ -14,6 +14,8 @@ describe("finite setup task contracts", () => {
       .toEqual({ rerun: "always", idempotent: true, retries: 2, timeoutMs: 1000, inputs: ["migrations", "schema.sql"] });
     expect(() => base(null)).toThrow("must be an object");
     expect(() => base({ rerun: "sometimes" })).toThrow("on-change, always or once");
+    // Only an omitted policy defaults; null is no policy and is rejected, never run as on-change.
+    for (const field of ["rerun", "idempotent", "retries", "timeoutMs"]) expect(() => base({ [field]: null }), field).toThrow(field);
     expect(() => base({ idempotent: "yes" })).toThrow("must be a boolean");
     expect(() => base({ rerun: "always" })).toThrow("requires idempotent: true");
     expect(() => base({ retries: 1 })).toThrow("never repeated automatically");

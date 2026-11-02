@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, readlink, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, opendir, readFile, readlink, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { ComposeController, composeTaskSourceDigest, createComposeEnvironment, type ComposeLaunch } from "@devfn/compose";
@@ -85,7 +85,7 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
   return { spec, task: spec.task!, field: `${node.kind === "process" ? "processes" : "services"}.${node.name}` };
 }
 
-/** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. */
+/** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
 async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
@@ -103,7 +103,8 @@ async function digestInput(root: string, relative: string, field: string, exclud
     if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
     else if (stats.isDirectory()) {
       if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      for (const entry of (await readdir(absolute)).sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
+      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!excluded.includes(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
       if (budget.bytes > MAX_INPUT_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} exceeds ${MAX_INPUT_BYTES} bytes.`);
@@ -218,8 +219,7 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   return { key: sha256(JSON.stringify(identity)).slice(0, 40), scope: shared.length > 0 ? "shared" : "instance" };
 }
 
-const OUTCOMES = new Set<unknown>(["running", "succeeded", "failed", "timed-out", "cancelled", "interrupted"]);
-const EFFECTS = new Set<unknown>(["none", "applied", "unknown"]);
+const OUTCOMES = new Set<unknown>(["running", "succeeded", "failed", "timed-out", "cancelled", "interrupted"]), EFFECTS = new Set<unknown>(["none", "applied", "unknown"]);
 const journalPath = (stateDir: string, key: string) => path.join(stateDir, "tasks", `${key}.json`);
 
 export async function readTaskJournal(stateDir: string, key: string): Promise<TaskJournal | undefined> {
@@ -234,10 +234,8 @@ export async function readTaskJournal(stateDir: string, key: string): Promise<Ta
   try { value = JSON.parse(raw) as TaskJournal; }
   catch { value = undefined as unknown as TaskJournal; }
   // Every attempt and success is complete evidence: a known outcome and effects, a launcher until verified stopped, and a success's revision.
-  const complete = (attempt: TaskAttempt | null) => !!attempt && OUTCOMES.has(attempt.outcome) && EFFECTS.has(attempt.effects) && typeof attempt.inputRevision === "string"
-    && (attempt.stopped === true || (Number.isInteger(attempt.launcher?.pid) && attempt.launcher!.pid > 0));
-  if (!value || value.version !== 1 || !Array.isArray(value.attempts) || !value.attempts.every(complete)
-    || (value.lastSuccess === undefined ? value.attempts.some((attempt) => attempt.outcome === "succeeded") : typeof value.lastSuccess?.inputRevision !== "string")) {
+  const complete = (attempt: TaskAttempt | null) => !!attempt && OUTCOMES.has(attempt.outcome) && EFFECTS.has(attempt.effects) && typeof attempt.inputRevision === "string" && (attempt.stopped === true || (Number.isInteger(attempt.launcher?.pid) && attempt.launcher!.pid > 0));
+  if (!value || value.version !== 1 || !Array.isArray(value.attempts) || !value.attempts.every(complete) || (value.lastSuccess === undefined ? value.attempts.some((attempt) => attempt.outcome === "succeeded") : typeof value.lastSuccess?.inputRevision !== "string")) {
     // A completion record is evidence of work done to real systems; DevFn never guesses it.
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task journal ${file} is malformed; restore it, or remove it to treat the task as never run.`);
   }
@@ -449,9 +447,8 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
           await context.record(receipt);
         });
       } catch (error) {
-        // runAttempt throws only while the launch gate is closed: the command never ran.
-        Object.assign(attempt, { outcome: context.signal?.aborted ? "cancelled" : "failed", effects: "none", stopped: true, endedAt: new Date().toISOString(),
-          error: error instanceof Error ? error.message : String(error) });
+        // runAttempt throws only while the launch gate is closed: the command never ran. A launcher it could not stop stays unresolved, so the next start settles it first.
+        const stopError = (error as { details?: { stopError?: unknown } } | undefined)?.details?.stopError; Object.assign(attempt, { outcome: context.signal?.aborted ? "cancelled" : "failed", effects: "none", stopped: !(stopError && attempt.launcher), endedAt: new Date().toISOString(), error: [error instanceof Error ? error.message : String(error), stopError].filter(Boolean).join(" ") });
         receipt.status = attempt.outcome === "cancelled" ? "cancelled" : "failed";
         if (journal.attempts.includes(attempt)) await writeTaskJournal(stateDir, key, journal).catch(() => undefined);
         await context.record(receipt).catch(() => undefined);

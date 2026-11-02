@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -202,5 +202,42 @@ describe.skipIf(!composeAtLeast(2, 24, 4))("Compose task source digest", () => {
     expect(await digestOf(project("one", true, "other"))).not.toBe(before);
     // Where a's declaration is effective, the selected volumes still disagree on the name's provenance.
     await expect(digestOf(project("one", false))).rejects.toThrow(/LABEL_VALUE/);
+  }, 120_000);
+
+  it("never digests a selected resource from a merge DevFn would make when Compose cannot show its uninterpolated model", async () => {
+    // A docker whose config --no-interpolate fails, as supported Compose 2.24 does for a typed interpolated field such as cpus: ${CPUS}.
+    const bin = await mkdtemp(path.join(tmpdir(), "devfn-no-interpolate-"));
+    const docker = spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8" }).stdout.trim();
+    await writeFile(path.join(bin, "docker"), `#!/bin/sh\nfor arg; do [ "$arg" = --no-interpolate ] && { echo "unsupported field" >&2; exit 1; }; done\nexec "${docker}" "$@"\n`, { mode: 0o755 });
+    const digest = async (files: Record<string, string>, forced: boolean) => await withProject(files, {}, async (spec, root) => await composeTaskSourceDigest(spec, root,
+      createComposeEnvironment(spec, {}, forced ? { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` } : process.env)));
+    const merged = (password: string) => ({ "compose.yaml": "include:\n  - path: [ a.yaml, b.yaml ]\nservices:\n  setup:\n    image: busybox\n    volumes: [ \"data:/data\" ]\n",
+      "a.yaml": "volumes:\n  data:\n    labels: { marker: \"${DB_PASSWORD}\" }\n", "b.yaml": "volumes:\n  data:\n    labels: { other: b }\n", ".env": `DB_PASSWORD=${password}\n` });
+    const single = (password: string, which = "one") => ({ ".env": `DB_PASSWORD=${password}\n`,
+      "compose.yaml": `services:\n  setup:\n    image: busybox\n    volumes: [ "data:/data" ]\nvolumes:\n  data:\n    labels: { marker: "\${DB_PASSWORD}", which: ${which} }\n` });
+    try {
+      // Compose's own model keeps a's credential label in the merged volume, and rotating the credential never counts.
+      expect(await digest(merged("two"), false)).toBe(await digest(merged("one"), false));
+      // Without that model, a volume several documents declare fails closed instead of digesting one document's declaration.
+      await expect(digest(merged("one"), true)).rejects.toMatchObject({ code: "DEVFN_COMPOSE_START_FAILED", message: expect.stringContaining("volume data") });
+      // A volume one document declares is that declaration: a rotation still never counts, and another value does.
+      const base = await digest(single("one"), true);
+      expect(await digest(single("two"), true)).toBe(base);
+      expect(await digest(single("one", "two"), true)).not.toBe(base);
+    } finally { await rm(bin, { recursive: true, force: true }); }
+  }, 120_000);
+
+  it("counts only the paths Compose resolves relative to the repository, and every other resource value as written", async () => {
+    const yaml = (content: string, directory: string) => "services:\n  setup:\n    image: busybox\n    configs: [ settings ]\n    secrets: [ token ]\n    volumes: [ \"bound:/bound\" ]\n"
+      + `configs:\n  settings:\n    content: ${content}\nsecrets:\n  token:\n    file: ./${directory}/token.txt\nvolumes:\n  bound:\n    driver_opts: { type: none, o: bind, device: ./${directory} }\n`;
+    // Inline content is delivered as written, even when it spells a path inside the repository.
+    const inline = async (content: (root: string) => string) => await withProject({ "data/token.txt": "t\n" }, {}, async (spec, root) => {
+      await writeFile(path.join(root, "compose.yaml"), yaml(content(await realpath(root)), "data"));
+      return await composeTaskSourceDigest(spec, root, createComposeEnvironment(spec));
+    });
+    expect(await inline((root) => `${root}/foo`)).not.toBe(await inline(() => "foo"));
+    // A file or bind device under a directory whose name starts with .. is still inside the repository: each worktree gives one digest.
+    const files = { "compose.yaml": yaml("foo", "..cache"), "..cache/token.txt": "t\n" };
+    expect(await digestOf(files)).toBe(await digestOf(files));
   }, 120_000);
 });

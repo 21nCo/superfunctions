@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FilePortRegistry, isPortAvailable } from "@devfn/ports";
-import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
+import { processBirthSignature, processExists, validateDevFnConfig } from "@devfn/config";
 import { DevFnOrchestrator, readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
 import { runCli } from "../src/index.js";
 
@@ -151,7 +151,8 @@ describe("devfn CLI", () => {
       expect(cancelled).toMatchObject({ code: 1, value: { error: { code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } } } });
       expect(added("SIGINT")).toHaveLength(0);
       expect(added("SIGTERM")).toHaveLength(0);
-      expect(() => process.kill(Number(readFileSync(path.join(cwd, "task.pid"), "utf8")), 0)).toThrow();
+      // A cancelled child that exited but is not reaped yet (a zombie) runs nothing.
+      expect(processExists(Number(readFileSync(path.join(cwd, "task.pid"), "utf8")))).toBe(false);
     } finally {
       await runCli(["down", "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: () => undefined, stderr: () => undefined }).catch(() => undefined);
       await rm(cwd, { recursive: true, force: true });
