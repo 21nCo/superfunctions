@@ -107,6 +107,18 @@ describe("named runtime isolation", () => {
       await writeFile(path.join(root, "config", "app.default.env"), "A=1\n");
       await writeFile(path.join(root, "config", "app.review.env"), "A=2\n");
       expect(await revision()).toBe(before);
+      // A staging file DevFn writes beside any runtime's output, mid-write or left by an interrupted write, is never read:
+      // this one cannot be read at all, and the revision is unchanged.
+      const staging = path.join(root, "config", ".app.review.env.00000000-0000-4000-8000-000000000000.devfn-tmp");
+      await writeFile(staging, "DEVFN_INSTANCE_ID=partial\n", { mode: 0o000 });
+      await writeFile(path.join(root, "config", ".app.other.env.11111111-1111-4111-8111-111111111111.devfn-tmp"), "A=4\n");
+      expect(await revision()).toBe(before);
+      await rm(staging);
+      expect(await revision()).toBe(before);
+      // The pattern is not a blanket exclusion: staging-shaped names of other files are inputs.
+      await writeFile(path.join(root, "config", ".schema.sql.22222222-2222-4222-8222-222222222222.devfn-tmp"), "x");
+      expect(await revision()).not.toBe(before);
+      await rm(path.join(root, "config", ".schema.sql.22222222-2222-4222-8222-222222222222.devfn-tmp"));
       // A file the token cannot produce is an ordinary input.
       await writeFile(path.join(root, "config", "app.re_view.env"), "A=3\n");
       expect(await revision()).not.toBe(before);

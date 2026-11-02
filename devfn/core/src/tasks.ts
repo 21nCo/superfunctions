@@ -7,6 +7,7 @@ import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/co
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
+import { stagedOutputName } from "./outputs.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -91,10 +92,17 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/
 const runtimeFileName = (template: string): RegExp =>
   new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
 
-/** Whether a canonical path is excluded DevFn state: an excluded path itself, or any runtime's file of an excluded `{runtime}` output. */
+/**
+ * Whether a canonical path is excluded DevFn state: an excluded path itself,
+ * any runtime's file of an excluded `{runtime}` output, or a staging file
+ * DevFn writes beside one of those (present during a write, or left by an
+ * interrupted one), decided by name before it is read.
+ */
 function isExcluded(excluded: readonly string[], absolute: string): boolean {
-  return excluded.some((item) => item === absolute || (path.basename(item).includes("{runtime}") && path.dirname(item) === path.dirname(absolute) &&
-    runtimeFileName(path.basename(item)).test(path.basename(absolute))));
+  const matches = (candidate: string) => excluded.some((item) => item === candidate || (path.basename(item).includes("{runtime}") && path.dirname(item) === path.dirname(candidate) &&
+    runtimeFileName(path.basename(item)).test(path.basename(candidate))));
+  const staged = stagedOutputName(path.basename(absolute));
+  return matches(absolute) || (staged !== undefined && matches(path.join(path.dirname(absolute), staged)));
 }
 
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */

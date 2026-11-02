@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { processBirthSignature, processIdentityStatus, resolveContainedPath, type DevFnConfig } from "@devfn/config";
@@ -14,21 +14,22 @@ import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./type
  * The environment-output files one instance of a checkout claims and has
  * written, as canonical paths. `targets` are held while the DevFn process
  * that claimed them runs or the instance's receipt is not stopped; down
- * empties them. `written` remembers every file the instance wrote, so a
- * named runtime keeps rewriting its own files and no one else's. `pending`
- * records a file a named runtime is about to create with the digest of its
- * content, before the file can exist: an interrupted write leaves either no
- * file, a file with that content (its own), or someone else's file.
+ * empties them. `written` remembers every file the instance wrote with the
+ * digest of what it last wrote there, so a named runtime keeps rewriting its
+ * own unchanged files and no one else's. `pending` records a file a named
+ * runtime is about to create with the digest of its content, before the file
+ * can exist: an interrupted write leaves either no file, a file with that
+ * content (its own), or someone else's file.
  */
-interface PendingOutput { target: string; sha256: string }
+interface WrittenOutput { target: string; sha256: string }
 
 interface OutputClaim {
   version: 1;
   instanceId: string;
   runtime: string;
   targets: string[];
-  written: string[];
-  pending?: PendingOutput[];
+  written: WrittenOutput[];
+  pending?: WrittenOutput[];
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -41,6 +42,14 @@ const INSTANCE_ID = /^[0-9a-f]{12}$/;
 const pathKey = (value: string): string => process.platform === "darwin" || process.platform === "win32" ? value.toLowerCase() : value;
 
 const relativeName = (root: string, target: string): string => path.relative(root, target) || target;
+
+/**
+ * A DevFn staging file of an output, `.<file name>.<uuid>.devfn-tmp` beside
+ * it: the file name it stages, or undefined for any other name.
+ */
+const STAGING = /^\.(.+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.devfn-tmp$/;
+export const stagedOutputName = (name: string): string | undefined => STAGING.exec(name)?.[1];
+const stagingPath = (target: string): string => path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.devfn-tmp`);
 
 /**
  * The file a write to target reaches: a symlink's target, otherwise the
@@ -77,9 +86,10 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
   try {
     const value = JSON.parse(text) as OutputClaim;
     const strings = (items: unknown) => Array.isArray(items) && items.every((item) => typeof item === "string");
-    const pending = value.pending === undefined || (Array.isArray(value.pending) &&
-      value.pending.every((item) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256)));
-    if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && strings(value.written) && pending &&
+    const files = (items: unknown) => Array.isArray(items) &&
+      items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
+    if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
+      (value.pending === undefined || files(value.pending)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -139,19 +149,23 @@ async function canonicalKeys(paths: readonly string[] | undefined): Promise<Set<
 
 const digest = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
 
-/** Whether a pending file is the one this instance was creating: a regular file holding the recorded content. */
-async function pendingIsOwn(item: PendingOutput): Promise<boolean> {
+/** Whether a file is a regular file holding exactly the content recorded for it. */
+async function holdsRecorded(item: WrittenOutput): Promise<boolean> {
   if (!(await lstat(item.target).catch(() => undefined))?.isFile()) return false;
   const content = await readFile(item.target).catch(() => undefined);
   return content !== undefined && digest(content) === item.sha256;
 }
 
+/** Record one written file, replacing an earlier record of the same path. */
+const withWritten = (written: readonly WrittenOutput[], item: WrittenOutput): WrittenOutput[] =>
+  [...written.filter((entry) => pathKey(entry.target) !== pathKey(item.target)), item].sort((a, b) => a.target < b.target ? -1 : a.target > b.target ? 1 : 0);
+
 /** The files an instance wrote: its written history and any interrupted creation that provably produced its own file. */
-async function writtenByClaim(claim: OutputClaim | undefined): Promise<string[]> {
+async function writtenByClaim(claim: OutputClaim | undefined): Promise<WrittenOutput[]> {
   if (!claim) return [];
-  const adopted: string[] = [];
-  for (const item of claim.pending ?? []) if (await pendingIsOwn(item)) adopted.push(item.target);
-  return [...new Set([...claim.written, ...adopted])].sort();
+  let written = [...claim.written];
+  for (const item of claim.pending ?? []) if (await holdsRecorded(item)) written = withWritten(written, item);
+  return written;
 }
 
 const live = (receipt: LifecycleReceipt | undefined): boolean => receipt !== undefined && receipt.state !== "stopped";
@@ -226,15 +240,22 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
   }
   if (!isNamedRuntime(identity.runtime)) return;
   // Its claim record is the only attribution: every named runtime has one, and a write records each file in it.
-  const written = new Set((await writtenByClaim(claims.get(identity.instanceId)?.claim)).map(pathKey));
+  const written = new Map((await writtenByClaim(claims.get(identity.instanceId)?.claim)).map((item) => [pathKey(item.target), item]));
   for (const item of targets) {
     if (item.symlink) throw symlinkRefusal(root, runtime, item.target);
-    if (item.exists && !written.has(item.key)) {
+    if (!item.exists) continue;
+    const own = written.get(item.key);
+    if (!own) {
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, item.target)} of runtime ${runtime} already exists and runtime ${runtime} did not write it; move it away or rename the output.`,
         { runtime, target: item.canonical });
     }
+    if (!(await holdsRecorded({ target: item.canonical, sha256: own.sha256 }))) throw changedRefusal(root, runtime, item.target, item.canonical);
   }
 }
+
+const changedRefusal = (root: string, runtime: string, target: string, canonical: string) => new DevFnError("DEVFN_RUNTIME_INVALID",
+  `Environment output ${relativeName(root, target)} of runtime ${runtime} changed since runtime ${runtime} wrote it; DevFn left it untouched. Move it away, or restore what DevFn wrote, before starting it again.`,
+  { runtime, target: canonical });
 
 const symlinkRefusal = (root: string, runtime: string, target: string) => new DevFnError("DEVFN_RUNTIME_INVALID",
   `Environment output ${relativeName(root, target)} of runtime ${runtime} is a symlink; a named runtime writes only its own regular files.`, { runtime, target });
@@ -263,7 +284,7 @@ const LINKLESS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV"]);
  * links, an exclusive no-follow open creates it.
  */
 async function createExclusive(target: string, content: string, mode: number): Promise<"created" | "exists"> {
-  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.devfn-tmp`);
+  const temp = stagingPath(target);
   try {
     const file = await open(temp, "wx", mode);
     try { await file.writeFile(content, "utf8"); await file.chmod(mode); await file.sync(); } finally { await file.close(); }
@@ -286,12 +307,39 @@ async function createExclusive(target: string, content: string, mode: number): P
 
 /** Replace a regular file in place of a link-free path: write a private temporary file, then rename it over the target. */
 async function replaceRegular(target: string, content: string, mode: number): Promise<void> {
-  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.devfn-tmp`);
+  const temp = stagingPath(target);
   try {
     const file = await open(temp, "wx", mode);
     try { await file.writeFile(content, "utf8"); await file.chmod(mode); await file.sync(); } finally { await file.close(); }
     await rename(temp, target);
   } finally { await unlink(temp).catch(() => undefined); }
+}
+
+/**
+ * Write a file in place as DevFn v0.1 did (truncate, keep its inode, apply
+ * the mode), without following a link at its name: a symlink there fails.
+ */
+async function overwriteInPlace(target: string, content: string, mode: number): Promise<"written" | "symlink"> {
+  let file;
+  try { file = await open(target, constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), mode); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "EMLINK") return "symlink";
+    throw error;
+  }
+  try { await file.writeFile(content, "utf8"); await file.chmod(mode); } finally { await file.close(); }
+  return "written";
+}
+
+/** Remove staging files an interrupted write left beside claimed targets; only the claimant writes there. */
+async function removeOrphanedStaging(targets: readonly Target[]): Promise<void> {
+  for (const item of targets) {
+    const names = await readdir(path.dirname(item.canonical)).catch(() => [] as string[]);
+    for (const name of names) {
+      const staged = stagedOutputName(name);
+      if (staged !== undefined && pathKey(staged) === pathKey(path.basename(item.canonical))) await unlink(path.join(path.dirname(item.canonical), name)).catch(() => undefined);
+    }
+  }
 }
 
 /**
@@ -321,9 +369,9 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       const locked = await selectedTargets(config, root, runtime);
       await assertTargetsAvailable(config, root, identity, locked, await readClaims(root));
       await record(locked);
+      await removeOrphanedStaging(locked);
     }, { timeoutMs: 30_000 });
   }
-  const claimed = new Set(targets.length ? claim.targets.map(pathKey) : []);
   const update = async (change: (current: OutputClaim) => OutputClaim) => {
     claim = change(claim);
     await writeClaim(root, claim);
@@ -344,46 +392,66 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       else await writeClaim(root, kept);
     },
     write: async (target, content, mode) => {
-      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-      if (!isNamedRuntime(identity.runtime)) {
-        // The default runtime writes its outputs as DevFn v0.1 did.
-        await writeFile(target, content, { encoding: "utf8", mode });
-        await chmod(target, mode);
-        const { canonical } = await canonicalTarget(target);
-        if (!claim || claim.written.includes(canonical)) return;
-        await update((current) => ({ ...current, written: [...new Set([...current.written, canonical])].sort() }));
-        return;
-      }
-      // A named runtime writes at the canonical path it claimed, never through
-      // a symlink, and creates only a file nothing else created in between.
-      const resolved = await canonicalTarget(target);
-      if (resolved.symlink) throw symlinkRefusal(root, runtime, target);
-      if (!claimed.has(pathKey(resolved.canonical))) {
-        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} now resolves to ${resolved.canonical}, not the file it claimed; a directory on its path changed during startup.`,
-          { runtime, target: resolved.canonical });
-      }
-      const canonical = resolved.canonical;
-      const recorded = claim.written.some((item) => pathKey(item) === pathKey(canonical));
-      const stat = recorded ? await lstat(canonical).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; }) : undefined;
-      if (stat) {
-        if (stat.isSymbolicLink()) throw symlinkRefusal(root, runtime, target);
-        if (!stat.isFile()) {
-          throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} is no longer a regular file; DevFn will not replace it.`, { runtime, target: canonical });
+      // Every runtime writes only the canonical file it claimed: a target a
+      // changed symlink or directory now leads elsewhere is refused before any
+      // byte changes, and the claimed path is written without following a
+      // link at its name. (A directory swapped in the instant between the last
+      // check and the open is not detected.)
+      const named = isNamedRuntime(identity.runtime);
+      const sha256 = digest(content);
+      const claimedPath = async (): Promise<string> => {
+        const resolved = await canonicalTarget(target);
+        if (named && resolved.symlink) throw symlinkRefusal(root, runtime, target);
+        const key = pathKey(resolved.canonical);
+        const match = claim?.targets.find((item) => pathKey(item) === key);
+        if (match === undefined) {
+          throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} now resolves to ${resolved.canonical}, not the file it claimed; a symlink or directory on its path changed during startup, and DevFn left every file untouched.`,
+            { runtime, target: resolved.canonical });
         }
-        await replaceRegular(canonical, content, mode);
-        return;
-      }
-      const intent: PendingOutput = { target: canonical, sha256: digest(content) };
-      await update((current) => ({ ...current, pending: [...(current.pending ?? []).filter((item) => item.target !== canonical), intent] }));
-      const outcome = await createExclusive(canonical, content, mode);
-      await update((current) => {
-        const pending = (current.pending ?? []).filter((item) => item.target !== canonical);
-        const { pending: _dropped, ...rest } = current;
-        return { ...rest, ...(pending.length ? { pending } : {}), written: outcome === "created" ? [...new Set([...current.written, canonical])].sort() : current.written };
-      });
-      if (outcome === "exists") {
-        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} was created by someone else after DevFn claimed it; DevFn left it untouched. Move it away or rename the output.`,
-          { runtime, target: canonical });
+        return match;
+      };
+      let canonical = await claimedPath();
+      try {
+        await mkdir(path.dirname(canonical), { recursive: true, mode: 0o700 });
+        canonical = await claimedPath();
+        if (!named) {
+          // The default runtime overwrites its claimed file in place as DevFn v0.1 did.
+          if (await overwriteInPlace(canonical, content, mode) === "symlink") {
+            throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} became a symlink after DevFn claimed it; DevFn left it untouched.`, { runtime, target: canonical });
+          }
+          await update((current) => ({ ...current, written: withWritten(current.written, { target: canonical, sha256 }) }));
+          return;
+        }
+        // A named runtime replaces only a regular file it wrote and nobody changed since, and creates only a file nothing else created in between.
+        const own = claim.written.find((item) => pathKey(item.target) === pathKey(canonical));
+        const stat = own ? await lstat(canonical).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; }) : undefined;
+        if (own && stat) {
+          if (stat.isSymbolicLink()) throw symlinkRefusal(root, runtime, target);
+          if (!stat.isFile()) {
+            throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} is no longer a regular file; DevFn will not replace it.`, { runtime, target: canonical });
+          }
+          if (!(await holdsRecorded(own))) throw changedRefusal(root, runtime, target, canonical);
+          await replaceRegular(canonical, content, mode);
+          await update((current) => ({ ...current, written: withWritten(current.written, { target: canonical, sha256 }) }));
+          return;
+        }
+        const intent: WrittenOutput = { target: canonical, sha256 };
+        await update((current) => ({ ...current, pending: [...(current.pending ?? []).filter((item) => item.target !== canonical), intent] }));
+        const outcome = await createExclusive(canonical, content, mode);
+        await update((current) => {
+          const pending = (current.pending ?? []).filter((item) => item.target !== canonical);
+          const { pending: _dropped, ...rest } = current;
+          return { ...rest, ...(pending.length ? { pending } : {}), written: outcome === "created" ? withWritten(current.written, intent) : current.written };
+        });
+        if (outcome === "exists") {
+          throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} was created by someone else after DevFn claimed it; DevFn left it untouched. Move it away or rename the output.`,
+            { runtime, target: canonical });
+        }
+      } catch (error) {
+        if (error instanceof DevFnError) throw error;
+        // Name the output, not only the staging file an I/O error reports.
+        const failure = error as NodeJS.ErrnoException;
+        throw Object.assign(new Error(`Could not write environment output ${relativeName(root, target)}: ${failure.message ?? String(error)}`, { cause: error }), failure.code ? { code: failure.code } : {});
       }
     },
   };
