@@ -17,9 +17,10 @@ import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./type
  * empties them. `written` remembers every file the instance wrote with the
  * digest of what it last wrote there, so a named runtime keeps rewriting its
  * own unchanged files and no one else's. `pending` records a file a named
- * runtime is about to create with the digest of its content, before the file
- * can exist: an interrupted write leaves either no file, a file with that
- * content (its own), or someone else's file.
+ * runtime is about to create or replace with the digest of its new content,
+ * before any of it can reach the file: an interrupted write leaves no file,
+ * the content it last wrote or the content it intended (both its own), or
+ * someone else's file.
  */
 interface WrittenOutput { target: string; sha256: string }
 
@@ -36,6 +37,13 @@ interface OutputClaim {
 }
 
 const CLAIMS = path.join(".devfn", "outputs");
+const CLAIMS_LOCK = "claims.lock";
+// The lock guards a few file operations, so a holder verified dead (pid and
+// birth signature) is recovered well within a waiter's budget: a crashed
+// runtime never holds up another runtime's start. A live holder is never
+// taken over however long it holds the lock.
+const CLAIMS_LOCK_TIMEOUT_MS = 30_000;
+const CLAIMS_LOCK_STALE_MS = 5_000;
 const INSTANCE_ID = /^[0-9a-f]{12}$/;
 
 /** Paths compare case-folded where the default filesystems fold case. */
@@ -160,7 +168,7 @@ async function holdsRecorded(item: WrittenOutput): Promise<boolean> {
 const withWritten = (written: readonly WrittenOutput[], item: WrittenOutput): WrittenOutput[] =>
   [...written.filter((entry) => pathKey(entry.target) !== pathKey(item.target)), item].sort((a, b) => a.target < b.target ? -1 : a.target > b.target ? 1 : 0);
 
-/** The files an instance wrote: its written history and any interrupted creation that provably produced its own file. */
+/** The files an instance wrote: its written history and any interrupted creation or replacement that provably left its intended content. */
 async function writtenByClaim(claim: OutputClaim | undefined): Promise<WrittenOutput[]> {
   if (!claim) return [];
   let written = [...claim.written];
@@ -363,19 +371,30 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   };
   const targets = await selectedTargets(config, root, runtime);
   if (targets.length) {
-    const devfn = await resolveContainedPath(root, ".devfn", "environmentOutputs");
-    await mkdir(devfn, { recursive: true, mode: 0o700 });
-    await withFileLock(path.join(devfn, "outputs.lock"), async () => {
+    // The lock lives among the claims, which are never task inputs, and so
+    // do the directories it is retired to on release.
+    const directory = await claimDirectory(root);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await withFileLock(path.join(directory, CLAIMS_LOCK), async () => {
       const locked = await selectedTargets(config, root, runtime);
       await assertTargetsAvailable(config, root, identity, locked, await readClaims(root));
       await record(locked);
       await removeOrphanedStaging(locked);
-    }, { timeoutMs: 30_000 });
+    }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
   }
   const update = async (change: (current: OutputClaim) => OutputClaim) => {
     claim = change(claim);
     await writeClaim(root, claim);
   };
+  /** Record the content about to be written before any byte of it can reach the file. */
+  const intend = async (intent: WrittenOutput) =>
+    await update((current) => ({ ...current, pending: [...(current.pending ?? []).filter((item) => pathKey(item.target) !== pathKey(intent.target)), intent] }));
+  /** Clear the intent, recording the content as written when it landed. */
+  const settle = async (intent: WrittenOutput, landed: boolean) => await update((current) => {
+    const pending = (current.pending ?? []).filter((item) => pathKey(item.target) !== pathKey(intent.target));
+    const { pending: _dropped, ...rest } = current;
+    return { ...rest, ...(pending.length ? { pending } : {}), written: landed ? withWritten(current.written, intent) : current.written };
+  });
   let committed = false;
   return {
     // Every committed start records a claim, also of no file, so a live
@@ -423,6 +442,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
           return;
         }
         // A named runtime replaces only a regular file it wrote and nobody changed since, and creates only a file nothing else created in between.
+        const intent: WrittenOutput = { target: canonical, sha256 };
         const own = claim.written.find((item) => pathKey(item.target) === pathKey(canonical));
         const stat = own ? await lstat(canonical).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; }) : undefined;
         if (own && stat) {
@@ -431,18 +451,16 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
             throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} is no longer a regular file; DevFn will not replace it.`, { runtime, target: canonical });
           }
           if (!(await holdsRecorded(own))) throw changedRefusal(root, runtime, target, canonical);
+          // The new content is recorded before the rename can land, so an
+          // interruption leaves the old or the new content, both its own.
+          await intend(intent);
           await replaceRegular(canonical, content, mode);
-          await update((current) => ({ ...current, written: withWritten(current.written, { target: canonical, sha256 }) }));
+          await settle(intent, true);
           return;
         }
-        const intent: WrittenOutput = { target: canonical, sha256 };
-        await update((current) => ({ ...current, pending: [...(current.pending ?? []).filter((item) => item.target !== canonical), intent] }));
+        await intend(intent);
         const outcome = await createExclusive(canonical, content, mode);
-        await update((current) => {
-          const pending = (current.pending ?? []).filter((item) => item.target !== canonical);
-          const { pending: _dropped, ...rest } = current;
-          return { ...rest, ...(pending.length ? { pending } : {}), written: outcome === "created" ? withWritten(current.written, intent) : current.written };
-        });
+        await settle(intent, outcome === "created");
         if (outcome === "exists") {
           throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} was created by someone else after DevFn claimed it; DevFn left it untouched. Move it away or rename the output.`,
             { runtime, target: canonical });

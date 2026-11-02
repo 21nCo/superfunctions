@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
-import { proxyOwnerStatus } from "@devfn/proxy";
+import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it } from "vitest";
 
 import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, selectRuntime, taskInputRevision } from "../src/index.js";
@@ -126,6 +126,43 @@ describe("named runtime isolation", () => {
         root, { name: "migrate", kind: "process" }, "default")).rejects.toThrow(/DevFn runtime state/);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  it("keeps output-ownership state, its lock and the lock's retired directories out of a task's input revision", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-claims-")));
+    try {
+      await writeFile(path.join(root, "schema.sql"), "create table t();");
+      const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, environmentOutputs: [{ path: ".env.{runtime}" }],
+        processes: { migrate: { adapter: "command", command: ["node", "migrate.mjs"], task: { inputs: ["."] } } }, profiles: { default: { processes: ["migrate"] } } });
+      const revision = async () => await taskInputRevision(config, root, { name: "migrate", kind: "process" }, "default");
+      const before = await revision();
+      const claims = path.join(root, ".devfn", "outputs");
+      // A held lock, one a killed holder left retired, a claim and its temporary file, and a staging file of an output.
+      for (const lock of ["claims.lock", "claims.lock.released.0123456789abcdef"]) {
+        await mkdir(path.join(claims, lock), { recursive: true });
+        await writeFile(path.join(claims, lock, "owner.json"), JSON.stringify({ token: "x", pid: 999_999, createdAt: new Date().toISOString() }), { mode: 0o000 });
+      }
+      await writeFile(path.join(claims, "0123456789ab.json"), "{}");
+      await writeFile(path.join(claims, "0123456789ab.json.00000000-0000-4000-8000-000000000000.tmp"), "{");
+      await writeFile(path.join(root, ".env.review"), "A=1\n");
+      await writeFile(path.join(root, "..env.review.00000000-0000-4000-8000-000000000000.devfn-tmp"), "A=2\n");
+      expect(await revision()).toBe(before);
+      // State that appears and vanishes while siblings start and stop is never read, so a walk cannot fail on it.
+      let churning = true;
+      const churn = (async () => {
+        for (let round = 0; churning; round += 1) {
+          const retired = path.join(claims, `claims.lock.released.${round}`);
+          await mkdir(retired, { recursive: true });
+          await writeFile(path.join(retired, "owner.json"), "{}");
+          await rm(retired, { recursive: true, force: true });
+        }
+      })();
+      try { for (let walk = 0; walk < 20; walk += 1) expect(await revision()).toBe(before); }
+      finally { churning = false; await churn; }
+      // Other files under .devfn stay inputs.
+      await writeFile(path.join(root, ".devfn", "notes.txt"), "user notes");
+      expect(await revision()).not.toBe(before);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });
 
 const SERVER = `import http from "node:http";
@@ -149,7 +186,7 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("routes two named runtimes of on
     const orchestrator = new DevFnOrchestrator();
     const routes = async () => (JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8")) as { routes: Array<{ instanceId: string; hostname: string }> }).routes;
     const viaProxy = async (hostname: string) => await new Promise<string>((resolve, reject) => {
-      const request = http.get({ host: "127.0.0.1", port: 8080, path: "/", headers: { host: hostname } }, (response) => {
+      const request = http.get({ host: "127.0.0.1", port: proxyListenerPorts().httpPort, path: "/", headers: { host: hostname } }, (response) => {
         let body = "";
         response.setEncoding("utf8").on("data", (chunk: string) => { body += chunk; }).on("end", () => resolve(body));
       });
